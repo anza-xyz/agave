@@ -407,6 +407,18 @@ impl ShrinkStats {
             datapoint_info!(
                 "shrink_stats",
                 (
+                    "ancient_slots_added_to_shrink",
+                    self.ancient_slots_added_to_shrink
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "ancient_bytes_added_to_shrink",
+                    self.ancient_bytes_added_to_shrink
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
                     "num_slots_shrunk",
                     self.num_slots_shrunk.swap(0, Ordering::Relaxed) as i64,
                     i64
@@ -508,11 +520,6 @@ impl ShrinkStats {
                     i64
                 ),
                 (
-                    "initial_candidates_count",
-                    self.initial_candidates_count.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
                     "purged_zero_lamports_count",
                     self.purged_zero_lamports.swap(0, Ordering::Relaxed),
                     i64
@@ -528,15 +535,8 @@ impl ShrinkStats {
                     i64
                 ),
                 (
-                    "ancient_slots_added_to_shrink",
-                    self.ancient_slots_added_to_shrink
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "ancient_bytes_added_to_shrink",
-                    self.ancient_bytes_added_to_shrink
-                        .swap(0, Ordering::Relaxed),
+                    "initial_candidates_count",
+                    self.initial_candidates_count.swap(0, Ordering::Relaxed),
                     i64
                 ),
             );
