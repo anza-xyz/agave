@@ -7,7 +7,6 @@ target/
 /test-ledger/
 
 **/*.rs.bk
-.cargo
 
 /config/
 
