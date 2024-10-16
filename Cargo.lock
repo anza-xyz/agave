@@ -5652,8 +5652,10 @@ dependencies = [
  "solana-account",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
+ "solana-instruction",
  "solana-logger",
  "solana-program",
+ "solana-pubkey",
 ]
 
 [[package]]
@@ -7268,6 +7270,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-precompile-error"
+version = "2.1.0"
+dependencies = [
+ "num-traits",
+ "solana-decode-error",
+]
+
+[[package]]
 name = "solana-program"
 version = "2.1.0"
 dependencies = [
@@ -7323,6 +7333,7 @@ dependencies = [
  "solana-logger",
  "solana-msg",
  "solana-native-token",
+ "solana-program-entrypoint",
  "solana-program-error",
  "solana-program-memory",
  "solana-program-option",
@@ -7341,6 +7352,16 @@ dependencies = [
  "test-case",
  "thiserror",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "solana-program-entrypoint"
+version = "2.1.0"
+dependencies = [
+ "solana-account-info",
+ "solana-msg",
+ "solana-program-error",
+ "solana-pubkey",
 ]
 
 [[package]]
@@ -7902,8 +7923,10 @@ dependencies = [
  "solana-feature-set",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
+ "solana-instruction",
  "solana-logger",
  "solana-native-token",
+ "solana-precompile-error",
  "solana-program",
  "solana-program-memory",
  "solana-pubkey",
