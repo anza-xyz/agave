@@ -870,7 +870,7 @@ pub mod reenable_sbpf_v1_execution {
 }
 
 pub mod enable_secp256r1_precompile {
-    solana_program::declare_id!("GkVUbiefEqFzzLcArWgNG7r3BCs551UUjdH2hVE5ns3E");
+    solana_pubkey::declare_id!("GkVUbiefEqFzzLcArWgNG7r3BCs551UUjdH2hVE5ns3E");
 }
 
 lazy_static! {

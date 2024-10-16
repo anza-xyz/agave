@@ -2,11 +2,8 @@
 //!
 //! [np]: https://docs.solana.com/developing/runtime-facilities/programs#secp256r1-program
 
-#![cfg(feature = "full")]
-
 #[cfg(not(target_arch = "wasm32"))]
 use {
-    crate::instruction::Instruction,
     bytemuck::bytes_of,
     openssl::{
         bn::{BigNum, BigNumContext},
@@ -16,11 +13,15 @@ use {
         pkey::PKey,
         sign::{Signer, Verifier},
     },
+    solana_instruction::Instruction,
 };
 use {
-    crate::{feature_set::FeatureSet, precompiles::PrecompileError},
     bytemuck::{Pod, Zeroable},
+    solana_feature_set::FeatureSet,
+    solana_precompile_error::PrecompileError,
 };
+
+solana_pubkey::declare_id!("Secp256r1SigVerify1111111111111111111111111");
 
 #[cfg(not(target_arch = "wasm32"))]
 pub const COMPRESSED_PUBKEY_SERIALIZED_SIZE: usize = 33;
@@ -141,7 +142,7 @@ pub fn new_secp256r1_instruction(
     instruction_data.extend_from_slice(message);
 
     Ok(Instruction {
-        program_id: solana_sdk::secp256r1_program::id(),
+        program_id: crate::id(),
         accounts: vec![],
         data: instruction_data,
     })
@@ -316,14 +317,13 @@ fn get_data_slice<'a>(
 pub mod test {
     use {
         super::*,
-        crate::{
-            feature_set::FeatureSet,
+        rand0_7::{thread_rng, Rng},
+        solana_feature_set::FeatureSet,
+        solana_sdk::{
             hash::Hash,
-            secp256r1_instruction::new_secp256r1_instruction,
             signature::{Keypair, Signer},
             transaction::Transaction,
         },
-        rand0_7::{thread_rng, Rng},
     };
 
     fn test_case(

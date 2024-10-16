@@ -7343,6 +7343,7 @@ dependencies = [
  "solana-sanitize",
  "solana-sdk-macro",
  "solana-secp256k1-recover",
+ "solana-secp256r1",
  "solana-serde-varint",
  "solana-serialize-utils",
  "solana-sha256-hasher",
@@ -7903,7 +7904,6 @@ dependencies = [
  "num-derive",
  "num-traits",
  "num_enum",
- "openssl",
  "pbkdf2 0.11.0",
  "qualifier_attr",
  "rand 0.7.3",
@@ -7934,6 +7934,7 @@ dependencies = [
  "solana-sdk",
  "solana-sdk-macro",
  "solana-secp256k1-recover",
+ "solana-secp256r1",
  "solana-serde-varint",
  "solana-short-vec",
  "solana-signature",
@@ -7964,6 +7965,22 @@ dependencies = [
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "thiserror",
+]
+
+[[package]]
+name = "solana-secp256r1"
+version = "2.1.0"
+dependencies = [
+ "bytemuck",
+ "openssl",
+ "rand 0.7.3",
+ "rand 0.8.5",
+ "solana-feature-set",
+ "solana-instruction",
+ "solana-logger",
+ "solana-precompile-error",
+ "solana-pubkey",
+ "solana-sdk",
 ]
 
 [[package]]

@@ -106,6 +106,7 @@ solana-pubkey = { workspace = true, default-features = false, features = ["std"]
 solana-sanitize = { workspace = true }
 solana-sdk-macro = { workspace = true }
 solana-secp256k1-recover = { workspace = true }
+solana-secp256r1 = { workspace = true }
 solana-serde-varint = { workspace = true }
 solana-short-vec = { workspace = true }
 solana-signature = { workspace = true, features = [
@@ -116,8 +117,6 @@ solana-signature = { workspace = true, features = [
 ], optional = true }
 thiserror = { workspace = true }
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-openssl = { workspace = true, features = ["vendored"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.1", features = ["wasm-bindgen"] }

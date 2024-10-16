@@ -4,6 +4,8 @@
 
 #[deprecated(since = "2.1.0", note = "Use `solana-precompile-error` crate instead.")]
 pub use solana_precompile_error::PrecompileError;
+#[deprecated(since = "2.1.0", note = "Use `solana-secp256r1` crate instead.")]
+pub use solana_secp256r1 as secp256r1_instruction;
 use {
     lazy_static::lazy_static, solana_feature_set::FeatureSet,
     solana_program::instruction::CompiledInstruction, solana_pubkey::Pubkey,
@@ -66,7 +68,7 @@ lazy_static! {
         Precompile::new(
             crate::secp256r1_program::id(),
             Pubkey::try_from("GkVUbiefEqFzzLcArWgNG7r3BCs551UUjdH2hVE5ns3E").ok(),
-            crate::secp256r1_instruction::verify,
+            secp256r1_instruction::verify,
         )
     ];
 }
