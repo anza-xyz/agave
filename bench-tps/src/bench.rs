@@ -1,5 +1,5 @@
-use solana_rpc_client::rpc_client::SerializableTransaction;
 use {
+    chrono::Utc,
     crate::{
         cli::{ComputeUnitPrice, Config, InstructionPaddingConfig},
         log_transaction_service::{
@@ -7,9 +7,8 @@ use {
         },
         perf_utils::{sample_txs, SampleStats},
         send_batch::*,
-        tx_latency::{measure_tx_latency, HttpOrWs},
+        tx_latency::measure_tx_latency_thread,
     },
-    chrono::Utc,
     crossbeam_channel::{bounded, Sender},
     log::*,
     rand::{
@@ -19,6 +18,7 @@ use {
     rayon::prelude::*,
     solana_client::nonce_utils,
     solana_metrics::{self, datapoint_info},
+    solana_rpc_client::rpc_client::SerializableTransaction,
     solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS,
     solana_sdk::{
         account::Account,
@@ -40,10 +40,10 @@ use {
         collections::{HashSet, VecDeque},
         process::exit,
         sync::{
-            atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering},
-            Arc, RwLock,
+            Arc,
+            atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering}, RwLock,
         },
-        thread::{sleep, Builder, JoinHandle},
+        thread::{Builder, JoinHandle, sleep},
         time::{Duration, Instant},
     },
 };
@@ -431,7 +431,8 @@ where
         num_conflict_groups,
         block_data_file,
         transaction_data_file,
-        measure_tx_latency: measure_latency,
+        measure_tx_latency,
+        latency_sleep_ms,
         ..
     } = config;
 
@@ -498,7 +499,7 @@ where
 
     // using zero capacity to process transaction only when receiving side is ready for it
     // (finished processing previous one)
-    let (latency_sender, latency_receiver) = if measure_latency {
+    let (latency_sender, latency_receiver) = if measure_tx_latency {
         let (tx, rx) = bounded(0);
         (Some(tx), Some(rx))
     } else {
@@ -518,7 +519,7 @@ where
     );
 
     let latency_thread =
-        latency_receiver.map(|rx| measure_tx_latency(rx, HttpOrWs::Http, 100, client.clone()));
+        latency_receiver.map(|rx| measure_tx_latency_thread(rx, latency_sleep_ms, client.clone()));
 
     wait_for_target_slots_per_epoch(target_slots_per_epoch, &client);
 
@@ -1265,7 +1266,6 @@ pub fn fund_keypairs<T: 'static + TpsClient + Send + Sync + ?Sized>(
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
         solana_feature_set::FeatureSet,
         solana_runtime::{bank::Bank, bank_client::BankClient, bank_forks::BankForks},
         solana_sdk::{
@@ -1275,6 +1275,7 @@ mod tests {
             native_token::sol_to_lamports,
             nonce::State,
         },
+        super::*,
     };
 
     fn bank_with_all_features(
