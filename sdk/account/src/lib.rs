@@ -1,4 +1,5 @@
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
 //! The Solana [`Account`] type.
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -28,6 +29,8 @@ use {
         sync::Arc,
     },
 };
+#[cfg(feature = "bincode")]
+pub mod state_traits;
 
 /// An Account with data that is stored on chain
 #[repr(C)]
