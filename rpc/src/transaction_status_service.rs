@@ -73,7 +73,7 @@ impl TransactionStatusService {
                 token_balances,
                 transaction_indexes,
             }) => {
-                let mut status_and_memos_batch = blockstore.db_ref().batch().unwrap();
+                let mut status_and_memos_batch = blockstore.get_write_batch().unwrap();
 
                 for (
                     transaction,
@@ -195,9 +195,7 @@ impl TransactionStatusService {
                 }
 
                 if enable_rpc_transaction_history {
-                    blockstore
-                        .db_ref()
-                        .write(status_and_memos_batch)
+                    blockstore.write_batch(status_and_memos_batch)
                         .expect("Expect database batched writes to succeed: TransactionStatus + TransactionMemos");
                 }
             }

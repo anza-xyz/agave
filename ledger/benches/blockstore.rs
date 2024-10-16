@@ -164,11 +164,11 @@ fn bench_write_transaction_memos(b: &mut Bencher) {
         Blockstore::open(ledger_path.path()).expect("Expected to be able to open database ledger");
     let signatures: Vec<Signature> = (0..64).map(|_| Signature::new_unique()).collect();
     b.iter(|| {
-        for (i, signature) in signatures.iter().enumerate() {
+        for (slot, signature) in signatures.iter().enumerate() {
             blockstore
                 .write_transaction_memos(
                     signature,
-                    i as u64,
+                    slot as u64,
                     "bench_write_transaction_memos".to_string(),
                 )
                 .unwrap();
@@ -184,20 +184,20 @@ fn bench_add_transaction_memos_to_batch(b: &mut Bencher) {
         Blockstore::open(ledger_path.path()).expect("Expected to be able to open database ledger");
     let signatures: Vec<Signature> = (0..64).map(|_| Signature::new_unique()).collect();
     b.iter(|| {
-        let mut memos_batch = blockstore.db_ref().batch().unwrap();
+        let mut memos_batch = blockstore.get_write_batch().unwrap();
 
-        for (i, signature) in signatures.iter().enumerate() {
+        for (slot, signature) in signatures.iter().enumerate() {
             blockstore
                 .add_transaction_memos_to_batch(
                     signature,
-                    i as u64,
+                    slot as u64,
                     "bench_write_transaction_memos".to_string(),
                     &mut memos_batch,
                 )
                 .unwrap();
         }
 
-        blockstore.db_ref().write(memos_batch).unwrap();
+        blockstore.write_batch(memos_batch).unwrap();
     });
 }
 
@@ -221,14 +221,14 @@ fn bench_write_transaction_status(b: &mut Bencher) {
     let slot = 5;
 
     b.iter(|| {
-        for (i, signature) in signatures.iter().enumerate() {
+        for (tx_idx, signature) in signatures.iter().enumerate() {
             blockstore
                 .write_transaction_status(
                     slot,
                     *signature,
-                    keys_with_writable[i].iter().map(|(k, v)| (k, *v)),
+                    keys_with_writable[tx_idx].iter().map(|(k, v)| (k, *v)),
                     TransactionStatusMeta::default(),
-                    i,
+                    tx_idx,
                 )
                 .unwrap();
         }
@@ -255,21 +255,21 @@ fn bench_add_transaction_status_to_batch(b: &mut Bencher) {
     let slot = 5;
 
     b.iter(|| {
-        let mut status_batch = blockstore.db_ref().batch().unwrap();
+        let mut status_batch = blockstore.get_write_batch().unwrap();
 
-        for (i, signature) in signatures.iter().enumerate() {
+        for (tx_idx, signature) in signatures.iter().enumerate() {
             blockstore
                 .add_transaction_status_to_batch(
                     slot,
                     *signature,
-                    keys_with_writable[i].iter().map(|(k, v)| (k, *v)),
+                    keys_with_writable[tx_idx].iter().map(|(k, v)| (k, *v)),
                     TransactionStatusMeta::default(),
-                    i,
+                    tx_idx,
                     &mut status_batch,
                 )
                 .unwrap();
         }
 
-        blockstore.db_ref().write(status_batch).unwrap();
+        blockstore.write_batch(status_batch).unwrap();
     });
 }

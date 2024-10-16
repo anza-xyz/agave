@@ -313,10 +313,6 @@ impl Blockstore {
         self.db
     }
 
-    pub fn db_ref(&self) -> &Arc<Database> {
-        &self.db
-    }
-
     pub fn ledger_path(&self) -> &PathBuf {
         &self.ledger_path
     }
@@ -4611,6 +4607,14 @@ impl Blockstore {
         total_start.stop();
         *index_meta_time_us += total_start.as_us();
         res
+    }
+
+    pub fn get_write_batch(&self) -> std::result::Result<WriteBatch<'_>, BlockstoreError> {
+        self.db.batch()
+    }
+
+    pub fn write_batch(&self, write_batch: WriteBatch) -> Result<()> {
+        self.db.write(write_batch)
     }
 }
 
@@ -12316,7 +12320,7 @@ pub mod tests {
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
         let signatures: Vec<Signature> = (0..2).map(|_| Signature::new_unique()).collect();
-        let mut memos_batch = blockstore.db_ref().batch().unwrap();
+        let mut memos_batch = blockstore.get_write_batch().unwrap();
 
         blockstore
             .add_transaction_memos_to_batch(
@@ -12336,7 +12340,7 @@ pub mod tests {
             )
             .unwrap();
 
-        blockstore.db_ref().write(memos_batch).unwrap();
+        blockstore.write_batch(memos_batch).unwrap();
 
         let memo1 = blockstore
             .read_transaction_memos(signatures[0], 4)
@@ -12391,30 +12395,30 @@ pub mod tests {
             .map(|_| vec![(Pubkey::new_unique(), true), (Pubkey::new_unique(), false)])
             .collect();
         let slot = 5;
-        let mut status_batch = blockstore.db_ref().batch().unwrap();
+        let mut status_batch = blockstore.get_write_batch().unwrap();
 
-        for (i, signature) in signatures.iter().enumerate() {
+        for (tx_idx, signature) in signatures.iter().enumerate() {
             blockstore
                 .add_transaction_status_to_batch(
                     slot,
                     *signature,
-                    keys_with_writable[i].iter().map(|(k, v)| (k, *v)),
+                    keys_with_writable[tx_idx].iter().map(|(k, v)| (k, *v)),
                     TransactionStatusMeta {
-                        fee: 5700 + i as u64,
-                        status: if i % 2 == 0 {
+                        fee: 5700 + tx_idx as u64,
+                        status: if tx_idx % 2 == 0 {
                             Ok(())
                         } else {
                             Err(TransactionError::InsufficientFundsForFee)
                         },
                         ..TransactionStatusMeta::default()
                     },
-                    i,
+                    tx_idx,
                     &mut status_batch,
                 )
                 .unwrap();
         }
 
-        blockstore.db_ref().write(status_batch).unwrap();
+        blockstore.write_batch(status_batch).unwrap();
 
         let tx_status1 = blockstore
             .read_transaction_status((signatures[0], slot))
