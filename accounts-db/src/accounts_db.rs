@@ -8301,7 +8301,7 @@ impl AccountsDb {
 
     fn generate_index_for_slot(
         &self,
-        storage: &AccountStorageEntry,
+        storage: &Arc<AccountStorageEntry>,
         slot: Slot,
         store_id: AccountsFileId,
         rent_collector: &RentCollector,
@@ -8317,6 +8317,7 @@ impl AccountsDb {
         let mut num_accounts_rent_paying = 0;
         let mut amount_to_top_off_rent = 0;
         let mut stored_size_alive = 0;
+        let mut all_accounts_are_zero_lamports = true;
 
         let (dirty_pubkeys, insert_time_us, mut generate_index_results) = {
             let mut items_local = Vec::default();
@@ -8324,9 +8325,18 @@ impl AccountsDb {
                 stored_size_alive += info.stored_size_aligned;
                 if info.index_info.lamports > 0 {
                     accounts_data_len += info.index_info.data_len;
+                    all_accounts_are_zero_lamports = false;
                 }
                 items_local.push(info.index_info);
             });
+
+            if all_accounts_are_zero_lamports {
+                // this whole slot can likely be marked dead and dropped. Clean
+                // has to determine that. There could be an older non-zero
+                // account for any of these zero lamport accounts.
+                self.dirty_stores.insert(slot, Arc::clone(storage));
+                self.accounts_index.add_uncleaned_roots([slot]);
+            }
             let items_len = items_local.len();
             let items = items_local.into_iter().map(|info| {
                 if let Some(amount_to_top_off_rent_this_account) = Self::stats_for_rent_payers(
