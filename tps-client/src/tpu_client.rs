@@ -1,4 +1,3 @@
-use solana_transaction_status::TransactionStatus;
 use {
     crate::{TpsClient, TpsClientError, TpsClientResult},
     solana_connection_cache::connection_cache::{
@@ -17,7 +16,7 @@ use {
         transaction::{Result, Transaction},
     },
     solana_tpu_client::tpu_client::TpuClient,
-    solana_transaction_status::UiConfirmedBlock,
+    solana_transaction_status::{TransactionStatus, UiConfirmedBlock},
 };
 
 impl<P, M, C> TpsClient for TpuClient<P, M, C>
