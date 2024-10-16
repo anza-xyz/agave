@@ -58,7 +58,6 @@ pub use solana_program::{
 };
 #[cfg(feature = "borsh")]
 pub use solana_program::{borsh, borsh0_10, borsh1};
-pub mod account_utils;
 pub mod client;
 pub mod commitment_config;
 pub mod compute_budget;
@@ -108,6 +107,11 @@ pub mod wasm;
 
 #[deprecated(since = "2.1.0", note = "Use `solana-account` crate instead")]
 pub use solana_account as account;
+#[deprecated(
+    since = "2.1.0",
+    note = "Use `solana_account::state_traits` crate instead"
+)]
+pub use solana_account::state_traits as account_utils;
 #[deprecated(since = "2.1.0", note = "Use `solana-bn254` crate instead")]
 pub use solana_bn254 as alt_bn128;
 #[deprecated(since = "2.1.0", note = "Use `solana-decode-error` crate instead")]
@@ -118,6 +122,23 @@ pub use solana_derivation_path as derivation_path;
 pub use solana_feature_set as feature_set;
 #[deprecated(since = "2.1.0", note = "Use `solana-program-memory` crate instead")]
 pub use solana_program_memory as program_memory;
+#[deprecated(since = "2.1.0", note = "Use `solana_pubkey::pubkey` instead")]
+/// Convenience macro to define a static public key.
+///
+/// Input: a single literal base58 string representation of a Pubkey
+///
+/// # Example
+///
+/// ```
+/// use std::str::FromStr;
+/// use solana_program::{pubkey, pubkey::Pubkey};
+///
+/// static ID: Pubkey = pubkey!("My11111111111111111111111111111111111111111");
+///
+/// let my_id = Pubkey::from_str("My11111111111111111111111111111111111111111").unwrap();
+/// assert_eq!(ID, my_id);
+/// ```
+pub use solana_pubkey::pubkey;
 #[deprecated(since = "2.1.0", note = "Use `solana-sanitize` crate instead")]
 pub use solana_sanitize as sanitize;
 /// Same as `declare_id` except report that this id has been deprecated.
@@ -144,22 +165,6 @@ pub use solana_sdk_macro::declare_deprecated_id;
 /// assert_eq!(id(), my_id);
 /// ```
 pub use solana_sdk_macro::declare_id;
-/// Convenience macro to define a static public key.
-///
-/// Input: a single literal base58 string representation of a Pubkey
-///
-/// # Example
-///
-/// ```
-/// use std::str::FromStr;
-/// use solana_program::{pubkey, pubkey::Pubkey};
-///
-/// static ID: Pubkey = pubkey!("My11111111111111111111111111111111111111111");
-///
-/// let my_id = Pubkey::from_str("My11111111111111111111111111111111111111111").unwrap();
-/// assert_eq!(ID, my_id);
-/// ```
-pub use solana_sdk_macro::pubkey;
 /// Convenience macro to define multiple static public keys.
 pub use solana_sdk_macro::pubkeys;
 #[deprecated(since = "2.1.0", note = "Use `solana-secp256k1-recover` crate instead")]

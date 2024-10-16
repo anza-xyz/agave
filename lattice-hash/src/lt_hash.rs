@@ -1,6 +1,6 @@
 use {
     base64::{display::Base64Display, prelude::BASE64_STANDARD},
-    std::fmt,
+    std::{fmt, str},
 };
 
 /// A 16-bit, 1024 element lattice-based incremental hash based on blake3
@@ -77,8 +77,14 @@ impl Checksum {
 
 impl fmt::Display for Checksum {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let base64 = Base64Display::new(&self.0, &BASE64_STANDARD);
-        write!(f, "{base64}")
+        /// Maximum string length of a base58 encoded Checksum.
+        const MAX_BASE58_LEN: usize = 44;
+        let mut buf = [0u8; MAX_BASE58_LEN];
+        // SAFETY: The only error is if the buffer is too small
+        let len = bs58::encode(&self.0).onto(buf.as_mut_slice()).unwrap();
+        // SAFETY: The base58 alphabet is utf8
+        let str = str::from_utf8(&buf[..len]).unwrap();
+        write!(f, "{str}")
     }
 }
 
@@ -130,6 +136,7 @@ mod tests {
         let a = LtHash::new_random();
         let b = LtHash::new_random();
         assert_eq!(a, a + b - b);
+        assert_eq!(a, a - b + b);
     }
 
     // Ensure that mixing is commutative
@@ -147,6 +154,16 @@ mod tests {
         let b = LtHash::new_random();
         let c = LtHash::new_random();
         assert_eq!((a + b) + c, a + (b + c));
+    }
+
+    // Ensure that mixing out respects distribution
+    #[test]
+    fn test_distribute() {
+        let a = LtHash::new_random();
+        let b = LtHash::new_random();
+        let c = LtHash::new_random();
+        let d = LtHash::new_random();
+        assert_eq!(a - b - c - d, a - (b + c + d));
     }
 
     // Ensure the correct lattice hash and checksum values are produced
@@ -365,5 +382,13 @@ mod tests {
             let actual_checksum = actual_lt_hash.checksum();
             assert_eq!(actual_checksum, expected_checksum);
         }
+    }
+
+    #[test]
+    fn test_checksum_display() {
+        let lt_hash = LtHash::identity();
+        let checksum = lt_hash.checksum();
+        let str = checksum.to_string();
+        assert_eq!(str.as_str(), "DoL6fvKuTpTQCyUh83NxQw2ewKzWYtq9gsTKp1eQiGC2");
     }
 }

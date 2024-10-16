@@ -189,7 +189,20 @@ impl<FG: ForkGraph> Default for TransactionBatchProcessor<FG> {
 }
 
 impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
-    pub fn new(slot: Slot, epoch: Epoch, builtin_program_ids: HashSet<Pubkey>) -> Self {
+    /// Create a new, uninitialized `TransactionBatchProcessor`.
+    ///
+    /// In this context, uninitialized means that the `TransactionBatchProcessor`
+    /// has been initialized with an empty program cache. The cache contains no
+    /// programs (including builtins) and has not been configured with a valid
+    /// fork graph.
+    ///
+    /// When using this method, it's advisable to call `set_fork_graph_in_program_cache`
+    /// as well as `add_builtin` to configure the cache before using the processor.
+    pub fn new_uninitialized(
+        slot: Slot,
+        epoch: Epoch,
+        builtin_program_ids: HashSet<Pubkey>,
+    ) -> Self {
         Self {
             slot,
             epoch,
@@ -199,6 +212,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         }
     }
 
+    /// Create a new `TransactionBatchProcessor` from the current instance, but
+    /// with the provided slot and epoch.
+    ///
+    /// * Inherits the program cache and builtin program ids from the current
+    ///   instance.
+    /// * Resets the sysvar cache.
     pub fn new_from(&self, slot: Slot, epoch: Epoch) -> Self {
         Self {
             slot,
@@ -426,21 +445,23 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         })?;
 
         let fee_payer_address = message.fee_payer();
+        let mut fee_payer_account = if let Some(fee_payer_account) =
+            account_overrides.and_then(|overrides| overrides.get(fee_payer_address).cloned())
+        {
+            fee_payer_account
+        } else if let Some(fee_payer_account) = callbacks.get_account_shared_data(fee_payer_address)
+        {
+            callbacks.inspect_account(
+                fee_payer_address,
+                AccountState::Alive(&fee_payer_account),
+                true, // <-- is_writable
+            );
 
-        let fee_payer_account = account_overrides
-            .and_then(|overrides| overrides.get(fee_payer_address).cloned())
-            .or_else(|| callbacks.get_account_shared_data(fee_payer_address));
-
-        let Some(mut fee_payer_account) = fee_payer_account else {
+            fee_payer_account
+        } else {
             error_counters.account_not_found += 1;
             return Err(TransactionError::AccountNotFound);
         };
-
-        callbacks.inspect_account(
-            fee_payer_address,
-            AccountState::Alive(&fee_payer_account),
-            true, // <-- is_writable
-        );
 
         let fee_payer_loaded_rent_epoch = fee_payer_account.rent_epoch();
         let fee_payer_rent_debit = collect_rent_from_account(
