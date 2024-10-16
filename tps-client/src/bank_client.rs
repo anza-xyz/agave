@@ -1,4 +1,3 @@
-use solana_transaction_status::TransactionStatus;
 use {
     crate::{TpsClient, TpsClientError, TpsClientResult},
     solana_rpc_client_api::config::RpcBlockConfig,
@@ -15,7 +14,7 @@ use {
         slot_history::Slot,
         transaction::{Result, Transaction},
     },
-    solana_transaction_status::UiConfirmedBlock,
+    solana_transaction_status::{TransactionStatus, UiConfirmedBlock},
 };
 
 impl TpsClient for BankClient {
