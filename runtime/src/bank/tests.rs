@@ -10056,79 +10056,7 @@ fn test_verify_transactions_packet_data_size() {
 }
 
 #[test]
-fn test_reverify_transaction_alts() {
-    let (genesis_config, _mint_keypair) = create_genesis_config(1);
-    let bank = Bank::new_for_tests(&genesis_config);
-    let bank = Bank::new_from_parent(Arc::new(bank), &Pubkey::new_unique(), 1);
-
-    // Handcraft a v0 transaction that will fail to re-resolve.
-    let simple_v0_transfer = |to_pubkey: Pubkey, alt: Option<Pubkey>| {
-        let payer = Keypair::new();
-        let loaded_addresses = LoadedAddresses {
-            writable: vec![to_pubkey],
-            readonly: vec![],
-        };
-        let loader = SimpleAddressLoader::Enabled(loaded_addresses);
-        let alts = match alt {
-            Some(alt) => &[AddressLookupTableAccount {
-                key: alt,
-                addresses: vec![to_pubkey],
-            }][..],
-            None => &[],
-        };
-        SanitizedTransaction::try_create(
-            VersionedTransaction::try_new(
-                VersionedMessage::V0(
-                    v0::Message::try_compile(
-                        &payer.pubkey(),
-                        &[system_instruction::transfer(&payer.pubkey(), &to_pubkey, 1)],
-                        alts,
-                        genesis_config.hash(),
-                    )
-                    .unwrap(),
-                ),
-                &[&payer],
-            )
-            .unwrap(),
-            MessageHash::Compute,
-            None,
-            loader,
-            &HashSet::default(),
-        )
-        .unwrap()
-    };
-
-    // No ALT. Transaction succeeds to reverify.
-    let tx1 = simple_v0_transfer(Pubkey::new_unique(), None);
-    assert_eq!(bank.reverify_transaction(&tx1), Ok(()));
-
-    // ALT that actually exists.
-    let to_pubkey = Pubkey::new_unique();
-    let alt_pubkey = Pubkey::new_unique();
-    let alt_data = AddressLookupTable {
-        meta: LookupTableMeta::default(),
-        addresses: Cow::Owned(vec![to_pubkey]),
-    }
-    .serialize_for_tests()
-    .unwrap();
-    let mut alt_account =
-        AccountSharedData::new(1, alt_data.len(), &address_lookup_table::program::id());
-    alt_account.set_data(alt_data);
-    bank.store_account(&alt_pubkey, &alt_account);
-    let tx2 = simple_v0_transfer(to_pubkey, Some(alt_pubkey));
-    assert_eq!(bank.reverify_transaction(&tx2), Ok(()));
-
-    // ALT that doesn't actually exist.
-    // Manually create to emulate resolving earlier but ALT has since expired.
-    let tx3 = simple_v0_transfer(Pubkey::new_unique(), Some(Pubkey::new_unique()));
-    assert_eq!(
-        bank.reverify_transaction(&tx3),
-        Err(TransactionError::AddressLookupTableNotFound)
-    );
-}
-
-#[test]
-fn test_reverify_transaction_reserved() {
+fn test_check_reserved_keys() {
     let (genesis_config, _mint_keypair) = create_genesis_config(1);
     let bank = Bank::new_for_tests(&genesis_config);
     let mut bank = Bank::new_from_parent(Arc::new(bank), &Pubkey::new_unique(), 1);
@@ -10141,13 +10069,13 @@ fn test_reverify_transaction_reserved() {
             genesis_config.hash(),
         ));
 
-    assert_eq!(bank.reverify_transaction(&transaction), Ok(()));
+    assert_eq!(bank.check_reserved_keys(&transaction), Ok(()));
 
     Arc::make_mut(&mut bank.reserved_account_keys)
         .active
         .insert(transaction.account_keys()[1]);
     assert_eq!(
-        bank.reverify_transaction(&transaction),
+        bank.check_reserved_keys(&transaction),
         Err(TransactionError::ResanitizationNeeded)
     );
 }

@@ -440,26 +440,29 @@ impl Consumer {
         // This means that the transaction may cross and epoch boundary (not allowed),
         //  or account lookup tables may have been closed.
         let pre_results = txs.iter().zip(max_ages).map(|(tx, max_age)| {
+            // If the transaction was sanitized before this bank's epoch,
+            // additional checks are necessary.
             if bank.slot() > max_age.epoch_invalidation_slot {
-                // Epoch has rolled over. Need to re-verify the transaction.
-                bank.reverify_transaction(tx)?;
-            } else {
-                if bank.slot() > max_age.alt_invalidation_slot {
-                    // The address table lookup **may** have expired, but the
-                    // expiration is not guaranteed since there may have been
-                    // skipped slot.
-                    // If the addresses still resolve here, then the transaction is still
-                    // valid, and we can continue with processing.
-                    // If they do not, then the ATL has expired and the transaction
-                    // can be dropped.
-                    let (_addresses, _deactivation_slot) =
-                        bank.load_addresses_from_ref(tx.message_address_table_lookups())?;
-                }
+                // Reserved key set may have cahnged, so we must verify that
+                // no writable keys are reserved.
+                bank.check_reserved_keys(tx)?;
+            }
 
-                // Verify pre-compiles.
-                if !move_precompile_verification_to_svm {
-                    verify_precompiles(tx, &bank.feature_set)?;
-                }
+            if bank.slot() > max_age.alt_invalidation_slot {
+                // The address table lookup **may** have expired, but the
+                // expiration is not guaranteed since there may have been
+                // skipped slot.
+                // If the addresses still resolve here, then the transaction is still
+                // valid, and we can continue with processing.
+                // If they do not, then the ATL has expired and the transaction
+                // can be dropped.
+                let (_addresses, _deactivation_slot) =
+                    bank.load_addresses_from_ref(tx.message_address_table_lookups())?;
+            }
+
+            // Verify pre-compiles.
+            if !move_precompile_verification_to_svm {
+                verify_precompiles(tx, &bank.feature_set)?;
             }
 
             Ok(())

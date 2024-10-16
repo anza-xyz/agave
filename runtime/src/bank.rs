@@ -5868,23 +5868,10 @@ impl Bank {
         self.verify_transaction(tx, TransactionVerificationMode::FullVerification)
     }
 
-    /// Re-performs **feature** or state dependent verification on the transaction.
-    pub fn reverify_transaction(&self, tx: &impl SVMMessage) -> Result<()> {
-        // Loaded addresses depend on address table account state.
-        // We need only verify that loading works correctly.
-        // Since the address table is append only there is no chance addresses
-        // are different than the first time this was resolved.
-        let _loaded_addresses = self.load_addresses_from_ref(tx.message_address_table_lookups())?;
-
-        // Precompiles may be verified at this time if feature is not activated.
-        // Precompile verification can be dependent on features of the bank.
-        let move_precompile_verification_to_svm = self
-            .feature_set
-            .is_active(&feature_set::move_precompile_verification_to_svm::id());
-        if !move_precompile_verification_to_svm {
-            verify_precompiles(tx, &self.feature_set)?;
-        }
-
+    /// Checks if the transaction violates the bank's reserved keys.
+    /// This needs to be checked upon epoch boundary crosses because the
+    /// reserved key set may have changed since the initial sanitization.
+    pub fn check_reserved_keys(&self, tx: &impl SVMMessage) -> Result<()> {
         // Check keys against the reserved set - these failures simply require us
         // to re-sanitize the transaction. We do not need to drop the transaction.
         let reserved_keys = self.get_reserved_account_keys();
