@@ -131,6 +131,16 @@ impl Accounts {
                 slot_hashes,
             )?;
 
+            // Reserve space in vectors to avoid reallocations.
+            // If `loaded_addresses` is pre-allocated, this only does a simple
+            // bounds check.
+            loaded_addresses
+                .writable
+                .reserve(address_table_lookup.writable_indexes.len());
+            loaded_addresses
+                .readonly
+                .reserve(address_table_lookup.readonly_indexes.len());
+
             // Append to the loaded addresses.
             // Check if **any** of the addresses are not available.
             for address in writable_addresses {
