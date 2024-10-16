@@ -765,6 +765,7 @@ pub(crate) fn receive_restart_heaviest_fork(
                     total_active_stake: 0,
                     wallclock: new_heaviest_fork.wallclock,
                     shred_version: new_heaviest_fork.shred_version as u32,
+                    from: new_heaviest_fork.from.to_string(),
                 });
                 return Ok((coordinator_heaviest_slot, coordinator_heaviest_hash));
             }
@@ -877,7 +878,6 @@ pub fn wait_for_wen_restart(config: WenRestartConfig) -> Result<()> {
                     // TODO(wen): remove this aggregate.
                     aggregate_restart_heaviest_fork(
                         &config.wen_restart_path,
-                        config.wait_for_supermajority_threshold_percent,
                         config.cluster_info.clone(),
                         config.bank_forks.clone(),
                         config.exit.clone(),
@@ -1749,6 +1749,7 @@ mod tests {
                         .as_ref()
                         .unwrap()
                         .wallclock,
+                    from: coordinator_keypair.pubkey().to_string(),
                 }),
                 ..Default::default()
             }
