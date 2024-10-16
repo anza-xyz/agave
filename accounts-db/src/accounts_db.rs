@@ -667,6 +667,7 @@ struct SlotIndexGenerationInfo {
     accounts_data_len: u64,
     amount_to_top_off_rent: u64,
     rent_paying_accounts_by_partition: Vec<Pubkey>,
+    all_accounts_are_zero_lamports: bool,
 }
 
 /// The lt hash of old/duplicate accounts
@@ -706,6 +707,7 @@ struct GenerateIndexTimings {
     pub total_slots: u64,
     pub slots_to_clean: u64,
     pub par_duplicates_lt_hash_us: AtomicU64,
+    pub all_accounts_are_zero_lamports_slots: u64,
 }
 
 #[derive(Default, Debug, PartialEq, Eq)]
@@ -785,6 +787,11 @@ impl GenerateIndexTimings {
             (
                 "par_duplicates_lt_hash_us",
                 self.par_duplicates_lt_hash_us.load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "all_accounts_are_zero_lamports_slots",
+                self.all_accounts_are_zero_lamports_slots,
                 i64
             ),
         );
@@ -8391,6 +8398,7 @@ impl AccountsDb {
             accounts_data_len,
             amount_to_top_off_rent,
             rent_paying_accounts_by_partition,
+            all_accounts_are_zero_lamports,
         }
     }
 
@@ -8445,6 +8453,7 @@ impl AccountsDb {
             let rent_paying = AtomicUsize::new(0);
             let amount_to_top_off_rent = AtomicU64::new(0);
             let total_including_duplicates = AtomicU64::new(0);
+            let all_accounts_are_zero_lamports_slots = AtomicU64::new(0);
             let scan_time: u64 = slots
                 .par_chunks(chunk_size)
                 .map(|slots| {
@@ -8477,6 +8486,7 @@ impl AccountsDb {
                                 amount_to_top_off_rent: amount_to_top_off_rent_this_slot,
                                 rent_paying_accounts_by_partition:
                                     rent_paying_accounts_by_partition_this_slot,
+                                all_accounts_are_zero_lamports,
                             } = self.generate_index_for_slot(
                                 &storage,
                                 *slot,
@@ -8490,6 +8500,10 @@ impl AccountsDb {
                                 .fetch_add(amount_to_top_off_rent_this_slot, Ordering::Relaxed);
                             total_including_duplicates
                                 .fetch_add(total_this_slot, Ordering::Relaxed);
+                            all_accounts_are_zero_lamports_slots.fetch_add(
+                                all_accounts_are_zero_lamports as u64,
+                                Ordering::Relaxed,
+                            );
                             accounts_data_len
                                 .fetch_add(accounts_data_len_this_slot, Ordering::Relaxed);
                             let mut rent_paying_accounts_by_partition =
@@ -8613,6 +8627,8 @@ impl AccountsDb {
                 populate_duplicate_keys_us,
                 total_including_duplicates: total_including_duplicates.load(Ordering::Relaxed),
                 total_slots: slots.len() as u64,
+                all_accounts_are_zero_lamports_slots: all_accounts_are_zero_lamports_slots
+                    .load(Ordering::Relaxed),
                 ..GenerateIndexTimings::default()
             };
 
