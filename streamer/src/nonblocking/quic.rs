@@ -328,6 +328,7 @@ async fn run_server(
         coalesce,
     ));
 
+
     let mut accepts = endpoints
         .iter()
         .enumerate()
@@ -342,13 +343,16 @@ async fn run_server(
     while !exit.load(Ordering::Relaxed) {
         let timeout_connection = select! {
             ready = accepts.next() => {
+                
                 if let Some((connecting, i)) = ready {
+                    
                     accepts.push(
                         Box::pin(EndpointAccept {
                             accept: endpoints[i].accept(),
                             endpoint: i,
                         }
                     ));
+                    
                     Ok(connecting)
                 } else {
                     // we can't really get here - we never poll an empty FuturesUnordered
@@ -364,8 +368,9 @@ async fn run_server(
             stats.report(name);
             last_datapoint = Instant::now();
         }
-
+        
         if let Ok(Some(incoming)) = timeout_connection {
+            
             stats
                 .total_incoming_connection_attempts
                 .fetch_add(1, Ordering::Relaxed);
@@ -420,6 +425,7 @@ async fn run_server(
             let connecting = incoming.accept();
             match connecting {
                 Ok(connecting) => {
+
                     tokio::spawn(setup_connection(
                         connecting,
                         client_connection_tracker,
@@ -1528,8 +1534,7 @@ pub mod test {
             nonblocking::{
                 quic::compute_max_allowed_uni_streams,
                 testing_utilities::{
-                    get_client_config, make_client_endpoint, setup_quic_server,
-                    SpawnTestServerResult, TestServerConfig,
+                    get_client_config, make_client_endpoint, make_client_endpoint_0rtt, setup_quic_server, SpawnTestServerResult, TestServerConfig
                 },
             },
             quic::{MAX_STAKED_CONNECTIONS, MAX_UNSTAKED_CONNECTIONS},
@@ -2452,5 +2457,21 @@ pub mod test {
         // dropping the connection, concurrent connections should become 0
         drop(tracker_1);
         assert_eq!(stats.open_connections.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn test_server_0rtt() {
+        
+        let SpawnTestServerResult {
+            join_handle: _,
+            exit: _,
+            receiver: _,
+            server_address,
+            stats: _,
+        } = setup_quic_server(None, TestServerConfig::default());
+
+        let client_connection = make_client_endpoint_0rtt(&server_address, None).await;
+        assert!(client_connection.is_ok());
+
     }
 }
