@@ -5296,6 +5296,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-feature"
+version = "2.1.0"
+dependencies = [
+ "bincode",
+ "serde",
+ "serde_derive",
+ "solana-account-info",
+ "solana-instruction",
+ "solana-program-error",
+ "solana-pubkey",
+ "solana-rent",
+ "solana-system-instruction",
+]
+
+[[package]]
 name = "solana-feature-set"
 version = "2.1.0"
 dependencies = [
@@ -5711,6 +5726,7 @@ dependencies = [
  "solana-decode-error",
  "solana-define-syscall",
  "solana-epoch-schedule",
+ "solana-feature",
  "solana-hash",
  "solana-instruction",
  "solana-msg",
@@ -5730,6 +5746,7 @@ dependencies = [
  "solana-sha256-hasher",
  "solana-short-vec",
  "solana-slot-hashes",
+ "solana-system-instruction",
  "thiserror",
  "wasm-bindgen",
 ]
@@ -6932,6 +6949,20 @@ name = "solana-svm-transaction"
 version = "2.1.0"
 dependencies = [
  "solana-sdk",
+]
+
+[[package]]
+name = "solana-system-instruction"
+version = "2.1.0"
+dependencies = [
+ "js-sys",
+ "num-traits",
+ "serde",
+ "serde_derive",
+ "solana-decode-error",
+ "solana-instruction",
+ "solana-pubkey",
+ "wasm-bindgen",
 ]
 
 [[package]]
