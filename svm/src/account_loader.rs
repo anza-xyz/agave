@@ -773,7 +773,7 @@ mod tests {
         std::{borrow::Cow, cell::RefCell, collections::HashMap, sync::Arc},
     };
 
-    #[derive(Default)]
+    #[derive(Clone, Default)]
     struct TestCallbacks {
         accounts_map: HashMap<Pubkey, AccountSharedData>,
         #[allow(clippy::type_complexity)]
@@ -2796,72 +2796,113 @@ mod tests {
             );
 
             // edge cases involving program cache
+
+            // we set up a clean loader first
+            // the account loader checks its own internal cache prior to the program cache
+            // this means we must test every case against a loader that has, and has not, seen the relevant account
+            // NOTE when program cache usage is fixed, we will go to the program cache first
+            // so this will no longer be necessary
+            drop(account_loader);
+            let mut clean_loader: AccountLoader<_> = (&mock_bank).into();
             let program2_entry = ProgramCacheEntry {
                 account_size: (program2_size + programdata2_size) as usize,
                 account_owner: ProgramCacheEntryOwner::LoaderV3,
                 ..ProgramCacheEntry::default()
             };
-            account_loader
+            clean_loader
                 .program_cache
                 .replenish(program2, Arc::new(program2_entry));
 
-            // normal invocation uses the combined cache size
-            let ixns = vec![Instruction::new_with_bytes(program2, &[], vec![])];
-            test_data_size(
-                &mut account_loader,
-                ixns,
-                program2_size + programdata2_size + upgradeable_loader_size + fee_payer_size,
+            let mut cache_test_txs = vec![];
+
+            // normal program invocation uses the combined cache size
+            let normal_tx = SanitizedTransaction::from_transaction_for_tests(
+                Transaction::new_signed_with_payer(
+                    &[Instruction::new_with_bytes(program2, &[], vec![])],
+                    Some(&fee_payer),
+                    &[&fee_payer_keypair],
+                    Hash::default(),
+                ),
             );
+            let normal_tx_size =
+                program2_size + programdata2_size + upgradeable_loader_size + fee_payer_size;
+            cache_test_txs.push((normal_tx, normal_tx_size));
+
+            // program as writable, non-instruction account, bypasses the cache
+            let writable_tx =
+                new_unchecked_sanitized_transaction_with_writable_program(program2, fee_payer);
+            let writable_tx_size = program2_size + upgradeable_loader_size + fee_payer_size;
+            cache_test_txs.push((writable_tx, writable_tx_size));
 
             // program as instruction account bypasses the cache
-            let ixns = vec![Instruction::new_with_bytes(
-                program2,
-                &[],
-                vec![account_meta(program2, false)],
-            )];
-            test_data_size(
-                &mut account_loader,
-                ixns,
-                program2_size + upgradeable_loader_size + fee_payer_size,
+            let instruction_tx = SanitizedTransaction::from_transaction_for_tests(
+                Transaction::new_signed_with_payer(
+                    &[Instruction::new_with_bytes(
+                        program2,
+                        &[],
+                        vec![account_meta(program2, false)],
+                    )],
+                    Some(&fee_payer),
+                    &[&fee_payer_keypair],
+                    Hash::default(),
+                ),
             );
+            let instruction_tx_size = program2_size + upgradeable_loader_size + fee_payer_size;
+            cache_test_txs.push((instruction_tx, instruction_tx_size));
 
             // programdata as instruction account double-counts it
-            let ixns = vec![Instruction::new_with_bytes(
-                program2,
-                &[],
-                vec![account_meta(programdata2, false)],
-            )];
-            test_data_size(
-                &mut account_loader,
-                ixns,
-                program2_size + programdata2_size * 2 + upgradeable_loader_size + fee_payer_size,
+            let programdata_tx = SanitizedTransaction::from_transaction_for_tests(
+                Transaction::new_signed_with_payer(
+                    &[Instruction::new_with_bytes(
+                        program2,
+                        &[],
+                        vec![account_meta(programdata2, false)],
+                    )],
+                    Some(&fee_payer),
+                    &[&fee_payer_keypair],
+                    Hash::default(),
+                ),
             );
+            let programdata_tx_size =
+                program2_size + programdata2_size * 2 + upgradeable_loader_size + fee_payer_size;
+            cache_test_txs.push((programdata_tx, programdata_tx_size));
 
-            // both as instruction accounts, for completeness
-            let ixns = vec![Instruction::new_with_bytes(
-                program2,
-                &[],
-                vec![
-                    account_meta(program2, false),
-                    account_meta(programdata2, false),
-                ],
-            )];
-            test_data_size(
-                &mut account_loader,
-                ixns,
-                program2_size + programdata2_size + upgradeable_loader_size + fee_payer_size,
+            // program and programdata as instruction accounts
+            // loading one account can never affect the loading of a different account
+            // we only include it for completeness
+            let double_instruction_tx = SanitizedTransaction::from_transaction_for_tests(
+                Transaction::new_signed_with_payer(
+                    &[Instruction::new_with_bytes(
+                        program2,
+                        &[],
+                        vec![
+                            account_meta(program2, false),
+                            account_meta(programdata2, false),
+                        ],
+                    )],
+                    Some(&fee_payer),
+                    &[&fee_payer_keypair],
+                    Hash::default(),
+                ),
             );
+            let double_instruction_tx_size =
+                program2_size + programdata2_size + upgradeable_loader_size + fee_payer_size;
+            cache_test_txs.push((double_instruction_tx, double_instruction_tx_size));
 
-            // writable program bypasses the cache
-            let tx = new_unchecked_sanitized_transaction_with_writable_program(program2, fee_payer);
-            test_transaction_data_size(
-                &mut account_loader,
-                tx,
-                program2_size + upgradeable_loader_size + fee_payer_size,
-            );
+            // first test all cases against a clean loader
+            for (tx, size) in cache_test_txs.clone() {
+                test_transaction_data_size(&mut clean_loader.clone(), tx, size);
+            }
 
-            // NOTE for the new loader we *must* also test arbitrary permutations of the cache transactions
-            // to ensure that the batched loading is overridden on a tx-per-tx basis
+            // next test all cases against a dirty loader
+            // we loop twice to ensure every transaction runs against a fully populated internal cache
+            // this ensures there is no difference in behavior regardless of where the account is loaded from
+            let mut dirty_loader = clean_loader.clone();
+            for _ in 0..1 {
+                for (tx, size) in cache_test_txs.clone() {
+                    test_transaction_data_size(&mut dirty_loader, tx, size);
+                }
+            }
         }
     }
 }
