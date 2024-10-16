@@ -34,7 +34,7 @@ full = [
     "sha3",
     "digest",
     "solana-pubkey/rand",
-    "dep:solana-precompile-error"
+    "dep:solana-precompile-error",
     "dep:solana-transaction-error"
 ]
 borsh = ["dep:borsh", "solana-program/borsh", "solana-secp256k1-recover/borsh"]
