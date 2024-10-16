@@ -527,8 +527,6 @@ pub use solana_program_pack as program_pack;
 pub use solana_sanitize as sanitize;
 #[deprecated(since = "2.1.0", note = "Use `solana-secp256k1-recover` crate instead")]
 pub use solana_secp256k1_recover as secp256k1_recover;
-#[deprecated(since = "2.1.0", note = "Use `solana-secp256r1` crate instead")]
-pub use solana_secp256r1 as secp256r1_program;
 #[deprecated(since = "2.1.0", note = "Use `solana-serde-varint` crate instead")]
 pub use solana_serde_varint as serde_varint;
 #[deprecated(since = "2.1.0", note = "Use `solana-serialize-utils` crate instead")]
@@ -568,9 +566,10 @@ pub mod sdk_ids {
         crate::{
             address_lookup_table, bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
             config, ed25519_program, feature, incinerator, loader_v4, secp256k1_program,
-            secp256r1_program, solana_program::pubkey::Pubkey, stake, system_program, sysvar, vote,
+            solana_program::pubkey::Pubkey, stake, system_program, sysvar, vote,
         },
         lazy_static::lazy_static,
+        solana_secp256r1 as secp256r1_program,
     };
 
     lazy_static! {
