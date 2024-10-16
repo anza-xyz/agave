@@ -312,7 +312,7 @@ pub(crate) union SingleElementOrMultipleSlots<T: Clone + Copy> {
 enum OccupiedEnumTag {
     #[default]
     Free = 0,
-    ZeroSlots = 1,
+    OneSlotRef2 = 1,
     /// this should be value 2 so that we can store Free and OneSlotInIndex in only 1 bit. These are the primary states.
     OneSlotInIndex = 2,
     MultipleSlots = 3,
@@ -324,8 +324,8 @@ pub(crate) enum OccupiedEnum<'a, T> {
     /// this spot is not occupied.
     /// ALL other enum values ARE occupied.
     Free = OccupiedEnumTag::Free as u8,
-    /// zero slots in the slot list
-    ZeroSlots = OccupiedEnumTag::ZeroSlots as u8,
+    /// one slot in the slot list with ref_count = 2
+    OneSlotRef2(&'a T) = OccupiedEnumTag::OneSlotRef2 as u8,
     /// one slot in the slot list, it is stored in the index
     OneSlotInIndex(&'a T) = OccupiedEnumTag::OneSlotInIndex as u8,
     /// data is stored in data file
@@ -350,7 +350,9 @@ impl<T: Copy + PartialEq + 'static> IndexEntryPlaceInBucket<T> {
         let index_entry = index_bucket.get::<IndexEntry<T>>(self.ix);
         match enum_tag {
             OccupiedEnumTag::Free => OccupiedEnum::Free,
-            OccupiedEnumTag::ZeroSlots => OccupiedEnum::ZeroSlots,
+            OccupiedEnumTag::OneSlotRef2 => unsafe {
+                OccupiedEnum::OneSlotRef2(&index_entry.contents.single_element)
+            },
             OccupiedEnumTag::OneSlotInIndex => unsafe {
                 OccupiedEnum::OneSlotInIndex(&index_entry.contents.single_element)
             },
@@ -385,7 +387,11 @@ impl<T: Copy + PartialEq + 'static> IndexEntryPlaceInBucket<T> {
     ) {
         let tag = match value {
             OccupiedEnum::Free => OccupiedEnumTag::Free,
-            OccupiedEnum::ZeroSlots => OccupiedEnumTag::ZeroSlots,
+            OccupiedEnum::OneSlotRef2(single_element) => {
+                let index_entry = index_bucket.get_mut::<IndexEntry<T>>(self.ix);
+                index_entry.contents.single_element = *single_element;
+                OccupiedEnumTag::OneSlotRef2
+            }
             OccupiedEnum::OneSlotInIndex(single_element) => {
                 let index_entry = index_bucket.get_mut::<IndexEntry<T>>(self.ix);
                 index_entry.contents.single_element = *single_element;
@@ -445,9 +451,10 @@ impl<T: Copy + PartialEq + 'static> IndexEntryPlaceInBucket<T> {
     ) -> (&'a [T], RefCount) {
         let mut ref_count = 1;
         let slot_list = match self.get_slot_count_enum(index_bucket) {
-            OccupiedEnum::ZeroSlots => {
-                // num_slots is 0. This means empty slot list and ref_count=1
-                &[]
+            OccupiedEnum::OneSlotRef2(single_element) => {
+                ref_count = 2;
+                // only element is stored in the index entry
+                std::slice::from_ref(single_element)
             }
             OccupiedEnum::OneSlotInIndex(single_element) => {
                 // only element is stored in the index entry

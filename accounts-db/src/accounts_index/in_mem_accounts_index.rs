@@ -1036,9 +1036,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                     } else {
                         // Evict when ref_count == 1 or slot is more than one epoch old when ref_count = 2
                         if slot_list.len() == 1
-                            && (ref_count == 2
-                                && current_slot.saturating_sub(oldest_slot)
-                                    > solana_sdk::epoch_schedule::DEFAULT_SLOTS_PER_EPOCH)
+                            && (ref_count == 1
+                                || (ref_count == 2
+                                    && current_slot.saturating_sub(oldest_slot)
+                                        > solana_sdk::epoch_schedule::DEFAULT_SLOTS_PER_EPOCH))
                         {
                             (true, Some(slot_list))
                         } else {
