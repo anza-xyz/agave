@@ -1014,7 +1014,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         // we could look at more ages or we could throw out more items we are choosing to keep in the cache
         if Self::should_evict_based_on_age(current_age, entry, startup, ages_flushing_now) {
             match entry.ref_count() {
-                1 | 2 => {
+                ref_count @ (1 | 2) => {
                     // only read the slot list if we are planning to throw the item out
                     let slot_list = entry.slot_list.read().unwrap();
                     let mut cached = false;
@@ -1034,10 +1034,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         }
                         (false, None)
                     } else {
-                        // Evict when ref_count == 1 or oldest_slot is more than one epoch old
+                        // Evict when ref_count == 1 or slot is more than one epoch old when ref_count = 2
                         if slot_list.len() == 1
-                            || current_slot.saturating_sub(oldest_slot)
-                                > solana_sdk::epoch_schedule::DEFAULT_SLOTS_PER_EPOCH
+                            && (ref_count == 2
+                                && current_slot.saturating_sub(oldest_slot)
+                                    > solana_sdk::epoch_schedule::DEFAULT_SLOTS_PER_EPOCH)
                         {
                             (true, Some(slot_list))
                         } else {
@@ -1283,6 +1284,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                                     // If the entry *was* updated, re-mark it as dirty then
                                     // skip to the next pubkey/entry.
                                     let ref_count = v.ref_count();
+                                    if (ref_count != 1 && ref_count != 2) || slot_list.len() != 1 {
+                                        v.set_dirty(true);
+                                        break;
+                                    }
                                     disk.try_write(
                                         &k,
                                         (
