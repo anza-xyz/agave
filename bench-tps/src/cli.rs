@@ -1,15 +1,15 @@
 use {
-    clap::{crate_description, crate_name, value_t_or_exit, App, Arg, ArgMatches},
+    clap::{App, Arg, ArgMatches, crate_description, crate_name, value_t_or_exit},
     solana_clap_utils::{
         hidden_unless_forced,
         input_validators::{is_keypair, is_url, is_url_or_moniker, is_within_range},
     },
-    solana_cli_config::{ConfigInput, CONFIG_FILE},
+    solana_cli_config::{CONFIG_FILE, ConfigInput},
     solana_sdk::{
         commitment_config::CommitmentConfig,
         fee_calculator::FeeRateGovernor,
         pubkey::Pubkey,
-        signature::{read_keypair_file, Keypair},
+        signature::{Keypair, read_keypair_file},
     },
     solana_streamer::nonblocking::quic::DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
     solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_USE_QUIC},
@@ -81,6 +81,7 @@ pub struct Config {
     pub block_data_file: Option<String>,
     pub transaction_data_file: Option<String>,
     pub measure_tx_latency: bool,
+    pub latency_sleep_ms: u64,
 }
 
 impl Eq for Config {}
@@ -119,6 +120,7 @@ impl Default for Config {
             block_data_file: None,
             transaction_data_file: None,
             measure_tx_latency: false,
+            latency_sleep_ms: 100,
         }
     }
 }
@@ -461,6 +463,13 @@ pub fn build_args<'a>(version: &'_ str) -> App<'a, '_> {
                 .long("measure-tx-latency")
                 .help("Measure the latency of some transactions"),
         )
+        .arg(
+            Arg::with_name("latency_sleep_ms")
+                .long("latency-sleep-ms")
+                .value_name("NUM")
+                .takes_value(true)
+                .help("Per-iteration sleep in ms between transaction status requests"),
+        )
 }
 
 /// Parses a clap `ArgMatches` structure into a `Config`
@@ -645,18 +654,25 @@ pub fn parse_args(matches: &ArgMatches) -> Result<Config, &'static str> {
         args.measure_tx_latency = true;
     }
 
+    if let Some(t) = matches.value_of("latency_sleep_ms") {
+        args.latency_sleep_ms = t
+            .to_string()
+            .parse()
+            .map_err(|_| "can't parse latency_sleep_ms")?;
+    }
+
     Ok(args)
 }
 
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
-        solana_sdk::signature::{read_keypair_file, write_keypair_file, Keypair, Signer},
+        solana_sdk::signature::{Keypair, read_keypair_file, Signer, write_keypair_file},
         std::{
             net::{IpAddr, Ipv4Addr},
             time::Duration,
         },
+        super::*,
         tempfile::{tempdir, TempDir},
     };
 
