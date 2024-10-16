@@ -1,6 +1,7 @@
 //! Vote state, vote program
 //! Receive and processes votes from validators
 pub use solana_program::vote::state::{vote_state_versions::*, *};
+use solana_sdk::pubkey;
 use {
     log::*,
     serde_derive::{Deserialize, Serialize},
@@ -1031,6 +1032,7 @@ pub fn initialize_account<S: std::hash::BuildHasher>(
     vote_init: &VoteInit,
     signers: &HashSet<Pubkey, S>,
     clock: &Clock,
+    cluster_authority_signer: &Pubkey,
 ) -> Result<(), InstructionError> {
     if vote_account.get_data().len() != VoteStateVersions::vote_state_size_of(true) {
         return Err(InstructionError::InvalidAccountData);
@@ -1041,6 +1043,9 @@ pub fn initialize_account<S: std::hash::BuildHasher>(
         return Err(InstructionError::AccountAlreadyInitialized);
     }
 
+    // Authorized signer must sign. (Cluster authority)
+    verify_authorized_signer(cluster_authority_signer, signers)?;
+    
     // node must agree to accept this vote account
     verify_authorized_signer(&vote_init.node_pubkey, signers)?;
 

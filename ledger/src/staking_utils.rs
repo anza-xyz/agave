@@ -29,8 +29,10 @@ pub(crate) mod tests {
         vote_account: &Keypair,
         validator_identity_account: &Keypair,
         amount: u64,
+        cluster_authority: &Keypair,
     ) {
         let vote_pubkey = vote_account.pubkey();
+        let cluster_authority_pubkey = cluster_authority.pubkey();
         fn process_instructions<T: Signers>(bank: &Bank, keypairs: &T, ixs: &[Instruction]) {
             let tx = Transaction::new_signed_with_payer(
                 ixs,
@@ -45,6 +47,7 @@ pub(crate) mod tests {
             bank,
             &[from_account, vote_account, validator_identity_account],
             &vote_instruction::create_account_with_config(
+                &cluster_authority_pubkey,
                 &from_account.pubkey(),
                 &vote_pubkey,
                 &VoteInit {

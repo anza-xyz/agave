@@ -155,6 +155,7 @@ impl LocalCluster {
         cluster_lamports: u64,
         lamports_per_node: u64,
         socket_addr_space: SocketAddrSpace,
+        cluster_authority_keypair: Arc<Keypair>,
     ) -> Self {
         Self::new(
             &mut ClusterConfig::new_with_equal_stakes(
@@ -163,6 +164,7 @@ impl LocalCluster {
                 lamports_per_node,
             ),
             socket_addr_space,
+            cluster_authority_keypair,
         )
     }
 
@@ -187,7 +189,11 @@ impl LocalCluster {
         }
     }
 
-    pub fn new(config: &mut ClusterConfig, socket_addr_space: SocketAddrSpace) -> Self {
+    pub fn new(
+        config: &mut ClusterConfig,
+        socket_addr_space: SocketAddrSpace,
+        cluster_authority_keypair: Arc<Keypair>,
+    ) -> Self {
         assert_eq!(config.validator_configs.len(), config.node_stakes.len());
 
         let connection_cache = if config.tpu_use_quic {
@@ -391,6 +397,7 @@ impl LocalCluster {
                 key.clone(),
                 node_pubkey_to_vote_key.get(&key.pubkey()).cloned(),
                 socket_addr_space,
+                cluster_authority_keypair,
             );
         }
 
@@ -402,6 +409,7 @@ impl LocalCluster {
                 0,
                 Arc::new(Keypair::new()),
                 None,
+                cluster_authority_keypair.clone(),
                 socket_addr_space,
             );
         });
@@ -447,6 +455,7 @@ impl LocalCluster {
         stake: u64,
         validator_keypair: Arc<Keypair>,
         voting_keypair: Option<Arc<Keypair>>,
+        cluster_authority_keypair: Arc<Keypair>,
         socket_addr_space: SocketAddrSpace,
     ) -> Pubkey {
         self.do_add_validator(
@@ -455,6 +464,7 @@ impl LocalCluster {
             stake,
             validator_keypair,
             voting_keypair,
+            cluster_authority_keypair,
             socket_addr_space,
         )
     }
@@ -467,6 +477,7 @@ impl LocalCluster {
         validator_keypair: Arc<Keypair>,
         voting_keypair: Option<Arc<Keypair>>,
         socket_addr_space: SocketAddrSpace,
+        cluster_authority_keypair: Arc<Keypair>,
     ) -> Pubkey {
         self.do_add_validator(
             validator_config,
@@ -474,6 +485,7 @@ impl LocalCluster {
             stake,
             validator_keypair,
             voting_keypair,
+            cluster_authority_keypair,
             socket_addr_space,
         )
     }
@@ -485,6 +497,7 @@ impl LocalCluster {
         stake: u64,
         validator_keypair: Arc<Keypair>,
         mut voting_keypair: Option<Arc<Keypair>>,
+        cluster_authority_keypair: Arc<Keypair>,
         socket_addr_space: SocketAddrSpace,
     ) -> Pubkey {
         let client = self.build_tpu_quic_client().expect("tpu_client");
@@ -520,6 +533,7 @@ impl LocalCluster {
             Self::setup_vote_and_stake_accounts(
                 &client,
                 voting_keypair.as_ref().unwrap(),
+                &cluster_authority_keypair,
                 &validator_keypair,
                 stake,
             )
@@ -757,10 +771,12 @@ impl LocalCluster {
     fn setup_vote_and_stake_accounts(
         client: &QuicTpuClient,
         vote_account: &Keypair,
+        cluster_authority_keypair: &Keypair,
         from_account: &Arc<Keypair>,
         amount: u64,
     ) -> Result<()> {
         let vote_account_pubkey = vote_account.pubkey();
+        let cluster_authority_pubkey = cluster_authority_keypair.pubkey();
         let node_pubkey = from_account.pubkey();
         info!(
             "setup_vote_and_stake_accounts: {}, {}, amount: {}",
@@ -778,6 +794,7 @@ impl LocalCluster {
         {
             // 1) Create vote account
             let instructions = vote_instruction::create_account_with_config(
+                &cluster_authority_pubkey,
                 &from_account.pubkey(),
                 &vote_account_pubkey,
                 &VoteInit {

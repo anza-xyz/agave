@@ -33,9 +33,7 @@ use {
     solana_rpc_client_api::config::RpcGetVoteAccountsConfig,
     solana_rpc_client_nonce_utils::blockhash_query::BlockhashQuery,
     solana_sdk::{
-        account::Account, commitment_config::CommitmentConfig, message::Message,
-        native_token::lamports_to_sol, pubkey::Pubkey, system_instruction::SystemError,
-        transaction::Transaction,
+        account::Account, commitment_config::CommitmentConfig, message::Message, native_token::lamports_to_sol, pubkey::Pubkey, signer::Signer, system_instruction::SystemError, transaction::Transaction
     },
     solana_vote_program::{
         vote_error::VoteError,
@@ -456,6 +454,8 @@ pub fn parse_create_vote_account(
     let seed = matches.value_of("seed").map(|s| s.to_string());
     let (identity_account, identity_pubkey) =
         signer_of(matches, "identity_account", wallet_manager)?;
+    let (cluster_authority, cluster_authority_pubkey) =
+        signer_of(matches, "cluster_authority", wallet_manager)?;
     let commission = value_t_or_exit!(matches, "commission", u8);
     let authorized_voter = pubkey_of_signer(matches, "authorized_voter", wallet_manager)?;
     let authorized_withdrawer =
@@ -511,6 +511,7 @@ pub fn parse_create_vote_account(
             memo,
             fee_payer: signer_info.index_of(fee_payer_pubkey).unwrap(),
             compute_unit_price,
+            cluster_authority: signer_info.index_of(cluster_authority_pubkey).unwrap(),
         },
         signers: signer_info.signers,
     })
@@ -804,6 +805,7 @@ pub fn process_create_vote_account(
     memo: Option<&String>,
     fee_payer: SignerIndex,
     compute_unit_price: Option<u64>,
+    cluster_authority: SignerIndex,
 ) -> ProcessResult {
     let vote_account = config.signers[vote_account];
     let vote_account_pubkey = vote_account.pubkey();
@@ -856,6 +858,7 @@ pub fn process_create_vote_account(
         };
 
         let ixs = vote_instruction::create_account_with_config(
+            &config.signers[cluster_authority].pubkey(),
             &config.signers[0].pubkey(),
             to,
             &vote_init,
@@ -1816,6 +1819,7 @@ mod tests {
                     memo: None,
                     fee_payer: 0,
                     compute_unit_price: None,
+                    cluster_authority: 3,
                 },
                 signers: vec![
                     Box::new(read_keypair_file(&default_keypair_file).unwrap()),
@@ -1850,6 +1854,7 @@ mod tests {
                     memo: None,
                     fee_payer: 0,
                     compute_unit_price: None,
+                    cluster_authority: 3,
                 },
                 signers: vec![
                     Box::new(read_keypair_file(&default_keypair_file).unwrap()),
@@ -1891,6 +1896,7 @@ mod tests {
                     memo: None,
                     fee_payer: 0,
                     compute_unit_price: None,
+                    cluster_authority: 3,
                 },
                 signers: vec![
                     Box::new(read_keypair_file(&default_keypair_file).unwrap()),
@@ -1944,6 +1950,7 @@ mod tests {
                     memo: None,
                     fee_payer: 0,
                     compute_unit_price: None,
+                    cluster_authority: 3,
                 },
                 signers: vec![
                     Box::new(read_keypair_file(&default_keypair_file).unwrap()),
@@ -1987,6 +1994,7 @@ mod tests {
                     memo: None,
                     fee_payer: 0,
                     compute_unit_price: None,
+                    cluster_authority: 3,
                 },
                 signers: vec![
                     Box::new(read_keypair_file(&default_keypair_file).unwrap()),
@@ -2026,6 +2034,7 @@ mod tests {
                     memo: None,
                     fee_payer: 0,
                     compute_unit_price: None,
+                    cluster_authority: 3,
                 },
                 signers: vec![
                     Box::new(read_keypair_file(&default_keypair_file).unwrap()),

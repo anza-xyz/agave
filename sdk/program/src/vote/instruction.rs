@@ -241,11 +241,13 @@ impl VoteInstruction {
     }
 }
 
-fn initialize_account(vote_pubkey: &Pubkey, vote_init: &VoteInit) -> Instruction {
+fn initialize_account(vote_pubkey: &Pubkey, vote_init: &VoteInit, cluster_authority: &Pubkey) -> Instruction {
     let account_metas = vec![
         AccountMeta::new(*vote_pubkey, false),
         AccountMeta::new_readonly(sysvar::rent::id(), false),
         AccountMeta::new_readonly(sysvar::clock::id(), false),
+        AccountMeta::new_readonly(solana_program::pubkey!("AUTH1111111111111111111111111111111111111111"), false),
+        AccountMeta::new_readonly(*cluster_authority, true),
         AccountMeta::new_readonly(vote_init.node_pubkey, true),
     ];
 
@@ -271,6 +273,7 @@ impl<'a> Default for CreateVoteAccountConfig<'a> {
 }
 
 pub fn create_account_with_config(
+    cluster_authority: &Pubkey,
     from_pubkey: &Pubkey,
     vote_pubkey: &Pubkey,
     vote_init: &VoteInit,
@@ -279,7 +282,7 @@ pub fn create_account_with_config(
 ) -> Vec<Instruction> {
     let create_ix =
         system_instruction::create_account(from_pubkey, vote_pubkey, lamports, config.space, &id());
-    let init_ix = initialize_account(vote_pubkey, vote_init);
+    let init_ix = initialize_account(vote_pubkey, vote_init, cluster_authority);
     vec![create_ix, init_ix]
 }
 

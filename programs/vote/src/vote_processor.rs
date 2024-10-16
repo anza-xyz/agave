@@ -10,10 +10,7 @@ use {
         sysvar_cache::get_sysvar_with_account_check,
     },
     solana_sdk::{
-        instruction::InstructionError,
-        program_utils::limited_deserialize,
-        pubkey::Pubkey,
-        transaction_context::{BorrowedAccount, InstructionContext, TransactionContext},
+        account::ReadableAccount, instruction::InstructionError, program_utils::limited_deserialize, pubkey::Pubkey, system_program, transaction_context::{BorrowedAccount, InstructionContext, TransactionContext}
     },
     std::collections::HashSet,
 };
@@ -74,7 +71,34 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             }
             let clock =
                 get_sysvar_with_account_check::clock(invoke_context, instruction_context, 2)?;
-            vote_state::initialize_account(&mut me, &vote_init, &signers, &clock)
+
+            // Account 3 is AUTH1111111111111111111111111111111111111111
+            // Which contains the cluster authority pubkey bytes.
+            let auth_account = invoke_context.transaction_context.get_account_at_index(3)?;
+            let auth_account_key = invoke_context
+                .transaction_context
+                .get_key_of_account_at_index(3)?;
+            if auth_account_key
+                != &solana_program::pubkey!("AUTH1111111111111111111111111111111111111111")
+            {
+                return Err(InstructionError::MissingAccount);
+            }
+            let auth_account = auth_account.borrow();
+            if auth_account.owner() != &system_program::ID {
+                return Err(InstructionError::InvalidAccountOwner);
+            }
+            let authorized_signer = auth_account.deserialize_data::<Pubkey>();
+            if let Err(_) = authorized_signer {
+                return Err(InstructionError::InvalidArgument);
+            }
+
+            vote_state::initialize_account(
+                &mut me,
+                &vote_init,
+                &signers,
+                &clock,
+                &authorized_signer.unwrap(),
+            )
         }
         VoteInstruction::Authorize(voter_pubkey, vote_authorize) => {
             let clock =
@@ -1764,9 +1788,11 @@ mod tests {
 
     #[test]
     fn test_create_account_vote_state_1_14_11() {
+        let cluster_authority = Pubkey::new_unique();
         let node_pubkey = Pubkey::new_unique();
         let vote_pubkey = Pubkey::new_unique();
         let instructions = create_account_with_config(
+            &cluster_authority,
             &node_pubkey,
             &vote_pubkey,
             &VoteInit {
@@ -1802,9 +1828,11 @@ mod tests {
 
     #[test]
     fn test_create_account_vote_state_current() {
+        let cluster_authority = Pubkey::new_unique();
         let node_pubkey = Pubkey::new_unique();
         let vote_pubkey = Pubkey::new_unique();
         let instructions = create_account_with_config(
+            &cluster_authority,
             &node_pubkey,
             &vote_pubkey,
             &VoteInit {
@@ -1844,6 +1872,7 @@ mod tests {
     fn test_vote_process_instruction() {
         solana_logger::setup();
         let instructions = create_account_with_config(
+            &Pubkey::new_unique(),
             &Pubkey::new_unique(),
             &Pubkey::new_unique(),
             &VoteInit::default(),
