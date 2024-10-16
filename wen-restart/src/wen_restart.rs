@@ -901,6 +901,7 @@ pub(crate) fn receive_restart_heaviest_fork(
                 return Ok((coordinator_heaviest_slot, coordinator_heaviest_hash));
             }
         }
+        sleep(Duration::from_millis(GOSSIP_SLEEP_MILLIS));
     }
 }
 
