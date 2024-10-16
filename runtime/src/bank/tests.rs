@@ -51,11 +51,6 @@ use {
             Account, AccountSharedData, ReadableAccount, WritableAccount,
         },
         account_utils::StateMut,
-        address_lookup_table::{
-            self,
-            state::{AddressLookupTable, LookupTableMeta},
-            AddressLookupTableAccount,
-        },
         bpf_loader,
         bpf_loader_upgradeable::{self, UpgradeableLoaderState},
         client::SyncClient,
@@ -76,10 +71,7 @@ use {
         incinerator,
         instruction::{AccountMeta, CompiledInstruction, Instruction, InstructionError},
         loader_upgradeable_instruction::UpgradeableLoaderInstruction,
-        message::{
-            v0::{self, LoadedAddresses},
-            Message, MessageHeader, SanitizedMessage, SimpleAddressLoader, VersionedMessage,
-        },
+        message::{Message, MessageHeader, SanitizedMessage},
         native_loader,
         native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
         nonce::{self, state::DurableNonce},
@@ -125,7 +117,6 @@ use {
         },
     },
     std::{
-        borrow::Cow,
         collections::{HashMap, HashSet},
         convert::TryInto,
         fs::File,
