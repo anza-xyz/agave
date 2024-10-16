@@ -367,7 +367,7 @@ where
         &self,
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
-        banking_context: Option<(BankingPacketReceiver, impl FnMut(BankingPacketBatch) -> Vec<Task> + Send + 'static)>,
+        banking_context: Option<(BankingPacketReceiver, impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static)>,
     ) -> S {
         assert_matches!(result_with_timings, (Ok(_), _));
 
@@ -395,7 +395,7 @@ where
         }
     }
 
-    pub fn create_banking_scheduler(&self, bank_forks: &BankForks, recv: BankingPacketReceiver, on_banking_packet_receive: impl FnMut(BankingPacketBatch) -> Vec<Task> + Send + 'static) -> Arc<BlockProducingUnifiedScheduler> {
+    pub fn create_banking_scheduler(&self, bank_forks: &BankForks, recv: BankingPacketReceiver, on_banking_packet_receive: impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static) -> Arc<BlockProducingUnifiedScheduler> {
         let s = self.block_producing_scheduler_inner.lock().unwrap().0.as_ref().map(|(id, bps)| bps).cloned();
         if let Some(ss) = s {
             return ss;
@@ -1111,7 +1111,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         &mut self,
         mut context: SchedulingContext,
         mut result_with_timings: ResultWithTimings,
-        banking_context: Option<(BankingPacketReceiver, impl FnMut(BankingPacketBatch) -> Vec<Task> + Send + 'static)>,
+        banking_context: Option<(BankingPacketReceiver, impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static)>,
     ) {
         let scheduler_id = self.scheduler_id;
         let mut slot = context.bank().slot();
@@ -1229,6 +1229,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         // 5. the handler thread reply back to the scheduler thread as an executed task.
         // 6. the scheduler thread post-processes the executed task.
         let scheduler_main_loop = {
+            let banking_context = banking_context.clone();
             let handler_count = self.pool.handler_count;
             let session_result_sender = self.session_result_sender.clone();
             // Taking new_task_receiver here is important to ensure there's a single receiver. In
@@ -1510,25 +1511,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 }
                             },
                             */
-                            recv(banking_packet_receiver) -> banking_packet => {
-                                let Ok(banking_packet) = banking_packet else {
-                                    info!("disconnectd banking_packet_receiver");
-                                    result_with_timings.0 = Err(TransactionError::CommitFailed);
-                                    break 'nonaborted_main_loop;
-                                };
-                                let tasks = on_recv.as_mut().unwrap()((banking_packet));
-                                for task in tasks {
-                                    if session_ending {
-                                        continue;
-                                    }
-                                    sleepless_testing::at(CheckPoint::NewTask(task.task_index()));
-                                    if let Some(task) = state_machine.do_schedule_task(task, session_pausing) {
-                                        //runnable_task_sender.send_aux_payload(task).unwrap();
-                                        runnable_task_sender.send_payload(task).unwrap();
-                                    }
-                                }
-                                "banking"
-                            },
                             default => {
                                 if let Some(task) = state_machine.scan_and_schedule_next_task() {
                                     runnable_task_sender.send_payload(task).unwrap();
@@ -1655,30 +1637,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 Ok(p) => unreachable!("{:?}", p),
                             }
                         },
-                        recv(banking_packet_receiver) -> banking_packet => {
-                            let Ok(banking_packet) = banking_packet else {
-                                // Initialize result_with_timings with a harmless value...
-                                result_with_timings = initialized_result_with_timings();
-                                session_ending = false;
-                                session_pausing = false;
-                                info!("disconnectd banking_packet_receiver");
-                                result_with_timings.0 = Err(TransactionError::CommitFailed);
-                                break 'nonaborted_main_loop;
-                            };
-                            let tasks = on_recv.as_mut().unwrap()((banking_packet));
-                            for task in tasks {
-                                if session_ending {
-                                    continue;
-                                }
-                                sleepless_testing::at(CheckPoint::NewTask(task.task_index()));
-                                assert!(state_machine.do_schedule_task(task, true).is_none());
-                                if log_interval.increment() {
-                                    log_scheduler!(info, "rebuffer");
-                                } else {
-                                    log_scheduler!(trace, "rebuffer");
-                                }
-                            }
-                        },
                     }
                     }
                 }
@@ -1708,6 +1666,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         };
 
         let handler_main_loop = || {
+            let (banking_packet_receiver, mut on_recv) = banking_context.clone().unzip();
+            let banking_packet_receiver = banking_packet_receiver.unwrap_or_else(|| never());
+            let new_task_sender = self.new_task_sender.clone();
+
             let pool = self.pool.clone();
             let mut runnable_task_receiver = runnable_task_receiver.clone();
             let finished_blocked_task_sender = finished_blocked_task_sender.clone();
@@ -1722,16 +1684,35 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             //    `select_biased!`, which are sent from `.send_chained_channel()` in the scheduler
             //    thread for all-but-initial sessions.
             move || loop {
+                let mut session_ending = false;
+
                 let (task, sender) = select_biased! {
                     recv(runnable_task_receiver.for_select()) -> message => {
                         let Ok(message) = message else {
                             break;
                         };
                         if let Some(task) = runnable_task_receiver.after_select(message.into()) {
+                            session_ending = true;
                             (task, &finished_blocked_task_sender)
                         } else {
                             continue;
                         }
+                    },
+                    recv(banking_packet_receiver) -> banking_packet => {
+                        let Ok(banking_packet) = banking_packet else {
+                            info!("disconnectd banking_packet_receiver");
+                            break return;
+                        };
+                        let tasks = on_recv.as_mut().unwrap()((banking_packet));
+                        for task in tasks {
+                            if session_ending {
+                                continue;
+                            }
+                            new_task_sender
+                                .send(NewTaskPayload::Payload(task).into())
+                                .unwrap();
+                        }
+                        continue;
                     },
                     /*
                     recv(runnable_task_receiver.aux_for_select()) -> task => {
@@ -1921,7 +1902,7 @@ pub trait SpawnableScheduler<TH: TaskHandler>: InstalledScheduler {
         pool: Arc<SchedulerPool<Self, TH>>,
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
-        banking_context: Option<(BankingPacketReceiver, impl FnMut(BankingPacketBatch) -> Vec<Task> + Send + 'static)>,
+        banking_context: Option<(BankingPacketReceiver, impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static)>,
     ) -> Self
     where
         Self: Sized;
@@ -1956,7 +1937,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
         pool: Arc<SchedulerPool<Self, TH>>,
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
-        banking_context: Option<(BankingPacketReceiver, impl FnMut(BankingPacketBatch) -> Vec<Task> + Send + 'static)>,
+        banking_context: Option<(BankingPacketReceiver, impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static)>,
     ) -> Self {
         info!(
             "spawning new scheduler pool for slot: {}",
