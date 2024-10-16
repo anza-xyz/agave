@@ -235,6 +235,7 @@ dependencies = [
  "agave-transaction-view",
  "bincode",
  "criterion",
+ "solana-entry",
  "solana-sdk",
  "solana-svm-transaction",
 ]
