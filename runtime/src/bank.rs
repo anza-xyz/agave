@@ -3166,7 +3166,7 @@ impl Bank {
     }
 
     pub fn get_fee_for_message(&self, message: &SanitizedMessage) -> Option<u64> {
-        let lamports_per_signature = {
+        let _lamports_per_signature = {
             let blockhash_queue = self.blockhash_queue.read().unwrap();
             blockhash_queue.get_lamports_per_signature(message.recent_blockhash())
         }
@@ -3177,7 +3177,7 @@ impl Bank {
                 },
             )
         })?;
-        Some(self.get_fee_for_message_with_lamports_per_signature(message, lamports_per_signature))
+        Some(self.get_fee_for_message_with_lamports_per_signature(message))
     }
 
     /// Returns true when startup accounts hash verification has completed or never had to run in background.
@@ -3206,7 +3206,6 @@ impl Bank {
     pub fn get_fee_for_message_with_lamports_per_signature(
         &self,
         message: &impl SVMMessage,
-        lamports_per_signature: u64,
     ) -> u64 {
         let fee_budget_limits = FeeBudgetLimits::from(
             process_compute_budget_instructions(message.program_instructions_iter())
@@ -3214,7 +3213,6 @@ impl Bank {
         );
         solana_fee::calculate_fee(
             message,
-            lamports_per_signature == 0,
             self.fee_structure().lamports_per_signature,
             fee_budget_limits.prioritization_fee,
             self.feature_set
@@ -7003,7 +7001,7 @@ impl Bank {
         account_indexes: AccountSecondaryIndexes,
         shrink_ratio: AccountShrinkThreshold,
     ) -> Self {
-        Self::new_with_paths(
+        let mut bank = Self::new_with_paths(
             genesis_config,
             runtime_config,
             paths,
@@ -7018,7 +7016,20 @@ impl Bank {
             Arc::default(),
             None,
             None,
-        )
+        );
+
+        // Many tests rely on the fact that transaction fees
+        // are zero.
+        // This was previously handled by the `FeeRateGovernor`
+        // in the `genesis_config`, but that is no longer the case.
+        // However, for testing, we can set the fee structure to
+        // result in zero base fees for all transactions IF the
+        // lamports_per_signature is zero on the `FeeRateGovernor`.
+        if genesis_config.fee_rate_governor.lamports_per_signature == 0 {
+            bank.set_fee_structure(FeeStructure::zero_fees());
+        }
+
+        bank
     }
 
     pub fn new_for_benches(genesis_config: &GenesisConfig) -> Self {
@@ -7141,8 +7152,8 @@ impl Bank {
         &self.transaction_processor
     }
 
-    pub fn set_fee_structure(&mut self, fee_structure: &FeeStructure) {
-        self.fee_structure = fee_structure.clone();
+    pub fn set_fee_structure(&mut self, fee_structure: FeeStructure) {
+        self.fee_structure = fee_structure;
     }
 
     pub fn load_program(
