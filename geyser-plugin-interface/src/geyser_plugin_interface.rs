@@ -328,6 +328,9 @@ pub enum SlotStatus {
 
     /// A new bank fork is created with the slot
     CreatedBank,
+
+    /// A slot is marked dead
+    Dead,
 }
 
 impl SlotStatus {
@@ -339,6 +342,7 @@ impl SlotStatus {
             SlotStatus::FirstShredReceived => "first_shread_received",
             SlotStatus::Completed => "completed",
             SlotStatus::CreatedBank => "created_bank",
+            SlotStatus::Dead => "dead",
         }
     }
 }
