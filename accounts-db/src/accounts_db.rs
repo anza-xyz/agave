@@ -595,7 +595,7 @@ pub struct AccountsAddRootTiming {
 
 /// if negative, this many accounts older than # slots in epoch are still treated as modern (ie. non-ancient).
 /// Slots older than # slots in epoch - this # are then treated as ancient and subject to packing.
-const ANCIENT_APPEND_VEC_DEFAULT_OFFSET: Option<i64> = Some(-10_000);
+const ANCIENT_APPEND_VEC_DEFAULT_OFFSET: Option<i64> = Some(-100_000);
 
 #[derive(Debug, Default, Clone)]
 pub struct AccountsDbConfig {
