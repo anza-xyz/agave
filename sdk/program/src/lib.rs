@@ -444,6 +444,11 @@
 //!   - Instruction: [`solana_sdk::secp256k1_instruction`](https://docs.rs/solana-sdk/latest/solana_sdk/secp256k1_instruction/index.html)
 //!   - Invokable by programs? no
 //!
+//! - __secp256r1 Program__: Verifies an secp256r1 signature.
+//!   - ID: [`solana_program::secp256r1_program`]
+//!   - Instruction: [`solana-secp256r1`](https://docs.rs/solana-secp256r1)
+//!   - Invokable by programs? no
+//!
 //! - __BPF Loader__: Deploys, and executes immutable programs on the chain.
 //!   - ID: [`solana_program::bpf_loader`]
 //!   - Instruction: [`solana_program::loader_instruction`]
@@ -569,6 +574,7 @@ pub mod sdk_ids {
             solana_program::pubkey::Pubkey, stake, system_program, sysvar, vote,
         },
         lazy_static::lazy_static,
+        solana_secp256r1 as secp256r1_program,
     };
 
     lazy_static! {
@@ -576,6 +582,7 @@ pub mod sdk_ids {
             let mut sdk_ids = vec![
                 ed25519_program::id(),
                 secp256k1_program::id(),
+                secp256r1_program::id(),
                 system_program::id(),
                 sysvar::id(),
                 bpf_loader::id(),
