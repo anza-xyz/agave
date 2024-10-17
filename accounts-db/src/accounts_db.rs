@@ -8473,7 +8473,7 @@ impl AccountsDb {
             let amount_to_top_off_rent = AtomicU64::new(0);
             let total_including_duplicates = AtomicU64::new(0);
             let all_accounts_are_zero_lamports_slots = AtomicU64::new(0);
-            let all_zeros_slots = Mutex::new(Vec::<(Slot, Arc<AccountStorageEntry>)>::new());
+            let mut all_zeros_slots = Mutex::new(Vec::<(Slot, Arc<AccountStorageEntry>)>::new());
             let scan_time: u64 = slots
                 .par_chunks(chunk_size)
                 .map(|slots| {
@@ -8483,6 +8483,8 @@ impl AccountsDb {
                         outer_slots_len as u64,
                     );
                     let mut scan_time_sum = 0;
+                    let mut all_accounts_are_zero_lamports_slots_inner = 0;
+                    let mut all_zeros_slots_inner = vec![];
                     let mut insert_time_sum = 0;
                     let mut total_including_duplicates_sum = 0;
                     let mut accounts_data_len_sum = 0;
@@ -8540,10 +8542,8 @@ impl AccountsDb {
                             total_including_duplicates_sum += total_this_slot;
                             accounts_data_len_sum += accounts_data_len_this_slot;
                             if all_accounts_are_zero_lamports {
-                                all_zeros_slots
-                                    .lock()
-                                    .unwrap()
-                                    .push((*slot, Arc::clone(&storage)));
+                                all_accounts_are_zero_lamports_slots_inner += 1;
+                                all_zeros_slots_inner.push((*slot, Arc::clone(&storage)));
                             }
 
                             insert_us
@@ -8576,6 +8576,14 @@ impl AccountsDb {
                         };
                         insert_time_sum += insert_us;
                     }
+                    all_accounts_are_zero_lamports_slots.fetch_add(
+                        all_accounts_are_zero_lamports_slots_inner,
+                        Ordering::Relaxed,
+                    );
+                    all_zeros_slots
+                        .lock()
+                        .unwrap()
+                        .append(&mut all_zeros_slots_inner);
                     insertion_time_us.fetch_add(insert_time_sum, Ordering::Relaxed);
                     total_including_duplicates
                         .fetch_add(total_including_duplicates_sum, Ordering::Relaxed);
@@ -8757,13 +8765,18 @@ impl AccountsDb {
                     accounts_data_len.load(Ordering::Relaxed)
                 );
 
-                let all_zero_slots_to_clean = std::mem::take(&mut *all_zeros_slots.lock().unwrap());
+                let all_zero_slots_to_clean = std::mem::take(all_zeros_slots.get_mut().unwrap());
                 info!(
                     "insert all zero slots to clean at startup {}",
                     all_zero_slots_to_clean.len()
                 );
                 for (slot, storage) in all_zero_slots_to_clean {
-                    self.dirty_stores.insert(slot, storage);
+                    let old = self.dirty_stores.insert(slot, storage);
+                    if old.is_none() {
+                        warn!(
+                            "Expecting all zero slot {slot} exists in dirty_store, but it doesn't."
+                        );
+                    }
                     self.accounts_index.add_uncleaned_roots([slot]);
                 }
             }
