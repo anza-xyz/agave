@@ -109,6 +109,7 @@ members = [
     "sdk/clock",
     "sdk/decode-error",
     "sdk/derivation-path",
+    "sdk/epoch-info",
     "sdk/epoch-schedule",
     "sdk/feature-set",
     "sdk/gen-headers",
@@ -410,7 +411,7 @@ solana-define-syscall = { path = "define-syscall", version = "=2.1.0" }
 solana-derivation-path = { path = "sdk/derivation-path", version = "=2.1.0" }
 solana-download-utils = { path = "download-utils", version = "=2.1.0" }
 solana-entry = { path = "entry", version = "=2.1.0" }
-solana-program-entrypoint = { path = "sdk/program-entrypoint", version = "=2.1.0" }
+solana-epoch-info = { path = "sdk/epoch-info", version = "=2.1.0" }
 solana-epoch-schedule = { path = "sdk/epoch-schedule", version = "=2.1.0" }
 solana-faucet = { path = "faucet", version = "=2.1.0" }
 solana-feature-set = { path = "sdk/feature-set", version = "=2.1.0" }
@@ -447,6 +448,7 @@ solana-poh = { path = "poh", version = "=2.1.0" }
 solana-poseidon = { path = "poseidon", version = "=2.1.0" }
 solana-precompile-error = { path = "sdk/precompile-error", version = "=2.1.0" }
 solana-program = { path = "sdk/program", version = "=2.1.0", default-features = false }
+solana-program-entrypoint = { path = "sdk/program-entrypoint", version = "=2.1.0" }
 solana-program-error = { path = "sdk/program-error", version = "=2.1.0" }
 solana-program-memory = { path = "sdk/program-memory", version = "=2.1.0" }
 solana-program-option = { path = "sdk/program-option", version = "=2.1.0" }
