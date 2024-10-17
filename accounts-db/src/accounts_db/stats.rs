@@ -347,6 +347,7 @@ pub struct ShrinkAncientStats {
     pub slots_eligible_to_shrink: AtomicU64,
     pub total_dead_bytes: AtomicU64,
     pub total_alive_bytes: AtomicU64,
+    pub slot: AtomicU64,
 }
 
 #[derive(Debug, Default)]
@@ -399,6 +400,9 @@ pub struct ShrinkStats {
     pub num_ancient_slots_shrunk: AtomicU64,
     pub ancient_slots_added_to_shrink: AtomicU64,
     pub ancient_bytes_added_to_shrink: AtomicU64,
+    pub adding_dead_slots_to_clean: AtomicU64,
+    pub adding_shrink_slots_from_zeros: AtomicU64,
+    pub marking_zero_dead_accounts: AtomicU64,
 }
 
 impl ShrinkStats {
@@ -537,6 +541,22 @@ impl ShrinkStats {
                 (
                     "initial_candidates_count",
                     self.initial_candidates_count.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "adding_dead_slots_to_clean",
+                    self.adding_dead_slots_to_clean.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "adding_shrink_slots_from_zeros",
+                    self.adding_shrink_slots_from_zeros
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "marking_zero_dead_accounts",
+                    self.marking_zero_dead_accounts.swap(0, Ordering::Relaxed),
                     i64
                 ),
             );
@@ -772,6 +792,7 @@ impl ShrinkAncientStats {
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
+            ("slot", self.slot.swap(0, Ordering::Relaxed), i64),
         );
     }
 }
