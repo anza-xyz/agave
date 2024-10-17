@@ -7,7 +7,7 @@ use {
         admin_rpc_post_init::AdminRpcRequestMetadataPostInit,
         banking_trace::{self, BankingTracer, TraceError},
         cache_block_meta_service::{CacheBlockMetaSender, CacheBlockMetaService},
-        cluster_info_vote_listener::{DumpedSlotNotifier, VoteTracker},
+        cluster_info_vote_listener::VoteTracker,
         completed_data_sets_service::CompletedDataSetsService,
         consensus::{
             reconcile_blockstore_roots_with_external_source,
@@ -1362,7 +1362,6 @@ impl Validator {
             Arc::<RwLock<repair::repair_service::OutstandingShredRepairs>>::default();
         let cluster_slots =
             Arc::new(crate::cluster_slots_service::cluster_slots::ClusterSlots::default());
-        let dumped_slot_notifier = DumpedSlotNotifier::default();
 
         let tvu = Tvu::new(
             vote_account,
@@ -1425,7 +1424,6 @@ impl Validator {
             cluster_slots.clone(),
             wen_restart_repair_slots.clone(),
             slot_status_notifier,
-            dumped_slot_notifier.clone(),
         )
         .map_err(ValidatorError::Other)?;
 
@@ -1492,7 +1490,6 @@ impl Validator {
             config.block_production_method.clone(),
             config.enable_block_production_forwarding,
             config.generator_config.clone(),
-            dumped_slot_notifier,
         );
 
         datapoint_info!(

@@ -22,8 +22,12 @@ use {
         rpc_subscriptions::RpcSubscriptions,
     },
     solana_runtime::{
-        bank::Bank, bank_forks::BankForks, commitment::VOTE_THRESHOLD_SIZE,
-        epoch_stakes::EpochStakes, root_bank_cache::RootBankCache,
+        bank::Bank,
+        bank_forks::BankForks,
+        bank_hash_cache::{BankHashCache, DumpedSlotSubscription},
+        commitment::VOTE_THRESHOLD_SIZE,
+        epoch_stakes::EpochStakes,
+        root_bank_cache::RootBankCache,
         vote_sender_types::ReplayVoteReceiver,
     },
     solana_sdk::{
@@ -40,11 +44,11 @@ use {
     },
     std::{
         cmp::max,
-        collections::{BTreeMap, HashMap},
+        collections::HashMap,
         iter::repeat,
         sync::{
             atomic::{AtomicBool, Ordering},
-            Arc, Mutex, MutexGuard, RwLock,
+            Arc, Mutex, RwLock,
         },
         thread::{self, sleep, Builder, JoinHandle},
         time::{Duration, Instant},
@@ -62,75 +66,7 @@ pub type GossipVerifiedVoteHashReceiver = Receiver<(Pubkey, Slot, Hash)>;
 pub type DuplicateConfirmedSlotsSender = Sender<ThresholdConfirmedSlots>;
 pub type DuplicateConfirmedSlotsReceiver = Receiver<ThresholdConfirmedSlots>;
 
-// Used to notify local bank cache that slots have been dumped in replay
-pub type DumpedSlotNotifier = Arc<Mutex<bool>>;
-
 const THRESHOLDS_TO_CHECK: [f64; 2] = [DUPLICATE_THRESHOLD, VOTE_THRESHOLD_SIZE];
-
-struct BankHashCache {
-    hashes: BTreeMap<Slot, Hash>,
-    bank_forks: Arc<RwLock<BankForks>>,
-    root_bank_cache: RootBankCache,
-    last_root: Slot,
-}
-
-impl BankHashCache {
-    fn new(bank_forks: Arc<RwLock<BankForks>>) -> Self {
-        let root_bank_cache = RootBankCache::new(bank_forks.clone());
-        Self {
-            hashes: BTreeMap::default(),
-            bank_forks,
-            root_bank_cache,
-            last_root: 0,
-        }
-    }
-
-    /// Should only be used after `_lock` is acquired from `dumped_slots_notifier` to
-    /// guarantee synchronicity with `self.bank_forks`
-    fn invalidate(&mut self, _lock: &MutexGuard<bool>) {
-        self.hashes.clear();
-    }
-
-    /// Should only be used after `_lock` is acquired from `dumped_slots_notifier` to
-    /// guarantee synchronicity with `self.bank_forks`
-    fn hash(&mut self, slot: Slot, _lock: &MutexGuard<bool>) -> Option<Hash> {
-        if let Some(hash) = self.hashes.get(&slot) {
-            return Some(*hash);
-        }
-
-        let Some(hash) = self.bank_forks.read().unwrap().bank_hash(slot) else {
-            // Bank not yet received, bail
-            return None;
-        };
-
-        if hash == Hash::default() {
-            // If we have not frozen the bank then bail
-            return None;
-        }
-
-        // Cache the slot for future lookup
-        let prev_hash = self.hashes.insert(slot, hash);
-        debug_assert!(
-            prev_hash.is_none(),
-            "Programmer error, this indicates we have dumped and replayed \
-             a block however the cache was not invalidated"
-        );
-        Some(hash)
-    }
-
-    fn root(&mut self) -> Slot {
-        self.root_bank().slot()
-    }
-
-    fn root_bank(&mut self) -> Arc<Bank> {
-        let root_bank = self.root_bank_cache.root_bank();
-        if root_bank.slot() != self.last_root {
-            self.last_root = root_bank.slot();
-            self.hashes = self.hashes.split_off(&self.last_root);
-        }
-        root_bank
-    }
-}
 
 #[derive(Default)]
 pub struct SlotVoteTracker {
@@ -265,7 +201,6 @@ impl ClusterInfoVoteListener {
         blockstore: Arc<Blockstore>,
         bank_notification_sender: Option<BankNotificationSender>,
         duplicate_confirmed_slot_sender: DuplicateConfirmedSlotsSender,
-        dumped_slot_notifier: DumpedSlotNotifier,
     ) -> Self {
         let (verified_vote_transactions_sender, verified_vote_transactions_receiver) = unbounded();
         let listen_thread = {
@@ -289,12 +224,13 @@ impl ClusterInfoVoteListener {
             .name("solCiProcVotes".to_string())
             .spawn(move || {
                 let mut bank_hash_cache = BankHashCache::new(bank_forks);
+                let dumped_slot_subscription = bank_hash_cache.dumped_slot_subscription();
                 let _ = Self::process_votes_loop(
                     exit,
                     verified_vote_transactions_receiver,
                     vote_tracker,
                     &mut bank_hash_cache,
-                    dumped_slot_notifier,
+                    dumped_slot_subscription,
                     subscriptions,
                     gossip_verified_vote_hash_sender,
                     verified_vote_sender,
@@ -382,7 +318,7 @@ impl ClusterInfoVoteListener {
         gossip_vote_txs_receiver: VerifiedVoteTransactionsReceiver,
         vote_tracker: Arc<VoteTracker>,
         bank_hash_cache: &mut BankHashCache,
-        dumped_slot_notifier: DumpedSlotNotifier,
+        dumped_slot_subscription: DumpedSlotSubscription,
         subscriptions: Arc<RpcSubscriptions>,
         gossip_verified_vote_hash_sender: GossipVerifiedVoteHashSender,
         verified_vote_sender: VerifiedVoteSender,
@@ -401,7 +337,7 @@ impl ClusterInfoVoteListener {
                 return Ok(());
             }
 
-            let root_bank = bank_hash_cache.root_bank();
+            let root_bank = bank_hash_cache.get_root_bank_and_prune_cache();
             if last_process_root.elapsed().as_millis() > DEFAULT_MS_PER_SLOT as u128 {
                 let unrooted_optimistic_slots = confirmation_verifier
                     .verify_for_unrooted_optimistic_slots(&root_bank, &blockstore);
@@ -429,7 +365,7 @@ impl ClusterInfoVoteListener {
                 &mut vote_processing_time,
                 &mut latest_vote_slot_per_validator,
                 bank_hash_cache,
-                &dumped_slot_notifier,
+                &dumped_slot_subscription,
             );
             match confirmed_slots {
                 Ok(confirmed_slots) => {
@@ -463,7 +399,7 @@ impl ClusterInfoVoteListener {
         vote_processing_time: &mut Option<VoteProcessingTiming>,
         latest_vote_slot_per_validator: &mut HashMap<Pubkey, Slot>,
         bank_hash_cache: &mut BankHashCache,
-        dumped_slot_notifier: &Mutex<bool>,
+        dumped_slot_subscription: &Mutex<bool>,
     ) -> Result<ThresholdConfirmedSlots> {
         let mut sel = Select::new();
         sel.recv(gossip_vote_txs_receiver);
@@ -495,7 +431,7 @@ impl ClusterInfoVoteListener {
                     vote_processing_time,
                     latest_vote_slot_per_validator,
                     bank_hash_cache,
-                    dumped_slot_notifier,
+                    dumped_slot_subscription,
                 ));
             }
             remaining_wait_time = remaining_wait_time.saturating_sub(start.elapsed());
@@ -520,21 +456,14 @@ impl ClusterInfoVoteListener {
         duplicate_confirmed_slot_sender: &Option<DuplicateConfirmedSlotsSender>,
         latest_vote_slot_per_validator: &mut HashMap<Pubkey, Slot>,
         bank_hash_cache: &mut BankHashCache,
-        dumped_slot_notifier: &Mutex<bool>,
+        dumped_slot_subscription: &Mutex<bool>,
     ) {
         if vote.is_empty() {
             return;
         }
 
-        // Hold lock for whole function
-        let mut dumped_slots = dumped_slot_notifier.lock().unwrap();
-        if *dumped_slots {
-            // We could be smarter and keep a fork cache to only clear affected slots from the cache,
-            // but dumping slots should be extremely rare so it is simpler to invalidate the entire cache.
-            bank_hash_cache.invalidate(&dumped_slots);
-            *dumped_slots = false;
-        }
-
+        // Hold lock for whole function to ensure hash consistency with bank_forks
+        let mut slots_dumped = dumped_slot_subscription.lock().unwrap();
         let (last_vote_slot, last_vote_hash) = vote.last_voted_slot_hash().unwrap();
 
         let latest_vote_slot = latest_vote_slot_per_validator
@@ -546,7 +475,7 @@ impl ClusterInfoVoteListener {
         let vote_slots = vote.slots();
 
         let accumulate_intermediate_votes =
-            if let Some(hash) = bank_hash_cache.hash(last_vote_slot, &dumped_slots) {
+            if let Some(hash) = bank_hash_cache.hash(last_vote_slot, &mut slots_dumped) {
                 // Only accumulate intermediates if we have replayed the same version being voted on, as
                 // otherwise we cannot verify the ancestry or the hashes.
                 // Note: this can only be performed on full tower votes, until deprecate_legacy_vote_ixs feature
@@ -560,7 +489,7 @@ impl ClusterInfoVoteListener {
         let mut get_hash = |slot: Slot| {
             (slot == last_vote_slot)
                 .then_some(last_vote_hash)
-                .or(bank_hash_cache.hash(slot, &dumped_slots))
+                .or(bank_hash_cache.hash(slot, &mut slots_dumped))
         };
 
         // If slot is before the root, ignore it. Iterates from most recent vote slot to oldest.
@@ -677,7 +606,7 @@ impl ClusterInfoVoteListener {
         vote_processing_time: &mut Option<VoteProcessingTiming>,
         latest_vote_slot_per_validator: &mut HashMap<Pubkey, Slot>,
         bank_hash_cache: &mut BankHashCache,
-        dumped_slot_notifier: &Mutex<bool>,
+        dumped_slot_subscription: &Mutex<bool>,
     ) -> ThresholdConfirmedSlots {
         let mut diff: HashMap<Slot, HashMap<Pubkey, bool>> = HashMap::new();
         let mut new_optimistic_confirmed_slots = vec![];
@@ -706,7 +635,7 @@ impl ClusterInfoVoteListener {
                 duplicate_confirmed_slot_sender,
                 latest_vote_slot_per_validator,
                 bank_hash_cache,
-                dumped_slot_notifier,
+                dumped_slot_subscription,
             );
         }
         gossip_vote_txn_processing_time.stop();
