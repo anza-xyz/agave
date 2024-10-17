@@ -823,6 +823,19 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         self.fork_graph = Some(fork_graph);
     }
 
+    pub fn set_environments(
+        &mut self,
+        latest_root_slot: Slot,
+        latest_root_epoch: Epoch,
+        program_runtime_environment_v1: ProgramRuntimeEnvironment,
+        program_runtime_environment_v2: ProgramRuntimeEnvironment,
+    ) {
+        self.latest_root_slot = latest_root_slot;
+        self.latest_root_epoch = latest_root_epoch;
+        self.environments.program_runtime_v1 = program_runtime_environment_v1;
+        self.environments.program_runtime_v2 = program_runtime_environment_v2;
+    }
+
     /// Returns the current environments depending on the given epoch
     pub fn get_environments_for_epoch(&self, epoch: Epoch) -> ProgramRuntimeEnvironments {
         if epoch != self.latest_root_epoch {
