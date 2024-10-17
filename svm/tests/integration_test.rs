@@ -928,24 +928,21 @@ impl WriteProgramInstruction {
         target: Pubkey,
         clamp_data_size: Option<u32>,
     ) -> Transaction {
-        let instruction_data = match self {
-            Self::Print => vec![0],
-            Self::Set => vec![1],
-            Self::Dealloc => vec![2],
+        let (instruction_data, account_metas) = match self {
+            Self::Print => (vec![0], vec![AccountMeta::new_readonly(target, false)]),
+            Self::Set => (vec![1], vec![AccountMeta::new(target, false)]),
+            Self::Dealloc => (
+                vec![2],
+                vec![
+                    AccountMeta::new(target, false),
+                    AccountMeta::new(solana_sdk::incinerator::id(), false),
+                ],
+            ),
             Self::Realloc(new_size) => {
-                let mut vec = vec![3];
-                vec.extend_from_slice(&new_size.to_le_bytes());
-                vec
+                let mut instruction_data = vec![3];
+                instruction_data.extend_from_slice(&new_size.to_le_bytes());
+                (instruction_data, vec![AccountMeta::new(target, false)])
             }
-        };
-
-        let account_metas = match self {
-            Self::Dealloc => vec![
-                AccountMeta::new(target, false),
-                AccountMeta::new(solana_sdk::incinerator::id(), false),
-            ],
-            Self::Print => vec![AccountMeta::new_readonly(target, false)],
-            _ => vec![AccountMeta::new(target, false)],
         };
 
         let mut instructions = vec![];
