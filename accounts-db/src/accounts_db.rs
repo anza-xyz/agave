@@ -8308,7 +8308,7 @@ impl AccountsDb {
 
     fn generate_index_for_slot(
         &self,
-        storage: &Arc<AccountStorageEntry>,
+        storage: &AccountStorageEntry,
         slot: Slot,
         store_id: AccountsFileId,
         rent_collector: &RentCollector,
@@ -8337,13 +8337,6 @@ impl AccountsDb {
                 items_local.push(info.index_info);
             });
 
-            if all_accounts_are_zero_lamports {
-                // this whole slot can likely be marked dead and dropped. Clean
-                // has to determine that. There could be an older non-zero
-                // account for any of these zero lamport accounts.
-                self.dirty_stores.insert(slot, Arc::clone(storage));
-                self.accounts_index.add_uncleaned_roots([slot]);
-            }
             let items_len = items_local.len();
             let items = items_local.into_iter().map(|info| {
                 if let Some(amount_to_top_off_rent_this_account) = Self::stats_for_rent_payers(
@@ -8480,6 +8473,7 @@ impl AccountsDb {
             let amount_to_top_off_rent = AtomicU64::new(0);
             let total_including_duplicates = AtomicU64::new(0);
             let all_accounts_are_zero_lamports_slots = AtomicU64::new(0);
+            let all_zeros_slots = Mutex::new(Vec::<(Slot, Arc<AccountStorageEntry>)>::new());
             let scan_time: u64 = slots
                 .par_chunks(chunk_size)
                 .map(|slots| {
@@ -8545,6 +8539,13 @@ impl AccountsDb {
 
                             total_including_duplicates_sum += total_this_slot;
                             accounts_data_len_sum += accounts_data_len_this_slot;
+                            if all_accounts_are_zero_lamports {
+                                all_zeros_slots
+                                    .lock()
+                                    .unwrap()
+                                    .push((*slot, Arc::clone(&storage)));
+                            }
+
                             insert_us
                         } else {
                             // verify index matches expected and measure the time to get all items
@@ -8755,6 +8756,16 @@ impl AccountsDb {
                     "accounts data len: {}",
                     accounts_data_len.load(Ordering::Relaxed)
                 );
+
+                let all_zero_slots_to_clean = std::mem::take(&mut *all_zeros_slots.lock().unwrap());
+                info!(
+                    "insert all zero slots to clean at startup {}",
+                    all_zero_slots_to_clean.len()
+                );
+                for (slot, storage) in all_zero_slots_to_clean {
+                    self.dirty_stores.insert(slot, storage);
+                    self.accounts_index.add_uncleaned_roots([slot]);
+                }
             }
 
             if pass == 0 {
