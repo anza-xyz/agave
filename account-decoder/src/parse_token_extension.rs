@@ -4,7 +4,7 @@ use {
     spl_token_2022::{
         extension::{self, BaseState, BaseStateWithExtensions, ExtensionType, StateWithExtensions},
         solana_program::pubkey::Pubkey,
-        solana_zk_token_sdk::zk_token_elgamal::pod::ElGamalPubkey,
+        solana_zk_sdk::encryption::pod::elgamal::PodElGamalPubkey,
     },
     spl_token_group_interface::state::{TokenGroup, TokenGroupMember},
     spl_token_metadata_interface::state::TokenMetadata,
@@ -313,7 +313,7 @@ impl From<extension::confidential_transfer::ConfidentialTransferMint>
         confidential_transfer_mint: extension::confidential_transfer::ConfidentialTransferMint,
     ) -> Self {
         let authority: Option<Pubkey> = confidential_transfer_mint.authority.into();
-        let auditor_elgamal_pubkey: Option<ElGamalPubkey> =
+        let auditor_elgamal_pubkey: Option<PodElGamalPubkey> =
             confidential_transfer_mint.auditor_elgamal_pubkey.into();
         Self {
             authority: authority.map(|pubkey| pubkey.to_string()),
@@ -339,7 +339,7 @@ impl From<extension::confidential_transfer_fee::ConfidentialTransferFeeConfig>
         confidential_transfer_fee_config: extension::confidential_transfer_fee::ConfidentialTransferFeeConfig,
     ) -> Self {
         let authority: Option<Pubkey> = confidential_transfer_fee_config.authority.into();
-        let withdraw_withheld_authority_elgamal_pubkey: Option<ElGamalPubkey> =
+        let withdraw_withheld_authority_elgamal_pubkey: Option<PodElGamalPubkey> =
             confidential_transfer_fee_config
                 .withdraw_withheld_authority_elgamal_pubkey
                 .into();
@@ -544,8 +544,8 @@ impl From<extension::group_member_pointer::GroupMemberPointer> for UiGroupMember
 pub struct UiTokenGroup {
     pub update_authority: Option<String>,
     pub mint: String,
-    pub size: u32,
-    pub max_size: u32,
+    pub size: u64,
+    pub max_size: u64,
 }
 
 impl From<TokenGroup> for UiTokenGroup {
@@ -565,7 +565,7 @@ impl From<TokenGroup> for UiTokenGroup {
 pub struct UiTokenGroupMember {
     pub mint: String,
     pub group: String,
-    pub member_number: u32,
+    pub member_number: u64,
 }
 
 impl From<TokenGroupMember> for UiTokenGroupMember {
