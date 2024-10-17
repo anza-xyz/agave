@@ -667,6 +667,7 @@ struct SlotIndexGenerationInfo {
     accounts_data_len: u64,
     amount_to_top_off_rent: u64,
     rent_paying_accounts_by_partition: Vec<Pubkey>,
+    zero_pubkeys: Vec<Pubkey>,
 }
 
 /// The lt hash of old/duplicate accounts
@@ -706,6 +707,8 @@ struct GenerateIndexTimings {
     pub total_slots: u64,
     pub slots_to_clean: u64,
     pub par_duplicates_lt_hash_us: AtomicU64,
+    pub visit_zeros_us: u64,
+    pub num_zero_single_refs: u64,
 }
 
 #[derive(Default, Debug, PartialEq, Eq)]
@@ -787,6 +790,12 @@ impl GenerateIndexTimings {
                 self.par_duplicates_lt_hash_us.load(Ordering::Relaxed),
                 i64
             ),
+            (
+                "num_zero_single_refs",
+                self.num_zero_single_refs as i64,
+                i64
+            ),
+            ("visit_zeros_us", self.visit_zeros_us as i64, i64),
         );
     }
 }
@@ -8374,6 +8383,7 @@ impl AccountsDb {
         let mut num_accounts_rent_paying = 0;
         let mut amount_to_top_off_rent = 0;
         let mut stored_size_alive = 0;
+        let mut zero_pubkeys = vec![];
 
         let (dirty_pubkeys, insert_time_us, mut generate_index_results) = {
             let mut items_local = Vec::default();
@@ -8381,6 +8391,7 @@ impl AccountsDb {
                 stored_size_alive += info.stored_size_aligned;
                 if info.index_info.lamports > 0 {
                     accounts_data_len += info.index_info.data_len;
+                    zero_pubkeys.push(info.index_info.pubkey);
                 }
                 items_local.push(info.index_info);
             });
@@ -8465,6 +8476,7 @@ impl AccountsDb {
             accounts_data_len,
             amount_to_top_off_rent,
             rent_paying_accounts_by_partition,
+            zero_pubkeys,
         }
     }
 
@@ -8492,6 +8504,7 @@ impl AccountsDb {
 
         let rent_paying_accounts_by_partition =
             Mutex::new(RentPayingAccountsByPartition::new(schedule));
+        let zero_pubkeys = Mutex::new(HashSet::new());
         let mut outer_duplicates_lt_hash = None;
 
         // pass == 0 always runs and generates the index
@@ -8551,6 +8564,7 @@ impl AccountsDb {
                                 amount_to_top_off_rent: amount_to_top_off_rent_this_slot,
                                 rent_paying_accounts_by_partition:
                                     rent_paying_accounts_by_partition_this_slot,
+                                zero_pubkeys: zero_pubkeys_this_slot,
                             } = self.generate_index_for_slot(
                                 &storage,
                                 *slot,
@@ -8573,6 +8587,10 @@ impl AccountsDb {
                                 .for_each(|k| {
                                     rent_paying_accounts_by_partition.add_account(k);
                                 });
+                            let mut zero_pubkeys = zero_pubkeys.lock().unwrap();
+                            zero_pubkeys_this_slot.into_iter().for_each(|k| {
+                                zero_pubkeys.insert(k);
+                            });
 
                             insert_us
                         } else {
@@ -8719,6 +8737,12 @@ impl AccountsDb {
                     }
                 }
 
+                let zero_pubkeys_to_visit = std::mem::take(&mut *zero_pubkeys.lock().unwrap());
+                let (num_zero_single_refs, visit_zeros_us) =
+                    measure_us!(self.visit_zero_pubkeys_during_startup(&zero_pubkeys_to_visit));
+                timings.visit_zeros_us = visit_zeros_us;
+                timings.num_zero_single_refs = num_zero_single_refs;
+
                 // subtract data.len() from accounts_data_len for all old accounts that are in the index twice
                 let mut accounts_data_len_dedup_timer =
                     Measure::start("handle accounts data len duplicates");
@@ -8824,6 +8848,32 @@ impl AccountsDb {
             // callers of this are typically run in parallel, so many threads will be sleeping at different starting intervals, waiting to resume insertion.
             sleep(Duration::from_millis(10));
         }
+    }
+
+    /// Visit zero lamport pubkeys and populate zero_lamport_single_ref info on
+    /// storage.
+    fn visit_zero_pubkeys_during_startup(&self, pubkeys: &HashSet<Pubkey>) -> u64 {
+        let mut count = 0;
+        self.accounts_index.scan(
+            pubkeys.iter(),
+            |_pubkey, slots_refs, _entry| {
+                if let Some((slot_list, ref_count)) = slots_refs {
+                    if slot_list.len() == 1 && ref_count == 1 {
+                        if let Some((slot_alive, acct_info)) = slot_list.first() {
+                            if acct_info.is_zero_lamport() && !acct_info.is_cached() {
+                                count += 1;
+                                self.zero_lamport_single_ref_found(*slot_alive, acct_info.offset());
+                            }
+                        }
+                    }
+                }
+                AccountsIndexScanResult::OnlyKeepInMemoryIfDirty
+            },
+            None,
+            false,
+            ScanFilter::All,
+        );
+        count
     }
 
     /// Used during generate_index() to:
