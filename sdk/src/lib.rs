@@ -90,7 +90,9 @@ pub mod quic;
 pub mod rent_collector;
 pub mod rent_debits;
 pub mod reserved_account_keys;
+#[deprecated(since = "2.1.0", note = "Use `solana-reward-info` crate instead")]
 pub mod reward_info;
+#[deprecated(since = "2.1.0", note = "Use `solana-reward-info` crate instead")]
 pub mod reward_type;
 pub mod rpc_port;
 pub mod secp256k1_instruction;
