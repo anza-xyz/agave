@@ -36,6 +36,7 @@ solana-account-info = { workspace = true, features = ["bincode"] }
 solana-atomic-u64 = { workspace = true }
 solana-bincode = { workspace = true }
 solana-clock = { workspace = true, features = ["serde"] }
+solana-cpi = { workspace = true }
 solana-decode-error = { workspace = true }
 solana-epoch-schedule = { workspace = true, features = ["serde"] }
 solana-frozen-abi = { workspace = true, optional = true, features = ["frozen-abi"] }
@@ -67,6 +68,7 @@ solana-serialize-utils = { workspace = true }
 solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 solana-short-vec = { workspace = true }
 solana-slot-hashes = { workspace = true, features = ["serde"] }
+solana-stable-layout = { workspace = true }
 thiserror = { workspace = true }
 
 # This is currently needed to build on-chain programs reliably.
