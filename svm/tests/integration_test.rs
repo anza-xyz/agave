@@ -870,7 +870,7 @@ fn simple_nonce(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> V
         }
     }
 
-    // 4: safety check that rent-paying nonce fee-payers are verboten (blockhash fee-payers may be below rent-exemption)
+    // 4: safety check that nonce fee-payers are required to be rent-exempt (blockhash fee-payers may be below rent-exemption)
     // if this situation is ever allowed in the future, the nonce account MUST be hidden for fee-only transactions
     // as an aside, nonce accounts closed by WithdrawNonceAccount are safe because they are ordinary executed transactions
     // we also dont care whether a non-fee nonce (or any account) pays rent because rent is charged on executed transactions
