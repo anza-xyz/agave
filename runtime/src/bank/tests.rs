@@ -10122,11 +10122,7 @@ fn test_call_precomiled_program() {
         let mut rng = rand::thread_rng();
         let mut seed = [0u8; ed25519_dalek::SECRET_KEY_LENGTH];
         rng.fill_bytes(&mut seed);
-        let secret =
-            ed25519_dalek::SecretKey::from_bytes(&seed[..ed25519_dalek::SECRET_KEY_LENGTH])
-                .unwrap();
-        let public = ed25519_dalek::PublicKey::from(&secret);
-        ed25519_dalek::Keypair { secret, public }
+        ed25519_dalek::SigningKey::from_bytes(&seed)
     };
     let message_arr = b"hello";
     let instruction =
