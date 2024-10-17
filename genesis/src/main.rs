@@ -16,7 +16,9 @@ use {
         },
     },
     solana_entry::poh::compute_hashes_per_tick,
-    solana_genesis::{genesis_accounts::add_genesis_accounts, Base64Account},
+    solana_genesis::{
+        genesis_accounts::add_genesis_accounts, Base64Account, Base64ValidatorAccount,
+    },
     solana_ledger::{blockstore::create_new_ledger, blockstore_options::LedgerColumnOptions},
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS,
@@ -49,6 +51,7 @@ use {
         io::{self, Read},
         path::PathBuf,
         process,
+        slice::Iter,
         str::FromStr,
         time::Duration,
     },
@@ -110,6 +113,62 @@ pub fn load_genesis_accounts(file: &str, genesis_config: &mut GenesisConfig) -> 
     }
 
     Ok(lamports)
+}
+
+pub fn load_validator_accounts(
+    file: &str,
+    commission: u8,
+    rent: &Rent,
+    genesis_config: &mut GenesisConfig,
+) -> io::Result<()> {
+    let accounts_file = File::open(file)?;
+    let validator_genesis_accounts: Vec<Base64ValidatorAccount> =
+        serde_yaml::from_reader(accounts_file)
+            .map_err(|err| io::Error::new(io::ErrorKind::Other, format!("{err:?}")))?;
+
+    for account_details in validator_genesis_accounts {
+        let pubkeys = [
+            pubkey_from_str(account_details.identity_account.as_str()).map_err(|err| {
+                io::Error::new(
+                    io::ErrorKind::Other,
+                    format!(
+                        "Invalid pubkey/keypair {}: {:?}",
+                        account_details.identity_account, err
+                    ),
+                )
+            })?,
+            pubkey_from_str(account_details.vote_account.as_str()).map_err(|err| {
+                io::Error::new(
+                    io::ErrorKind::Other,
+                    format!(
+                        "Invalid pubkey/keypair {}: {:?}",
+                        account_details.vote_account, err
+                    ),
+                )
+            })?,
+            pubkey_from_str(account_details.stake_account.as_str()).map_err(|err| {
+                io::Error::new(
+                    io::ErrorKind::Other,
+                    format!(
+                        "Invalid pubkey/keypair {}: {:?}",
+                        account_details.stake_account, err
+                    ),
+                )
+            })?,
+        ];
+
+        add_validator_accounts(
+            genesis_config,
+            &mut pubkeys.iter(),
+            account_details.balance_lamports,
+            account_details.stake_lamports,
+            commission,
+            rent,
+            None,
+        );
+    }
+
+    Ok(())
 }
 
 fn check_rpc_genesis_hash(
@@ -174,6 +233,49 @@ fn features_to_deactivate_for_cluster(
             });
     }
     Ok(features_to_deactivate)
+}
+
+fn add_validator_accounts(
+    genesis_config: &mut GenesisConfig,
+    pubkeys_iter: &mut Iter<Pubkey>,
+    lamports: u64,
+    stake_lamports: u64,
+    commission: u8,
+    rent: &Rent,
+    authorized_pubkey: Option<&Pubkey>,
+) {
+    loop {
+        let Some(identity_pubkey) = pubkeys_iter.next() else {
+            break;
+        };
+        let vote_pubkey = pubkeys_iter.next().unwrap();
+        let stake_pubkey = pubkeys_iter.next().unwrap();
+
+        genesis_config.add_account(
+            *identity_pubkey,
+            AccountSharedData::new(lamports, 0, &system_program::id()),
+        );
+
+        let vote_account = vote_state::create_account_with_authorized(
+            identity_pubkey,
+            identity_pubkey,
+            identity_pubkey,
+            commission,
+            VoteState::get_rent_exempt_reserve(rent).max(1),
+        );
+
+        genesis_config.add_account(
+            *stake_pubkey,
+            stake_state::create_account(
+                authorized_pubkey.unwrap_or(identity_pubkey),
+                vote_pubkey,
+                &vote_account,
+                rent,
+                stake_lamports,
+            ),
+        );
+        genesis_config.add_account(*vote_pubkey, vote_account);
+    }
 }
 
 #[allow(clippy::cognitive_complexity)]
@@ -423,6 +525,14 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .help("The location of pubkey for primordial accounts and balance"),
         )
         .arg(
+            Arg::with_name("validator_accounts_file")
+                .long("validator-accounts-file")
+                .value_name("FILENAME")
+                .takes_value(true)
+                .multiple(true)
+                .help("The location of identity, vote, and stake pubkeys and balances for validator accounts"),
+        )
+        .arg(
             Arg::with_name("cluster_type")
                 .long("cluster-type")
                 .possible_values(&ClusterType::STRINGS)
@@ -627,43 +737,17 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     }
 
     let commission = value_t_or_exit!(matches, "vote_commission_percentage", u8);
+    let rent = genesis_config.rent.clone();
 
-    let mut bootstrap_validator_pubkeys_iter = bootstrap_validator_pubkeys.iter();
-    loop {
-        let Some(identity_pubkey) = bootstrap_validator_pubkeys_iter.next() else {
-            break;
-        };
-        let vote_pubkey = bootstrap_validator_pubkeys_iter.next().unwrap();
-        let stake_pubkey = bootstrap_validator_pubkeys_iter.next().unwrap();
-
-        genesis_config.add_account(
-            *identity_pubkey,
-            AccountSharedData::new(bootstrap_validator_lamports, 0, &system_program::id()),
-        );
-
-        let vote_account = vote_state::create_account_with_authorized(
-            identity_pubkey,
-            identity_pubkey,
-            identity_pubkey,
-            commission,
-            VoteState::get_rent_exempt_reserve(&genesis_config.rent).max(1),
-        );
-
-        genesis_config.add_account(
-            *stake_pubkey,
-            stake_state::create_account(
-                bootstrap_stake_authorized_pubkey
-                    .as_ref()
-                    .unwrap_or(identity_pubkey),
-                vote_pubkey,
-                &vote_account,
-                &genesis_config.rent,
-                bootstrap_validator_stake_lamports,
-            ),
-        );
-
-        genesis_config.add_account(*vote_pubkey, vote_account);
-    }
+    add_validator_accounts(
+        &mut genesis_config,
+        &mut bootstrap_validator_pubkeys.iter(),
+        bootstrap_validator_lamports,
+        bootstrap_validator_stake_lamports,
+        commission,
+        &rent,
+        bootstrap_stake_authorized_pubkey.as_ref(),
+    );
 
     if let Some(creation_time) = unix_timestamp_from_rfc3339_datetime(&matches, "creation_time") {
         genesis_config.creation_time = creation_time;
@@ -688,6 +772,12 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     if let Some(files) = matches.values_of("primordial_accounts_file") {
         for file in files {
             load_genesis_accounts(file, &mut genesis_config)?;
+        }
+    }
+
+    if let Some(files) = matches.values_of("validator_accounts_file") {
+        for file in files {
+            load_validator_accounts(file, commission, &rent, &mut genesis_config)?;
         }
     }
 
@@ -810,7 +900,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 mod tests {
     use {
         super::*,
-        solana_sdk::genesis_config::GenesisConfig,
+        solana_sdk::{borsh1, genesis_config::GenesisConfig, stake},
         std::{collections::HashMap, fs::remove_file, io::Write, path::Path},
     };
 
@@ -1149,5 +1239,126 @@ mod tests {
         remove_file(path).unwrap();
 
         assert_eq!(genesis_config.accounts.len(), 3);
+    }
+
+    #[test]
+    fn test_append_validator_accounts_to_genesis() {
+        // Test invalid file returns error
+        assert!(load_validator_accounts(
+            "unknownfile",
+            100,
+            &Rent::default(),
+            &mut GenesisConfig::default()
+        )
+        .is_err());
+
+        let mut genesis_config = GenesisConfig::default();
+
+        let validator_accounts = vec![
+            Base64ValidatorAccount {
+                identity_account: solana_sdk::pubkey::new_rand().to_string(),
+                vote_account: solana_sdk::pubkey::new_rand().to_string(),
+                stake_account: solana_sdk::pubkey::new_rand().to_string(),
+                balance_lamports: 100000000000,
+                stake_lamports: 10000000000,
+            },
+            Base64ValidatorAccount {
+                identity_account: solana_sdk::pubkey::new_rand().to_string(),
+                vote_account: solana_sdk::pubkey::new_rand().to_string(),
+                stake_account: solana_sdk::pubkey::new_rand().to_string(),
+                balance_lamports: 200000000000,
+                stake_lamports: 20000000000,
+            },
+            Base64ValidatorAccount {
+                identity_account: solana_sdk::pubkey::new_rand().to_string(),
+                vote_account: solana_sdk::pubkey::new_rand().to_string(),
+                stake_account: solana_sdk::pubkey::new_rand().to_string(),
+                balance_lamports: 300000000000,
+                stake_lamports: 30000000000,
+            },
+        ];
+
+        let serialized = serde_yaml::to_string(&validator_accounts).unwrap();
+
+        // Write the YAML string to a file
+        let path = Path::new("test_append_validator_accounts_to_genesis.yml");
+        let mut file = File::create(path).unwrap();
+        file.write_all(b"---\n").unwrap();
+        file.write_all(serialized.as_bytes()).unwrap();
+
+        // Load the validator accounts from the file
+        load_validator_accounts(
+            "test_append_validator_accounts_to_genesis.yml",
+            100,
+            &Rent::default(),
+            &mut genesis_config,
+        )
+        .expect("Failed to load validator accounts");
+
+        remove_file(path).unwrap();
+
+        let accounts_per_validator = 3;
+        let expected_accounts_len = validator_accounts.len() * accounts_per_validator;
+        {
+            assert_eq!(genesis_config.accounts.len(), expected_accounts_len);
+
+            // Test account data matches
+            for b64_account in validator_accounts.iter() {
+                // Check Identity
+                let identity_pk = b64_account.identity_account.parse().unwrap();
+                assert_eq!(
+                    system_program::id(),
+                    genesis_config.accounts[&identity_pk].owner
+                );
+                assert_eq!(
+                    b64_account.balance_lamports,
+                    genesis_config.accounts[&identity_pk].lamports
+                );
+
+                // Check vote account
+                let vote_pk = b64_account.vote_account.parse().unwrap();
+                let vote_data = genesis_config.accounts[&vote_pk].data.clone();
+                let vote_state = VoteState::deserialize(&vote_data).unwrap();
+                assert_eq!(vote_state.node_pubkey, identity_pk);
+                assert_eq!(vote_state.authorized_withdrawer, identity_pk);
+                let authorized_voters = vote_state.authorized_voters();
+                assert_eq!(authorized_voters.first().unwrap().1, &identity_pk);
+
+                // check stake account
+                let stake_pk = b64_account.stake_account.parse().unwrap();
+                assert_eq!(
+                    b64_account.stake_lamports,
+                    genesis_config.accounts[&stake_pk].lamports
+                );
+
+                let stake_data = genesis_config.accounts[&stake_pk].data.clone();
+                let stake_state =
+                    borsh1::try_from_slice_unchecked::<StakeStateV2>(&stake_data).unwrap();
+                assert!(
+                    matches!(stake_state, StakeStateV2::Stake(_, _, _)),
+                    "Expected StakeStateV2::Stake variant"
+                );
+
+                if let StakeStateV2::Stake(meta, stake, stake_flags) = stake_state {
+                    assert_eq!(meta.authorized.staker, identity_pk);
+                    assert_eq!(meta.authorized.withdrawer, identity_pk);
+
+                    assert_eq!(stake.delegation.voter_pubkey, vote_pk);
+                    let stake_account = AccountSharedData::new(
+                        b64_account.stake_lamports,
+                        StakeStateV2::size_of(),
+                        &solana_stake_program::id(),
+                    );
+                    let rent_exempt_reserve =
+                        &Rent::default().minimum_balance(stake_account.data().len());
+                    assert_eq!(
+                        stake.delegation.stake,
+                        b64_account.stake_lamports - rent_exempt_reserve
+                    );
+
+                    assert_eq!(stake_flags, stake::stake_flags::StakeFlags::empty());
+                }
+            }
+        }
     }
 }
