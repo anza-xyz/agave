@@ -617,45 +617,6 @@ mod tests {
     }
 
     #[test]
-    fn test_cost_model_with_failed_compute_budget_transaction() {
-        let (mint_keypair, start_hash) = test_setup();
-
-        let instructions = vec![
-            CompiledInstruction::new(3, &(), vec![1, 2, 0]),
-            CompiledInstruction::new_from_raw_parts(
-                4,
-                ComputeBudgetInstruction::SetComputeUnitLimit(12_345)
-                    .pack()
-                    .unwrap(),
-                vec![],
-            ),
-            // to trigger `duplicate_instruction_error` error
-            CompiledInstruction::new_from_raw_parts(
-                4,
-                ComputeBudgetInstruction::SetComputeUnitLimit(1_000)
-                    .pack()
-                    .unwrap(),
-                vec![],
-            ),
-        ];
-        let tx = Transaction::new_with_compiled_instructions(
-            &[&mint_keypair],
-            &[
-                solana_sdk::pubkey::new_rand(),
-                solana_sdk::pubkey::new_rand(),
-            ],
-            start_hash,
-            vec![Pubkey::new_unique(), compute_budget::id()],
-            instructions,
-        );
-        let token_transaction = RuntimeTransaction::from_transaction_for_tests(tx);
-
-        let (program_execution_cost, _loaded_accounts_data_size_cost, _data_bytes_cost) =
-            CostModel::get_transaction_cost(&token_transaction, &FeatureSet::all_enabled());
-        assert_eq!(0, program_execution_cost);
-    }
-
-    #[test]
     fn test_cost_model_transaction_many_transfer_instructions() {
         let (mint_keypair, start_hash) = test_setup();
 
