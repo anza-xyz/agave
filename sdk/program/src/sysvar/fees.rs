@@ -20,6 +20,7 @@
 
 #![allow(deprecated)]
 
+pub use solana_reserved_account_keys::sysvar::fees::{check_id, id, ID};
 use {
     crate::{
         fee_calculator::FeeCalculator, impl_sysvar_get, program_error::ProgramError, sysvar::Sysvar,
@@ -27,7 +28,7 @@ use {
     solana_sdk_macro::CloneZeroed,
 };
 
-crate::declare_deprecated_sysvar_id!("SysvarFees111111111111111111111111111111111", Fees);
+crate::impl_sysvar_id!(Fees);
 
 /// Transaction fees.
 #[deprecated(

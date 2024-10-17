@@ -45,7 +45,10 @@
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
-pub use crate::stake_history::StakeHistory;
+pub use {
+    crate::stake_history::StakeHistory,
+    solana_reserved_account_keys::sysvar::stake_history::{check_id, id, ID},
+};
 use {
     crate::{
         stake_history::{StakeHistoryEntry, StakeHistoryGetEntry, MAX_ENTRIES},
@@ -54,7 +57,7 @@ use {
     solana_clock::Epoch,
 };
 
-crate::declare_sysvar_id!("SysvarStakeHistory1111111111111111111111111", StakeHistory);
+crate::impl_sysvar_id!(StakeHistory);
 
 impl Sysvar for StakeHistory {
     // override

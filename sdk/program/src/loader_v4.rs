@@ -8,8 +8,7 @@ use crate::{
     pubkey::Pubkey,
     system_instruction,
 };
-
-crate::declare_id!("LoaderV411111111111111111111111111111111111");
+pub use solana_reserved_account_keys::loader_v4::{check_id, id, ID};
 
 /// Cooldown before a program can be un-/redeployed again
 pub const DEPLOYMENT_COOLDOWN_IN_SLOTS: u64 = 750;

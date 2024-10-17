@@ -126,10 +126,13 @@
 //! #
 //! # Ok::<(), anyhow::Error>(())
 //! ```
-pub use crate::rent::Rent;
 use crate::{impl_sysvar_get, program_error::ProgramError, sysvar::Sysvar};
+pub use {
+    crate::rent::Rent,
+    solana_reserved_account_keys::sysvar::rent::{check_id, id, ID},
+};
 
-crate::declare_sysvar_id!("SysvarRent111111111111111111111111111111111", Rent);
+crate::impl_sysvar_id!(Rent);
 
 impl Sysvar for Rent {
     impl_sysvar_get!(sol_get_rent_sysvar);

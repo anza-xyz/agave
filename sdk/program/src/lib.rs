@@ -551,7 +551,7 @@ pub use {
 /// [np]: https://docs.solanalabs.com/runtime/programs#config-program
 pub mod config {
     pub mod program {
-        crate::declare_id!("Config1111111111111111111111111111111111111");
+        pub use solana_reserved_account_keys::config::{check_id, id, ID};
     }
 }
 

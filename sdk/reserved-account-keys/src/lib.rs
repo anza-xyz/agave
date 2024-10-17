@@ -1,28 +1,126 @@
 //! Collection of reserved account keys that cannot be write-locked by transactions.
 //! New reserved account keys may be added as long as they specify a feature
 //! gate that transitions the key into read-only at an epoch boundary.
-
-#![cfg(feature = "full")]
-
+#![no_std]
+#![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#[cfg(all(feature = "std", not(target_os = "solana")))]
+extern crate std;
+#[cfg(all(feature = "std", not(target_os = "solana")))]
 use {
-    crate::{
-        address_lookup_table, bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
-        compute_budget, config, ed25519_program, feature, loader_v4, native_loader, pubkey::Pubkey,
-        secp256k1_program, stake, system_program, sysvar, vote,
-    },
-    lazy_static::lazy_static,
     solana_feature_set::{self as feature_set, FeatureSet},
+    solana_pubkey::Pubkey,
     std::collections::{HashMap, HashSet},
 };
 
-// Inline zk token program id since it isn't available in the sdk
-mod zk_token_proof_program {
-    solana_sdk::declare_id!("ZkTokenProof1111111111111111111111111111111");
+pub mod address_lookup_table {
+    solana_pubkey::declare_id!("AddressLookupTab1e1111111111111111111111111");
 }
 
-// Inline zk-elgamal-proof program id since it isn't available in the sdk
-mod zk_elgamal_proof_program {
-    solana_sdk::declare_id!("ZkE1Gama1Proof11111111111111111111111111111");
+pub mod bpf_loader {
+    solana_pubkey::declare_id!("BPFLoader2111111111111111111111111111111111");
+}
+
+pub mod bpf_loader_deprecated {
+    solana_pubkey::declare_id!("BPFLoader1111111111111111111111111111111111");
+}
+
+pub mod bpf_loader_upgradeable {
+    solana_pubkey::declare_id!("BPFLoaderUpgradeab1e11111111111111111111111");
+}
+
+pub mod compute_budget {
+    solana_pubkey::declare_id!("ComputeBudget111111111111111111111111111111");
+}
+
+pub mod config {
+    solana_pubkey::declare_id!("Config1111111111111111111111111111111111111");
+}
+
+pub mod ed25519_program {
+    solana_pubkey::declare_id!("Ed25519SigVerify111111111111111111111111111");
+}
+
+pub mod feature {
+    solana_pubkey::declare_id!("Feature111111111111111111111111111111111111");
+}
+
+pub mod loader_v4 {
+    solana_pubkey::declare_id!("LoaderV411111111111111111111111111111111111");
+}
+
+pub mod native_loader {
+    solana_pubkey::declare_id!("NativeLoader1111111111111111111111111111111");
+}
+
+pub mod secp256k1_program {
+    solana_pubkey::declare_id!("KeccakSecp256k11111111111111111111111111111");
+}
+
+pub mod stake {
+    pub mod config {
+        solana_pubkey::declare_deprecated_id!("StakeConfig11111111111111111111111111111111");
+    }
+    pub mod program {
+        solana_pubkey::declare_id!("Stake11111111111111111111111111111111111111");
+    }
+}
+
+pub mod system_program {
+    solana_pubkey::declare_id!("11111111111111111111111111111111");
+}
+
+pub mod vote {
+    solana_pubkey::declare_id!("Vote111111111111111111111111111111111111111");
+}
+
+pub mod sysvar {
+    // Owner pubkey for sysvar accounts
+    solana_pubkey::declare_id!("Sysvar1111111111111111111111111111111111111");
+    pub mod clock {
+        solana_pubkey::declare_id!("SysvarC1ock11111111111111111111111111111111");
+    }
+    pub mod epoch_rewards {
+        solana_pubkey::declare_id!("SysvarEpochRewards1111111111111111111111111");
+    }
+    pub mod epoch_schedule {
+        solana_pubkey::declare_id!("SysvarEpochSchedu1e111111111111111111111111");
+    }
+    pub mod fees {
+        solana_pubkey::declare_id!("SysvarFees111111111111111111111111111111111");
+    }
+    pub mod instructions {
+        solana_pubkey::declare_id!("Sysvar1nstructions1111111111111111111111111");
+    }
+    pub mod last_restart_slot {
+        solana_pubkey::declare_id!("SysvarLastRestartS1ot1111111111111111111111");
+    }
+    pub mod recent_blockhashes {
+        solana_pubkey::declare_id!("SysvarRecentB1ockHashes11111111111111111111");
+    }
+    pub mod rent {
+        solana_pubkey::declare_id!("SysvarRent111111111111111111111111111111111");
+    }
+    pub mod rewards {
+        solana_pubkey::declare_id!("SysvarRewards111111111111111111111111111111");
+    }
+    pub mod slot_hashes {
+        solana_pubkey::declare_id!("SysvarS1otHashes111111111111111111111111111");
+    }
+    pub mod slot_history {
+        solana_pubkey::declare_id!("SysvarS1otHistory11111111111111111111111111");
+    }
+    pub mod stake_history {
+        solana_pubkey::declare_id!("SysvarStakeHistory1111111111111111111111111");
+    }
+}
+
+pub mod zk_token_proof_program {
+    solana_pubkey::declare_id!("ZkTokenProof1111111111111111111111111111111");
+}
+
+pub mod zk_elgamal_proof_program {
+    solana_pubkey::declare_id!("ZkE1Gama1Proof11111111111111111111111111111");
 }
 
 // ReservedAccountKeys is not serialized into or deserialized from bank
@@ -35,6 +133,7 @@ impl ::solana_frozen_abi::abi_example::AbiExample for ReservedAccountKeys {
     }
 }
 
+#[cfg(all(feature = "std", not(target_os = "solana")))]
 /// `ReservedAccountKeys` holds the set of currently active/inactive
 /// account keys that are reserved by the protocol and may not be write-locked
 /// during transaction processing.
@@ -47,12 +146,14 @@ pub struct ReservedAccountKeys {
     inactive: HashMap<Pubkey, Pubkey>,
 }
 
+#[cfg(all(feature = "std", not(target_os = "solana")))]
 impl Default for ReservedAccountKeys {
     fn default() -> Self {
         Self::new(&RESERVED_ACCOUNTS)
     }
 }
 
+#[cfg(all(feature = "std", not(target_os = "solana")))]
 impl ReservedAccountKeys {
     /// Compute a set of active / inactive reserved account keys from a list of
     /// keys with a designated feature id. If a reserved account key doesn't
@@ -119,6 +220,7 @@ impl ReservedAccountKeys {
     }
 }
 
+#[cfg(all(feature = "std", not(target_os = "solana")))]
 /// `ReservedAccount` represents a reserved account that will not be
 /// write-lockable by transactions. If a feature id is set, the account will
 /// become read-only only after the feature has been activated.
@@ -128,6 +230,7 @@ struct ReservedAccount {
     feature_id: Option<Pubkey>,
 }
 
+#[cfg(all(feature = "std", not(target_os = "solana")))]
 impl ReservedAccount {
     fn new_pending(key: Pubkey, feature_id: Pubkey) -> Self {
         Self {
@@ -144,18 +247,19 @@ impl ReservedAccount {
     }
 }
 
+#[cfg(all(feature = "std", not(target_os = "solana")))]
 // New reserved accounts should be added in alphabetical order and must specify
 // a feature id for activation. Reserved accounts cannot be removed from this
 // list without breaking consensus.
-lazy_static! {
-    static ref RESERVED_ACCOUNTS: Vec<ReservedAccount> = [
+lazy_static::lazy_static! {
+    static ref RESERVED_ACCOUNTS: std::vec::Vec<ReservedAccount> = [
         // builtin programs
-        ReservedAccount::new_pending(address_lookup_table::program::id(), feature_set::add_new_reserved_account_keys::id()),
+        ReservedAccount::new_pending(address_lookup_table::id(), feature_set::add_new_reserved_account_keys::id()),
         ReservedAccount::new_active(bpf_loader::id()),
         ReservedAccount::new_active(bpf_loader_deprecated::id()),
         ReservedAccount::new_active(bpf_loader_upgradeable::id()),
         ReservedAccount::new_pending(compute_budget::id(), feature_set::add_new_reserved_account_keys::id()),
-        ReservedAccount::new_active(config::program::id()),
+        ReservedAccount::new_active(config::id()),
         ReservedAccount::new_pending(ed25519_program::id(), feature_set::add_new_reserved_account_keys::id()),
         ReservedAccount::new_active(feature::id()),
         ReservedAccount::new_pending(loader_v4::id(), feature_set::add_new_reserved_account_keys::id()),
@@ -164,7 +268,7 @@ lazy_static! {
         ReservedAccount::new_active(stake::config::id()),
         ReservedAccount::new_active(stake::program::id()),
         ReservedAccount::new_active(system_program::id()),
-        ReservedAccount::new_active(vote::program::id()),
+        ReservedAccount::new_active(vote::id()),
         ReservedAccount::new_pending(zk_elgamal_proof_program::id(), feature_set::add_new_reserved_account_keys::id()),
         ReservedAccount::new_pending(zk_token_proof_program::id(), feature_set::add_new_reserved_account_keys::id()),
 
@@ -222,7 +326,7 @@ mod tests {
         let feature_ids = [Pubkey::new_unique(), Pubkey::new_unique()];
         let active_reserved_key = Pubkey::new_unique();
         let pending_reserved_keys = [Pubkey::new_unique(), Pubkey::new_unique()];
-        let reserved_accounts = vec![
+        let reserved_accounts = std::vec![
             ReservedAccount::new_active(active_reserved_key),
             ReservedAccount::new_pending(pending_reserved_keys[0], feature_ids[0]),
             ReservedAccount::new_pending(pending_reserved_keys[1], feature_ids[1]),
