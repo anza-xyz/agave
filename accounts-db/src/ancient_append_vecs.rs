@@ -415,6 +415,9 @@ impl AccountsDb {
                 .max(MINUMAL_IDEAL_STORAGE_SIZE),
         )
         .unwrap();
+        self.shrink_ancient_stats
+            .ideal_storage_size
+            .store(tuning.ideal_storage_size.into(), Ordering::Relaxed);
 
         std::mem::swap(
             &mut *self.best_ancient_slots_to_shrink.write().unwrap(),
@@ -595,9 +598,6 @@ impl AccountsDb {
             })
             .count()
             .saturating_sub(randoms as usize);
-        self.shrink_ancient_stats
-            .ideal_storage_size
-            .store(tuning.ideal_storage_size.into(), Ordering::Relaxed);
         self.shrink_ancient_stats
             .slots_eligible_to_shrink
             .fetch_add(should_shrink_count as u64, Ordering::Relaxed);
