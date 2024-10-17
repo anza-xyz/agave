@@ -86,7 +86,6 @@ pub mod poh_config;
 pub mod precompiles;
 pub mod program_utils;
 pub mod pubkey;
-pub mod quic;
 pub mod rent_collector;
 pub mod rent_debits;
 pub mod reserved_account_keys;
@@ -139,6 +138,9 @@ pub use solana_program_memory as program_memory;
 /// assert_eq!(ID, my_id);
 /// ```
 pub use solana_pubkey::pubkey;
+#[cfg(feature = "full")]
+#[deprecated(since = "2.1.0", note = "Use `solana-quic-definitions` crate instead")]
+pub use solana_quic_definitions as quic;
 #[deprecated(since = "2.1.0", note = "Use `solana-sanitize` crate instead")]
 pub use solana_sanitize as sanitize;
 /// Same as `declare_id` except report that this id has been deprecated.
