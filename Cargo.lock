@@ -6447,6 +6447,7 @@ dependencies = [
  "solana-net-utils",
  "solana-perf",
  "solana-poh",
+ "solana-prio-graph-scheduler",
  "solana-program-runtime",
  "solana-quic-client",
  "solana-rayon-threadlimit",
@@ -7276,6 +7277,37 @@ version = "2.1.0"
 dependencies = [
  "num-traits",
  "solana-decode-error",
+]
+
+[[package]]
+name = "solana-prio-graph-scheduler"
+version = "2.1.0"
+dependencies = [
+ "ahash 0.8.10",
+ "arrayvec",
+ "assert_matches",
+ "bincode",
+ "crossbeam-channel",
+ "itertools 0.12.1",
+ "log",
+ "min-max-heap",
+ "prio-graph",
+ "solana-compute-budget",
+ "solana-cost-model",
+ "solana-gossip",
+ "solana-ledger",
+ "solana-measure",
+ "solana-metrics",
+ "solana-perf",
+ "solana-poh",
+ "solana-prio-graph-scheduler",
+ "solana-runtime",
+ "solana-runtime-transaction",
+ "solana-sanitize",
+ "solana-sdk",
+ "solana-short-vec",
+ "solana-svm-transaction",
+ "thiserror",
 ]
 
 [[package]]

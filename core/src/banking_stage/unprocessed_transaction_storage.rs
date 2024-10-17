@@ -20,6 +20,7 @@ use {
     solana_accounts_db::account_locks::validate_account_locks,
     solana_feature_set::FeatureSet,
     solana_measure::measure_us,
+    solana_prio_graph_scheduler::deserializable_packet::DeserializableTxPacket,
     solana_runtime::bank::Bank,
     solana_sdk::{
         clock::FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, hash::Hash, saturating_add_assign,
@@ -1328,7 +1329,9 @@ mod tests {
             VoteSource::Tpu,
         );
 
-        transaction_storage.insert_batch(vec![ImmutableDeserializedPacket::new(vote.clone())?]);
+        transaction_storage.insert_batch(vec![ImmutableDeserializedPacket::new(
+            vote.clone(),
+        )?]);
         assert_eq!(1, transaction_storage.len());
 
         // When processing packets, return all packets as retryable so that they

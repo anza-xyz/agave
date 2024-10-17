@@ -1,15 +1,12 @@
 use {
-    crate::banking_stage::{
-        immutable_deserialized_packet::ImmutableDeserializedPacket, scheduler_messages::MaxAge,
-    },
-    solana_sdk::transaction::SanitizedTransaction,
-    std::sync::Arc,
+    crate::deserializable_packet::DeserializableTxPacket, crate::scheduler_messages::MaxAge,
+    solana_sdk::transaction::SanitizedTransaction, std::sync::Arc,
 };
 
 /// Simple wrapper type to tie a sanitized transaction to max age slot.
-pub(crate) struct SanitizedTransactionTTL {
-    pub(crate) transaction: SanitizedTransaction,
-    pub(crate) max_age: MaxAge,
+pub struct SanitizedTransactionTTL {
+    pub transaction: SanitizedTransaction,
+    pub max_age: MaxAge,
 }
 
 /// TransactionState is used to track the state of a transaction in the transaction scheduler
@@ -32,18 +29,18 @@ pub(crate) struct SanitizedTransactionTTL {
 ///   to the appropriate thread for processing. This is done to avoid cloning the
 ///  `SanitizedTransaction`.
 #[allow(clippy::large_enum_variant)]
-pub(crate) enum TransactionState {
+pub enum TransactionState<P: DeserializableTxPacket> {
     /// The transaction is available for scheduling.
     Unprocessed {
         transaction_ttl: SanitizedTransactionTTL,
-        packet: Arc<ImmutableDeserializedPacket>,
+        packet: Arc<P>,
         priority: u64,
         cost: u64,
         should_forward: bool,
     },
     /// The transaction is currently scheduled or being processed.
     Pending {
-        packet: Arc<ImmutableDeserializedPacket>,
+        packet: Arc<P>,
         priority: u64,
         cost: u64,
         should_forward: bool,
@@ -52,11 +49,11 @@ pub(crate) enum TransactionState {
     Transitioning,
 }
 
-impl TransactionState {
+impl<P: DeserializableTxPacket> TransactionState<P> {
     /// Creates a new `TransactionState` in the `Unprocessed` state.
-    pub(crate) fn new(
+    pub fn new(
         transaction_ttl: SanitizedTransactionTTL,
-        packet: Arc<ImmutableDeserializedPacket>,
+        packet: Arc<P>,
         priority: u64,
         cost: u64,
     ) -> Self {
@@ -74,7 +71,7 @@ impl TransactionState {
     /// Return the priority of the transaction.
     /// This is *not* the same as the `compute_unit_price` of the transaction.
     /// The priority is used to order transactions for processing.
-    pub(crate) fn priority(&self) -> u64 {
+    pub fn priority(&self) -> u64 {
         match self {
             Self::Unprocessed { priority, .. } => *priority,
             Self::Pending { priority, .. } => *priority,
@@ -83,7 +80,7 @@ impl TransactionState {
     }
 
     /// Return the cost of the transaction.
-    pub(crate) fn cost(&self) -> u64 {
+    pub fn cost(&self) -> u64 {
         match self {
             Self::Unprocessed { cost, .. } => *cost,
             Self::Pending { cost, .. } => *cost,
@@ -92,7 +89,7 @@ impl TransactionState {
     }
 
     /// Return whether packet should be attempted to be forwarded.
-    pub(crate) fn should_forward(&self) -> bool {
+    pub fn should_forward(&self) -> bool {
         match self {
             Self::Unprocessed {
                 should_forward: forwarded,
@@ -108,7 +105,7 @@ impl TransactionState {
 
     /// Mark the packet as forwarded.
     /// This is used to prevent the packet from being forwarded multiple times.
-    pub(crate) fn mark_forwarded(&mut self) {
+    pub fn mark_forwarded(&mut self) {
         match self {
             Self::Unprocessed { should_forward, .. } => *should_forward = false,
             Self::Pending { should_forward, .. } => *should_forward = false,
@@ -117,7 +114,7 @@ impl TransactionState {
     }
 
     /// Return the packet of the transaction.
-    pub(crate) fn packet(&self) -> &Arc<ImmutableDeserializedPacket> {
+    pub fn packet(&self) -> &Arc<P> {
         match self {
             Self::Unprocessed { packet, .. } => packet,
             Self::Pending { packet, .. } => packet,
@@ -132,7 +129,7 @@ impl TransactionState {
     /// # Panics
     /// This method will panic if the transaction is already in the `Pending` state,
     ///   as this is an invalid state transition.
-    pub(crate) fn transition_to_pending(&mut self) -> SanitizedTransactionTTL {
+    pub fn transition_to_pending(&mut self) -> SanitizedTransactionTTL {
         match self.take() {
             TransactionState::Unprocessed {
                 transaction_ttl,
@@ -162,7 +159,7 @@ impl TransactionState {
     /// # Panics
     /// This method will panic if the transaction is already in the `Unprocessed`
     ///   state, as this is an invalid state transition.
-    pub(crate) fn transition_to_unprocessed(&mut self, transaction_ttl: SanitizedTransactionTTL) {
+    pub fn transition_to_unprocessed(&mut self, transaction_ttl: SanitizedTransactionTTL) {
         match self.take() {
             TransactionState::Unprocessed { .. } => panic!("already unprocessed"),
             TransactionState::Pending {
@@ -187,7 +184,7 @@ impl TransactionState {
     ///
     /// # Panics
     /// This method will panic if the transaction is in the `Pending` state.
-    pub(crate) fn transaction_ttl(&self) -> &SanitizedTransactionTTL {
+    pub fn transaction_ttl(&self) -> &SanitizedTransactionTTL {
         match self {
             Self::Unprocessed {
                 transaction_ttl, ..
@@ -208,6 +205,7 @@ impl TransactionState {
 mod tests {
     use {
         super::*,
+        crate::tests::MockImmutableDeserializedPacket,
         solana_sdk::{
             clock::Slot, compute_budget::ComputeBudgetInstruction, hash::Hash, message::Message,
             packet::Packet, signature::Keypair, signer::Signer, system_instruction,
@@ -215,7 +213,9 @@ mod tests {
         },
     };
 
-    fn create_transaction_state(compute_unit_price: u64) -> TransactionState {
+    fn create_transaction_state(
+        compute_unit_price: u64,
+    ) -> TransactionState<MockImmutableDeserializedPacket> {
         let from_keypair = Keypair::new();
         let ixs = vec![
             system_instruction::transfer(
@@ -229,7 +229,8 @@ mod tests {
         let tx = Transaction::new(&[&from_keypair], message, Hash::default());
 
         let packet = Arc::new(
-            ImmutableDeserializedPacket::new(Packet::from_data(None, tx.clone()).unwrap()).unwrap(),
+            MockImmutableDeserializedPacket::new(Packet::from_data(None, tx.clone()).unwrap())
+                .unwrap(),
         );
         let transaction_ttl = SanitizedTransactionTTL {
             transaction: SanitizedTransaction::from_transaction_for_tests(tx),

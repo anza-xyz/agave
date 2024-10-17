@@ -2,6 +2,7 @@ use {
     super::immutable_deserialized_packet::{DeserializedPacketError, ImmutableDeserializedPacket},
     min_max_heap::MinMaxHeap,
     solana_perf::packet::Packet,
+    solana_prio_graph_scheduler::deserializable_packet::DeserializableTxPacket,
     solana_sdk::hash::Hash,
     std::{
         cmp::Ordering,

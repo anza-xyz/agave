@@ -2,6 +2,7 @@ use {
     super::packet_filter::PacketFilterFailure,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_perf::packet::Packet,
+    solana_prio_graph_scheduler::deserializable_packet::DeserializableTxPacket,
     solana_runtime::bank::Bank,
     solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
     solana_sanitize::SanitizeError,
@@ -50,8 +51,9 @@ pub struct ImmutableDeserializedPacket {
     compute_unit_limit: u32,
 }
 
-impl ImmutableDeserializedPacket {
-    pub fn new(packet: Packet) -> Result<Self, DeserializedPacketError> {
+impl DeserializableTxPacket for ImmutableDeserializedPacket {
+    type DeserializeError = DeserializedPacketError;
+    fn new(packet: Packet) -> Result<Self, Self::DeserializeError> {
         let versioned_transaction: VersionedTransaction = packet.deserialize_slice(..)?;
         let sanitized_transaction = SanitizedVersionedTransaction::try_from(versioned_transaction)?;
         let message_bytes = packet_message(&packet)?;
@@ -86,34 +88,34 @@ impl ImmutableDeserializedPacket {
         })
     }
 
-    pub fn original_packet(&self) -> &Packet {
+    fn original_packet(&self) -> &Packet {
         &self.original_packet
     }
 
-    pub fn transaction(&self) -> &SanitizedVersionedTransaction {
+    fn transaction(&self) -> &SanitizedVersionedTransaction {
         &self.transaction
     }
 
-    pub fn message_hash(&self) -> &Hash {
+    fn message_hash(&self) -> &Hash {
         &self.message_hash
     }
 
-    pub fn is_simple_vote(&self) -> bool {
+    fn is_simple_vote(&self) -> bool {
         self.is_simple_vote
     }
 
-    pub fn compute_unit_price(&self) -> u64 {
+    fn compute_unit_price(&self) -> u64 {
         self.compute_unit_price
     }
 
-    pub fn compute_unit_limit(&self) -> u64 {
+    fn compute_unit_limit(&self) -> u64 {
         u64::from(self.compute_unit_limit)
     }
 
     // This function deserializes packets into transactions, computes the blake3 hash of transaction
     // messages.
     // Additionally, this returns the minimum deactivation slot of the resolved addresses.
-    pub fn build_sanitized_transaction(
+    fn build_sanitized_transaction(
         &self,
         votes_only: bool,
         bank: &Bank,
@@ -138,7 +140,9 @@ impl ImmutableDeserializedPacket {
         .ok()?;
         Some((tx, deactivation_slot))
     }
+}
 
+impl ImmutableDeserializedPacket {
     fn resolve_addresses_with_deactivation(
         transaction: &SanitizedVersionedTransaction,
         bank: &Bank,
