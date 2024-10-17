@@ -7349,6 +7349,7 @@ dependencies = [
  "solana-sha256-hasher",
  "solana-short-vec",
  "solana-slot-hashes",
+ "solana-system-instruction",
  "static_assertions",
  "test-case",
  "thiserror",
@@ -8301,6 +8302,30 @@ name = "solana-svm-transaction"
 version = "2.1.0"
 dependencies = [
  "solana-sdk",
+]
+
+[[package]]
+name = "solana-system-instruction"
+version = "2.1.0"
+dependencies = [
+ "anyhow",
+ "borsh 1.5.1",
+ "js-sys",
+ "num-traits",
+ "serde",
+ "serde_derive",
+ "solana-decode-error",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
+ "solana-instruction",
+ "solana-logger",
+ "solana-program",
+ "solana-program-error",
+ "solana-pubkey",
+ "static_assertions",
+ "strum",
+ "strum_macros",
+ "wasm-bindgen",
 ]
 
 [[package]]
