@@ -8771,12 +8771,7 @@ impl AccountsDb {
                     all_zero_slots_to_clean.len()
                 );
                 for (slot, storage) in all_zero_slots_to_clean {
-                    let old = self.dirty_stores.insert(slot, storage);
-                    if old.is_none() {
-                        warn!(
-                            "Expecting all zero slot {slot} exists in dirty_store, but it doesn't."
-                        );
-                    }
+                    self.dirty_stores.insert(slot, storage);
                     self.accounts_index.add_uncleaned_roots([slot]);
                 }
             }
