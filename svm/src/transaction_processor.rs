@@ -831,10 +831,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             program_cache_for_tx_batch,
             EnvironmentConfig::new(
                 environment.blockhash,
+                environment.blockhash_lamports_per_signature,
                 environment.epoch_total_stake,
                 environment.epoch_vote_accounts,
                 Arc::clone(&environment.feature_set),
-                environment.blockhash_lamports_per_signature,
                 sysvar_cache,
             ),
             log_collector.clone(),
