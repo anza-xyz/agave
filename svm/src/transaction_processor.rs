@@ -124,6 +124,13 @@ pub struct TransactionProcessingConfig<'a> {
 pub struct TransactionProcessingEnvironment<'a> {
     /// The blockhash to use for the transaction batch.
     pub blockhash: Hash,
+    /// Lamports per signature that corresponds to this blockhash.
+    ///
+    /// Note: This value is primarily used for nonce accounts. If set to zero,
+    /// it will disable transaction fees. However, any non-zero value will not
+    /// change transaction fees. For this reason, it is recommended to use the
+    /// `fee_per_signature` field to adjust transaction fees.
+    pub blockhash_lamports_per_signature: u64,
     /// The total stake for the current epoch.
     pub epoch_total_stake: Option<u64>,
     /// The vote accounts for the current epoch.
@@ -132,8 +139,6 @@ pub struct TransactionProcessingEnvironment<'a> {
     pub feature_set: Arc<FeatureSet>,
     /// Transaction fee to charge per signature, in lamports.
     pub fee_lamports_per_signature: u64,
-    /// Lamports per signature to charge per transaction.
-    pub lamports_per_signature: u64,
     /// Rent collector to use for the transaction batch.
     pub rent_collector: Option<&'a dyn SVMRentCollector>,
 }
@@ -142,11 +147,11 @@ impl Default for TransactionProcessingEnvironment<'_> {
     fn default() -> Self {
         Self {
             blockhash: Hash::default(),
+            blockhash_lamports_per_signature: 0,
             epoch_total_stake: None,
             epoch_vote_accounts: None,
             feature_set: Arc::<FeatureSet>::default(),
             fee_lamports_per_signature: FeeStructure::default().lamports_per_signature, // <-- Default fee.
-            lamports_per_signature: 0,
             rent_collector: None,
         }
     }
@@ -818,9 +823,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             None
         };
 
-        let blockhash = environment.blockhash;
-        let lamports_per_signature = environment.lamports_per_signature;
-
         let mut executed_units = 0u64;
         let sysvar_cache = &self.sysvar_cache.read().unwrap();
 
@@ -828,11 +830,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             &mut transaction_context,
             program_cache_for_tx_batch,
             EnvironmentConfig::new(
-                blockhash,
+                environment.blockhash,
                 environment.epoch_total_stake,
                 environment.epoch_vote_accounts,
                 Arc::clone(&environment.feature_set),
-                lamports_per_signature,
+                environment.blockhash_lamports_per_signature,
                 sysvar_cache,
             ),
             log_collector.clone(),
