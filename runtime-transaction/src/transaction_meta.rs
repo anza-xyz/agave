@@ -12,7 +12,7 @@
 //! RuntimeTransaction types, not the TransactionMeta itself.
 //!
 use {
-    crate::compute_budget_instruction_details::ComputeBudgetInstructionDetails,
+    crate::instruction_details::InstructionDetails,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_sdk::{
         feature_set::FeatureSet, hash::Hash, message::TransactionSignatureDetails,
@@ -41,5 +41,5 @@ pub struct TransactionMeta {
     pub(crate) message_hash: Hash,
     pub(crate) is_simple_vote_transaction: bool,
     pub(crate) signature_details: TransactionSignatureDetails,
-    pub(crate) compute_budget_instruction_details: ComputeBudgetInstructionDetails,
+    pub(crate) instruction_details: InstructionDetails,
 }
