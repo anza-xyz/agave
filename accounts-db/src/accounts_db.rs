@@ -15888,10 +15888,10 @@ pub mod tests {
         assert!(db
             .get_sorted_potential_ancient_slots(oldest_non_ancient_slot)
             .is_empty());
-        let root0 = MAX_ANCIENT_SLOTS_DEFAULT as u64 + ancient_append_vec_offset as u64 + 1;
-        db.add_root(root0);
-        let root1 = root0 + 1;
+        let root1 = MAX_ANCIENT_SLOTS_DEFAULT as u64 + ancient_append_vec_offset as u64 + 1;
         db.add_root(root1);
+        let root2 = root1 + 1;
+        db.add_root(root2);
         let oldest_non_ancient_slot = db.get_oldest_non_ancient_slot(&epoch_schedule);
         assert!(db
             .get_sorted_potential_ancient_slots(oldest_non_ancient_slot)
@@ -15907,16 +15907,6 @@ pub mod tests {
         assert!(db
             .get_sorted_potential_ancient_slots(oldest_non_ancient_slot)
             .is_empty());
-        let completed_slot = epoch_schedule.slots_per_epoch + root0;
-        db.accounts_index.add_root(AccountsDb::apply_offset_to_slot(
-            completed_slot,
-            ancient_append_vec_offset,
-        ));
-        let oldest_non_ancient_slot = db.get_oldest_non_ancient_slot(&epoch_schedule);
-        assert_eq!(
-            db.get_sorted_potential_ancient_slots(oldest_non_ancient_slot),
-            vec![root0, root1]
-        );
         let completed_slot = epoch_schedule.slots_per_epoch + root1;
         db.accounts_index.add_root(AccountsDb::apply_offset_to_slot(
             completed_slot,
@@ -15925,18 +15915,28 @@ pub mod tests {
         let oldest_non_ancient_slot = db.get_oldest_non_ancient_slot(&epoch_schedule);
         assert_eq!(
             db.get_sorted_potential_ancient_slots(oldest_non_ancient_slot),
-            vec![root0, root1]
+            vec![root1, root2]
+        );
+        let completed_slot = epoch_schedule.slots_per_epoch + root2;
+        db.accounts_index.add_root(AccountsDb::apply_offset_to_slot(
+            completed_slot,
+            ancient_append_vec_offset,
+        ));
+        let oldest_non_ancient_slot = db.get_oldest_non_ancient_slot(&epoch_schedule);
+        assert_eq!(
+            db.get_sorted_potential_ancient_slots(oldest_non_ancient_slot),
+            vec![root1, root2]
         );
         db.accounts_index
             .roots_tracker
             .write()
             .unwrap()
             .alive_roots
-            .remove(&root0);
+            .remove(&root1);
         let oldest_non_ancient_slot = db.get_oldest_non_ancient_slot(&epoch_schedule);
         assert_eq!(
             db.get_sorted_potential_ancient_slots(oldest_non_ancient_slot),
-            vec![root1]
+            vec![root2]
         );
     });
 
