@@ -11,7 +11,7 @@ use {
         program::ProgramCliCommand,
     },
     solana_client::transaction_executor::TransactionExecutor,
-    solana_faucet::faucet::{request_airdrop_transaction, FAUCET_PORT},
+    solana_faucet::faucet::{request_airdrop_transaction, FAUCET_SOCKET},
     solana_gossip::gossip_service::discover,
     solana_rpc_client::rpc_client::RpcClient,
     solana_sdk::{
@@ -550,7 +550,7 @@ fn main() {
             exit(1)
         });
     }
-    let mut faucet_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, FAUCET_PORT));
+    let mut faucet_addr = FAUCET_SOCKET;
     if let Some(addr) = matches.value_of("faucet_addr") {
         faucet_addr = solana_net_utils::parse_host_port(addr).unwrap_or_else(|e| {
             eprintln!("failed to parse entrypoint address: {e}");
