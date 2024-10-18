@@ -1027,8 +1027,8 @@ fn execute_test_entry(test_entry: SvmTestEntry) {
 
     let processing_environment = TransactionProcessingEnvironment {
         blockhash: LAST_BLOCKHASH,
+        blockhash_lamports_per_signature: LAMPORTS_PER_SIGNATURE,
         feature_set: feature_set.into(),
-        lamports_per_signature: LAMPORTS_PER_SIGNATURE,
         ..TransactionProcessingEnvironment::default()
     };
 
