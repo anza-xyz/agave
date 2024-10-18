@@ -234,8 +234,11 @@ mod tests {
         solana_feature_set::FeatureSet,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
-            hash::Hash, message::SimpleAddressLoader, reserved_account_keys::ReservedAccountKeys,
-            signer::keypair::Keypair, transaction::VersionedTransaction,
+            hash::Hash,
+            message::SimpleAddressLoader,
+            reserved_account_keys::ReservedAccountKeys,
+            signer::keypair::Keypair,
+            transaction::{MessageHash, VersionedTransaction},
         },
         solana_vote_program::{vote_state::TowerSync, vote_transaction},
     };
@@ -258,7 +261,7 @@ mod tests {
         // create a sanitized vote transaction
         let vote_transaction = RuntimeTransaction::try_create(
             VersionedTransaction::from(transaction.clone()),
-            None,
+            MessageHash::Compute,
             Some(true),
             SimpleAddressLoader::Disabled,
             &ReservedAccountKeys::empty_key_set(),
@@ -268,7 +271,7 @@ mod tests {
         // create a identical sanitized transaction, but identified as non-vote
         let none_vote_transaction = RuntimeTransaction::try_create(
             VersionedTransaction::from(transaction),
-            None,
+            MessageHash::Compute,
             Some(false),
             SimpleAddressLoader::Disabled,
             &ReservedAccountKeys::empty_key_set(),

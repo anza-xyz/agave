@@ -77,8 +77,8 @@ use {
         signature::{Keypair, Signature, Signer},
         system_instruction,
         transaction::{
-            self, AddressLoader, SanitizedTransaction, TransactionError, VersionedTransaction,
-            MAX_TX_ACCOUNT_LOCKS,
+            self, AddressLoader, MessageHash, SanitizedTransaction, TransactionError,
+            VersionedTransaction, MAX_TX_ACCOUNT_LOCKS,
         },
     },
     solana_send_transaction_service::{
@@ -4216,7 +4216,7 @@ fn sanitize_transaction(
 ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
     RuntimeTransaction::try_create(
         transaction,
-        None,
+        MessageHash::Compute,
         None,
         address_loader,
         reserved_account_keys,

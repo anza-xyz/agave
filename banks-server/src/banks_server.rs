@@ -181,7 +181,7 @@ fn simulate_transaction(
 ) -> BanksTransactionResultWithSimulation {
     let sanitized_transaction = match RuntimeTransaction::try_create(
         transaction,
-        None,        // message_hash
+        MessageHash::Compute,
         Some(false), // is_simple_vote_tx
         bank,
         bank.get_reserved_account_keys(),

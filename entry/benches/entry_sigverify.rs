@@ -8,8 +8,8 @@ use {
         hash::Hash,
         reserved_account_keys::ReservedAccountKeys,
         transaction::{
-            Result, SanitizedTransaction, SimpleAddressLoader, TransactionVerificationMode,
-            VersionedTransaction,
+            MessageHash, Result, SanitizedTransaction, SimpleAddressLoader,
+            TransactionVerificationMode, VersionedTransaction,
         },
     },
     std::sync::Arc,
@@ -40,7 +40,7 @@ fn bench_gpusigverify(bencher: &mut Bencher) {
 
                 RuntimeTransaction::try_create(
                     versioned_tx,
-                    Some(message_hash),
+                    MessageHash::Precomputed(message_hash),
                     None,
                     SimpleAddressLoader::Disabled,
                     &ReservedAccountKeys::empty_key_set(),
@@ -84,7 +84,7 @@ fn bench_cpusigverify(bencher: &mut Bencher) {
                 let message_hash = versioned_tx.verify_and_hash_message()?;
                 RuntimeTransaction::try_create(
                     versioned_tx,
-                    Some(message_hash),
+                    MessageHash::Precomputed(message_hash),
                     None,
                     SimpleAddressLoader::Disabled,
                     &ReservedAccountKeys::empty_key_set(),

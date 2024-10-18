@@ -905,6 +905,7 @@ mod tests {
             thread::{Builder, JoinHandle},
             time::Duration,
         },
+        transaction::MessageHash,
     };
 
     fn execute_transactions_with_dummy_poh_service(
@@ -2064,7 +2065,7 @@ mod tests {
         let tx = VersionedTransaction::try_new(message, &[&keypair]).unwrap();
         let sanitized_tx = RuntimeTransaction::try_create(
             tx.clone(),
-            None,
+            MessageHash::Compute,
             Some(false),
             bank.as_ref(),
             &ReservedAccountKeys::empty_key_set(),

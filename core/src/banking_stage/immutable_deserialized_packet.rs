@@ -14,7 +14,9 @@ use {
         message::{v0::LoadedAddresses, AddressLoaderError, Message, SimpleAddressLoader},
         pubkey::Pubkey,
         signature::Signature,
-        transaction::{SanitizedTransaction, SanitizedVersionedTransaction, VersionedTransaction},
+        transaction::{
+            MessageHash, SanitizedTransaction, SanitizedVersionedTransaction, VersionedTransaction,
+        },
     },
     solana_short_vec::decode_shortu16_len,
     solana_svm_transaction::{
@@ -132,7 +134,7 @@ impl ImmutableDeserializedPacket {
         let address_loader = SimpleAddressLoader::Enabled(loaded_addresses);
         let tx = RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
             self.transaction.clone(),
-            Some(self.message_hash),
+            MessageHash::Precomputed(self.message_hash),
             Some(self.is_simple_vote),
         )
         .and_then(|tx| {

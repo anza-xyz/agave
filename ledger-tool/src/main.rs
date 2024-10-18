@@ -74,7 +74,7 @@ use {
         shred_version::compute_shred_version,
         stake::{self, state::StakeStateV2},
         system_program,
-        transaction::SimpleAddressLoader,
+        transaction::{MessageHash, SimpleAddressLoader},
     },
     solana_stake_program::{points::PointValue, stake_state},
     solana_transaction_status::parse_ui_instruction,
@@ -475,7 +475,7 @@ fn compute_slot_cost(
             .filter_map(|transaction| {
                 RuntimeTransaction::try_create(
                     transaction,
-                    None,
+                    MessageHash::Compute,
                     None,
                     SimpleAddressLoader::Disabled,
                     &reserved_account_keys.active,

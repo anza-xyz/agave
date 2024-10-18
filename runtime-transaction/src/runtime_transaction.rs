@@ -25,7 +25,8 @@ use {
         signature::Signature,
         simple_vote_transaction_checker::is_simple_vote_transaction,
         transaction::{
-            Result, SanitizedTransaction, SanitizedVersionedTransaction, VersionedTransaction,
+            MessageHash, Result, SanitizedTransaction, SanitizedVersionedTransaction,
+            VersionedTransaction,
         },
     },
     solana_svm_transaction::{
@@ -73,13 +74,15 @@ impl<T> Deref for RuntimeTransaction<T> {
 impl RuntimeTransaction<SanitizedVersionedTransaction> {
     pub fn try_from(
         sanitized_versioned_tx: SanitizedVersionedTransaction,
-        message_hash: Option<Hash>,
+        message_hash: MessageHash,
         is_simple_vote_tx: Option<bool>,
     ) -> Result<Self> {
+        let message_hash = match message_hash {
+            MessageHash::Precomputed(hash) => hash,
+            MessageHash::Compute => sanitized_versioned_tx.get_message().message.hash(),
+        };
         let is_simple_vote_tx = is_simple_vote_tx
             .unwrap_or_else(|| is_simple_vote_transaction(&sanitized_versioned_tx));
-        let message_hash =
-            message_hash.unwrap_or_else(|| sanitized_versioned_tx.get_message().message.hash());
 
         let precompile_signature_details = get_precompile_signature_details(
             sanitized_versioned_tx
@@ -122,7 +125,7 @@ impl RuntimeTransaction<SanitizedTransaction> {
     /// unsanitized `VersionedTransaction`.
     pub fn try_create(
         tx: VersionedTransaction,
-        message_hash: Option<Hash>,
+        message_hash: MessageHash,
         is_simple_vote_tx: Option<bool>,
         address_loader: impl AddressLoader,
         reserved_account_keys: &HashSet<Pubkey>,
@@ -178,7 +181,7 @@ impl RuntimeTransaction<SanitizedTransaction> {
         let versioned_transaction = VersionedTransaction::from(transaction);
         Self::try_create(
             versioned_transaction,
-            None,
+            MessageHash::Compute,
             None,
             solana_sdk::message::SimpleAddressLoader::Disabled,
             &HashSet::new(),
@@ -361,10 +364,14 @@ mod tests {
             svt: SanitizedVersionedTransaction,
             is_simple_vote: Option<bool>,
         ) -> bool {
-            RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(svt, None, is_simple_vote)
-                .unwrap()
-                .meta
-                .is_simple_vote_transaction
+            RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
+                svt,
+                MessageHash::Compute,
+                is_simple_vote,
+            )
+            .unwrap()
+            .meta
+            .is_simple_vote_transaction
         }
 
         assert!(!get_is_simple_vote(
@@ -395,7 +402,7 @@ mod tests {
         let statically_loaded_transaction =
             RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
                 non_vote_sanitized_versioned_transaction(),
-                Some(hash),
+                MessageHash::Precomputed(hash),
                 None,
             )
             .unwrap();
@@ -430,7 +437,7 @@ mod tests {
                     .add_compute_unit_price(compute_unit_price)
                     .add_loaded_accounts_bytes(loaded_accounts_bytes)
                     .to_sanitized_versioned_transaction(),
-                Some(hash),
+                MessageHash::Precomputed(hash),
                 None,
             )
             .unwrap();

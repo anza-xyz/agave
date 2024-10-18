@@ -1001,7 +1001,8 @@ mod tests {
             signature::{Keypair, Signer},
             system_transaction,
             transaction::{
-                Result, SanitizedTransaction, SimpleAddressLoader, VersionedTransaction,
+                MessageHash, Result, SanitizedTransaction, SimpleAddressLoader,
+                VersionedTransaction,
             },
         },
     };
@@ -1097,7 +1098,7 @@ mod tests {
 
                     RuntimeTransaction::try_create(
                         versioned_tx,
-                        Some(message_hash),
+                        MessageHash::Precomputed(message_hash),
                         None,
                         SimpleAddressLoader::Disabled,
                         &ReservedAccountKeys::empty_key_set(),

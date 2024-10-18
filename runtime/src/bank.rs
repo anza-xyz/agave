@@ -151,7 +151,7 @@ use {
         sysvar::{self, last_restart_slot::LastRestartSlot, Sysvar, SysvarId},
         timing::years_as_slots,
         transaction::{
-            Result, SanitizedTransaction, Transaction, TransactionError,
+            MessageHash, Result, SanitizedTransaction, Transaction, TransactionError,
             TransactionVerificationMode, VersionedTransaction, MAX_TX_ACCOUNT_LOCKS,
         },
         transaction_context::{TransactionAccount, TransactionReturnData},
@@ -3463,7 +3463,7 @@ impl Bank {
             .map(|tx| {
                 RuntimeTransaction::try_create(
                     tx,
-                    None,
+                    MessageHash::Compute,
                     None,
                     self,
                     self.get_reserved_account_keys(),
@@ -5920,7 +5920,7 @@ impl Bank {
 
             RuntimeTransaction::try_create(
                 tx,
-                Some(message_hash),
+                MessageHash::Precomputed(message_hash),
                 None,
                 self,
                 self.get_reserved_account_keys(),
