@@ -204,6 +204,7 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
             is_delta: dvb.is_delta,
             incremental_snapshot_persistence: None,
             epoch_accounts_hash: None,
+            accounts_lt_hash: None, // populated from ExtraFieldsToDeserialize
         }
     }
 }
@@ -404,7 +405,6 @@ struct ExtraFieldsToDeserialize {
     #[serde(deserialize_with = "default_on_eof")]
     versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
     #[serde(deserialize_with = "default_on_eof")]
-    #[allow(dead_code)]
     accounts_lt_hash: Option<SerdeAccountsLtHash>,
 }
 
@@ -422,6 +422,7 @@ pub struct ExtraFieldsToSerialize<'a> {
     pub incremental_snapshot_persistence: Option<&'a BankIncrementalSnapshotPersistence>,
     pub epoch_accounts_hash: Option<EpochAccountsHash>,
     pub versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
+    pub accounts_lt_hash: Option<SerdeAccountsLtHash>,
 }
 
 fn deserialize_bank_fields<R>(
@@ -447,7 +448,7 @@ where
         incremental_snapshot_persistence,
         epoch_accounts_hash,
         versioned_epoch_stakes,
-        accounts_lt_hash: _,
+        accounts_lt_hash,
     } = extra_fields;
 
     bank_fields.fee_rate_governor = bank_fields
@@ -463,6 +464,8 @@ where
             .into_iter()
             .map(|(epoch, versioned_epoch_stakes)| (epoch, versioned_epoch_stakes.into())),
     );
+
+    bank_fields.accounts_lt_hash = accounts_lt_hash.map(Into::into);
 
     Ok((bank_fields, accounts_db_fields))
 }
@@ -712,6 +715,7 @@ impl<'a> Serialize for SerializableBankAndStorage<'a> {
         let write_version = accounts_db.write_version.load(Ordering::Acquire);
         let lamports_per_signature = bank_fields.fee_rate_governor.lamports_per_signature;
         let versioned_epoch_stakes = std::mem::take(&mut bank_fields.versioned_epoch_stakes);
+        let accounts_lt_hash = bank_fields.accounts_lt_hash.clone().map(Into::into);
         let bank_fields_to_serialize = (
             SerializableVersionedBank::from(bank_fields),
             SerializableAccountsDb::<'_> {
@@ -727,6 +731,7 @@ impl<'a> Serialize for SerializableBankAndStorage<'a> {
                 incremental_snapshot_persistence: None,
                 epoch_accounts_hash: self.bank.get_epoch_accounts_hash_to_serialize(),
                 versioned_epoch_stakes,
+                accounts_lt_hash,
             },
         );
         bank_fields_to_serialize.serialize(serializer)
