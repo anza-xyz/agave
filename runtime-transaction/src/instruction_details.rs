@@ -13,6 +13,10 @@ use {
     std::num::NonZeroU32,
 };
 
+// Note - Testing if 5K as default allocation for all builtin, including CPIed instructions would
+// reducing over-reservation therefore reduce number of retries, while still maintain block density
+pub const DEFAULT_BUILTIN_ALLOCATION_COMPUTE_UNITS: u32 = 5_000;
+
 #[cfg_attr(test, derive(Eq, PartialEq))]
 #[derive(Default, Debug)]
 pub(crate) struct InstructionDetails {
@@ -89,15 +93,12 @@ impl InstructionDetails {
             .requested_compute_unit_limit
             .map_or_else(
                 || {
-                    self.num_non_compute_budget_instructions()
+                    self.num_non_builtin_instructions
                         .saturating_mul(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT)
-                    /* Note:
-                     * - to add CB ixs CUs to meter to match what's actually consumed woud be
-                     * nice, but need fewature gate, because increase budget could make some tx
-                     * would fail (exceeds budget) suceeds.
-                     *
-                    .saturating_add(self.num_compute_budget_instructions.saturating_mul(150))
-                    // */
+                        .saturating_add(
+                            self.num_builtin_instructions
+                                .saturating_mul(DEFAULT_BUILTIN_ALLOCATION_COMPUTE_UNITS),
+                        )
                 },
                 |(_index, requested_compute_unit_limit)| requested_compute_unit_limit,
             )
@@ -167,13 +168,6 @@ impl InstructionDetails {
     #[inline]
     fn sanitize_requested_heap_size(bytes: u32) -> bool {
         (MIN_HEAP_FRAME_BYTES..=MAX_HEAP_FRAME_BYTES).contains(&bytes) && bytes % 1024 == 0
-    }
-
-    #[inline]
-    fn num_non_compute_budget_instructions(&self) -> u32 {
-        self.num_builtin_instructions
-            .saturating_add(self.num_non_builtin_instructions)
-            .saturating_sub(self.num_compute_budget_instructions)
     }
 }
 
@@ -343,8 +337,10 @@ mod test {
             num_non_builtin_instructions: 3,
             ..InstructionDetails::default()
         };
-        let expected_compute_unit_limit = instruction_details.num_non_compute_budget_instructions()
-            * DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT;
+        let expected_compute_unit_limit = instruction_details.num_non_builtin_instructions
+            * DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
+            + instruction_details.num_builtin_instructions
+                * DEFAULT_BUILTIN_ALLOCATION_COMPUTE_UNITS;
         assert_eq!(
             instruction_details.sanitize_and_convert_to_compute_budget_limits(),
             Ok(ComputeBudgetLimits {
