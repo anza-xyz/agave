@@ -1,20 +1,15 @@
 use {
-    super::{
+    crate::{
+        deserializable_packet::DeserializableTxPacket,
         in_flight_tracker::InFlightTracker,
-        scheduler_error::SchedulerError,
-        thread_aware_account_locks::{ThreadAwareAccountLocks, ThreadId, ThreadSet},
-        transaction_state::SanitizedTransactionTTL,
-        transaction_state_container::TransactionStateContainer,
-    },
-    crate::banking_stage::{
-        consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
         read_write_account_set::ReadWriteAccountSet,
-        scheduler_messages::{
-            ConsumeWork, FinishedConsumeWork, MaxAge, TransactionBatchId, TransactionId,
-        },
-        transaction_scheduler::{
-            transaction_priority_id::TransactionPriorityId, transaction_state::TransactionState,
-        },
+        scheduler_error::SchedulerError,
+        scheduler_messages::{ConsumeWork, FinishedConsumeWork, TransactionBatchId, TransactionId, MaxAge},
+        thread_aware_account_locks::{ThreadAwareAccountLocks, ThreadId, ThreadSet},
+        transaction_priority_id::TransactionPriorityId,
+        transaction_state::{SanitizedTransactionTTL, TransactionState},
+        transaction_state_container::TransactionStateContainer,
+        TARGET_NUM_TRANSACTIONS_PER_BATCH,
     },
     crossbeam_channel::{Receiver, Sender, TryRecvError},
     itertools::izip,
@@ -24,16 +19,17 @@ use {
     solana_sdk::{pubkey::Pubkey, saturating_add_assign, transaction::SanitizedTransaction},
 };
 
-pub(crate) struct PrioGraphScheduler {
+pub struct PrioGraphScheduler<P: DeserializableTxPacket> {
     in_flight_tracker: InFlightTracker,
     account_locks: ThreadAwareAccountLocks,
     consume_work_senders: Vec<Sender<ConsumeWork>>,
     finished_consume_work_receiver: Receiver<FinishedConsumeWork>,
     look_ahead_window_size: usize,
+    phantom: std::marker::PhantomData<P>,
 }
 
-impl PrioGraphScheduler {
-    pub(crate) fn new(
+impl<P: DeserializableTxPacket> PrioGraphScheduler<P> {
+    pub fn new(
         consume_work_senders: Vec<Sender<ConsumeWork>>,
         finished_consume_work_receiver: Receiver<FinishedConsumeWork>,
     ) -> Self {
@@ -44,6 +40,7 @@ impl PrioGraphScheduler {
             consume_work_senders,
             finished_consume_work_receiver,
             look_ahead_window_size: 2048,
+            phantom: std::marker::PhantomData,
         }
     }
 
@@ -63,9 +60,9 @@ impl PrioGraphScheduler {
     /// This, combined with internal tracking of threads' in-flight transactions, allows
     /// for load-balancing while prioritizing scheduling transactions onto threads that will
     /// not cause conflicts in the near future.
-    pub(crate) fn schedule(
+    pub fn schedule(
         &mut self,
-        container: &mut TransactionStateContainer,
+        container: &mut TransactionStateContainer<P>,
         pre_graph_filter: impl Fn(&[&SanitizedTransaction], &mut [bool]),
         pre_lock_filter: impl Fn(&SanitizedTransaction) -> bool,
     ) -> Result<SchedulingSummary, SchedulerError> {
@@ -101,7 +98,7 @@ impl PrioGraphScheduler {
         let mut total_filter_time_us: u64 = 0;
 
         let mut window_budget = self.look_ahead_window_size;
-        let mut chunked_pops = |container: &mut TransactionStateContainer,
+        let mut chunked_pops = |container: &mut TransactionStateContainer<P>,
                                 prio_graph: &mut PrioGraph<_, _, _, _>,
                                 window_budget: &mut usize| {
             while *window_budget > 0 {
@@ -280,7 +277,7 @@ impl PrioGraphScheduler {
     /// Returns (num_transactions, num_retryable_transactions) on success.
     pub fn receive_completed(
         &mut self,
-        container: &mut TransactionStateContainer,
+        container: &mut TransactionStateContainer<P>,
     ) -> Result<(usize, usize), SchedulerError> {
         let mut total_num_transactions: usize = 0;
         let mut total_num_retryable: usize = 0;
@@ -299,7 +296,7 @@ impl PrioGraphScheduler {
     /// Returns `Ok((num_transactions, num_retryable))` if a batch was received, `Ok((0, 0))` if no batch was received.
     fn try_receive_completed(
         &mut self,
-        container: &mut TransactionStateContainer,
+        container: &mut TransactionStateContainer<P>,
     ) -> Result<(usize, usize), SchedulerError> {
         match self.finished_consume_work_receiver.try_recv() {
             Ok(FinishedConsumeWork {
@@ -462,7 +459,7 @@ impl PrioGraphScheduler {
 
 /// Metrics from scheduling transactions.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct SchedulingSummary {
+pub struct SchedulingSummary {
     /// Number of transactions scheduled.
     pub num_scheduled: usize,
     /// Number of transactions that were not scheduled due to conflicts.
@@ -534,8 +531,8 @@ enum TransactionSchedulingError {
     UnschedulableConflicts,
 }
 
-fn try_schedule_transaction(
-    transaction_state: &mut TransactionState,
+fn try_schedule_transaction<P: DeserializableTxPacket>(
+    transaction_state: &mut TransactionState<P>,
     pre_lock_filter: impl Fn(&SanitizedTransaction) -> bool,
     blocking_locks: &mut ReadWriteAccountSet,
     account_locks: &mut ThreadAwareAccountLocks,
@@ -591,10 +588,8 @@ fn try_schedule_transaction(
 mod tests {
     use {
         super::*,
-        crate::banking_stage::{
-            consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
-            immutable_deserialized_packet::ImmutableDeserializedPacket,
-        },
+        crate::tests::MockImmutableDeserializedPacket,
+        crate::TARGET_NUM_TRANSACTIONS_PER_BATCH,
         crossbeam_channel::{unbounded, Receiver},
         itertools::Itertools,
         solana_sdk::{
@@ -612,23 +607,25 @@ mod tests {
     }
 
     macro_rules! txids {
-        ([$($element:expr),*]) => {
-            vec![ $(txid!($element)),* ]
-        };
-    }
+      ([$($element:expr),*]) => {
+          vec![ $(txid!($element)),* ]
+      };
+  }
 
     fn create_test_frame(
         num_threads: usize,
     ) -> (
-        PrioGraphScheduler,
+        PrioGraphScheduler<MockImmutableDeserializedPacket>,
         Vec<Receiver<ConsumeWork>>,
         Sender<FinishedConsumeWork>,
     ) {
         let (consume_work_senders, consume_work_receivers) =
             (0..num_threads).map(|_| unbounded()).unzip();
         let (finished_consume_work_sender, finished_consume_work_receiver) = unbounded();
-        let scheduler =
-            PrioGraphScheduler::new(consume_work_senders, finished_consume_work_receiver);
+        let scheduler = PrioGraphScheduler::<MockImmutableDeserializedPacket>::new(
+            consume_work_senders,
+            finished_consume_work_receiver,
+        );
         (
             scheduler,
             consume_work_receivers,
@@ -665,8 +662,9 @@ mod tests {
                 u64,
             ),
         >,
-    ) -> TransactionStateContainer {
-        let mut container = TransactionStateContainer::with_capacity(10 * 1024);
+    ) -> TransactionStateContainer<MockImmutableDeserializedPacket> {
+        let mut container =
+            TransactionStateContainer::<MockImmutableDeserializedPacket>::with_capacity(10 * 1024);
         for (index, (from_keypair, to_pubkeys, lamports, compute_unit_price)) in
             tx_infos.into_iter().enumerate()
         {
@@ -678,7 +676,7 @@ mod tests {
                 compute_unit_price,
             );
             let packet = Arc::new(
-                ImmutableDeserializedPacket::new(
+                MockImmutableDeserializedPacket::new(
                     Packet::from_data(None, transaction.to_versioned_transaction()).unwrap(),
                 )
                 .unwrap(),

@@ -17,12 +17,8 @@ use {
     },
     crate::{
         banking_stage::{
-            consume_worker::ConsumeWorker,
-            packet_deserializer::PacketDeserializer,
-            transaction_scheduler::{
-                prio_graph_scheduler::PrioGraphScheduler,
-                scheduler_controller::SchedulerController, scheduler_error::SchedulerError,
-            },
+            consume_worker::ConsumeWorker, packet_deserializer::PacketDeserializer,
+            scheduler_controller::SchedulerController,
         },
         banking_trace::BankingPacketReceiver,
         tracer_packet_stats::TracerPacketStats,
@@ -36,6 +32,9 @@ use {
     solana_measure::measure_us,
     solana_perf::{data_budget::DataBudget, packet::PACKETS_PER_BATCH},
     solana_poh::poh_recorder::{PohRecorder, TransactionRecorder},
+    solana_prio_graph_scheduler::{
+        prio_graph_scheduler::PrioGraphScheduler, scheduler_error::SchedulerError,
+    },
     solana_runtime::{
         bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
         vote_sender_types::ReplayVoteSender,
@@ -73,8 +72,7 @@ mod packet_deserializer;
 mod packet_filter;
 mod packet_receiver;
 mod read_write_account_set;
-mod scheduler_messages;
-mod transaction_scheduler;
+mod scheduler_controller;
 
 // Fixed thread size seems to be fastest on GCP setup
 pub const NUM_THREADS: u32 = 6;

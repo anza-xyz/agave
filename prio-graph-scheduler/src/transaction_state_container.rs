@@ -3,10 +3,7 @@ use {
         transaction_priority_id::TransactionPriorityId,
         transaction_state::{SanitizedTransactionTTL, TransactionState},
     },
-    crate::banking_stage::{
-        immutable_deserialized_packet::ImmutableDeserializedPacket,
-        scheduler_messages::TransactionId,
-    },
+    crate::{deserializable_packet::DeserializableTxPacket, scheduler_messages::TransactionId},
     itertools::MinMaxResult,
     min_max_heap::MinMaxHeap,
     std::{collections::HashMap, sync::Arc},
@@ -37,13 +34,13 @@ use {
 ///
 /// The container maintains a fixed capacity. If the queue is full when pushing
 /// a new transaction, the lowest priority transaction will be dropped.
-pub(crate) struct TransactionStateContainer {
+pub struct TransactionStateContainer<P: DeserializableTxPacket> {
     priority_queue: MinMaxHeap<TransactionPriorityId>,
-    id_to_transaction_state: HashMap<TransactionId, TransactionState>,
+    id_to_transaction_state: HashMap<TransactionId, TransactionState<P>>,
 }
 
-impl TransactionStateContainer {
-    pub(crate) fn with_capacity(capacity: usize) -> Self {
+impl<P: DeserializableTxPacket> TransactionStateContainer<P> {
+    pub fn with_capacity(capacity: usize) -> Self {
         Self {
             priority_queue: MinMaxHeap::with_capacity(capacity),
             id_to_transaction_state: HashMap::with_capacity(capacity),
@@ -51,34 +48,31 @@ impl TransactionStateContainer {
     }
 
     /// Returns true if the queue is empty.
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.priority_queue.is_empty()
     }
 
     /// Returns the remaining capacity of the queue
-    pub(crate) fn remaining_queue_capacity(&self) -> usize {
+    pub fn remaining_queue_capacity(&self) -> usize {
         self.priority_queue.capacity() - self.priority_queue.len()
     }
 
     /// Get the top transaction id in the priority queue.
-    pub(crate) fn pop(&mut self) -> Option<TransactionPriorityId> {
+    pub fn pop(&mut self) -> Option<TransactionPriorityId> {
         self.priority_queue.pop_max()
     }
 
     /// Get mutable transaction state by id.
-    pub(crate) fn get_mut_transaction_state(
+    pub fn get_mut_transaction_state(
         &mut self,
         id: &TransactionId,
-    ) -> Option<&mut TransactionState> {
+    ) -> Option<&mut TransactionState<P>> {
         self.id_to_transaction_state.get_mut(id)
     }
 
     /// Get reference to `SanitizedTransactionTTL` by id.
     /// Panics if the transaction does not exist.
-    pub(crate) fn get_transaction_ttl(
-        &self,
-        id: &TransactionId,
-    ) -> Option<&SanitizedTransactionTTL> {
+    pub fn get_transaction_ttl(&self, id: &TransactionId) -> Option<&SanitizedTransactionTTL> {
         self.id_to_transaction_state
             .get(id)
             .map(|state| state.transaction_ttl())
@@ -86,11 +80,11 @@ impl TransactionStateContainer {
 
     /// Insert a new transaction into the container's queues and maps.
     /// Returns `true` if a packet was dropped due to capacity limits.
-    pub(crate) fn insert_new_transaction(
+    pub fn insert_new_transaction(
         &mut self,
         transaction_id: TransactionId,
         transaction_ttl: SanitizedTransactionTTL,
-        packet: Arc<ImmutableDeserializedPacket>,
+        packet: Arc<P>,
         priority: u64,
         cost: u64,
     ) -> bool {
@@ -104,7 +98,7 @@ impl TransactionStateContainer {
 
     /// Retries a transaction - inserts transaction back into map (but not packet).
     /// This transitions the transaction to `Unprocessed` state.
-    pub(crate) fn retry_transaction(
+    pub fn retry_transaction(
         &mut self,
         transaction_id: TransactionId,
         transaction_ttl: SanitizedTransactionTTL,
@@ -120,7 +114,7 @@ impl TransactionStateContainer {
     /// Pushes a transaction id into the priority queue. If the queue is full, the lowest priority
     /// transaction will be dropped (removed from the queue and map).
     /// Returns `true` if a packet was dropped due to capacity limits.
-    pub(crate) fn push_id_into_queue(&mut self, priority_id: TransactionPriorityId) -> bool {
+    pub fn push_id_into_queue(&mut self, priority_id: TransactionPriorityId) -> bool {
         if self.remaining_queue_capacity() == 0 {
             let popped_id = self.priority_queue.push_pop_min(priority_id);
             self.remove_by_id(&popped_id.id);
@@ -132,13 +126,13 @@ impl TransactionStateContainer {
     }
 
     /// Remove transaction by id.
-    pub(crate) fn remove_by_id(&mut self, id: &TransactionId) {
+    pub fn remove_by_id(&mut self, id: &TransactionId) {
         self.id_to_transaction_state
             .remove(id)
             .expect("transaction must exist");
     }
 
-    pub(crate) fn get_min_max_priority(&self) -> MinMaxResult<u64> {
+    pub fn get_min_max_priority(&self) -> MinMaxResult<u64> {
         match self.priority_queue.peek_min() {
             Some(min) => match self.priority_queue.peek_max() {
                 Some(max) => MinMaxResult::MinMax(min.priority, max.priority),
@@ -152,9 +146,7 @@ impl TransactionStateContainer {
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
-        crate::banking_stage::scheduler_messages::MaxAge,
-        solana_sdk::{
+        super::*, crate::tests::MockImmutableDeserializedPacket, solana_sdk::{
             compute_budget::ComputeBudgetInstruction,
             hash::Hash,
             message::Message,
@@ -165,6 +157,7 @@ mod tests {
             system_instruction,
             transaction::{SanitizedTransaction, Transaction},
         },
+        crate::scheduler_messages::MaxAge,
     };
 
     /// Returns (transaction_ttl, priority, cost)
@@ -172,7 +165,7 @@ mod tests {
         priority: u64,
     ) -> (
         SanitizedTransactionTTL,
-        Arc<ImmutableDeserializedPacket>,
+        Arc<MockImmutableDeserializedPacket>,
         u64,
         u64,
     ) {
@@ -192,7 +185,7 @@ mod tests {
             Hash::default(),
         ));
         let packet = Arc::new(
-            ImmutableDeserializedPacket::new(
+            MockImmutableDeserializedPacket::new(
                 Packet::from_data(None, tx.to_versioned_transaction()).unwrap(),
             )
             .unwrap(),
@@ -208,7 +201,10 @@ mod tests {
         (transaction_ttl, packet, priority, TEST_TRANSACTION_COST)
     }
 
-    fn push_to_container(container: &mut TransactionStateContainer, num: usize) {
+    fn push_to_container(
+        container: &mut TransactionStateContainer<MockImmutableDeserializedPacket>,
+        num: usize,
+    ) {
         for id in 0..num as u64 {
             let priority = id;
             let (transaction_ttl, packet, priority, cost) = test_transaction(priority);

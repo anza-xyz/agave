@@ -6,6 +6,7 @@ use {
     itertools::Itertools,
     rand::{thread_rng, Rng},
     solana_perf::packet::Packet,
+    solana_prio_graph_scheduler::deserializable_packet::DeserializableTxPacket,
     solana_runtime::{bank::Bank, epoch_stakes::EpochStakes},
     solana_sdk::{
         account::from_account,
