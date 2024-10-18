@@ -151,7 +151,7 @@ impl PayTubeChannel {
             epoch_total_stake: None,
             epoch_vote_accounts: None,
             feature_set: Arc::new(feature_set),
-            fee_structure: Some(&fee_structure),
+            fee_lamports_per_signature: fee_structure.lamports_per_signature,
             lamports_per_signature,
             rent_collector: Some(&rent_collector),
         };

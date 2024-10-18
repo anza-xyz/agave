@@ -121,7 +121,6 @@ pub struct TransactionProcessingConfig<'a> {
 }
 
 /// Runtime environment for transaction batch processing.
-#[derive(Default)]
 pub struct TransactionProcessingEnvironment<'a> {
     /// The blockhash to use for the transaction batch.
     pub blockhash: Hash,
@@ -131,12 +130,26 @@ pub struct TransactionProcessingEnvironment<'a> {
     pub epoch_vote_accounts: Option<&'a VoteAccountsHashMap>,
     /// Runtime feature set to use for the transaction batch.
     pub feature_set: Arc<FeatureSet>,
-    /// Fee structure to use for assessing transaction fees.
-    pub fee_structure: Option<&'a FeeStructure>,
+    /// Transaction fee to charge per signature, in lamports.
+    pub fee_lamports_per_signature: u64,
     /// Lamports per signature to charge per transaction.
     pub lamports_per_signature: u64,
     /// Rent collector to use for the transaction batch.
     pub rent_collector: Option<&'a dyn SVMRentCollector>,
+}
+
+impl Default for TransactionProcessingEnvironment<'_> {
+    fn default() -> Self {
+        Self {
+            blockhash: Hash::default(),
+            epoch_total_stake: None,
+            epoch_vote_accounts: None,
+            feature_set: Arc::<FeatureSet>::default(),
+            fee_lamports_per_signature: FeeStructure::default().lamports_per_signature, // <-- Default fee.
+            lamports_per_signature: 0,
+            rent_collector: None,
+        }
+    }
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -270,9 +283,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             sanitized_txs,
             check_results,
             &environment.feature_set,
-            environment
-                .fee_structure
-                .unwrap_or(&FeeStructure::default()),
+            environment.fee_lamports_per_signature,
             environment
                 .rent_collector
                 .unwrap_or(&RentCollector::default()),
@@ -408,7 +419,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         sanitized_txs: &[impl core::borrow::Borrow<T>],
         check_results: Vec<TransactionCheckResult>,
         feature_set: &FeatureSet,
-        fee_structure: &FeeStructure,
+        fee_lamports_per_signature: u64,
         rent_collector: &dyn SVMRentCollector,
         error_counters: &mut TransactionErrorMetrics,
     ) -> Vec<TransactionValidationResult> {
@@ -424,7 +435,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         message,
                         checked_details,
                         feature_set,
-                        fee_structure,
+                        fee_lamports_per_signature,
                         rent_collector,
                         error_counters,
                     )
@@ -443,7 +454,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         message: &impl SVMMessage,
         checked_details: CheckedTransactionDetails,
         feature_set: &FeatureSet,
-        fee_structure: &FeeStructure,
+        fee_lamports_per_signature: u64,
         rent_collector: &dyn SVMRentCollector,
         error_counters: &mut TransactionErrorMetrics,
     ) -> transaction::Result<ValidatedTransactionDetails> {
@@ -491,7 +502,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let fee_details = solana_fee::calculate_fee_details(
             message,
             lamports_per_signature == 0,
-            fee_structure.lamports_per_signature,
+            fee_lamports_per_signature,
             fee_budget_limits.prioritization_fee,
             feature_set.is_active(&remove_rounding_in_fee_calculation::id()),
         );
@@ -1044,7 +1055,7 @@ mod tests {
             bpf_loader,
             compute_budget::ComputeBudgetInstruction,
             epoch_schedule::EpochSchedule,
-            fee::FeeDetails,
+            fee::{FeeDetails, FeeStructure},
             fee_calculator::FeeCalculator,
             hash::Hash,
             message::{LegacyMessage, Message, MessageHeader, SanitizedMessage},
@@ -1978,7 +1989,7 @@ mod tests {
                 lamports_per_signature,
             },
             &FeatureSet::default(),
-            &FeeStructure::default(),
+            FeeStructure::default().lamports_per_signature,
             &rent_collector,
             &mut error_counters,
         );
@@ -2056,7 +2067,7 @@ mod tests {
                 lamports_per_signature,
             },
             &FeatureSet::default(),
-            &FeeStructure::default(),
+            FeeStructure::default().lamports_per_signature,
             &rent_collector,
             &mut error_counters,
         );
@@ -2107,7 +2118,7 @@ mod tests {
                 lamports_per_signature,
             },
             &FeatureSet::default(),
-            &FeeStructure::default(),
+            FeeStructure::default().lamports_per_signature,
             &RentCollector::default(),
             &mut error_counters,
         );
@@ -2141,7 +2152,7 @@ mod tests {
                 lamports_per_signature,
             },
             &FeatureSet::default(),
-            &FeeStructure::default(),
+            FeeStructure::default().lamports_per_signature,
             &RentCollector::default(),
             &mut error_counters,
         );
@@ -2179,7 +2190,7 @@ mod tests {
                 lamports_per_signature,
             },
             &FeatureSet::default(),
-            &FeeStructure::default(),
+            FeeStructure::default().lamports_per_signature,
             &rent_collector,
             &mut error_counters,
         );
@@ -2215,7 +2226,7 @@ mod tests {
                 lamports_per_signature,
             },
             &FeatureSet::default(),
-            &FeeStructure::default(),
+            FeeStructure::default().lamports_per_signature,
             &RentCollector::default(),
             &mut error_counters,
         );
@@ -2247,7 +2258,7 @@ mod tests {
                 lamports_per_signature,
             },
             &FeatureSet::default(),
-            &FeeStructure::default(),
+            FeeStructure::default().lamports_per_signature,
             &RentCollector::default(),
             &mut error_counters,
         );
@@ -2314,7 +2325,7 @@ mod tests {
                     lamports_per_signature,
                 },
                 &feature_set,
-                &FeeStructure::default(),
+                FeeStructure::default().lamports_per_signature,
                 &rent_collector,
                 &mut error_counters,
             );
@@ -2376,7 +2387,7 @@ mod tests {
                     lamports_per_signature,
                 },
                 &feature_set,
-                &FeeStructure::default(),
+                FeeStructure::default().lamports_per_signature,
                 &rent_collector,
                 &mut error_counters,
             );
@@ -2430,7 +2441,7 @@ mod tests {
                 lamports_per_signature,
             },
             &FeatureSet::default(),
-            &FeeStructure::default(),
+            FeeStructure::default().lamports_per_signature,
             &rent_collector,
             &mut error_counters,
         );
@@ -2478,7 +2489,7 @@ mod tests {
                     lamports_per_signature: 5000,
                 },
                 &FeatureSet::default(),
-                &FeeStructure::default(),
+                FeeStructure::default().lamports_per_signature,
                 &RentCollector::default(),
                 &mut TransactionErrorMetrics::default(),
             )

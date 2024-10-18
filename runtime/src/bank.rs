@@ -3716,7 +3716,7 @@ impl Bank {
             epoch_total_stake: Some(self.get_current_epoch_total_stake()),
             epoch_vote_accounts: Some(self.get_current_epoch_vote_accounts()),
             feature_set: Arc::clone(&self.feature_set),
-            fee_structure: Some(&self.fee_structure),
+            fee_lamports_per_signature: self.fee_structure.lamports_per_signature,
             lamports_per_signature,
             rent_collector: Some(&rent_collector_with_metrics),
         };
