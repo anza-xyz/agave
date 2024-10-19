@@ -1,3 +1,7 @@
+#[deprecated(
+    since = "2.1.0",
+    note = "Use solana_transaction_error::SanitizeMessageError instead"
+)]
 pub use solana_transaction_error::SanitizeMessageError;
 use {
     crate::{

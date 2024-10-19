@@ -136,7 +136,9 @@ use {
 mod sanitized;
 mod versioned;
 
-pub use {sanitized::*, solana_transaction_error::*, versioned::*};
+#[deprecated(since = "2.1.0", note = "Use solana_transaction_error crate instead")]
+pub use solana_transaction_error::*;
+pub use {sanitized::*, versioned::*};
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum TransactionVerificationMode {
