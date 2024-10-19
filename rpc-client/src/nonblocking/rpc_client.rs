@@ -17,7 +17,6 @@ use {
             GetConfirmedSignaturesForAddress2Config, RpcClientConfig, SerializableMessage,
             SerializableTransaction,
         },
-        rpc_sender::*,
     },
     base64::{prelude::BASE64_STANDARD, Engine},
     bincode::serialize,
@@ -35,6 +34,7 @@ use {
         request::{RpcError, RpcRequest, RpcResponseErrorData, TokenAccountsFilter},
         response::*,
     },
+    solana_rpc_sender::*,
     solana_sdk::{
         account::Account,
         clock::{Epoch, Slot, UnixTimestamp, DEFAULT_MS_PER_SLOT},

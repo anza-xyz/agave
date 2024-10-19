@@ -472,6 +472,7 @@ solana-rpc = { path = "rpc", version = "=2.1.0" }
 solana-rpc-client = { path = "rpc-client", version = "=2.1.0", default-features = false }
 solana-rpc-client-api = { path = "rpc-client-api", version = "=2.1.0" }
 solana-rpc-client-nonce-utils = { path = "rpc-client-nonce-utils", version = "=2.1.0" }
+solana-rpc-sender = { path = "rpc-sender", version = "=2.1.0" }
 solana-runtime = { path = "runtime", version = "=2.1.0" }
 solana-runtime-transaction = { path = "runtime-transaction", version = "=2.1.0" }
 solana-sdk = { path = "sdk", version = "=2.1.0" }
