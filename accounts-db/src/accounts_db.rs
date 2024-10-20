@@ -101,7 +101,7 @@ use {
         fs,
         hash::{Hash as StdHash, Hasher as StdHasher},
         io::Result as IoResult,
-        num::Saturating,
+        num::{NonZeroUsize, Saturating},
         ops::{Range, RangeBounds},
         path::{Path, PathBuf},
         sync::{
@@ -507,6 +507,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     storage_access: StorageAccess::Mmap,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormalWithVerify,
     enable_experimental_accumulator_hash: false,
+    num_threads_for_hash_thread_pool: None,
 };
 pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig {
     index: Some(ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS),
@@ -524,6 +525,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     storage_access: StorageAccess::Mmap,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormalWithVerify,
     enable_experimental_accumulator_hash: false,
+    num_threads_for_hash_thread_pool: None,
 };
 
 pub type BinnedHashData = Vec<Vec<CalculateHashIntermediate>>;
@@ -620,6 +622,7 @@ pub struct AccountsDbConfig {
     pub storage_access: StorageAccess,
     pub scan_filter_for_shrinking: ScanFilter,
     pub enable_experimental_accumulator_hash: bool,
+    pub num_threads_for_hash_thread_pool: Option<NonZeroUsize>,
 }
 
 #[cfg(not(test))]
@@ -1717,9 +1720,11 @@ pub fn make_min_priority_thread_pool() -> ThreadPool {
         .unwrap()
 }
 
-pub fn make_hash_thread_pool() -> ThreadPool {
-    // 1/8 of the number of cpus and up to 6 threads gives good balance for the system.
-    let num_threads = (num_cpus::get() / 8).clamp(2, 6);
+pub fn make_hash_thread_pool(num_threads: Option<NonZeroUsize>) -> ThreadPool {
+    let num_threads = num_threads.map(Into::into).unwrap_or_else(|| {
+        // 1/8 of the number of cpus and up to 6 threads gives good balance for the system.
+        (num_cpus::get() / 8).clamp(2, 6)
+    });
     rayon::ThreadPoolBuilder::new()
         .thread_name(|i| format!("solAcctHash{i:02}"))
         .num_threads(num_threads)
@@ -1838,7 +1843,9 @@ impl AccountsDb {
                 .build()
                 .unwrap(),
             thread_pool_clean: make_min_priority_thread_pool(),
-            thread_pool_hash: make_hash_thread_pool(),
+            thread_pool_hash: make_hash_thread_pool(
+                default_accounts_db_config.num_threads_for_hash_thread_pool,
+            ),
             bank_hash_stats: Mutex::new(bank_hash_stats),
             accounts_delta_hashes: Mutex::new(HashMap::new()),
             accounts_hashes: Mutex::new(HashMap::new()),
@@ -1988,6 +1995,10 @@ impl AccountsDb {
             .unwrap_or(default_accounts_db_config.enable_experimental_accumulator_hash)
             .into();
 
+        let num_threads_for_hash_thread_pool = accounts_db_config
+            .as_ref()
+            .and_then(|config| config.num_threads_for_hash_thread_pool);
+
         let paths_is_empty = paths.is_empty();
         let mut new = Self {
             paths,
@@ -2012,6 +2023,7 @@ impl AccountsDb {
             storage_access,
             scan_filter_for_shrinking,
             is_experimental_accumulator_hash_enabled: enable_experimental_accumulator_hash,
+            thread_pool_hash: make_hash_thread_pool(num_threads_for_hash_thread_pool),
             ..Self::default_with_accounts_index(
                 accounts_index,
                 base_working_path,

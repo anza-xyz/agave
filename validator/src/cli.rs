@@ -1412,6 +1412,15 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .hidden(hidden_unless_forced()),
         )
         .arg(
+            Arg::with_name("accounts_db_hash_threads")
+                .long("accounts-db-hash-threads")
+                .value_name("NUM_THREADS")
+                .takes_value(true)
+                .validator(|s| is_within_range(s, 1..=num_cpus::get()))
+                .help("The number of threads for the accounts-db hash thread pool")
+                .hidden(hidden_unless_forced()),
+        )
+        .arg(
             Arg::with_name("accounts_index_scan_results_limit_mb")
                 .long("accounts-index-scan-results-limit-mb")
                 .value_name("MEGABYTES")
