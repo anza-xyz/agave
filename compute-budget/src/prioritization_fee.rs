@@ -36,10 +36,6 @@ impl PrioritizationFeeDetails {
     pub fn get_fee(&self) -> u64 {
         self.fee
     }
-
-    pub fn get_compute_unit_price(&self) -> u64 {
-        self.compute_unit_price
-    }
 }
 
 #[cfg(test)]
