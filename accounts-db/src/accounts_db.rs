@@ -607,6 +607,13 @@ pub struct AccountsAddRootTiming {
 /// slots in epoch are still treated as modern (ie. non-ancient).
 /// |  older  |<- abs(offset) ->|<- slots in an epoch ->| max root
 /// | ancient |                 modern                  |
+///
+/// Note that another constant MAX_ANCIENT_SLOTS_DEFAULT sets a
+/// threshold for combining ancient storages so that their overall
+/// number is under a certain limit, whereas this constant establishes
+/// the distance from the max root slot beyond which storages holding
+/// the account data for the slots are considered ancient by the
+/// shrinking algorithm.
 const ANCIENT_APPEND_VEC_DEFAULT_OFFSET: Option<i64> = Some(100_000);
 
 #[derive(Debug, Default, Clone)]
