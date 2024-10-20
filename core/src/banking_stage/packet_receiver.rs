@@ -9,6 +9,7 @@ use {
     crate::{banking_trace::BankingPacketReceiver, tracer_packet_stats::TracerPacketStats},
     crossbeam_channel::RecvTimeoutError,
     solana_measure::{measure::Measure, measure_us},
+    solana_prio_graph_scheduler::deserializable_packet::DeserializableTxPacket,
     solana_sdk::{saturating_add_assign, timing::timestamp},
     std::{sync::atomic::Ordering, time::Duration},
 };
