@@ -1284,6 +1284,10 @@ pub fn main() {
         })
         .unwrap_or_default();
 
+    let num_threads_for_hash_thread_pool = matches
+        .is_present("accounts_db_hash_threads")
+        .then(|| value_t_or_exit!(matches, "accounts_db_hash_threads", NonZeroUsize));
+
     let accounts_db_config = AccountsDbConfig {
         index: Some(accounts_index_config),
         base_working_path: Some(ledger_path.clone()),
@@ -1303,6 +1307,7 @@ pub fn main() {
         scan_filter_for_shrinking,
         enable_experimental_accumulator_hash: matches
             .is_present("accounts_db_experimental_accumulator_hash"),
+        num_threads_for_hash_thread_pool,
         ..AccountsDbConfig::default()
     };
 
