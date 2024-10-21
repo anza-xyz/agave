@@ -671,6 +671,7 @@ struct SlotIndexGenerationInfo {
     accounts_data_len: u64,
     amount_to_top_off_rent: u64,
     rent_paying_accounts_by_partition: Vec<Pubkey>,
+    all_accounts_are_zero_lamports: bool,
 }
 
 /// The lt hash of old/duplicate accounts
@@ -710,6 +711,7 @@ struct GenerateIndexTimings {
     pub total_slots: u64,
     pub slots_to_clean: u64,
     pub par_duplicates_lt_hash_us: AtomicU64,
+    pub all_accounts_are_zero_lamports_slots: u64,
 }
 
 #[derive(Default, Debug, PartialEq, Eq)]
@@ -789,6 +791,11 @@ impl GenerateIndexTimings {
             (
                 "par_duplicates_lt_hash_us",
                 self.par_duplicates_lt_hash_us.load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "all_accounts_are_zero_lamports_slots",
+                self.all_accounts_are_zero_lamports_slots,
                 i64
             ),
         );
@@ -8317,6 +8324,7 @@ impl AccountsDb {
         let mut num_accounts_rent_paying = 0;
         let mut amount_to_top_off_rent = 0;
         let mut stored_size_alive = 0;
+        let mut all_accounts_are_zero_lamports = true;
 
         let (dirty_pubkeys, insert_time_us, mut generate_index_results) = {
             let mut items_local = Vec::default();
@@ -8324,9 +8332,11 @@ impl AccountsDb {
                 stored_size_alive += info.stored_size_aligned;
                 if info.index_info.lamports > 0 {
                     accounts_data_len += info.index_info.data_len;
+                    all_accounts_are_zero_lamports = false;
                 }
                 items_local.push(info.index_info);
             });
+
             let items_len = items_local.len();
             let items = items_local.into_iter().map(|info| {
                 if let Some(amount_to_top_off_rent_this_account) = Self::stats_for_rent_payers(
@@ -8407,6 +8417,7 @@ impl AccountsDb {
             accounts_data_len,
             amount_to_top_off_rent,
             rent_paying_accounts_by_partition,
+            all_accounts_are_zero_lamports,
         }
     }
 
@@ -8461,6 +8472,8 @@ impl AccountsDb {
             let rent_paying = AtomicUsize::new(0);
             let amount_to_top_off_rent = AtomicU64::new(0);
             let total_including_duplicates = AtomicU64::new(0);
+            let all_accounts_are_zero_lamports_slots = AtomicU64::new(0);
+            let mut all_zeros_slots = Mutex::new(Vec::<(Slot, Arc<AccountStorageEntry>)>::new());
             let scan_time: u64 = slots
                 .par_chunks(chunk_size)
                 .map(|slots| {
@@ -8470,6 +8483,11 @@ impl AccountsDb {
                         outer_slots_len as u64,
                     );
                     let mut scan_time_sum = 0;
+                    let mut insert_time_sum = 0;
+                    let mut all_accounts_are_zero_lamports_slots_inner = 0;
+                    let mut total_including_duplicates_sum = 0;
+                    let mut accounts_data_len_sum = 0;
+                    let mut all_zeros_slots_inner = vec![];
                     for (index, slot) in slots.iter().enumerate() {
                         let mut scan_time = Measure::start("scan");
                         log_status.report(index as u64);
@@ -8493,6 +8511,7 @@ impl AccountsDb {
                                 amount_to_top_off_rent: amount_to_top_off_rent_this_slot,
                                 rent_paying_accounts_by_partition:
                                     rent_paying_accounts_by_partition_this_slot,
+                                all_accounts_are_zero_lamports,
                             } = self.generate_index_for_slot(
                                 &storage,
                                 *slot,
@@ -8501,20 +8520,27 @@ impl AccountsDb {
                                 &storage_info,
                             );
 
-                            rent_paying.fetch_add(rent_paying_this_slot, Ordering::Relaxed);
-                            amount_to_top_off_rent
-                                .fetch_add(amount_to_top_off_rent_this_slot, Ordering::Relaxed);
-                            total_including_duplicates
-                                .fetch_add(total_this_slot, Ordering::Relaxed);
-                            accounts_data_len
-                                .fetch_add(accounts_data_len_this_slot, Ordering::Relaxed);
-                            let mut rent_paying_accounts_by_partition =
-                                rent_paying_accounts_by_partition.lock().unwrap();
-                            rent_paying_accounts_by_partition_this_slot
-                                .iter()
-                                .for_each(|k| {
-                                    rent_paying_accounts_by_partition.add_account(k);
-                                });
+                            if rent_paying_this_slot > 0 {
+                                // We don't have any rent paying accounts on mainnet, so this code should never be hit.
+                                rent_paying.fetch_add(rent_paying_this_slot, Ordering::Relaxed);
+                                amount_to_top_off_rent
+                                    .fetch_add(amount_to_top_off_rent_this_slot, Ordering::Relaxed);
+                                let mut rent_paying_accounts_by_partition =
+                                    rent_paying_accounts_by_partition.lock().unwrap();
+                                rent_paying_accounts_by_partition_this_slot
+                                    .iter()
+                                    .for_each(|k| {
+                                        rent_paying_accounts_by_partition.add_account(k);
+                                    });
+                            }
+
+                            total_including_duplicates_sum += total_this_slot;
+                            accounts_data_len_sum += accounts_data_len_this_slot;
+
+                            if all_accounts_are_zero_lamports {
+                                all_accounts_are_zero_lamports_slots_inner += 1;
+                                all_zeros_slots_inner.push((*slot, Arc::clone(&storage)));
+                            }
 
                             insert_us
                         } else {
@@ -8544,8 +8570,21 @@ impl AccountsDb {
                             lookup_time.stop();
                             lookup_time.as_us()
                         };
-                        insertion_time_us.fetch_add(insert_us, Ordering::Relaxed);
+                        insert_time_sum += insert_us;
                     }
+                    insertion_time_us.fetch_add(insert_time_sum, Ordering::Relaxed);
+                    total_including_duplicates
+                        .fetch_add(total_including_duplicates_sum, Ordering::Relaxed);
+                    accounts_data_len.fetch_add(accounts_data_len_sum, Ordering::Relaxed);
+
+                    all_accounts_are_zero_lamports_slots.fetch_add(
+                        all_accounts_are_zero_lamports_slots_inner,
+                        Ordering::Relaxed,
+                    );
+                    all_zeros_slots
+                        .lock()
+                        .unwrap()
+                        .append(&mut all_zeros_slots_inner);
                     scan_time_sum
                 })
                 .sum();
@@ -8629,6 +8668,8 @@ impl AccountsDb {
                 populate_duplicate_keys_us,
                 total_including_duplicates: total_including_duplicates.load(Ordering::Relaxed),
                 total_slots: slots.len() as u64,
+                all_accounts_are_zero_lamports_slots: all_accounts_are_zero_lamports_slots
+                    .load(Ordering::Relaxed),
                 ..GenerateIndexTimings::default()
             };
 
@@ -8720,6 +8761,16 @@ impl AccountsDb {
                     "accounts data len: {}",
                     accounts_data_len.load(Ordering::Relaxed)
                 );
+
+                let all_zero_slots_to_clean = std::mem::take(all_zeros_slots.get_mut().unwrap());
+                info!(
+                    "insert all zero slots to clean at startup {}",
+                    all_zero_slots_to_clean.len()
+                );
+                for (slot, storage) in all_zero_slots_to_clean {
+                    self.dirty_stores.insert(slot, storage);
+                    self.accounts_index.add_uncleaned_roots([slot]);
+                }
             }
 
             if pass == 0 {
