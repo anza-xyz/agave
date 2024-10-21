@@ -107,6 +107,7 @@ members = [
     "sdk/cargo-build-sbf",
     "sdk/cargo-test-sbf",
     "sdk/clock",
+    "sdk/commitment-config",
     "sdk/decode-error",
     "sdk/derivation-path",
     "sdk/epoch-schedule",
@@ -398,6 +399,7 @@ solana-cli-config = { path = "cli-config", version = "=2.1.0" }
 solana-cli-output = { path = "cli-output", version = "=2.1.0" }
 solana-client = { path = "client", version = "=2.1.0" }
 solana-clock = { path = "sdk/clock", version = "=2.1.0" }
+solana-commitment-config = { path = "sdk/commitment-config", version = "=2.1.0" }
 solana-compute-budget = { path = "compute-budget", version = "=2.1.0" }
 solana-compute-budget-program = { path = "programs/compute-budget", version = "=2.1.0" }
 solana-config-program = { path = "programs/config", version = "=2.1.0" }
