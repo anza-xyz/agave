@@ -8479,10 +8479,7 @@ impl AccountsDb {
                             rent_paying.fetch_add(rent_paying_this_slot, Ordering::Relaxed);
                             amount_to_top_off_rent
                                 .fetch_add(amount_to_top_off_rent_this_slot, Ordering::Relaxed);
-                            total_including_duplicates
-                                .fetch_add(total_this_slot, Ordering::Relaxed);
-                            accounts_data_len
-                                .fetch_add(accounts_data_len_this_slot, Ordering::Relaxed);
+
                             let mut rent_paying_accounts_by_partition =
                                 rent_paying_accounts_by_partition.lock().unwrap();
                             rent_paying_accounts_by_partition_this_slot
@@ -8490,6 +8487,11 @@ impl AccountsDb {
                                 .for_each(|k| {
                                     rent_paying_accounts_by_partition.add_account(k);
                                 });
+
+                            total_including_duplicates
+                                .fetch_add(total_this_slot, Ordering::Relaxed);
+                            accounts_data_len
+                                .fetch_add(accounts_data_len_this_slot, Ordering::Relaxed);
 
                             insert_us
                         } else {
