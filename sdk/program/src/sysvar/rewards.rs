@@ -1,8 +1,9 @@
 //! This sysvar is deprecated and unused.
 
 use crate::sysvar::Sysvar;
+pub use solana_reserved_account_keys::sysvar::rewards::{check_id, id, ID};
 
-crate::declare_sysvar_id!("SysvarRewards111111111111111111111111111111", Rewards);
+crate::impl_sysvar_id!(Rewards);
 
 #[repr(C)]
 #[derive(Serialize, Deserialize, Debug, Default, PartialEq)]

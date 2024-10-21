@@ -48,11 +48,12 @@
 //! ```
 
 use crate::sysvar::Sysvar;
-pub use crate::{
-    account_info::AccountInfo, program_error::ProgramError, slot_history::SlotHistory,
+pub use {
+    crate::{account_info::AccountInfo, program_error::ProgramError, slot_history::SlotHistory},
+    solana_reserved_account_keys::sysvar::slot_history::{check_id, id, ID},
 };
 
-crate::declare_sysvar_id!("SysvarS1otHistory11111111111111111111111111", SlotHistory);
+crate::impl_sysvar_id!(SlotHistory);
 
 impl Sysvar for SlotHistory {
     // override

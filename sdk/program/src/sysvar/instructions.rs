@@ -31,6 +31,7 @@
 
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
+pub use solana_reserved_account_keys::sysvar::instructions::{check_id, id, ID};
 #[cfg(not(target_os = "solana"))]
 use {
     crate::serialize_utils::{append_slice, append_u16, append_u8},
@@ -59,7 +60,7 @@ use {
 /// Use the free functions in this module to access the instructions sysvar.
 pub struct Instructions();
 
-crate::declare_sysvar_id!("Sysvar1nstructions1111111111111111111111111", Instructions);
+crate::impl_sysvar_id!(Instructions);
 
 /// Construct the account data for the instructions sysvar.
 ///

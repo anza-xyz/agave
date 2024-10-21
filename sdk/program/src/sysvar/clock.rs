@@ -127,9 +127,12 @@
 //! ```
 
 use crate::{impl_sysvar_get, program_error::ProgramError, sysvar::Sysvar};
-pub use solana_clock::Clock;
+pub use {
+    solana_clock::Clock,
+    solana_reserved_account_keys::sysvar::clock::{check_id, id, ID},
+};
 
-crate::declare_sysvar_id!("SysvarC1ock11111111111111111111111111111111", Clock);
+crate::impl_sysvar_id!(Clock);
 
 impl Sysvar for Clock {
     impl_sysvar_get!(sol_get_clock_sysvar);

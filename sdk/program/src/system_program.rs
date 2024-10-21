@@ -1,5 +1,4 @@
 //! The [system native program][np].
 //!
 //! [np]: https://docs.solanalabs.com/runtime/programs#system-program
-
-crate::declare_id!("11111111111111111111111111111111");
+pub use solana_reserved_account_keys::system_program::{check_id, id, ID};

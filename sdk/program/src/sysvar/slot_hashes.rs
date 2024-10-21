@@ -45,7 +45,10 @@
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
-pub use crate::slot_hashes::SlotHashes;
+pub use {
+    crate::slot_hashes::SlotHashes,
+    solana_reserved_account_keys::sysvar::slot_hashes::{check_id, id, ID},
+};
 use {
     crate::{
         account_info::AccountInfo,
@@ -58,9 +61,9 @@ use {
     solana_clock::Slot,
 };
 
-const U64_SIZE: usize = std::mem::size_of::<u64>();
+crate::impl_sysvar_id!(SlotHashes);
 
-crate::declare_sysvar_id!("SysvarS1otHashes111111111111111111111111111", SlotHashes);
+const U64_SIZE: usize = std::mem::size_of::<u64>();
 
 impl Sysvar for SlotHashes {
     // override
