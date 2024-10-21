@@ -10,6 +10,7 @@ use {
         net::SocketAddr,
         ops::{Index, IndexMut},
         slice::{Iter, IterMut, SliceIndex},
+        sync::Arc,
     },
 };
 
@@ -210,17 +211,30 @@ impl From<PacketBatch> for Vec<Packet> {
     }
 }
 
+fn to_packet_batch_iter<T: Serialize>(
+    items: &[T],
+    chunk_size: usize,
+) -> impl Iterator<Item = PacketBatch> + '_ {
+    items.chunks(chunk_size).map(|batch_items| {
+        let mut batch = PacketBatch::with_capacity(batch_items.len());
+        batch.resize(batch_items.len(), Packet::default());
+        for (item, packet) in batch_items.iter().zip(batch.packets.iter_mut()) {
+            Packet::populate_packet(packet, None, item).expect("serialize request");
+        }
+        batch
+    })
+}
+
 pub fn to_packet_batches<T: Serialize>(items: &[T], chunk_size: usize) -> Vec<PacketBatch> {
-    items
-        .chunks(chunk_size)
-        .map(|batch_items| {
-            let mut batch = PacketBatch::with_capacity(batch_items.len());
-            batch.resize(batch_items.len(), Packet::default());
-            for (item, packet) in batch_items.iter().zip(batch.packets.iter_mut()) {
-                Packet::populate_packet(packet, None, item).expect("serialize request");
-            }
-            batch
-        })
+    to_packet_batch_iter(items, chunk_size).collect()
+}
+
+pub fn to_arc_packet_batches<T: Serialize>(
+    items: &[T],
+    chunk_size: usize,
+) -> Vec<Arc<PacketBatch>> {
+    to_packet_batch_iter(items, chunk_size)
+        .map(Arc::new)
         .collect()
 }
 

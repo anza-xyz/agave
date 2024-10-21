@@ -2,13 +2,6 @@
 #![feature(test)]
 
 use {
-    solana_core::validator::BlockProductionMethod,
-    solana_vote_program::{vote_state::TowerSync, vote_transaction::new_tower_sync_transaction},
-};
-
-extern crate test;
-
-use {
     crossbeam_channel::{unbounded, Receiver},
     log::*,
     rand::{thread_rng, Rng},
@@ -25,6 +18,7 @@ use {
             BankingStage, BankingStageStats,
         },
         banking_trace::{BankingPacketBatch, BankingTracer},
+        validator::BlockProductionMethod,
     },
     solana_entry::entry::{next_hash, Entry},
     solana_gossip::cluster_info::{ClusterInfo, Node},
@@ -35,7 +29,8 @@ use {
         get_tmp_ledger_path_auto_delete,
     },
     solana_perf::{
-        packet::{to_packet_batches, Packet},
+        mutable_packet_batch::MutablePacketBatch,
+        packet::{to_arc_packet_batches, Packet},
         test_tx::test_tx,
     },
     solana_poh::poh_recorder::{create_test_recorder, WorkingBankEntry},
@@ -53,6 +48,7 @@ use {
         transaction::{Transaction, VersionedTransaction},
     },
     solana_streamer::socket::SocketAddrSpace,
+    solana_vote_program::{vote_state::TowerSync, vote_transaction::new_tower_sync_transaction},
     std::{
         iter::repeat_with,
         sync::{atomic::Ordering, Arc},
@@ -60,6 +56,8 @@ use {
     },
     test::Bencher,
 };
+
+extern crate test;
 
 fn check_txs(receiver: &Arc<Receiver<WorkingBankEntry>>, ref_tx_count: usize) {
     let mut total = 0;
@@ -266,11 +264,11 @@ fn bench_banking(bencher: &mut Bencher, tx_type: TransactionType) {
         assert!(r.is_ok(), "sanity parallel execution");
     }
     bank.clear_signatures();
-    let verified: Vec<_> = to_packet_batches(&transactions, PACKETS_PER_BATCH);
+    let verified: Vec<_> = to_arc_packet_batches(&transactions, PACKETS_PER_BATCH);
     let vote_packets = vote_txs.map(|vote_txs| {
-        let mut packet_batches = to_packet_batches(&vote_txs, PACKETS_PER_BATCH);
+        let mut packet_batches = to_arc_packet_batches(&vote_txs, PACKETS_PER_BATCH);
         for batch in packet_batches.iter_mut() {
-            for packet in batch.iter_mut() {
+            for packet in batch.as_mut().iter_mut() {
                 packet.meta_mut().set_simple_vote(true);
             }
         }
