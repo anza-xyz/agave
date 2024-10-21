@@ -512,9 +512,13 @@ impl AdminRpc for AdminRpcImpl {
         debug!("repair_shred_from_peer request received");
 
         meta.with_post_init(|post_init| {
+            let current_epoch_staked_nodes = {
+                let root_bank = post_init.bank_forks.read().unwrap().root_bank();
+                root_bank.current_epoch_staked_nodes()
+            };
             repair_service::RepairService::request_repair_for_shred_from_peer(
-                post_init.cluster_info.clone(),
-                post_init.cluster_slots.clone(),
+                &post_init.cluster_info,
+                &current_epoch_staked_nodes,
                 pubkey,
                 slot,
                 shred_index,
@@ -940,9 +944,6 @@ mod tests {
                     outstanding_repair_requests: Arc::<
                         RwLock<repair_service::OutstandingShredRepairs>,
                     >::default(),
-                    cluster_slots: Arc::new(
-                        solana_core::cluster_slots_service::cluster_slots::ClusterSlots::default(),
-                    ),
                 }))),
                 staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
                 rpc_to_plugin_manager_sender: None,
