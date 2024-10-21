@@ -64,7 +64,8 @@ impl TransactionStatusService {
                         enable_extended_tx_metadata_storage,
                     ) {
                         Ok(_) => {}
-                        Err(_err) => {
+                        Err(err) => {
+                            error!("TransactionStatusService stopping due to error: {err}");
                             exit.store(true, Ordering::Relaxed);
                             break;
                         }
