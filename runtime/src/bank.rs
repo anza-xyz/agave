@@ -1121,6 +1121,21 @@ impl Bank {
         #[cfg(feature = "dev-context-only-utils")]
         bank.process_genesis_config(genesis_config, collector_id_for_tests, genesis_hash);
 
+        // Many tests (including local-cluster tests) rely on the fact
+        // that transaction fees are zero.
+        // This was previously handled by the `FeeRateGovernor`
+        // in the `genesis_config`, but that is no longer the case.
+        // However, for testing, we can set the fee structure to
+        // result in zero base fees for all transactions IF the
+        // lamports_per_signature is zero on the `FeeRateGovernor`.
+        if genesis_config
+            .fee_rate_governor
+            .target_lamports_per_signature
+            == 0
+        {
+            bank.fee_structure = FeeStructure::zero_fees();
+        }
+
         bank.finish_init(
             genesis_config,
             additional_builtins,
@@ -1712,6 +1727,21 @@ impl Bank {
             cache_for_accounts_lt_hash: RwLock::new(AHashMap::new()),
             block_id: RwLock::new(None),
         };
+
+        // Many tests (including local-cluster tests) rely on the fact
+        // that transaction fees are zero.
+        // This was previously handled by the `FeeRateGovernor`
+        // in the `genesis_config`, but that is no longer the case.
+        // However, for testing, we can set the fee structure to
+        // result in zero base fees for all transactions IF the
+        // lamports_per_signature is zero on the `FeeRateGovernor`.
+        if genesis_config
+            .fee_rate_governor
+            .target_lamports_per_signature
+            == 0
+        {
+            bank.fee_structure = FeeStructure::zero_fees();
+        }
 
         bank.transaction_processor =
             TransactionBatchProcessor::new_uninitialized(bank.slot, bank.epoch);
@@ -3176,7 +3206,7 @@ impl Bank {
     }
 
     pub fn get_fee_for_message(&self, message: &SanitizedMessage) -> Option<u64> {
-        let lamports_per_signature = {
+        let _lamports_per_signature = {
             let blockhash_queue = self.blockhash_queue.read().unwrap();
             blockhash_queue.get_lamports_per_signature(message.recent_blockhash())
         }
@@ -3187,7 +3217,7 @@ impl Bank {
                 },
             )
         })?;
-        Some(self.get_fee_for_message_with_lamports_per_signature(message, lamports_per_signature))
+        Some(self.get_fee_for_message_with_lamports_per_signature(message))
     }
 
     /// Returns true when startup accounts hash verification has completed or never had to run in background.
@@ -3216,7 +3246,6 @@ impl Bank {
     pub fn get_fee_for_message_with_lamports_per_signature(
         &self,
         message: &impl SVMMessage,
-        lamports_per_signature: u64,
     ) -> u64 {
         let fee_budget_limits = FeeBudgetLimits::from(
             process_compute_budget_instructions(message.program_instructions_iter())
@@ -3224,7 +3253,6 @@ impl Bank {
         );
         solana_fee::calculate_fee(
             message,
-            lamports_per_signature == 0,
             self.fee_structure().lamports_per_signature,
             fee_budget_limits.prioritization_fee,
             self.feature_set
@@ -7153,8 +7181,8 @@ impl Bank {
         &self.transaction_processor
     }
 
-    pub fn set_fee_structure(&mut self, fee_structure: &FeeStructure) {
-        self.fee_structure = fee_structure.clone();
+    pub fn set_fee_structure(&mut self, fee_structure: FeeStructure) {
+        self.fee_structure = fee_structure;
     }
 
     pub fn load_program(
