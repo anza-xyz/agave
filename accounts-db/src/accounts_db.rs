@@ -8459,6 +8459,8 @@ impl AccountsDb {
                     let mut scan_time_sum = 0;
                     let mut insert_time_sum = 0;
                     let mut all_accounts_are_zero_lamports_slots_inner = 0;
+                    let mut total_including_duplicates_sum = 0;
+                    let mut accounts_data_len_sum = 0;
                     let mut all_zeros_slots_inner = vec![];
                     for (index, slot) in slots.iter().enumerate() {
                         let mut scan_time = Measure::start("scan");
@@ -8493,6 +8495,7 @@ impl AccountsDb {
                             );
 
                             if rent_paying_this_slot > 0 {
+                                // We don't have any rent paying accounts on mainnet, so this code should never be hit.
                                 rent_paying.fetch_add(rent_paying_this_slot, Ordering::Relaxed);
                                 amount_to_top_off_rent
                                     .fetch_add(amount_to_top_off_rent_this_slot, Ordering::Relaxed);
@@ -8505,10 +8508,8 @@ impl AccountsDb {
                                     });
                             }
 
-                            total_including_duplicates
-                                .fetch_add(total_this_slot, Ordering::Relaxed);
-                            accounts_data_len
-                                .fetch_add(accounts_data_len_this_slot, Ordering::Relaxed);
+                            total_including_duplicates_sum += total_this_slot;
+                            accounts_data_len_sum += accounts_data_len_this_slot;
 
                             if all_accounts_are_zero_lamports {
                                 all_accounts_are_zero_lamports_slots_inner += 1;
@@ -8546,6 +8547,10 @@ impl AccountsDb {
                         insert_time_sum += insert_us;
                     }
                     insertion_time_us.fetch_add(insert_time_sum, Ordering::Relaxed);
+                    total_including_duplicates
+                        .fetch_add(total_including_duplicates_sum, Ordering::Relaxed);
+                    accounts_data_len.fetch_add(accounts_data_len_sum, Ordering::Relaxed);
+
                     all_accounts_are_zero_lamports_slots.fetch_add(
                         all_accounts_are_zero_lamports_slots_inner,
                         Ordering::Relaxed,
