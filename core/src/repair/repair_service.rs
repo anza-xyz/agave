@@ -217,7 +217,7 @@ pub const MAX_CLOSEST_COMPLETION_REPAIRS: usize = 100;
 pub struct RepairInfo {
     pub bank_forks: Arc<RwLock<BankForks>>,
     pub cluster_info: Arc<ClusterInfo>,
-    pub cluster_slots: Arc<ClusterSlots>,
+    pub(crate) cluster_slots: Arc<ClusterSlots>,
     pub epoch_schedule: EpochSchedule,
     pub ancestor_duplicate_slots_sender: AncestorDuplicateSlotsSender,
     // Validators from which repairs are requested
@@ -456,7 +456,6 @@ impl RepairService {
                     .filter_map(|repair_request| {
                         let (to, req) = serve_repair
                             .repair_request(
-                                &repair_info.cluster_slots,
                                 repair_request,
                                 &mut peers_cache,
                                 &mut repair_stats,
@@ -750,33 +749,21 @@ impl RepairService {
     }
 
     fn get_repair_peers(
-        cluster_info: Arc<ClusterInfo>,
-        cluster_slots: Arc<ClusterSlots>,
-        slot: u64,
+        cluster_info: &ClusterInfo,
+        stakes: &HashMap<Pubkey, u64>,
+        slot: Slot,
     ) -> Vec<(Pubkey, SocketAddr)> {
-        // Find the repair peers that have this slot frozen.
-        let Some(peers_with_slot) = cluster_slots.lookup(slot) else {
-            warn!("No repair peers have frozen slot: {slot}");
-            return vec![];
-        };
-        let peers_with_slot = peers_with_slot.read().unwrap();
-
         // Filter out any peers that don't have a valid repair socket.
-        let repair_peers: Vec<(Pubkey, SocketAddr, u32)> = peers_with_slot
-            .iter()
-            .filter_map(|(pubkey, stake)| {
-                let peer_repair_addr = cluster_info
-                    .lookup_contact_info(pubkey, |node| node.serve_repair(Protocol::UDP));
-                if let Some(Ok(peer_repair_addr)) = peer_repair_addr {
-                    trace!("Repair peer {pubkey} has a valid repair socket: {peer_repair_addr:?}");
-                    Some((
-                        *pubkey,
-                        peer_repair_addr,
-                        (*stake / solana_sdk::native_token::LAMPORTS_PER_SOL) as u32,
-                    ))
-                } else {
-                    None
-                }
+        let repair_peers: Vec<(Pubkey, SocketAddr, u32)> = cluster_info
+            .repair_peers(slot)
+            .into_iter()
+            .filter_map(|peer| {
+                let pubkey = peer.pubkey();
+                let peer_repair_addr = peer.serve_repair(Protocol::UDP).ok()?;
+                trace!("Repair peer {pubkey} has a valid repair socket: {peer_repair_addr:?}");
+                let stake = stakes.get(pubkey).copied().unwrap_or_default();
+                let stake = stake / solana_sdk::native_token::LAMPORTS_PER_SOL;
+                Some((*pubkey, peer_repair_addr, stake as u32))
             })
             .collect();
 
@@ -799,8 +786,8 @@ impl RepairService {
     }
 
     pub fn request_repair_for_shred_from_peer(
-        cluster_info: Arc<ClusterInfo>,
-        cluster_slots: Arc<ClusterSlots>,
+        cluster_info: &ClusterInfo,
+        stakes: &HashMap<Pubkey, u64>,
         pubkey: Option<Pubkey>,
         slot: u64,
         shred_index: u64,
@@ -825,13 +812,13 @@ impl RepairService {
                 "No pubkey was provided or no valid repair socket was found. Sampling a set of \
                  repair peers instead."
             );
-            repair_peers = Self::get_repair_peers(cluster_info.clone(), cluster_slots, slot);
+            repair_peers = Self::get_repair_peers(cluster_info, stakes, slot);
         }
 
         // Send repair request to each peer.
         for (pubkey, peer_repair_addr) in repair_peers {
             Self::request_repair_for_shred_from_address(
-                cluster_info.clone(),
+                cluster_info,
                 pubkey,
                 peer_repair_addr,
                 slot,
@@ -843,7 +830,7 @@ impl RepairService {
     }
 
     fn request_repair_for_shred_from_address(
-        cluster_info: Arc<ClusterInfo>,
+        cluster_info: &ClusterInfo,
         pubkey: Pubkey,
         address: SocketAddr,
         slot: u64,
@@ -945,7 +932,6 @@ impl RepairService {
     #[cfg(test)]
     fn generate_and_send_duplicate_repairs(
         duplicate_slot_repair_statuses: &mut HashMap<Slot, DuplicateSlotRepairStatus>,
-        cluster_slots: &ClusterSlots,
         blockstore: &Blockstore,
         serve_repair: &ServeRepair,
         repair_stats: &mut RepairStats,
@@ -955,13 +941,7 @@ impl RepairService {
         identity_keypair: &Keypair,
     ) {
         duplicate_slot_repair_statuses.retain(|slot, status| {
-            Self::update_duplicate_slot_repair_addr(
-                *slot,
-                status,
-                cluster_slots,
-                serve_repair,
-                repair_validators,
-            );
+            Self::update_duplicate_slot_repair_addr(*slot, status, serve_repair, repair_validators);
             if let Some((repair_pubkey, repair_addr)) = status.repair_pubkey_and_addr {
                 let repairs = Self::generate_duplicate_repairs_for_slot(blockstore, *slot);
 
@@ -1002,7 +982,6 @@ impl RepairService {
     fn update_duplicate_slot_repair_addr(
         slot: Slot,
         status: &mut DuplicateSlotRepairStatus,
-        cluster_slots: &ClusterSlots,
         serve_repair: &ServeRepair,
         repair_validators: &Option<HashSet<Pubkey>>,
     ) {
@@ -1010,11 +989,8 @@ impl RepairService {
         if status.repair_pubkey_and_addr.is_none()
             || now.saturating_sub(status.start_ts) >= MAX_DUPLICATE_WAIT_MS as u64
         {
-            let repair_pubkey_and_addr = serve_repair.repair_request_duplicate_compute_best_peer(
-                slot,
-                cluster_slots,
-                repair_validators,
-            );
+            let repair_pubkey_and_addr =
+                serve_repair.repair_request_duplicate_compute_best_peer(slot, repair_validators);
             status.repair_pubkey_and_addr = repair_pubkey_and_addr.ok();
             status.start_ts = timestamp();
         }
@@ -1025,7 +1001,6 @@ impl RepairService {
     fn initiate_repair_for_duplicate_slot(
         slot: Slot,
         duplicate_slot_repair_statuses: &mut HashMap<Slot, DuplicateSlotRepairStatus>,
-        cluster_slots: &ClusterSlots,
         serve_repair: &ServeRepair,
         repair_validators: &Option<HashSet<Pubkey>>,
     ) {
@@ -1036,7 +1011,7 @@ impl RepairService {
         // Mark this slot as special repair, try to download from single
         // validator to avoid corruption
         let repair_pubkey_and_addr = serve_repair
-            .repair_request_duplicate_compute_best_peer(slot, cluster_slots, repair_validators)
+            .repair_request_duplicate_compute_best_peer(slot, repair_validators)
             .ok();
         let new_duplicate_slot_repair_status = DuplicateSlotRepairStatus {
             correct_ancestor_to_repair: (slot, Hash::default()),
@@ -1103,7 +1078,7 @@ mod test {
 
         // Send a repair request
         RepairService::request_repair_for_shred_from_address(
-            cluster_info.clone(),
+            &cluster_info,
             pubkey,
             address,
             slot,
@@ -1441,7 +1416,6 @@ mod test {
         let bank_forks = BankForks::new_rw_arc(bank);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-        let cluster_slots = ClusterSlots::default();
         let cluster_info = Arc::new(new_test_cluster_info());
         let identity_keypair = cluster_info.keypair().clone();
         let serve_repair = ServeRepair::new(
@@ -1476,7 +1450,6 @@ mod test {
         // `u64::MAX` has not expired
         RepairService::generate_and_send_duplicate_repairs(
             &mut duplicate_slot_repair_statuses,
-            &cluster_slots,
             &blockstore,
             &serve_repair,
             &mut RepairStats::default(),
@@ -1502,7 +1475,6 @@ mod test {
         // Slot is not yet full, should not get filtered from `duplicate_slot_repair_statuses`
         RepairService::generate_and_send_duplicate_repairs(
             &mut duplicate_slot_repair_statuses,
-            &cluster_slots,
             &blockstore,
             &serve_repair,
             &mut RepairStats::default(),
@@ -1521,7 +1493,6 @@ mod test {
             .unwrap();
         RepairService::generate_and_send_duplicate_repairs(
             &mut duplicate_slot_repair_statuses,
-            &cluster_slots,
             &blockstore,
             &serve_repair,
             &mut RepairStats::default(),
@@ -1553,8 +1524,6 @@ mod test {
         // Signal that this peer has confirmed the dead slot, and is thus
         // a valid target for repair
         let dead_slot = 9;
-        let cluster_slots = ClusterSlots::default();
-        cluster_slots.insert_node_id(dead_slot, *valid_repair_peer.pubkey());
         cluster_info.insert_info(valid_repair_peer);
 
         // Not enough time has passed, should not update the
@@ -1567,7 +1536,6 @@ mod test {
         RepairService::update_duplicate_slot_repair_addr(
             dead_slot,
             &mut duplicate_status,
-            &cluster_slots,
             &serve_repair,
             &None,
         );
@@ -1582,7 +1550,6 @@ mod test {
         RepairService::update_duplicate_slot_repair_addr(
             dead_slot,
             &mut duplicate_status,
-            &cluster_slots,
             &serve_repair,
             &None,
         );
@@ -1597,7 +1564,6 @@ mod test {
         RepairService::update_duplicate_slot_repair_addr(
             dead_slot,
             &mut duplicate_status,
-            &cluster_slots,
             &serve_repair,
             &None,
         );

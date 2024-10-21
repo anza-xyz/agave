@@ -1,14 +1,11 @@
 use {
-    crate::{
-        cluster_slots_service::cluster_slots::ClusterSlots,
-        repair::{
-            duplicate_repair_status::get_ancestor_hash_repair_sample_size,
-            quic_endpoint::RemoteRequest,
-            repair_response,
-            repair_service::{OutstandingShredRepairs, RepairStats, REPAIR_MS},
-            request_response::RequestResponse,
-            result::{Error, RepairVerifyError, Result},
-        },
+    crate::repair::{
+        duplicate_repair_status::get_ancestor_hash_repair_sample_size,
+        quic_endpoint::RemoteRequest,
+        repair_response,
+        repair_service::{OutstandingShredRepairs, RepairStats, REPAIR_MS},
+        request_response::RequestResponse,
+        result::{Error, RepairVerifyError, Result},
     },
     bincode::{serialize, Options},
     bytes::Bytes,
@@ -1058,10 +1055,28 @@ impl ServeRepair {
         Self::repair_proto_to_bytes(&request, keypair)
     }
 
+    fn get_repair_peer_sampling_weights(&self, repair_peers: &[ContactInfo]) -> Vec<u64> {
+        let stakes = {
+            let root_bank = self.bank_forks.read().unwrap().root_bank();
+            root_bank.current_epoch_staked_nodes()
+        };
+        repair_peers
+            .iter()
+            .map(|peer| {
+                // .max(1u64) because rand::WeightedIndex excludes items with
+                // weight zero and fails if all items have zero weight.
+                stakes
+                    .get(peer.pubkey())
+                    .copied()
+                    .unwrap_or_default()
+                    .max(1u64)
+            })
+            .collect()
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn repair_request(
         &self,
-        cluster_slots: &ClusterSlots,
         repair_request: ShredRepairType,
         peers_cache: &mut LruCache<Slot, RepairPeers>,
         repair_stats: &mut RepairStats,
@@ -1079,7 +1094,7 @@ impl ServeRepair {
             _ => {
                 peers_cache.pop(&slot);
                 let repair_peers = self.repair_peers(repair_validators, slot);
-                let weights = cluster_slots.compute_weights(slot, &repair_peers);
+                let weights = self.get_repair_peer_sampling_weights(&repair_peers);
                 let repair_peers = RepairPeers::new(Instant::now(), &repair_peers, &weights)?;
                 peers_cache.put(slot, repair_peers);
                 peers_cache.get(&slot).unwrap()
@@ -1113,7 +1128,6 @@ impl ServeRepair {
     pub(crate) fn repair_request_ancestor_hashes_sample_peers(
         &self,
         slot: Slot,
-        cluster_slots: &ClusterSlots,
         repair_validators: &Option<HashSet<Pubkey>>,
         repair_protocol: Protocol,
     ) -> Result<Vec<(Pubkey, SocketAddr)>> {
@@ -1121,13 +1135,9 @@ impl ServeRepair {
         if repair_peers.is_empty() {
             return Err(ClusterInfoError::NoPeers.into());
         }
-        let (weights, index): (Vec<_>, Vec<_>) = cluster_slots
-            .compute_weights_exclude_nonfrozen(slot, &repair_peers)
-            .into_iter()
-            .unzip();
+        let weights = self.get_repair_peer_sampling_weights(&repair_peers);
         let peers = WeightedShuffle::new("repair_request_ancestor_hashes", &weights)
             .shuffle(&mut rand::thread_rng())
-            .map(|i| index[i])
             .filter_map(|i| {
                 let addr = repair_peers[i].serve_repair(repair_protocol).ok()?;
                 Some((*repair_peers[i].pubkey(), addr))
@@ -1141,22 +1151,17 @@ impl ServeRepair {
     pub(crate) fn repair_request_duplicate_compute_best_peer(
         &self,
         slot: Slot,
-        cluster_slots: &ClusterSlots,
         repair_validators: &Option<HashSet<Pubkey>>,
     ) -> Result<(Pubkey, SocketAddr)> {
         let repair_peers: Vec<_> = self.repair_peers(repair_validators, slot);
         if repair_peers.is_empty() {
             return Err(ClusterInfoError::NoPeers.into());
         }
-        let (weights, index): (Vec<_>, Vec<_>) = cluster_slots
-            .compute_weights_exclude_nonfrozen(slot, &repair_peers)
-            .into_iter()
-            .unzip();
+        let weights = self.get_repair_peer_sampling_weights(&repair_peers);
         let k = WeightedIndex::new(weights)?.sample(&mut rand::thread_rng());
-        let n = index[k];
         Ok((
-            *repair_peers[n].pubkey(),
-            repair_peers[n].serve_repair(Protocol::UDP)?,
+            *repair_peers[k].pubkey(),
+            repair_peers[k].serve_repair(Protocol::UDP)?,
         ))
     }
 
@@ -1994,7 +1999,6 @@ mod tests {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
-        let cluster_slots = ClusterSlots::default();
         let cluster_info = Arc::new(new_test_cluster_info());
         let serve_repair = ServeRepair::new(
             cluster_info.clone(),
@@ -2005,7 +2009,6 @@ mod tests {
         let mut outstanding_requests = OutstandingShredRepairs::default();
         let (repair_request_quic_sender, _) = tokio::sync::mpsc::channel(/*buffer:*/ 128);
         let rv = serve_repair.repair_request(
-            &cluster_slots,
             ShredRepairType::Shred(0, 0),
             &mut LruCache::new(100),
             &mut RepairStats::default(),
@@ -2037,7 +2040,6 @@ mod tests {
         cluster_info.insert_info(nxt.clone());
         let rv = serve_repair
             .repair_request(
-                &cluster_slots,
                 ShredRepairType::Shred(0, 0),
                 &mut LruCache::new(100),
                 &mut RepairStats::default(),
@@ -2076,7 +2078,6 @@ mod tests {
             //this randomly picks an option, so eventually it should pick both
             let rv = serve_repair
                 .repair_request(
-                    &cluster_slots,
                     ShredRepairType::Shred(0, 0),
                     &mut LruCache::new(100),
                     &mut RepairStats::default(),
@@ -2319,7 +2320,6 @@ mod tests {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
-        let cluster_slots = ClusterSlots::default();
         let cluster_info = Arc::new(new_test_cluster_info());
         let me = cluster_info.my_contact_info();
         let (repair_request_quic_sender, _) = tokio::sync::mpsc::channel(/*buffer:*/ 128);
@@ -2346,7 +2346,6 @@ mod tests {
             assert!(serve_repair.repair_peers(&known_validators, 1).is_empty());
             assert_matches!(
                 serve_repair.repair_request(
-                    &cluster_slots,
                     ShredRepairType::Shred(0, 0),
                     &mut LruCache::new(100),
                     &mut RepairStats::default(),
@@ -2367,7 +2366,6 @@ mod tests {
         assert_eq!(repair_peers[0].pubkey(), contact_info2.pubkey());
         assert_matches!(
             serve_repair.repair_request(
-                &cluster_slots,
                 ShredRepairType::Shred(0, 0),
                 &mut LruCache::new(100),
                 &mut RepairStats::default(),
@@ -2392,7 +2390,6 @@ mod tests {
         assert!(repair_peers.contains(contact_info3.pubkey()));
         assert_matches!(
             serve_repair.repair_request(
-                &cluster_slots,
                 ShredRepairType::Shred(0, 0),
                 &mut LruCache::new(100),
                 &mut RepairStats::default(),
