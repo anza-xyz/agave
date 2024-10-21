@@ -13,7 +13,7 @@ use {
         slot_history::Slot,
         transaction::{Result, Transaction},
     },
-    solana_transaction_status::UiConfirmedBlock,
+    solana_transaction_status::{TransactionStatus, UiConfirmedBlock},
 };
 
 impl TpsClient for RpcClient {
@@ -45,6 +45,15 @@ impl TpsClient for RpcClient {
 
     fn get_signature_status(&self, signature: &Signature) -> TpsClientResult<Option<Result<()>>> {
         RpcClient::get_signature_status(self, signature).map_err(|err| err.into())
+    }
+
+    fn get_signature_statuses(
+        &self,
+        signatures: &[Signature],
+    ) -> TpsClientResult<Vec<Option<TransactionStatus>>> {
+        RpcClient::get_signature_statuses(self, signatures)
+            .map(|response| response.value)
+            .map_err(|err| err.into())
     }
 
     fn get_transaction_count(&self) -> TpsClientResult<u64> {
