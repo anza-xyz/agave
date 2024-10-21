@@ -39,12 +39,13 @@ impl TransactionStatusService {
             .spawn(move || {
                 info!("TransactionStatusService has started");
                 loop {
-                if exit.load(Ordering::Relaxed) {
-                    break;
-                }
+                    if exit.load(Ordering::Relaxed) {
+                        break;
+                    }
 
-                let message =
-                    match write_transaction_status_receiver.recv_timeout(Duration::from_secs(1)) {
+                    let message = match write_transaction_status_receiver
+                        .recv_timeout(Duration::from_secs(1))
+                    {
                         Ok(message) => message,
                         Err(RecvTimeoutError::Disconnected) => {
                             break;
@@ -54,22 +55,22 @@ impl TransactionStatusService {
                         }
                     };
 
-                match Self::write_transaction_status_batch(
-                    message,
-                    &max_complete_transaction_status_slot,
-                    enable_rpc_transaction_history,
-                    transaction_notifier.clone(),
-                    &blockstore,
-                    enable_extended_tx_metadata_storage,
-                ) {
-                    Ok(_) => {}
-                    Err(_err) => {
-                        exit.store(true, Ordering::Relaxed);
-                        break;
+                    match Self::write_transaction_status_batch(
+                        message,
+                        &max_complete_transaction_status_slot,
+                        enable_rpc_transaction_history,
+                        transaction_notifier.clone(),
+                        &blockstore,
+                        enable_extended_tx_metadata_storage,
+                    ) {
+                        Ok(_) => {}
+                        Err(_err) => {
+                            exit.store(true, Ordering::Relaxed);
+                            break;
+                        }
                     }
                 }
-            }
-            info!("TransactionStatusService has stopped");
+                info!("TransactionStatusService has stopped");
             })
             .unwrap();
         Self { thread_hdl }
