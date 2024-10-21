@@ -7937,6 +7937,7 @@ dependencies = [
  "solana-serde-varint",
  "solana-short-vec",
  "solana-signature",
+ "solana-transaction-context",
  "static_assertions",
  "thiserror",
  "tiny-bip39",
@@ -8474,6 +8475,24 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-util 0.7.12",
+]
+
+[[package]]
+name = "solana-transaction-context"
+version = "2.1.0"
+dependencies = [
+ "bincode",
+ "serde",
+ "serde_derive",
+ "solana-account",
+ "solana-account-info",
+ "solana-instruction",
+ "solana-program",
+ "solana-pubkey",
+ "solana-rent",
+ "solana-signature",
+ "solana-transaction-context",
+ "static_assertions",
 ]
 
 [[package]]
