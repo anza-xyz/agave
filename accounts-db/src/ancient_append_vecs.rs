@@ -756,7 +756,7 @@ impl AccountsDb {
         tuning: &PackedAncientStorageTuning,
         mut many_ref_slots: IncludeManyRefSlots,
     ) -> AccountsToCombine<'a> {
-        let alive_bytes = accounts_per_storage
+        let mut alive_bytes = accounts_per_storage
             .iter()
             .map(|a| a.0.alive_bytes)
             .sum::<u64>();
@@ -787,11 +787,6 @@ impl AccountsDb {
 
         let mut many_refs_old_alive_count = 0;
 
-        // We want ceiling, so we add 1.
-        // 0 < alive_bytes < `ideal_storage_size`, then `min_resulting_packed_slots` = 0.
-        // We obviously require 1 packed slot if we have at 1 alive byte.
-        let min_resulting_packed_slots =
-            alive_bytes.saturating_sub(1) / u64::from(tuning.ideal_storage_size) + 1;
         let mut remove = Vec::default();
         let mut last_slot = None;
         for (i, (shrink_collect, (info, _unique_accounts))) in accounts_to_combine
@@ -799,6 +794,11 @@ impl AccountsDb {
             .zip(accounts_per_storage.iter())
             .enumerate()
         {
+            // If 0 < alive_bytes < `ideal_storage_size`, then `min_resulting_packed_slots` = 0.
+            // We obviously require 1 packed slot if we have at least 1 alive byte.
+            // We want ceiling, so we add 1.
+            let min_resulting_packed_slots =
+                alive_bytes.saturating_sub(1) / u64::from(tuning.ideal_storage_size) + 1;
             // assert that iteration is in descending slot order since the code below relies on this.
             if let Some(last_slot) = last_slot {
                 assert!(last_slot > info.slot);
@@ -832,6 +832,8 @@ impl AccountsDb {
                     self.shrink_ancient_stats
                         .many_ref_slots_skipped
                         .fetch_add(1, Ordering::Relaxed);
+                    // since we're skipping this one, we don't count it as required target storages
+                    alive_bytes = alive_bytes.saturating_sub(info.alive_bytes);
                     remove.push(i);
                     continue;
                 }
