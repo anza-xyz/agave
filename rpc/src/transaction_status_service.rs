@@ -36,7 +36,9 @@ impl TransactionStatusService {
     ) -> Self {
         let thread_hdl = Builder::new()
             .name("solTxStatusWrtr".to_string())
-            .spawn(move || loop {
+            .spawn(move || {
+                info!("TransactionStatusService has started");
+                loop {
                 if exit.load(Ordering::Relaxed) {
                     break;
                 }
@@ -66,6 +68,8 @@ impl TransactionStatusService {
                         break;
                     }
                 }
+            }
+            info!("TransactionStatusService has stopped");
             })
             .unwrap();
         Self { thread_hdl }
