@@ -1,0 +1,50 @@
+[package]
+name = "solana-system-instruction"
+description = "Instructions and constructors for the Solana system program."
+documentation = "https://docs.rs/solana-system-instruction"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[dependencies]
+num-traits = { workspace = true }
+serde = { workspace = true }
+serde_derive = { workspace = true }
+solana-decode-error = { workspace = true }
+solana-frozen-abi = { workspace = true, optional = true }
+solana-frozen-abi-macro = { workspace = true, optional = true }
+solana-instruction = { workspace = true, features = ["bincode", "std"] }
+solana-logger = { workspace = true, optional = true }
+solana-pubkey = { workspace = true, default-features = false, features = ["serde"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = { workspace = true }
+wasm-bindgen = { workspace = true }
+
+[dev-dependencies]
+anyhow = { workspace = true }
+borsh = { workspace = true }
+solana-instruction = { workspace = true }
+solana-program = { path = "../program", default-features = false }
+solana-program-error = { workspace = true, features = ["borsh"] }
+static_assertions = { workspace = true }
+strum = { workspace = true }
+strum_macros = { workspace = true }
+
+[features]
+frozen-abi = [
+    "dep:solana-frozen-abi",
+    "dep:solana-frozen-abi-macro",
+    "dep:solana-logger"
+]
+
+[lints]
+workspace = true
