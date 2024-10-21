@@ -37,6 +37,10 @@ impl SlotStatusNotifierInterface for SlotStatusNotifierImpl {
     fn notify_created_bank(&self, slot: Slot, parent: Slot) {
         self.notify_slot_status(slot, Some(parent), SlotStatus::CreatedBank);
     }
+
+    fn notify_slot_dead(&self, slot: Slot, _error: String) {
+        self.notify_slot_status(slot, None, SlotStatus::Dead);
+    }
 }
 
 impl SlotStatusNotifierImpl {
