@@ -6813,7 +6813,6 @@ dependencies = [
  "bv",
  "serde",
  "serde_derive",
- "solana-clock",
 ]
 
 [[package]]

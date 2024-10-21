@@ -21,7 +21,7 @@ pub use solana_clock::Slot;
 #[derive(Clone, PartialEq, Eq)]
 pub struct SlotHistory {
     pub bits: BitVec<u64>,
-    pub next_slot: Slot,
+    pub next_slot: u64,
 }
 
 impl Default for SlotHistory {
@@ -57,7 +57,7 @@ pub enum Check {
 }
 
 impl SlotHistory {
-    pub fn add(&mut self, slot: Slot) {
+    pub fn add(&mut self, slot: u64) {
         if slot > self.next_slot && slot - self.next_slot >= MAX_ENTRIES {
             // Wrapped past current history,
             // clear entire bitvec.
@@ -74,7 +74,7 @@ impl SlotHistory {
         self.next_slot = slot + 1;
     }
 
-    pub fn check(&self, slot: Slot) -> Check {
+    pub fn check(&self, slot: u64) -> Check {
         if slot > self.newest() {
             Check::Future
         } else if slot < self.oldest() {
@@ -86,11 +86,11 @@ impl SlotHistory {
         }
     }
 
-    pub fn oldest(&self) -> Slot {
+    pub fn oldest(&self) -> u64 {
         self.next_slot.saturating_sub(MAX_ENTRIES)
     }
 
-    pub fn newest(&self) -> Slot {
+    pub fn newest(&self) -> u64 {
         self.next_slot - 1
     }
 }

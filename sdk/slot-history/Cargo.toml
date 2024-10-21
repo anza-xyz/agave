@@ -13,7 +13,6 @@ edition = { workspace = true }
 bv = { workspace = true }
 serde = { workspace = true, optional = true }
 serde_derive = { workspace = true, optional = true }
-solana-clock = { workspace = true, default-features = false }
 
 [features]
 serde = ["dep:serde", "dep:serde_derive", "bv/serde"]
