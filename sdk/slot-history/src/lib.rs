@@ -2,9 +2,9 @@
 //!
 //! [sv]: https://docs.solanalabs.com/runtime/sysvars#slothistory
 //!
-//! The sysvar ID is declared in [`sysvar`].
+//! The sysvar ID is declared in [`sysvar::slot_history`].
 //!
-//! [`sysvar`]: crate::sysvar
+//! [`sysvar`]: https://docs.rs/solana-program/latest/solana_program/sysvar/slot_history
 
 #![allow(clippy::arithmetic_side_effects)]
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
