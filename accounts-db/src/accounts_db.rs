@@ -8457,6 +8457,7 @@ impl AccountsDb {
                         outer_slots_len as u64,
                     );
                     let mut scan_time_sum = 0;
+                    let mut insert_time_sum = 0;
                     let mut all_accounts_are_zero_lamports_slots_inner = 0;
                     let mut all_zeros_slots_inner = vec![];
                     for (index, slot) in slots.iter().enumerate() {
@@ -8539,8 +8540,9 @@ impl AccountsDb {
                             lookup_time.stop();
                             lookup_time.as_us()
                         };
-                        insertion_time_us.fetch_add(insert_us, Ordering::Relaxed);
+                        insert_time_sum += insert_us;
                     }
+                    insertion_time_us.fetch_add(insert_time_sum, Ordering::Relaxed);
                     all_accounts_are_zero_lamports_slots.fetch_add(
                         all_accounts_are_zero_lamports_slots_inner,
                         Ordering::Relaxed,
