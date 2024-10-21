@@ -2,7 +2,7 @@
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
 #![no_std]
-
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
 use log::*;
 #[cfg(feature = "frozen-abi")]
 extern crate std;
