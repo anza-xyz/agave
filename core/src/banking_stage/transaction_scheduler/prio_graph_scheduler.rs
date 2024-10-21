@@ -591,18 +591,15 @@ fn try_schedule_transaction(
 mod tests {
     use {
         super::*,
-        crate::banking_stage::{
-            consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
-            immutable_deserialized_packet::ImmutableDeserializedPacket,
-        },
+        crate::banking_stage::consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
         crossbeam_channel::{unbounded, Receiver},
         itertools::Itertools,
         solana_sdk::{
             clock::Slot, compute_budget::ComputeBudgetInstruction, hash::Hash, message::Message,
-            packet::Packet, pubkey::Pubkey, signature::Keypair, signer::Signer, system_instruction,
+            pubkey::Pubkey, signature::Keypair, signer::Signer, system_instruction,
             transaction::Transaction,
         },
-        std::{borrow::Borrow, sync::Arc},
+        std::borrow::Borrow,
     };
 
     macro_rules! txid {
@@ -677,12 +674,6 @@ mod tests {
                 lamports,
                 compute_unit_price,
             );
-            let packet = Arc::new(
-                ImmutableDeserializedPacket::new(
-                    Packet::from_data(None, transaction.to_versioned_transaction()).unwrap(),
-                )
-                .unwrap(),
-            );
             let transaction_ttl = SanitizedTransactionTTL {
                 transaction,
                 max_age: MaxAge {
@@ -694,7 +685,6 @@ mod tests {
             container.insert_new_transaction(
                 id,
                 transaction_ttl,
-                packet,
                 compute_unit_price,
                 TEST_TRANSACTION_COST,
             );

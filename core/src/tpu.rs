@@ -11,6 +11,7 @@ use {
             VerifiedVoteSender, VoteTracker,
         },
         fetch_stage::FetchStage,
+        forwarding_stage::ForwardingStage,
         sigverify::TransactionSigVerifier,
         sigverify_stage::SigVerifyStage,
         staked_nodes_updater_service::StakedNodesUpdaterService,
@@ -18,7 +19,7 @@ use {
         validator::{BlockProductionMethod, GeneratorConfig},
     },
     bytes::Bytes,
-    crossbeam_channel::{unbounded, Receiver},
+    crossbeam_channel::{bounded, unbounded, Receiver},
     solana_client::connection_cache::ConnectionCache,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
@@ -71,6 +72,7 @@ pub struct Tpu {
     sigverify_stage: SigVerifyStage,
     vote_sigverify_stage: SigVerifyStage,
     banking_stage: BankingStage,
+    forwarding_stage: thread::JoinHandle<()>,
     cluster_info_vote_listener: ClusterInfoVoteListener,
     broadcast_stage: BroadcastStage,
     tpu_quic_t: thread::JoinHandle<()>,
@@ -199,15 +201,22 @@ impl Tpu {
         )
         .unwrap();
 
+        let (forward_stage_sender, forward_stage_receiver) = bounded(64);
         let sigverify_stage = {
-            let verifier = TransactionSigVerifier::new(non_vote_sender);
+            let verifier = TransactionSigVerifier::new(
+                non_vote_sender,
+                enable_block_production_forwarding.then(|| forward_stage_sender.clone()), // only forward non-vote transactions if enabled
+            );
             SigVerifyStage::new(packet_receiver, verifier, "solSigVerTpu", "tpu-verifier")
         };
 
         let (tpu_vote_sender, tpu_vote_receiver) = banking_tracer.create_channel_tpu_vote();
 
         let vote_sigverify_stage = {
-            let verifier = TransactionSigVerifier::new_reject_non_vote(tpu_vote_sender);
+            let verifier = TransactionSigVerifier::new_reject_non_vote(
+                tpu_vote_sender,
+                Some(forward_stage_sender),
+            );
             SigVerifyStage::new(
                 vote_packet_receiver,
                 verifier,
@@ -243,10 +252,14 @@ impl Tpu {
             transaction_status_sender,
             replay_vote_sender,
             log_messages_bytes_limit,
-            connection_cache.clone(),
             bank_forks.clone(),
             prioritization_fee_cache,
-            enable_block_production_forwarding,
+        );
+
+        let forwarding_stage = ForwardingStage::spawn(
+            forward_stage_receiver,
+            (cluster_info.clone(), poh_recorder.clone()),
+            connection_cache.clone(),
         );
 
         let (entry_receiver, tpu_entry_notifier) =
@@ -281,6 +294,7 @@ impl Tpu {
                 sigverify_stage,
                 vote_sigverify_stage,
                 banking_stage,
+                forwarding_stage,
                 cluster_info_vote_listener,
                 broadcast_stage,
                 tpu_quic_t,
@@ -300,6 +314,7 @@ impl Tpu {
             self.vote_sigverify_stage.join(),
             self.cluster_info_vote_listener.join(),
             self.banking_stage.join(),
+            self.forwarding_stage.join(),
             self.staked_nodes_updater_service.join(),
             self.tpu_quic_t.join(),
             self.tpu_forwards_quic_t.join(),
