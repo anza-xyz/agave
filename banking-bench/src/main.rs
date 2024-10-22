@@ -468,6 +468,9 @@ fn main() {
         None,
         Some(leader_schedule_cache),
     );
+    if let BlockProductionMethod::UnifiedScheduler = block_production_method {
+        solana_unified_scheduler_pool::MY_POH.lock().unwrap().insert(poh_recorder.read().unwrap().new_recorder());
+    }
     let (banking_tracer, tracer_thread) =
         BankingTracer::new(matches.is_present("trace_banking").then_some((
             &blockstore.banking_trace_path(),
@@ -476,8 +479,16 @@ fn main() {
         )))
         .unwrap();
     let (non_vote_sender, non_vote_receiver) = banking_tracer.create_channel_non_vote();
-    let (tpu_vote_sender, tpu_vote_receiver) = banking_tracer.create_channel_tpu_vote();
-    let (gossip_vote_sender, gossip_vote_receiver) = banking_tracer.create_channel_gossip_vote();
+    let (tpu_vote_sender, tpu_vote_receiver) = if let BlockProductionMethod::UnifiedScheduler = block_production_method {
+        banking_tracer.create_unified_channel_tpu_vote(&non_vote_sender, &non_vote_receiver)
+    } else {
+        banking_tracer.create_channel_tpu_vote()
+    };
+    let (gossip_vote_sender, gossip_vote_receiver) = if let BlockProductionMethod::UnifiedScheduler = block_production_method {
+        banking_tracer.create_unified_channel_gossip_vote(&non_vote_sender, &non_vote_receiver)
+    } else {
+        banking_tracer.create_channel_gossip_vote()
+    };
     let cluster_info = {
         let keypair = Arc::new(Keypair::new());
         let node = Node::new_localhost_with_pubkey(&keypair.pubkey());
@@ -498,13 +509,13 @@ fn main() {
     let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
     let collector = solana_sdk::pubkey::new_rand();
     let (dummy_sender, dummy_receiver) = unbounded();
-    let use_dummy = if let BlockProductionMethod::UnifiedScheduler = block_production_method {
+    let (use_dummy, scheduler_pool) = if let BlockProductionMethod::UnifiedScheduler = block_production_method {
         let (dummy_sender, use_dummy) = if std::env::var("USE_DUMMY").is_ok() {
             (Some(dummy_sender), true)
         } else {
             (None, false)
         };
-        let scheduler_pool = DefaultSchedulerPool::new_dyn(
+        let scheduler_pool = DefaultSchedulerPool::new(
             Some(num_banking_threads as usize),
             None,
             None,
@@ -516,7 +527,7 @@ fn main() {
         bank_forks
             .write()
             .unwrap()
-            .install_scheduler_pool(scheduler_pool);
+            .install_scheduler_pool(scheduler_pool.clone());
         bank_forks
             .write()
             .unwrap()
@@ -530,9 +541,9 @@ fn main() {
             .write()
             .unwrap()
             .swap_working_bank(bank.clone_with_scheduler());
-        use_dummy
+        (use_dummy, Some(scheduler_pool))
     } else {
-        false
+        (false, None)
     };
 
     let banking_stage = BankingStage::new_num_threads(
@@ -550,6 +561,7 @@ fn main() {
         bank_forks.clone(),
         &prioritization_fee_cache,
         false,
+        scheduler_pool,
     );
 
     // This is so that the signal_receiver does not go out of scope after the closure.
