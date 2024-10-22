@@ -121,9 +121,8 @@ const SCAN_SLOT_PAR_ITER_THRESHOLD: usize = 4000;
 
 const UNREF_ACCOUNTS_BATCH_SIZE: usize = 10_000;
 
-pub const DEFAULT_FILE_SIZE: u64 = 4 * 1024 * 1024;
-pub const DEFAULT_NUM_THREADS: u32 = 8;
-pub const DEFAULT_NUM_DIRS: u32 = 4;
+const DEFAULT_FILE_SIZE: u64 = 4 * 1024 * 1024;
+const DEFAULT_NUM_DIRS: u32 = 4;
 
 // When calculating hashes, it is helpful to break the pubkeys found into bins based on the pubkey value.
 // More bins means smaller vectors to sort, copy, etc.
@@ -2071,11 +2070,6 @@ impl AccountsDb {
             size,
             self.accounts_file_provider,
         )
-    }
-
-    pub fn expected_cluster_type(&self) -> ClusterType {
-        self.cluster_type
-            .expect("Cluster type must be set at initialization")
     }
 
     /// Returns if the experimental accounts lattice hash is enabled
@@ -6321,11 +6315,8 @@ impl AccountsDb {
             .unzip();
 
         // hash this accounts in bg
-        match &self.sender_bg_hasher {
-            Some(ref sender) => {
-                let _ = sender.send(cached_accounts);
-            }
-            None => (),
+        if let Some(ref sender) = &self.sender_bg_hasher {
+            let _ = sender.send(cached_accounts);
         };
 
         account_infos
@@ -6422,11 +6413,6 @@ impl AccountsDb {
                 i64
             ),
         );
-    }
-
-    pub fn checked_iterative_sum_for_capitalization(total_cap: u64, new_cap: u64) -> u64 {
-        let new_total = total_cap as u128 + new_cap as u128;
-        AccountsHasher::checked_cast_for_capitalization(new_total)
     }
 
     pub fn checked_sum_for_capitalization<T: Iterator<Item = u64>>(balances: T) -> u64 {

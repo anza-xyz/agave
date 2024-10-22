@@ -3897,7 +3897,11 @@ fn test_bank_update_sysvar_account() {
     for pass in 0..5 {
         use sysvar::clock::Clock;
 
-        let dummy_clock_id = solana_sdk::pubkey::new_rand();
+        // This pubkey was chosen empirically.
+        // The test requires that the dummy clock id *not* be loaded for rent collection
+        // (since rent collection will update the rent epoch, thus causing the
+        // subsequent checks to fail spuriously).
+        let dummy_clock_id = Pubkey::from_str_const("64jsX5hwtsjsKR7eNcNU4yhgwjuXoU9KR2MpnV47iXXz");
         let dummy_rent_epoch = 44;
         let (mut genesis_config, _mint_keypair) = create_genesis_config(500);
 
@@ -10044,6 +10048,31 @@ fn test_verify_transactions_packet_data_size() {
                 .is_ok(),
         );
     }
+}
+
+#[test]
+fn test_check_reserved_keys() {
+    let (genesis_config, _mint_keypair) = create_genesis_config(1);
+    let bank = Bank::new_for_tests(&genesis_config);
+    let mut bank = Bank::new_from_parent(Arc::new(bank), &Pubkey::new_unique(), 1);
+
+    let transaction =
+        SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
+            &Keypair::new(),
+            &Pubkey::new_unique(),
+            1,
+            genesis_config.hash(),
+        ));
+
+    assert_eq!(bank.check_reserved_keys(&transaction), Ok(()));
+
+    Arc::make_mut(&mut bank.reserved_account_keys)
+        .active
+        .insert(transaction.account_keys()[1]);
+    assert_eq!(
+        bank.check_reserved_keys(&transaction),
+        Err(TransactionError::ResanitizationNeeded)
+    );
 }
 
 #[test]
