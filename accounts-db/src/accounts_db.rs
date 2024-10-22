@@ -9657,6 +9657,33 @@ pub mod tests {
         run_generate_index_duplicates_within_slot_test(db, true);
     });
 
+    #[test]
+    fn test_generate_index_for_single_ref_zero_slot() {
+        let db = AccountsDb::new_single_for_tests();
+        let slot0 = 0;
+        let pubkey = Pubkey::from([1; 32]);
+        let append_vec = db.create_and_insert_store(slot0, 1000, "test");
+        let account = AccountSharedData::default();
+
+        let data = vec![(&pubkey, &account)];
+        let storable_accounts = (slot0, &data[..]);
+        append_vec.accounts.append_accounts(&storable_accounts, 0);
+        let genesis_config = GenesisConfig::default();
+        assert!(!db.accounts_index.contains(&pubkey));
+        let result = db.generate_index(None, false, &genesis_config);
+        let entry = db.accounts_index.get_cloned(&pubkey).unwrap();
+        assert_eq!(entry.slot_list.read().unwrap().len(), 1);
+        assert_eq!(append_vec.alive_bytes(), aligned_stored_size(0));
+        assert_eq!(append_vec.accounts_count(), 1);
+        assert_eq!(append_vec.count(), 1);
+        assert_eq!(result.accounts_data_len, 0);
+        assert_eq!(1, append_vec.zero_lamport_single_ref_account_len());
+        assert_eq!(
+            0,
+            append_vec.alive_bytes_exclude_zero_lamport_single_ref_accounts()
+        );
+    }
+
     fn generate_sample_account_from_storage(i: u8) -> AccountFromStorage {
         // offset has to be 8 byte aligned
         let offset = (i as usize) * std::mem::size_of::<u64>();
