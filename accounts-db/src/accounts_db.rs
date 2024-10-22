@@ -1933,26 +1933,10 @@ impl AccountsDb {
     ) -> Self {
         let accounts_db_config = accounts_db_config.unwrap_or_default();
         let accounts_index = AccountsIndex::new(accounts_db_config.index.clone(), exit);
-
         let base_working_path = accounts_db_config.base_working_path.clone();
-
         let accounts_hash_cache_path = accounts_db_config.accounts_hash_cache_path.clone();
 
-        let skip_initial_hash_calc = accounts_db_config.skip_initial_hash_calc;
-
-        let ancient_append_vec_offset = accounts_db_config
-            .ancient_append_vec_offset
-            .or(ANCIENT_APPEND_VEC_DEFAULT_OFFSET);
-
-        let exhaustively_verify_refcounts = accounts_db_config.exhaustively_verify_refcounts;
-
-        let create_ancient_storage = accounts_db_config.create_ancient_storage;
-
         let test_partitioned_epoch_rewards = accounts_db_config.test_partitioned_epoch_rewards;
-
-        let test_skip_rewrites_but_include_in_bank_hash =
-            accounts_db_config.test_skip_rewrites_but_include_in_bank_hash;
-
         let partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig =
             PartitionedEpochRewardsConfig::new(test_partitioned_epoch_rewards);
 
@@ -1961,24 +1945,18 @@ impl AccountsDb {
             Self::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI,
         ));
 
-        let storage_access = accounts_db_config.storage_access;
-
-        let scan_filter_for_shrinking = accounts_db_config.scan_filter_for_shrinking;
-
-        let enable_experimental_accumulator_hash = accounts_db_config
-            .enable_experimental_accumulator_hash
-            .into();
-
         let paths_is_empty = paths.is_empty();
         let mut new = Self {
             paths,
-            skip_initial_hash_calc,
-            ancient_append_vec_offset,
+            skip_initial_hash_calc: accounts_db_config.skip_initial_hash_calc,
+            ancient_append_vec_offset: accounts_db_config
+                .ancient_append_vec_offset
+                .or(ANCIENT_APPEND_VEC_DEFAULT_OFFSET),
             cluster_type: Some(*cluster_type),
             account_indexes,
             shrink_ratio,
             accounts_update_notifier,
-            create_ancient_storage,
+            create_ancient_storage: accounts_db_config.create_ancient_storage,
             read_only_accounts_cache: ReadOnlyAccountsCache::new(
                 read_cache_size.0,
                 read_cache_size.1,
@@ -1986,11 +1964,14 @@ impl AccountsDb {
             ),
             write_cache_limit_bytes: accounts_db_config.write_cache_limit_bytes,
             partitioned_epoch_rewards_config,
-            exhaustively_verify_refcounts,
-            test_skip_rewrites_but_include_in_bank_hash,
-            storage_access,
-            scan_filter_for_shrinking,
-            is_experimental_accumulator_hash_enabled: enable_experimental_accumulator_hash,
+            exhaustively_verify_refcounts: accounts_db_config.exhaustively_verify_refcounts,
+            test_skip_rewrites_but_include_in_bank_hash: accounts_db_config
+                .test_skip_rewrites_but_include_in_bank_hash,
+            storage_access: accounts_db_config.storage_access,
+            scan_filter_for_shrinking: accounts_db_config.scan_filter_for_shrinking,
+            is_experimental_accumulator_hash_enabled: accounts_db_config
+                .enable_experimental_accumulator_hash
+                .into(),
             ..Self::default_with_accounts_index(
                 accounts_index,
                 base_working_path,
