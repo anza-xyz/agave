@@ -10,7 +10,6 @@
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
 use bv::{BitVec, BitsMut};
-pub use solana_clock::Slot;
 
 /// A bitvector indicating which slots are present in the past epoch.
 #[repr(C)]
