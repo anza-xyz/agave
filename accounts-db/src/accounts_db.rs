@@ -8437,8 +8437,10 @@ impl AccountsDb {
                 stored_size_alive += info.stored_size_aligned;
                 if info.index_info.lamports > 0 {
                     accounts_data_len += info.index_info.data_len;
-                    zero_pubkeys.push(info.index_info.pubkey);
                     all_accounts_are_zero_lamports = false;
+                } else {
+                    // zero lamport accounts
+                    zero_pubkeys.push(info.index_info.pubkey);
                 }
                 items_local.push(info.index_info);
             });
