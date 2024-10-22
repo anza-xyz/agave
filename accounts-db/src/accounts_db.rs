@@ -8938,6 +8938,7 @@ impl AccountsDb {
 
     /// Visit zero lamport pubkeys and populate zero_lamport_single_ref info on
     /// storage.
+    /// Returns the number of zero lamport single ref accounts found.
     fn visit_zero_pubkeys_during_startup(&self, pubkeys: &HashSet<Pubkey>) -> u64 {
         let mut count = 0;
         self.accounts_index.scan(
