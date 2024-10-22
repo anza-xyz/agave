@@ -1927,77 +1927,46 @@ impl AccountsDb {
         cluster_type: &ClusterType,
         account_indexes: AccountSecondaryIndexes,
         shrink_ratio: AccountShrinkThreshold,
-        mut accounts_db_config: Option<AccountsDbConfig>,
+        accounts_db_config: Option<AccountsDbConfig>,
         accounts_update_notifier: Option<AccountsUpdateNotifier>,
         exit: Arc<AtomicBool>,
     ) -> Self {
-        let default_accounts_db_config = AccountsDbConfig::default();
+        let accounts_db_config = accounts_db_config.unwrap_or_default();
+        let accounts_index = AccountsIndex::new(accounts_db_config.index.clone(), exit);
 
-        let accounts_index = AccountsIndex::new(
-            accounts_db_config.as_mut().and_then(|x| x.index.take()),
-            exit,
-        );
-        let base_working_path = accounts_db_config
-            .as_ref()
-            .and_then(|x| x.base_working_path.clone());
-        let accounts_hash_cache_path = accounts_db_config
-            .as_ref()
-            .and_then(|config| config.accounts_hash_cache_path.clone());
-        let skip_initial_hash_calc = accounts_db_config
-            .as_ref()
-            .map(|config| config.skip_initial_hash_calc)
-            .unwrap_or_default();
+        let base_working_path = accounts_db_config.base_working_path.clone();
+
+        let accounts_hash_cache_path = accounts_db_config.accounts_hash_cache_path.clone();
+
+        let skip_initial_hash_calc = accounts_db_config.skip_initial_hash_calc;
 
         let ancient_append_vec_offset = accounts_db_config
-            .as_ref()
-            .and_then(|config| config.ancient_append_vec_offset)
+            .ancient_append_vec_offset
             .or(ANCIENT_APPEND_VEC_DEFAULT_OFFSET);
 
-        let exhaustively_verify_refcounts = accounts_db_config
-            .as_ref()
-            .map(|config| config.exhaustively_verify_refcounts)
-            .unwrap_or_default();
+        let exhaustively_verify_refcounts = accounts_db_config.exhaustively_verify_refcounts;
 
-        let create_ancient_storage = accounts_db_config
-            .as_ref()
-            .map(|config| config.create_ancient_storage)
-            .unwrap_or_default();
+        let create_ancient_storage = accounts_db_config.create_ancient_storage;
 
-        let test_partitioned_epoch_rewards = accounts_db_config
-            .as_ref()
-            .map(|config| config.test_partitioned_epoch_rewards)
-            .unwrap_or_default();
+        let test_partitioned_epoch_rewards = accounts_db_config.test_partitioned_epoch_rewards;
 
-        let test_skip_rewrites_but_include_in_bank_hash = accounts_db_config
-            .as_ref()
-            .map(|config| config.test_skip_rewrites_but_include_in_bank_hash)
-            .unwrap_or_default();
+        let test_skip_rewrites_but_include_in_bank_hash =
+            accounts_db_config.test_skip_rewrites_but_include_in_bank_hash;
 
         let partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig =
             PartitionedEpochRewardsConfig::new(test_partitioned_epoch_rewards);
 
-        let read_cache_size = accounts_db_config
-            .as_ref()
-            .and_then(|config| config.read_cache_limit_bytes)
-            .unwrap_or((
-                Self::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_LO,
-                Self::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI,
-            ));
+        let read_cache_size = accounts_db_config.read_cache_limit_bytes.unwrap_or((
+            Self::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_LO,
+            Self::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI,
+        ));
 
-        let storage_access = accounts_db_config
-            .as_ref()
-            .map(|config| config.storage_access)
-            .unwrap_or_default();
+        let storage_access = accounts_db_config.storage_access;
 
-        let scan_filter_for_shrinking = accounts_db_config
-            .as_ref()
-            .map(|config| config.scan_filter_for_shrinking)
-            .unwrap_or_default();
+        let scan_filter_for_shrinking = accounts_db_config.scan_filter_for_shrinking;
 
         let enable_experimental_accumulator_hash = accounts_db_config
-            .as_ref()
-            .map(|config| config.enable_experimental_accumulator_hash)
-            .unwrap_or(default_accounts_db_config.enable_experimental_accumulator_hash)
+            .enable_experimental_accumulator_hash
             .into();
 
         let paths_is_empty = paths.is_empty();
@@ -2015,9 +1984,7 @@ impl AccountsDb {
                 read_cache_size.1,
                 Self::READ_ONLY_CACHE_MS_TO_SKIP_LRU_UPDATE,
             ),
-            write_cache_limit_bytes: accounts_db_config
-                .as_ref()
-                .and_then(|x| x.write_cache_limit_bytes),
+            write_cache_limit_bytes: accounts_db_config.write_cache_limit_bytes,
             partitioned_epoch_rewards_config,
             exhaustively_verify_refcounts,
             test_skip_rewrites_but_include_in_bank_hash,
@@ -2039,8 +2006,8 @@ impl AccountsDb {
             new.temp_paths = Some(temp_dirs);
         };
         new.shrink_paths = accounts_db_config
-            .as_ref()
-            .and_then(|config| config.shrink_paths.clone())
+            .shrink_paths
+            .clone()
             .unwrap_or_else(|| new.paths.clone());
 
         new.start_background_hasher();
