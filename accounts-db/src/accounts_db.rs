@@ -8533,12 +8533,6 @@ impl AccountsDb {
                                         rent_paying_accounts_by_partition.add_account(k);
                                     });
                             }
-
-                            all_accounts_are_zero_lamports_slots.fetch_add(
-                                all_accounts_are_zero_lamports as u64,
-                                Ordering::Relaxed,
-                            );
-
                             total_including_duplicates_sum += total_this_slot;
                             accounts_data_len_sum += accounts_data_len_this_slot;
                             if all_accounts_are_zero_lamports {
@@ -8765,6 +8759,7 @@ impl AccountsDb {
                     accounts_data_len.load(Ordering::Relaxed)
                 );
 
+                // insert all zero lamport account storage into the dirty stores and add them into the uncleaned roots for clean to pick up
                 let all_zero_slots_to_clean = std::mem::take(all_zeros_slots.get_mut().unwrap());
                 info!(
                     "insert all zero slots to clean at startup {}",
