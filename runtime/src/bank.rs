@@ -3708,7 +3708,7 @@ impl Bank {
 
         let sanitized_output = self
             .transaction_processor
-            .load_and_execute_sanitized_transactions(
+            .load_and_execute_batch_with_preprocessing_checks(
                 self,
                 sanitized_txs,
                 check_results,

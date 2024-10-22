@@ -63,9 +63,7 @@ use {
     crate::{
         loader::PayTubeAccountLoader, settler::PayTubeSettler, transaction::PayTubeTransaction,
     },
-    processor::{
-        create_transaction_batch_processor, get_transaction_check_results, PayTubeForkGraph,
-    },
+    processor::{create_transaction_batch_processor, PayTubeForkGraph},
     solana_client::rpc_client::RpcClient,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_sdk::{
@@ -174,10 +172,9 @@ impl PayTubeChannel {
 
         // Step 2: Process the SVM-compatible transactions with the SVM API.
         log::processing_transactions(svm_transactions.len());
-        let results = processor.load_and_execute_sanitized_transactions(
+        let results = processor.load_and_execute_batch(
             &account_loader,
             &svm_transactions,
-            get_transaction_check_results(svm_transactions.len(), lamports_per_signature),
             &processing_environment,
             &processing_config,
         );

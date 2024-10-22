@@ -240,8 +240,64 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         self.sysvar_cache.read().unwrap()
     }
 
-    /// Main entrypoint to the SVM.
-    pub fn load_and_execute_sanitized_transactions<CB: TransactionProcessingCallback>(
+    /// Main entrypoint to the SVM. Load and execute a batch of sanitized
+    /// transactions.
+    ///
+    /// The behavior of the SVM is configurable entirely from this method's
+    /// parameters.
+    ///
+    /// * `callbacks`: Reference to an object that implements the
+    ///   `TransactionProcessingCallback` trait. This plugin is used by SVM
+    ///   to load accounts, check account ownership, and more.
+    /// * `sanitized_txs`: A slice of sanitized transactions to process.
+    /// * `environment`: Configures the SVM runtime environment to use when
+    ///   processing the transaction batch.
+    /// * `config`: Additional configurations for controlling the behavior of
+    ///   SVM during transaction processing.
+    ///
+    /// Note: SVM has built-in support for evaluating preprocessing checks that
+    /// may have occurred before invoking the SVM API. These could be useful
+    /// for architectures that may wish to stream batches, performing checks
+    /// on-the-fly that aren't supported by SVM directly.
+    ///
+    /// If you wish to involve pre-processing checks, you can use
+    /// `load_and_execute_batch_with_preprocessing_checks` instead.
+    pub fn load_and_execute_batch<CB: TransactionProcessingCallback>(
+        &self,
+        callbacks: &CB,
+        sanitized_txs: &[impl SVMTransaction],
+        environment: &TransactionProcessingEnvironment,
+        config: &TransactionProcessingConfig,
+    ) -> LoadAndExecuteSanitizedTransactionsOutput {
+        let check_results = vec![
+            Ok(CheckedTransactionDetails {
+                nonce: None,
+                lamports_per_signature: environment.lamports_per_signature
+            });
+            sanitized_txs.len()
+        ];
+        self.load_and_execute_batch_with_preprocessing_checks(
+            callbacks,
+            sanitized_txs,
+            check_results,
+            environment,
+            config,
+        )
+    }
+
+    /// Load and execute a batch of sanitized transactions, with pre-processing
+    /// checks.
+    ///
+    /// This method's behavior is exactly the same as the flagship
+    /// `load_and_execute_batch`, except pre-processing checks are considered
+    /// when processing the batch.
+    ///
+    /// The vector of `check_results` must have the same length as the provided
+    /// slice of `sanitized_txs`. If the lengths do not match, the method will
+    /// panic.
+    ///
+    /// Any transaction that has a check result of `Err` will not be processed.
+    pub fn load_and_execute_batch_with_preprocessing_checks<CB: TransactionProcessingCallback>(
         &self,
         callbacks: &CB,
         sanitized_txs: &[impl SVMTransaction],
@@ -259,6 +315,23 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             "Length of check_results does not match length of sanitized_txs"
         );
 
+        self.load_and_execute_batch_inner(
+            callbacks,
+            sanitized_txs,
+            check_results,
+            environment,
+            config,
+        )
+    }
+
+    fn load_and_execute_batch_inner<CB: TransactionProcessingCallback>(
+        &self,
+        callbacks: &CB,
+        sanitized_txs: &[impl SVMTransaction],
+        check_results: Vec<TransactionCheckResult>,
+        environment: &TransactionProcessingEnvironment,
+        config: &TransactionProcessingConfig,
+    ) -> LoadAndExecuteSanitizedTransactionsOutput {
         // Initialize metrics.
         let mut error_metrics = TransactionErrorMetrics::default();
         let mut execute_timings = ExecuteTimings::default();
@@ -1158,7 +1231,7 @@ mod tests {
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
         let callback = MockBankCallback::default();
 
-        batch_processor.load_and_execute_sanitized_transactions(
+        batch_processor.load_and_execute_batch_with_preprocessing_checks(
             &callback,
             &sanitized_txs,
             check_results,

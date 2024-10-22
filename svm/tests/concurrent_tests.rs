@@ -243,7 +243,7 @@ fn svm_concurrent() {
             let check_tx_data = std::mem::take(&mut check_data[idx]);
 
             thread::spawn(move || {
-                let result = local_batch.load_and_execute_sanitized_transactions(
+                let result = local_batch.load_and_execute_batch_with_preprocessing_checks(
                     &*local_bank,
                     &th_txs,
                     check_results,
