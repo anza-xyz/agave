@@ -1063,6 +1063,7 @@ mod tests {
             sorted_storages::SortedStorages,
         },
         solana_sdk::{
+            feature_set,
             genesis_config::create_genesis_config,
             native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
             signature::{Keypair, Signer},
@@ -1962,11 +1963,18 @@ mod tests {
         let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
 
-        let genesis_config_info = genesis_utils::create_genesis_config_with_leader(
+        let mut genesis_config_info = genesis_utils::create_genesis_config_with_leader(
             1_000_000 * LAMPORTS_PER_SOL,
             &Pubkey::new_unique(),
             100 * LAMPORTS_PER_SOL,
         );
+        // When the accounts lt hash feature is enabled, the incremental accounts hash is bypassed.
+        // Disable the accounts lt hash feature by removing its account from genesis.
+        genesis_config_info
+            .genesis_config
+            .accounts
+            .remove(&feature_set::accounts_lt_hash::id())
+            .unwrap();
         let mint = &genesis_config_info.mint_keypair;
 
         let do_transfers = |bank: &Bank| {
