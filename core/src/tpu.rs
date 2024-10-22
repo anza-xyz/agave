@@ -1,8 +1,10 @@
 //! The `tpu` module implements the Transaction Processing Unit, a
 //! multi-stage transaction processing pipeline in software.
 
+use crate::{forwarding_stage::TransactionForwardClient, tpu_client_next::spawn_tpu_client_next};
 use solana_perf::data_budget::DataBudget;
 pub use solana_sdk::net::DEFAULT_TPU_COALESCE;
+
 use {
     crate::{
         banking_stage::BankingStage,
@@ -257,11 +259,15 @@ impl Tpu {
             prioritization_fee_cache,
         );
 
+        let client_sender = spawn_tpu_client_next(poh_recorder.clone(), cluster_info.clone());
+
         let forwarding_stage = ForwardingStage::spawn(
             forward_stage_receiver,
+            //TODO(klykov) these two arguments below are needed only for the CC
             poh_recorder.clone(),
             cluster_info.clone(),
-            connection_cache.clone(),
+            TransactionForwardClient::TpuClientNextSender(client_sender),
+            //connection_cache.clone().into(),
             DataBudget::default(),
         );
 

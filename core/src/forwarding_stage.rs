@@ -10,19 +10,33 @@ use {
     solana_poh::poh_recorder::PohRecorder,
     solana_sdk::pubkey::Pubkey,
     solana_streamer::sendmmsg::batch_send,
+    solana_tpu_client_next::transaction_batch::TransactionBatch,
     std::{
         iter::repeat,
         net::{SocketAddr, UdpSocket},
         sync::{Arc, RwLock},
         thread::{Builder, JoinHandle},
     },
+    tokio::sync::mpsc,
 };
+
+#[derive(Clone)]
+pub enum TransactionForwardClient {
+    ConnectionCache(Arc<ConnectionCache>),
+    TpuClientNextSender(mpsc::Sender<TransactionBatch>),
+}
+
+impl From<Arc<ConnectionCache>> for TransactionForwardClient {
+    fn from(cache: Arc<ConnectionCache>) -> Self {
+        TransactionForwardClient::ConnectionCache(cache)
+    }
+}
 
 pub struct ForwardingStage<T: LikeClusterInfo> {
     receiver: BankingPacketReceiver,
     poh_recorder: Arc<RwLock<PohRecorder>>,
     cluster_info: T,
-    connection_cache: Arc<ConnectionCache>,
+    transaction_client: TransactionForwardClient,
     data_budget: DataBudget,
     udp_socket: UdpSocket,
 }
@@ -32,14 +46,14 @@ impl<T: LikeClusterInfo> ForwardingStage<T> {
         receiver: BankingPacketReceiver,
         poh_recorder: Arc<RwLock<PohRecorder>>,
         cluster_info: T,
-        connection_cache: Arc<ConnectionCache>,
+        transaction_client: TransactionForwardClient,
         data_budget: DataBudget,
     ) -> JoinHandle<()> {
         let forwarding_stage = Self {
             receiver,
             poh_recorder,
             cluster_info,
-            connection_cache,
+            transaction_client,
             data_budget,
             udp_socket: UdpSocket::bind("0.0.0.0:0").unwrap(),
         };
@@ -55,10 +69,21 @@ impl<T: LikeClusterInfo> ForwardingStage<T> {
             let tpu_vote_batch = Self::is_tpu_vote(&packet_batches);
 
             // Get the leader and address to forward the packets to.
-            let Some((_leader, leader_address)) = self.get_leader_and_addr(tpu_vote_batch) else {
-                // If unknown leader, move to next packet batch.
-                continue;
-            };
+            let leader_address =
+                if let Some((_leader, leader_address)) = self.get_leader_and_addr(tpu_vote_batch) {
+                    // If unknown leader, move to next packet batch.
+                    Some(leader_address)
+                } else {
+                    None
+                };
+            if leader_address.is_none() {
+                if tpu_vote_batch {
+                    continue;
+                }
+                if let TransactionForwardClient::ConnectionCache(_) = &self.transaction_client {
+                    continue;
+                }
+            }
 
             self.update_data_budget();
 
@@ -74,11 +99,23 @@ impl<T: LikeClusterInfo> ForwardingStage<T> {
 
             if tpu_vote_batch {
                 // The vote must be forwarded using only UDP.
-                let pkts: Vec<_> = packet_vec.into_iter().zip(repeat(leader_address)).collect();
+                let pkts: Vec<_> = packet_vec
+                    .into_iter()
+                    .zip(repeat(leader_address.unwrap()))
+                    .collect();
                 let _ = batch_send(&self.udp_socket, &pkts);
             } else {
-                let conn = self.connection_cache.get_connection(&leader_address);
-                let _ = conn.send_data_batch_async(packet_vec);
+                match &self.transaction_client {
+                    TransactionForwardClient::ConnectionCache(connection_cache) => {
+                        let conn = connection_cache.get_connection(&leader_address.unwrap());
+                        let _ = conn.send_data_batch_async(packet_vec);
+                    }
+                    TransactionForwardClient::TpuClientNextSender(sender) => {
+                        if sender.try_send(TransactionBatch::new(packet_vec)).is_err() {
+                            debug!("Failed to forward transactions because channel is full, drop them.");
+                        }
+                    }
+                }
             }
         }
     }
@@ -88,9 +125,17 @@ impl<T: LikeClusterInfo> ForwardingStage<T> {
         if tpu_vote {
             next_leader_tpu_vote(&self.cluster_info, &self.poh_recorder)
         } else {
-            next_leader(&self.cluster_info, &self.poh_recorder, |node| {
-                node.tpu_forwards(self.connection_cache.protocol())
-            })
+            match &self.transaction_client {
+                TransactionForwardClient::ConnectionCache(connection_cache) => {
+                    next_leader(&self.cluster_info, &self.poh_recorder, |node| {
+                        node.tpu_forwards(connection_cache.protocol())
+                    })
+                }
+                TransactionForwardClient::TpuClientNextSender(_sender) => {
+                    // we don't really need to know leader explicitly here
+                    None
+                }
+            }
         }
     }
 
@@ -284,7 +329,7 @@ mod tests {
                 forward_stage_receiver,
                 poh_recorder.clone(),
                 cluster_info.clone(),
-                connection_cache.clone(),
+                connection_cache.clone().into(),
                 data_budget,
             );
             let tracer_packet_stats_to_send = SigverifyTracerPacketStats::default();
