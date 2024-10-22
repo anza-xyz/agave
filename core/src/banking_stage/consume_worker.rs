@@ -198,6 +198,7 @@ impl ConsumeWorkerMetrics {
             self.count_metrics.report_and_reset(&self.id);
             self.timing_metrics.report_and_reset(&self.id);
             self.error_metrics.report_and_reset(&self.id);
+            self.slot.swap(0, Ordering::Relaxed);
         }
     }
 
