@@ -5,7 +5,7 @@ pub use solana_instruction::syscalls::{
     sol_get_processed_sibling_instruction, sol_get_stack_height,
 };
 #[deprecated(since = "2.1.0", note = "Use `solana_msg::syscalls` instead.")]
-pub use solana_msg::syscalls::{sol_log, sol_log_64_, sol_log_compute_units_, sol_log_data};
+pub use solana_msg::syscalls::{sol_log_, sol_log_64_, sol_log_compute_units_, sol_log_data};
 #[deprecated(
     since = "2.1.0",
     note = "Use `solana_program_memory::syscalls` instead"
