@@ -4,7 +4,7 @@
 //!
 //! The sysvar ID is declared in [`sysvar::slot_history`].
 //!
-//! [`sysvar`]: https://docs.rs/solana-program/latest/solana_program/sysvar/slot_history
+//! [`sysvar::slot_history`]: https://docs.rs/solana-program/latest/solana_program/sysvar/slot_history
 
 #![allow(clippy::arithmetic_side_effects)]
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
