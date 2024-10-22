@@ -1268,19 +1268,19 @@ impl AccountStorageEntry {
 
     /// Return true if offset is "new" and inserted successfully. Otherwise,
     /// return false if the offset exits already.
-    pub fn insert_zero_lamport_single_ref_account_offset(&self, offset: usize) -> bool {
+    fn insert_zero_lamport_single_ref_account_offset(&self, offset: usize) -> bool {
         let mut zero_lamport_single_ref_offsets =
             self.zero_lamport_single_ref_offsets.write().unwrap();
         zero_lamport_single_ref_offsets.insert(offset)
     }
 
     /// Return the number of zero_lamport_single_ref accounts in the storage.
-    pub fn zero_lamport_single_ref_account_len(&self) -> usize {
+    fn zero_lamport_single_ref_account_len(&self) -> usize {
         self.zero_lamport_single_ref_offsets.read().unwrap().len()
     }
 
     /// Return the "alive_bytes" minus "zero_lamport_single_ref_accounts bytes".
-    pub fn alive_bytes_exclude_zero_lamport_single_ref_accounts(&self) -> usize {
+    fn alive_bytes_exclude_zero_lamport_single_ref_accounts(&self) -> usize {
         let zero_lamport_dead_bytes = self.accounts.dead_bytes_due_to_zero_lamport_single_ref(
             self.zero_lamport_single_ref_offsets.read().unwrap().len(),
         );
