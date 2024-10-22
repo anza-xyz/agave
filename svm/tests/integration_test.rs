@@ -8,13 +8,15 @@ use {
         EXECUTION_SLOT, WALLCLOCK_TIME,
     },
     solana_sdk::{
-        account::{AccountSharedData, ReadableAccount, WritableAccount},
+        account::{AccountSharedData, ReadableAccount, WritableAccount, PROGRAM_OWNERS},
+        bpf_loader_upgradeable::{self, UpgradeableLoaderState},
         clock::Slot,
         compute_budget::ComputeBudgetInstruction,
         entrypoint::MAX_PERMITTED_DATA_INCREASE,
         feature_set::{self, FeatureSet},
         hash::Hash,
         instruction::{AccountMeta, Instruction},
+        native_loader,
         native_token::LAMPORTS_PER_SOL,
         nonce::{self, state::DurableNonce},
         pubkey::Pubkey,
@@ -151,7 +153,12 @@ impl SvmTestEnvironment<'_> {
                     for (pubkey, account_data) in
                         executed_transaction.loaded_transaction.accounts.clone()
                     {
-                        final_accounts_actual.insert(pubkey, account_data);
+                        // by excluding executable, we skip program cache dummy accounts
+                        // the real account loader is smarter and skips read-only accounts
+                        // this can improved if complex multi-batch tests require it in the future
+                        if !account_data.executable() {
+                            final_accounts_actual.insert(pubkey, account_data);
+                        }
                     }
                 }
                 Ok(ProcessedTransaction::FeesOnly(fees_only_transaction)) => {
@@ -219,8 +226,9 @@ impl SvmTestEnvironment<'_> {
             }
         }
 
+        // merge new account states into the bank for multi-batch tests
         let mut mock_bank_accounts = self.mock_bank.account_shared_data.write().unwrap();
-        *mock_bank_accounts = final_accounts_actual;
+        mock_bank_accounts.extend(final_accounts_actual);
     }
 }
 
@@ -1759,6 +1767,95 @@ fn nonce_reuse(enable_fee_only_transactions: bool, fee_paying_nonce: bool) -> Ve
         test_entries.push(test_entry);
     }
 
+    // batch 10:
+    // * a successful blockhash transaction that changes the nonce authority
+    // * a nonce transaction that uses the nonce with the old authority; this transaction must be dropped
+    if !fee_paying_nonce {
+        let mut test_entry = common_test_entry.clone();
+
+        let new_authority = Pubkey::new_unique();
+
+        let first_transaction = Transaction::new_signed_with_payer(
+            &[system_instruction::authorize_nonce_account(
+                &nonce_pubkey,
+                &fee_payer,
+                &new_authority,
+            )],
+            Some(&fee_payer),
+            &[&fee_payer_keypair],
+            Hash::default(),
+        );
+
+        test_entry.push_transaction(first_transaction);
+        test_entry.push_nonce_transaction_with_status(
+            second_transaction.clone(),
+            advanced_nonce_info.clone(),
+            ExecutionStatus::Discarded,
+        );
+
+        let final_nonce_data =
+            nonce::state::Data::new(new_authority, initial_durable, LAMPORTS_PER_SIGNATURE);
+        let final_nonce_account = AccountSharedData::new_data(
+            LAMPORTS_PER_SOL,
+            &nonce::state::Versions::new(nonce::State::Initialized(final_nonce_data)),
+            &system_program::id(),
+        )
+        .unwrap();
+
+        test_entry.update_expected_account_data(nonce_pubkey, &final_nonce_account);
+
+        test_entries.push(test_entry);
+    }
+
+    // batch 11:
+    // * a successful blockhash transaction that changes the nonce authority
+    // * a nonce transaction that uses the nonce with the new authority; this transaction succeeds
+    if !fee_paying_nonce {
+        let mut test_entry = common_test_entry.clone();
+
+        let new_authority_keypair = Keypair::new();
+        let new_authority = new_authority_keypair.pubkey();
+
+        let first_transaction = Transaction::new_signed_with_payer(
+            &[system_instruction::authorize_nonce_account(
+                &nonce_pubkey,
+                &fee_payer,
+                &new_authority,
+            )],
+            Some(&fee_payer),
+            &[&fee_payer_keypair],
+            Hash::default(),
+        );
+
+        let second_transaction = Transaction::new_signed_with_payer(
+            &[
+                system_instruction::advance_nonce_account(&nonce_pubkey, &new_authority),
+                successful_noop_instruction.clone(),
+            ],
+            Some(&fee_payer),
+            &[&fee_payer_keypair, &new_authority_keypair],
+            *advanced_durable.as_hash(),
+        );
+
+        test_entry.push_transaction(first_transaction);
+        test_entry.push_nonce_transaction(second_transaction.clone(), advanced_nonce_info.clone());
+
+        test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
+
+        let final_nonce_data =
+            nonce::state::Data::new(new_authority, advanced_durable, LAMPORTS_PER_SIGNATURE);
+        let final_nonce_account = AccountSharedData::new_data(
+            LAMPORTS_PER_SOL,
+            &nonce::state::Versions::new(nonce::State::Initialized(final_nonce_data)),
+            &system_program::id(),
+        )
+        .unwrap();
+
+        test_entry.update_expected_account_data(nonce_pubkey, &final_nonce_account);
+
+        test_entries.push(test_entry);
+    }
+
     for test_entry in &mut test_entries {
         test_entry.add_initial_program(program_name);
 
@@ -2154,9 +2251,14 @@ fn account_reallocate(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry> {
     test_entries
 }
 
-fn rent_delinquent() -> Vec<SvmTestEntry> {
+fn bpf_loader_buffer(enable_fee_only_transactions: bool) -> Vec<SvmTestEntry> {
     let mut test_entries = vec![];
     let mut common_test_entry = SvmTestEntry::default();
+    if enable_fee_only_transactions {
+        common_test_entry
+            .enabled_features
+            .push(feature_set::enable_transaction_loading_failure_fees::id());
+    }
 
     let program_name = "write-to-account";
     let program_id = program_address(program_name);
@@ -2166,109 +2268,305 @@ fn rent_delinquent() -> Vec<SvmTestEntry> {
     let fee_payer = fee_payer_keypair.pubkey();
 
     let mut fee_payer_data = AccountSharedData::default();
-    fee_payer_data.set_lamports(LAMPORTS_PER_SOL * 2);
+    fee_payer_data.set_lamports(LAMPORTS_PER_SOL);
+    fee_payer_data.set_rent_epoch(u64::MAX);
     common_test_entry.add_initial_account(fee_payer, &fee_payer_data);
 
-    let target = Pubkey::new_unique();
+    let buffer_keypair = Keypair::new();
+    let buffer = buffer_keypair.pubkey();
 
-    let target_data_before = AccountSharedData::create(0, vec![1], program_id, false, 0);
-    common_test_entry.add_initial_account(target, &target_data_before);
+    let mut buffer_bytes = vec![0; MAX_PERMITTED_DATA_INCREASE];
+    bincode::serialize_into(
+        &mut buffer_bytes,
+        &UpgradeableLoaderState::Buffer {
+            authority_address: Some(fee_payer),
+        },
+    )
+    .unwrap();
 
-    let push_expected_size_log = |common_test_entry: &mut SvmTestEntry, expected_size| {
-        common_test_entry
-            .transaction_batch
-            .last_mut()
-            .unwrap()
-            .asserts
-            .logs
-            .push(format!("Program log: account size {}", expected_size));
+    // this is used to test non-buffer accounts for all loaders
+    let mut throwaway_account_owners = vec![None];
+    for program_owner in PROGRAM_OWNERS {
+        throwaway_account_owners.push(Some(*program_owner));
+    }
+
+    let initial_buffer_data = AccountSharedData::create(
+        LAMPORTS_PER_SOL,
+        buffer_bytes.clone(),
+        bpf_loader_upgradeable::id(),
+        false,
+        u64::MAX,
+    );
+    common_test_entry.add_initial_account(buffer, &initial_buffer_data);
+
+    // bpf_loader_upgradeable does not reassign closed accounts to system
+    // so reopening a closed buffer under a new owner can only be done in a subsequent transaction
+    let close_transaction = Transaction::new_signed_with_payer(
+        &[bpf_loader_upgradeable::close(
+            &buffer, &fee_payer, &fee_payer,
+        )],
+        Some(&fee_payer),
+        &[&fee_payer_keypair],
+        Hash::default(),
+    );
+
+    // make a transaction to reopen an account with a given size
+    let reopen = |new_size: usize| {
+        let reopen_transaction = Transaction::new_signed_with_payer(
+            &[system_instruction::create_account(
+                &fee_payer,
+                &buffer,
+                LAMPORTS_PER_SOL,
+                new_size as u64,
+                &system_program::id(),
+            )],
+            Some(&fee_payer),
+            &[&fee_payer_keypair, &buffer_keypair],
+            Hash::default(),
+        );
+
+        let reopened_buffer_data = AccountSharedData::create(
+            LAMPORTS_PER_SOL,
+            vec![0; new_size],
+            system_program::id(),
+            false,
+            u64::MAX,
+        );
+
+        (reopen_transaction, reopened_buffer_data)
     };
 
-    let print_transaction_read_only = WriteProgramInstruction::Print.create_transaction(
+    let print_transaction = WriteProgramInstruction::Print.create_transaction(
         program_id,
         &fee_payer_keypair,
-        target,
+        buffer,
         None,
     );
-
-    // read-only rent-delinquent account exists
-    common_test_entry.push_transaction(print_transaction_read_only.clone());
-    push_expected_size_log(&mut common_test_entry, 1);
-
-    // account was not shadowed or deallocated by previous transaction
-    common_test_entry.push_transaction(print_transaction_read_only.clone());
-    push_expected_size_log(&mut common_test_entry, 1);
-
-    // transfer that fails and uses the rent-delinquent account as writable
-    common_test_entry.push_transaction_with_status(
-        system_transaction::transfer(
-            &fee_payer_keypair,
-            &target,
-            LAMPORTS_PER_SOL * 10,
-            Hash::default(),
-        ),
-        ExecutionStatus::ExecutedFailed,
-    );
-
-    // account was not shadowed or deallocated by previous transaction
-    common_test_entry.push_transaction(print_transaction_read_only.clone());
-    push_expected_size_log(&mut common_test_entry, 1);
-
-    let mut print_transaction_writable = print_transaction_read_only.clone();
-    print_transaction_writable
-        .message
-        .header
-        .num_readonly_unsigned_accounts -= 1;
-    let print_transaction_writable = print_transaction_writable;
 
     let common_test_entry = common_test_entry;
 
     // batch 0:
-    // * all transactions above
-    // * transfer that brings the account to rent-exemption
-    // * account has not been deallocated (using the writable print transaction to update rent epoch)
+    // * check buffer size (must be account size)
     {
         let mut test_entry = common_test_entry.clone();
 
-        test_entry.push_transaction(system_transaction::transfer(
-            &fee_payer_keypair,
-            &target,
-            LAMPORTS_PER_SOL,
-            Hash::default(),
-        ));
+        test_entry.push_transaction(print_transaction.clone());
+        test_entry.transaction_batch[0]
+            .asserts
+            .logs
+            .push(format!("Program log: account size {}", buffer_bytes.len(),));
 
-        test_entry.push_transaction(print_transaction_writable.clone());
-        push_expected_size_log(&mut test_entry, 1);
-
-        test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SOL);
-        test_entry.increase_expected_lamports(&target, LAMPORTS_PER_SOL);
+        test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
 
         test_entries.push(test_entry);
     }
 
     // batch 1:
-    // * all transactions above
-    // * successful transaction that takes the rent-delinquent account as writable
-    // * account has been deallocated
+    // * close buffer
+    // * check buffer size (must be zero)
     {
         let mut test_entry = common_test_entry.clone();
 
-        test_entry.push_transaction(print_transaction_writable);
-        push_expected_size_log(&mut test_entry, 1);
+        test_entry.push_transaction(close_transaction.clone());
+        test_entry.push_transaction(print_transaction.clone());
+        test_entry.transaction_batch[1]
+            .asserts
+            .logs
+            .push("Program log: account size 0".to_string());
 
-        test_entry.push_transaction(print_transaction_read_only);
-        push_expected_size_log(&mut test_entry, 0);
-
-        test_entry.update_expected_account_data(target, &AccountSharedData::default());
+        test_entry
+            .increase_expected_lamports(&fee_payer, LAMPORTS_PER_SOL - LAMPORTS_PER_SIGNATURE * 2);
+        test_entry.update_expected_account_data(buffer, &AccountSharedData::default());
 
         test_entries.push(test_entry);
     }
 
-    for test_entry in &mut test_entries {
-        test_entry.decrease_expected_lamports(
-            &fee_payer,
-            LAMPORTS_PER_SIGNATURE * test_entry.transaction_batch.len() as u64,
+    // batch 1:
+    // * close buffer
+    // * reopen as system account of large size
+    // * check buffer size (must be new size)
+    {
+        let mut test_entry = common_test_entry.clone();
+
+        let (reopen_transaction, reopened_buffer_data) = reopen(MAX_PERMITTED_DATA_INCREASE);
+
+        test_entry.push_transaction(close_transaction.clone());
+        test_entry.push_transaction(reopen_transaction);
+        test_entry.push_transaction(print_transaction);
+        test_entry.transaction_batch[2].asserts.logs.push(format!(
+            "Program log: account size {}",
+            MAX_PERMITTED_DATA_INCREASE,
+        ));
+
+        test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 4);
+        test_entry.update_expected_account_data(buffer, &reopened_buffer_data);
+
+        test_entries.push(test_entry);
+    }
+
+    // batch 3/4:
+    // * close buffer
+    // * (only batch 3) reopen as large system account
+    // * include account as invisible and use compute budget to check size
+    //
+    // batch 2 is a sanity check that compute budget failure depends only on the system account size
+    // it succeeds because we create a 1 byte account with a 10kb transaction data size limit
+    //
+    // in batch 3 we expect the third transaction to see a 10kb account
+    // this fails given a 10kb limit because there are some other accounts of negligible size
+    // this codepath will find it in the accounts cache, then find it in the program cache
+    // the program cache check normally substitutes a different transaction size
+    // this is so read-only non-instruction upgradeable program sizes include programdata
+    // in this case, however, we do *not* use the program cache size (which is always 0)
+    // because the program cache does not evict entries, even if the account was closed
+    //
+    // the test account must be read-only non-instruction, so we append it to account keys
+    // we use a system program transfer for our no-op to simplify size math because its only 14 bytes
+    for sanity_check in [true, false] {
+        let mut test_entry = common_test_entry.clone();
+
+        let new_account_size = if sanity_check {
+            1
+        } else {
+            MAX_PERMITTED_DATA_INCREASE
+        };
+
+        let (reopen_transaction, reopened_buffer_data) = reopen(new_account_size);
+
+        let mut noop_transaction = Transaction::new_with_payer(
+            &[
+                ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(
+                    MAX_PERMITTED_DATA_INCREASE as u32,
+                ),
+                system_instruction::transfer(&fee_payer, &fee_payer, 0),
+            ],
+            Some(&fee_payer),
         );
+
+        noop_transaction.message.account_keys.push(buffer);
+        noop_transaction
+            .message
+            .header
+            .num_readonly_unsigned_accounts += 1;
+        noop_transaction.sign(&[&fee_payer_keypair], Hash::default());
+
+        let expected_status = if sanity_check {
+            test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 4);
+            ExecutionStatus::Succeeded
+        } else if enable_fee_only_transactions {
+            test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 4);
+            ExecutionStatus::ProcessedFailed
+        } else {
+            test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 3);
+            ExecutionStatus::Discarded
+        };
+
+        test_entry.push_transaction(close_transaction.clone());
+        test_entry.push_transaction(reopen_transaction);
+        test_entry.push_transaction_with_status(noop_transaction, expected_status);
+
+        test_entry.update_expected_account_data(buffer, &reopened_buffer_data);
+
+        test_entries.push(test_entry);
+    }
+
+    // batch 5: buffer from program cache has zero size
+    // batch 6: same as above but force it into account cache
+    // batches 7-14: both of above, with an account owned by each loader
+    for throwaway_account_owner in throwaway_account_owners {
+        for transaction_count in 1..=2 {
+            let mut test_entry = common_test_entry.clone();
+
+            let target = match throwaway_account_owner {
+                None => buffer,
+                Some(loader_id) => {
+                    let target = Pubkey::new_unique();
+                    let throwaway_account_data = AccountSharedData::create(
+                        LAMPORTS_PER_SOL,
+                        vec![0; MAX_PERMITTED_DATA_INCREASE],
+                        loader_id,
+                        false,
+                        u64::MAX,
+                    );
+                    test_entry.add_initial_account(target, &throwaway_account_data);
+
+                    target
+                }
+            };
+
+            // 10kb budget is a comfortable margin to ensure the calculated size of the target is zero
+            // if the real account size is used, the program sizes push us over this threshold
+            let mut noop_transaction = Transaction::new_with_payer(
+                &[
+                    ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(
+                        MAX_PERMITTED_DATA_INCREASE as u32,
+                    ),
+                    system_instruction::transfer(&fee_payer, &fee_payer, 0),
+                ],
+                Some(&fee_payer),
+            );
+
+            noop_transaction.message.account_keys.push(target);
+            noop_transaction
+                .message
+                .header
+                .num_readonly_unsigned_accounts += 1;
+            noop_transaction.sign(&[&fee_payer_keypair], Hash::default());
+
+            for _ in 0..transaction_count {
+                test_entry.push_transaction(noop_transaction.clone());
+            }
+
+            test_entry
+                .decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * transaction_count);
+
+            test_entries.push(test_entry);
+        }
+    }
+
+    // batch 15: non-builtin accounts owned by NativeLoader are never added to the cache
+    {
+        let mut test_entry = common_test_entry.clone();
+
+        let target = Pubkey::new_unique();
+
+        let throwaway_account_data = AccountSharedData::create(
+            LAMPORTS_PER_SOL,
+            vec![0; MAX_PERMITTED_DATA_INCREASE],
+            native_loader::id(),
+            false,
+            u64::MAX,
+        );
+
+        test_entry.add_initial_account(target, &throwaway_account_data);
+
+        let mut noop_transaction = Transaction::new_with_payer(
+            &[
+                ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(
+                    MAX_PERMITTED_DATA_INCREASE as u32 / 2,
+                ),
+                system_instruction::transfer(&fee_payer, &fee_payer, 0),
+            ],
+            Some(&fee_payer),
+        );
+
+        noop_transaction.message.account_keys.push(target);
+        noop_transaction
+            .message
+            .header
+            .num_readonly_unsigned_accounts += 1;
+        noop_transaction.sign(&[&fee_payer_keypair], Hash::default());
+
+        let expected_status = if enable_fee_only_transactions {
+            test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
+            ExecutionStatus::ProcessedFailed
+        } else {
+            ExecutionStatus::Discarded
+        };
+
+        test_entry.push_transaction_with_status(noop_transaction, expected_status);
+
+        test_entries.push(test_entry);
     }
 
     test_entries
@@ -2292,7 +2590,8 @@ fn rent_delinquent() -> Vec<SvmTestEntry> {
 #[test_case(fee_payer_deallocate(true))]
 #[test_case(account_reallocate(false))]
 #[test_case(account_reallocate(true))]
-#[test_case(rent_delinquent())]
+#[test_case(bpf_loader_buffer(false))]
+#[test_case(bpf_loader_buffer(true))]
 fn svm_integration(test_entries: Vec<SvmTestEntry>) {
     for test_entry in test_entries {
         let env = SvmTestEnvironment::create(test_entry);

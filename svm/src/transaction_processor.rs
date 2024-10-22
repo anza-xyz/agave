@@ -1203,7 +1203,13 @@ mod tests {
 
     impl<'a> From<&'a MockBankCallback> for AccountLoader<'a, MockBankCallback> {
         fn from(callbacks: &'a MockBankCallback) -> AccountLoader<'a, MockBankCallback> {
-            AccountLoader::new(callbacks, None, ProgramCacheForTxBatch::default())
+            let capacity = callbacks.account_shared_data.read().unwrap().len();
+            AccountLoader::new_with_account_cache_capacity(
+                callbacks,
+                None,
+                ProgramCacheForTxBatch::default(),
+                capacity,
+            )
         }
     }
 
@@ -2043,15 +2049,13 @@ mod tests {
         let mut account_loader = (&mock_bank).into();
 
         let mut error_counters = TransactionErrorMetrics::default();
-        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
-        let result = batch_processor.validate_transaction_fee_payer(
+        let result = TransactionBatchProcessor::<TestForkGraph>::validate_transaction_fee_payer(
             &mut account_loader,
             &message,
             CheckedTransactionDetails {
                 nonce: None,
                 lamports_per_signature,
             },
-            &DurableNonce::default(),
             &FeatureSet::default(),
             &FeeStructure::default(),
             &rent_collector,
@@ -2122,15 +2126,13 @@ mod tests {
         let mut account_loader = (&mock_bank).into();
 
         let mut error_counters = TransactionErrorMetrics::default();
-        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
-        let result = batch_processor.validate_transaction_fee_payer(
+        let result = TransactionBatchProcessor::<TestForkGraph>::validate_transaction_fee_payer(
             &mut account_loader,
             &message,
             CheckedTransactionDetails {
                 nonce: None,
                 lamports_per_signature,
             },
-            &DurableNonce::default(),
             &FeatureSet::default(),
             &FeeStructure::default(),
             &rent_collector,
@@ -2174,15 +2176,13 @@ mod tests {
         let mock_bank = MockBankCallback::default();
         let mut account_loader = (&mock_bank).into();
         let mut error_counters = TransactionErrorMetrics::default();
-        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
-        let result = batch_processor.validate_transaction_fee_payer(
+        let result = TransactionBatchProcessor::<TestForkGraph>::validate_transaction_fee_payer(
             &mut account_loader,
             &message,
             CheckedTransactionDetails {
                 nonce: None,
                 lamports_per_signature,
             },
-            &DurableNonce::default(),
             &FeatureSet::default(),
             &FeeStructure::default(),
             &RentCollector::default(),
@@ -2209,15 +2209,13 @@ mod tests {
         let mut account_loader = (&mock_bank).into();
 
         let mut error_counters = TransactionErrorMetrics::default();
-        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
-        let result = batch_processor.validate_transaction_fee_payer(
+        let result = TransactionBatchProcessor::<TestForkGraph>::validate_transaction_fee_payer(
             &mut account_loader,
             &message,
             CheckedTransactionDetails {
                 nonce: None,
                 lamports_per_signature,
             },
-            &DurableNonce::default(),
             &FeatureSet::default(),
             &FeeStructure::default(),
             &RentCollector::default(),
@@ -2248,15 +2246,13 @@ mod tests {
         let mut account_loader = (&mock_bank).into();
 
         let mut error_counters = TransactionErrorMetrics::default();
-        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
-        let result = batch_processor.validate_transaction_fee_payer(
+        let result = TransactionBatchProcessor::<TestForkGraph>::validate_transaction_fee_payer(
             &mut account_loader,
             &message,
             CheckedTransactionDetails {
                 nonce: None,
                 lamports_per_signature,
             },
-            &DurableNonce::default(),
             &FeatureSet::default(),
             &FeeStructure::default(),
             &rent_collector,
@@ -2285,15 +2281,13 @@ mod tests {
         let mut account_loader = (&mock_bank).into();
 
         let mut error_counters = TransactionErrorMetrics::default();
-        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
-        let result = batch_processor.validate_transaction_fee_payer(
+        let result = TransactionBatchProcessor::<TestForkGraph>::validate_transaction_fee_payer(
             &mut account_loader,
             &message,
             CheckedTransactionDetails {
                 nonce: None,
                 lamports_per_signature,
             },
-            &DurableNonce::default(),
             &FeatureSet::default(),
             &FeeStructure::default(),
             &RentCollector::default(),
@@ -2318,15 +2312,13 @@ mod tests {
         let mock_bank = MockBankCallback::default();
         let mut account_loader = (&mock_bank).into();
         let mut error_counters = TransactionErrorMetrics::default();
-        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
-        let result = batch_processor.validate_transaction_fee_payer(
+        let result = TransactionBatchProcessor::<TestForkGraph>::validate_transaction_fee_payer(
             &mut account_loader,
             &message,
             CheckedTransactionDetails {
                 nonce: None,
                 lamports_per_signature,
             },
-            &DurableNonce::default(),
             &FeatureSet::default(),
             &FeeStructure::default(),
             &RentCollector::default(),
@@ -2364,9 +2356,11 @@ mod tests {
         {
             let fee_payer_account = AccountSharedData::new_data(
                 min_balance + transaction_fee + priority_fee,
-                &nonce::state::Versions::new(nonce::State::Initialized(
-                    nonce::state::Data::default(),
-                )),
+                &nonce::state::Versions::new(nonce::State::Initialized(nonce::state::Data::new(
+                    *fee_payer_address,
+                    DurableNonce::default(),
+                    lamports_per_signature,
+                ))),
                 &system_program::id(),
             )
             .unwrap();
@@ -2380,20 +2374,33 @@ mod tests {
             let mut account_loader = (&mock_bank).into();
 
             let mut error_counters = TransactionErrorMetrics::default();
-            let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
 
-            let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
+            let environment_blockhash = Hash::new_unique();
+            let next_durable_nonce = DurableNonce::from_blockhash(&environment_blockhash);
             let mut future_nonce = NonceInfo::new(*fee_payer_address, fee_payer_account.clone());
-            future_nonce.try_advance_nonce(durable_nonce, 0).unwrap();
+            future_nonce
+                .try_advance_nonce(next_durable_nonce, lamports_per_signature)
+                .unwrap();
 
-            let result = batch_processor.validate_transaction_fee_payer(
+            let tx_details = CheckedTransactionDetails {
+                nonce: Some(future_nonce.clone()),
+                lamports_per_signature,
+            };
+
+            let result = TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce(
                 &mut account_loader,
                 &message,
-                CheckedTransactionDetails {
-                    nonce: Some(future_nonce.clone()),
-                    lamports_per_signature,
-                },
-                &durable_nonce,
+                &tx_details,
+                &environment_blockhash,
+                &mut error_counters,
+            );
+
+            assert_eq!(result, Ok(()));
+
+            let result = TransactionBatchProcessor::<TestForkGraph>::validate_transaction_fee_payer(
+                &mut account_loader,
+                &message,
+                tx_details,
                 &feature_set,
                 &FeeStructure::default(),
                 &rent_collector,
@@ -2448,15 +2455,13 @@ mod tests {
             let mut account_loader = (&mock_bank).into();
 
             let mut error_counters = TransactionErrorMetrics::default();
-            let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
-            let result = batch_processor.validate_transaction_fee_payer(
+            let result = TransactionBatchProcessor::<TestForkGraph>::validate_transaction_fee_payer(
                 &mut account_loader,
                 &message,
                 CheckedTransactionDetails {
                     nonce: None,
                     lamports_per_signature,
                 },
-                &DurableNonce::default(),
                 &feature_set,
                 &FeeStructure::default(),
                 &rent_collector,
@@ -2499,23 +2504,22 @@ mod tests {
             account_shared_data: Arc::new(RwLock::new(mock_accounts)),
             ..Default::default()
         };
-        let mut account_loader = AccountLoader::new(
+        let mut account_loader = AccountLoader::new_with_account_cache_capacity(
             &mock_bank,
             Some(&account_overrides),
             ProgramCacheForTxBatch::default(),
+            2,
         );
 
         let mut error_counters = TransactionErrorMetrics::default();
-        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
 
-        let result = batch_processor.validate_transaction_fee_payer(
+        let result = TransactionBatchProcessor::<TestForkGraph>::validate_transaction_fee_payer(
             &mut account_loader,
             &message,
             CheckedTransactionDetails {
                 nonce: None,
                 lamports_per_signature,
             },
-            &DurableNonce::default(),
             &FeatureSet::default(),
             &FeeStructure::default(),
             &rent_collector,
@@ -2555,22 +2559,19 @@ mod tests {
             Some(&fee_payer_address),
             &Hash::new_unique(),
         ));
-        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
-        batch_processor
-            .validate_transaction_fee_payer(
-                &mut account_loader,
-                &message,
-                CheckedTransactionDetails {
-                    nonce: None,
-                    lamports_per_signature: 5000,
-                },
-                &DurableNonce::default(),
-                &FeatureSet::default(),
-                &FeeStructure::default(),
-                &RentCollector::default(),
-                &mut TransactionErrorMetrics::default(),
-            )
-            .unwrap();
+        TransactionBatchProcessor::<TestForkGraph>::validate_transaction_fee_payer(
+            &mut account_loader,
+            &message,
+            CheckedTransactionDetails {
+                nonce: None,
+                lamports_per_signature: 5000,
+            },
+            &FeatureSet::default(),
+            &FeeStructure::default(),
+            &RentCollector::default(),
+            &mut TransactionErrorMetrics::default(),
+        )
+        .unwrap();
 
         // ensure the fee payer is an inspected account
         let actual_inspected_accounts: Vec<_> = mock_bank

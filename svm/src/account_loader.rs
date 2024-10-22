@@ -771,6 +771,7 @@ mod tests {
             transaction_context::{TransactionAccount, TransactionContext},
         },
         std::{borrow::Cow, cell::RefCell, collections::HashMap, sync::Arc},
+        test_case::test_matrix,
     };
 
     #[derive(Clone, Default)]
@@ -810,7 +811,12 @@ mod tests {
 
     impl<'a> From<&'a TestCallbacks> for AccountLoader<'a, TestCallbacks> {
         fn from(callbacks: &'a TestCallbacks) -> AccountLoader<'a, TestCallbacks> {
-            AccountLoader::new(callbacks, None, ProgramCacheForTxBatch::default())
+            AccountLoader::new_with_account_cache_capacity(
+                callbacks,
+                None,
+                ProgramCacheForTxBatch::default(),
+                callbacks.accounts_map.len(),
+            )
         }
     }
 
@@ -1140,10 +1146,11 @@ mod tests {
             accounts_map,
             ..Default::default()
         };
-        let mut account_loader = AccountLoader::new(
+        let mut account_loader = AccountLoader::new_with_account_cache_capacity(
             &callbacks,
             account_overrides,
             ProgramCacheForTxBatch::default(),
+            accounts.len(),
         );
         load_transaction(
             &mut account_loader,
@@ -1552,7 +1559,8 @@ mod tests {
         let mut loaded_programs = ProgramCacheForTxBatch::default();
         loaded_programs.replenish(key2.pubkey(), Arc::new(ProgramCacheEntry::default()));
 
-        let mut account_loader = AccountLoader::new(&mock_bank, None, loaded_programs);
+        let mut account_loader =
+            AccountLoader::new_with_account_cache_capacity(&mock_bank, None, loaded_programs, 1);
 
         let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
@@ -1572,15 +1580,21 @@ mod tests {
         assert_eq!(result.err(), Some(TransactionError::ProgramAccountNotFound));
     }
 
-    #[test]
-    fn test_load_transaction_accounts_program_account_executable_bypass() {
-        // currently, the account loader retrieves read-only non-instruction accounts from the program cache
-        // it creates a mock AccountSharedData with the executable flag set to true
-        // however, it does not check whether these accounts are actually executable before doing so
-        // this affects consensus: a transaction that uses a cached non-executable program executes and fails
-        // but if the transaction gets the program from accounts-db, it will be dropped during account loading
-        // this test enforces the current behavior, so that future account loader changes do not break consensus
-
+    // currently, the account loader retrieves read-only non-instruction accounts from the program cache
+    // it creates a mock AccountSharedData with the executable flag set to true
+    // however, it does not check whether these accounts are actually executable before doing so
+    // this affects consensus: a transaction that uses a cached non-executable program executes and fails
+    // but if the transaction gets the program from accounts-db, it will be dropped during account loading
+    // this test enforces the current behavior, so that future account loader changes do not break consensus
+    //
+    // account cache has its own code path that accesses program cache, so we test hit and miss
+    // we also test bpf_loader and bpf_loader_upgradeable, because accounts owned by the latter can behave strangely
+    // all cases should produce the same results
+    #[test_matrix([bpf_loader::id(), bpf_loader_upgradeable::id()], [false, true])]
+    fn test_load_transaction_accounts_program_account_executable_bypass(
+        program_owner: Pubkey,
+        clear_account_cache: bool,
+    ) {
         let mut mock_bank = TestCallbacks::default();
         let account_keypair = Keypair::new();
         let program_keypair = Keypair::new();
@@ -1593,7 +1607,7 @@ mod tests {
 
         let mut program_data = AccountSharedData::default();
         program_data.set_lamports(200);
-        program_data.set_owner(bpf_loader::id());
+        program_data.set_owner(program_owner);
         mock_bank
             .accounts_map
             .insert(program_keypair.pubkey(), program_data);
@@ -1604,7 +1618,7 @@ mod tests {
         loader_data.set_owner(native_loader::id());
         mock_bank
             .accounts_map
-            .insert(bpf_loader::id(), loader_data.clone());
+            .insert(program_owner, loader_data.clone());
         mock_bank
             .accounts_map
             .insert(native_loader::id(), loader_data);
@@ -1648,6 +1662,10 @@ mod tests {
             program_keypair.pubkey(),
             Arc::new(ProgramCacheEntry::default()),
         );
+
+        if clear_account_cache {
+            account_loader.account_cache = AHashMap::default();
+        }
 
         let result = load_transaction_accounts(
             &mut account_loader,
@@ -1693,6 +1711,10 @@ mod tests {
                 Hash::default(),
             ));
 
+        if clear_account_cache {
+            account_loader.account_cache = AHashMap::default();
+        }
+
         let result = load_transaction_accounts(
             &mut account_loader,
             transaction.message(),
@@ -1715,6 +1737,10 @@ mod tests {
             program_keypair.pubkey(),
             account_keypair.pubkey(),
         );
+
+        if clear_account_cache {
+            account_loader.account_cache = AHashMap::default();
+        }
 
         let result = load_transaction_accounts(
             &mut account_loader,
@@ -2460,6 +2486,23 @@ mod tests {
         assert_eq!(account.lamports(), 0);
     }
 
+    #[test]
+    fn test_load_account_dropped() {
+        let mock_bank = TestCallbacks::default();
+        let mut account_loader: AccountLoader<TestCallbacks> = (&mock_bank).into();
+
+        let address = Pubkey::new_unique();
+        let account = AccountSharedData::default();
+        let cache_item = AccountCacheItem {
+            account,
+            inspected_as_writable: false,
+        };
+        account_loader.account_cache.insert(address, cache_item);
+
+        let result = account_loader.load_account(&address, AccountUsagePattern::ReadOnlyInvisible);
+        assert!(result.is_none());
+    }
+
     // Ensure `TransactionProcessingCallback::inspect_account()` is called when
     // loading accounts for transaction processing.
     #[test]
@@ -2898,7 +2941,7 @@ mod tests {
             // we loop twice to ensure every transaction runs against a fully populated internal cache
             // this ensures there is no difference in behavior regardless of where the account is loaded from
             let mut dirty_loader = clean_loader.clone();
-            for _ in 0..1 {
+            for _ in 0..=1 {
                 for (tx, size) in cache_test_txs.clone() {
                     test_transaction_data_size(&mut dirty_loader, tx, size);
                 }
