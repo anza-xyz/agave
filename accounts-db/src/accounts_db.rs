@@ -8643,10 +8643,6 @@ impl AccountsDb {
                                     .for_each(|k| {
                                         rent_paying_accounts_by_partition.add_account(k);
                                     });
-                                let mut zero_pubkeys = zero_pubkeys.lock().unwrap();
-                                zero_pubkeys_this_slot.into_iter().for_each(|k| {
-                                    zero_pubkeys.insert(k);
-                                });
                             }
                             total_including_duplicates_sum += total_this_slot;
                             accounts_data_len_sum += accounts_data_len_this_slot;
@@ -8654,6 +8650,10 @@ impl AccountsDb {
                                 all_accounts_are_zero_lamports_slots_inner += 1;
                                 all_zeros_slots_inner.push((*slot, Arc::clone(&storage)));
                             }
+                            let mut zero_pubkeys = zero_pubkeys.lock().unwrap();
+                            zero_pubkeys_this_slot.into_iter().for_each(|k| {
+                                zero_pubkeys.insert(k);
+                            });
 
                             insert_us
                         } else {
