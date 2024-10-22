@@ -183,8 +183,8 @@ impl ConsumeWorkerMetrics {
     /// a) (when a leader) Previous slot is not the same as current.
     /// b) (when not a leader) report the metrics accumulated so far.
     pub fn maybe_report_and_reset(&self, slot: Option<Slot>) {
+        let prev_slot_id: u64 = self.slot.load(Ordering::Relaxed);
         if let Some(slot) = slot {
-            let prev_slot_id: u64 = self.slot.load(Ordering::Relaxed);
             if slot != prev_slot_id {
                 if !self.has_data.swap(false, Ordering::Relaxed) {
                     return;
@@ -194,7 +194,7 @@ impl ConsumeWorkerMetrics {
                 self.error_metrics.report_and_reset(&self.id);
                 self.slot.swap(slot, Ordering::Relaxed);
             }
-        } else {
+        } else if prev_slot_id != 0 {
             self.count_metrics.report_and_reset(&self.id);
             self.timing_metrics.report_and_reset(&self.id);
             self.error_metrics.report_and_reset(&self.id);
