@@ -233,6 +233,7 @@ impl BankForks {
                     &self.scheduler_pool.as_ref().unwrap(),
                     mode,
                     bank.clone_without_scheduler(),
+                    true,
                 );
             }
         }
@@ -242,8 +243,9 @@ impl BankForks {
         scheduler_pool: &InstalledSchedulerPoolArc,
         mode: SchedulingMode,
         bank: Arc<Bank>,
+        is_reinstall: bool,
     ) -> BankWithScheduler {
-        if bank.slot() <= 1 && matches!(mode, SchedulingMode::BlockProduction) {
+        if !is_reinstall && bank.slot() == 0 && matches!(mode, SchedulingMode::BlockProduction) {
             info!(
                 "Inserting bank (slot: {}) WITHOUT scheduler into bank_forks...",
                 bank.slot()
@@ -251,10 +253,17 @@ impl BankForks {
             warn!("bt: {:?} {:?}", std::thread::current(), std::backtrace::Backtrace::force_capture());
             return BankWithScheduler::new_without_scheduler(bank);
         }
-        trace!(
-            "Inserting bank (slot: {}) with scheduler into bank_forks...",
-            bank.slot()
-        );
+        if is_reinstall {
+            info!(
+                "Reinserting bank (slot: {}) with scheduler into bank_forks...",
+                bank.slot()
+            );
+        } else {
+            trace!(
+                "Inserting bank (slot: {}) with scheduler into bank_forks...",
+                bank.slot()
+            );
+        }
         let context = SchedulingContext::new(mode, bank.clone());
         let scheduler = scheduler_pool.take_scheduler(context);
         let bank_with_scheduler = BankWithScheduler::new(bank, Some(scheduler));
@@ -269,7 +278,7 @@ impl BankForks {
 
         let bank = Arc::new(bank);
         let bank = if let Some(scheduler_pool) = &self.scheduler_pool {
-            Self::install_scheduler_into_bank(scheduler_pool, mode, bank)
+            Self::install_scheduler_into_bank(scheduler_pool, mode, bank, false)
         } else {
             BankWithScheduler::new_without_scheduler(bank)
         };

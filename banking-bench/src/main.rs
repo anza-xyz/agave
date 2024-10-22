@@ -82,6 +82,7 @@ fn check_txs(
             }
         }
 
+        //info!("{total} >= {ref_tx_count}");
         if total >= ref_tx_count {
             break;
         }
@@ -509,7 +510,7 @@ fn main() {
     let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
     let collector = solana_sdk::pubkey::new_rand();
     let (dummy_sender, dummy_receiver) = unbounded();
-    let (use_dummy, scheduler_pool) = if let BlockProductionMethod::UnifiedScheduler = block_production_method {
+    let (use_dummy, scheduler_pool) = if matches!(block_production_method, BlockProductionMethod::UnifiedScheduler) {
         let (dummy_sender, use_dummy) = if std::env::var("USE_DUMMY").is_ok() {
             (Some(dummy_sender), true)
         } else {
@@ -528,26 +529,13 @@ fn main() {
             .write()
             .unwrap()
             .install_scheduler_pool(scheduler_pool.clone());
-        bank_forks
-            .write()
-            .unwrap()
-            .reinstall_schedulers(SchedulingMode::BlockProduction);
-        bank = bank_forks
-            .read()
-            .unwrap()
-            .working_bank_with_scheduler()
-            .clone_with_scheduler();
-        poh_recorder
-            .write()
-            .unwrap()
-            .swap_working_bank(bank.clone_with_scheduler());
         (use_dummy, Some(scheduler_pool))
     } else {
         (false, None)
     };
 
     let banking_stage = BankingStage::new_num_threads(
-        block_production_method,
+        block_production_method.clone(),
         &cluster_info,
         &poh_recorder,
         non_vote_receiver,
@@ -563,6 +551,23 @@ fn main() {
         false,
         scheduler_pool,
     );
+
+    if matches!(block_production_method, BlockProductionMethod::UnifiedScheduler) {
+        sleep(Duration::from_millis(111));
+        bank_forks
+            .write()
+            .unwrap()
+            .reinstall_schedulers(SchedulingMode::BlockProduction);
+        bank = bank_forks
+            .read()
+            .unwrap()
+            .working_bank_with_scheduler()
+            .clone_with_scheduler();
+        poh_recorder
+            .write()
+            .unwrap()
+            .swap_working_bank(bank.clone_with_scheduler());
+    }
 
     // This is so that the signal_receiver does not go out of scope after the closure.
     // If it is dropped before poh_service, then poh_service will error when

@@ -330,6 +330,7 @@ where
     // This fn needs to return immediately due to being part of the blocking
     // `::wait_for_termination()` call.
     fn return_scheduler(&self, scheduler: S::Inner, id: u64, should_trash: bool) {
+        debug!("return_scheduler(): id: {id} should_trash: {should_trash}");
         let bp_id: Option<u64> = self.block_producing_scheduler_inner.lock().unwrap().0.as_ref().map(|(id, s)| id).copied();
         if should_trash {
             if Some(id) != bp_id {
@@ -399,6 +400,7 @@ where
         if let Some(ss) = s {
             return ss;
         } else {
+            info!("flash session: start!");
             let context = SchedulingContext::new(SchedulingMode::BlockProduction, bank_forks.root_bank());
             let scheduler = Box::new(self.do_take_resumed_scheduler(
                 context,
@@ -408,6 +410,7 @@ where
             let (result_with_timings, uninstalled_scheduler) =
                 scheduler.wait_for_termination(false);
             let () = uninstalled_scheduler.return_to_pool();
+            info!("flash session: end!");
             self.block_producing_scheduler_inner.lock().unwrap().0.as_ref().map(|(id, bps)| bps).cloned().unwrap()
         }
     }
@@ -1300,10 +1303,13 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 let mut cpu_log_reported_at = cpu_session_started_at;
                 let mut error_count = 0;
 
+                let (banking_packet_receiver, mut on_recv) = banking_context.unzip();
+                let banking_packet_receiver = banking_packet_receiver.unwrap_or_else(|| never());
+
                 macro_rules! log_scheduler {
                     ($level:ident, $prefix:tt) => {
                         $level! {
-                            "sch: {}: slot: {}({})[{:12}]({}{}): state_machine(({}({}b{}B{}F)=>{}({}E))/{}|{}TB|{}Lr) channels(<{} >{}+{} <{}+{}) {}",
+                            "sch: {}: slot: {}({})[{:12}]({}{}): state_machine(({}({}b{}B{}F)=>{}({}E))/{}|{}TB|{}Lr) channels(<{} >{}+{} <{}+{} <B{}) {}",
                             scheduler_id, slot,
                             match state_machine.mode() {
                                 SchedulingMode::BlockVerification => "v",
@@ -1321,6 +1327,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             new_task_receiver.len(),
                             runnable_task_sender.len(), runnable_task_sender.aux_len(),
                             finished_blocked_task_receiver.len(), finished_idle_task_receiver.len(),
+                            banking_packet_receiver.len(),
                             {
                                 let now = Instant::now();
                                 let cpu_now = cpu_time::ThreadTime::now();
@@ -1374,8 +1381,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         }
                     }
                 }
-                let (banking_packet_receiver, mut on_recv) = banking_context.unzip();
-                let banking_packet_receiver = banking_packet_receiver.unwrap_or_else(|| never());
 
                 log_scheduler!(info, "started");
 
@@ -1416,6 +1421,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     break 'nonaborted_main_loop;
                                 };
                                 state_machine.deschedule_task(&executed_task.task);
+                                if should_pause {
+                                    state_machine.reset_task(&executed_task.task);
+                                    state_machine.do_schedule_task(executed_task.task, true);
+                                }
                                 std::mem::forget(executed_task);
                                 if should_pause && !session_pausing && slot != 282254387 {
                                     session_pausing = true;
@@ -1504,6 +1513,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             recv(banking_packet_receiver) -> banking_packet => {
                                 let Ok(banking_packet) = banking_packet else {
                                     info!("disconnectd banking_packet_receiver");
+                                    result_with_timings.0 = Err(TransactionError::CommitFailed);
                                     break 'nonaborted_main_loop;
                                 };
                                 let tasks = on_recv.as_mut().unwrap()((banking_packet));
@@ -1528,7 +1538,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 }
                             }
                         };
-                        let force_log = if !is_running && !state_machine.has_no_alive_task() {
+                        let force_log = /*if !is_running && !state_machine.has_no_alive_task() {
                             is_running = true;
                             step_type = "running";
                             true
@@ -1540,7 +1550,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             } else {
                                 false
                             }
-                        } else if step_type == "ending" || step_type == "pausing" {
+                        } else */ if step_type == "ending" || step_type == "pausing" {
                             true
                         } else {
                             false
@@ -1652,6 +1662,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 session_ending = false;
                                 session_pausing = false;
                                 info!("disconnectd banking_packet_receiver");
+                                result_with_timings.0 = Err(TransactionError::CommitFailed);
                                 break 'nonaborted_main_loop;
                             };
                             let tasks = on_recv.as_mut().unwrap()((banking_packet));

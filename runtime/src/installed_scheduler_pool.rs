@@ -697,7 +697,10 @@ impl BankWithSchedulerInner {
                 let result_with_timings = scheduler.transition_from_stale_to_unavailable();
                 (true, Some(result_with_timings))
             }
-            SchedulerStatus::Unavailable => (true, None),
+            SchedulerStatus::Unavailable => {
+                debug!("unavailable");
+                (true, None)
+            }
         };
         debug!(
             "wait_for_scheduler_termination(slot: {}, reason: {:?}): noop: {:?}, result: {:?} at {:?}...",

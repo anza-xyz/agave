@@ -657,7 +657,7 @@ impl TaskInner {
 
 /// [`Task`]'s per-address context to lock a [usage_queue](UsageQueue) with [certain kind of
 /// request](RequestedUsage).
-#[derive(Debug, EnumPtr)]
+#[derive(Clone, Debug, EnumPtr)]
 #[repr(C, usize)]
 enum LockContext {
     Readonly(UsageQueue),
@@ -1266,6 +1266,9 @@ impl SchedulingStateMachine {
         self.task_total.increment_self();
         self.alive_task_count.increment_self();
         self.alive_tasks.insert(task.clone()).then_some(()).or_else(|| panic!());
+        task.with_pending_mut(&mut self.count_token, |c| {
+            assert_eq!(task.lock_contexts().len(), c.pending_lock_contexts.len());
+        });
         self.try_lock_usage_queues(task).and_then(|task| {
             if self.is_task_runnable() && !force_buffer_mode {
                 self.executing_task_count.increment_self();
@@ -1644,6 +1647,18 @@ impl SchedulingStateMachine {
             packed_task_inner: PackedTaskInner { lock_context_and_transaction: Box::new((lock_contexts, Box::new(transaction))), index},
             blocked_usage_count: TokenCell::new(CounterWithStatus::new(pending_lock_contexts)),
         })
+    }
+
+    pub fn reset_task(&mut self, task: &Task) {
+        task.with_pending_mut(&mut self.count_token, |c| {
+            //dbg!(&c);
+            assert!(c.pending_lock_contexts.is_empty());
+            assert_matches!(c.status, TaskStatus::Unlocked);
+            c.status = TaskStatus::default();
+            for context in task.lock_contexts() {
+                c.pending_lock_contexts.insert(ByAddress(context.clone().into()));
+            }
+        });
     }
 
     pub fn reset_task_total(&mut self) {
