@@ -8445,10 +8445,8 @@ impl AccountsDb {
                     );
                     let mut scan_time_sum = 0;
                     let mut insert_time_sum = 0;
-                    let mut all_accounts_are_zero_lamports_slots_inner = 0;
                     let mut total_including_duplicates_sum = 0;
                     let mut accounts_data_len_sum = 0;
-                    let mut all_zeros_slots_inner = vec![];
                     for (index, slot) in slots.iter().enumerate() {
                         let mut scan_time = Measure::start("scan");
                         log_status.report(index as u64);
@@ -8493,12 +8491,8 @@ impl AccountsDb {
                                         rent_paying_accounts_by_partition.add_account(k);
                                     });
                             }
-
-                            total_including_duplicates
-                                .fetch_add(total_this_slot, Ordering::Relaxed);
-                            accounts_data_len
-                                .fetch_add(accounts_data_len_this_slot, Ordering::Relaxed);
-
+                            total_including_duplicates_sum += total_this_slot;
+                            accounts_data_len_sum += accounts_data_len_this_slot;
                             insert_us
                         } else {
                             // verify index matches expected and measure the time to get all items
@@ -8533,7 +8527,6 @@ impl AccountsDb {
                     total_including_duplicates
                         .fetch_add(total_including_duplicates_sum, Ordering::Relaxed);
                     accounts_data_len.fetch_add(accounts_data_len_sum, Ordering::Relaxed);
-
                     scan_time_sum
                 })
                 .sum();
