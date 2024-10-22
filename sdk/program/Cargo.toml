@@ -20,6 +20,7 @@ bs58 = { workspace = true, features = ["alloc"] }
 bv = { workspace = true, features = ["serde"] }
 bytemuck = { workspace = true }
 bytemuck_derive = { workspace = true }
+five8_const = { workspace = true }
 lazy_static = { workspace = true }
 log = { workspace = true }
 memoffset = { workspace = true }
@@ -37,6 +38,7 @@ solana-bincode = { workspace = true }
 solana-clock = { workspace = true, features = ["serde"] }
 solana-decode-error = { workspace = true }
 solana-epoch-schedule = { workspace = true, features = ["serde"] }
+solana-fee-calculator = { workspace = true, features = ["serde"] }
 solana-frozen-abi = { workspace = true, optional = true, features = ["frozen-abi"] }
 solana-frozen-abi-macro = { workspace = true, optional = true, features = ["frozen-abi"] }
 solana-hash = { workspace = true, features = [
@@ -50,6 +52,8 @@ solana-instruction = { workspace = true, default-features = false, features = [
     "std",
 ] }
 solana-msg = { workspace = true }
+solana-native-token = { workspace = true }
+solana-program-entrypoint = { workspace = true }
 solana-program-error = { workspace = true, features = ["serde"] }
 solana-program-memory = { workspace = true }
 solana-program-option = { workspace = true }
@@ -64,6 +68,7 @@ solana-serialize-utils = { workspace = true }
 solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 solana-short-vec = { workspace = true }
 solana-slot-hashes = { workspace = true, features = ["serde"] }
+solana-stable-layout = { workspace = true }
 thiserror = { workspace = true }
 
 # This is currently needed to build on-chain programs reliably.
@@ -82,6 +87,7 @@ bitflags = { workspace = true }
 curve25519-dalek = { workspace = true }
 num-bigint = { workspace = true }
 rand = { workspace = true }
+solana-transaction-error = { workspace = true }
 
 [target.'cfg(not(target_os = "solana"))'.dev-dependencies]
 arbitrary = { workspace = true, features = ["derive"] }
@@ -130,6 +136,7 @@ frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-epoch-schedule/frozen-abi",
+    "solana-fee-calculator/frozen-abi",
     "solana-hash/frozen-abi",
     "solana-instruction/frozen-abi",
     "solana-pubkey/frozen-abi",

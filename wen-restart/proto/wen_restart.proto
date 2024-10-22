@@ -39,17 +39,12 @@ message HeaviestForkRecord {
     uint64 total_active_stake = 3;
     uint32 shred_version = 4;
     uint64 wallclock = 5;
-}
-
-message HeaviestForkAggregateFinal {
-    uint64 total_active_stake = 1;
-    uint64 total_active_stake_seen_supermajority = 2;
-    uint64 total_active_stake_agreed_with_me = 3;
+    string from = 6;
 }
 
 message HeaviestForkAggregateRecord {
-    map<string, HeaviestForkRecord> received = 1;
-    optional HeaviestForkAggregateFinal final_result = 2;
+    repeated HeaviestForkRecord received = 1;
+    uint64 total_active_stake = 2;
 }
 
 message GenerateSnapshotRecord {
@@ -70,6 +65,7 @@ message WenRestartProgress {
     optional LastVotedForkSlotsAggregateRecord last_voted_fork_slots_aggregate = 3;
     optional HeaviestForkRecord my_heaviest_fork = 4;
     optional HeaviestForkAggregateRecord heaviest_fork_aggregate = 5;
-    optional GenerateSnapshotRecord my_snapshot = 6;
-    map<string, ConflictMessage> conflict_message = 7;
+    optional HeaviestForkRecord coordinator_heaviest_fork = 6;
+    optional GenerateSnapshotRecord my_snapshot = 7;
+    map<string, ConflictMessage> conflict_message = 8;
 }

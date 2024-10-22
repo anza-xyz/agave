@@ -2,7 +2,7 @@ use {
     super::Bank,
     rayon::prelude::*,
     solana_accounts_db::accounts_db::AccountsDb,
-    solana_lattice_hash::lt_hash::{Checksum as LtChecksum, LtHash},
+    solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{meas_dur, measure::Measure},
     solana_sdk::{
         account::{accounts_equal, AccountSharedData},
@@ -29,12 +29,11 @@ impl Bank {
     /// - mix in its current state
     ///
     /// Since this function is non-idempotent, it should only be called once per bank.
-    pub fn update_accounts_lt_hash(&self) -> LtChecksum {
+    pub fn update_accounts_lt_hash(&self) {
         debug_assert!(self.is_accounts_lt_hash_enabled());
         let delta_lt_hash = self.calculate_delta_lt_hash();
         let mut accounts_lt_hash = self.accounts_lt_hash.lock().unwrap();
         accounts_lt_hash.0.mix_in(&delta_lt_hash);
-        accounts_lt_hash.0.checksum()
     }
 
     /// Calculates the lt hash *of only this slot*
@@ -59,6 +58,22 @@ impl Bank {
             ancestors.remove(&self.slot());
             ancestors
         };
+
+        if slot == 0 {
+            // Slot 0 is special when calculating the accounts lt hash.
+            // Primordial accounts (those in genesis) that are modified by transaction processing
+            // in slot 0 will have Alive entries in the accounts lt hash cache.
+            // When calculating the accounts lt hash, if an account was initially alive, we mix
+            // *out* its previous lt hash value.  In slot 0, we haven't stored any previous lt hash
+            // values (since it is in the first slot), yet we'd still mix out these accounts!
+            // This produces the incorrect accounts lt hash.
+            // From the perspective of the accounts lt hash, in slot 0 we cannot have any accounts
+            // as previously alive.  So to work around this issue, we clear the cache.
+            // And since `strictly_ancestors` is empty, loading the previous version of the account
+            // from accounts db will return `None` (aka Dead), which is the correct behavior.
+            assert!(strictly_ancestors.is_empty());
+            self.cache_for_accounts_lt_hash.write().unwrap().clear();
+        }
 
         // Get all the accounts stored in this slot.
         // Since this bank is in the middle of being frozen, it hasn't been rooted.
@@ -282,19 +297,52 @@ pub enum InitialStateOfAccount {
 mod tests {
     use {
         super::*,
-        crate::bank::tests::new_bank_from_parent_with_bank_forks,
-        solana_accounts_db::accounts::Accounts,
+        crate::{
+            bank::tests::new_bank_from_parent_with_bank_forks, genesis_utils,
+            runtime_config::RuntimeConfig, snapshot_bank_utils, snapshot_config::SnapshotConfig,
+            snapshot_utils,
+        },
+        solana_accounts_db::{
+            accounts_db::{
+                AccountShrinkThreshold, AccountsDbConfig, DuplicatesLtHash,
+                ACCOUNTS_DB_CONFIG_FOR_TESTING,
+            },
+            accounts_index::AccountSecondaryIndexes,
+        },
         solana_sdk::{
             account::{ReadableAccount as _, WritableAccount as _},
             fee_calculator::FeeRateGovernor,
-            genesis_config::create_genesis_config,
+            genesis_config::{self, GenesisConfig},
             native_token::LAMPORTS_PER_SOL,
             pubkey::{self, Pubkey},
             signature::Signer as _,
             signer::keypair::Keypair,
         },
-        std::{cmp, str::FromStr as _, sync::Arc},
+        std::{cmp, collections::HashMap, ops::RangeFull, str::FromStr as _, sync::Arc},
+        tempfile::TempDir,
+        test_case::test_case,
     };
+
+    /// What features should be enabled?
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    enum Features {
+        /// Do not enable any features
+        None,
+        /// Enable all features
+        All,
+    }
+
+    /// Creates a genesis config with `features` enabled
+    fn genesis_config_with(features: Features) -> (GenesisConfig, Keypair) {
+        let mint_lamports = 123_456_789 * LAMPORTS_PER_SOL;
+        match features {
+            Features::None => genesis_config::create_genesis_config(mint_lamports),
+            Features::All => {
+                let info = genesis_utils::create_genesis_config(mint_lamports);
+                (info.genesis_config, info.mint_keypair)
+            }
+        }
+    }
 
     #[test]
     fn test_update_accounts_lt_hash() {
@@ -315,7 +363,7 @@ mod tests {
         let keypair5 = Keypair::new();
 
         let (mut genesis_config, mint_keypair) =
-            create_genesis_config(123_456_789 * LAMPORTS_PER_SOL);
+            genesis_config::create_genesis_config(123_456_789 * LAMPORTS_PER_SOL);
         genesis_config.fee_rate_governor = FeeRateGovernor::new(0, 0);
         let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         bank.rc
@@ -474,12 +522,53 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_inspect_account_for_accounts_lt_hash() {
-        let accounts_db = AccountsDb::default_for_tests();
-        accounts_db.set_is_experimental_accumulator_hash_enabled(true);
-        let accounts = Accounts::new(Arc::new(accounts_db));
-        let bank = Bank::default_with_accounts(accounts);
+    /// Ensure that the accounts lt hash is correct for slot 0
+    ///
+    /// This test does a simple transfer in slot 0 so that a primordial account is modified.
+    ///
+    /// See the comments in calculate_delta_lt_hash() for more information.
+    #[test_case(Features::None; "no features")]
+    #[test_case(Features::All; "all features")]
+    fn test_slot0_accounts_lt_hash(features: Features) {
+        let (genesis_config, mint_keypair) = genesis_config_with(features);
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        bank.rc
+            .accounts
+            .accounts_db
+            .set_is_experimental_accumulator_hash_enabled(true);
+
+        // ensure the accounts lt hash is enabled, otherwise this test doesn't actually do anything...
+        assert!(bank.is_accounts_lt_hash_enabled());
+
+        // ensure this bank is for slot 0, otherwise this test doesn't actually do anything...
+        assert_eq!(bank.slot(), 0);
+
+        // process a transaction that modifies a primordial account
+        bank.transfer(LAMPORTS_PER_SOL, &mint_keypair, &Pubkey::new_unique())
+            .unwrap();
+
+        // manually freeze the bank to trigger update_accounts_lt_hash() to run
+        bank.freeze();
+        let actual_accounts_lt_hash = bank.accounts_lt_hash.lock().unwrap().clone();
+
+        // ensure the actual accounts lt hash matches the value calculated from the index
+        let calculated_accounts_lt_hash = bank
+            .rc
+            .accounts
+            .accounts_db
+            .calculate_accounts_lt_hash_at_startup_from_index(&bank.ancestors, bank.slot());
+        assert_eq!(actual_accounts_lt_hash, calculated_accounts_lt_hash);
+    }
+
+    #[test_case(Features::None; "no features")]
+    #[test_case(Features::All; "all features")]
+    fn test_inspect_account_for_accounts_lt_hash(features: Features) {
+        let (genesis_config, _mint_keypair) = genesis_config_with(features);
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        bank.rc
+            .accounts
+            .accounts_db
+            .set_is_experimental_accumulator_hash_enabled(true);
 
         // ensure the accounts lt hash is enabled, otherwise this test doesn't actually do anything...
         assert!(bank.is_accounts_lt_hash_enabled());
@@ -580,9 +669,10 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_calculate_accounts_lt_hash_at_startup() {
-        let (genesis_config, mint_keypair) = create_genesis_config(123_456_789 * LAMPORTS_PER_SOL);
+    #[test_case(Features::None; "no features")]
+    #[test_case(Features::All; "all features")]
+    fn test_calculate_accounts_lt_hash_at_startup_from_index(features: Features) {
+        let (genesis_config, mint_keypair) = genesis_config_with(features);
         let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         bank.rc
             .accounts
@@ -624,10 +714,192 @@ mod tests {
             .rc
             .accounts
             .accounts_db
-            .calculate_accounts_lt_hash_at_startup(&bank.ancestors, bank.slot());
+            .calculate_accounts_lt_hash_at_startup_from_index(&bank.ancestors, bank.slot());
+        assert_eq!(expected_accounts_lt_hash, calculated_accounts_lt_hash);
+    }
 
-        let expected = expected_accounts_lt_hash.0.checksum();
-        let actual = calculated_accounts_lt_hash.0.checksum();
-        assert_eq!(expected, actual, "expected: {expected}, actual: {actual}");
+    #[test_case(Features::None; "no features")]
+    #[test_case(Features::All; "all features")]
+    fn test_calculate_accounts_lt_hash_at_startup_from_storages(features: Features) {
+        let (genesis_config, mint_keypair) = genesis_config_with(features);
+        let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        bank.rc
+            .accounts
+            .accounts_db
+            .set_is_experimental_accumulator_hash_enabled(true);
+
+        // ensure the accounts lt hash is enabled, otherwise this test doesn't actually do anything...
+        assert!(bank.is_accounts_lt_hash_enabled());
+
+        let amount = cmp::max(
+            bank.get_minimum_balance_for_rent_exemption(0),
+            LAMPORTS_PER_SOL,
+        );
+
+        // Write to this pubkey multiple times, so there are guaranteed duplicates in the storages.
+        let duplicate_pubkey = pubkey::new_rand();
+
+        // create some banks with some modified accounts so that there are stored accounts
+        // (note: the number of banks and transfers are arbitrary)
+        for _ in 0..7 {
+            let slot = bank.slot() + 1;
+            bank =
+                new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot);
+            for _ in 0..9 {
+                bank.register_unique_recent_blockhash_for_test();
+                // note: use a random pubkey here to ensure accounts
+                // are spread across all the index bins
+                // (and calculating the accounts lt hash from storages requires no duplicates)
+                bank.transfer(amount, &mint_keypair, &pubkey::new_rand())
+                    .unwrap();
+
+                bank.register_unique_recent_blockhash_for_test();
+                bank.transfer(amount, &mint_keypair, &duplicate_pubkey)
+                    .unwrap();
+            }
+
+            // flush the write cache each slot to ensure there are account duplicates in the storages
+            bank.squash();
+            bank.force_flush_accounts_cache();
+        }
+        let expected_accounts_lt_hash = bank.accounts_lt_hash.lock().unwrap().clone();
+
+        // go through the storages to find the duplicates
+        let (mut storages, _slots) = bank
+            .rc
+            .accounts
+            .accounts_db
+            .get_snapshot_storages(RangeFull);
+        // sort the storages in slot-descending order
+        // this makes skipping the latest easier
+        storages.sort_unstable_by_key(|storage| cmp::Reverse(storage.slot()));
+        let storages = storages.into_boxed_slice();
+
+        // get all the lt hashes for each version of all accounts
+        let mut stored_accounts_map = HashMap::<_, Vec<_>>::new();
+        for storage in &storages {
+            storage.accounts.scan_accounts(|stored_account_meta| {
+                let pubkey = stored_account_meta.pubkey();
+                let account_lt_hash = AccountsDb::lt_hash_account(&stored_account_meta, pubkey);
+                stored_accounts_map
+                    .entry(*pubkey)
+                    .or_default()
+                    .push(account_lt_hash)
+            });
+        }
+
+        // calculate the duplicates lt hash by skipping the first version (latest) of each account,
+        // and then mixing together all the rest
+        let duplicates_lt_hash = stored_accounts_map
+            .values()
+            .map(|lt_hashes| {
+                // the first element in the vec is the latest; all the rest are duplicates
+                &lt_hashes[1..]
+            })
+            .fold(LtHash::identity(), |mut accum, duplicate_lt_hashes| {
+                for duplicate_lt_hash in duplicate_lt_hashes {
+                    accum.mix_in(&duplicate_lt_hash.0);
+                }
+                accum
+            });
+        let duplicates_lt_hash = DuplicatesLtHash(duplicates_lt_hash);
+
+        // ensure that calculating the accounts lt hash from storages is correct
+        let calculated_accounts_lt_hash_from_storages = bank
+            .rc
+            .accounts
+            .accounts_db
+            .calculate_accounts_lt_hash_at_startup_from_storages(&storages, &duplicates_lt_hash);
+        assert_eq!(
+            expected_accounts_lt_hash,
+            calculated_accounts_lt_hash_from_storages
+        );
+    }
+
+    #[test_case(Features::None; "no features")]
+    #[test_case(Features::All; "all features")]
+    fn test_verify_accounts_lt_hash_at_startup(features: Features) {
+        let (genesis_config, mint_keypair) = genesis_config_with(features);
+        let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        bank.rc
+            .accounts
+            .accounts_db
+            .set_is_experimental_accumulator_hash_enabled(true);
+
+        // ensure the accounts lt hash is enabled, otherwise this test doesn't actually do anything...
+        assert!(bank.is_accounts_lt_hash_enabled());
+
+        let amount = cmp::max(
+            bank.get_minimum_balance_for_rent_exemption(0),
+            LAMPORTS_PER_SOL,
+        );
+
+        // Write to this pubkey multiple times, so there are guaranteed duplicates in the storages.
+        let duplicate_pubkey = pubkey::new_rand();
+
+        // create some banks with some modified accounts so that there are stored accounts
+        // (note: the number of banks and transfers are arbitrary)
+        for _ in 0..9 {
+            let slot = bank.slot() + 1;
+            bank =
+                new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot);
+            for _ in 0..3 {
+                bank.register_unique_recent_blockhash_for_test();
+                bank.transfer(amount, &mint_keypair, &pubkey::new_rand())
+                    .unwrap();
+                bank.register_unique_recent_blockhash_for_test();
+                bank.transfer(amount, &mint_keypair, &duplicate_pubkey)
+                    .unwrap();
+            }
+
+            // flush the write cache to disk to ensure there are duplicates across the storages
+            bank.fill_bank_with_ticks_for_tests();
+            bank.squash();
+            bank.force_flush_accounts_cache();
+        }
+
+        // verification happens at startup, so mimic the behavior by loading from a snapshot
+        let snapshot_config = SnapshotConfig::default();
+        let bank_snapshots_dir = TempDir::new().unwrap();
+        let snapshot_archives_dir = TempDir::new().unwrap();
+        let snapshot = snapshot_bank_utils::bank_to_full_snapshot_archive(
+            &bank_snapshots_dir,
+            &bank,
+            Some(snapshot_config.snapshot_version),
+            &snapshot_archives_dir,
+            &snapshot_archives_dir,
+            snapshot_config.archive_format,
+        )
+        .unwrap();
+        let (_accounts_tempdir, accounts_dir) = snapshot_utils::create_tmp_accounts_dir_for_tests();
+        let accounts_db_config = AccountsDbConfig {
+            enable_experimental_accumulator_hash: true,
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        };
+        let (roundtrip_bank, _) = snapshot_bank_utils::bank_from_snapshot_archives(
+            &[accounts_dir],
+            &bank_snapshots_dir,
+            &snapshot,
+            None,
+            &genesis_config,
+            &RuntimeConfig::default(),
+            None,
+            None,
+            AccountSecondaryIndexes::default(),
+            None,
+            AccountShrinkThreshold::default(),
+            false,
+            false,
+            false,
+            false,
+            Some(accounts_db_config),
+            None,
+            Arc::default(),
+        )
+        .unwrap();
+
+        // Wait for the startup verification to complete.  If we don't panic, then we're good!
+        roundtrip_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
+        assert_eq!(roundtrip_bank, *bank);
     }
 }
