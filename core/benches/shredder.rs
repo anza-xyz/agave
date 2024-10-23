@@ -28,11 +28,11 @@ fn make_large_unchained_entries(txs_per_entry: u64, num_entries: u64) -> Vec<Ent
         .collect()
 }
 
-fn make_shreds(num_shreds: usize) -> Vec<Shred> {
+fn make_shreds(num_shreds: u32) -> Vec<Shred> {
     let txs_per_entry = 128;
     let num_entries = max_entries_per_n_shred(
         &make_test_entry(txs_per_entry),
-        2 * num_shreds as u64,
+        2 * num_shreds,
         Some(LEGACY_SHRED_DATA_CAPACITY),
     );
     let entries = make_large_unchained_entries(txs_per_entry, num_entries);
@@ -49,7 +49,7 @@ fn make_shreds(num_shreds: usize) -> Vec<Shred> {
         &ReedSolomonCache::default(),
         &mut ProcessShredsStats::default(),
     );
-    assert!(data_shreds.len() >= num_shreds);
+    assert!(data_shreds.len() >= num_shreds as usize);
     data_shreds
 }
 
@@ -57,7 +57,7 @@ fn make_shreds(num_shreds: usize) -> Vec<Shred> {
 fn bench_shredder_ticks(bencher: &mut Bencher) {
     let kp = Keypair::new();
     let shred_size = LEGACY_SHRED_DATA_CAPACITY;
-    let num_shreds = ((1000 * 1000) + (shred_size - 1)) / shred_size;
+    let num_shreds = u32::try_from(((1000 * 1000) + (shred_size - 1)) / shred_size).unwrap();
     // ~1Mb
     let num_ticks = max_ticks_per_n_shreds(1, Some(LEGACY_SHRED_DATA_CAPACITY)) * num_shreds as u64;
     let entries = create_ticks(num_ticks, 0, Hash::default());
@@ -83,11 +83,11 @@ fn bench_shredder_ticks(bencher: &mut Bencher) {
 fn bench_shredder_large_entries(bencher: &mut Bencher) {
     let kp = Keypair::new();
     let shred_size = LEGACY_SHRED_DATA_CAPACITY;
-    let num_shreds = ((1000 * 1000) + (shred_size - 1)) / shred_size;
+    let num_shreds = u32::try_from(((1000 * 1000) + (shred_size - 1)) / shred_size).unwrap();
     let txs_per_entry = 128;
     let num_entries = max_entries_per_n_shred(
         &make_test_entry(txs_per_entry),
-        num_shreds as u64,
+        num_shreds,
         Some(shred_size),
     );
     let entries = make_large_unchained_entries(txs_per_entry, num_entries);
@@ -115,7 +115,7 @@ fn bench_deshredder(bencher: &mut Bencher) {
     let kp = Keypair::new();
     let shred_size = LEGACY_SHRED_DATA_CAPACITY;
     // ~10Mb
-    let num_shreds = ((10000 * 1000) + (shred_size - 1)) / shred_size;
+    let num_shreds = u32::try_from(((10000 * 1000) + (shred_size - 1)) / shred_size).unwrap();
     let num_ticks = max_ticks_per_n_shreds(1, Some(shred_size)) * num_shreds as u64;
     let entries = create_ticks(num_ticks, 0, Hash::default());
     let shredder = Shredder::new(1, 0, 0, 0).unwrap();
@@ -156,7 +156,7 @@ fn bench_shredder_coding(bencher: &mut Bencher) {
     let reed_solomon_cache = ReedSolomonCache::default();
     bencher.iter(|| {
         Shredder::generate_coding_shreds(
-            &data_shreds[..symbol_count],
+            &data_shreds[..symbol_count as usize],
             0, // next_code_index
             &reed_solomon_cache,
         )
@@ -170,7 +170,7 @@ fn bench_shredder_decoding(bencher: &mut Bencher) {
     let data_shreds = make_shreds(symbol_count);
     let reed_solomon_cache = ReedSolomonCache::default();
     let coding_shreds = Shredder::generate_coding_shreds(
-        &data_shreds[..symbol_count],
+        &data_shreds[..symbol_count as usize],
         0, // next_code_index
         &reed_solomon_cache,
     );
