@@ -1795,9 +1795,11 @@ pub mod tests {
                             // When there are two_refs and when slots < 3, all regular slots can fit into one ancient slots.
                             // Therefore, we should have all slots that can be combined for slots < 3.
                             // However, when slots >=3, we need more than one ancient slots. The pack algorithm will need to first
-                            // find at least [ceiling(num_slots/2.5) - 1] slots that's doesn't have many_refs before we can pack slots with many_refs.
-                            // Since all the slots have many_refs, we can't find any eligible slot to combine.
-                            0
+                            // find at least [ceiling(num_slots/2.5) - 1] slots that's don't have many_refs before we can pack slots with many_refs.
+                            // Since we decrease the number of alive bytes we'll be writing, when we encounter slots that can't be packed,
+                            // we now reduce the number required ideal packed storages. As a result, the last
+                            // slot can be packed, and the number of accounts to combine should be 2.
+                            2
                         } else {
                             num_slots
                         };
@@ -1901,7 +1903,9 @@ pub mod tests {
                                     many_ref_slots,
                                 );
                                 // if we are only trying to pack a single slot of multi-refs, it will succeed
-                                // if num_slots = 2 and skip multi-ref slots, accounts_to_combine should be empty.
+                                // if num_slots = 2 and skip multi-ref slots, accounts_to_combine should contain
+                                // one element (storage), because we don't count alive bytes of skipped accounts
+                                // when we compute required target storages, and the second slot can be combined.
                                 let expected_number_accounts_to_combine = if !two_refs
                                     || many_ref_slots == IncludeManyRefSlots::Include
                                     || num_slots == 1
