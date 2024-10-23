@@ -517,7 +517,7 @@ fn main() {
             (None, false)
         };
         let scheduler_pool = DefaultSchedulerPool::new(
-            Some(num_banking_threads as usize),
+            Some((num_banking_threads - 2) as usize),
             None,
             None,
             Some(replay_vote_sender.clone()),
