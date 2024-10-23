@@ -2581,7 +2581,7 @@ pub mod tests {
                     }
                 }
                 assert_eq!(infos.all_infos.len(), 1, "{method:?}");
-                let should_shrink = data_size.is_none();
+                let should_shrink = db.is_candidate_for_shrink(&storage);
                 assert_storage_info(infos.all_infos.first().unwrap(), &storage, should_shrink);
                 if should_shrink {
                     // data size is so small compared to min aligned file size that the storage is marked as should_shrink
@@ -2677,30 +2677,33 @@ pub mod tests {
                         assert_eq!(infos.total_alive_bytes_shrink.0, 0);
                     } else {
                         assert_eq!(infos.all_infos.len(), slots);
-                        let should_shrink = data_size.is_none();
                         storages
                             .iter()
                             .zip(infos.all_infos.iter())
                             .for_each(|(storage, info)| {
+                                let should_shrink = db.is_candidate_for_shrink(&storage);
                                 assert_storage_info(info, storage, should_shrink);
+                                if should_shrink {
+                                    // data size is so small compared to min aligned file size that the storage is marked as should_shrink
+                                    assert_eq!(
+                                        infos.shrink_indexes,
+                                        slot_vec
+                                            .iter()
+                                            .enumerate()
+                                            .map(|(i, _)| i)
+                                            .collect::<Vec<_>>()
+                                    );
+                                    assert_eq!(infos.total_alive_bytes.0, alive_bytes_expected);
+                                    assert_eq!(
+                                        infos.total_alive_bytes_shrink.0,
+                                        alive_bytes_expected
+                                    );
+                                } else {
+                                    assert!(infos.shrink_indexes.is_empty());
+                                    assert_eq!(infos.total_alive_bytes.0, alive_bytes_expected);
+                                    assert_eq!(infos.total_alive_bytes_shrink.0, 0);
+                                }
                             });
-                        if should_shrink {
-                            // data size is so small compared to min aligned file size that the storage is marked as should_shrink
-                            assert_eq!(
-                                infos.shrink_indexes,
-                                slot_vec
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(i, _)| i)
-                                    .collect::<Vec<_>>()
-                            );
-                            assert_eq!(infos.total_alive_bytes.0, alive_bytes_expected);
-                            assert_eq!(infos.total_alive_bytes_shrink.0, alive_bytes_expected);
-                        } else {
-                            assert!(infos.shrink_indexes.is_empty());
-                            assert_eq!(infos.total_alive_bytes.0, alive_bytes_expected);
-                            assert_eq!(infos.total_alive_bytes_shrink.0, 0);
-                        }
                     }
                 }
             }
@@ -2774,29 +2777,29 @@ pub mod tests {
                         }
                     };
                     assert_eq!(infos.all_infos.len(), 1, "method: {method:?}");
-                    let should_shrink = data_size.is_none();
                     alive_storages.iter().zip(infos.all_infos.iter()).for_each(
                         |(storage, info)| {
+                            let should_shrink = db.is_candidate_for_shrink(&storage);
                             assert_storage_info(info, storage, should_shrink);
+                            if should_shrink {
+                                // data size is so small compared to min aligned file size that the storage is marked as should_shrink
+                                assert_eq!(
+                                    infos.shrink_indexes,
+                                    if !matches!(method, TestCollectInfo::CollectSortFilterInfo) {
+                                        vec![0]
+                                    } else {
+                                        Vec::default()
+                                    }
+                                );
+                                assert_eq!(infos.total_alive_bytes.0, alive_bytes_expected);
+                                assert_eq!(infos.total_alive_bytes_shrink.0, alive_bytes_expected);
+                            } else {
+                                assert!(infos.shrink_indexes.is_empty());
+                                assert_eq!(infos.total_alive_bytes.0, alive_bytes_expected);
+                                assert_eq!(infos.total_alive_bytes_shrink.0, 0);
+                            }
                         },
                     );
-                    if should_shrink {
-                        // data size is so small compared to min aligned file size that the storage is marked as should_shrink
-                        assert_eq!(
-                            infos.shrink_indexes,
-                            if !matches!(method, TestCollectInfo::CollectSortFilterInfo) {
-                                vec![0]
-                            } else {
-                                Vec::default()
-                            }
-                        );
-                        assert_eq!(infos.total_alive_bytes.0, alive_bytes_expected);
-                        assert_eq!(infos.total_alive_bytes_shrink.0, alive_bytes_expected);
-                    } else {
-                        assert!(infos.shrink_indexes.is_empty());
-                        assert_eq!(infos.total_alive_bytes.0, alive_bytes_expected);
-                        assert_eq!(infos.total_alive_bytes_shrink.0, 0);
-                    }
                 }
             }
         }
@@ -3152,7 +3155,6 @@ pub mod tests {
                     .collect::<Vec<_>>();
                 let (db, slot1) =
                     create_db_with_storages_and_index(true /*alive*/, 1, data_sizes[1]);
-                let dead_bytes = 184; // constant based on None data size
                 create_storages_and_update_index(
                     &db,
                     None,
@@ -3200,19 +3202,19 @@ pub mod tests {
                 // data size is so small compared to min aligned file size that the storage is marked as should_shrink
                 assert_eq!(
                     infos.shrink_indexes,
-                    if matches!(method, TestCollectInfo::CollectSortFilterInfo) {
-                        Vec::default()
-                    } else {
-                        shrinks
+                    match method {
+                        TestCollectInfo::CollectSortFilterInfo => Vec::default(),
+                        TestCollectInfo::CalcAncientSlotInfo => vec![0, 1],
+                        _ => shrinks
                             .iter()
                             .skip(1)
                             .enumerate()
                             .filter_map(|(i, shrink)| shrink.then_some(i))
-                            .collect::<Vec<_>>()
+                            .collect::<Vec<_>>(),
                     }
                 );
                 assert_eq!(infos.total_alive_bytes.0, alive_bytes_expected);
-                assert_eq!(infos.total_alive_bytes_shrink.0, dead_bytes);
+                assert_eq!(infos.total_alive_bytes_shrink.0, alive_bytes_expected);
             }
         }
     }
