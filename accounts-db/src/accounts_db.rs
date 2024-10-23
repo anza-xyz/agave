@@ -1777,9 +1777,7 @@ impl AccountsDb {
     const DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI: usize = 410 * 1024 * 1024;
 
     pub fn default_for_tests() -> Self {
-        // TODO: revisit me in later commit
         Self::new_single_for_tests()
-        // Self::default_with_accounts_index(AccountInfoAccountsIndex::default_for_tests(), None, None)
     }
 
     pub fn new_single_for_tests() -> Self {
