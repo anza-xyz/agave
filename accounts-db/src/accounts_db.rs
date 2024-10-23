@@ -1855,6 +1855,14 @@ impl AccountsDb {
         // Increase the stack for accounts threads
         // rayon needs a lot of stack
         const ACCOUNTS_STACK_SIZE: usize = 8 * 1024 * 1024;
+        let thread_pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(get_thread_count())
+            .thread_name(|i| format!("solAccounts{i:02}"))
+            .stack_size(ACCOUNTS_STACK_SIZE)
+            .build()
+            .expect("new rayon threadpool");
+        let thread_pool_clean = make_min_priority_thread_pool();
+        let thread_pool_hash = make_hash_thread_pool();
 
         let paths_is_empty = paths.is_empty();
         let mut new = Self {
@@ -1890,6 +1898,9 @@ impl AccountsDb {
                 .enable_experimental_accumulator_hash
                 .into(),
             bank_hash_stats,
+            thread_pool,
+            thread_pool_clean,
+            thread_pool_hash,
             verify_accounts_hash_in_bg: VerifyAccountsHashInBackground::default(),
             active_stats: ActiveStats::default(),
             storage: AccountStorage::default(),
@@ -1900,14 +1911,6 @@ impl AccountsDb {
             shrink_candidate_slots: Mutex::new(ShrinkCandidates::default()),
             write_version: AtomicU64::new(0),
             file_size: DEFAULT_FILE_SIZE,
-            thread_pool: rayon::ThreadPoolBuilder::new()
-                .num_threads(get_thread_count())
-                .thread_name(|i| format!("solAccounts{i:02}"))
-                .stack_size(ACCOUNTS_STACK_SIZE)
-                .build()
-                .unwrap(),
-            thread_pool_clean: make_min_priority_thread_pool(),
-            thread_pool_hash: make_hash_thread_pool(),
             accounts_delta_hashes: Mutex::new(HashMap::new()),
             accounts_hashes: Mutex::new(HashMap::new()),
             incremental_accounts_hashes: Mutex::new(HashMap::new()),
