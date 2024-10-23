@@ -445,8 +445,8 @@
 //!   - Invokable by programs? no
 //!
 //! - __secp256r1 Program__: Verifies a secp256r1 signature.
-//!   - ID: [`solana_secp256r1_program::id`]
-//!   - Instruction: [`solana_secp256r1`](https://docs.rs/latest/solana-secp256r1/index.html)
+//!   - ID: [`solana_secp256r1_program`]
+//!   - Instruction: [`solana_secp256r1_program`](https://docs.rs/latest/solana-secp256r1/index.html)
 //!   - Invokable by programs? no
 //!
 //! - __BPF Loader__: Deploys, and executes immutable programs on the chain.

@@ -193,7 +193,7 @@ struct Secp256r1SignatureOffsets {
 ```
 
 The pseudo code of the signature verification:
-
+```
 process_instruction() {
     if data.len() < SIGNATURE_OFFSETS_START {
         return Error
@@ -219,7 +219,7 @@ process_instruction() {
         }
 
         pubkey = get_data_slice(data, instruction_datas, offsets.public_key_instruction_index, offsets.public_key_offset, COMPRESSED_PUBKEY_SERIALIZED_SIZE)
-        
+
         message = get_data_slice(data, instruction_datas, offsets.message_instruction_index, offsets.message_data_offset, offsets.message_data_size)
 
         if !verify_signature(signature, pubkey, message) {
@@ -229,7 +229,7 @@ process_instruction() {
 
     return Success
 }
-
+```
 Note: Low S values are enforced for all signatures to avoid accidental signature
 malleability.
 
