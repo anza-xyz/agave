@@ -26,9 +26,10 @@ fn bench_write_points(bencher: &mut Bencher) {
         })
         .collect();
     let host_id = "benchmark-host-id";
+    let host_name = "benchmark-host-name";
     bencher.iter(|| {
         for _ in 0..10 {
-            test::black_box(serialize_points(&points, host_id));
+            test::black_box(serialize_points(&points, host_id, host_name));
         }
     })
 }
