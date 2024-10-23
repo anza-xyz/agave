@@ -65,7 +65,6 @@ pub mod deserialize_utils;
 pub mod ed25519_instruction;
 pub mod entrypoint;
 pub mod entrypoint_deprecated;
-pub mod epoch_info;
 pub mod epoch_rewards_hasher;
 pub mod example_mocks;
 pub mod exit;
@@ -118,6 +117,8 @@ pub use solana_bn254 as alt_bn128;
 pub use solana_decode_error as decode_error;
 #[deprecated(since = "2.1.0", note = "Use `solana-derivation-path` crate instead")]
 pub use solana_derivation_path as derivation_path;
+#[deprecated(since = "2.1.0", note = "Use `solana-epoch-info` crate instead")]
+pub use solana_epoch_info as epoch_info;
 #[deprecated(since = "2.1.0", note = "Use `solana-feature-set` crate instead")]
 pub use solana_feature_set as feature_set;
 #[deprecated(since = "2.1.0", note = "Use `solana-program-memory` crate instead")]

@@ -92,6 +92,7 @@ solana-account = { workspace = true, features = ["bincode"] }
 solana-bn254 = { workspace = true }
 solana-decode-error = { workspace = true }
 solana-derivation-path = { workspace = true }
+solana-epoch-info = { workspace = true, features = ["serde"] }
 solana-feature-set = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
