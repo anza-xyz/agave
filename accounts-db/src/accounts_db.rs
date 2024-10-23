@@ -1938,7 +1938,6 @@ impl AccountsDb {
             // Create a temporary set of accounts directories, used primarily
             // for testing
             let (temp_dirs, paths) = get_temp_accounts_paths(DEFAULT_NUM_DIRS).unwrap();
-            new.accounts_update_notifier = None;
             new.paths = paths;
             new.temp_paths = Some(temp_dirs);
         };
