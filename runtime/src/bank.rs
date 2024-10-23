@@ -106,7 +106,10 @@ use {
     solana_program_runtime::{
         invoke_context::BuiltinFunctionWithContext, loaded_programs::ProgramCacheEntry,
     },
-    solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
+    solana_runtime_transaction::{
+        instructions_processor::process_compute_budget_instructions,
+        svm_transaction_adapter::SVMTransactionAdapter,
+    },
     solana_sdk::{
         account::{
             create_account_shared_data_with_fields as create_account, from_account, Account,
@@ -3987,7 +3990,12 @@ impl Bank {
                 .accounts()
                 .accounts_db
                 .has_accounts_update_notifier()
-                .then(|| sanitized_txs.iter().collect::<Vec<_>>());
+                .then(|| {
+                    sanitized_txs
+                        .iter()
+                        .map(|tx| tx.as_sanitized_transaction())
+                        .collect::<Vec<_>>()
+                });
 
             let (accounts_to_store, transactions) = collect_accounts_to_store(
                 sanitized_txs,
