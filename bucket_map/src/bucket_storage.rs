@@ -433,10 +433,6 @@ impl<O: BucketOccupied> BucketStorage<O> {
                 std::env::current_dir(),
             );
         });
-        // Access to the disk bucket files are random (excluding the linear search on collisions),
-        // so advise the kernel to treat the mmaps as such.
-        #[cfg(unix)]
-        mmap.advise(memmap2::Advice::Random).unwrap();
         measure_mmap.stop();
         stats
             .new_file_us
