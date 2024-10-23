@@ -1831,6 +1831,20 @@ impl AccountsDb {
                 (base_working_path, Some(base_working_temp_dir))
             };
 
+        let (paths, temp_paths) = if paths.is_empty() {
+            // Create a temporary set of accounts directories, used primarily
+            // for testing
+            let (temp_dirs, temp_paths) = get_temp_accounts_paths(DEFAULT_NUM_DIRS).unwrap();
+            (temp_paths, Some(temp_dirs))
+        } else {
+            (paths, None)
+        };
+
+        let shrink_paths = accounts_db_config
+            .shrink_paths
+            .clone()
+            .unwrap_or_else(|| paths.clone());
+
         let accounts_hash_cache_path = accounts_db_config.accounts_hash_cache_path.clone();
         let accounts_hash_cache_path = accounts_hash_cache_path.unwrap_or_else(|| {
             let accounts_hash_cache_path =
@@ -1864,16 +1878,14 @@ impl AccountsDb {
         let thread_pool_clean = make_min_priority_thread_pool();
         let thread_pool_hash = make_hash_thread_pool();
 
-        let paths_is_empty = paths.is_empty();
         let mut new = Self {
             accounts_index,
             paths,
             base_working_path,
             base_working_temp_dir,
             accounts_hash_cache_path,
-            temp_paths: None,
-            // TODO: combine later in separate commit, this copy/paste from old function for now
-            shrink_paths: Vec::default(),
+            temp_paths,
+            shrink_paths,
             skip_initial_hash_calc: accounts_db_config.skip_initial_hash_calc,
             ancient_append_vec_offset: accounts_db_config
                 .ancient_append_vec_offset
@@ -1933,18 +1945,6 @@ impl AccountsDb {
             latest_full_snapshot_slot: SeqLock::new(None),
             best_ancient_slots_to_shrink: RwLock::default(),
         };
-
-        if paths_is_empty {
-            // Create a temporary set of accounts directories, used primarily
-            // for testing
-            let (temp_dirs, paths) = get_temp_accounts_paths(DEFAULT_NUM_DIRS).unwrap();
-            new.paths = paths;
-            new.temp_paths = Some(temp_dirs);
-        };
-        new.shrink_paths = accounts_db_config
-            .shrink_paths
-            .clone()
-            .unwrap_or_else(|| new.paths.clone());
 
         new.start_background_hasher();
         {
