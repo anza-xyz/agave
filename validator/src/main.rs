@@ -910,6 +910,7 @@ pub fn main() {
     };
 
     let cli::thread_args::NumThreadConfig {
+        accounts_db_clean_threads,
         accounts_db_hash_threads,
         ip_echo_server_threads,
         replay_forks_threads,
@@ -1312,6 +1313,7 @@ pub fn main() {
         scan_filter_for_shrinking,
         enable_experimental_accumulator_hash: matches
             .is_present("accounts_db_experimental_accumulator_hash"),
+        num_clean_threads: Some(accounts_db_clean_threads),
         num_hash_threads: Some(accounts_db_hash_threads),
         ..AccountsDbConfig::default()
     };
