@@ -601,9 +601,7 @@ mod native {
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
-    use {
-        super::common::*, solana_feature_set::FeatureSet, solana_precompile_error::PrecompileError,
-    };
+    use {solana_feature_set::FeatureSet, solana_precompile_error::PrecompileError};
 
     pub fn verify(
         _data: &[u8],
