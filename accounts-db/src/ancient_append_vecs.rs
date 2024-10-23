@@ -1900,11 +1900,25 @@ pub mod tests {
                                     &default_tuning(),
                                     many_ref_slots,
                                 );
+                                // if we are only trying to pack a single slot of multi-refs, it will succeed
+                                // if num_slots = 2 and skip multi-ref slots, accounts_to_combine should be empty.
+                                let expected_number_accounts_to_combine = if !two_refs
+                                    || many_ref_slots == IncludeManyRefSlots::Include
+                                    || num_slots == 1
+                                    || (num_slots == 2
+                                        && many_ref_slots != IncludeManyRefSlots::Skip)
+                                {
+                                    num_slots
+                                } else if num_slots == 2
+                                    && many_ref_slots == IncludeManyRefSlots::Skip
+                                {
+                                    1
+                                } else {
+                                    0
+                                };
                                 assert_eq!(
                                     accounts_to_combine.accounts_to_combine.len(),
-                                    // if we are only trying to pack a single slot of multi-refs, it will succeed
-                                    // if num_slots = 2 and skip multi-ref slots, accounts_to_combine should be empty.
-                                    if !two_refs || many_ref_slots == IncludeManyRefSlots::Include || num_slots == 1 || (num_slots == 2 && many_ref_slots != IncludeManyRefSlots::Skip) {num_slots} else {0},
+                                    expected_number_accounts_to_combine,
                                     "method: {method:?}, num_slots: {num_slots}, two_refs: {two_refs}, many_refs: {many_ref_slots:?}"
                                 );
 
@@ -1914,21 +1928,26 @@ pub mod tests {
                                         .iter()
                                         .any(|a| a.pubkeys_to_unref.is_empty()));
                                 }
+                                let expected_target_slots_sorted = if !two_refs
+                                    || many_ref_slots == IncludeManyRefSlots::Include
+                                    || num_slots == 1
+                                {
+                                    if unsorted_slots {
+                                        slots_vec.iter().cloned().rev().collect::<Vec<_>>()
+                                    } else {
+                                        slots_vec.clone()
+                                    }
+                                } else if num_slots == 2
+                                    && many_ref_slots == IncludeManyRefSlots::Skip
+                                {
+                                    vec![1]
+                                } else {
+                                    vec![]
+                                };
                                 // all accounts should be in one_ref and all slots are available as target slots
                                 assert_eq!(
                                     accounts_to_combine.target_slots_sorted,
-                                    if !two_refs
-                                        || many_ref_slots == IncludeManyRefSlots::Include
-                                        || num_slots == 1
-                                    {
-                                        if unsorted_slots {
-                                            slots_vec.iter().cloned().rev().collect::<Vec<_>>()
-                                        } else {
-                                            slots_vec.clone()
-                                        }
-                                    } else {
-                                        vec![]
-                                    },
+                                    expected_target_slots_sorted,
                                 );
                                 assert!(accounts_to_combine.accounts_keep_slots.is_empty());
                                 assert!(accounts_to_combine.accounts_to_combine.iter().all(
