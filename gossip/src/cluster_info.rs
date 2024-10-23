@@ -1068,13 +1068,15 @@ impl ClusterInfo {
 
     /// If there are less than `MAX_LOCKOUT_HISTORY` votes present, returns the next index
     /// without a vote. If there are `MAX_LOCKOUT_HISTORY` votes:
-    /// - Finds the oldest wallclock vote with slot < `new_vote_slot` and returns its index
-    /// - If all votes are newer returns the number of votes in crds
-    fn find_vote_index_to_evict(&self, new_vote_slot: Slot) -> u8 {
-        let should_evict_vote =
-            |vote: &Vote| vote.slot().map(|slot| new_vote_slot > slot).unwrap_or(true);
+    /// - Finds the oldest wallclock vote and returns its index
+    /// - Otherwise returns the total amount of observed votes
+    ///
+    /// If there exists a newer vote in gossip than `new_vote_slot` return `None` as this indicates
+    /// that we might be submitting slashable votes after an improper restart
+    fn find_vote_index_to_evict(&self, new_vote_slot: Slot) -> Option<u8> {
         let self_pubkey = self.id();
         let mut num_crds_votes = 0;
+        let mut exists_newer_vote = false;
         let vote_index = {
             let gossip_crds =
                 self.time_gossip_read_lock("gossip_read_push_vote", &self.stats.push_vote_read);
@@ -1084,21 +1086,27 @@ impl ClusterInfo {
                     let vote: &CrdsData = gossip_crds.get(&vote)?;
                     num_crds_votes += 1;
                     match &vote {
-                        CrdsData::Vote(_, vote) if should_evict_vote(vote) => {
+                        CrdsData::Vote(_, vote) if vote.slot() < Some(new_vote_slot) => {
                             Some((vote.wallclock, ix))
                         }
-                        CrdsData::Vote(_, _) => None,
+                        CrdsData::Vote(_, _) => {
+                            exists_newer_vote = true;
+                            None
+                        }
                         _ => panic!("this should not happen!"),
                     }
                 })
                 .min() // Boot the oldest evicted vote by wallclock.
                 .map(|(_ /*wallclock*/, ix)| ix)
         };
+        if exists_newer_vote {
+            return None;
+        }
         if num_crds_votes < MAX_LOCKOUT_HISTORY as u8 {
             // Do not evict if there is space in crds
-            num_crds_votes
+            Some(num_crds_votes)
         } else {
-            vote_index.unwrap_or(num_crds_votes)
+            vote_index
         }
     }
 
@@ -1106,20 +1114,20 @@ impl ClusterInfo {
         debug_assert!(tower.iter().tuple_windows().all(|(a, b)| a < b));
         // Find the oldest crds vote by wallclock that has a lower slot than `tower`
         // and recycle its vote-index. If the crds buffer is not full we instead add a new vote-index.
-        let vote_index =
-            self.find_vote_index_to_evict(tower.last().copied().expect("Cannot push empty vote"));
-        if (vote_index as usize) >= MAX_LOCKOUT_HISTORY {
+        let Some(vote_index) =
+            self.find_vote_index_to_evict(tower.last().copied().expect("Cannot push empty vote"))
+        else {
             // In this case we have restarted with a mangled/missing tower and are attempting
             // to push an old vote. This could be a slashable offense so better to panic here.
             let (_, vote, hash, _) = vote_parser::parse_vote_transaction(&vote).unwrap();
             panic!(
-                "invalid vote index: {}, switch: {}, vote slots: {:?}, tower: {:?}",
-                vote_index,
+                "Submitting old vote, switch: {}, vote slots: {:?}, tower: {:?}",
                 hash.is_some(),
                 vote.slots(),
                 tower
             );
-        }
+        };
+        debug_assert!(vote_index < MAX_LOCKOUT_HISTORY as u8);
         self.push_vote_at_index(vote, vote_index);
     }
 
@@ -1153,14 +1161,14 @@ impl ClusterInfo {
         } else {
             // If you don't see a vote with the same slot yet, this means you probably
             // restarted, and need to repush and evict the oldest vote
-            let vote_index = self.find_vote_index_to_evict(refresh_vote_slot);
-            if (vote_index as usize) >= MAX_LOCKOUT_HISTORY {
+            let Some(vote_index) = self.find_vote_index_to_evict(refresh_vote_slot) else {
                 warn!(
                     "trying to refresh slot {} but all votes in gossip table are for newer slots",
                     refresh_vote_slot,
                 );
                 return;
-            }
+            };
+            debug_assert!(vote_index < MAX_LOCKOUT_HISTORY as u8);
             self.push_vote_at_index(refresh_vote, vote_index);
         }
     }
@@ -4022,9 +4030,8 @@ mod tests {
         let votes = cluster_info.get_votes(&mut cursor);
         assert_eq!(votes, vec![unrefresh_tx.clone()]);
 
-        // Now construct vote for the slot to be refreshed later. Has to be less than the `unrefresh_slot`,
-        // otherwise it will evict that slot
-        let refresh_slot = unrefresh_slot - 1;
+        // Now construct vote for the slot to be refreshed later.
+        let refresh_slot = unrefresh_slot + 1;
         let refresh_tower = vec![1, 3, unrefresh_slot, refresh_slot];
         let refresh_vote = Vote::new(refresh_tower.clone(), Hash::new_unique());
         let refresh_ix = vote_instruction::vote(
@@ -4178,7 +4185,7 @@ mod tests {
             .err()
             .and_then(|a| a
                 .downcast_ref::<String>()
-                .map(|s| { s.starts_with("invalid vote index") }))
+                .map(|s| { s.starts_with("Submitting old vote") }))
             .unwrap_or_default());
     }
 
