@@ -2681,7 +2681,7 @@ pub mod tests {
                             .iter()
                             .zip(infos.all_infos.iter())
                             .for_each(|(storage, info)| {
-                                let should_shrink = db.is_candidate_for_shrink(&storage);
+                                let should_shrink = db.is_candidate_for_shrink(storage);
                                 assert_storage_info(info, storage, should_shrink);
                                 if should_shrink {
                                     // data size is so small compared to min aligned file size that the storage is marked as should_shrink
@@ -2779,7 +2779,7 @@ pub mod tests {
                     assert_eq!(infos.all_infos.len(), 1, "method: {method:?}");
                     alive_storages.iter().zip(infos.all_infos.iter()).for_each(
                         |(storage, info)| {
-                            let should_shrink = db.is_candidate_for_shrink(&storage);
+                            let should_shrink = db.is_candidate_for_shrink(storage);
                             assert_storage_info(info, storage, should_shrink);
                             if should_shrink {
                                 // data size is so small compared to min aligned file size that the storage is marked as should_shrink
