@@ -425,6 +425,7 @@ struct ConsumeWorkerCountMetrics {
     cost_model_throttled_transactions_count: AtomicU64,
     min_prioritization_fees: AtomicU64,
     max_prioritization_fees: AtomicU64,
+    slot: AtomicU64,
 }
 
 impl Default for ConsumeWorkerCountMetrics {
@@ -438,6 +439,7 @@ impl Default for ConsumeWorkerCountMetrics {
             cost_model_throttled_transactions_count: AtomicU64::default(),
             min_prioritization_fees: AtomicU64::new(u64::MAX),
             max_prioritization_fees: AtomicU64::default(),
+            slot: AtomicU64::default(),
         }
     }
 }
@@ -491,6 +493,11 @@ impl ConsumeWorkerCountMetrics {
                 self.max_prioritization_fees.swap(0, Ordering::Relaxed),
                 i64
             ),
+            (
+                "slot",
+                self.slot.swap(0, Ordering::Relaxed),
+                i64
+            ),
         );
     }
 }
@@ -506,6 +513,7 @@ struct ConsumeWorkerTimingMetrics {
     find_and_send_votes_us: AtomicU64,
     wait_for_bank_success_us: AtomicU64,
     wait_for_bank_failure_us: AtomicU64,
+    slot: AtomicU64,
 }
 
 impl ConsumeWorkerTimingMetrics {
@@ -550,6 +558,11 @@ impl ConsumeWorkerTimingMetrics {
                 self.wait_for_bank_failure_us.swap(0, Ordering::Relaxed),
                 i64
             ),
+            (
+                "slot",
+                self.slot.swap(0, Ordering::Relaxed),
+                i64
+            ),
         );
     }
 }
@@ -580,6 +593,7 @@ struct ConsumeWorkerTransactionErrorMetrics {
     would_exceed_account_data_block_limit: AtomicUsize,
     max_loaded_accounts_data_size_exceeded: AtomicUsize,
     program_execution_temporarily_restricted: AtomicUsize,
+    slot: AtomicU64,
 }
 
 impl ConsumeWorkerTransactionErrorMetrics {
@@ -692,6 +706,11 @@ impl ConsumeWorkerTransactionErrorMetrics {
                 "would_exceed_max_vote_cost_limit",
                 self.would_exceed_max_vote_cost_limit
                     .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "slot",
+                self.slot.swap(0, Ordering::Relaxed),
                 i64
             ),
         );
