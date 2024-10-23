@@ -3815,7 +3815,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.0.0",
  "rustls 0.23.15",
- "socket2 0.5.7",
+ "socket2",
  "thiserror",
  "tokio",
  "tracing",
@@ -6917,7 +6917,7 @@ dependencies = [
  "solana-transaction-metrics-tracker",
  "thiserror",
  "tokio",
- "tokio-util 0.7.1",
+ "tokio-util 0.7.12",
  "x509-parser",
 ]
 
