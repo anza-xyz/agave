@@ -16,7 +16,7 @@ solana-instruction = { workspace = true, features = ["std"]}
 solana-precompile-error = { workspace = true }
 solana-pubkey = { workspace = true }
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "solana")))'.dependencies]
 openssl = { workspace = true, optional = true, features = ["vendored"] }
 
 [dev-dependencies]

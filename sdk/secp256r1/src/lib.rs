@@ -30,8 +30,8 @@ pub struct Secp256r1SignatureOffsets {
     pub message_instruction_index: u16,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-mod native {
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "solana")))]
+mod target_arch {
     use {
         crate::Secp256r1SignatureOffsets,
         bytemuck::bytes_of,
@@ -599,8 +599,8 @@ mod native {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-mod wasm {
+#[cfg(any(target_arch = "wasm32", target_os = "solana"))]
+mod target_arch {
     use {solana_feature_set::FeatureSet, solana_precompile_error::PrecompileError};
 
     pub fn verify(
@@ -612,7 +612,4 @@ mod wasm {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub use self::native::*;
-#[cfg(target_arch = "wasm32")]
-pub use self::wasm::*;
+pub use self::target_arch::*;
