@@ -98,14 +98,14 @@ impl AncientSlotInfos {
         can_randomly_shrink: bool,
         ideal_size: NonZeroU64,
         is_high_slot: bool,
-        db: &AccountsDb,
+        is_candidate_for_shrink: bool,
     ) -> bool {
         let mut was_randomly_shrunk = false;
         let alive_bytes = storage.alive_bytes() as u64;
         if alive_bytes > 0 {
             let capacity = storage.accounts.capacity();
             let should_shrink = if capacity > 0 {
-                if db.is_candidate_for_shrink(&storage) {
+                if is_candidate_for_shrink {
                     true
                 } else if can_randomly_shrink && thread_rng().gen_range(0..10000) == 0 {
                     was_randomly_shrunk = true;
@@ -576,16 +576,16 @@ impl AccountsDb {
         // heuristic to include some # of newly eligible ancient slots so that the pack algorithm always makes progress
         let high_slot_boundary = max_slot.saturating_sub(HIGH_SLOT_OFFSET);
         let is_high_slot = |slot| slot >= high_slot_boundary;
-
         for slot in &slots {
             if let Some(storage) = self.storage.get_slot_storage_entry(*slot) {
+                let is_candidate_for_shrink = self.is_candidate_for_shrink(&storage);
                 if infos.add(
                     *slot,
                     storage,
                     tuning.can_randomly_shrink,
                     tuning.ideal_storage_size,
                     is_high_slot(*slot),
-                    self,
+                    is_candidate_for_shrink,
                 ) {
                     randoms += 1;
                 }
@@ -2553,6 +2553,7 @@ pub mod tests {
                 let storage = db.storage.get_slot_storage_entry(slot1).unwrap();
                 let alive_bytes_expected = storage.alive_bytes();
                 let high_slot = false;
+                let is_candidate_for_shrink = db.is_candidate_for_shrink(&storage);
                 let tuning = PackedAncientStorageTuning {
                     percent_of_alive_shrunk_data: 100,
                     max_ancient_slots: 0,
@@ -2570,7 +2571,7 @@ pub mod tests {
                             can_randomly_shrink,
                             NonZeroU64::new(get_ancient_append_vec_capacity()).unwrap(),
                             high_slot,
-                            &db,
+                            is_candidate_for_shrink,
                         );
                     }
                     TestCollectInfo::CalcAncientSlotInfo => {
@@ -2617,6 +2618,7 @@ pub mod tests {
             let mut infos = AncientSlotInfos::default();
             let storage = db.storage.get_slot_storage_entry(slot1).unwrap();
             let high_slot = false;
+            let is_candidate_for_shrink = db.is_candidate_for_shrink(&storage);
             if call_add {
                 infos.add(
                     slot1,
@@ -2624,7 +2626,7 @@ pub mod tests {
                     can_randomly_shrink,
                     NonZeroU64::new(get_ancient_append_vec_capacity()).unwrap(),
                     high_slot,
-                    &db,
+                    is_candidate_for_shrink,
                 );
             } else {
                 let tuning = PackedAncientStorageTuning {
