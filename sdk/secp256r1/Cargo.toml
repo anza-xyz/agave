@@ -10,21 +10,20 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
-solana-instruction = { workspace = true }
+bytemuck = { workspace = true, features = ["derive"] }
 solana-feature-set = { workspace = true }
+solana-instruction = { workspace = true }
 solana-precompile-error = { workspace = true }
 solana-pubkey = { workspace = true }
-bytemuck = { workspace = true, features = ["derive"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 openssl = { workspace = true, optional = true, features = ["vendored"] }
 
 [dev-dependencies]
-solana-sdk = {path = "../"}
 rand = { workspace = true }
 rand0-7 = { package = "rand", version = "0.7" }
 solana-logger = { workspace = true }
-
+solana-sdk = { path = "../" }
 
 [features]
 default = ["openssl"]  # This ensures OpenSSL is included by default
