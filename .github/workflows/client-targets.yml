@@ -34,6 +34,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Perl
+        run: |
+          apt-get update
+          apt-get install -y perl
+
+      - name: Setup environment for Android NDK
+        run: |
+          echo "RANLIB=/usr/local/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib" >> $GITHUB_ENV
+
       - run: cargo install cargo-ndk@2.12.2
 
       - name: Setup Rust
