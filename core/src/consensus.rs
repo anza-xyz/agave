@@ -590,11 +590,19 @@ impl Tower {
     pub fn record_bank_vote(&mut self, bank: &Bank) -> Option<Slot> {
         // Returns the new root if one is made after applying a vote for the given bank to
         // `self.vote_state`
+        let block_id = bank.block_id().unwrap_or_else(|| {
+            // This can only happen for our leader bank
+            // Note: since the new shred format is yet to be rolled out to all clusters,
+            // this can also happen for non-leader banks. Once rolled out we can assert
+            // here that this is our leader bank.
+            Hash::default()
+        });
         self.record_bank_vote_and_update_lockouts(
             bank.slot(),
             bank.hash(),
             bank.feature_set
                 .is_active(&solana_feature_set::enable_tower_sync_ix::id()),
+            block_id,
         )
     }
 
@@ -604,6 +612,7 @@ impl Tower {
         &mut self,
         vote_hash: Hash,
         enable_tower_sync_ix: bool,
+        block_id: Hash,
     ) {
         let mut new_vote = if enable_tower_sync_ix {
             VoteTransaction::from(TowerSync::new(
@@ -614,7 +623,7 @@ impl Tower {
                     .collect(),
                 self.vote_state.root_slot,
                 vote_hash,
-                Hash::default(), // TODO: block_id will fill in upcoming pr
+                block_id,
             ))
         } else {
             VoteTransaction::from(VoteStateUpdate::new(
@@ -637,6 +646,7 @@ impl Tower {
         vote_slot: Slot,
         vote_hash: Hash,
         enable_tower_sync_ix: bool,
+        block_id: Hash,
     ) -> Option<Slot> {
         trace!("{} record_vote for {}", self.node_pubkey, vote_slot);
         let old_root = self.root();
@@ -649,7 +659,7 @@ impl Tower {
                 vote_slot, vote_hash, result
             );
         }
-        self.update_last_vote_from_vote_state(vote_hash, enable_tower_sync_ix);
+        self.update_last_vote_from_vote_state(vote_hash, enable_tower_sync_ix, block_id);
 
         let new_root = self.root();
 
@@ -667,10 +677,10 @@ impl Tower {
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn record_vote(&mut self, slot: Slot, hash: Hash) -> Option<Slot> {
-        self.record_bank_vote_and_update_lockouts(slot, hash, true)
+        self.record_bank_vote_and_update_lockouts(slot, hash, true, Hash::default())
     }
 
-    /// Used for tests
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn increase_lockout(&mut self, confirmation_count_increase: u32) {
         for vote in self.vote_state.votes.iter_mut() {
             vote.lockout

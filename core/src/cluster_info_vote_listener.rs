@@ -377,31 +377,6 @@ impl ClusterInfoVoteListener {
         }
     }
 
-    #[cfg(test)]
-    pub fn get_and_process_votes_for_tests(
-        gossip_vote_txs_receiver: &VerifiedVoteTransactionsReceiver,
-        vote_tracker: &VoteTracker,
-        root_bank: &Bank,
-        subscriptions: &RpcSubscriptions,
-        gossip_verified_vote_hash_sender: &GossipVerifiedVoteHashSender,
-        verified_vote_sender: &VerifiedVoteSender,
-        replay_votes_receiver: &ReplayVoteReceiver,
-    ) -> Result<ThresholdConfirmedSlots> {
-        Self::listen_and_confirm_votes(
-            gossip_vote_txs_receiver,
-            vote_tracker,
-            root_bank,
-            subscriptions,
-            gossip_verified_vote_hash_sender,
-            verified_vote_sender,
-            replay_votes_receiver,
-            &None,
-            &None,
-            &mut None,
-            &mut HashMap::new(),
-        )
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn listen_and_confirm_votes(
         gossip_vote_txs_receiver: &VerifiedVoteTransactionsReceiver,
@@ -679,12 +654,11 @@ impl ClusterInfoVoteListener {
         gossip_vote_slot_confirming_time.stop();
         let gossip_vote_slot_confirming_time_us = gossip_vote_slot_confirming_time.as_us();
 
-        match vote_processing_time {
-            Some(ref mut vote_processing_time) => vote_processing_time.update(
+        if let Some(ref mut vote_processing_time) = vote_processing_time {
+            vote_processing_time.update(
                 gossip_vote_txn_processing_time_us,
                 gossip_vote_slot_confirming_time_us,
-            ),
-            None => {}
+            )
         }
         new_optimistic_confirmed_slots
     }
