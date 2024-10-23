@@ -62,7 +62,7 @@ solana-rent = { workspace = true, features = ["serde"] }
 solana-sanitize = { workspace = true }
 solana-sdk-macro = { workspace = true }
 solana-secp256k1-recover = { workspace = true }
-solana-secp256r1 = { workspace = true }
+solana-secp256r1-program = { workspace = true }
 solana-serde-varint = { workspace = true }
 solana-serialize-utils = { workspace = true }
 solana-sha256-hasher = { workspace = true, features = ["sha2"] }
