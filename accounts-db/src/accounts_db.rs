@@ -694,7 +694,7 @@ struct SlotIndexGenerationInfo {
     accounts_data_len: u64,
     amount_to_top_off_rent: u64,
     rent_paying_accounts_by_partition: Vec<Pubkey>,
-    zero_pubkeys: Vec<Pubkey>,
+    zero_lamport_pubkeys: Vec<Pubkey>,
     all_accounts_are_zero_lamports: bool,
 }
 
@@ -8428,7 +8428,7 @@ impl AccountsDb {
         let mut num_accounts_rent_paying = 0;
         let mut amount_to_top_off_rent = 0;
         let mut stored_size_alive = 0;
-        let mut zero_pubkeys = vec![];
+        let mut zero_lamport_pubkeys = vec![];
         let mut all_accounts_are_zero_lamports = true;
 
         let (dirty_pubkeys, insert_time_us, mut generate_index_results) = {
@@ -8440,7 +8440,7 @@ impl AccountsDb {
                     all_accounts_are_zero_lamports = false;
                 } else {
                     // zero lamport accounts
-                    zero_pubkeys.push(info.index_info.pubkey);
+                    zero_lamport_pubkeys.push(info.index_info.pubkey);
                 }
                 items_local.push(info.index_info);
             });
@@ -8525,7 +8525,7 @@ impl AccountsDb {
             accounts_data_len,
             amount_to_top_off_rent,
             rent_paying_accounts_by_partition,
-            zero_pubkeys,
+            zero_lamport_pubkeys,
             all_accounts_are_zero_lamports,
         }
     }
@@ -8621,7 +8621,7 @@ impl AccountsDb {
                                 amount_to_top_off_rent: amount_to_top_off_rent_this_slot,
                                 rent_paying_accounts_by_partition:
                                     rent_paying_accounts_by_partition_this_slot,
-                                zero_pubkeys: zero_pubkeys_this_slot,
+                                zero_lamport_pubkeys: zero_pubkeys_this_slot,
                                 all_accounts_are_zero_lamports,
                             } = self.generate_index_for_slot(
                                 &storage,
