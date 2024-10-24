@@ -400,8 +400,8 @@ pub struct ShrinkStats {
     pub num_ancient_slots_shrunk: AtomicU64,
     pub ancient_slots_added_to_shrink: AtomicU64,
     pub ancient_bytes_added_to_shrink: AtomicU64,
-    pub adding_dead_slots_to_clean: AtomicU64,
-    pub adding_shrink_slots_from_zeros: AtomicU64,
+    pub num_dead_slots_added_to_clean: AtomicU64,
+    pub num_slots_with_zero_lamport_accounts_added_to_shrink: AtomicU64,
     pub marking_zero_dead_accounts: AtomicU64,
 }
 
@@ -544,13 +544,14 @@ impl ShrinkStats {
                     i64
                 ),
                 (
-                    "adding_dead_slots_to_clean",
-                    self.adding_dead_slots_to_clean.swap(0, Ordering::Relaxed),
+                    "num_dead_slots_added_to_clean",
+                    self.num_dead_slots_added_to_clean
+                        .swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
-                    "adding_shrink_slots_from_zeros",
-                    self.adding_shrink_slots_from_zeros
+                    "num_slots_with_zero_lamport_accounts_added_to_shrink",
+                    self.num_slots_with_zero_lamport_accounts_added_to_shrink
                         .swap(0, Ordering::Relaxed),
                     i64
                 ),

@@ -3772,7 +3772,7 @@ impl AccountsDb {
                     // all accounts in this storage can be dead
                     self.accounts_index.add_uncleaned_roots([slot]);
                     self.shrink_stats
-                        .adding_dead_slots_to_clean
+                        .num_dead_slots_added_to_clean
                         .fetch_add(1, Ordering::Relaxed);
                 } else if Self::is_shrinking_productive(&store)
                     && self.is_candidate_for_shrink(&store)
@@ -3780,7 +3780,7 @@ impl AccountsDb {
                     // this store might be eligible for shrinking now
                     self.shrink_candidate_slots.lock().unwrap().insert(slot);
                     self.shrink_stats
-                        .adding_shrink_slots_from_zeros
+                        .num_slots_with_zero_lamport_accounts_added_to_shrink
                         .fetch_add(1, Ordering::Relaxed);
                 } else {
                     self.shrink_stats
