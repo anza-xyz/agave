@@ -12,7 +12,7 @@ edition = { workspace = true }
 [dependencies]
 bytemuck = { workspace = true, features = ["derive"] }
 solana-feature-set = { workspace = true }
-solana-instruction = { workspace = true, features = ["std"]}
+solana-instruction = { workspace = true, features = ["std"] }
 solana-precompile-error = { workspace = true }
 solana-pubkey = { workspace = true }
 
