@@ -511,8 +511,8 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormalWithVerify,
     enable_experimental_accumulator_hash: false,
     num_clean_threads: None,
-    num_hash_threads: None,
     num_foreground_threads: None,
+    num_hash_threads: None,
 };
 pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig {
     index: Some(ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS),
@@ -531,8 +531,8 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormalWithVerify,
     enable_experimental_accumulator_hash: false,
     num_clean_threads: None,
-    num_hash_threads: None,
     num_foreground_threads: None,
+    num_hash_threads: None,
 };
 
 pub type BinnedHashData = Vec<Vec<CalculateHashIntermediate>>;
@@ -646,10 +646,10 @@ pub struct AccountsDbConfig {
     pub enable_experimental_accumulator_hash: bool,
     /// Number of threads for background cleaning operations (`thread_pool_clean')
     pub num_clean_threads: Option<NonZeroUsize>,
-    /// Number of threads for background accounts hashing (`thread_pool_hash`)
-    pub num_hash_threads: Option<NonZeroUsize>,
     /// Number of threads for foreground operations (`thread_pool`)
     pub num_foreground_threads: Option<NonZeroUsize>,
+    /// Number of threads for background accounts hashing (`thread_pool_hash`)
+    pub num_hash_threads: Option<NonZeroUsize>,
 }
 
 #[cfg(not(test))]
