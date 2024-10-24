@@ -6017,6 +6017,7 @@ dependencies = [
  "ark-serialize",
  "array-bytes",
  "bytemuck",
+ "criterion",
  "serde",
  "serde_derive",
  "serde_json",
