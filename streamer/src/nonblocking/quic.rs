@@ -84,6 +84,9 @@ const CONNECTION_CLOSE_REASON_EXCEED_MAX_STREAM_COUNT: &[u8] = b"exceed_max_stre
 const CONNECTION_CLOSE_CODE_TOO_MANY: u32 = 4;
 const CONNECTION_CLOSE_REASON_TOO_MANY: &[u8] = b"too_many";
 
+const CONNECTION_CLOSE_CODE_INVALID_STREAM: u32 = 5;
+const CONNECTION_CLOSE_REASON_INVALID_STREAM: &[u8] = b"invalid_stream";
+
 /// Limit to 250K PPS
 pub const DEFAULT_MAX_STREAMS_PER_MS: u64 = 250;
 
@@ -1034,7 +1037,7 @@ async fn handle_connection(
     );
     let stable_id = connection.stable_id();
     stats.total_connections.fetch_add(1, Ordering::Relaxed);
-    loop {
+    'conn: loop {
         // Wait for new streams. If the peer is disconnected we get a cancellation signal and stop
         // the connection task.
         let mut stream = select! {
@@ -1084,64 +1087,71 @@ async fn handle_connection(
         stream_counter.stream_count.fetch_add(1, Ordering::Relaxed);
         stats.total_streams.fetch_add(1, Ordering::Relaxed);
         stats.total_new_streams.fetch_add(1, Ordering::Relaxed);
-        let cancel = cancel.clone();
-        let stats = stats.clone();
-        let packet_sender = params.packet_sender.clone();
-        let last_update = last_update.clone();
-        let stream_load_ema = stream_load_ema.clone();
-        tokio::spawn(async move {
-            let mut maybe_batch = None;
-            loop {
-                // Read the next chunk, waiting up to `wait_for_chunk_timeout`. If we don't get a
-                // chunk before then, we assume the stream is dead and stop the stream task. This
-                // can only happen if there's severe packet loss or the peer stop sending for
-                // whatever reason.
-                let chunk = match tokio::select! {
-                    chunk = tokio::time::timeout(
-                        wait_for_chunk_timeout,
-                        stream.read_chunk(PACKET_DATA_SIZE, true)) => chunk,
+        let packet_sender = &params.packet_sender;
+        let mut maybe_batch = None;
+        loop {
+            // Read the next chunk, waiting up to `wait_for_chunk_timeout`. If we don't get a
+            // chunk before then, we assume the stream is dead and stop the stream task. This
+            // can only happen if there's severe packet loss or the peer stop sending for
+            // whatever reason.
+            let chunk = match tokio::select! {
+                chunk = tokio::time::timeout(
+                    wait_for_chunk_timeout,
+                    stream.read_chunk(PACKET_DATA_SIZE, true)) => chunk,
 
-                    // If the peer gets disconnected stop the task right away.
-                    _ = cancel.cancelled() => break,
-                } {
-                    // read_chunk returned success
-                    Ok(Ok(chunk)) => chunk,
-                    // read_chunk returned error
-                    Ok(Err(e)) => {
-                        debug!("Received stream error: {:?}", e);
-                        stats
-                            .total_stream_read_errors
-                            .fetch_add(1, Ordering::Relaxed);
-                        break;
-                    }
-                    // timeout elapsed
-                    Err(_) => {
-                        debug!("Timeout in receiving on stream");
-                        stats
-                            .total_stream_read_timeouts
-                            .fetch_add(1, Ordering::Relaxed);
-                        break;
-                    }
-                };
+                // If the peer gets disconnected stop the task right away.
+                _ = cancel.cancelled() => break,
+            } {
+                // read_chunk returned success
+                Ok(Ok(chunk)) => chunk,
+                // read_chunk returned error
+                Ok(Err(e)) => {
+                    debug!("Received stream error: {:?}", e);
+                    stats
+                        .total_stream_read_errors
+                        .fetch_add(1, Ordering::Relaxed);
+                    break;
+                }
+                // timeout elapsed
+                Err(_) => {
+                    debug!("Timeout in receiving on stream");
+                    stats
+                        .total_stream_read_timeouts
+                        .fetch_add(1, Ordering::Relaxed);
+                    break;
+                }
+            };
 
-                if handle_chunk(
-                    chunk,
-                    &mut maybe_batch,
-                    &remote_addr,
-                    &packet_sender,
-                    stats.clone(),
-                    params.peer_type,
-                )
-                .await
-                {
+            match handle_chunk(
+                chunk,
+                &mut maybe_batch,
+                &remote_addr,
+                packet_sender,
+                stats.clone(),
+                params.peer_type,
+            )
+            .await
+            {
+                // The stream is done, break out of the loop and close the stream.
+                Ok(true) => {
                     last_update.store(timing::timestamp(), Ordering::Relaxed);
                     break;
                 }
+                // The stream is still active, continue reading.
+                Ok(false) => {}
+                Err(_) => {
+                    // Disconnect peers that send streams that exceeds the maximum tx size.
+                    connection.close(
+                        CONNECTION_CLOSE_CODE_INVALID_STREAM.into(),
+                        CONNECTION_CLOSE_REASON_INVALID_STREAM,
+                    );
+                    break 'conn;
+                }
             }
+        }
 
-            stats.total_streams.fetch_sub(1, Ordering::Relaxed);
-            stream_load_ema.update_ema_if_needed();
-        });
+        stats.total_streams.fetch_sub(1, Ordering::Relaxed);
+        stream_load_ema.update_ema_if_needed();
     }
 
     let removed_connection_count = connection_table.lock().await.remove_connection(
@@ -1169,7 +1179,7 @@ async fn handle_chunk(
     packet_sender: &AsyncSender<PacketAccumulator>,
     stats: Arc<StreamerStats>,
     peer_type: ConnectionPeerType,
-) -> bool {
+) -> Result<bool, ()> {
     if let Some(chunk) = maybe_chunk {
         trace!("got chunk: {:?}", chunk);
 
@@ -1193,7 +1203,7 @@ async fn handle_chunk(
                 // tho, in which case we drop the stream.
                 stats.invalid_stream_size.fetch_add(1, Ordering::Relaxed);
                 debug!("invalid stream size {}", accum.meta.size);
-                return true;
+                return Err(());
             }
             accum.chunks.push(chunk.bytes);
         }
@@ -1250,10 +1260,10 @@ async fn handle_chunk(
                 .total_packet_batches_none
                 .fetch_add(1, Ordering::Relaxed);
         }
-        return true;
+        return Ok(true);
     }
 
-    false
+    Ok(false)
 }
 
 #[derive(Debug)]
@@ -1504,6 +1514,7 @@ pub mod test {
         assert_matches::assert_matches,
         async_channel::unbounded as async_unbounded,
         crossbeam_channel::{unbounded, Receiver},
+        quinn::{ApplicationClose, ConnectionError},
         solana_sdk::{net::DEFAULT_TPU_COALESCE, signature::Keypair, signer::Signer},
         std::collections::HashMap,
         tokio::time::sleep,
@@ -2418,5 +2429,34 @@ pub mod test {
         // dropping the connection, concurrent connections should become 0
         drop(tracker_1);
         assert_eq!(stats.open_connections.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_client_connection_close_invalid_stream() {
+        let SpawnTestServerResult {
+            join_handle,
+            server_address,
+            stats,
+            exit,
+            ..
+        } = setup_quic_server(None, TestServerConfig::default());
+
+        let client_connection = make_client_endpoint(&server_address, None).await;
+
+        let mut send_stream = client_connection.open_uni().await.unwrap();
+        send_stream
+            .write_all(&[42; PACKET_DATA_SIZE + 1])
+            .await
+            .unwrap();
+        match client_connection.closed().await {
+            ConnectionError::ApplicationClosed(ApplicationClose { error_code, reason }) => {
+                assert_eq!(error_code, CONNECTION_CLOSE_CODE_INVALID_STREAM.into());
+                assert_eq!(reason, CONNECTION_CLOSE_REASON_INVALID_STREAM);
+            }
+            _ => panic!("unexpected close"),
+        }
+        assert_eq!(stats.invalid_stream_size.load(Ordering::Relaxed), 1);
+        exit.store(true, Ordering::Relaxed);
+        join_handle.await.unwrap();
     }
 }
