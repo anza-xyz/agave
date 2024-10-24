@@ -87,7 +87,7 @@ use {
         account::{Account, AccountSharedData, ReadableAccount},
         clock::{BankId, Epoch, Slot},
         epoch_schedule::EpochSchedule,
-        genesis_config::{ClusterType, GenesisConfig},
+        genesis_config::GenesisConfig,
         hash::Hash,
         pubkey::Pubkey,
         rent_collector::RentCollector,
@@ -144,6 +144,10 @@ const SHRINK_COLLECT_CHUNK_SIZE: usize = 50;
 /// additional storages from ancient slots can be added to the
 /// candidates for shrinking.
 const SHRINK_INSERT_ANCIENT_THRESHOLD: usize = 10;
+
+/// Default value for the number of ancient storages the ancient slot
+/// combining should converge to.
+pub const MAX_ANCIENT_SLOTS_DEFAULT: usize = 100_000;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum CreateAncientStorage {
@@ -592,9 +596,24 @@ pub struct AccountsAddRootTiming {
     pub store_us: u64,
 }
 
-/// if negative, this many accounts older than # slots in epoch are still treated as modern (ie. non-ancient).
-/// Slots older than # slots in epoch - this # are then treated as ancient and subject to packing.
-const ANCIENT_APPEND_VEC_DEFAULT_OFFSET: Option<i64> = Some(-10_000);
+/// Slots older the "number of slots in an epoch minus this number"
+/// than max root are treated as ancient and subject to packing.
+/// |  older  |<-          slots in an epoch          ->| max root
+/// |  older  |<-    offset   ->|                       |
+/// |          ancient          |        modern         |
+///
+/// If this is negative, this many slots older than the number of
+/// slots in epoch are still treated as modern (ie. non-ancient).
+/// |  older  |<- abs(offset) ->|<- slots in an epoch ->| max root
+/// | ancient |                 modern                  |
+///
+/// Note that another constant MAX_ANCIENT_SLOTS_DEFAULT sets a
+/// threshold for combining ancient storages so that their overall
+/// number is under a certain limit, whereas this constant establishes
+/// the distance from the max root slot beyond which storages holding
+/// the account data for the slots are considered ancient by the
+/// shrinking algorithm.
+const ANCIENT_APPEND_VEC_DEFAULT_OFFSET: Option<i64> = Some(100_000);
 
 #[derive(Debug, Default, Clone)]
 pub struct AccountsDbConfig {
@@ -1444,8 +1463,6 @@ pub struct AccountsDb {
 
     pub(crate) shrink_ancient_stats: ShrinkAncientStats,
 
-    pub cluster_type: Option<ClusterType>,
-
     pub account_indexes: AccountSecondaryIndexes,
 
     /// Set of unique keys per slot which is used
@@ -1860,7 +1877,6 @@ impl AccountsDb {
             shrink_stats: ShrinkStats::default(),
             shrink_ancient_stats: ShrinkAncientStats::default(),
             stats: AccountsStats::default(),
-            cluster_type: None,
             account_indexes: AccountSecondaryIndexes::default(),
             #[cfg(test)]
             load_delay: u64::default(),
@@ -1889,29 +1905,23 @@ impl AccountsDb {
     }
 
     pub fn new_single_for_tests() -> Self {
-        AccountsDb::new_for_tests(Vec::new(), &ClusterType::Development)
+        AccountsDb::new_for_tests(Vec::new())
     }
 
     pub fn new_single_for_tests_with_provider(file_provider: AccountsFileProvider) -> Self {
-        AccountsDb::new_for_tests_with_provider(
-            Vec::new(),
-            &ClusterType::Development,
-            file_provider,
-        )
+        AccountsDb::new_for_tests_with_provider(Vec::new(), file_provider)
     }
 
-    pub fn new_for_tests(paths: Vec<PathBuf>, cluster_type: &ClusterType) -> Self {
-        Self::new_for_tests_with_provider(paths, cluster_type, AccountsFileProvider::default())
+    pub fn new_for_tests(paths: Vec<PathBuf>) -> Self {
+        Self::new_for_tests_with_provider(paths, AccountsFileProvider::default())
     }
 
     fn new_for_tests_with_provider(
         paths: Vec<PathBuf>,
-        cluster_type: &ClusterType,
         accounts_file_provider: AccountsFileProvider,
     ) -> Self {
         let mut db = AccountsDb::new_with_config(
             paths,
-            cluster_type,
             AccountSecondaryIndexes::default(),
             AccountShrinkThreshold::default(),
             Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
@@ -1924,106 +1934,52 @@ impl AccountsDb {
 
     pub fn new_with_config(
         paths: Vec<PathBuf>,
-        cluster_type: &ClusterType,
         account_indexes: AccountSecondaryIndexes,
         shrink_ratio: AccountShrinkThreshold,
-        mut accounts_db_config: Option<AccountsDbConfig>,
+        accounts_db_config: Option<AccountsDbConfig>,
         accounts_update_notifier: Option<AccountsUpdateNotifier>,
         exit: Arc<AtomicBool>,
     ) -> Self {
-        let default_accounts_db_config = AccountsDbConfig::default();
+        let accounts_db_config = accounts_db_config.unwrap_or_default();
+        let accounts_index = AccountsIndex::new(accounts_db_config.index.clone(), exit);
+        let base_working_path = accounts_db_config.base_working_path.clone();
+        let accounts_hash_cache_path = accounts_db_config.accounts_hash_cache_path.clone();
 
-        let accounts_index = AccountsIndex::new(
-            accounts_db_config.as_mut().and_then(|x| x.index.take()),
-            exit,
-        );
-        let base_working_path = accounts_db_config
-            .as_ref()
-            .and_then(|x| x.base_working_path.clone());
-        let accounts_hash_cache_path = accounts_db_config
-            .as_ref()
-            .and_then(|config| config.accounts_hash_cache_path.clone());
-        let skip_initial_hash_calc = accounts_db_config
-            .as_ref()
-            .map(|config| config.skip_initial_hash_calc)
-            .unwrap_or_default();
-
-        let ancient_append_vec_offset = accounts_db_config
-            .as_ref()
-            .and_then(|config| config.ancient_append_vec_offset)
-            .or(ANCIENT_APPEND_VEC_DEFAULT_OFFSET);
-
-        let exhaustively_verify_refcounts = accounts_db_config
-            .as_ref()
-            .map(|config| config.exhaustively_verify_refcounts)
-            .unwrap_or_default();
-
-        let create_ancient_storage = accounts_db_config
-            .as_ref()
-            .map(|config| config.create_ancient_storage)
-            .unwrap_or_default();
-
-        let test_partitioned_epoch_rewards = accounts_db_config
-            .as_ref()
-            .map(|config| config.test_partitioned_epoch_rewards)
-            .unwrap_or_default();
-
-        let test_skip_rewrites_but_include_in_bank_hash = accounts_db_config
-            .as_ref()
-            .map(|config| config.test_skip_rewrites_but_include_in_bank_hash)
-            .unwrap_or_default();
-
+        let test_partitioned_epoch_rewards = accounts_db_config.test_partitioned_epoch_rewards;
         let partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig =
             PartitionedEpochRewardsConfig::new(test_partitioned_epoch_rewards);
 
-        let read_cache_size = accounts_db_config
-            .as_ref()
-            .and_then(|config| config.read_cache_limit_bytes)
-            .unwrap_or((
-                Self::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_LO,
-                Self::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI,
-            ));
-
-        let storage_access = accounts_db_config
-            .as_ref()
-            .map(|config| config.storage_access)
-            .unwrap_or_default();
-
-        let scan_filter_for_shrinking = accounts_db_config
-            .as_ref()
-            .map(|config| config.scan_filter_for_shrinking)
-            .unwrap_or_default();
-
-        let enable_experimental_accumulator_hash = accounts_db_config
-            .as_ref()
-            .map(|config| config.enable_experimental_accumulator_hash)
-            .unwrap_or(default_accounts_db_config.enable_experimental_accumulator_hash)
-            .into();
+        let read_cache_size = accounts_db_config.read_cache_limit_bytes.unwrap_or((
+            Self::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_LO,
+            Self::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI,
+        ));
 
         let paths_is_empty = paths.is_empty();
         let mut new = Self {
             paths,
-            skip_initial_hash_calc,
-            ancient_append_vec_offset,
-            cluster_type: Some(*cluster_type),
+            skip_initial_hash_calc: accounts_db_config.skip_initial_hash_calc,
+            ancient_append_vec_offset: accounts_db_config
+                .ancient_append_vec_offset
+                .or(ANCIENT_APPEND_VEC_DEFAULT_OFFSET),
             account_indexes,
             shrink_ratio,
             accounts_update_notifier,
-            create_ancient_storage,
+            create_ancient_storage: accounts_db_config.create_ancient_storage,
             read_only_accounts_cache: ReadOnlyAccountsCache::new(
                 read_cache_size.0,
                 read_cache_size.1,
                 Self::READ_ONLY_CACHE_MS_TO_SKIP_LRU_UPDATE,
             ),
-            write_cache_limit_bytes: accounts_db_config
-                .as_ref()
-                .and_then(|x| x.write_cache_limit_bytes),
+            write_cache_limit_bytes: accounts_db_config.write_cache_limit_bytes,
             partitioned_epoch_rewards_config,
-            exhaustively_verify_refcounts,
-            test_skip_rewrites_but_include_in_bank_hash,
-            storage_access,
-            scan_filter_for_shrinking,
-            is_experimental_accumulator_hash_enabled: enable_experimental_accumulator_hash,
+            exhaustively_verify_refcounts: accounts_db_config.exhaustively_verify_refcounts,
+            test_skip_rewrites_but_include_in_bank_hash: accounts_db_config
+                .test_skip_rewrites_but_include_in_bank_hash,
+            storage_access: accounts_db_config.storage_access,
+            scan_filter_for_shrinking: accounts_db_config.scan_filter_for_shrinking,
+            is_experimental_accumulator_hash_enabled: accounts_db_config
+                .enable_experimental_accumulator_hash
+                .into(),
             ..Self::default_with_accounts_index(
                 accounts_index,
                 base_working_path,
@@ -2039,8 +1995,8 @@ impl AccountsDb {
             new.temp_paths = Some(temp_dirs);
         };
         new.shrink_paths = accounts_db_config
-            .as_ref()
-            .and_then(|config| config.shrink_paths.clone())
+            .shrink_paths
+            .clone()
             .unwrap_or_else(|| new.paths.clone());
 
         new.start_background_hasher();
@@ -7606,7 +7562,9 @@ impl AccountsDb {
         true
     }
 
-    fn is_candidate_for_shrink(&self, store: &AccountStorageEntry) -> bool {
+    /// Determines whether a given AccountStorageEntry instance is a
+    /// candidate for shrinking.
+    pub(crate) fn is_candidate_for_shrink(&self, store: &AccountStorageEntry) -> bool {
         // appended ancient append vecs should not be shrunk by the normal shrink codepath.
         // It is not possible to identify ancient append vecs when we pack, so no check for ancient when we are not appending.
         let total_bytes = if self.create_ancient_storage == CreateAncientStorage::Append
@@ -8948,7 +8906,9 @@ impl AccountsDb {
                             );
                             accessor.check_and_get_loaded_account(|loaded_account| {
                                 let data_len = loaded_account.data_len();
-                                accounts_data_len_from_duplicates += data_len;
+                                if loaded_account.lamports() > 0 {
+                                    accounts_data_len_from_duplicates += data_len;
+                                }
                                 num_duplicate_accounts += 1;
                                 if let Some(lamports_to_top_off) = Self::stats_for_rent_payers(
                                     pubkey,
@@ -10519,7 +10479,7 @@ pub mod tests {
     #[test]
     fn test_account_one() {
         let (_accounts_dirs, paths) = get_temp_accounts_paths(1).unwrap();
-        let db = AccountsDb::new_for_tests(paths, &ClusterType::Development);
+        let db = AccountsDb::new_for_tests(paths);
         let mut pubkeys: Vec<Pubkey> = vec![];
         db.create_account(&mut pubkeys, 0, 1, 0, 0);
         let ancestors = vec![(0, 0)].into_iter().collect();
@@ -10534,7 +10494,7 @@ pub mod tests {
     #[test]
     fn test_account_many() {
         let (_accounts_dirs, paths) = get_temp_accounts_paths(2).unwrap();
-        let db = AccountsDb::new_for_tests(paths, &ClusterType::Development);
+        let db = AccountsDb::new_for_tests(paths);
         let mut pubkeys: Vec<Pubkey> = vec![];
         db.create_account(&mut pubkeys, 0, 100, 0, 0);
         db.check_accounts(&pubkeys, 0, 100, 1);
@@ -10556,7 +10516,7 @@ pub mod tests {
         let size = 4096;
         let accounts = AccountsDb {
             file_size: size,
-            ..AccountsDb::new_for_tests(paths, &ClusterType::Development)
+            ..AccountsDb::new_for_tests(paths)
         };
         let mut keys = vec![];
         for i in 0..9 {
@@ -15262,10 +15222,9 @@ pub mod tests {
         let slots_per_epoch = config.epoch_schedule.slots_per_epoch;
         assert_ne!(slot, 0);
         let offset = 10;
-        // no ancient append vecs, so always 0
         assert_eq!(
             db.get_oldest_non_ancient_slot_for_hash_calc_scan(slots_per_epoch + offset, &config),
-            expected(0)
+            expected(db.ancient_append_vec_offset.unwrap() as u64 + offset + 1)
         );
         // ancient append vecs enabled (but at 0 offset), so can be non-zero
         db.ancient_append_vec_offset = Some(0);
@@ -15779,7 +15738,6 @@ pub mod tests {
         ] {
             let db = AccountsDb::new_with_config(
                 Vec::new(),
-                &ClusterType::Development,
                 AccountSecondaryIndexes::default(),
                 AccountShrinkThreshold::default(),
                 Some(AccountsDbConfig {
@@ -15813,7 +15771,6 @@ pub mod tests {
         let ancient_append_vec_offset = 50_000;
         let db = AccountsDb::new_with_config(
             Vec::new(),
-            &ClusterType::Development,
             AccountSecondaryIndexes::default(),
             AccountShrinkThreshold::default(),
             Some(AccountsDbConfig {
@@ -15868,7 +15825,6 @@ pub mod tests {
             for starting_slot_offset in [0, avoid_saturation] {
                 let db = AccountsDb::new_with_config(
                     Vec::new(),
-                    &ClusterType::Development,
                     AccountSecondaryIndexes::default(),
                     AccountShrinkThreshold::default(),
                     Some(AccountsDbConfig {
@@ -15993,52 +15949,55 @@ pub mod tests {
         assert!(db
             .get_sorted_potential_ancient_slots(oldest_non_ancient_slot)
             .is_empty());
-        let root0 = 0;
-        db.add_root(root0);
-        let root1 = 1;
+        let root1 = MAX_ANCIENT_SLOTS_DEFAULT as u64 + ancient_append_vec_offset as u64 + 1;
         db.add_root(root1);
+        let root2 = root1 + 1;
+        db.add_root(root2);
         let oldest_non_ancient_slot = db.get_oldest_non_ancient_slot(&epoch_schedule);
         assert!(db
             .get_sorted_potential_ancient_slots(oldest_non_ancient_slot)
             .is_empty());
         let completed_slot = epoch_schedule.slots_per_epoch;
-        db.accounts_index.add_root(completed_slot);
+        db.accounts_index.add_root(AccountsDb::apply_offset_to_slot(
+            completed_slot,
+            ancient_append_vec_offset,
+        ));
         let oldest_non_ancient_slot = db.get_oldest_non_ancient_slot(&epoch_schedule);
         // get_sorted_potential_ancient_slots uses 'less than' as opposed to 'less or equal'
         // so, we need to get more than an epoch away to get the first valid root
         assert!(db
             .get_sorted_potential_ancient_slots(oldest_non_ancient_slot)
             .is_empty());
-        let completed_slot = epoch_schedule.slots_per_epoch + root0;
-        db.accounts_index.add_root(AccountsDb::apply_offset_to_slot(
-            completed_slot,
-            -ancient_append_vec_offset,
-        ));
-        let oldest_non_ancient_slot = db.get_oldest_non_ancient_slot(&epoch_schedule);
-        assert_eq!(
-            db.get_sorted_potential_ancient_slots(oldest_non_ancient_slot),
-            vec![root0]
-        );
         let completed_slot = epoch_schedule.slots_per_epoch + root1;
         db.accounts_index.add_root(AccountsDb::apply_offset_to_slot(
             completed_slot,
-            -ancient_append_vec_offset,
+            ancient_append_vec_offset,
         ));
         let oldest_non_ancient_slot = db.get_oldest_non_ancient_slot(&epoch_schedule);
         assert_eq!(
             db.get_sorted_potential_ancient_slots(oldest_non_ancient_slot),
-            vec![root0, root1]
+            vec![root1, root2]
+        );
+        let completed_slot = epoch_schedule.slots_per_epoch + root2;
+        db.accounts_index.add_root(AccountsDb::apply_offset_to_slot(
+            completed_slot,
+            ancient_append_vec_offset,
+        ));
+        let oldest_non_ancient_slot = db.get_oldest_non_ancient_slot(&epoch_schedule);
+        assert_eq!(
+            db.get_sorted_potential_ancient_slots(oldest_non_ancient_slot),
+            vec![root1, root2]
         );
         db.accounts_index
             .roots_tracker
             .write()
             .unwrap()
             .alive_roots
-            .remove(&root0);
+            .remove(&root1);
         let oldest_non_ancient_slot = db.get_oldest_non_ancient_slot(&epoch_schedule);
         assert_eq!(
             db.get_sorted_potential_ancient_slots(oldest_non_ancient_slot),
-            vec![root1]
+            vec![root2]
         );
     });
 
