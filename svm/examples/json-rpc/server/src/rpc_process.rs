@@ -562,7 +562,7 @@ impl JsonRpcRequestProcessor {
             .transaction_processor
             .read()
             .unwrap()
-            .load_and_execute_sanitized_transactions(
+            .load_and_execute_batch_with_preprocessing_checks(
                 bank,
                 sanitized_txs,
                 check_results,

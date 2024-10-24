@@ -130,7 +130,7 @@ impl SvmTestEnvironment<'_> {
         let (transactions, check_results) = self.test_entry.prepare_transactions();
         let batch_output = self
             .batch_processor
-            .load_and_execute_sanitized_transactions(
+            .load_and_execute_batch_with_preprocessing_checks(
                 &self.mock_bank,
                 &transactions,
                 check_results,
