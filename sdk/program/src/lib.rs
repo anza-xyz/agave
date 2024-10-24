@@ -511,7 +511,6 @@ pub mod slot_history;
 pub mod stake;
 pub mod stake_history;
 pub mod syscalls;
-pub mod system_instruction;
 pub mod system_program;
 pub mod sysvar;
 pub mod vote;
@@ -547,6 +546,7 @@ pub use {
         entrypoint_no_alloc,
     },
     solana_program_option as program_option, solana_pubkey as pubkey, solana_rent as rent,
+    solana_system_instruction as system_instruction,
 };
 /// The [config native program][np].
 ///

@@ -137,6 +137,7 @@ members = [
     "sdk/signature",
     "sdk/slot-hashes",
     "sdk/stable-layout",
+    "sdk/system-instruction",
     "sdk/transaction-error",
     "send-transaction-service",
     "short-vec",
@@ -492,6 +493,7 @@ solana-svm-conformance = { path = "svm-conformance", version = "=2.1.0" }
 solana-svm-example-paytube = { path = "svm/examples/paytube", version = "=2.1.0" }
 solana-svm-rent-collector = { path = "svm-rent-collector", version = "=2.1.0" }
 solana-svm-transaction = { path = "svm-transaction", version = "=2.1.0" }
+solana-system-instruction = { path = "sdk/system-instruction", version = "=2.1.0" }
 solana-system-program = { path = "programs/system", version = "=2.1.0" }
 solana-test-validator = { path = "test-validator", version = "=2.1.0" }
 solana-thin-client = { path = "thin-client", version = "=2.1.0" }
