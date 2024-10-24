@@ -53,7 +53,7 @@ fn calc(info: &[(usize, usize)], bin_widths: Vec<usize>, offset: i64) {
     eprintln!("highest slot: {max_inclusive}");
     eprintln!("slot range: {}", max_inclusive - min + 1);
     eprintln!(
-        "outside of epoch: {}",
+        "ancient boundary: {}",
         info.iter()
             .filter(|x| x.0 < max_inclusive - outside_slot)
             .count()
