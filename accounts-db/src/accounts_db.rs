@@ -512,6 +512,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     enable_experimental_accumulator_hash: false,
     num_clean_threads: None,
     num_hash_threads: None,
+    num_process_threads: None,
 };
 pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig {
     index: Some(ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS),
@@ -531,6 +532,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     enable_experimental_accumulator_hash: false,
     num_clean_threads: None,
     num_hash_threads: None,
+    num_process_threads: None,
 };
 
 pub type BinnedHashData = Vec<Vec<CalculateHashIntermediate>>;
@@ -646,6 +648,8 @@ pub struct AccountsDbConfig {
     pub num_clean_threads: Option<NonZeroUsize>,
     /// Number of threads for background accounts hashing (`thread_pool_hash`)
     pub num_hash_threads: Option<NonZeroUsize>,
+    /// Number of threads for foreground opeations (`thread_pool`)
+    pub num_process_threads: Option<NonZeroUsize>,
 }
 
 #[cfg(not(test))]
@@ -1770,6 +1774,10 @@ pub fn make_hash_thread_pool(num_threads: Option<NonZeroUsize>) -> ThreadPool {
         .unwrap()
 }
 
+pub fn default_num_foreground_threads() -> usize {
+    get_thread_count()
+}
+
 #[cfg(feature = "frozen-abi")]
 impl solana_frozen_abi::abi_example::AbiExample for AccountsDb {
     fn example() -> Self {
@@ -1900,8 +1908,12 @@ impl AccountsDb {
         // Increase the stack for accounts threads
         // rayon needs a lot of stack
         const ACCOUNTS_STACK_SIZE: usize = 8 * 1024 * 1024;
+        let num_process_threads = accounts_db_config
+            .num_process_threads
+            .map(Into::into)
+            .unwrap_or_else(default_num_foreground_threads);
         let thread_pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(get_thread_count())
+            .num_threads(num_process_threads)
             .thread_name(|i| format!("solAccounts{i:02}"))
             .stack_size(ACCOUNTS_STACK_SIZE)
             .build()

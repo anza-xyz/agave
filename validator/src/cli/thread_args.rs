@@ -12,6 +12,7 @@ use {
 pub struct DefaultThreadArgs {
     pub accounts_db_clean_threads: String,
     pub accounts_db_hash_threads: String,
+    pub accounts_db_process_threads: String,
     pub ip_echo_server_threads: String,
     pub replay_forks_threads: String,
     pub replay_transactions_threads: String,
@@ -24,6 +25,7 @@ impl Default for DefaultThreadArgs {
         Self {
             accounts_db_clean_threads: AccountsDbCleanThreadsArg::bounded_default().to_string(),
             accounts_db_hash_threads: AccountsDbHashThreadsArg::bounded_default().to_string(),
+            accounts_db_process_threads: AccountsDbProcessThreadsArg::bounded_default().to_string(),
             ip_echo_server_threads: IpEchoServerThreadsArg::bounded_default().to_string(),
             replay_forks_threads: ReplayForksThreadsArg::bounded_default().to_string(),
             replay_transactions_threads: ReplayTransactionsThreadsArg::bounded_default()
@@ -38,6 +40,7 @@ pub fn thread_args<'a>(defaults: &DefaultThreadArgs) -> Vec<Arg<'_, 'a>> {
     vec![
         new_thread_arg::<AccountsDbCleanThreadsArg>(&defaults.accounts_db_clean_threads),
         new_thread_arg::<AccountsDbHashThreadsArg>(&defaults.accounts_db_hash_threads),
+        new_thread_arg::<AccountsDbProcessThreadsArg>(&defaults.accounts_db_process_threads),
         new_thread_arg::<IpEchoServerThreadsArg>(&defaults.ip_echo_server_threads),
         new_thread_arg::<ReplayForksThreadsArg>(&defaults.replay_forks_threads),
         new_thread_arg::<ReplayTransactionsThreadsArg>(&defaults.replay_transactions_threads),
@@ -60,6 +63,7 @@ fn new_thread_arg<'a, T: ThreadArg>(default: &str) -> Arg<'_, 'a> {
 pub struct NumThreadConfig {
     pub accounts_db_clean_threads: NonZeroUsize,
     pub accounts_db_hash_threads: NonZeroUsize,
+    pub accounts_db_process_threads: NonZeroUsize,
     pub ip_echo_server_threads: NonZeroUsize,
     pub replay_forks_threads: NonZeroUsize,
     pub replay_transactions_threads: NonZeroUsize,
@@ -77,6 +81,11 @@ pub fn parse_num_threads_args(matches: &ArgMatches) -> NumThreadConfig {
         accounts_db_hash_threads: value_t_or_exit!(
             matches,
             AccountsDbHashThreadsArg::NAME,
+            NonZeroUsize
+        ),
+        accounts_db_process_threads: value_t_or_exit!(
+            matches,
+            AccountsDbProcessThreadsArg::NAME,
             NonZeroUsize
         ),
         ip_echo_server_threads: value_t_or_exit!(
@@ -154,6 +163,17 @@ impl ThreadArg for AccountsDbHashThreadsArg {
 
     fn default() -> usize {
         accounts_db::default_num_hash_threads().get()
+    }
+}
+
+struct AccountsDbProcessThreadsArg;
+impl ThreadArg for AccountsDbProcessThreadsArg {
+    const NAME: &'static str = "accounts_db_process_threads";
+    const LONG_NAME: &'static str = "accounts-db-process-threads";
+    const HELP: &'static str = "Number of threads to use for AccountsDb block processing";
+
+    fn default() -> usize {
+        accounts_db::default_num_foreground_threads()
     }
 }
 
