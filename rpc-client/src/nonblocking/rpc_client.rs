@@ -2180,11 +2180,29 @@ impl RpcClient {
         commitment: CommitmentConfig,
         max_stake_percent: f32,
     ) -> ClientResult<()> {
-        self.wait_for_max_stake_below_threshold_with_timeout(commitment, max_stake_percent, None)
-            .await
+        self.wait_for_max_stake_below_threshold_with_timeout_helper(
+            commitment,
+            max_stake_percent,
+            None,
+        )
+        .await
     }
 
     pub async fn wait_for_max_stake_below_threshold_with_timeout(
+        &self,
+        commitment: CommitmentConfig,
+        max_stake_percent: f32,
+        timeout: Duration,
+    ) -> ClientResult<()> {
+        self.wait_for_max_stake_below_threshold_with_timeout_helper(
+            commitment,
+            max_stake_percent,
+            Some(timeout),
+        )
+        .await
+    }
+
+    async fn wait_for_max_stake_below_threshold_with_timeout_helper(
         &self,
         commitment: CommitmentConfig,
         max_stake_percent: f32,

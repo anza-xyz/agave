@@ -1904,7 +1904,7 @@ impl RpcClient {
         &self,
         commitment: CommitmentConfig,
         max_stake_percent: f32,
-        timeout: Option<Duration>,
+        timeout: Duration,
     ) -> ClientResult<()> {
         self.invoke(
             (self.rpc_client.as_ref()).wait_for_max_stake_below_threshold_with_timeout(

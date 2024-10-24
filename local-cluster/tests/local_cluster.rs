@@ -1566,7 +1566,7 @@ fn test_wait_for_max_stake() {
         * num_expected_epochs;
     // Make the timeout double the expected duration to provide some margin.
     // Especially considering tests may be running in parallel.
-    let timeout = Some(expected_test_duration * 2);
+    let timeout = expected_test_duration * 2;
     if let Err(err) = client.wait_for_max_stake_below_threshold_with_timeout(
         CommitmentConfig::default(),
         33.0f32,
