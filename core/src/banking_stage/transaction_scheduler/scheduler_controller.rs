@@ -16,11 +16,10 @@ use {
         consume_worker::ConsumeWorkerMetrics,
         consumer::Consumer,
         decision_maker::{BufferedPacketsDecision, DecisionMaker},
-        forwarder::Forwarder,
         immutable_deserialized_packet::ImmutableDeserializedPacket,
         packet_deserializer::PacketDeserializer,
         scheduler_messages::MaxAge,
-        ForwardOption, LikeClusterInfo, TOTAL_BUFFERED_PACKETS,
+        TOTAL_BUFFERED_PACKETS,
     },
     arrayvec::ArrayVec,
     crossbeam_channel::RecvTimeoutError,
@@ -32,7 +31,7 @@ use {
     solana_sdk::{
         self,
         address_lookup_table::state::estimate_last_valid_slot,
-        clock::{Slot, FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, MAX_PROCESSING_AGE},
+        clock::{Slot, MAX_PROCESSING_AGE},
         fee::FeeBudgetLimits,
         saturating_add_assign,
         transaction::SanitizedTransaction,
@@ -41,12 +40,12 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
     std::{
         sync::{Arc, RwLock},
-        time::{Duration, Instant},
+        time::Duration,
     },
 };
 
 /// Controls packet and transaction flow into scheduler, and scheduling execution.
-pub(crate) struct SchedulerController<T: LikeClusterInfo> {
+pub(crate) struct SchedulerController {
     /// Decision maker for determining what should be done with transactions.
     decision_maker: DecisionMaker,
     /// Packet/Transaction ingress.
@@ -69,18 +68,15 @@ pub(crate) struct SchedulerController<T: LikeClusterInfo> {
     timing_metrics: SchedulerTimingMetrics,
     /// Metric report handles for the worker threads.
     worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
-    /// State for forwarding packets to the leader, if enabled.
-    forwarder: Option<Forwarder<T>>,
 }
 
-impl<T: LikeClusterInfo> SchedulerController<T> {
+impl SchedulerController {
     pub fn new(
         decision_maker: DecisionMaker,
         packet_deserializer: PacketDeserializer,
         bank_forks: Arc<RwLock<BankForks>>,
         scheduler: PrioGraphScheduler,
         worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
-        forwarder: Option<Forwarder<T>>,
     ) -> Self {
         Self {
             decision_maker,
@@ -93,7 +89,6 @@ impl<T: LikeClusterInfo> SchedulerController<T> {
             count_metrics: SchedulerCountMetrics::default(),
             timing_metrics: SchedulerTimingMetrics::default(),
             worker_metrics,
-            forwarder,
         }
     }
 
@@ -151,7 +146,6 @@ impl<T: LikeClusterInfo> SchedulerController<T> {
         &mut self,
         decision: &BufferedPacketsDecision,
     ) -> Result<(), SchedulerError> {
-        let forwarding_enabled = self.forwarder.is_some();
         match decision {
             BufferedPacketsDecision::Consume(bank_start) => {
                 let (scheduling_summary, schedule_time_us) = measure_us!(self.scheduler.schedule(
@@ -191,30 +185,16 @@ impl<T: LikeClusterInfo> SchedulerController<T> {
                 });
             }
             BufferedPacketsDecision::Forward => {
-                if forwarding_enabled {
-                    let (_, forward_time_us) = measure_us!(self.forward_packets(false));
-                    self.timing_metrics.update(|timing_metrics| {
-                        saturating_add_assign!(timing_metrics.forward_time_us, forward_time_us);
-                    });
-                } else {
-                    let (_, clear_time_us) = measure_us!(self.clear_container());
-                    self.timing_metrics.update(|timing_metrics| {
-                        saturating_add_assign!(timing_metrics.clear_time_us, clear_time_us);
-                    });
-                }
+                let (_, clear_time_us) = measure_us!(self.clear_container());
+                self.timing_metrics.update(|timing_metrics| {
+                    saturating_add_assign!(timing_metrics.clear_time_us, clear_time_us);
+                });
             }
             BufferedPacketsDecision::ForwardAndHold => {
-                if forwarding_enabled {
-                    let (_, forward_time_us) = measure_us!(self.forward_packets(true));
-                    self.timing_metrics.update(|timing_metrics| {
-                        saturating_add_assign!(timing_metrics.forward_time_us, forward_time_us);
-                    });
-                } else {
-                    let (_, clean_time_us) = measure_us!(self.clean_queue());
-                    self.timing_metrics.update(|timing_metrics| {
-                        saturating_add_assign!(timing_metrics.clean_time_us, clean_time_us);
-                    });
-                }
+                let (_, clean_time_us) = measure_us!(self.clean_queue());
+                self.timing_metrics.update(|timing_metrics| {
+                    saturating_add_assign!(timing_metrics.clean_time_us, clean_time_us);
+                });
             }
             BufferedPacketsDecision::Hold => {}
         }
@@ -245,106 +225,6 @@ impl<T: LikeClusterInfo> SchedulerController<T> {
         for (fee_check_result, result) in fee_check_results.into_iter().zip(results.iter_mut()) {
             *result = fee_check_result.is_ok();
         }
-    }
-
-    /// Forward packets to the next leader.
-    fn forward_packets(&mut self, hold: bool) {
-        const MAX_FORWARDING_DURATION: Duration = Duration::from_millis(100);
-        let start = Instant::now();
-        let bank = self.bank_forks.read().unwrap().working_bank();
-        let feature_set = &bank.feature_set;
-        let forwarder = self.forwarder.as_mut().expect("forwarder must exist");
-
-        // Pop from the container in chunks, filter using bank checks, then attempt to forward.
-        // This doubles as a way to clean the queue as well as forwarding transactions.
-        const CHUNK_SIZE: usize = 64;
-        let mut num_forwarded: usize = 0;
-        let mut ids_to_add_back = Vec::new();
-        let mut max_time_reached = false;
-        while !self.container.is_empty() {
-            let mut filter_array = [true; CHUNK_SIZE];
-            let mut ids = Vec::with_capacity(CHUNK_SIZE);
-            let mut txs = Vec::with_capacity(CHUNK_SIZE);
-
-            for _ in 0..CHUNK_SIZE {
-                if let Some(id) = self.container.pop() {
-                    ids.push(id);
-                } else {
-                    break;
-                }
-            }
-            let chunk_size = ids.len();
-            ids.iter().for_each(|id| {
-                let transaction = self.container.get_transaction_ttl(&id.id).unwrap();
-                txs.push(&transaction.transaction);
-            });
-
-            // use same filter we use for processing transactions:
-            // age, already processed, fee-check.
-            Self::pre_graph_filter(
-                &txs,
-                &mut filter_array,
-                &bank,
-                MAX_PROCESSING_AGE
-                    .saturating_sub(FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET as usize),
-            );
-
-            for (id, filter_result) in ids.iter().zip(&filter_array[..chunk_size]) {
-                if !*filter_result {
-                    self.container.remove_by_id(&id.id);
-                    continue;
-                }
-
-                ids_to_add_back.push(*id); // add back to the queue at end
-                let state = self.container.get_mut_transaction_state(&id.id).unwrap();
-                let sanitized_transaction = &state.transaction_ttl().transaction;
-                let immutable_packet = state.packet().clone();
-
-                // If not already forwarded and can be forwarded, add to forwardable packets.
-                if state.should_forward()
-                    && forwarder.try_add_packet(
-                        sanitized_transaction,
-                        immutable_packet,
-                        feature_set,
-                    )
-                {
-                    saturating_add_assign!(num_forwarded, 1);
-                    state.mark_forwarded();
-                }
-            }
-
-            if start.elapsed() >= MAX_FORWARDING_DURATION {
-                max_time_reached = true;
-                break;
-            }
-        }
-
-        // Forward each batch of transactions
-        forwarder.forward_batched_packets(&ForwardOption::ForwardTransaction);
-        forwarder.clear_batches();
-
-        // If we hit the time limit. Drop everything that was not checked/processed.
-        // If we cannot run these simple checks in time, then we cannot run them during
-        // leader slot.
-        if max_time_reached {
-            while let Some(id) = self.container.pop() {
-                self.container.remove_by_id(&id.id);
-            }
-        }
-
-        if hold {
-            for priority_id in ids_to_add_back {
-                self.container.push_id_into_queue(priority_id);
-            }
-        } else {
-            for priority_id in ids_to_add_back {
-                self.container.remove_by_id(&priority_id.id);
-            }
-        }
-
-        self.count_metrics.update(|count_metrics| {
-            saturating_add_assign!(count_metrics.num_forwarded, num_forwarded);
-        });
     }
 
     /// Clears the transaction state container.
@@ -450,7 +330,7 @@ impl<T: LikeClusterInfo> SchedulerController<T> {
                 },
                 true,
             ),
-            BufferedPacketsDecision::Forward => (MAX_PACKET_RECEIVE_TIME, self.forwarder.is_some()),
+            BufferedPacketsDecision::Forward => (MAX_PACKET_RECEIVE_TIME, false),
             BufferedPacketsDecision::ForwardAndHold | BufferedPacketsDecision::Hold => {
                 (MAX_PACKET_RECEIVE_TIME, true)
             }
@@ -518,7 +398,6 @@ impl<T: LikeClusterInfo> SchedulerController<T> {
         const CHUNK_SIZE: usize = 128;
         let lock_results: [_; CHUNK_SIZE] = core::array::from_fn(|_| Ok(()));
 
-        let mut arc_packets = ArrayVec::<_, CHUNK_SIZE>::new();
         let mut transactions = ArrayVec::<_, CHUNK_SIZE>::new();
         let mut max_ages = ArrayVec::<_, CHUNK_SIZE>::new();
         let mut fee_budget_limits_vec = ArrayVec::<_, CHUNK_SIZE>::new();
@@ -552,8 +431,7 @@ impl<T: LikeClusterInfo> SchedulerController<T> {
                         })
                         .ok()
                 })
-                .for_each(|(packet, tx, deactivation_slot, fee_budget_limits)| {
-                    arc_packets.push(packet);
+                .for_each(|(_packet, tx, deactivation_slot, fee_budget_limits)| {
                     transactions.push(tx);
                     max_ages.push(calculate_max_age(
                         last_slot_in_epoch,
@@ -563,12 +441,7 @@ impl<T: LikeClusterInfo> SchedulerController<T> {
                     fee_budget_limits_vec.push(fee_budget_limits);
                 });
 
-            let check_results: Vec<
-                Result<
-                    solana_svm::account_loader::CheckedTransactionDetails,
-                    solana_sdk::transaction::TransactionError,
-                >,
-            > = working_bank.check_transactions(
+            let check_results = working_bank.check_transactions(
                 &transactions,
                 &lock_results[..transactions.len()],
                 MAX_PROCESSING_AGE,
@@ -579,14 +452,12 @@ impl<T: LikeClusterInfo> SchedulerController<T> {
             let mut post_transaction_check_count: usize = 0;
             let mut num_dropped_on_capacity: usize = 0;
             let mut num_buffered: usize = 0;
-            for ((((packet, transaction), max_age), fee_budget_limits), _check_result) in
-                arc_packets
-                    .drain(..)
-                    .zip(transactions.drain(..))
-                    .zip(max_ages.drain(..))
-                    .zip(fee_budget_limits_vec.drain(..))
-                    .zip(check_results)
-                    .filter(|(_, check_result)| check_result.is_ok())
+            for (((transaction, max_age), fee_budget_limits), _check_result) in transactions
+                .drain(..)
+                .zip(max_ages.drain(..))
+                .zip(fee_budget_limits_vec.drain(..))
+                .zip(check_results)
+                .filter(|(_, check_result)| check_result.is_ok())
             {
                 saturating_add_assign!(post_transaction_check_count, 1);
                 let transaction_id = self.transaction_id_generator.next();
@@ -604,7 +475,6 @@ impl<T: LikeClusterInfo> SchedulerController<T> {
                 if self.container.insert_new_transaction(
                     transaction_id,
                     transaction_ttl,
-                    packet,
                     priority,
                     cost,
                 ) {
@@ -726,7 +596,6 @@ mod tests {
         },
         crossbeam_channel::{unbounded, Receiver, Sender},
         itertools::Itertools,
-        solana_gossip::cluster_info::ClusterInfo,
         solana_ledger::{
             blockstore::Blockstore, genesis_utils::GenesisConfigInfo,
             get_tmp_ledger_path_auto_delete, leader_schedule_cache::LeaderScheduleCache,
@@ -762,7 +631,7 @@ mod tests {
         finished_consume_work_sender: Sender<FinishedConsumeWork>,
     }
 
-    fn create_test_frame(num_threads: usize) -> (TestFrame, SchedulerController<Arc<ClusterInfo>>) {
+    fn create_test_frame(num_threads: usize) -> (TestFrame, SchedulerController) {
         let GenesisConfigInfo {
             mut genesis_config,
             mint_keypair,
@@ -812,7 +681,6 @@ mod tests {
             bank_forks,
             PrioGraphScheduler::new(consume_work_senders, finished_consume_work_receiver),
             vec![], // no actual workers with metrics to report, this can be empty
-            None,
         );
 
         (test_frame, scheduler_controller)
@@ -856,9 +724,7 @@ mod tests {
     // in order to keep the decision as recent as possible for processing.
     // In the tests, the decision will not become stale, so it is more convenient
     // to receive first and then schedule.
-    fn test_receive_then_schedule(
-        scheduler_controller: &mut SchedulerController<Arc<ClusterInfo>>,
-    ) {
+    fn test_receive_then_schedule(scheduler_controller: &mut SchedulerController) {
         let decision = scheduler_controller
             .decision_maker
             .make_consume_or_forward_decision();
