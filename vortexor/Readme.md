@@ -1,0 +1,1 @@
+The vortexor is a service which can be used to offload receiving transaction from the public, doing signature verifications and deduplications from the core validator which can focus on processing and executing the transactions. The filtered transactions can be forwarded to the validators linked with the vortexor.
