@@ -3768,6 +3768,10 @@ impl AccountsDb {
         if let Some(store) = self.storage.get_slot_storage_entry(slot) {
             if store.insert_zero_lamport_single_ref_account_offset(offset) {
                 // this wasn't previously marked as zero lamport single ref
+                self.shrink_stats
+                    .marking_zero_dead_accounts
+                    .fetch_add(1, Ordering::Relaxed);
+
                 if store.num_zero_lamport_single_ref_accounts() == store.count() {
                     // all accounts in this storage can be dead
                     self.accounts_index.add_uncleaned_roots([slot]);
@@ -3778,14 +3782,12 @@ impl AccountsDb {
                     && self.is_candidate_for_shrink(&store)
                 {
                     // this store might be eligible for shrinking now
-                    self.shrink_candidate_slots.lock().unwrap().insert(slot);
-                    self.shrink_stats
-                        .num_slots_with_zero_lamport_accounts_added_to_shrink
-                        .fetch_add(1, Ordering::Relaxed);
-                } else {
-                    self.shrink_stats
-                        .marking_zero_dead_accounts
-                        .fetch_add(1, Ordering::Relaxed);
+                    let is_new = self.shrink_candidate_slots.lock().unwrap().insert(slot);
+                    if is_new {
+                        self.shrink_stats
+                            .num_slots_with_zero_lamport_accounts_added_to_shrink
+                            .fetch_add(1, Ordering::Relaxed);
+                    }
                 }
             }
         }
