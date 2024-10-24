@@ -1896,13 +1896,23 @@ impl RpcClient {
         &self,
         commitment: CommitmentConfig,
         max_stake_percent: f32,
+    ) -> ClientResult<()> {
+        self.invoke((self.rpc_client.as_ref()).wait_for_max_stake(commitment, max_stake_percent))
+    }
+
+    pub fn wait_for_max_stake_below_threshold_with_timeout(
+        &self,
+        commitment: CommitmentConfig,
+        max_stake_percent: f32,
         timeout: Option<Duration>,
     ) -> ClientResult<()> {
-        self.invoke((self.rpc_client.as_ref()).wait_for_max_stake(
-            commitment,
-            max_stake_percent,
-            timeout,
-        ))
+        self.invoke(
+            (self.rpc_client.as_ref()).wait_for_max_stake_below_threshold_with_timeout(
+                commitment,
+                max_stake_percent,
+                timeout,
+            ),
+        )
     }
 
     /// Returns information about all the nodes participating in the cluster.

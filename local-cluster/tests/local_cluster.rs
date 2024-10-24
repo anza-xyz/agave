@@ -1557,11 +1557,21 @@ fn test_wait_for_max_stake() {
     let cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
     let client = RpcClient::new_socket(cluster.entry_point_info.rpc().unwrap());
 
-    // Expectation is it should only take a dozen or so epochs to warm up the
-    // necessary stake. This shouldn't take more than a minute or two with the
-    // given cluster parameters. Waiting 5 minutes provides plenty of margin.
-    let timeout = Some(Duration::from_secs(300));
-    if let Err(err) = client.wait_for_max_stake(CommitmentConfig::default(), 33.0f32, timeout) {
+    // This is based on the percentage of stake that is allowed to be activated
+    // each epoch.
+    let num_expected_epochs = 14;
+    let expected_test_duration = config.poh_config.target_tick_duration
+        * ticks_per_slot as u32
+        * slots_per_epoch as u32
+        * num_expected_epochs;
+    // Make the timeout double the expected duration to provide some margin.
+    // Especially considering tests may be running in parallel.
+    let timeout = Some(expected_test_duration * 2);
+    if let Err(err) = client.wait_for_max_stake_below_threshold_with_timeout(
+        CommitmentConfig::default(),
+        33.0f32,
+        timeout,
+    ) {
         panic!("wait_for_max_stake failed: {:?}", err);
     }
     assert!(client.get_slot().unwrap() > 10);

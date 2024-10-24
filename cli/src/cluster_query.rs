@@ -1961,7 +1961,7 @@ pub fn process_wait_for_max_stake(
     max_stake_percent: f32,
 ) -> ProcessResult {
     let now = std::time::Instant::now();
-    rpc_client.wait_for_max_stake(config.commitment, max_stake_percent, None)?;
+    rpc_client.wait_for_max_stake(config.commitment, max_stake_percent)?;
     Ok(format!("Done waiting, took: {}s", now.elapsed().as_secs()))
 }
 

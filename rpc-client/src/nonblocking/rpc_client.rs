@@ -2179,6 +2179,15 @@ impl RpcClient {
         &self,
         commitment: CommitmentConfig,
         max_stake_percent: f32,
+    ) -> ClientResult<()> {
+        self.wait_for_max_stake_below_threshold_with_timeout(commitment, max_stake_percent, None)
+            .await
+    }
+
+    pub async fn wait_for_max_stake_below_threshold_with_timeout(
+        &self,
+        commitment: CommitmentConfig,
+        max_stake_percent: f32,
         timeout: Option<Duration>,
     ) -> ClientResult<()> {
         let mut current_percent;
