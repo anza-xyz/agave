@@ -130,6 +130,7 @@ members = [
     "sdk/program-pack",
     "sdk/pubkey",
     "sdk/rent",
+    "sdk/reserved-account-keys",
     "sdk/sanitize",
     "sdk/serde-varint",
     "sdk/serialize-utils",
@@ -462,6 +463,7 @@ solana-quic-client = { path = "quic-client", version = "=2.1.0" }
 solana-rayon-threadlimit = { path = "rayon-threadlimit", version = "=2.1.0" }
 solana-remote-wallet = { path = "remote-wallet", version = "=2.1.0", default-features = false }
 solana-rent = { path = "sdk/rent", version = "=2.1.0", default-features = false }
+solana-reserved-account-keys = { path = "sdk/reserved-account-keys", version = "=2.1.0", default-features = false }
 solana-sanitize = { path = "sdk/sanitize", version = "=2.1.0" }
 solana-serde-varint = { path = "sdk/serde-varint", version = "=2.1.0" }
 solana-serialize-utils = { path = "sdk/serialize-utils", version = "=2.1.0" }

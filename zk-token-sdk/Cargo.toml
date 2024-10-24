@@ -17,6 +17,7 @@ num-derive = { workspace = true }
 num-traits = { workspace = true }
 solana-curve25519 = { workspace = true }
 solana-program = { workspace = true }
+solana-reserved-account-keys = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

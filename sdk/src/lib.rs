@@ -89,7 +89,6 @@ pub mod pubkey;
 pub mod quic;
 pub mod rent_collector;
 pub mod rent_debits;
-pub mod reserved_account_keys;
 pub mod reward_info;
 pub mod reward_type;
 pub mod rpc_port;
@@ -139,6 +138,12 @@ pub use solana_program_memory as program_memory;
 /// assert_eq!(ID, my_id);
 /// ```
 pub use solana_pubkey::pubkey;
+#[cfg(feature = "full")]
+#[deprecated(
+    since = "2.1.0",
+    note = "Use `solana-reserved-account-keys` crate instead"
+)]
+pub use solana_reserved_account_keys as reserved_account_keys;
 #[deprecated(since = "2.1.0", note = "Use `solana-sanitize` crate instead")]
 pub use solana_sanitize as sanitize;
 /// Same as `declare_id` except report that this id has been deprecated.

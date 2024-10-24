@@ -8,5 +8,5 @@ pub mod instruction;
 pub mod state;
 
 pub mod program {
-    crate::declare_id!("Vote111111111111111111111111111111111111111");
+    pub use solana_reserved_account_keys::vote::{check_id, id, ID};
 }
