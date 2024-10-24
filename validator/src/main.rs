@@ -913,6 +913,7 @@ pub fn main() {
         accounts_db_clean_threads,
         accounts_db_hash_threads,
         accounts_db_process_threads,
+        accounts_index_flush_threads,
         ip_echo_server_threads,
         replay_forks_threads,
         replay_transactions_threads,
@@ -1183,6 +1184,7 @@ pub fn main() {
 
     let mut accounts_index_config = AccountsIndexConfig {
         started_from_validator: true, // this is the only place this is set
+        num_flush_threads: Some(accounts_index_flush_threads),
         ..AccountsIndexConfig::default()
     };
     if let Ok(bins) = value_t!(matches, "accounts_index_bins", usize) {

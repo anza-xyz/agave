@@ -2,7 +2,7 @@
 
 use {
     clap::{value_t_or_exit, Arg, ArgMatches},
-    solana_accounts_db::accounts_db,
+    solana_accounts_db::{accounts_db, accounts_index},
     solana_clap_utils::{hidden_unless_forced, input_validators::is_within_range},
     solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
     std::{num::NonZeroUsize, ops::RangeInclusive},
@@ -13,6 +13,7 @@ pub struct DefaultThreadArgs {
     pub accounts_db_clean_threads: String,
     pub accounts_db_hash_threads: String,
     pub accounts_db_process_threads: String,
+    pub accounts_index_flush_threads: String,
     pub ip_echo_server_threads: String,
     pub replay_forks_threads: String,
     pub replay_transactions_threads: String,
@@ -26,6 +27,8 @@ impl Default for DefaultThreadArgs {
             accounts_db_clean_threads: AccountsDbCleanThreadsArg::bounded_default().to_string(),
             accounts_db_hash_threads: AccountsDbHashThreadsArg::bounded_default().to_string(),
             accounts_db_process_threads: AccountsDbProcessThreadsArg::bounded_default().to_string(),
+            accounts_index_flush_threads: AccountsIndexFlushThreadsArg::bounded_default()
+                .to_string(),
             ip_echo_server_threads: IpEchoServerThreadsArg::bounded_default().to_string(),
             replay_forks_threads: ReplayForksThreadsArg::bounded_default().to_string(),
             replay_transactions_threads: ReplayTransactionsThreadsArg::bounded_default()
@@ -41,6 +44,7 @@ pub fn thread_args<'a>(defaults: &DefaultThreadArgs) -> Vec<Arg<'_, 'a>> {
         new_thread_arg::<AccountsDbCleanThreadsArg>(&defaults.accounts_db_clean_threads),
         new_thread_arg::<AccountsDbHashThreadsArg>(&defaults.accounts_db_hash_threads),
         new_thread_arg::<AccountsDbProcessThreadsArg>(&defaults.accounts_db_process_threads),
+        new_thread_arg::<AccountsIndexFlushThreadsArg>(&defaults.accounts_db_process_threads),
         new_thread_arg::<IpEchoServerThreadsArg>(&defaults.ip_echo_server_threads),
         new_thread_arg::<ReplayForksThreadsArg>(&defaults.replay_forks_threads),
         new_thread_arg::<ReplayTransactionsThreadsArg>(&defaults.replay_transactions_threads),
@@ -64,6 +68,7 @@ pub struct NumThreadConfig {
     pub accounts_db_clean_threads: NonZeroUsize,
     pub accounts_db_hash_threads: NonZeroUsize,
     pub accounts_db_process_threads: NonZeroUsize,
+    pub accounts_index_flush_threads: NonZeroUsize,
     pub ip_echo_server_threads: NonZeroUsize,
     pub replay_forks_threads: NonZeroUsize,
     pub replay_transactions_threads: NonZeroUsize,
@@ -86,6 +91,11 @@ pub fn parse_num_threads_args(matches: &ArgMatches) -> NumThreadConfig {
         accounts_db_process_threads: value_t_or_exit!(
             matches,
             AccountsDbProcessThreadsArg::NAME,
+            NonZeroUsize
+        ),
+        accounts_index_flush_threads: value_t_or_exit!(
+            matches,
+            AccountsIndexFlushThreadsArg::NAME,
             NonZeroUsize
         ),
         ip_echo_server_threads: value_t_or_exit!(
@@ -174,6 +184,17 @@ impl ThreadArg for AccountsDbProcessThreadsArg {
 
     fn default() -> usize {
         accounts_db::default_num_foreground_threads()
+    }
+}
+
+struct AccountsIndexFlushThreadsArg;
+impl ThreadArg for AccountsIndexFlushThreadsArg {
+    const NAME: &'static str = "accounts_index_flush_threads";
+    const LONG_NAME: &'static str = "accounts-index-flush-threads";
+    const HELP: &'static str = "Number of threads to use for flushing the accounts index";
+
+    fn default() -> usize {
+        accounts_index::default_num_flush_threads().get()
     }
 }
 
