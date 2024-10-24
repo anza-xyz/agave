@@ -131,6 +131,7 @@ members = [
     "sdk/pubkey",
     "sdk/rent",
     "sdk/sanitize",
+    "sdk/secp256r1",
     "sdk/serde-varint",
     "sdk/serialize-utils",
     "sdk/sha256-hasher",
