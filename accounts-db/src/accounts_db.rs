@@ -512,7 +512,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     enable_experimental_accumulator_hash: false,
     num_clean_threads: None,
     num_hash_threads: None,
-    num_process_threads: None,
+    num_foreground_threads: None,
 };
 pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig {
     index: Some(ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS),
@@ -532,7 +532,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     enable_experimental_accumulator_hash: false,
     num_clean_threads: None,
     num_hash_threads: None,
-    num_process_threads: None,
+    num_foreground_threads: None,
 };
 
 pub type BinnedHashData = Vec<Vec<CalculateHashIntermediate>>;
@@ -649,7 +649,7 @@ pub struct AccountsDbConfig {
     /// Number of threads for background accounts hashing (`thread_pool_hash`)
     pub num_hash_threads: Option<NonZeroUsize>,
     /// Number of threads for foreground operations (`thread_pool`)
-    pub num_process_threads: Option<NonZeroUsize>,
+    pub num_foreground_threads: Option<NonZeroUsize>,
 }
 
 #[cfg(not(test))]
@@ -1905,15 +1905,15 @@ impl AccountsDb {
 
         let bank_hash_stats = Mutex::new(HashMap::from([(0, BankHashStats::default())]));
 
-        // Increase the stack for accounts threads
+        // Increase the stack for foreground threads
         // rayon needs a lot of stack
         const ACCOUNTS_STACK_SIZE: usize = 8 * 1024 * 1024;
-        let num_process_threads = accounts_db_config
-            .num_process_threads
+        let num_foreground_threads = accounts_db_config
+            .num_foreground_threads
             .map(Into::into)
             .unwrap_or_else(default_num_foreground_threads);
         let thread_pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(num_process_threads)
+            .num_threads(num_foreground_threads)
             .thread_name(|i| format!("solAccounts{i:02}"))
             .stack_size(ACCOUNTS_STACK_SIZE)
             .build()

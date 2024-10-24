@@ -12,7 +12,7 @@ use {
 pub struct DefaultThreadArgs {
     pub accounts_db_clean_threads: String,
     pub accounts_db_hash_threads: String,
-    pub accounts_db_process_threads: String,
+    pub accounts_db_foreground_threads: String,
     pub accounts_index_flush_threads: String,
     pub ip_echo_server_threads: String,
     pub replay_forks_threads: String,
@@ -26,7 +26,8 @@ impl Default for DefaultThreadArgs {
         Self {
             accounts_db_clean_threads: AccountsDbCleanThreadsArg::bounded_default().to_string(),
             accounts_db_hash_threads: AccountsDbHashThreadsArg::bounded_default().to_string(),
-            accounts_db_process_threads: AccountsDbProcessThreadsArg::bounded_default().to_string(),
+            accounts_db_foreground_threads: AccountsDbForegroundThreadsArg::bounded_default()
+                .to_string(),
             accounts_index_flush_threads: AccountsIndexFlushThreadsArg::bounded_default()
                 .to_string(),
             ip_echo_server_threads: IpEchoServerThreadsArg::bounded_default().to_string(),
@@ -43,8 +44,8 @@ pub fn thread_args<'a>(defaults: &DefaultThreadArgs) -> Vec<Arg<'_, 'a>> {
     vec![
         new_thread_arg::<AccountsDbCleanThreadsArg>(&defaults.accounts_db_clean_threads),
         new_thread_arg::<AccountsDbHashThreadsArg>(&defaults.accounts_db_hash_threads),
-        new_thread_arg::<AccountsDbProcessThreadsArg>(&defaults.accounts_db_process_threads),
-        new_thread_arg::<AccountsIndexFlushThreadsArg>(&defaults.accounts_db_process_threads),
+        new_thread_arg::<AccountsDbForegroundThreadsArg>(&defaults.accounts_db_foreground_threads),
+        new_thread_arg::<AccountsIndexFlushThreadsArg>(&defaults.accounts_db_foreground_threads),
         new_thread_arg::<IpEchoServerThreadsArg>(&defaults.ip_echo_server_threads),
         new_thread_arg::<ReplayForksThreadsArg>(&defaults.replay_forks_threads),
         new_thread_arg::<ReplayTransactionsThreadsArg>(&defaults.replay_transactions_threads),
@@ -67,7 +68,7 @@ fn new_thread_arg<'a, T: ThreadArg>(default: &str) -> Arg<'_, 'a> {
 pub struct NumThreadConfig {
     pub accounts_db_clean_threads: NonZeroUsize,
     pub accounts_db_hash_threads: NonZeroUsize,
-    pub accounts_db_process_threads: NonZeroUsize,
+    pub accounts_db_foreground_threads: NonZeroUsize,
     pub accounts_index_flush_threads: NonZeroUsize,
     pub ip_echo_server_threads: NonZeroUsize,
     pub replay_forks_threads: NonZeroUsize,
@@ -88,9 +89,9 @@ pub fn parse_num_threads_args(matches: &ArgMatches) -> NumThreadConfig {
             AccountsDbHashThreadsArg::NAME,
             NonZeroUsize
         ),
-        accounts_db_process_threads: value_t_or_exit!(
+        accounts_db_foreground_threads: value_t_or_exit!(
             matches,
-            AccountsDbProcessThreadsArg::NAME,
+            AccountsDbForegroundThreadsArg::NAME,
             NonZeroUsize
         ),
         accounts_index_flush_threads: value_t_or_exit!(
@@ -176,10 +177,10 @@ impl ThreadArg for AccountsDbHashThreadsArg {
     }
 }
 
-struct AccountsDbProcessThreadsArg;
-impl ThreadArg for AccountsDbProcessThreadsArg {
-    const NAME: &'static str = "accounts_db_process_threads";
-    const LONG_NAME: &'static str = "accounts-db-process-threads";
+struct AccountsDbForegroundThreadsArg;
+impl ThreadArg for AccountsDbForegroundThreadsArg {
+    const NAME: &'static str = "accounts_db_foreground_threads";
+    const LONG_NAME: &'static str = "accounts-db-foreground-threads";
     const HELP: &'static str = "Number of threads to use for AccountsDb block processing";
 
     fn default() -> usize {
