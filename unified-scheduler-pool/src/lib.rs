@@ -402,14 +402,13 @@ where
         } else {
             info!("flash session: start!");
             let context = SchedulingContext::new(SchedulingMode::BlockProduction, bank_forks.root_bank());
-            let scheduler = Box::new(self.do_take_resumed_scheduler(
+            let scheduler = self.do_take_resumed_scheduler(
                 context,
                 initialized_result_with_timings(),
                 Some((recv, on_banking_packet_receive)),
-            ));
-            let (result_with_timings, uninstalled_scheduler) =
-                scheduler.wait_for_termination(false);
-            let () = uninstalled_scheduler.return_to_pool();
+            );
+            let id = scheduler.id();
+            self.return_scheduler(scheduler.into_inner().1, id, false);
             info!("flash session: end!");
             self.block_producing_scheduler_inner.lock().unwrap().0.as_ref().map(|(id, bps)| bps).cloned().unwrap()
         }
@@ -1395,7 +1394,9 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     }
                 }
 
-                log_scheduler!(info, "started");
+                if !is_finished {
+                    log_scheduler!(info, "started");
+                }
 
                 // The following loop maintains and updates ResultWithTimings as its
                 // externally-provided mutable state for each session in this way:
