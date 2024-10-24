@@ -542,6 +542,7 @@ impl TaskHandler for DefaultTaskHandler {
                     SchedulingMode::BlockVerification => None,
                     SchedulingMode::BlockProduction => Some(|| {
                         if !scheduling_context.can_commit() {
+                            info!("not commitable");
                             return false;
                         }
                         let summary = MY_POH
@@ -552,7 +553,7 @@ impl TaskHandler for DefaultTaskHandler {
                                 scheduling_context.bank().slot(),
                                 vec![transaction.to_versioned_transaction()],
                             );
-                        summary.result.is_ok()
+                        summary.result.inspect_err(|_| info!("not commitable2")).is_ok()
                     }),
                 };
 
@@ -1043,11 +1044,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         (result, timings): &mut ResultWithTimings,
         executed_task: HandlerResult,
         error_count: &mut usize,
+        session_pausing: bool,
     ) -> Option<(Box<ExecutedTask>, bool)> {
         let Ok(executed_task) = executed_task else {
             return None;
         };
-        timings.accumulate(&executed_task.result_with_timings.1);
+        //timings.accumulate(&executed_task.result_with_timings.1);
         match context.mode() {
             SchedulingMode::BlockVerification => match executed_task.result_with_timings.0 {
                 Ok(()) => Some((executed_task, false)),
@@ -1059,7 +1061,9 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             },
             SchedulingMode::BlockProduction => {
                 if !context.can_commit() {
-                    //info!("detected max tick height at scheduler thread...");
+                    if !session_pausing {
+                        info!("detected max tick height at scheduler thread...");
+                    }
                     //*result = Err(TransactionError::CommitFailed);
                     *error_count += 1;
                     return Some((executed_task, true));
@@ -1067,7 +1071,9 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 match executed_task.result_with_timings.0 {
                 Ok(()) => Some((executed_task, false)),
                 Err(ref a @ TransactionError::CommitFailed) => {
-                    //info!("maybe reached max tick height...");
+                    if !session_pausing {
+                        info!("maybe reached max tick height...");
+                    }
                     //*result = Err(TransactionError::CommitFailed);
                     // it's okay to abort scheduler as this error gurantees determinstic bank
                     // freezing...
@@ -1078,7 +1084,9 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 Err(ref e @ TransactionError::WouldExceedMaxVoteCostLimit) |
                 Err(ref e @ TransactionError::WouldExceedMaxAccountCostLimit) |
                 Err(ref e @ TransactionError::WouldExceedAccountDataBlockLimit) => {
-                    info!("hit block cost: {e:?}");
+                    if !session_pausing {
+                        info!("hit block cost: {e:?}");
+                    }
                     *error_count += 1;
                     Some((executed_task, true))
                 }
@@ -1418,6 +1426,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     &mut result_with_timings,
                                     executed_task.expect("alive handler"),
                                     &mut error_count,
+                                    session_pausing,
                                 ) else {
                                     break 'nonaborted_main_loop;
                                 };
@@ -1498,6 +1507,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     &mut result_with_timings,
                                     executed_task.expect("alive handler"),
                                     &mut error_count,
+                                    session_pausing,
                                 ) else {
                                     break 'nonaborted_main_loop;
                                 };

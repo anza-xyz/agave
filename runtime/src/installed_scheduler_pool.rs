@@ -508,6 +508,7 @@ impl BankWithScheduler {
             return Err(self.inner.retrieve_error_after_schedule_failure());
         }
         if let Err(SchedulerError::Terminated) = schedule_result {
+            panic!();
             return Err(TransactionError::CommitFailed);
         }
 
@@ -647,6 +648,7 @@ impl BankWithSchedulerInner {
             }
             SchedulerStatus::Unavailable => {
                 trace!("no error in {:?}", scheduler);
+                panic!();
                 TransactionError::CommitFailed
             }
             _ => unreachable!("no error in {:?}", scheduler),
