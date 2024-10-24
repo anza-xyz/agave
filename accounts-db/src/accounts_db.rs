@@ -1281,9 +1281,9 @@ impl AccountStorageEntry {
 
     /// Return the "alive_bytes" minus "zero_lamport_single_ref_accounts bytes".
     fn alive_bytes_exclude_zero_lamport_single_ref_accounts(&self) -> usize {
-        let zero_lamport_dead_bytes = self.accounts.dead_bytes_due_to_zero_lamport_single_ref(
-            self.zero_lamport_single_ref_offsets.read().unwrap().len(),
-        );
+        let zero_lamport_dead_bytes = self
+            .accounts
+            .dead_bytes_due_to_zero_lamport_single_ref(self.num_zero_lamport_single_ref_accounts());
         self.alive_bytes().saturating_sub(zero_lamport_dead_bytes)
     }
 
