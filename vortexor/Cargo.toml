@@ -2,6 +2,7 @@
 name = "solana-vortexor"
 description = "Solana TPU Vortexor"
 documentation = "https://docs.rs/solana-vortexor"
+default-run = "solana-vortexor"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
@@ -12,6 +13,7 @@ edition = { workspace = true }
 [dependencies]
 async-channel = { workspace = true }
 bytes = { workspace = true }
+clap = { workspace = true }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true }
 futures  = { workspace = true }
@@ -31,8 +33,10 @@ rand = { workspace = true }
 rustls = { workspace = true }
 smallvec = { workspace = true }
 socket2 = { workspace = true }
+solana-clap-utils = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
+solana-net-utils = { workspace = true }
 solana-perf = { workspace = true }
 solana-sdk = { workspace = true }
 solana-streamer = { workspace = true }
