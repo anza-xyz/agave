@@ -586,6 +586,14 @@ impl AccountSharedData {
         Arc::strong_count(&self.data) > 1
     }
 
+    pub fn is_default(&self) -> bool {
+        self.lamports == 0
+            && self.owner == Pubkey::default()
+            && !self.executable
+            && self.rent_epoch == 0
+            && self.data.is_empty()
+    }
+
     pub fn reserve(&mut self, additional: usize) {
         if let Some(data) = Arc::get_mut(&mut self.data) {
             data.reserve(additional)
@@ -966,6 +974,38 @@ pub mod tests {
             accounts_equal(account_expected, account2),
             accounts_equal(account_expected, &Account::from(account2.clone()))
         );
+    }
+
+    #[test]
+    fn test_default() {
+        // affirmative cases
+        assert!(AccountSharedData::default().is_default());
+
+        let account = AccountSharedData::new(0, 0, &Pubkey::default());
+        assert!(account.is_default());
+
+        let account = AccountSharedData::create(0, vec![], Pubkey::default(), false, 0);
+        assert!(account.is_default());
+
+        let account: AccountSharedData = Account::default().into();
+        assert!(account.is_default());
+
+        // negative cases
+        // since abi is frozen, we dont need to derive Arbitrary to guard against new fields
+        let account = AccountSharedData::create(1, vec![], Pubkey::default(), false, 0);
+        assert!(!account.is_default());
+
+        let account = AccountSharedData::create(0, vec![0], Pubkey::default(), false, 0);
+        assert!(!account.is_default());
+
+        let account = AccountSharedData::create(0, vec![], Pubkey::new_unique(), false, 0);
+        assert!(!account.is_default());
+
+        let account = AccountSharedData::create(0, vec![], Pubkey::default(), true, 0);
+        assert!(!account.is_default());
+
+        let account = AccountSharedData::create(0, vec![], Pubkey::default(), false, 1);
+        assert!(!account.is_default());
     }
 
     #[test]
