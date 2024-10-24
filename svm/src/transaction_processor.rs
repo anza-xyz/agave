@@ -33,7 +33,11 @@ use {
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
             ForkGraph, ProgramCache, ProgramCacheEntry, ProgramCacheForTxBatch,
-            ProgramCacheMatchCriteria,
+            ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
+        },
+        solana_rbpf::{
+            program::{BuiltinProgram, FunctionRegistry},
+            vm::Config as VmConfig,
         },
         sysvar_cache::SysvarCache,
     },
@@ -60,6 +64,7 @@ use {
         collections::{hash_map::Entry, HashMap, HashSet},
         fmt::{Debug, Formatter},
         rc::Rc,
+        sync::Weak,
     },
 };
 
@@ -205,6 +210,42 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             program_cache: Arc::new(RwLock::new(ProgramCache::new(slot, epoch))),
             ..Self::default()
         }
+    }
+
+    /// Create a new `TransactionBatchProcessor`.
+    ///
+    /// The created processor's program cache is initialized with the provided
+    /// fork graph and loaders. If any loaders are omitted, a default "empty"
+    /// loader (no syscalls) will be used.
+    ///
+    /// The cache will still not contain any builtin programs. It's advisable to
+    /// call `add_builtin` to add the required builtins before using the processor.
+    pub fn new(
+        slot: Slot,
+        epoch: Epoch,
+        fork_graph: Weak<RwLock<FG>>,
+        program_runtime_environment_v1: Option<ProgramRuntimeEnvironment>,
+        program_runtime_environment_v2: Option<ProgramRuntimeEnvironment>,
+    ) -> Self {
+        let processor = Self::new_uninitialized(slot, epoch);
+        {
+            let empty_loader = || {
+                Arc::new(BuiltinProgram::new_loader(
+                    VmConfig::default(),
+                    FunctionRegistry::default(),
+                ))
+            };
+
+            let mut program_cache = processor.program_cache.write().unwrap();
+            program_cache.set_fork_graph(fork_graph);
+            program_cache.set_environments(
+                slot,
+                epoch,
+                program_runtime_environment_v1.unwrap_or(empty_loader()),
+                program_runtime_environment_v2.unwrap_or(empty_loader()),
+            );
+        }
+        processor
     }
 
     /// Create a new `TransactionBatchProcessor` from the current instance, but
@@ -1370,8 +1411,11 @@ mod tests {
         let mock_bank = MockBankCallback::default();
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
         let fork_graph = Arc::new(RwLock::new(TestForkGraph {}));
-        batch_processor.program_cache.write().unwrap().fork_graph =
-            Some(Arc::downgrade(&fork_graph));
+        batch_processor
+            .program_cache
+            .write()
+            .unwrap()
+            .set_fork_graph(Arc::downgrade(&fork_graph));
         let key = Pubkey::new_unique();
 
         let mut account_maps: HashMap<Pubkey, u64> = HashMap::new();
@@ -1385,8 +1429,11 @@ mod tests {
         let mock_bank = MockBankCallback::default();
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
         let fork_graph = Arc::new(RwLock::new(TestForkGraph {}));
-        batch_processor.program_cache.write().unwrap().fork_graph =
-            Some(Arc::downgrade(&fork_graph));
+        batch_processor
+            .program_cache
+            .write()
+            .unwrap()
+            .set_fork_graph(Arc::downgrade(&fork_graph));
         let key = Pubkey::new_unique();
 
         let mut account_data = AccountSharedData::default();
@@ -1873,8 +1920,11 @@ mod tests {
         let mock_bank = MockBankCallback::default();
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
         let fork_graph = Arc::new(RwLock::new(TestForkGraph {}));
-        batch_processor.program_cache.write().unwrap().fork_graph =
-            Some(Arc::downgrade(&fork_graph));
+        batch_processor
+            .program_cache
+            .write()
+            .unwrap()
+            .set_fork_graph(Arc::downgrade(&fork_graph));
 
         let key = Pubkey::new_unique();
         let name = "a_builtin_name";
