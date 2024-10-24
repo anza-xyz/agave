@@ -3,6 +3,7 @@ use {
     solana_builtins_default_costs::BUILTIN_INSTRUCTION_COSTS,
     solana_sdk::{ed25519_program, saturating_add_assign, secp256k1_program},
     thiserror::Error,
+    solana_prio_graph_scheduler::deserializable_packet::DeserializableTxPacket,
 };
 
 #[derive(Debug, Error, PartialEq)]

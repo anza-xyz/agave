@@ -19,6 +19,12 @@ impl Display for TransactionBatchId {
     }
 }
 
+impl From<u64> for TransactionBatchId {
+    fn from(id: u64) -> Self {
+        Self(id)
+    }
+}
+
 /// A unique identifier for a transaction.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TransactionId(u64);
@@ -32,6 +38,12 @@ impl TransactionId {
 impl Display for TransactionId {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{}", self.0)
+    }
+}
+
+impl From<u64> for TransactionId {
+    fn from(id: u64) -> Self {
+        Self(id)
     }
 }
 

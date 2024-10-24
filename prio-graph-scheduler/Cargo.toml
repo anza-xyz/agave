@@ -1,0 +1,54 @@
+[package]
+name = "solana-prio-graph-scheduler"
+description = "Solana Priority Graph Scheduler"
+documentation = "https://docs.rs/solana-prio-graph-scheduler"
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+solana-sdk = { workspace = true }
+solana-poh = { workspace = true }
+solana-metrics = { workspace = true }
+solana-ledger = { workspace = true }
+solana-runtime = { workspace = true }
+solana-gossip = { workspace = true }
+solana-cost-model = { workspace = true }
+solana-measure = { workspace = true }
+
+ahash = { workspace = true }
+prio-graph = { workspace = true }
+thiserror = { workspace = true }
+itertools = { workspace = true }
+log = { workspace = true }
+crossbeam-channel = { workspace = true }
+arrayvec = { workspace = true }
+min-max-heap = { workspace = true }
+
+[dev-dependencies]
+assert_matches = { workspace = true }
+solana-compute-budget = { workspace = true }
+solana-perf = { workspace = true }
+solana-runtime-transaction = { workspace = true }
+solana-sanitize = { workspace = true }
+solana-short-vec = { workspace = true }
+solana-svm-transaction = { workspace = true }
+# let dev-context-only-utils works when running this crate.
+solana-prio-graph-scheduler = { path = ".", features = [
+  "dev-context-only-utils",
+] }
+solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
+
+bincode = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lints]
+workspace = true
+
+[features]
+dev-context-only-utils = ["solana-runtime/dev-context-only-utils"]

@@ -7,7 +7,6 @@ use {
         },
         leader_slot_timing_metrics::LeaderExecuteAndCommitTimings,
         qos_service::QosService,
-        scheduler_messages::MaxAge,
         unprocessed_transaction_storage::{ConsumeScannerPayload, UnprocessedTransactionStorage},
         BankingStageStats,
     },
@@ -19,6 +18,7 @@ use {
         BankStart, PohRecorderError, RecordTransactionsSummary, RecordTransactionsTimings,
         TransactionRecorder,
     },
+    solana_prio_graph_scheduler::scheduler_messages::MaxAge,
     solana_runtime::{
         bank::{Bank, LoadAndExecuteTransactionsOutput},
         transaction_batch::TransactionBatch,

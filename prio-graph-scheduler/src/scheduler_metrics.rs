@@ -406,4 +406,3 @@ impl SchedulerLeaderDetectionMetrics {
         );
     }
 }
-

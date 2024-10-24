@@ -8,6 +8,7 @@ use {
     },
     solana_feature_set::FeatureSet,
     solana_perf::packet::Packet,
+    solana_prio_graph_scheduler::deserializable_packet::DeserializableTxPacket,
     solana_sdk::transaction::SanitizedTransaction,
     solana_svm_transaction::svm_message::SVMMessage,
     std::sync::Arc,
