@@ -41,7 +41,7 @@ jobs:
 
       - name: Setup environment for Android NDK
         run: |
-          echo "RANLIB=/usr/local/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib" >> $GITHUB_ENV
+          echo "RANLIB=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib" >> $GITHUB_ENV
 
       - run: cargo install cargo-ndk@2.12.2
 
