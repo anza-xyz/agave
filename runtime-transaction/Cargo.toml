@@ -27,6 +27,8 @@ name = "solana_runtime_transaction"
 bincode = { workspace = true }
 criterion = { workspace = true }
 rand = { workspace = true }
+solana-compute-budget-program = { workspace = true }
+solana-loader-v4-program = { workspace = true }
 solana-program = { workspace = true }
 
 [package.metadata.docs.rs]

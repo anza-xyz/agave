@@ -1,5 +1,5 @@
 use {
-    crate::compute_budget_instruction_details::*,
+    crate::instruction_details::*,
     solana_compute_budget::compute_budget_limits::*,
     solana_sdk::{pubkey::Pubkey, transaction::TransactionError},
     solana_svm_transaction::instruction::SVMInstruction,
@@ -13,8 +13,7 @@ use {
 pub fn process_compute_budget_instructions<'a>(
     instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)>,
 ) -> Result<ComputeBudgetLimits, TransactionError> {
-    ComputeBudgetInstructionDetails::try_from(instructions)?
-        .sanitize_and_convert_to_compute_budget_limits()
+    InstructionDetails::try_from(instructions)?.sanitize_and_convert_to_compute_budget_limits()
 }
 
 #[cfg(test)]
@@ -128,7 +127,8 @@ mod tests {
                 Instruction::new_with_bincode(Pubkey::new_unique(), &0_u8, vec![]),
             ],
             Ok(ComputeBudgetLimits {
-                compute_unit_limit: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+                compute_unit_limit: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
+                    + DEFAULT_BUILTIN_ALLOCATION_COMPUTE_UNITS,
                 updated_heap_bytes: 40 * 1024,
                 ..ComputeBudgetLimits::default()
             })
@@ -169,7 +169,8 @@ mod tests {
                 ComputeBudgetInstruction::request_heap_frame(MAX_HEAP_FRAME_BYTES),
             ],
             Ok(ComputeBudgetLimits {
-                compute_unit_limit: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+                compute_unit_limit: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
+                    + DEFAULT_BUILTIN_ALLOCATION_COMPUTE_UNITS,
                 updated_heap_bytes: MAX_HEAP_FRAME_BYTES,
                 ..ComputeBudgetLimits::default()
             })
@@ -275,7 +276,8 @@ mod tests {
         // budget is set with data_size
         let data_size = 1;
         let expected_result = Ok(ComputeBudgetLimits {
-            compute_unit_limit: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+            compute_unit_limit: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
+                + DEFAULT_BUILTIN_ALLOCATION_COMPUTE_UNITS,
             loaded_accounts_bytes: NonZeroU32::new(data_size).unwrap(),
             ..ComputeBudgetLimits::default()
         });
@@ -292,7 +294,8 @@ mod tests {
         // budget is set to max data size
         let data_size = MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get() + 1;
         let expected_result = Ok(ComputeBudgetLimits {
-            compute_unit_limit: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+            compute_unit_limit: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
+                + DEFAULT_BUILTIN_ALLOCATION_COMPUTE_UNITS,
             loaded_accounts_bytes: MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
             ..ComputeBudgetLimits::default()
         });
@@ -359,10 +362,12 @@ mod tests {
         // assert process_instructions will be successful with default,
         // and the default compute_unit_limit is 2 times default: one for bpf ix, one for
         // builtin ix.
+        let expected_compute_unit_limit =
+            DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT + DEFAULT_BUILTIN_ALLOCATION_COMPUTE_UNITS;
         assert_eq!(
             result,
             Ok(ComputeBudgetLimits {
-                compute_unit_limit: 2 * DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+                compute_unit_limit: expected_compute_unit_limit,
                 ..ComputeBudgetLimits::default()
             })
         );

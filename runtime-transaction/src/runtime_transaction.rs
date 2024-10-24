@@ -11,7 +11,7 @@
 //!    with its dynamic metadata loaded.
 use {
     crate::{
-        compute_budget_instruction_details::*,
+        instruction_details::*,
         signature_details::get_precompile_signature_details,
         transaction_meta::{DynamicMeta, StaticMeta, TransactionMeta},
     },
@@ -53,7 +53,7 @@ impl<T> StaticMeta for RuntimeTransaction<T> {
     }
     fn compute_budget_limits(&self, _feature_set: &FeatureSet) -> Result<ComputeBudgetLimits> {
         self.meta
-            .compute_budget_instruction_details
+            .instruction_details
             .sanitize_and_convert_to_compute_budget_limits()
     }
 }
@@ -96,7 +96,7 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
             precompile_signature_details.num_secp256k1_instruction_signatures,
             precompile_signature_details.num_ed25519_instruction_signatures,
         );
-        let compute_budget_instruction_details = ComputeBudgetInstructionDetails::try_from(
+        let instruction_details = InstructionDetails::try_from(
             sanitized_versioned_tx
                 .get_message()
                 .program_instructions_iter()
@@ -109,7 +109,7 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
                 message_hash,
                 is_simple_vote_transaction: is_simple_vote_tx,
                 signature_details,
-                compute_budget_instruction_details,
+                instruction_details,
             },
         })
     }

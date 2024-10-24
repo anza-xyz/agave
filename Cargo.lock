@@ -7895,6 +7895,8 @@ dependencies = [
  "rand 0.8.5",
  "solana-builtins-default-costs",
  "solana-compute-budget",
+ "solana-compute-budget-program",
+ "solana-loader-v4-program",
  "solana-program",
  "solana-pubkey",
  "solana-sdk",
