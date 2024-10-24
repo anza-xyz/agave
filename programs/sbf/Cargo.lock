@@ -5974,6 +5974,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-rent-debits"
+version = "2.1.0"
+dependencies = [
+ "solana-define-syscall",
+ "solana-pubkey",
+ "solana-reward-info",
+]
+
+[[package]]
+name = "solana-reward-info"
+version = "2.1.0"
+dependencies = [
+ "serde",
+ "serde_derive",
+]
+
+[[package]]
 name = "solana-rpc"
 version = "2.1.0"
 dependencies = [
@@ -6716,6 +6733,8 @@ dependencies = [
  "solana-program",
  "solana-program-memory",
  "solana-pubkey",
+ "solana-rent-debits",
+ "solana-reward-info",
  "solana-sanitize",
  "solana-sdk-macro",
  "solana-secp256k1-recover",
