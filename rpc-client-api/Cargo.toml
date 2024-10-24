@@ -16,15 +16,14 @@ bs58 = { workspace = true, features = ["std"] }
 jsonrpc-core = { workspace = true }
 reqwest = { workspace = true, features = ["blocking", "brotli", "deflate", "gzip", "rustls-tls", "json"] }
 reqwest-middleware = { workspace = true }
-semver = { workspace = true }
 serde = { workspace = true }
 serde_derive = { workspace = true }
 serde_json = { workspace = true }
 solana-account-decoder-client-types = { workspace = true }
 solana-inline-spl = { workspace = true }
+solana-rpc-response = { workspace = true }
 solana-sdk = { workspace = true }
 solana-transaction-status-client-types = { workspace = true }
-solana-version = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
