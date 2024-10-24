@@ -833,7 +833,7 @@ mod tests {
             get_tmp_ledger_path_auto_delete,
             leader_schedule_cache::LeaderScheduleCache,
         },
-        solana_perf::packet::{to_packet_batches, PacketBatch},
+        solana_perf::packet::{to_arc_packet_batches, PacketBatch},
         solana_poh::{
             poh_recorder::{
                 create_test_recorder, PohRecorderError, Record, RecordTransactionsSummary,
@@ -988,10 +988,11 @@ mod tests {
     }
 
     pub fn convert_from_old_verified(
-        mut with_vers: Vec<(PacketBatch, Vec<u8>)>,
-    ) -> Vec<PacketBatch> {
+        mut with_vers: Vec<(Arc<PacketBatch>, Vec<u8>)>,
+    ) -> Vec<Arc<PacketBatch>> {
         with_vers.iter_mut().for_each(|(b, v)| {
-            b.iter_mut()
+            Arc::make_mut(b)
+                .iter_mut()
                 .zip(v)
                 .for_each(|(p, f)| p.meta_mut().set_discard(*f == 0))
         });
@@ -1066,7 +1067,7 @@ mod tests {
             let tx_anf = system_transaction::transfer(&keypair, &to3, 1, start_hash);
 
             // send 'em over
-            let packet_batches = to_packet_batches(&[tx_no_ver, tx_anf, tx], 3);
+            let packet_batches = to_arc_packet_batches(&[tx_no_ver, tx_anf, tx], 3);
 
             // glad they all fit
             assert_eq!(packet_batches.len(), 1);
@@ -1154,7 +1155,7 @@ mod tests {
         let tx =
             system_transaction::transfer(&mint_keypair, &alice.pubkey(), 2, genesis_config.hash());
 
-        let packet_batches = to_packet_batches(&[tx], 1);
+        let packet_batches = to_arc_packet_batches(&[tx], 1);
         let packet_batches = packet_batches
             .into_iter()
             .map(|batch| (batch, vec![1u8]))
@@ -1167,7 +1168,7 @@ mod tests {
         // Process a second batch that uses the same from account, so conflicts with above TX
         let tx =
             system_transaction::transfer(&mint_keypair, &alice.pubkey(), 1, genesis_config.hash());
-        let packet_batches = to_packet_batches(&[tx], 1);
+        let packet_batches = to_arc_packet_batches(&[tx], 1);
         let packet_batches = packet_batches
             .into_iter()
             .map(|batch| (batch, vec![1u8]))
@@ -1466,9 +1467,9 @@ mod tests {
                 })
                 .collect_vec();
 
-            let non_vote_packet_batches = to_packet_batches(&txs, 10);
-            let tpu_packet_batches = to_packet_batches(&tpu_votes, 10);
-            let gossip_packet_batches = to_packet_batches(&gossip_votes, 10);
+            let non_vote_packet_batches = to_arc_packet_batches(&txs, 10);
+            let tpu_packet_batches = to_arc_packet_batches(&tpu_votes, 10);
+            let gossip_packet_batches = to_arc_packet_batches(&gossip_votes, 10);
 
             // Send em all
             [

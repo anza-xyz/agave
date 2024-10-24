@@ -12,8 +12,12 @@ use {
         banking_trace::{BankingPacketBatch, BankingPacketSender},
         sigverify_stage::{SigVerifier, SigVerifyServiceError},
     },
-    solana_perf::{cuda_runtime::PinnedVec, packet::PacketBatch, recycler::Recycler, sigverify},
+    solana_perf::{
+        cuda_runtime::PinnedVec, mutable_packet_batch::MutablePacketBatch, packet::PacketBatch,
+        recycler::Recycler, sigverify,
+    },
     solana_sdk::{packet::Packet, saturating_add_assign},
+    std::sync::Arc,
 };
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -124,7 +128,7 @@ impl SigVerifier for TransactionSigVerifier {
 
     fn send_packets(
         &mut self,
-        packet_batches: Vec<PacketBatch>,
+        packet_batches: Vec<Arc<PacketBatch>>,
     ) -> Result<(), SigVerifyServiceError<Self::SendType>> {
         let tracer_packet_stats_to_send = std::mem::take(&mut self.tracer_packet_stats);
         self.packet_sender.send(BankingPacketBatch::new((
@@ -134,11 +138,11 @@ impl SigVerifier for TransactionSigVerifier {
         Ok(())
     }
 
-    fn verify_batches(
+    fn verify_batches<T: MutablePacketBatch>(
         &self,
-        mut batches: Vec<PacketBatch>,
+        mut batches: Vec<T>,
         valid_packets: usize,
-    ) -> Vec<PacketBatch> {
+    ) -> Vec<T> {
         sigverify::ed25519_verify(
             &mut batches,
             &self.recycler,

@@ -722,7 +722,6 @@ mod tests {
                 tests::create_slow_genesis_config,
             },
             banking_trace::BankingPacketBatch,
-            sigverify::SigverifyTracerPacketStats,
         },
         crossbeam_channel::{unbounded, Receiver, Sender},
         itertools::Itertools,
@@ -731,7 +730,7 @@ mod tests {
             blockstore::Blockstore, genesis_utils::GenesisConfigInfo,
             get_tmp_ledger_path_auto_delete, leader_schedule_cache::LeaderScheduleCache,
         },
-        solana_perf::packet::{to_packet_batches, PacketBatch, NUM_PACKETS},
+        solana_perf::packet::{to_arc_packet_batches, NUM_PACKETS},
         solana_poh::poh_recorder::{PohRecorder, Record, WorkingBankEntry},
         solana_runtime::bank::Bank,
         solana_sdk::{
@@ -756,7 +755,7 @@ mod tests {
         _entry_receiver: Receiver<WorkingBankEntry>,
         _record_receiver: Receiver<Record>,
         poh_recorder: Arc<RwLock<PohRecorder>>,
-        banking_packet_sender: Sender<Arc<(Vec<PacketBatch>, Option<SigverifyTracerPacketStats>)>>,
+        banking_packet_sender: Sender<BankingPacketBatch>,
 
         consume_work_receivers: Vec<Receiver<ConsumeWork>>,
         finished_consume_work_sender: Sender<FinishedConsumeWork>,
@@ -845,7 +844,7 @@ mod tests {
     }
 
     fn to_banking_packet_batch(txs: &[Transaction]) -> BankingPacketBatch {
-        let packet_batch = to_packet_batches(txs, NUM_PACKETS);
+        let packet_batch = to_arc_packet_batches(txs, NUM_PACKETS);
         Arc::new((packet_batch, None))
     }
 
