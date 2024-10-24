@@ -4872,6 +4872,7 @@ dependencies = [
  "solana-client",
  "solana-feature-set",
  "solana-runtime",
+ "solana-runtime-transaction",
  "solana-sdk",
  "solana-send-transaction-service",
  "solana-svm",
@@ -5279,6 +5280,7 @@ dependencies = [
  "solana-metrics",
  "solana-perf",
  "solana-rayon-threadlimit",
+ "solana-runtime-transaction",
  "solana-sdk",
 ]
 
@@ -5525,6 +5527,7 @@ dependencies = [
  "solana-program-runtime",
  "solana-rayon-threadlimit",
  "solana-runtime",
+ "solana-runtime-transaction",
  "solana-sdk",
  "solana-stake-program",
  "solana-storage-bigtable",
@@ -6015,6 +6018,7 @@ dependencies = [
  "solana-rayon-threadlimit",
  "solana-rpc-client-api",
  "solana-runtime",
+ "solana-runtime-transaction",
  "solana-sdk",
  "solana-send-transaction-service",
  "solana-stake-program",
@@ -7192,6 +7196,7 @@ name = "solana-unified-scheduler-logic"
 version = "2.1.0"
 dependencies = [
  "assert_matches",
+ "solana-runtime-transaction",
  "solana-sdk",
  "static_assertions",
 ]
@@ -7209,6 +7214,7 @@ dependencies = [
  "scopeguard",
  "solana-ledger",
  "solana-runtime",
+ "solana-runtime-transaction",
  "solana-sdk",
  "solana-timings",
  "solana-unified-scheduler-logic",
