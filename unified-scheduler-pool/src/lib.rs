@@ -1249,7 +1249,11 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 .expect("no 2nd start_threads()");
 
             let mut session_ending = false;
-            let mut session_pausing = false;
+            let (mut session_pausing, mut is_finished) = if context.mode() == SchedulingMode::BlockProduction {
+                (true, true)
+            } else {
+                (false, false)
+            };
 
             // Now, this is the main loop for the scheduler thread, which is a special beast.
             //
@@ -1400,7 +1404,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 // 2. Subsequent result_with_timings are propagated explicitly from
                 //    the new_task_receiver.recv() invocation located at the end of loop.
                 'nonaborted_main_loop: loop {
-                    let mut is_finished = false;
                     while !is_finished {
                         // ALL recv selectors are eager-evaluated ALWAYS by current crossbeam impl,
                         // which isn't great and is inconsistent with `if`s in the Rust's match
@@ -1555,6 +1558,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
                         is_finished = (session_ending && state_machine.has_no_alive_task() || session_pausing && state_machine.has_no_executing_task());
                     }
+                    assert!(mem::replace(&mut is_finished, false));
 
                     // Finalize the current session after asserting it's explicitly requested so.
                     assert!(session_ending || session_pausing);
