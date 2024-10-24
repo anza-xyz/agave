@@ -1275,7 +1275,7 @@ impl AccountStorageEntry {
     }
 
     /// Return the number of zero_lamport_single_ref accounts in the storage.
-    fn zero_lamport_single_ref_account_len(&self) -> usize {
+    fn num_zero_lamport_single_ref_accounts(&self) -> usize {
         self.zero_lamport_single_ref_offsets.read().unwrap().len()
     }
 
@@ -3764,7 +3764,7 @@ impl AccountsDb {
         if let Some(store) = self.storage.get_slot_storage_entry(slot) {
             if store.insert_zero_lamport_single_ref_account_offset(offset) {
                 // this wasn't previously marked as zero lamport single ref
-                if store.zero_lamport_single_ref_account_len() == store.count() {
+                if store.num_zero_lamport_single_ref_accounts() == store.count() {
                     // all accounts in this storage can be dead
                     self.accounts_index.add_uncleaned_roots([slot]);
                     self.shrink_stats
@@ -9677,7 +9677,7 @@ pub mod tests {
         assert_eq!(append_vec.accounts_count(), 1);
         assert_eq!(append_vec.count(), 1);
         assert_eq!(result.accounts_data_len, 0);
-        assert_eq!(1, append_vec.zero_lamport_single_ref_account_len());
+        assert_eq!(1, append_vec.num_zero_lamport_single_ref_accounts());
         assert_eq!(
             0,
             append_vec.alive_bytes_exclude_zero_lamport_single_ref_accounts()
@@ -13733,7 +13733,7 @@ pub mod tests {
             );
 
             // assert the number of zlsr accounts
-            assert_eq!(storage.zero_lamport_single_ref_account_len(), num_keys);
+            assert_eq!(storage.num_zero_lamport_single_ref_accounts(), num_keys);
 
             // assert the "alive_bytes_exclude_zero_lamport_single_ref_accounts"
             if accounts_db.accounts_file_provider == AccountsFileProvider::AppendVec {
@@ -14294,7 +14294,7 @@ pub mod tests {
         assert_eq!(db.accounts_index.ref_count_from_storage(&account_key1), 1);
         assert_eq!(
             db.get_and_assert_single_storage(1)
-                .zero_lamport_single_ref_account_len(),
+                .num_zero_lamport_single_ref_accounts(),
             1
         );
         assert!(db.shrink_candidate_slots.lock().unwrap().contains(&1));
@@ -14337,7 +14337,7 @@ pub mod tests {
         assert_eq!(db.accounts_index.ref_count_from_storage(&account_key1), 1);
         assert_eq!(
             db.get_and_assert_single_storage(1)
-                .zero_lamport_single_ref_account_len(),
+                .num_zero_lamport_single_ref_accounts(),
             1
         );
         // And now, slot 1 should be marked complete dead, which will be added
