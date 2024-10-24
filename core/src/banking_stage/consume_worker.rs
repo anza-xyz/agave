@@ -189,15 +189,15 @@ impl ConsumeWorkerMetrics {
                 if !self.has_data.swap(false, Ordering::Relaxed) {
                     return;
                 }
-                self.count_metrics.report_and_reset(&self.id);
-                self.timing_metrics.report_and_reset(&self.id);
-                self.error_metrics.report_and_reset(&self.id);
+                self.count_metrics.report_and_reset(&self.id, slot);
+                self.timing_metrics.report_and_reset(&self.id, slot);
+                self.error_metrics.report_and_reset(&self.id, slot);
                 self.slot.swap(slot, Ordering::Relaxed);
             }
         } else if prev_slot_id != 0 {
-            self.count_metrics.report_and_reset(&self.id);
-            self.timing_metrics.report_and_reset(&self.id);
-            self.error_metrics.report_and_reset(&self.id);
+            self.count_metrics.report_and_reset(&self.id, prev_slot_id);
+            self.timing_metrics.report_and_reset(&self.id, prev_slot_id);
+            self.error_metrics.report_and_reset(&self.id, prev_slot_id);
             self.slot.swap(0, Ordering::Relaxed);
         }
     }
@@ -425,7 +425,6 @@ struct ConsumeWorkerCountMetrics {
     cost_model_throttled_transactions_count: AtomicU64,
     min_prioritization_fees: AtomicU64,
     max_prioritization_fees: AtomicU64,
-    slot: AtomicU64,
 }
 
 impl Default for ConsumeWorkerCountMetrics {
@@ -439,13 +438,12 @@ impl Default for ConsumeWorkerCountMetrics {
             cost_model_throttled_transactions_count: AtomicU64::default(),
             min_prioritization_fees: AtomicU64::new(u64::MAX),
             max_prioritization_fees: AtomicU64::default(),
-            slot: AtomicU64::default(),
         }
     }
 }
 
 impl ConsumeWorkerCountMetrics {
-    fn report_and_reset(&self, id: &str) {
+    fn report_and_reset(&self, id: &str, slot: u64) {
         datapoint_info!(
             "banking_stage_worker_counts",
             "id" => id,
@@ -495,7 +493,7 @@ impl ConsumeWorkerCountMetrics {
             ),
             (
                 "slot",
-                self.slot.swap(0, Ordering::Relaxed),
+                slot,
                 i64
             ),
         );
@@ -513,11 +511,10 @@ struct ConsumeWorkerTimingMetrics {
     find_and_send_votes_us: AtomicU64,
     wait_for_bank_success_us: AtomicU64,
     wait_for_bank_failure_us: AtomicU64,
-    slot: AtomicU64,
 }
 
 impl ConsumeWorkerTimingMetrics {
-    fn report_and_reset(&self, id: &str) {
+    fn report_and_reset(&self, id: &str, slot: u64) {
         datapoint_info!(
             "banking_stage_worker_timing",
             "id" => id,
@@ -560,7 +557,7 @@ impl ConsumeWorkerTimingMetrics {
             ),
             (
                 "slot",
-                self.slot.swap(0, Ordering::Relaxed),
+                slot,
                 i64
             ),
         );
@@ -593,11 +590,10 @@ struct ConsumeWorkerTransactionErrorMetrics {
     would_exceed_account_data_block_limit: AtomicUsize,
     max_loaded_accounts_data_size_exceeded: AtomicUsize,
     program_execution_temporarily_restricted: AtomicUsize,
-    slot: AtomicU64,
 }
 
 impl ConsumeWorkerTransactionErrorMetrics {
-    fn report_and_reset(&self, id: &str) {
+    fn report_and_reset(&self, id: &str, slot: u64) {
         datapoint_info!(
             "banking_stage_worker_error_metrics",
             "id" => id,
@@ -710,7 +706,7 @@ impl ConsumeWorkerTransactionErrorMetrics {
             ),
             (
                 "slot",
-                self.slot.swap(0, Ordering::Relaxed),
+                slot,
                 i64
             ),
         );
