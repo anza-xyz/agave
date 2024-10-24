@@ -1,7 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    clap::{crate_description, crate_name, value_t_or_exit, App, Arg},
-    std::{fs, path::PathBuf},
+    clap::{crate_description, crate_name, value_t, value_t_or_exit, App, Arg},
+    std::{fmt::Display, fs, path::PathBuf, str::FromStr},
 };
 
 struct Bin {
@@ -31,11 +31,23 @@ fn get_stars(x: usize, max: usize, width: usize) -> String {
     s
 }
 
-fn calc(info: &[(usize, usize)], bin_widths: Vec<usize>) {
+fn is_parsable<T>(string: String) -> Result<(), String>
+where
+    T: FromStr,
+    T::Err: Display,
+{
+    string
+        .parse::<T>()
+        .map(|_| ())
+        .map_err(|err| format!("error parsing '{string}': {err}"))
+}
+
+fn calc(info: &[(usize, usize)], bin_widths: Vec<usize>, offset: i64) {
     let mut info = info.to_owned();
     info.sort();
     let min = info.first().unwrap().0;
     let max_inclusive = info.last().unwrap().0;
+    let outside_slot = 432_000 - offset as usize;
     eprintln!("storages: {}", info.len());
     eprintln!("lowest slot: {min}");
     eprintln!("highest slot: {max_inclusive}");
@@ -43,7 +55,7 @@ fn calc(info: &[(usize, usize)], bin_widths: Vec<usize>) {
     eprintln!(
         "outside of epoch: {}",
         info.iter()
-            .filter(|x| x.0 < max_inclusive - 432_000)
+            .filter(|x| x.0 < max_inclusive - outside_slot)
             .count()
     );
 
@@ -130,7 +142,7 @@ fn calc(info: &[(usize, usize)], bin_widths: Vec<usize>) {
             eprintln!("...");
         }
         let bin = &bins[i];
-        if bin.slot_min == 432_000 {
+        if bin.slot_min == outside_slot {
             eprintln!("------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
         }
         let offset = format!("{:8}", bin.slot_min);
@@ -237,9 +249,18 @@ fn main() {
                 .value_name("PATH")
                 .help("ledger path"),
         )
+        .arg(
+            Arg::with_name("offset")
+                .long("offset")
+                .takes_value(true)
+                .value_name("SLOT-OFFSET")
+                .validator(is_parsable::<i64>)
+                .help("ancient offset"),
+        )
         .get_matches();
 
     let ledger = value_t_or_exit!(matches, "ledger", String);
+    let offset = value_t!(matches, "offset", i64).unwrap_or(100_000);
     let path: PathBuf = [&ledger, "accounts", "run"].iter().collect();
 
     if path.is_dir() {
@@ -263,15 +284,15 @@ fn main() {
                 }
             }
             eprintln!("======== Normal Histogram");
-            calc(&info, normal_bin_widths());
+            calc(&info, normal_bin_widths(), offset);
             eprintln!("========");
 
             eprintln!("\n======== Normal Ancient Histogram");
-            calc(&info, normal_ancient());
+            calc(&info, normal_ancient(), offset);
             eprintln!("========");
 
             eprintln!("\n======== Normal Ancient 10K Histogram");
-            calc(&info, normal_10k());
+            calc(&info, normal_10k(), offset);
             eprintln!("========");
         } else {
             panic!("couldn't read folder: {path:?}, {:?}", dir);
@@ -302,8 +323,9 @@ pub mod tests {
             .into_iter()
             .map(|(slot, size)| (max - slot + base, size))
             .collect::<Vec<_>>();
-        calc(&info, normal_bin_widths());
-        calc(&info, normal_ancient());
-        calc(&info, normal_10k());
+        let offset = 100_000i64;
+        calc(&info, normal_bin_widths(), offset);
+        calc(&info, normal_ancient(), offset);
+        calc(&info, normal_10k(), offset);
     }
 }
