@@ -648,7 +648,7 @@ pub struct AccountsDbConfig {
     pub num_clean_threads: Option<NonZeroUsize>,
     /// Number of threads for background accounts hashing (`thread_pool_hash`)
     pub num_hash_threads: Option<NonZeroUsize>,
-    /// Number of threads for foreground opeations (`thread_pool`)
+    /// Number of threads for foreground operations (`thread_pool`)
     pub num_process_threads: Option<NonZeroUsize>,
 }
 
