@@ -410,6 +410,10 @@ impl AccountsDb {
         mut tuning: PackedAncientStorageTuning,
         metrics: &mut ShrinkStatsSub,
     ) {
+        self.shrink_ancient_stats.slot.store(
+            sorted_slots.first().cloned().unwrap_or_default(),
+            Ordering::Relaxed,
+        );
         self.shrink_ancient_stats
             .slots_considered
             .fetch_add(sorted_slots.len() as u64, Ordering::Relaxed);
