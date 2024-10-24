@@ -1174,7 +1174,7 @@ pub struct AccountStorageEntry {
 
     /// offsets to accounts that are zero lamport single ref stored in this storage.
     /// These are still alive. But, shrink will be able to remove them.
-    zero_lamport_single_ref_offsets: RwLock<IntSet<usize>>,
+    zero_lamport_single_ref_offsets: RwLock<IntSet<Offset>>,
 }
 
 impl AccountStorageEntry {
