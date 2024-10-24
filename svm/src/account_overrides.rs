@@ -6,7 +6,7 @@ use {
 /// Encapsulates overridden accounts, typically used for transaction
 /// simulations. Account overrides are currently not used when loading the
 /// durable nonce account or when constructing the instructions sysvar account.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct AccountOverrides {
     accounts: HashMap<Pubkey, AccountSharedData>,
 }
