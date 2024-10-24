@@ -9671,7 +9671,7 @@ pub mod tests {
         let append_vec = db.create_and_insert_store(slot0, 1000, "test");
         let account = AccountSharedData::default();
 
-        let data = vec![(&pubkey, &account)];
+        let data = [(&pubkey, &account)];
         let storable_accounts = (slot0, &data[..]);
         append_vec.accounts.append_accounts(&storable_accounts, 0);
         let genesis_config = GenesisConfig::default();
