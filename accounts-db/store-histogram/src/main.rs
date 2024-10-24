@@ -142,9 +142,6 @@ fn calc(info: &[(usize, usize)], bin_widths: Vec<usize>, offset: i64) {
             eprintln!("...");
         }
         let bin = &bins[i];
-        if bin.slot_min == outside_slot {
-            eprintln!("{}", String::from_utf8(vec![b'-'; 168]).unwrap());
-        }
         let offset = format!("{:8}", bin.slot_min);
 
         if i == 0 {
@@ -202,6 +199,9 @@ fn calc(info: &[(usize, usize)], bin_widths: Vec<usize>, offset: i64) {
             s2 = format!("{s2}{s}");
         });
         eprintln!("{s2}");
+        if bin.slot_min < outside_slot && outside_slot <= bin.slot_max {
+            eprintln!("{}", String::from_utf8(vec![b'-'; 168]).unwrap());
+        }
     }
 }
 
