@@ -67,14 +67,36 @@ fn calc(info: &[(usize, usize)], bin_widths: Vec<usize>, offset: i64) {
         } else {
             bin_widths[i + 1]
         };
-        let abin = Bin {
-            slot_min: bin_widths[i],
-            slot_max: next,
-            count: 0,
-            min_size: usize::MAX,
-            max_size: 0,
-            sum_size: 0,
-            avg: 0,
+        let abin = if bin_widths[i] < outside_slot && outside_slot < next {
+            let abin = Bin {
+                slot_min: bin_widths[i],
+                slot_max: outside_slot,
+                count: 0,
+                min_size: usize::MAX,
+                max_size: 0,
+                sum_size: 0,
+                avg: 0,
+            };
+            bins.push(abin);
+            Bin {
+                slot_min: outside_slot,
+                slot_max: next,
+                count: 0,
+                min_size: usize::MAX,
+                max_size: 0,
+                sum_size: 0,
+                avg: 0,
+            }
+        } else {
+            Bin {
+                slot_min: bin_widths[i],
+                slot_max: next,
+                count: 0,
+                min_size: usize::MAX,
+                max_size: 0,
+                sum_size: 0,
+                avg: 0,
+            }
         };
         bins.push(abin);
     }
@@ -143,6 +165,9 @@ fn calc(info: &[(usize, usize)], bin_widths: Vec<usize>, offset: i64) {
             eprintln!("...");
         }
         let bin = &bins[i];
+        if bin.slot_min == outside_slot {
+            eprintln!("{}", String::from_utf8(vec![b'-'; 168]).unwrap());
+        }
         let offset = format!("{:8}", bin.slot_min);
 
         if i == 0 {
@@ -200,9 +225,6 @@ fn calc(info: &[(usize, usize)], bin_widths: Vec<usize>, offset: i64) {
             s2 = format!("{s2}{s}");
         });
         eprintln!("{s2}");
-        if bin.slot_min < outside_slot && outside_slot <= bin.slot_max {
-            eprintln!("{}", String::from_utf8(vec![b'-'; 168]).unwrap());
-        }
     }
 }
 
