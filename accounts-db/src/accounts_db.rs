@@ -735,8 +735,8 @@ struct GenerateIndexTimings {
     pub total_slots: u64,
     pub slots_to_clean: u64,
     pub par_duplicates_lt_hash_us: AtomicU64,
-    pub visit_zeros_us: u64,
-    pub num_zero_single_refs: u64,
+    pub visit_zero_lamports_us: u64,
+    pub num_zero_lamport_single_refs: u64,
     pub all_accounts_are_zero_lamports_slots: u64,
 }
 
@@ -820,11 +820,15 @@ impl GenerateIndexTimings {
                 i64
             ),
             (
-                "num_zero_single_refs",
-                self.num_zero_single_refs as i64,
+                "num_zero_lamport_single_refs",
+                self.num_zero_lamport_single_refs as i64,
                 i64
             ),
-            ("visit_zeros_us", self.visit_zeros_us as i64, i64),
+            (
+                "visit_zero_lamports_us",
+                self.visit_zero_lamports_us as i64,
+                i64
+            ),
             (
                 "all_accounts_are_zero_lamports_slots",
                 self.all_accounts_are_zero_lamports_slots,
@@ -8554,7 +8558,7 @@ impl AccountsDb {
 
         let rent_paying_accounts_by_partition =
             Mutex::new(RentPayingAccountsByPartition::new(schedule));
-        let zero_pubkeys = Mutex::new(HashSet::new());
+        let zero_lamport_pubkeys = Mutex::new(HashSet::new());
         let mut outer_duplicates_lt_hash = None;
 
         // pass == 0 always runs and generates the index
@@ -8650,7 +8654,7 @@ impl AccountsDb {
                                 all_accounts_are_zero_lamports_slots_inner += 1;
                                 all_zeros_slots_inner.push((*slot, Arc::clone(&storage)));
                             }
-                            let mut zero_pubkeys = zero_pubkeys.lock().unwrap();
+                            let mut zero_pubkeys = zero_lamport_pubkeys.lock().unwrap();
                             zero_pubkeys_this_slot.into_iter().for_each(|k| {
                                 zero_pubkeys.insert(k);
                             });
@@ -8814,11 +8818,13 @@ impl AccountsDb {
                     }
                 }
 
-                let zero_pubkeys_to_visit = std::mem::take(&mut *zero_pubkeys.lock().unwrap());
-                let (num_zero_single_refs, visit_zeros_us) =
-                    measure_us!(self.visit_zero_pubkeys_during_startup(&zero_pubkeys_to_visit));
-                timings.visit_zeros_us = visit_zeros_us;
-                timings.num_zero_single_refs = num_zero_single_refs;
+                let zero_lamport_pubkeys_to_visit =
+                    std::mem::take(&mut *zero_lamport_pubkeys.lock().unwrap());
+                let (num_zero_lamport_single_refs, visit_zero_lamports_us) = measure_us!(
+                    self.visit_zero_pubkeys_during_startup(&zero_lamport_pubkeys_to_visit)
+                );
+                timings.visit_zero_lamports_us = visit_zero_lamports_us;
+                timings.num_zero_lamport_single_refs = num_zero_lamport_single_refs;
 
                 // subtract data.len() from accounts_data_len for all old accounts that are in the index twice
                 let mut accounts_data_len_dedup_timer =
