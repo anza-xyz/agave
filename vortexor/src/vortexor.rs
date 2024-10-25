@@ -15,7 +15,7 @@ use {
 };
 
 pub const MAX_QUIC_CONNECTIONS_PER_PEER: usize = 8;
-pub const NUM_QUIC_ENDPOINTS: usize = 8;
+pub const NUM_QUIC_ENDPOINTS: usize = 1;
 
 pub struct TpuSockets {
     pub tpu_quic: Vec<UdpSocket>,
