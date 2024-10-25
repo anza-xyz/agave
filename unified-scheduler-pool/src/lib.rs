@@ -704,14 +704,12 @@ impl SigverifyTracerPacketStats {
 mod chained_channel {
     use super::*;
 
-    // hide variants by putting this inside newtype
     #[derive(EnumPtr)]
     #[repr(C, usize)]
-    pub(super) enum ChainedChannelPrivate<P: Aligned, C> {
+    pub(super) enum ChainedChannel<P: Aligned, C> {
         Payload(P),
         ContextAndChannels(Box<(C, Receiver<Compact<ChainedChannel<P, C>>>, Receiver<P>)>),
     }
-    pub(super) struct ChainedChannel<P: Aligned, C>(ChainedChannelPrivate<P, C>);
 
     impl<P: Aligned, C> ChainedChannel<P, C> {
         fn chain_to_new_channel(
