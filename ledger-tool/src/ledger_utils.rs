@@ -425,6 +425,7 @@ pub fn load_and_process_ledger(
         bank_forks,
         starting_snapshot_hashes,
         accounts_background_service,
+        unified_scheduler_pool: None,
     })
     .map_err(LoadAndProcessLedgerError::ProcessBlockstoreFromRoot);
 
