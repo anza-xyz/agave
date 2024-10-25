@@ -612,7 +612,7 @@ fn main() {
             &dummy_receiver,
             use_dummy,
         ) {
-            eprintln!(
+            info!(
                 "[iteration {}, tx sent {}, slot {} expired, bank tx count {}]",
                 current_iteration_index,
                 sent,
@@ -630,7 +630,7 @@ fn main() {
 
             let mut new_bank_time = Measure::start("new_bank");
             let new_slot = bank.slot() + 1;
-            let new_bank = Bank::new_from_parent(bank.clone(), &collector, new_slot);
+            let new_bank = Bank::new_from_parent(bank, &collector, new_slot);
             new_bank_time.stop();
 
             let mut insert_time = Measure::start("insert_time");
@@ -655,7 +655,6 @@ fn main() {
                 insert_time.as_us(),
                 poh_time.as_us(),
             );
-            assert!(poh_recorder_write.bank().is_some());
         } else {
             info!(
                 "[iteration {}, tx sent {}, slot {} active, bank tx count {}]",
@@ -674,15 +673,12 @@ fn main() {
         total_us += now.elapsed().as_micros() as u64;
         total_sent += sent;
 
-        /*
         if current_iteration_index % num_chunks == 0 {
             let last_blockhash = bank.last_blockhash();
             for packets_for_single_iteration in all_packets.iter_mut() {
                 packets_for_single_iteration.refresh_blockhash(last_blockhash);
             }
         }
-        */
-        assert!(bank.slot() < 100);
     }
     txs_processed += bank_forks
         .read()
