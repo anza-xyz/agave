@@ -13,6 +13,9 @@ edition = { workspace = true }
 solana-program-error = { workspace = true }
 solana-pubkey = { workspace = true, default-features = false }
 
+[target.'cfg(target_os = "solana")'.dependencies]
+solana-define-syscall = { workspace = true }
+
 [dev-dependencies]
 solana-program-entrypoint = { workspace = true }
 static_assertions = { workspace = true }
