@@ -618,7 +618,7 @@ impl BankWithSchedulerInner {
         })
     }
 
-    /// This must not be called until `Err(SchedulerError)` is observed. Violating this should
+    /// This must not be called until `Err(SchedulerAborted)` is observed. Violating this should
     /// `panic!()`.
     fn retrieve_error_after_schedule_failure(&self) -> TransactionError {
         let mut scheduler = self.scheduler.write().unwrap();
@@ -632,7 +632,7 @@ impl BankWithSchedulerInner {
                 panic!();
                 TransactionError::CommitFailed
             }
-            _ => unreachable!("no error in {:?}", scheduler),
+            _ => unreachable!("no error in {:?}", self.scheduler),
         }
     }
 
