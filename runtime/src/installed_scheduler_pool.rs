@@ -180,7 +180,7 @@ pub trait InstalledScheduler: Send + Sync + Debug + 'static {
     /// Return the error which caused the scheduler to abort.
     ///
     /// Note that this must not be called until it's observed that `schedule_execution()` has
-    /// returned `Err(SchedulerError)`. Violating this should `panic!()`.
+    /// returned `Err(SchedulerAborted)`. Violating this should `panic!()`.
     ///
     /// That said, calling this multiple times is completely acceptable after the error observation
     /// from `schedule_execution()`. While it's not guaranteed, the same `.clone()`-ed errors of
