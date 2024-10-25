@@ -463,7 +463,7 @@ fn main() {
     );
     let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
     let (exit, poh_recorder, poh_service, signal_receiver) = create_test_recorder(
-        bank.clone_with_scheduler(),
+        bank.clone(),
         blockstore.clone(),
         None,
         Some(leader_schedule_cache),
