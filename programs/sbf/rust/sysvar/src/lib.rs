@@ -21,7 +21,7 @@ use solana_program::{
         slot_hashes::{PodSlotHashes, SlotHashes},
         slot_history::SlotHistory,
         stake_history::{StakeHistory, StakeHistorySysvar},
-        Sysvar, SysvarId,
+        Sysvar,
     },
 };
 
@@ -29,7 +29,7 @@ use solana_program::{
 #[cfg(target_os = "solana")]
 fn sol_get_sysvar_handler<T>(dst: &mut [u8], offset: u64, length: u64) -> Result<(), ProgramError>
 where
-    T: Sysvar + SysvarId,
+    T: Sysvar,
 {
     let sysvar_id = &T::id() as *const _ as *const u8;
     let var_addr = dst as *mut _ as *mut u8;
@@ -46,7 +46,7 @@ where
 // Double-helper arrangement is easier to write to a mutable slice.
 fn sol_get_sysvar<T>() -> Result<T, ProgramError>
 where
-    T: Sysvar + SysvarId,
+    T: Sysvar,
 {
     #[cfg(target_os = "solana")]
     {
@@ -186,10 +186,8 @@ pub fn process_instruction(
                 sysvar::stake_history::id().log();
                 let _ = StakeHistory::from_account_info(&accounts[9]).unwrap();
                 // Syscall `sol_get_sysvar`.
-                let current_epoch = solana_program::stake_history::MAX_ENTRIES as u64;
-                let target_epoch = current_epoch.saturating_sub(1);
-                let stake_history_sysvar = StakeHistorySysvar(current_epoch);
-                assert!(stake_history_sysvar.get_entry(target_epoch).is_some());
+                let stake_history_sysvar = StakeHistorySysvar(1);
+                assert!(stake_history_sysvar.get_entry(0).is_some());
             }
 
             Ok(())

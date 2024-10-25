@@ -44,23 +44,16 @@ fn test_sysvar_syscalls() {
     };
     bank.set_sysvar_for_tests(&epoch_rewards);
 
-    // `StakeHistoryGetEntry` API assumes `MAX_ENTRIES` are present in the
-    // sysvar data.
-    //
-    // This isn't going to align with the bank's epoch, but it doesn't matter
-    // for the on-chain query, as long as there is data to retrieve.
     let stake_history = {
         let mut stake_history = StakeHistory::default();
-        for epoch in 0..solana_sdk::stake_history::MAX_ENTRIES as u64 {
-            stake_history.add(
-                epoch,
-                StakeHistoryEntry {
-                    effective: 200,
-                    activating: 300,
-                    deactivating: 400,
-                },
-            );
-        }
+        stake_history.add(
+            0,
+            StakeHistoryEntry {
+                effective: 200,
+                activating: 300,
+                deactivating: 400,
+            },
+        );
         stake_history
     };
     bank.set_sysvar_for_tests(&stake_history);
