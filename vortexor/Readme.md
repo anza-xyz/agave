@@ -36,7 +36,7 @@ It has the following major components:
 
 1. The TPU Streamer -- this is built from the existing QUIC based TPU streamer
 2. The SigVerify/Dedup -- this is built/refactored from the existing SigVerify component
-3. Subscription Management -- This is responsible for managing subscriptions from the validator. 
+3. Subscription Management -- This is responsible for managing subscriptions from the validator.
    Subscriptions action include subscription for transactions and cancel subscriptions.
 4. VerifiedPacketForwarder -- This is responsible for forwarding the verified transaction packets
    to the subscribed validators. We target use UDP/QUIC to send transactions to the validators
