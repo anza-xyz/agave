@@ -338,7 +338,7 @@ pub fn load_and_process_ledger(
             bank_forks
                 .write()
                 .unwrap()
-                .install_scheduler_pool(p);
+                .install_scheduler_pool(p.clone());
             Some(p)
         }
     };
