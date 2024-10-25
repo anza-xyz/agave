@@ -541,7 +541,6 @@ impl TaskHandler for DefaultTaskHandler {
                     SchedulingMode::BlockVerification => None,
                     SchedulingMode::BlockProduction => Some(|| {
                         if !scheduling_context.can_commit() {
-                            info!("not commitable");
                             return false;
                         }
                         let summary = MY_POH
@@ -552,7 +551,7 @@ impl TaskHandler for DefaultTaskHandler {
                                 scheduling_context.bank().slot(),
                                 vec![transaction.to_versioned_transaction()],
                             );
-                        summary.result.inspect_err(|_| info!("not commitable2")).is_ok()
+                        summary.result.is_ok()
                     }),
                 };
 
