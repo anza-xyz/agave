@@ -1682,9 +1682,13 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     recv(banking_packet_receiver) -> banking_packet => {
                         let Ok(banking_packet) = banking_packet else {
                             info!("disconnectd banking_packet_receiver");
-                            break return;
+                            break;
                         };
                         let tasks = on_recv.as_mut().unwrap()((banking_packet));
+                        let Some(new_task_sender) = new_task_sender.upgrade() else {
+                            info!("dead new_task_sender");
+                            break;
+                        }
                         for task in tasks {
                             new_task_sender
                                 .send(NewTaskPayload::Payload(task).into())
