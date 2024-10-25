@@ -66,11 +66,8 @@ pub trait InstalledSchedulerPool: Send + Sync + Debug {
 }
 
 #[derive(Debug)]
-pub enum SchedulerError {
-    Aborted,
-    Terminated,
-}
-pub type ScheduleResult = std::result::Result<(), SchedulerError>;
+pub struct SchedulerAborted; 
+pub type ScheduleResult = std::result::Result<(), SchedulerAborted>;
 
 pub struct TimeoutListener {
     callback: Box<dyn FnOnce(InstalledSchedulerPoolArc) + Sync + Send>,
