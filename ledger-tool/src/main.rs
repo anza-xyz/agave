@@ -2067,6 +2067,7 @@ fn main() {
                         bank_forks,
                         starting_snapshot_hashes,
                         accounts_background_service,
+                        unified_scheduler_pool,
                     } = load_and_process_ledger_or_exit(
                         arg_matches,
                         &genesis_config,
