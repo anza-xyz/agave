@@ -1568,62 +1568,62 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
                     // Prepare for the new session.
                     loop {
-                            match new_task_receiver.recv().map(|a| a.into()) {
-                                Ok(NewTaskPayload::OpenSubchannel(context_and_result_with_timings)) => {
-                                    let (new_context, new_result_with_timings) =
-                                        *context_and_result_with_timings;
-                                    // We just received subsequent (= not initial) session and about to
-                                    // enter into the preceding `while(!is_finished) {...}` loop again.
-                                    // Before that, propagate new SchedulingContext to handler threads
-                                    assert_eq!(state_machine.mode(), new_context.mode());
-                                    slot = new_context.bank().slot();
-                                    session_started_at = Instant::now();
-                                    cpu_session_started_at = cpu_time::ThreadTime::now();
+                        match new_task_receiver.recv().map(|a| a.into()) {
+                            Ok(NewTaskPayload::OpenSubchannel(context_and_result_with_timings)) => {
+                                let (new_context, new_result_with_timings) =
+                                    *context_and_result_with_timings;
+                                // We just received subsequent (= not initial) session and about to
+                                // enter into the preceding `while(!is_finished) {...}` loop again.
+                                // Before that, propagate new SchedulingContext to handler threads
+                                assert_eq!(state_machine.mode(), new_context.mode());
+                                slot = new_context.bank().slot();
+                                session_started_at = Instant::now();
+                                cpu_session_started_at = cpu_time::ThreadTime::now();
 
-                                    if session_ending {
-                                        log_interval = LogInterval::default();
-                                        state_machine.reinitialize(new_context.mode());
-                                        session_ending = false;
-                                        log_scheduler!(info, "started");
-                                    } else {
-                                        state_machine.reset_task_total();
-                                        state_machine.reset_executed_task_total();
-                                        reported_task_total = 0;
-                                        reported_executed_task_total = 0;
-                                        error_count = 0;
-                                        session_pausing = false;
-                                        log_scheduler!(info, "unpaused");
-                                    }
-
-                                    runnable_task_sender
-                                        .send_chained_channel(new_context.clone(), handler_count)
-                                        .unwrap();
-                                    context = new_context;
-                                    result_with_timings = new_result_with_timings;
-                                    break;
-                                }
-                                Err(_) => {
-                                    // This unusual condition must be triggered by ThreadManager::drop().
-                                    // Initialize result_with_timings with a harmless value...
-                                    result_with_timings = initialized_result_with_timings();
+                                if session_ending {
+                                    log_interval = LogInterval::default();
+                                    state_machine.reinitialize(new_context.mode());
                                     session_ending = false;
+                                    log_scheduler!(info, "started");
+                                } else {
+                                    state_machine.reset_task_total();
+                                    state_machine.reset_executed_task_total();
+                                    reported_task_total = 0;
+                                    reported_executed_task_total = 0;
+                                    error_count = 0;
                                     session_pausing = false;
-                                    break 'nonaborted_main_loop;
+                                    log_scheduler!(info, "unpaused");
                                 }
-                                Ok(NewTaskPayload::Payload(task)) if matches!(state_machine.mode(), SchedulingMode::BlockProduction) => {
-                                    assert!(state_machine.do_schedule_task(task, true).is_none());
-                                    if log_interval.increment() {
-                                        log_scheduler!(info, "rebuffer");
-                                    } else {
-                                        log_scheduler!(trace, "rebuffer");
-                                    }
-                                }
-                                Ok(NewTaskPayload::CloseSubchannel(_)) if matches!(state_machine.mode(), SchedulingMode::BlockProduction) => {
-                                    assert!(!std::mem::replace(already_ignored, true));
-                                    info!("ignoring duplicate CloseSubchannel...");
-                                }
-                                Ok(_) => unreachable!(),
+
+                                runnable_task_sender
+                                    .send_chained_channel(new_context.clone(), handler_count)
+                                    .unwrap();
+                                context = new_context;
+                                result_with_timings = new_result_with_timings;
+                                break;
                             }
+                            Err(_) => {
+                                // This unusual condition must be triggered by ThreadManager::drop().
+                                // Initialize result_with_timings with a harmless value...
+                                result_with_timings = initialized_result_with_timings();
+                                session_ending = false;
+                                session_pausing = false;
+                                break 'nonaborted_main_loop;
+                            }
+                            Ok(NewTaskPayload::Payload(task)) if matches!(state_machine.mode(), SchedulingMode::BlockProduction) => {
+                                assert!(state_machine.do_schedule_task(task, true).is_none());
+                                if log_interval.increment() {
+                                    log_scheduler!(info, "rebuffer");
+                                } else {
+                                    log_scheduler!(trace, "rebuffer");
+                                }
+                            }
+                            Ok(NewTaskPayload::CloseSubchannel(_)) if matches!(state_machine.mode(), SchedulingMode::BlockProduction) => {
+                                assert!(!std::mem::replace(already_ignored, true));
+                                info!("ignoring duplicate CloseSubchannel...");
+                            }
+                            Ok(_) => unreachable!(),
+                        }
                     }
                 }
 
