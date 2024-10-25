@@ -1735,8 +1735,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 if sender.send(Ok(task)).is_err() {
                     warn!("handler_thread: scheduler thread aborted...");
                     break;
-                } else {
-                    trace!("returning back task from handler to scheduler...");
                 }
             }
         };
