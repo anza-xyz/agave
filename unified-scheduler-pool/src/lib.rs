@@ -1010,7 +1010,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         Self {
             scheduler_id: pool.new_scheduler_id(),
             pool,
-            new_task_sender,
+            new_task_sender: Arc::new(new_task_sender),
             new_task_receiver: Some(new_task_receiver),
             session_result_sender,
             session_result_receiver,
