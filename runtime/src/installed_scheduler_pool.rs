@@ -66,7 +66,7 @@ pub trait InstalledSchedulerPool: Send + Sync + Debug {
 }
 
 #[derive(Debug)]
-pub struct SchedulerAborted; 
+pub struct SchedulerAborted;
 pub type ScheduleResult = std::result::Result<(), SchedulerAborted>;
 
 pub struct TimeoutListener {
