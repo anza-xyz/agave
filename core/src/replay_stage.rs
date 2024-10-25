@@ -36,6 +36,7 @@ use {
     solana_entry::entry::VerifyRecyclers,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
+        ancestor_iterator::AncestorIterator,
         block_error::BlockError,
         blockstore::Blockstore,
         blockstore_processor::{
@@ -2361,7 +2362,14 @@ impl ReplayStage {
             datapoint_info!("replay_stage-voted_empty_bank", ("slot", bank.slot(), i64));
         }
         trace!("handle votable bank {}", bank.slot());
-        let new_root = tower.record_bank_vote(bank);
+        // set replay_tip_bank to the first bank in ancestor iterator of bank which is frozen.
+        let replay_tip_bank = AncestorIterator::new_inclusive(bank.slot(), blockstore)
+            .map(|b| bank_forks.read().unwrap().get(b).expect("Ancestor should be in bank_forks"))
+            .find(|b| b.is_frozen());
+        if replay_tip_bank.is_none() {
+            return Err(SetRootError::NoAncestorFrozen(bank.slot()));
+        }
+        let new_root = tower.record_bank_vote(bank, &replay_tip_bank.unwrap());
 
         if let Some(new_root) = new_root {
             // get the root bank before squash

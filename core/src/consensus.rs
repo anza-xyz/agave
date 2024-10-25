@@ -587,14 +587,14 @@ impl Tower {
         vote_state.last_voted_slot()
     }
 
-    pub fn record_bank_vote(&mut self, bank: &Bank) -> Option<Slot> {
+    pub fn record_bank_vote(&mut self, bank: &Bank, replay_tip_bank: &Bank) -> Option<Slot> {
         // Returns the new root if one is made after applying a vote for the given bank to
         // `self.vote_state`
         self.record_bank_vote_and_update_lockouts(
             bank.slot(),
             bank.hash(),
-            bank.slot(),
-            bank.hash(),
+            replay_tip_bank.slot(),
+            replay_tip_bank.hash(),
             bank.feature_set
                 .is_active(&solana_feature_set::enable_tower_sync_ix::id()),
         )
@@ -673,8 +673,8 @@ impl Tower {
     }
 
     #[cfg(feature = "dev-context-only-utils")]
-    pub fn record_vote(&mut self, slot: Slot, hash: Hash) -> Option<Slot> {
-        self.record_bank_vote_and_update_lockouts(slot, hash, slot, hash, true)
+    pub fn record_vote(&mut self, slot: Slot, hash: Hash, replay_tip_slot: Slot, replay_tip_hash: Hash) -> Option<Slot> {
+        self.record_bank_vote_and_update_lockouts(slot, hash, replay_tip_slot, replay_tip_hash, true)
     }
 
     /// Used for tests

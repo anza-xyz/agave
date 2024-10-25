@@ -45,6 +45,8 @@ impl ReadOnlyAtomicSlot {
 pub enum SetRootError {
     #[error("failed to send epoch accounts hash request for bank {0}: {1}")]
     SendEpochAccountHashError(Slot, SendError<SnapshotRequest>),
+    #[error("no ancestor frozen for bank {0}")]
+    NoAncestorFrozen(Slot),
 }
 
 #[derive(Debug, Default, Copy, Clone)]

@@ -230,7 +230,7 @@ impl VoteSimulator {
             return heaviest_fork_failures;
         }
 
-        let new_root = tower.record_bank_vote(&vote_bank);
+        let new_root = tower.record_bank_vote(&vote_bank, &vote_bank);
         if let Some(new_root) = new_root {
             self.set_root(new_root);
         }
