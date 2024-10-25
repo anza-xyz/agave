@@ -1048,7 +1048,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         let Ok(executed_task) = executed_task else {
             return None;
         };
-        //timings.accumulate(&executed_task.result_with_timings.1);
+        timings.accumulate(&executed_task.result_with_timings.1);
         match context.mode() {
             SchedulingMode::BlockVerification => match executed_task.result_with_timings.0 {
                 Ok(()) => Some((executed_task, false)),
