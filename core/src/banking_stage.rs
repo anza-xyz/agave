@@ -688,7 +688,6 @@ impl BankingStage {
         // todo: forwarding, vote only blocks...
         struct MonotonicIdGenerator {
             next_task_id: std::sync::atomic::AtomicU64,
-            //next_task_id: u64,
         }
 
         impl MonotonicIdGenerator {
@@ -697,20 +696,9 @@ impl BankingStage {
                     next_task_id: Default::default(),
                 })
             }
-            /*
-            fn new() -> Self {
-                Self {
-                    next_task_id: Default::default(),
-                }
-            }
-            */
 
             fn bulk_assign_task_ids(&self, count: u64) -> u64 {
-            //fn bulk_assign_task_ids(&mut self, count: u64) -> u64 {
                 self.next_task_id.fetch_add(count, Ordering::AcqRel)
-                //let current = self.next_task_id;
-                //self.next_task_id += count;
-                //current
             }
         }
         let mut id_generator = MonotonicIdGenerator::new();
@@ -776,7 +764,6 @@ impl BankingStage {
                             &fb.into(),
                             &bank,
                         );
-                        // wire cost tracker....
                         //let i = ((u32::MAX - TryInto::<u32>::try_into(priority).unwrap()) as u64) << 32
                         let i = ((u64::MAX - priority) as u128) << 64
                             | task_ids[*i] as solana_runtime::installed_scheduler_pool::Index;
