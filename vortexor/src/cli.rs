@@ -47,11 +47,11 @@ impl Default for DefaultArgs {
 
 fn port_range_validator(port_range: String) -> Result<(), String> {
     if let Some((start, end)) = solana_net_utils::parse_port_range(&port_range) {
-        if end - start < MINIMUM_VALIDATOR_PORT_RANGE_WIDTH {
+        if end.saturating_sub(start) < MINIMUM_VALIDATOR_PORT_RANGE_WIDTH {
             Err(format!(
                 "Port range is too small.  Try --dynamic-port-range {}-{}",
                 start,
-                start + MINIMUM_VALIDATOR_PORT_RANGE_WIDTH
+                start.saturating_add(MINIMUM_VALIDATOR_PORT_RANGE_WIDTH)
             ))
         } else if end.checked_add(QUIC_PORT_OFFSET).is_none() {
             Err("Invalid dynamic_port_range.".to_string())
