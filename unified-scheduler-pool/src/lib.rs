@@ -2010,17 +2010,11 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
         self: Box<Self>,
         _is_dropped: bool,
     ) -> (ResultWithTimings, UninstalledSchedulerBox) {
-        let (id, slot) = (self.id(), self.context.slot());
-        let mode = self.context().mode();
         let (mut result_with_timings, uninstalled_scheduler) = self.into_inner();
         (result_with_timings, Box::new(uninstalled_scheduler))
     }
 
     fn pause_for_recent_blockhash(&mut self) {
-        if matches!(self.context().mode(), SchedulingMode::BlockProduction) {
-            return;
-        }
-
         self.inner.thread_manager.end_session();
     }
 }
