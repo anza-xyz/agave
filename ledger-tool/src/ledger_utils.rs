@@ -310,7 +310,7 @@ pub fn load_and_process_ledger(
     );
     let unified_scheduler_handler_threads =
         value_t!(arg_matches, "unified_scheduler_handler_threads", usize).ok();
-    match block_verification_method {
+    let unified_scheduler_pool = match block_verification_method {
         BlockVerificationMethod::BlockstoreProcessor => {
             info!("no scheduler pool is installed for block verification...");
             if let Some(count) = unified_scheduler_handler_threads {
@@ -319,6 +319,7 @@ pub fn load_and_process_ledger(
                      scheduler isn't enabled"
                 );
             }
+            None
         }
         BlockVerificationMethod::UnifiedScheduler => {
             let no_transaction_status_sender = None;
@@ -338,8 +339,9 @@ pub fn load_and_process_ledger(
                 .write()
                 .unwrap()
                 .install_scheduler_pool(p);
+            Some(p)
         }
-    }
+    };
 
     let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
     let (accounts_package_sender, accounts_package_receiver) = crossbeam_channel::unbounded();
