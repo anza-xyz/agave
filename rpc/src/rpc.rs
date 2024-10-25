@@ -4330,6 +4330,7 @@ pub mod tests {
         jsonrpc_core::{futures, ErrorCode, MetaIoHandler, Output, Response, Value},
         jsonrpc_core_client::transports::local,
         serde::de::DeserializeOwned,
+        solana_accounts_db::accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
         solana_entry::entry::next_versioned_entry,
         solana_gossip::socketaddr,
         solana_ledger::{
@@ -4468,7 +4469,10 @@ pub mod tests {
         fn start_with_config(config: JsonRpcConfig) -> Self {
             let (bank_forks, mint_keypair, leader_vote_keypair) =
                 new_bank_forks_with_config(BankTestConfig {
-                    secondary_indexes: config.account_indexes.clone(),
+                    accounts_db_config: AccountsDbConfig {
+                        account_indexes: Some(config.account_indexes.clone()),
+                        ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+                    },
                 });
 
             let ledger_path = get_tmp_ledger_path!();
