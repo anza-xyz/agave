@@ -23,17 +23,17 @@ pub struct TpuSockets {
 }
 
 pub struct TpuStreamerConfig {
-    tpu_thread_name: &'static str,
-    tpu_metrics_name: &'static str,
-    tpu_fwd_thread_name: &'static str,
-    tpu_fwd_metrics_name: &'static str,
-    max_connections_per_peer: usize,
-    max_staked_connections: usize,
-    max_unstaked_connections: usize,
-    max_streams_per_ms: u64,
-    max_connections_per_ipaddr_per_min: u64,
-    wait_for_chunk_timeout: Duration,
-    sender_coalesce_duration: Duration,
+    pub tpu_thread_name: &'static str,
+    pub tpu_metrics_name: &'static str,
+    pub tpu_fwd_thread_name: &'static str,
+    pub tpu_fwd_metrics_name: &'static str,
+    pub max_connections_per_peer: usize,
+    pub max_staked_connections: usize,
+    pub max_unstaked_connections: usize,
+    pub max_streams_per_ms: u64,
+    pub max_connections_per_ipaddr_per_min: u64,
+    pub wait_for_chunk_timeout: Duration,
+    pub sender_coalesce_duration: Duration,
 }
 
 pub struct Vortexor {

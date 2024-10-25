@@ -2,7 +2,8 @@ use {
     crate::vortexor::{MAX_QUIC_CONNECTIONS_PER_PEER, NUM_QUIC_ENDPOINTS},
     clap::{crate_description, crate_name, App, AppSettings, Arg},
     solana_clap_utils::input_validators::{is_keypair_or_ask_keyword, is_parsable},
-    solana_net_utils::VALIDATOR_PORT_RANGE,
+    solana_net_utils::{MINIMUM_VALIDATOR_PORT_RANGE_WIDTH, VALIDATOR_PORT_RANGE},
+    solana_sdk::quic::QUIC_PORT_OFFSET,
     solana_streamer::{
         nonblocking::quic::{
             DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_STREAMS_PER_MS,
@@ -44,6 +45,24 @@ impl Default for DefaultArgs {
     }
 }
 
+fn port_range_validator(port_range: String) -> Result<(), String> {
+    if let Some((start, end)) = solana_net_utils::parse_port_range(&port_range) {
+        if end - start < MINIMUM_VALIDATOR_PORT_RANGE_WIDTH {
+            Err(format!(
+                "Port range is too small.  Try --dynamic-port-range {}-{}",
+                start,
+                start + MINIMUM_VALIDATOR_PORT_RANGE_WIDTH
+            ))
+        } else if end.checked_add(QUIC_PORT_OFFSET).is_none() {
+            Err("Invalid dynamic_port_range.".to_string())
+        } else {
+            Ok(())
+        }
+    } else {
+        Err("Invalid port range".to_string())
+    }
+}
+
 pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
     return App::new(crate_name!())
         .about(crate_description!())
@@ -62,6 +81,24 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .help("Vortexor identity keypair"),
         )
         .arg(
+            Arg::with_name("bind_address")
+                .long("bind-address")
+                .value_name("HOST")
+                .takes_value(true)
+                .validator(solana_net_utils::is_host)
+                .default_value(&default_args.bind_address)
+                .help("IP address to bind the validator ports"),
+        )
+        .arg(
+            Arg::with_name("dynamic_port_range")
+                .long("dynamic-port-range")
+                .value_name("MIN_PORT-MAX_PORT")
+                .takes_value(true)
+                .default_value(&default_args.dynamic_port_range)
+                .validator(port_range_validator)
+                .help("Range to use for dynamically assigned ports"),
+        )
+        .arg(
             Arg::with_name("max_connections_per_peer")
                 .long("max-connections-per-peer")
                 .takes_value(true)
@@ -74,6 +111,14 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .long("max-tpu-staked-connections")
                 .takes_value(true)
                 .default_value(&default_args.max_tpu_staked_connections)
+                .validator(is_parsable::<u32>)
+                .help("Controls the max concurrent connection per IpAddr."),
+        )
+        .arg(
+            Arg::with_name("max_tpu_unstaked_connections")
+                .long("max-tpu-unstaked-connections")
+                .takes_value(true)
+                .default_value(&default_args.max_tpu_unstaked_connections)
                 .validator(is_parsable::<u32>)
                 .help("Controls the max concurrent connection per IpAddr."),
         )
@@ -94,5 +139,21 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .help("The number of QUIC endpoints used for TPU and TPU-Forward. It can be increased to \
                        increase network ingest throughput, at the expense of higher CPU and general \
                        validator load."),
+        )
+        .arg(
+            Arg::with_name("max_streams_per_ms")
+                .long("max-streams-per-ms")
+                .takes_value(true)
+                .default_value(&default_args.max_streams_per_ms)
+                .validator(is_parsable::<usize>)
+                .help("Max streams per second for a streamer."),
+        )
+        .arg(
+            Arg::with_name("tpu_coalesce_ms")
+                .long("tpu-coalesce-ms")
+                .value_name("MILLISECS")
+                .takes_value(true)
+                .validator(is_parsable::<u64>)
+                .help("Milliseconds to wait in the TPU receiver for packet coalescing."),
         );
 }

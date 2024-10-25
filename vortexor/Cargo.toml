@@ -41,6 +41,8 @@ solana-perf = { workspace = true }
 solana-sdk = { workspace = true }
 solana-streamer = { workspace = true }
 solana-transaction-metrics-tracker = { workspace = true }
+solana-version = { workspace = true }
+
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 x509-parser = { workspace = true }
