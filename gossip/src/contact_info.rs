@@ -36,8 +36,10 @@ const SOCKET_TAG_TPU_QUIC: u8 = 8;
 const SOCKET_TAG_TPU_VOTE: u8 = 9;
 const SOCKET_TAG_TVU: u8 = 10;
 const SOCKET_TAG_TVU_QUIC: u8 = 11;
-const_assert_eq!(SOCKET_CACHE_SIZE, 12);
-const SOCKET_CACHE_SIZE: usize = SOCKET_TAG_TVU_QUIC as usize + 1usize;
+const SOCKET_TAG_TPU_VOTE_QUIC: u8 = 12;
+
+const_assert_eq!(SOCKET_CACHE_SIZE, 13);
+const SOCKET_CACHE_SIZE: usize = SOCKET_TAG_TPU_VOTE_QUIC as usize + 1usize;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -257,6 +259,7 @@ impl ContactInfo {
     set_socket!(set_tpu_vote, SOCKET_TAG_TPU_VOTE);
     set_socket!(set_tvu, SOCKET_TAG_TVU);
     set_socket!(set_tvu_quic, SOCKET_TAG_TVU_QUIC);
+    set_socket!(set_tpu_vote_quic, SOCKET_TAG_TPU_VOTE_QUIC);
 
     remove_socket!(
         remove_serve_repair,
@@ -270,6 +273,12 @@ impl ContactInfo {
         SOCKET_TAG_TPU_FORWARDS_QUIC
     );
     remove_socket!(remove_tvu, SOCKET_TAG_TVU, SOCKET_TAG_TVU_QUIC);
+
+    remove_socket!(
+        remove_tpu_vote,
+        SOCKET_TAG_TPU_VOTE,
+        SOCKET_TAG_TPU_VOTE_QUIC
+    );
 
     #[cfg(test)]
     fn get_socket(&self, key: u8) -> Result<SocketAddr, Error> {
