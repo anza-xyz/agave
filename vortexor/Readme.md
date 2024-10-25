@@ -41,5 +41,3 @@ It has the following major components:
 4. VerifiedPacketForwarder -- This is responsible for forwarding the verified transaction packets
    to the subscribed validators. We target use UDP/QUIC to send transactions to the validators
    The validators can use firewall rules to allow transactions from the vortexor.
-
-
