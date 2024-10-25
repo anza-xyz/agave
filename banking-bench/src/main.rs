@@ -647,7 +647,7 @@ fn main() {
                 .unwrap()
                 .set_limits(u64::MAX, u64::MAX, u64::MAX);
 
-            assert!(recorder_p.bank().is_none());
+            assert!(poh_recorder_write.bank().is_none());
             recorder_p.set_bank_for_test(bank.clone());
             debug!(
                 "new_bank_time: {}us insert_time: {}us poh_time: {}us",
@@ -655,7 +655,7 @@ fn main() {
                 insert_time.as_us(),
                 poh_time.as_us(),
             );
-            assert!(recorder_p.bank().is_some());
+            assert!(poh_recorder_write.bank().is_some());
         } else {
             info!(
                 "[iteration {}, tx sent {}, slot {} active, bank tx count {}]",
