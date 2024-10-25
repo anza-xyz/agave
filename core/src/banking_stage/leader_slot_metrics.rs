@@ -535,7 +535,7 @@ impl LeaderSlotMetrics {
         }
     }
 
-    pub(crate) fn report2(&mut self) {
+    pub(crate) fn report(&mut self) {
         self.is_reported = true;
 
         self.timing_metrics.report(&self.id, self.slot);
@@ -599,7 +599,7 @@ pub struct LeaderSlotMetricsTracker {
     // Only `Some` if BankingStage detects it's time to construct our leader slot,
     // otherwise `None`
     leader_slot_metrics: Option<LeaderSlotMetrics>,
-    pub id: u32,
+    id: u32,
 }
 
 impl LeaderSlotMetricsTracker {
@@ -651,13 +651,13 @@ impl LeaderSlotMetricsTracker {
         }
     }
 
-    pub(crate) fn apply_action2(&mut self, action: MetricsTrackerAction) -> Option<Slot> {
+    pub(crate) fn apply_action(&mut self, action: MetricsTrackerAction) -> Option<Slot> {
         match action {
             MetricsTrackerAction::Noop => None,
             MetricsTrackerAction::ReportAndResetTracker => {
                 let mut reported_slot = None;
                 if let Some(leader_slot_metrics) = self.leader_slot_metrics.as_mut() {
-                    leader_slot_metrics.report2();
+                    leader_slot_metrics.report();
                     reported_slot = leader_slot_metrics.reported_slot();
                 }
                 self.leader_slot_metrics = None;
@@ -670,7 +670,7 @@ impl LeaderSlotMetricsTracker {
             MetricsTrackerAction::ReportAndNewTracker(new_slot_metrics) => {
                 let mut reported_slot = None;
                 if let Some(leader_slot_metrics) = self.leader_slot_metrics.as_mut() {
-                    leader_slot_metrics.report2();
+                    leader_slot_metrics.report();
                     reported_slot = leader_slot_metrics.reported_slot();
                 }
                 self.leader_slot_metrics = new_slot_metrics;
