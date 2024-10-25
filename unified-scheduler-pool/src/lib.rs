@@ -1969,16 +1969,6 @@ pub struct BlockProducingUnifiedScheduler {
     new_task_sender: Sender<CompactNewTaskPayload>,
 }
 
-use solana_runtime::installed_scheduler_pool::BlockProducingScheduler;
-impl BlockProducingScheduler for BlockProducingUnifiedScheduler {
-    fn schedule_execution(
-        &self,
-        transaction_with_index: &(&SanitizedTransaction, Index),
-    ) -> ScheduleResult {
-        send_task(&self.usage_queue_loader, &self.new_task_sender, transaction_with_index)
-    }
-}
-
 impl BlockProducingUnifiedScheduler {
     pub fn create_task(
         &self,

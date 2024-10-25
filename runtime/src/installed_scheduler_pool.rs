@@ -213,13 +213,6 @@ pub trait InstalledScheduler: Send + Sync + Debug + 'static {
     fn pause_for_recent_blockhash(&mut self);
 }
 
-pub trait BlockProducingScheduler: Send + Sync + Debug + 'static {
-    fn schedule_execution<'a>(
-        &'a self,
-        transaction_with_index: &'a (&'a SanitizedTransaction, Index),
-    ) -> ScheduleResult;
-}
-
 #[cfg_attr(feature = "dev-context-only-utils", automock)]
 pub trait UninstalledScheduler: Send + Sync + Debug + 'static {
     fn return_to_pool(self: Box<Self>);
