@@ -485,9 +485,8 @@ impl BankWithScheduler {
         transactions_with_indexes: impl ExactSizeIterator<Item = (&'a SanitizedTransaction, &'a Index)>,
     ) -> Result<()> {
         trace!(
-            "schedule_transaction_executions(): {} txs slot: {}",
-            transactions_with_indexes.len(),
-            self.inner.bank.slot(),
+            "schedule_transaction_executions(): {} txs",
+            transactions_with_indexes.len()
         );
 
         let schedule_result: ScheduleResult = self.inner.with_active_scheduler(|scheduler| {
@@ -497,7 +496,7 @@ impl BankWithScheduler {
             Ok(())
         });
 
-        if let Err(SchedulerError::Aborted) = schedule_result {
+        if schedule_result.is_err() {
             // This write lock isn't atomic with the above the read lock. So, another thread
             // could have called .recover_error_after_abort() while we're literally stuck at
             // the gaps of these locks (i.e. this comment in source code wise) under extreme
@@ -506,10 +505,6 @@ impl BankWithScheduler {
             //
             // Lastly, this non-atomic nature is intentional for optimizing the fast code-path
             return Err(self.inner.retrieve_error_after_schedule_failure());
-        }
-        if let Err(SchedulerError::Terminated) = schedule_result {
-            panic!();
-            return Err(TransactionError::CommitFailed);
         }
 
         Ok(())
@@ -561,7 +556,6 @@ impl BankWithSchedulerInner {
         let scheduler = self.scheduler.read().unwrap();
         match &*scheduler {
             SchedulerStatus::Active(scheduler) => {
-                trace!("entering the fast path slot: {}", self.bank.slot());
                 // This is the fast path, needing single read-lock most of time.
                 f(scheduler)
             }
@@ -570,7 +564,7 @@ impl BankWithSchedulerInner {
                     "with_active_scheduler: bank (slot: {}) has a stale aborted scheduler...",
                     self.bank.slot(),
                 );
-                Err(SchedulerError::Aborted)
+                Err(SchedulerAborted)
             }
             SchedulerStatus::Stale(pool, mode, _result_with_timings) => {
                 let mode = *mode;
@@ -599,10 +593,7 @@ impl BankWithSchedulerInner {
                 pool.register_timeout_listener(self.do_create_timeout_listener());
                 f(scheduler.active_scheduler())
             }
-            SchedulerStatus::Unavailable => {
-                trace!("no installed scheduler: slot: {}", self.bank.slot());
-                Err(SchedulerError::Terminated)
-            }
+            SchedulerStatus::Unavailable => unreachable!("no installed scheduler"),
         }
     }
 
