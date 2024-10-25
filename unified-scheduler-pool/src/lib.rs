@@ -1688,7 +1688,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         let Some(new_task_sender) = new_task_sender.upgrade() else {
                             info!("dead new_task_sender");
                             break;
-                        }
+                        };
                         for task in tasks {
                             new_task_sender
                                 .send(NewTaskPayload::Payload(task).into())
