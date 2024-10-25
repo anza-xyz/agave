@@ -265,9 +265,6 @@ impl PohService {
 
                     timing.total_send_record_result_us += send_record_result_us;
                     timing.num_hashes += 1; // note: may have also ticked inside record
-                    if record_time.elapsed().as_millis() > 10 {
-                        break;
-                    }
                     if let Ok(new_record) = record_receiver.try_recv() {
                         // we already have second request to record, so record again while we still have the mutex
                         record = new_record;

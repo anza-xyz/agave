@@ -378,11 +378,7 @@ fn main() {
     let (replay_vote_sender, _replay_vote_receiver) = unbounded();
     let bank0 = Bank::new_for_benches(&genesis_config);
     let bank_forks = BankForks::new_rw_arc(bank0);
-    let mut bank = bank_forks
-        .read()
-        .unwrap()
-        .working_bank_with_scheduler()
-        .clone_with_scheduler();
+    let mut bank = bank_forks.read().unwrap().working_bank();
 
     // set cost tracker limits to MAX so it will not filter out TXs
     bank.write_cost_tracker()
@@ -560,8 +556,7 @@ fn main() {
         bank = bank_forks
             .read()
             .unwrap()
-            .working_bank_with_scheduler()
-            .clone_with_scheduler();
+            .working_bank()
     }
 
     // This is so that the signal_receiver does not go out of scope after the closure.
@@ -617,7 +612,7 @@ fn main() {
             &dummy_receiver,
             use_dummy,
         ) {
-            info!(
+            eprintln!(
                 "[iteration {}, tx sent {}, slot {} expired, bank tx count {}]",
                 current_iteration_index,
                 sent,
@@ -642,16 +637,12 @@ fn main() {
             new_bank_time.stop();
 
             let mut insert_time = Measure::start("insert_time");
-            let mut p = poh_recorder.write().unwrap();
+            let mut poh_recorder_write = poh_recorder.write().unwrap();
             bank_forks
                 .write()
                 .unwrap()
                 .insert(SchedulingMode::BlockProduction, new_bank);
-            bank = bank_forks
-                .read()
-                .unwrap()
-                .working_bank_with_scheduler()
-                .clone_with_scheduler();
+            bank = bank_forks.read().unwrap().working_bank();
             insert_time.stop();
 
             // set cost tracker limits to MAX so it will not filter out TXs
@@ -659,17 +650,15 @@ fn main() {
                 .unwrap()
                 .set_limits(u64::MAX, u64::MAX, u64::MAX);
 
-            assert!(p.bank().is_none());
-            p.set_bank(bank.clone_with_scheduler(), false);
+            assert!(recorder_p.bank().is_none());
+            recorder_p.set_bank_for_test(bank.clone());
             debug!(
-                "new_bank_time ({} => {}): {}us insert_time: {}us poh_time: {}us",
-                new_slot - 1,
-                new_slot,
+                "new_bank_time: {}us insert_time: {}us poh_time: {}us",
                 new_bank_time.as_us(),
                 insert_time.as_us(),
                 poh_time.as_us(),
             );
-            //assert!(p.bank().is_some());
+            assert!(recorder_p.bank().is_some());
         } else {
             info!(
                 "[iteration {}, tx sent {}, slot {} active, bank tx count {}]",
