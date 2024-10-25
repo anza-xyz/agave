@@ -1934,7 +1934,6 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
         BlockProducingUnifiedScheduler {
             usage_queue_loader: self.inner.usage_queue_loader.clone(),
             deduper: DashSet::with_capacity(1_000_000),
-            new_task_sender: self.inner.thread_manager.new_task_sender.clone(),
         }
     }
 }
@@ -1943,7 +1942,6 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
 pub struct BlockProducingUnifiedScheduler {
     usage_queue_loader: Arc<UsageQueueLoader>,
     deduper: DashSet<Hash>,
-    new_task_sender: Sender<CompactNewTaskPayload>,
 }
 
 impl BlockProducingUnifiedScheduler {
