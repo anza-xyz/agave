@@ -2,7 +2,7 @@ use {
     clap::{value_t, value_t_or_exit},
     crossbeam_channel::unbounded,
     solana_clap_utils::input_parsers::keypair_of,
-    solana_net_utils::{bind_in_range_with_config, bind_more_with_config, PortRange, SocketConfig},
+    solana_net_utils::{bind_in_range_with_config, bind_more_with_config, SocketConfig},
     solana_sdk::net::DEFAULT_TPU_COALESCE,
     solana_streamer::{nonblocking::quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT, streamer::StakedNodes},
     solana_vortexor::{
@@ -10,24 +10,10 @@ use {
         vortexor::{TpuSockets, TpuStreamerConfig, Vortexor},
     },
     std::{
-        net::{IpAddr, UdpSocket},
         sync::{atomic::AtomicBool, Arc, RwLock},
         time::Duration,
     },
 };
-
-fn bind(bind_ip_addr: IpAddr, port_range: PortRange) -> (u16, UdpSocket) {
-    let config = SocketConfig { reuseport: false };
-    bind_with_config(bind_ip_addr, port_range, config)
-}
-
-fn bind_with_config(
-    bind_ip_addr: IpAddr,
-    port_range: PortRange,
-    config: SocketConfig,
-) -> (u16, UdpSocket) {
-    bind_in_range_with_config(bind_ip_addr, port_range, config).expect("Failed to bind")
-}
 
 pub fn main() {
     let default_args = DefaultArgs::default();
@@ -79,7 +65,9 @@ pub fn main() {
 
     let quic_config = SocketConfig { reuseport: true };
 
-    let (_, tpu_quic) = bind(bind_address, dynamic_port_range);
+    let (_, tpu_quic) =
+        bind_in_range_with_config(bind_address, dynamic_port_range, quic_config.clone())
+            .expect("expected bind to succeed");
 
     let tpu_quic = bind_more_with_config(
         tpu_quic,
@@ -88,7 +76,9 @@ pub fn main() {
     )
     .unwrap();
 
-    let (_, tpu_quic_fwd) = bind(bind_address, dynamic_port_range);
+    let (_, tpu_quic_fwd) =
+        bind_in_range_with_config(bind_address, dynamic_port_range, quic_config.clone())
+            .expect("expected bind to succeed");
 
     let tpu_quic_fwd = bind_more_with_config(
         tpu_quic_fwd,
