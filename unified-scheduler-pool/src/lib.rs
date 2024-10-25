@@ -26,7 +26,7 @@ use {
         installed_scheduler_pool::{
             initialized_result_with_timings, InstalledScheduler, InstalledSchedulerBox,
             InstalledSchedulerPool, InstalledSchedulerPoolArc, ResultWithTimings, ScheduleResult,
-            SchedulerError, SchedulerId, SchedulingContext, TimeoutListener, UninstalledScheduler,
+            SchedulerAborted, SchedulerId, SchedulingContext, TimeoutListener, UninstalledScheduler,
             UninstalledSchedulerBox,
         },
         prioritization_fee_cache::PrioritizationFeeCache,
@@ -2007,7 +2007,7 @@ fn send_task(
     debug!("send_task()");
     new_task_sender
         .send(NewTaskPayload::Payload(task).into())
-        .map_err(|_| SchedulerError::Aborted)
+        .map_err(|_| SchedulerAborted)
 }
 
 impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
