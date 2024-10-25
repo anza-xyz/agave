@@ -645,7 +645,7 @@ fn main() {
                 poh_time.as_us(),
             );
         } else {
-            info!(
+            eprintln!(
                 "[iteration {}, tx sent {}, slot {} active, bank tx count {}]",
                 current_iteration_index,
                 sent,
