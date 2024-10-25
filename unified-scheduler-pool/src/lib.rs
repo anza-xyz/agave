@@ -1568,9 +1568,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
                     // Prepare for the new session.
                     loop {
-                    select! {
-                        recv(new_task_receiver) -> a => {
-                            match a.map(|a| a.into()) {
+                            match new_task_receiver.recv().map(|a| a.into()) {
                                 Ok(NewTaskPayload::OpenSubchannel(context_and_result_with_timings)) => {
                                     let (new_context, new_result_with_timings) =
                                         *context_and_result_with_timings;
@@ -1626,9 +1624,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 }
                                 Ok(_) => unreachable!(),
                             }
-                        },
-                    }
-                    }
                 }
 
                 // There are several code-path reaching here out of the preceding unconditional
