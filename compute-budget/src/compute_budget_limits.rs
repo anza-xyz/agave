@@ -39,20 +39,26 @@ impl Default for ComputeBudgetLimits {
         }
     }
 }
+
+//#[cfg(test)]
+pub fn get_prioritization_fee_for_test(compute_unit_price: u64, compute_unit_limit: u64) -> u64 {
+    get_prioritization_fee(compute_unit_price, compute_unit_limit)
+}
+
 fn get_prioritization_fee(compute_unit_price: u64, compute_unit_limit: u64) -> u64 {
     let micro_lamport_fee: MicroLamports =
         (compute_unit_price as u128).saturating_mul(compute_unit_limit as u128);
-    let fee = micro_lamport_fee
+    micro_lamport_fee
         .saturating_add(MICRO_LAMPORTS_PER_LAMPORT.saturating_sub(1) as u128)
         .checked_div(MICRO_LAMPORTS_PER_LAMPORT as u128)
         .and_then(|fee| u64::try_from(fee).ok())
-        .unwrap_or(u64::MAX);
-    fee
+        .unwrap_or(u64::MAX)
 }
 
 impl From<ComputeBudgetLimits> for FeeBudgetLimits {
     fn from(val: ComputeBudgetLimits) -> Self {
-        let prioritization_fee = get_prioritization_fee(val.compute_unit_price, u64::from(val.compute_unit_limit));
+        let prioritization_fee =
+            get_prioritization_fee(val.compute_unit_price, u64::from(val.compute_unit_limit));
 
         FeeBudgetLimits {
             loaded_accounts_data_size_limit: val.loaded_accounts_bytes,
@@ -92,7 +98,10 @@ mod test {
 
         assert_eq!(get_prioritization_fee(200, 100_000), 20);
 
-        assert_eq!(get_prioritization_fee(MICRO_LAMPORTS_PER_LAMPORT, u64::MAX), u64::MAX);
+        assert_eq!(
+            get_prioritization_fee(MICRO_LAMPORTS_PER_LAMPORT, u64::MAX),
+            u64::MAX
+        );
 
         assert_eq!(get_prioritization_fee(u64::MAX, u64::MAX), u64::MAX);
     }
