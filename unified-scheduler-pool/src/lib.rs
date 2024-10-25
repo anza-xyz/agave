@@ -978,7 +978,7 @@ where
 struct ThreadManager<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     scheduler_id: SchedulerId,
     pool: Arc<SchedulerPool<S, TH>>,
-    new_task_sender: Sender<CompactNewTaskPayload>,
+    new_task_sender: Arc<Sender<CompactNewTaskPayload>>,
     new_task_receiver: Option<Receiver<CompactNewTaskPayload>>,
     session_result_sender: Sender<ResultWithTimings>,
     session_result_receiver: Receiver<ResultWithTimings>,
