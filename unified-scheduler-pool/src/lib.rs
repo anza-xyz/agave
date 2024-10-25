@@ -1473,14 +1473,9 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                                 "ending"
                                             },
                                             SchedulingMode::BlockProduction => {
-                                                if !session_pausing {
-                                                    if slot != 282254387 {
-                                                        session_pausing = true;
-                                                        "pausing"
-                                                    } else {
-                                                        session_ending = true;
-                                                        "ending"
-                                                    }
+                                                if !session_pausing && !context.can_commit() {
+                                                    session_pausing = true;
+                                                    "pausing"
                                                 } else {
                                                     "close_subch"
                                                 }
@@ -2018,16 +2013,6 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
         let (id, slot) = (self.id(), self.context.slot());
         let mode = self.context().mode();
         let (mut result_with_timings, uninstalled_scheduler) = self.into_inner();
-        if matches!(
-            (mode, &mut result_with_timings),
-            (
-                SchedulingMode::BlockProduction,
-                (Err(TransactionError::CommitFailed), _)
-            )
-        ) {
-            info!("clearing commit failed for tpu bank on wait_for_termination... {id}, {slot} {:?}", std::thread::current());
-            result_with_timings.0 = Ok(());
-        }
         (result_with_timings, Box::new(uninstalled_scheduler))
     }
 
