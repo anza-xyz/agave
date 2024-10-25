@@ -1705,15 +1705,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             //    `select_biased!`, which are sent from `.send_chained_channel()` in the scheduler
             //    thread for all-but-initial sessions.
             move || loop {
-                let mut session_ending = false;
-
                 let (task, sender) = select_biased! {
                     recv(runnable_task_receiver.for_select()) -> message => {
                         let Ok(message) = message else {
                             break;
                         };
                         if let Some(task) = runnable_task_receiver.after_select(message.into()) {
-                            session_ending = true;
                             (task, &finished_blocked_task_sender)
                         } else {
                             continue;
@@ -1726,9 +1723,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         };
                         let tasks = on_recv.as_mut().unwrap()((banking_packet));
                         for task in tasks {
-                            if session_ending {
-                                continue;
-                            }
                             new_task_sender
                                 .send(NewTaskPayload::Payload(task).into())
                                 .unwrap();
