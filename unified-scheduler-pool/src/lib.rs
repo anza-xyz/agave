@@ -1759,7 +1759,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
     fn send_task(&self, task: Task) -> ScheduleResult {
         debug!("send_task()");
         self.new_task_sender
-            .send(NewTaskPayload::Payload(task))
+            .send(NewTaskPayload::Payload(task).into())
             .map_err(|_| SchedulerAborted)
     }
 
