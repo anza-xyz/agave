@@ -147,11 +147,7 @@ fn make_accounts_txs(
                 mint_txs_percentage,
             );
             // simulated mint transactions have higher compute-unit-price
-            let compute_unit_price = if is_simulated_mint {
-                thread_rng().gen_range(5..5_000_000)
-            } else {
-                1
-            };
+            let compute_unit_price = if is_simulated_mint { 5 } else { 1 };
             let mut new = make_transfer_transaction_with_compute_unit_price(
                 &payer_key,
                 &to_pubkey,
@@ -199,18 +195,11 @@ fn make_transfer_transaction_with_compute_unit_price(
     compute_unit_price: u64,
 ) -> Transaction {
     let from_pubkey = from_keypair.pubkey();
-    let mut instructions = vec![
+    let instructions = vec![
         system_instruction::transfer(&from_pubkey, to, lamports),
         ComputeBudgetInstruction::set_compute_unit_price(compute_unit_price),
         ComputeBudgetInstruction::set_compute_unit_limit(TRANSFER_TRANSACTION_COST),
     ];
-    use solana_sdk::instruction::AccountMeta;
-    /*
-    for _ in 0..20 {
-        instructions[0].accounts.push(AccountMeta::new(pubkey::new_rand(), false));
-    }
-    */
-    instructions[0].accounts.push(AccountMeta::new(Pubkey::new_from_array([3; 32]), false));
     let message = Message::new(&instructions, Some(&from_pubkey));
     Transaction::new(&[from_keypair], message, recent_blockhash)
 }
