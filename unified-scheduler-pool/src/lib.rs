@@ -1756,6 +1756,13 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             .collect();
     }
 
+    fn send_task(&self, task: Task) -> ScheduleResult {
+        debug!("send_task()");
+        self.new_task_sender
+            .send(NewTaskPayload::Payload(task))
+            .map_err(|_| SchedulerAborted)
+    }
+
     fn ensure_join_threads(&mut self, should_receive_session_result: bool) {
         trace!("ensure_join_threads() is called");
 
@@ -1965,19 +1972,6 @@ impl BlockProducingUnifiedScheduler {
     }
 }
 
-fn send_task(
-    usage_queue_loader: &UsageQueueLoader,
-    new_task_sender: &Sender<CompactNewTaskPayload>,
-    &(transaction, index): &(&SanitizedTransaction, Index),
-) -> ScheduleResult {
-    let task = SchedulingStateMachine::create_task(transaction.clone(), index, &mut |pubkey| {
-        usage_queue_loader.load(pubkey)
-    });
-    new_task_sender
-        .send(NewTaskPayload::Payload(task).into())
-        .map_err(|_| SchedulerAborted)
-}
-
 impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
     fn id(&self) -> SchedulerId {
         self.inner.id()
@@ -1992,6 +1986,10 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
         transaction_with_index: &(&SanitizedTransaction, Index),
     ) -> ScheduleResult {
         send_task(&self.inner.usage_queue_loader, &self.inner.thread_manager.new_task_sender, transaction_with_index)
+        let task = SchedulingStateMachine::create_task(transaction.clone(), index, &mut |pubkey| {
+            self.inner.usage_queue_loader.load(pubkey)
+        });
+        self.inner.thread_manager.send_task(task)
     }
 
     fn recover_error_after_abort(&mut self) -> TransactionError {
