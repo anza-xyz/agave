@@ -648,7 +648,7 @@ fn main() {
                 .set_limits(u64::MAX, u64::MAX, u64::MAX);
 
             assert!(poh_recorder_write.bank().is_none());
-            recorder_p.set_bank_for_test(bank.clone());
+            poh_recorder_write.set_bank_for_test(bank.clone());
             debug!(
                 "new_bank_time: {}us insert_time: {}us poh_time: {}us",
                 new_bank_time.as_us(),
