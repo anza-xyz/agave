@@ -540,8 +540,7 @@ fn network_run_pull(
                 let rsp: Vec<_> = network
                     .get(&to)
                     .map(|node| {
-                        let rsp = node
-                            .gossip
+                        node.gossip
                             .generate_pull_responses(
                                 thread_pool,
                                 &filters,
@@ -551,12 +550,7 @@ fn network_run_pull(
                             )
                             .into_iter()
                             .flatten()
-                            .collect();
-                        node.gossip.process_pull_requests(
-                            filters.into_iter().map(|(caller, _)| caller),
-                            now,
-                        );
-                        rsp
+                            .collect()
                     })
                     .unwrap();
                 bytes += serialized_size(&rsp).unwrap() as usize;
