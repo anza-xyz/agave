@@ -6658,7 +6658,7 @@ pub mod tests {
             EpochSchedule::custom(TEST_SLOTS_PER_EPOCH, TEST_SLOTS_PER_EPOCH, false);
         genesis_config.fee_rate_governor = FeeRateGovernor::new(TEST_SIGNATURE_FEE, 0);
 
-        let bank = Bank::new_for_tests_with_config(&genesis_config, config);
+        let bank = Bank::new_with_config_for_tests(&genesis_config, config);
         (
             BankForks::new_rw_arc(bank),
             mint_keypair,

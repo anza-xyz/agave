@@ -7037,14 +7037,6 @@ impl Bank {
         bank.wrap_with_bank_forks_for_tests()
     }
 
-    // TODO: either this or new_with_config_for_tests likely redundant
-    pub fn new_for_tests_with_config(
-        genesis_config: &GenesisConfig,
-        test_config: BankTestConfig,
-    ) -> Self {
-        Self::new_with_config_for_tests(genesis_config, test_config)
-    }
-
     pub fn new_no_wallclock_throttle_for_tests(
         genesis_config: &GenesisConfig,
     ) -> (Arc<Self>, Arc<RwLock<BankForks>>) {
@@ -7054,7 +7046,7 @@ impl Bank {
         bank.wrap_with_bank_forks_for_tests()
     }
 
-    pub(crate) fn new_with_config_for_tests(
+    pub fn new_with_config_for_tests(
         genesis_config: &GenesisConfig,
         test_config: BankTestConfig,
     ) -> Self {
