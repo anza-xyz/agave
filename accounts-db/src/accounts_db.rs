@@ -3765,7 +3765,19 @@ impl AccountsDb {
 
     /// This function handles the case when zero lamport single ref accounts are found during shrink.
     pub(crate) fn zero_lamport_single_ref_found(&self, slot: Slot, offset: usize) {
-        if let Some(store) = self.storage.get_slot_storage_entry(slot) {
+        // This function can be called when a zero lamport single ref account is
+        // found during shrink. Therefore, we can't use the safe version of
+        // `get_slot_storage_entry` because shrink_in_progress map may not be
+        // empty. We have to use the unsafe version to avoid to assert failure.
+        // However, there is a possibility that the storage entry that we get is
+        // an old one, which is being shrunk away, because multiple slots can be
+        // shrunk away in parallel by thread pool. If this happens, any zero
+        // lamport single ref offset marked on the storage will be lost when the
+        // storage is dropped. However, this is not a problem, because after the
+        // storage being shrunk, the new storage will not have any zero lamport
+        // single ref account anyway. Therefore, we don't need to worry about
+        // marking zero lamport single ref offset on the new storage.
+        if let Some(store) = self.storage.get_slot_storage_entry_no_check(slot) {
             if store.insert_zero_lamport_single_ref_account_offset(offset) {
                 // this wasn't previously marked as zero lamport single ref
                 self.shrink_stats
