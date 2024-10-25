@@ -1601,13 +1601,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 result_with_timings = new_result_with_timings;
                                 break;
                             }
-                            Err(_) => {
-                                // This unusual condition must be triggered by ThreadManager::drop().
-                                // Initialize result_with_timings with a harmless value...
-                                result_with_timings = initialized_result_with_timings();
-                                session_ending = false;
-                                session_pausing = false;
-                                break 'nonaborted_main_loop;
+                            Ok(NewTaskPayload::CloseSubchannel(_)) if matches!(state_machine.mode(), SchedulingMode::BlockProduction) => {
+                                info!("ignoring duplicate CloseSubchannel...");
                             }
                             Ok(NewTaskPayload::Payload(task)) if matches!(state_machine.mode(), SchedulingMode::BlockProduction) => {
                                 assert!(state_machine.do_schedule_task(task, true).is_none());
@@ -1617,8 +1612,13 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     log_scheduler!(trace, "rebuffer");
                                 }
                             }
-                            Ok(NewTaskPayload::CloseSubchannel(_)) if matches!(state_machine.mode(), SchedulingMode::BlockProduction) => {
-                                info!("ignoring duplicate CloseSubchannel...");
+                            Err(_) => {
+                                // This unusual condition must be triggered by ThreadManager::drop().
+                                // Initialize result_with_timings with a harmless value...
+                                result_with_timings = initialized_result_with_timings();
+                                session_ending = false;
+                                session_pausing = false;
+                                break 'nonaborted_main_loop;
                             }
                             Ok(_) => unreachable!(),
                         }
