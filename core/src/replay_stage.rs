@@ -18,7 +18,6 @@ use {
             BlockhashStatus, ComputedBankState, Stake, SwitchForkDecision, Tower, TowerError,
             VotedStakes, SWITCH_FORK_THRESHOLD,
         },
-        cost_update_service::CostUpdate,
         repair::{
             ancestor_hashes_service::AncestorHashesReplayUpdateSender,
             cluster_slot_state_verifier::*,
@@ -27,7 +26,6 @@ use {
                 AncestorDuplicateSlotsReceiver, DumpedSlotsSender, PopularPrunedForksReceiver,
             },
         },
-        rewards_recorder_service::{RewardsMessage, RewardsRecorderSender},
         unfrozen_gossip_verified_vote_hashes::UnfrozenGossipVerifiedVoteHashes,
         voting_service::VoteOp,
         window_service::DuplicateSlotReceiver,
@@ -36,14 +34,13 @@ use {
     rayon::{prelude::*, ThreadPool},
     solana_accounts_db::contains::Contains,
     solana_entry::entry::VerifyRecyclers,
-    solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierArc,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         block_error::BlockError,
         blockstore::Blockstore,
         blockstore_processor::{
             self, BlockstoreProcessorError, ConfirmationProgress, ExecuteBatchesInternalMetrics,
-            ReplaySlotStats, TransactionStatusSender,
+            ReplaySlotStats,
         },
         entry_notifier_service::EntryNotifierSender,
         leader_schedule_cache::LeaderScheduleCache,
@@ -254,8 +251,6 @@ pub struct ReplayStageConfig {
     pub leader_schedule_cache: Arc<LeaderScheduleCache>,
     pub accounts_background_request_sender: AbsRequestSender,
     pub block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
-    pub transaction_status_sender: Option<TransactionStatusSender>,
-    pub rewards_recorder_sender: Option<RewardsRecorderSender>,
     pub cache_block_meta_sender: Option<CacheBlockMetaSender>,
     pub entry_notification_sender: Option<EntryNotifierSender>,
     pub bank_notification_sender: Option<BankNotificationSenderConfig>,
@@ -522,15 +517,14 @@ impl ReplayStage {
         duplicate_confirmed_slots_receiver: DuplicateConfirmedSlotsReceiver,
         gossip_verified_vote_hash_receiver: GossipVerifiedVoteHashReceiver,
         cluster_slots_update_sender: ClusterSlotsUpdateSender,
-        cost_update_sender: Sender<CostUpdate>,
         voting_sender: Sender<VoteOp>,
         drop_bank_sender: Sender<Vec<BankWithScheduler>>,
-        block_metadata_notifier: Option<BlockMetadataNotifierArc>,
         log_messages_bytes_limit: Option<usize>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
         dumped_slots_sender: DumpedSlotsSender,
         banking_tracer: Arc<BankingTracer>,
         popular_pruned_forks_receiver: PopularPrunedForksReceiver,
+        replay_signal_sender: Sender<bool>,
     ) -> Result<Self, String> {
         let ReplayStageConfig {
             vote_account,
@@ -540,8 +534,6 @@ impl ReplayStage {
             leader_schedule_cache,
             accounts_background_request_sender,
             block_commitment_cache,
-            transaction_status_sender,
-            rewards_recorder_sender,
             cache_block_meta_sender,
             entry_notification_sender,
             bank_notification_sender,
@@ -686,14 +678,11 @@ impl ReplayStage {
                     &my_pubkey,
                     &vote_account,
                     &mut progress,
-                    transaction_status_sender.as_ref(),
                     cache_block_meta_sender.as_ref(),
                     entry_notification_sender.as_ref(),
                     &verify_recyclers,
                     &mut heaviest_subtree_fork_choice,
                     &replay_vote_sender,
-                    &bank_notification_sender,
-                    &rewards_recorder_sender,
                     &rpc_subscriptions,
                     &mut duplicate_slots_tracker,
                     &duplicate_confirmed_slots,
@@ -701,10 +690,8 @@ impl ReplayStage {
                     &mut unfrozen_gossip_verified_vote_hashes,
                     &mut latest_validator_votes_for_frozen_banks,
                     &cluster_slots_update_sender,
-                    &cost_update_sender,
                     &mut duplicate_slots_to_repair,
                     &ancestor_hashes_replay_update_sender,
-                    block_metadata_notifier.clone(),
                     &mut replay_timing,
                     log_messages_bytes_limit,
                     &replay_mode,
@@ -713,6 +700,11 @@ impl ReplayStage {
                     &mut purge_repair_slot_counter,
                 );
                 replay_active_banks_time.stop();
+                if did_complete_bank {
+                    if let Err(e) = replay_signal_sender.send(true) {
+                        error!("replay_signal_sender.send failed: {:?}", e);
+                    }
+                }
 
                 let forks_root = bank_forks.read().unwrap().root();
 
@@ -1127,7 +1119,7 @@ impl ReplayStage {
                         &mut skipped_slots_info,
                         &banking_tracer,
                         has_new_vote_been_rooted,
-                        transaction_status_sender.is_some(),
+                        true,
                     );
 
                     let poh_bank = poh_recorder.read().unwrap().bank();
@@ -2206,7 +2198,6 @@ impl ReplayStage {
         replay_tx_thread_pool: &ThreadPool,
         replay_stats: &RwLock<ReplaySlotStats>,
         replay_progress: &RwLock<ConfirmationProgress>,
-        transaction_status_sender: Option<&TransactionStatusSender>,
         entry_notification_sender: Option<&EntryNotifierSender>,
         replay_vote_sender: &ReplayVoteSender,
         verify_recyclers: &VerifyRecyclers,
@@ -2226,13 +2217,14 @@ impl ReplayStage {
             &mut w_replay_stats,
             &mut w_replay_progress,
             false,
-            transaction_status_sender,
+            None,
             entry_notification_sender,
             Some(replay_vote_sender),
             verify_recyclers,
             false,
             log_messages_bytes_limit,
             prioritization_fee_cache,
+            true,
         )?;
         let tx_count_after = w_replay_progress.num_txs;
         let tx_count = tx_count_after - tx_count_before;
@@ -2799,7 +2791,6 @@ impl ReplayStage {
         my_pubkey: &Pubkey,
         vote_account: &Pubkey,
         progress: &mut ProgressMap,
-        transaction_status_sender: Option<&TransactionStatusSender>,
         entry_notification_sender: Option<&EntryNotifierSender>,
         verify_recyclers: &VerifyRecyclers,
         replay_vote_sender: &ReplayVoteSender,
@@ -2883,7 +2874,6 @@ impl ReplayStage {
                             replay_tx_thread_pool,
                             &replay_stats,
                             &replay_progress,
-                            transaction_status_sender,
                             entry_notification_sender,
                             &replay_vote_sender.clone(),
                             &verify_recyclers.clone(),
@@ -2914,7 +2904,6 @@ impl ReplayStage {
         my_pubkey: &Pubkey,
         vote_account: &Pubkey,
         progress: &mut ProgressMap,
-        transaction_status_sender: Option<&TransactionStatusSender>,
         entry_notification_sender: Option<&EntryNotifierSender>,
         verify_recyclers: &VerifyRecyclers,
         replay_vote_sender: &ReplayVoteSender,
@@ -2972,7 +2961,6 @@ impl ReplayStage {
                     replay_tx_thread_pool,
                     &bank_progress.replay_stats,
                     &bank_progress.replay_progress,
-                    transaction_status_sender,
                     entry_notification_sender,
                     &replay_vote_sender.clone(),
                     &verify_recyclers.clone(),
@@ -2992,11 +2980,8 @@ impl ReplayStage {
         blockstore: &Blockstore,
         bank_forks: &RwLock<BankForks>,
         progress: &mut ProgressMap,
-        transaction_status_sender: Option<&TransactionStatusSender>,
         cache_block_meta_sender: Option<&CacheBlockMetaSender>,
         heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
-        bank_notification_sender: &Option<BankNotificationSenderConfig>,
-        rewards_recorder_sender: &Option<RewardsRecorderSender>,
         rpc_subscriptions: &Arc<RpcSubscriptions>,
         duplicate_slots_tracker: &mut DuplicateSlotsTracker,
         duplicate_confirmed_slots: &DuplicateConfirmedSlots,
@@ -3004,10 +2989,8 @@ impl ReplayStage {
         unfrozen_gossip_verified_vote_hashes: &mut UnfrozenGossipVerifiedVoteHashes,
         latest_validator_votes_for_frozen_banks: &mut LatestValidatorVotesForFrozenBanks,
         cluster_slots_update_sender: &ClusterSlotsUpdateSender,
-        cost_update_sender: &Sender<CostUpdate>,
         duplicate_slots_to_repair: &mut DuplicateSlotsToRepair,
         ancestor_hashes_replay_update_sender: &AncestorHashesReplayUpdateSender,
-        block_metadata_notifier: Option<BlockMetadataNotifierArc>,
         replay_result_vec: &[ReplaySlotFromBlockstore],
         purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
         my_pubkey: &Pubkey,
@@ -3144,36 +3127,25 @@ impl ReplayStage {
                 );
                 did_complete_bank = true;
                 let _ = cluster_slots_update_sender.send(vec![bank_slot]);
-                if let Some(transaction_status_sender) = transaction_status_sender {
-                    transaction_status_sender.send_transaction_status_freeze_message(bank);
-                }
-                bank.freeze();
+                bank.vote_only_freeze();
                 datapoint_info!(
-                    "bank_frozen",
+                    "bank_vote_only_frozen",
                     ("slot", bank_slot, i64),
-                    ("hash", bank.hash().to_string(), String),
+                    ("hash", bank.vote_only_hash().to_string(), String),
                 );
-                // report cost tracker stats
-                cost_update_sender
-                    .send(CostUpdate::FrozenBank {
-                        bank: bank.clone_without_scheduler(),
-                    })
-                    .unwrap_or_else(|err| {
-                        warn!("cost_update_sender failed sending bank stats: {:?}", err)
-                    });
 
-                assert_ne!(bank.hash(), Hash::default());
+                assert_ne!(bank.vote_only_hash(), Hash::default());
                 // Needs to be updated before `check_slot_agrees_with_cluster()` so that
                 // any updates in `check_slot_agrees_with_cluster()` on fork choice take
                 // effect
                 heaviest_subtree_fork_choice.add_new_leaf_slot(
-                    (bank.slot(), bank.hash()),
-                    Some((bank.parent_slot(), bank.parent_hash())),
+                    (bank.slot(), bank.vote_only_hash()),
+                    Some((bank.parent_slot(), bank.parent_vote_only_hash())),
                 );
                 bank_progress.fork_stats.vote_only_hash = Some(bank.vote_only_hash());
                 let bank_frozen_state = BankFrozenState::new_from_state(
                     bank.slot(),
-                    bank.hash(),
+                    bank.vote_only_hash(),
                     duplicate_slots_tracker,
                     duplicate_confirmed_slots,
                     heaviest_subtree_fork_choice,
@@ -3215,15 +3187,11 @@ impl ReplayStage {
                         SlotStateUpdate::Duplicate(duplicate_state),
                     );
                 }
-                if let Some(sender) = bank_notification_sender {
-                    sender
-                        .sender
-                        .send(BankNotification::Frozen(bank.clone_without_scheduler()))
-                        .unwrap_or_else(|err| warn!("bank_notification_sender failed: {:?}", err));
-                }
+                // The clock sysvar is updated using VoteStateUpdate of its parent, so we
+                // do calculate it during vote only execution.
                 blockstore_processor::cache_block_meta(bank, cache_block_meta_sender);
 
-                let bank_hash = bank.hash();
+                let bank_hash = bank.vote_only_hash();
                 if let Some(new_frozen_voters) =
                     unfrozen_gossip_verified_vote_hashes.remove_slot_hash(bank.slot(), &bank_hash)
                 {
@@ -3235,24 +3203,6 @@ impl ReplayStage {
                             false,
                         );
                     }
-                }
-                Self::record_rewards(bank, rewards_recorder_sender);
-                if let Some(ref block_metadata_notifier) = block_metadata_notifier {
-                    let parent_blockhash = bank
-                        .parent()
-                        .map(|bank| bank.last_blockhash())
-                        .unwrap_or_default();
-                    block_metadata_notifier.notify_block_metadata(
-                        bank.parent_slot(),
-                        &parent_blockhash.to_string(),
-                        bank.slot(),
-                        &bank.last_blockhash().to_string(),
-                        &bank.get_rewards_and_num_partitions(),
-                        Some(bank.clock().unix_timestamp),
-                        Some(bank.block_height()),
-                        bank.executed_transaction_count(),
-                        r_replay_progress.num_entries as u64,
-                    )
                 }
                 bank_complete_time.stop();
 
@@ -3285,14 +3235,11 @@ impl ReplayStage {
         my_pubkey: &Pubkey,
         vote_account: &Pubkey,
         progress: &mut ProgressMap,
-        transaction_status_sender: Option<&TransactionStatusSender>,
         cache_block_meta_sender: Option<&CacheBlockMetaSender>,
         entry_notification_sender: Option<&EntryNotifierSender>,
         verify_recyclers: &VerifyRecyclers,
         heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
         replay_vote_sender: &ReplayVoteSender,
-        bank_notification_sender: &Option<BankNotificationSenderConfig>,
-        rewards_recorder_sender: &Option<RewardsRecorderSender>,
         rpc_subscriptions: &Arc<RpcSubscriptions>,
         duplicate_slots_tracker: &mut DuplicateSlotsTracker,
         duplicate_confirmed_slots: &DuplicateConfirmedSlots,
@@ -3300,10 +3247,8 @@ impl ReplayStage {
         unfrozen_gossip_verified_vote_hashes: &mut UnfrozenGossipVerifiedVoteHashes,
         latest_validator_votes_for_frozen_banks: &mut LatestValidatorVotesForFrozenBanks,
         cluster_slots_update_sender: &ClusterSlotsUpdateSender,
-        cost_update_sender: &Sender<CostUpdate>,
         duplicate_slots_to_repair: &mut DuplicateSlotsToRepair,
         ancestor_hashes_replay_update_sender: &AncestorHashesReplayUpdateSender,
-        block_metadata_notifier: Option<BlockMetadataNotifierArc>,
         replay_timing: &mut ReplayLoopTiming,
         log_messages_bytes_limit: Option<usize>,
         replay_mode: &ForkReplayMode,
@@ -3311,7 +3256,7 @@ impl ReplayStage {
         prioritization_fee_cache: &PrioritizationFeeCache,
         purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
     ) -> bool /* completed a bank */ {
-        let active_bank_slots = bank_forks.read().unwrap().active_bank_slots();
+        let active_bank_slots = bank_forks.read().unwrap().active_vote_only_bank_slots();
         let num_active_banks = active_bank_slots.len();
         trace!(
             "{} active bank(s) to replay: {:?}",
@@ -3333,7 +3278,6 @@ impl ReplayStage {
                     my_pubkey,
                     vote_account,
                     progress,
-                    transaction_status_sender,
                     entry_notification_sender,
                     verify_recyclers,
                     replay_vote_sender,
@@ -3353,7 +3297,6 @@ impl ReplayStage {
                         my_pubkey,
                         vote_account,
                         progress,
-                        transaction_status_sender,
                         entry_notification_sender,
                         verify_recyclers,
                         replay_vote_sender,
@@ -3370,11 +3313,8 @@ impl ReplayStage {
             blockstore,
             bank_forks,
             progress,
-            transaction_status_sender,
             cache_block_meta_sender,
             heaviest_subtree_fork_choice,
-            bank_notification_sender,
-            rewards_recorder_sender,
             rpc_subscriptions,
             duplicate_slots_tracker,
             duplicate_confirmed_slots,
@@ -3382,10 +3322,8 @@ impl ReplayStage {
             unfrozen_gossip_verified_vote_hashes,
             latest_validator_votes_for_frozen_banks,
             cluster_slots_update_sender,
-            cost_update_sender,
             duplicate_slots_to_repair,
             ancestor_hashes_replay_update_sender,
-            block_metadata_notifier,
             &replay_result_vec,
             purge_repair_slot_counter,
             my_pubkey,
@@ -3972,7 +3910,7 @@ impl ReplayStage {
         let forks = bank_forks.read().unwrap();
         generate_new_bank_forks_read_lock.stop();
 
-        let frozen_banks = forks.frozen_banks();
+        let frozen_banks = forks.vote_only_frozen_banks();
         let frozen_bank_slots: Vec<u64> = frozen_banks
             .keys()
             .cloned()
@@ -4068,20 +4006,6 @@ impl ReplayStage {
     ) -> Bank {
         rpc_subscriptions.notify_slot(slot, parent.slot(), root_slot);
         Bank::new_from_parent_with_options(parent, leader, slot, new_bank_options)
-    }
-
-    fn record_rewards(bank: &Bank, rewards_recorder_sender: &Option<RewardsRecorderSender>) {
-        if let Some(rewards_recorder_sender) = rewards_recorder_sender {
-            let rewards = bank.get_rewards_and_num_partitions();
-            if rewards.should_record() {
-                rewards_recorder_sender
-                    .send(RewardsMessage::Batch((bank.slot(), rewards)))
-                    .unwrap_or_else(|err| warn!("rewards_recorder_sender failed: {:?}", err));
-            }
-            rewards_recorder_sender
-                .send(RewardsMessage::Complete(bank.slot()))
-                .unwrap_or_else(|err| warn!("rewards_recorder_sender failed: {:?}", err));
-        }
     }
 
     fn log_heaviest_fork_failures(

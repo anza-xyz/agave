@@ -5477,16 +5477,11 @@ impl Bank {
         LittleEndian::write_u64(&mut signature_count_buf[..], self.signature_count());
 
         let mut hash = hashv(&[
-            self.parent_hash.as_ref(),
+            self.parent_vote_only_hash.as_ref(),
             accounts_delta_hash.0.as_ref(),
             &signature_count_buf,
             self.last_blockhash().as_ref(),
         ]);
-
-        let epoch_accounts_hash = self.wait_get_epoch_accounts_hash();
-        if let Some(epoch_accounts_hash) = epoch_accounts_hash {
-            hash = hashv(&[hash.as_ref(), epoch_accounts_hash.as_ref().as_ref()]);
-        };
 
         let buf = self
             .hard_forks
@@ -5529,16 +5524,11 @@ impl Bank {
             .get_bank_hash_stats(slot)
             .expect("No bank hash stats were found for this bank, that should not be possible");
         info!(
-            "bank frozen: {slot} hash: {hash} accounts_delta: {} signature_count: {} last_blockhash: {} capitalization: {}{}, stats: {bank_hash_stats:?}",
+            "bank vote_only_frozen: {slot} hash: {hash} accounts_delta: {} signature_count: {} last_blockhash: {} capitalization: {}, stats: {bank_hash_stats:?}",
             accounts_delta_hash.0,
             self.signature_count(),
             self.last_blockhash(),
             self.capitalization(),
-            if let Some(epoch_accounts_hash) = epoch_accounts_hash {
-                format!(", epoch_accounts_hash: {:?}", epoch_accounts_hash.as_ref())
-            } else {
-                "".to_string()
-            }
         );
         hash
     }

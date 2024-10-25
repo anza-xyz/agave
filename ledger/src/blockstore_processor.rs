@@ -41,16 +41,10 @@ use {
         vote_sender_types::ReplayVoteSender,
     },
     solana_sdk::{
-        clock::{Slot, MAX_PROCESSING_AGE},
-        genesis_config::GenesisConfig,
-        hash::Hash,
-        pubkey::Pubkey,
-        saturating_add_assign,
-        signature::{Keypair, Signature},
-        transaction::{
+        clock::{Slot, MAX_PROCESSING_AGE}, genesis_config::GenesisConfig, hash::Hash, pubkey::Pubkey, saturating_add_assign, signature::{Keypair, Signature}, transaction::{
             Result, SanitizedTransaction, TransactionError, TransactionVerificationMode,
             VersionedTransaction,
-        },
+        }
     },
     solana_svm::{
         transaction_commit_result::{TransactionCommitResult, TransactionCommitResultExtensions},
@@ -1098,6 +1092,7 @@ fn confirm_full_slot(
         opts.allow_dead_slots,
         opts.runtime_config.log_messages_bytes_limit,
         &ignored_prioritization_fee_cache,
+        false,  // execute_votes_only
     )?;
 
     timing.accumulate(&confirmation_timing.batch_execute.totals);
@@ -1436,6 +1431,7 @@ pub fn confirm_slot(
     allow_dead_slots: bool,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
+    execute_votes_only: bool,
 ) -> result::Result<(), BlockstoreProcessorError> {
     let slot = bank.slot();
 
@@ -1466,6 +1462,7 @@ pub fn confirm_slot(
         recyclers,
         log_messages_bytes_limit,
         prioritization_fee_cache,
+        execute_votes_only,
     )
 }
 
@@ -1483,6 +1480,7 @@ fn confirm_slot_entries(
     recyclers: &VerifyRecyclers,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
+    execute_votes_only: bool,
 ) -> result::Result<(), BlockstoreProcessorError> {
     let ConfirmationTiming {
         confirmation_elapsed,
@@ -1607,9 +1605,28 @@ fn confirm_slot_entries(
         .entries()
         .expect("Transaction verification generates entries");
 
+    let entry_filter_map = |entry: EntryType| {
+        match entry {
+            EntryType::Transactions(transactions) => {
+                let filtered_transactions = transactions
+                    .into_iter()
+                    .filter_map(|tx| {
+                        if !execute_votes_only || tx.is_simple_vote_transaction() {
+                            Some(tx)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                EntryType::Transactions(filtered_transactions)
+            },
+            EntryType::Tick(_) => entry,
+        }
+    };
     let mut replay_timer = Measure::start("replay_elapsed");
     let mut replay_entries: Vec<_> = entries
         .into_iter()
+        .map(entry_filter_map)
         .zip(entry_tx_starting_indexes)
         .map(|(entry, tx_starting_index)| ReplayEntry {
             entry,

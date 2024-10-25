@@ -14,6 +14,7 @@ use {
         consensus::{tower_storage::TowerStorage, Tower},
         cost_update_service::CostUpdateService,
         drop_bank_service::DropBankService,
+        final_replay_stage::{FinalReplayConfig, FinalReplayStage},
         repair::{
             quic_endpoint::LocalRequest,
             repair_service::{OutstandingShredRepairs, RepairInfo},
@@ -67,6 +68,7 @@ pub struct Tvu {
     window_service: WindowService,
     cluster_slots_service: ClusterSlotsService,
     replay_stage: Option<ReplayStage>,
+    final_replay_stage: Option<FinalReplayStage>,
     blockstore_cleanup_service: Option<BlockstoreCleanupService>,
     cost_update_service: CostUpdateService,
     voting_service: VotingService,
@@ -273,11 +275,9 @@ impl Tvu {
             leader_schedule_cache: leader_schedule_cache.clone(),
             accounts_background_request_sender,
             block_commitment_cache,
-            transaction_status_sender,
-            rewards_recorder_sender,
             cache_block_meta_sender,
-            entry_notification_sender,
-            bank_notification_sender,
+            entry_notification_sender: entry_notification_sender.clone(),
+            bank_notification_sender: bank_notification_sender.clone(),
             wait_for_vote_to_start_leader: tvu_config.wait_for_vote_to_start_leader,
             ancestor_hashes_replay_update_sender,
             tower_storage: tower_storage.clone(),
@@ -314,6 +314,8 @@ impl Tvu {
 
         let drop_bank_service = DropBankService::new(drop_bank_receiver);
 
+        let (replay_signal_sender, replay_signal_receiver) = unbounded();
+
         let replay_stage = if in_wen_restart {
             None
         } else {
@@ -334,16 +336,38 @@ impl Tvu {
                 duplicate_confirmed_slots_receiver,
                 gossip_verified_vote_hash_receiver,
                 cluster_slots_update_sender,
-                cost_update_sender,
                 voting_sender,
                 drop_bank_sender,
-                block_metadata_notifier,
                 log_messages_bytes_limit,
                 prioritization_fee_cache.clone(),
                 dumped_slots_sender,
                 banking_tracer,
                 popular_pruned_forks_receiver,
+                replay_signal_sender,
             )?)
+        };
+
+        let final_replay_stage = if in_wen_restart {
+            None
+        } else {
+            let final_replay_config = FinalReplayConfig {
+                bank_forks: bank_forks.clone(),
+                bank_notification_sender: bank_notification_sender.clone(),
+                block_metadata_notifier,
+                blockstore: blockstore.clone(),
+                cost_update_sender,
+                entry_notification_sender,
+                exit: exit.clone(),
+                log_messages_bytes_limit,
+                my_pubkey: cluster_info.id(),
+                prioritization_fee_cache: prioritization_fee_cache.clone(),
+                replay_forks_threads: tvu_config.replay_forks_threads,
+                replay_signal_receiver,
+                replay_transactions_threads: tvu_config.replay_transactions_threads,
+                rewards_recorder_sender,
+                transaction_status_sender,
+            };
+            Some(FinalReplayStage::new(final_replay_config))
         };
 
         let blockstore_cleanup_service = tvu_config.max_ledger_shreds.map(|max_ledger_shreds| {
@@ -369,6 +393,7 @@ impl Tvu {
             window_service,
             cluster_slots_service,
             replay_stage,
+            final_replay_stage,
             blockstore_cleanup_service,
             cost_update_service,
             voting_service,
@@ -389,6 +414,9 @@ impl Tvu {
         }
         if self.replay_stage.is_some() {
             self.replay_stage.unwrap().join()?;
+        }
+        if self.final_replay_stage.is_some() {
+            self.final_replay_stage.unwrap().join()?;
         }
         self.cost_update_service.join()?;
         self.voting_service.join()?;

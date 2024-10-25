@@ -175,10 +175,26 @@ impl BankForks {
             .collect()
     }
 
+    pub fn vote_only_frozen_banks(&self) -> HashMap<Slot, Arc<Bank>> {
+        self.banks
+            .iter()
+            .filter(|(_, b)| b.is_vote_only_frozen())
+            .map(|(&k, b)| (k, b.clone_without_scheduler()))
+            .collect()
+    }
+
     pub fn active_bank_slots(&self) -> Vec<Slot> {
         self.banks
             .iter()
             .filter(|(_, v)| !v.is_frozen())
+            .map(|(k, _v)| *k)
+            .collect()
+    }
+
+    pub fn active_vote_only_bank_slots(&self) -> Vec<Slot> {
+        self.banks
+            .iter()
+            .filter(|(_, v)| !v.is_vote_only_frozen())
             .map(|(k, _v)| *k)
             .collect()
     }
