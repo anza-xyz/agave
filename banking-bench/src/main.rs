@@ -562,10 +562,6 @@ fn main() {
             .unwrap()
             .working_bank_with_scheduler()
             .clone_with_scheduler();
-        poh_recorder
-            .write()
-            .unwrap()
-            .swap_working_bank(bank.clone_with_scheduler());
     }
 
     // This is so that the signal_receiver does not go out of scope after the closure.
