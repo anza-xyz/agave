@@ -3800,6 +3800,10 @@ impl AccountsDb {
                             .num_slots_with_zero_lamport_accounts_added_to_shrink
                             .fetch_add(1, Ordering::Relaxed);
                     }
+                } else {
+                    self.shrink_stats
+                        .marking_zero_dead_accounts_in_non_shrinkable_store
+                        .fetch_add(1, Ordering::Relaxed);
                 }
             }
         }
