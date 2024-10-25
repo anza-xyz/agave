@@ -704,6 +704,7 @@ impl BankingSimulator {
         bank_forks: Arc<RwLock<BankForks>>,
         blockstore: Arc<Blockstore>,
         block_production_method: BlockProductionMethod,
+        unified_scheduler_pool: Option<Arc<DefaultSchedulerPool>>,
     ) -> (SenderLoop, SimulatorLoop, SimulatorThreads) {
         let parent_slot = self.parent_slot().unwrap();
         let mut packet_batches_by_time = self.banking_trace_events.packet_batches_by_time;
@@ -953,6 +954,7 @@ impl BankingSimulator {
             bank_forks,
             blockstore,
             block_production_method,
+            unified_scheduler_pool,
         );
 
         sender_loop.log_starting();
