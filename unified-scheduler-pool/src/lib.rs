@@ -1624,6 +1624,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 }
                                 Ok(_) => unreachable!(),
                             }
+                    }
                 }
 
                 // There are several code-path reaching here out of the preceding unconditional
