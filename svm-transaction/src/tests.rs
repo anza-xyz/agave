@@ -1,18 +1,6 @@
-/// Serialized value of [`SystemInstruction::AdvanceNonceAccount`].
-const SERIALIZED_ADVANCE_NONCE_ACCOUNT: [u8; 4] = 4u32.to_le_bytes();
-
-#[inline]
-pub(crate) fn is_advance_nonce_account_instruction(data: &[u8]) -> bool {
-    const SERIALIZED_SIZE: usize = 4;
-    data.get(..SERIALIZED_SIZE)
-        .map(|data| data == SERIALIZED_ADVANCE_NONCE_ACCOUNT)
-        .unwrap_or(false)
-}
-
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
         crate::svm_message::SVMMessage,
         solana_sdk::{
             hash::Hash,
@@ -179,7 +167,7 @@ mod tests {
         // system program id - nonce instruction w/ trailing bytes fee-payer
         {
             let payer_nonce = Pubkey::new_unique();
-            let mut instruction_bytes = SERIALIZED_ADVANCE_NONCE_ACCOUNT.to_vec();
+            let mut instruction_bytes = vec![4, 0, 0, 0];
             instruction_bytes.push(0); // add a trailing byte
             let message = create_message_for_test(
                 1,

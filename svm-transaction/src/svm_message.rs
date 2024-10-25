@@ -1,7 +1,6 @@
 use {
     crate::{
         instruction::SVMInstruction, message_address_table_lookup::SVMMessageAddressTableLookup,
-        nonce_extraction::is_advance_nonce_account_instruction,
     },
     core::fmt::Debug,
     solana_sdk::{
@@ -75,7 +74,16 @@ pub trait SVMMessage: Debug {
                     _ => false,
                 },
             )
-            .filter(|ix| is_advance_nonce_account_instruction(ix.data))
+            .filter(|ix| {
+                /// Serialized value of [`SystemInstruction::AdvanceNonceAccount`].
+                const SERIALIZED_ADVANCE_NONCE_ACCOUNT: [u8; 4] = 4u32.to_le_bytes();
+                const SERIALIZED_SIZE: usize = SERIALIZED_ADVANCE_NONCE_ACCOUNT.len();
+
+                ix.data
+                    .get(..SERIALIZED_SIZE)
+                    .map(|data| data == SERIALIZED_ADVANCE_NONCE_ACCOUNT)
+                    .unwrap_or(false)
+            })
             .and_then(|ix| {
                 ix.accounts.first().and_then(|idx| {
                     let index = usize::from(*idx);
