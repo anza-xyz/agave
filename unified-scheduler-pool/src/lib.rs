@@ -1477,7 +1477,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                                     session_pausing = true;
                                                     "pausing"
                                                 } else {
-                                                    "close_subch"
+                                                    continue
                                                 }
                                             },
                                         }
