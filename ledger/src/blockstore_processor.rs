@@ -2315,7 +2315,6 @@ pub mod tests {
         solana_entry::entry::{create_ticks, next_entry, next_entry_mut},
         solana_program_runtime::declare_process_instruction,
         solana_runtime::{
-            bank::BankTestConfig,
             genesis_utils::{
                 self, create_genesis_config_with_vote_accounts, ValidatorVoteKeypairs,
             },
@@ -2988,7 +2987,7 @@ pub mod tests {
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
         // Let `last_slot` be the number of slots in the first two epochs
-        let epoch_schedule = get_epoch_schedule(&genesis_config, Vec::new());
+        let epoch_schedule = get_epoch_schedule(&genesis_config);
         let last_slot = epoch_schedule.get_last_slot_in_epoch(1);
 
         // Create a single chain of slots with all indexes in the range [0, v + 1]
@@ -4291,17 +4290,8 @@ pub mod tests {
         assert_eq!(bank0.get_balance(&keypair.pubkey()), 1)
     }
 
-    fn get_epoch_schedule(
-        genesis_config: &GenesisConfig,
-        account_paths: Vec<PathBuf>,
-    ) -> EpochSchedule {
-        // TODO: change which Bank method this uses, just using defaults
-        let bank = Bank::new_with_paths_for_tests(
-            genesis_config,
-            Arc::<RuntimeConfig>::default(),
-            BankTestConfig::default(),
-            account_paths,
-        );
+    fn get_epoch_schedule(genesis_config: &GenesisConfig) -> EpochSchedule {
+        let bank = Bank::new_for_tests(genesis_config);
         bank.epoch_schedule().clone()
     }
 
