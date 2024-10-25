@@ -2002,7 +2002,7 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
         self: Box<Self>,
         _is_dropped: bool,
     ) -> (ResultWithTimings, UninstalledSchedulerBox) {
-        let (mut result_with_timings, uninstalled_scheduler) = self.into_inner();
+        let (result_with_timings, uninstalled_scheduler) = self.into_inner();
         (result_with_timings, Box::new(uninstalled_scheduler))
     }
 
