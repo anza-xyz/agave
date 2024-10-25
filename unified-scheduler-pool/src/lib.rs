@@ -1058,23 +1058,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 }
             },
             SchedulingMode::BlockProduction => {
-                if !context.can_commit() {
-                    if !session_pausing {
-                        info!("detected max tick height at scheduler thread...");
-                    }
-                    //*result = Err(TransactionError::CommitFailed);
-                    *error_count += 1;
-                    return Some((executed_task, true));
-                }
                 match executed_task.result_with_timings.0 {
                 Ok(()) => Some((executed_task, false)),
-                Err(ref a @ TransactionError::CommitFailed) => {
+                Err(TransactionError::CommitFailed) => {
                     if !session_pausing {
                         info!("maybe reached max tick height...");
                     }
-                    //*result = Err(TransactionError::CommitFailed);
-                    // it's okay to abort scheduler as this error gurantees determinstic bank
-                    // freezing...
                     *error_count += 1;
                     Some((executed_task, true))
                 }
