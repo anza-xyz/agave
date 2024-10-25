@@ -1866,7 +1866,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         assert!(!self.are_threads_joined());
         assert_matches!(self.session_result_with_timings, None);
         self.new_task_sender
-            .send(NewTaskPayload::OpenSubchannel(Box::new((context, result_with_timings))).into())
+            .send(NewTaskPayload::OpenSubchannel(Box::new((
+                context,
+                result_with_timings,
+            ))).into())
             .expect("no new session after aborted");
     }
 }
@@ -1978,7 +1981,6 @@ fn send_task(
     let task = SchedulingStateMachine::create_task(transaction.clone(), index, &mut |pubkey| {
         usage_queue_loader.load(pubkey)
     });
-    debug!("send_task()");
     new_task_sender
         .send(NewTaskPayload::Payload(task).into())
         .map_err(|_| SchedulerAborted)
