@@ -1781,13 +1781,11 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         }
 
         if let Some(scheduler_thread) = self.scheduler_thread.take() {
-            info!("join started at {:?}", std::thread::current());
             for thread in self.handler_threads.drain(..) {
                 debug!("joining...: {:?}", thread);
                 () = join_with_panic_message(thread).unwrap();
             }
             () = join_with_panic_message(scheduler_thread).unwrap();
-            info!("join ended at {:?}", std::thread::current());
 
             if should_receive_session_result {
                 let result_with_timings = self.session_result_receiver.recv().unwrap();
@@ -1795,7 +1793,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 self.put_session_result_with_timings(result_with_timings);
             }
         } else {
-            debug!("ensure_join_threads(): skipping; already joined...");
+            warn!("ensure_join_threads(): skipping; already joined...");
         };
     }
 
