@@ -285,10 +285,10 @@ impl BankingTracer {
         active_tracer: Option<ActiveTracer>,
     ) -> (TracedSender, Receiver<BankingPacketBatch>) {
         let (sender, receiver) = unbounded();
-        Self::do_channel(label, active_tracer, sender, receiver)
+        Self::channel_inner(label, active_tracer, sender, receiver)
     }
 
-    fn do_channel(
+    fn channel_inner(
         label: ChannelLabel,
         active_tracer: Option<ActiveTracer>,
         sender: RealBankingPacketSender,
