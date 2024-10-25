@@ -1548,7 +1548,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     } else {
                         log_scheduler!(info, "paused");
                     }
-                    let already_ignored = &mut false;
                     match state_machine.mode() {
                         SchedulingMode::BlockVerification => {
                             reported_task_total = 0;
@@ -1619,7 +1618,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 }
                             }
                             Ok(NewTaskPayload::CloseSubchannel(_)) if matches!(state_machine.mode(), SchedulingMode::BlockProduction) => {
-                                assert!(!std::mem::replace(already_ignored, true));
                                 info!("ignoring duplicate CloseSubchannel...");
                             }
                             Ok(_) => unreachable!(),
