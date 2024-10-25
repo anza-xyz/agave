@@ -82,7 +82,6 @@ fn check_txs(
             }
         }
 
-        //info!("{total} >= {ref_tx_count}");
         if total >= ref_tx_count {
             break;
         }

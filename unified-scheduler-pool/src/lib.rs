@@ -1308,7 +1308,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     )
                 };
                 let mut log_interval = LogInterval::default();
-                let mut is_running = false;
                 let mut session_started_at = Instant::now();
                 let mut cpu_session_started_at = cpu_time::ThreadTime::now();
                 let (mut log_reported_at, mut reported_task_total, mut reported_executed_task_total) = (session_started_at, 0, 0);
@@ -1540,19 +1539,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 }
                             }
                         };
-                        let force_log = /*if !is_running && !state_machine.has_no_alive_task() {
-                            is_running = true;
-                            step_type = "running";
-                            true
-                        } else if is_running && state_machine.has_no_alive_task() {
-                            is_running = false;
-                            if !session_ending && !session_pausing {
-                                step_type = "waiting";
-                                true
-                            } else {
-                                false
-                            }
-                        } else */ if step_type == "ending" || step_type == "pausing" {
+                        let force_log = if step_type == "ending" || step_type == "pausing" {
                             true
                         } else {
                             false
@@ -1578,7 +1565,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     } else {
                         log_scheduler!(info, "paused");
                     }
-                    is_running = false;
                     let already_ignored = &mut false;
                     match state_machine.mode() {
                         SchedulingMode::BlockVerification => {
