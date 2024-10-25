@@ -3,6 +3,7 @@ name = "solana-vortexor"
 description = "Solana TPU Vortexor"
 documentation = "https://docs.rs/solana-vortexor"
 default-run = "solana-vortexor"
+publish = false
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
