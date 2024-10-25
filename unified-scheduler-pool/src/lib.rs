@@ -1624,7 +1624,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     assert!(!std::mem::replace(already_ignored, true));
                                     info!("ignoring duplicate CloseSubchannel...");
                                 }
-                                Ok(p) => unreachable!("{:?}", p),
+                                Ok(_) => unreachable!(),
                             }
                         },
                     }
