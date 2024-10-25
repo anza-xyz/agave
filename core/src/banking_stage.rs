@@ -674,7 +674,6 @@ impl BankingStage {
         Self { bank_thread_hdls }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn new_unified_scheduler(
         cluster_info: &impl LikeClusterInfo,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
