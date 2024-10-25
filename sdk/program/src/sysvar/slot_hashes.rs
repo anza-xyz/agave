@@ -9,8 +9,8 @@
 //! [`Sysvar::size_of`] methods in an on-chain program, and it can be accessed
 //! off-chain through RPC.
 //!
-//! [`SysvarId::id`]: crate::sysvar::SysvarId::id
-//! [`SysvarId::check_id`]: crate::sysvar::SysvarId::check_id
+//! [`SysvarId::id`]: https://docs.rs/solana-sysvar/latest/solana_sysvar/trait.SysvarId.html#tymethod.id
+//! [`SysvarId::check_id`]: https://docs.rs/solana-sysvar/latest/solana_sysvar/trait.SysvarId.html#tymethod.check_id
 //!
 //! # Examples
 //!
@@ -45,22 +45,25 @@
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
-pub use crate::slot_hashes::SlotHashes;
 use {
     crate::{
         account_info::AccountInfo,
         hash::Hash,
         program_error::ProgramError,
         slot_hashes::MAX_ENTRIES,
-        sysvar::{get_sysvar, Sysvar, SysvarId},
+        sysvar::{get_sysvar, Sysvar},
     },
     bytemuck_derive::{Pod, Zeroable},
     solana_clock::Slot,
+    solana_sysvar::SysvarId,
 };
 
 const U64_SIZE: usize = std::mem::size_of::<u64>();
 
-crate::declare_sysvar_id!("SysvarS1otHashes111111111111111111111111111", SlotHashes);
+pub use solana_slot_hashes::{
+    sysvar::{check_id, id, ID},
+    SlotHashes,
+};
 
 impl Sysvar for SlotHashes {
     // override

@@ -40,9 +40,12 @@
 //!
 
 pub use crate::last_restart_slot::LastRestartSlot;
-use crate::{impl_sysvar_get, program_error::ProgramError, sysvar::Sysvar};
+use {
+    crate::{impl_sysvar_get, program_error::ProgramError, sysvar::Sysvar},
+    solana_sysvar::declare_sysvar_id,
+};
 
-crate::declare_sysvar_id!(
+declare_sysvar_id!(
     "SysvarLastRestartS1ot1111111111111111111111",
     LastRestartSlot
 );
