@@ -128,7 +128,7 @@ default = ["borsh"]
 borsh = [
     "dep:borsh",
     "dep:borsh0-10",
-    "solana-borsh",
+    "dep:solana-borsh",
     "solana-hash/borsh",
     "solana-instruction/borsh",
     "solana-program-error/borsh",
