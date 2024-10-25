@@ -1983,9 +1983,8 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
 
     fn schedule_execution(
         &self,
-        transaction_with_index: &(&SanitizedTransaction, Index),
+        &(transaction, index): &(&SanitizedTransaction, Index),
     ) -> ScheduleResult {
-        send_task(&self.inner.usage_queue_loader, &self.inner.thread_manager.new_task_sender, transaction_with_index)
         let task = SchedulingStateMachine::create_task(transaction.clone(), index, &mut |pubkey| {
             self.inner.usage_queue_loader.load(pubkey)
         });
