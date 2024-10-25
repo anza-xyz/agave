@@ -395,13 +395,13 @@ where
         }
     }
 
-    pub fn create_banking_scheduler(&self, bank_forks: &BankForks, recv: BankingPacketReceiver, on_banking_packet_receive: impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static) -> Arc<BlockProducingUnifiedScheduler> {
+    pub fn create_banking_scheduler(&self, root_bank: Arc<Bank>, recv: BankingPacketReceiver, on_banking_packet_receive: impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static) -> Arc<BlockProducingUnifiedScheduler> {
         let s = self.block_producing_scheduler_inner.lock().unwrap().0.as_ref().map(|(id, bps)| bps).cloned();
         if let Some(ss) = s {
             return ss;
         } else {
             info!("flash session: start!");
-            let context = SchedulingContext::new(SchedulingMode::BlockProduction, bank_forks.root_bank());
+            let context = SchedulingContext::new(SchedulingMode::BlockProduction, root_bank);
             let scheduler = self.do_take_resumed_scheduler(
                 context,
                 initialized_result_with_timings(),
