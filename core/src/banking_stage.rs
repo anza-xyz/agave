@@ -685,8 +685,7 @@ impl BankingStage {
     ) -> Self {
         assert!(non_vote_receiver.same_channel(&tpu_vote_receiver));
         assert!(non_vote_receiver.same_channel(&gossip_vote_receiver));
-        // todo: forwarding, proper handling of buffered packets, vote storage, vote only
-        // blocks...
+        // todo: forwarding, vote only blocks...
         struct MonotonicIdGenerator {
             next_task_id: std::sync::atomic::AtomicU64,
             //next_task_id: u64,
