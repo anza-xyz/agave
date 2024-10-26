@@ -216,7 +216,7 @@ impl BankForks {
     ) -> Option<Arc<Bank>> {
         let maybe_bank = self.get(bank_slot);
         if let Some(bank) = &maybe_bank {
-            assert_eq!(bank.hash(), expected_hash);
+            assert_eq!(bank.vote_only_hash(), expected_hash);
         }
         maybe_bank
     }
