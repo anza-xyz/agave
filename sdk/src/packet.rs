@@ -135,6 +135,11 @@ impl Packet {
     }
 
     #[inline]
+    fn buffer_mut_inner(buffer: &mut [u8; PACKET_DATA_SIZE]) -> &mut [u8] {
+        &mut buffer[..]
+    }
+
+    #[inline]
     pub fn meta(&self) -> &Meta {
         &self.meta
     }
@@ -145,22 +150,36 @@ impl Packet {
     }
 
     pub fn from_data<T: Serialize>(dest: Option<&SocketAddr>, data: T) -> Result<Self> {
-        let mut packet = Self::default();
-        Self::populate_packet(&mut packet, dest, &data)?;
+        let buffer = std::mem::MaybeUninit::<[u8; PACKET_DATA_SIZE]>::uninit();
+        let mut packet = Packet {
+            buffer: unsafe { buffer.assume_init() },
+            meta: Meta::default(),
+        };
+        let mut wr = io::Cursor::new(Self::buffer_mut_inner(&mut packet.buffer));
+        Packet::populate_packet_raw(&mut wr, &mut packet.meta, dest, &data)?;
         Ok(packet)
     }
 
     pub fn populate_packet<T: Serialize>(
-        &mut self,
+        packet: &mut Packet,
         dest: Option<&SocketAddr>,
         data: &T,
     ) -> Result<()> {
-        debug_assert!(!self.meta.discard());
-        let mut wr = io::Cursor::new(self.buffer_mut());
-        bincode::serialize_into(&mut wr, data)?;
-        self.meta.size = wr.position() as usize;
+        let mut wr = io::Cursor::new(Self::buffer_mut_inner(&mut packet.buffer));
+        Packet::populate_packet_raw(&mut wr, &mut packet.meta, dest, data)
+    }
+
+    fn populate_packet_raw<T: Serialize>(
+        wr: &mut io::Cursor<&mut [u8]>,
+        meta: &mut Meta,
+        dest: Option<&SocketAddr>,
+        data: &T,
+    ) -> Result<()> {
+        debug_assert!(!meta.discard());
+        bincode::serialize_into(&mut *wr, data)?;
+        meta.size = wr.position() as usize;
         if let Some(dest) = dest {
-            self.meta.set_socket_addr(dest);
+            meta.set_socket_addr(dest);
         }
         Ok(())
     }

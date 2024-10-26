@@ -135,7 +135,6 @@ where
     T: AsRef<[u8]>,
 {
     let size = packets.len();
-    #[allow(clippy::uninit_assumed_init)]
     let iovec = std::mem::MaybeUninit::<iovec>::uninit();
     let mut iovs = vec![unsafe { iovec.assume_init() }; size];
     let mut addrs = vec![unsafe { std::mem::zeroed() }; size];

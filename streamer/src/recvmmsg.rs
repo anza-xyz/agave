@@ -78,7 +78,6 @@ fn cast_socket_addr(addr: &sockaddr_storage, hdr: &mmsghdr) -> Option<SocketAddr
 }
 
 #[cfg(target_os = "linux")]
-#[allow(clippy::uninit_assumed_init)]
 pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num packets:*/ usize> {
     // Assert that there are no leftovers in packets.
     debug_assert!(packets.iter().all(|pkt| pkt.meta() == &Meta::default()));
