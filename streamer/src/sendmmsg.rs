@@ -4,6 +4,7 @@
 use {
     itertools::izip,
     libc::{iovec, mmsghdr, sockaddr_in, sockaddr_in6, sockaddr_storage},
+    std::mem::MaybeUninit,
     std::os::unix::io::AsRawFd,
 };
 use {
@@ -58,18 +59,19 @@ where
 fn mmsghdr_for_packet(
     packet: &[u8],
     dest: &SocketAddr,
-    iov: &mut iovec,
+    iov: &mut MaybeUninit<iovec>,
     addr: &mut sockaddr_storage,
     hdr: &mut mmsghdr,
 ) {
     const SIZE_OF_SOCKADDR_IN: usize = std::mem::size_of::<sockaddr_in>();
     const SIZE_OF_SOCKADDR_IN6: usize = std::mem::size_of::<sockaddr_in6>();
 
-    *iov = iovec {
+    iov.write(iovec {
         iov_base: packet.as_ptr() as *mut libc::c_void,
         iov_len: packet.len(),
-    };
-    hdr.msg_hdr.msg_iov = iov;
+    });
+    // iov has been initialized above, so ok to get a pointer to it here
+    hdr.msg_hdr.msg_iov = iov.as_mut_ptr();
     hdr.msg_hdr.msg_iovlen = 1;
     hdr.msg_hdr.msg_name = addr as *mut _ as *mut _;
 
@@ -135,14 +137,16 @@ where
     T: AsRef<[u8]>,
 {
     let size = packets.len();
-    #[allow(clippy::uninit_assumed_init)]
-    let iovec = std::mem::MaybeUninit::<iovec>::uninit();
-    let mut iovs = vec![unsafe { iovec.assume_init() }; size];
+    let mut iovs = vec![MaybeUninit::<iovec>::uninit(); size];
     let mut addrs = vec![unsafe { std::mem::zeroed() }; size];
     let mut hdrs = vec![unsafe { std::mem::zeroed() }; size];
     for ((pkt, dest), hdr, iov, addr) in izip!(packets, &mut hdrs, &mut iovs, &mut addrs) {
         mmsghdr_for_packet(pkt.as_ref(), dest.borrow(), iov, addr, hdr);
     }
+    // mmsghdr_for_packet() initializes each element in iovs so transmute the
+    // Vec to the initialized type
+    let _iovs = unsafe { std::mem::transmute::<Vec<MaybeUninit<iovec>>, Vec<iovec>>(iovs) };
+
     sendmmsg_retry(sock, &mut hdrs)
 }
 
