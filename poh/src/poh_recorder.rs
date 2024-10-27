@@ -1045,7 +1045,6 @@ impl PohRecorder {
             poh_config.target_tick_duration.as_nanos() as u64,
         );
         let (sender, receiver) = unbounded();
-        //let (_, record_receiver) = unbounded();
         let record_sender = Arc::new(ArrayQueue::new(1000));
         let (leader_first_tick_height_including_grace_ticks, leader_last_tick_height, grace_ticks) =
             Self::compute_leader_slot_tick_heights(next_leader_slot, ticks_per_slot);
