@@ -904,6 +904,7 @@ mod tests {
             time::Duration,
         },
     };
+    use solana_poh::mpsc_ringbuffer::ArrayQueue;
 
     fn execute_transactions_with_dummy_poh_service(
         bank: Arc<Bank>,
@@ -1254,7 +1255,7 @@ mod tests {
             let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
             fn poh_tick_before_returning_record_response(
-                record_receiver: Receiver<Record>,
+                record_receiver: Arc<ArrayQueue<Record>>,
                 poh_recorder: Arc<RwLock<PohRecorder>>,
             ) -> JoinHandle<()> {
                 let is_exited = poh_recorder.read().unwrap().is_exited.clone();
@@ -1263,7 +1264,7 @@ mod tests {
                     .spawn(move || loop {
                         let timeout = Duration::from_millis(10);
                         let record = record_receiver.recv_timeout(timeout);
-                        if let Ok(record) = record {
+                        if let Some(record) = record {
                             let record_response = poh_recorder.write().unwrap().record(
                                 record.slot,
                                 record.mixin,

@@ -742,6 +742,7 @@ mod tests {
         std::sync::{atomic::AtomicBool, Arc, RwLock},
         tempfile::TempDir,
     };
+    use solana_poh::mpsc_ringbuffer::ArrayQueue;
 
     fn create_channels<T>(num: usize) -> (Vec<Sender<T>>, Vec<Receiver<T>>) {
         (0..num).map(|_| unbounded()).unzip()
@@ -754,7 +755,7 @@ mod tests {
         mint_keypair: Keypair,
         _ledger_path: TempDir,
         _entry_receiver: Receiver<WorkingBankEntry>,
-        _record_receiver: Receiver<Record>,
+        _record_receiver: Arc<ArrayQueue<Record>>,
         poh_recorder: Arc<RwLock<PohRecorder>>,
         banking_packet_sender: Sender<Arc<(Vec<PacketBatch>, Option<SigverifyTracerPacketStats>)>>,
 
@@ -799,7 +800,7 @@ mod tests {
             mint_keypair,
             _ledger_path: ledger_path,
             _entry_receiver: entry_receiver,
-            _record_receiver: record_receiver,
+            _record_receiver: record_receiver.clone(),
             poh_recorder,
             banking_packet_sender,
             consume_work_receivers,

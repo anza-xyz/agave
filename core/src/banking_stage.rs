@@ -858,6 +858,7 @@ mod tests {
             thread::sleep,
         },
     };
+    use solana_poh::mpsc_ringbuffer::ArrayQueue;
 
     pub(crate) fn new_test_cluster_info(keypair: Option<Arc<Keypair>>) -> (Node, ClusterInfo) {
         let keypair = keypair.unwrap_or_else(|| Arc::new(Keypair::new()));
@@ -1339,7 +1340,7 @@ mod tests {
     }
 
     pub(crate) fn simulate_poh(
-        record_receiver: Receiver<Record>,
+        record_receiver: Arc<ArrayQueue<Record>>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
     ) -> JoinHandle<()> {
         let poh_recorder = poh_recorder.clone();
@@ -1349,7 +1350,7 @@ mod tests {
             .spawn(move || loop {
                 PohService::read_record_receiver_and_process(
                     &poh_recorder,
-                    &record_receiver,
+                    record_receiver.clone(),
                     Duration::from_millis(10),
                 );
                 if is_exited.load(Ordering::Relaxed) {
