@@ -459,7 +459,7 @@ impl Shred {
         self.common_header().index
     }
 
-    pub(crate) fn data(&self) -> Result<&[u8], Error> {
+    pub fn data(&self) -> Result<&[u8], Error> {
         match self {
             Self::ShredCode(_) => Err(Error::InvalidShredType),
             Self::ShredData(shred) => shred.data(),
@@ -1091,7 +1091,7 @@ impl TryFrom<u8> for ShredVariant {
     }
 }
 
-pub(crate) fn recover(
+pub fn recover(
     shreds: Vec<Shred>,
     reed_solomon_cache: &ReedSolomonCache,
 ) -> Result<Vec<Shred>, Error> {
