@@ -44,6 +44,7 @@ use {
     },
     thiserror::Error,
 };
+use crate::mpsc_ringbuffer::ArrayQueue;
 
 pub const GRACE_TICKS_FACTOR: u64 = 2;
 pub const MAX_GRACE_SLOTS: u64 = 2;
@@ -143,12 +144,12 @@ pub struct RecordTransactionsSummary {
 #[derive(Clone)]
 pub struct TransactionRecorder {
     // shared by all users of PohRecorder
-    pub record_sender: Sender<Record>,
+    pub record_sender: Arc<ArrayQueue<Record>>,
     pub is_exited: Arc<AtomicBool>,
 }
 
 impl TransactionRecorder {
-    pub fn new(record_sender: Sender<Record>, is_exited: Arc<AtomicBool>) -> Self {
+    pub fn new(record_sender: Arc<ArrayQueue<Record>>, is_exited: Arc<AtomicBool>) -> Self {
         Self {
             record_sender,
             is_exited,
@@ -212,7 +213,7 @@ impl TransactionRecorder {
         let (result_sender, result_receiver) = bounded(1);
         let res =
             self.record_sender
-                .send(Record::new(mixin, transactions, bank_slot, result_sender));
+                .push(Record::new(mixin, transactions, bank_slot, result_sender));
         if res.is_err() {
             // If the channel is dropped, then the validator is shutting down so return that we are hitting
             //  the max tick height to stop transaction processing and flush any transactions in the pipeline.
@@ -306,7 +307,7 @@ pub struct PohRecorder {
     report_metrics_us: u64,
     ticks_from_record: u64,
     last_metric: Instant,
-    record_sender: Sender<Record>,
+    record_sender: Arc<ArrayQueue<Record>>,
     leader_bank_notifier: Arc<LeaderBankNotifier>,
     delay_leader_block_for_pending_fork: bool,
     last_reported_slot_for_pending_fork: Arc<Mutex<Slot>>,
@@ -314,6 +315,9 @@ pub struct PohRecorder {
 }
 
 impl PohRecorder {
+    pub fn get_record_receiver(&self) -> Arc<ArrayQueue<Record>> {
+        self.record_sender.clone()
+    }
     fn clear_bank(&mut self) {
         if let Some(WorkingBank { bank, start, .. }) = self.working_bank.take() {
             self.leader_bank_notifier.set_completed(bank.slot());
@@ -1028,7 +1032,7 @@ impl PohRecorder {
         poh_config: &PohConfig,
         poh_timing_point_sender: Option<PohTimingSender>,
         is_exited: Arc<AtomicBool>,
-    ) -> (Self, Receiver<WorkingBankEntry>, Receiver<Record>) {
+    ) -> (Self, Receiver<WorkingBankEntry>, Arc<ArrayQueue<Record>>) {
         let tick_number = 0;
         let poh = Arc::new(Mutex::new(Poh::new_with_slot_info(
             last_entry_hash,
@@ -1041,10 +1045,11 @@ impl PohRecorder {
             poh_config.target_tick_duration.as_nanos() as u64,
         );
         let (sender, receiver) = unbounded();
-        let (record_sender, record_receiver) = unbounded();
+        //let (_, record_receiver) = unbounded();
+        let record_sender = Arc::new(ArrayQueue::new(1000));
         let (leader_first_tick_height_including_grace_ticks, leader_last_tick_height, grace_ticks) =
             Self::compute_leader_slot_tick_heights(next_leader_slot, ticks_per_slot);
-        (
+        let poh =
             Self {
                 poh,
                 tick_height,
@@ -1078,7 +1083,10 @@ impl PohRecorder {
                 delay_leader_block_for_pending_fork,
                 last_reported_slot_for_pending_fork: Arc::default(),
                 is_exited,
-            },
+            };
+        let record_receiver = poh.get_record_receiver();
+        (
+            poh,
             receiver,
             record_receiver,
         )
@@ -1098,7 +1106,7 @@ impl PohRecorder {
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
         poh_config: &PohConfig,
         is_exited: Arc<AtomicBool>,
-    ) -> (Self, Receiver<WorkingBankEntry>, Receiver<Record>) {
+    ) -> (Self, Receiver<WorkingBankEntry>, Arc<ArrayQueue<Record>>) {
         let delay_leader_block_for_pending_fork = false;
         Self::new_with_clear_signal(
             tick_height,

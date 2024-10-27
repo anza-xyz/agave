@@ -16,6 +16,7 @@ use {
         time::{Duration, Instant},
     },
 };
+use crate::mpsc_ringbuffer::ArrayQueue;
 
 pub struct PohService {
     tick_producer: JoinHandle<()>,
@@ -101,7 +102,7 @@ impl PohService {
         ticks_per_slot: u64,
         pinned_cpu_core: usize,
         hashes_per_batch: u64,
-        record_receiver: Receiver<Record>,
+        record_receiver: Arc<ArrayQueue<Record>>,
     ) -> Self {
         let poh_config = poh_config.clone();
         let tick_producer = Builder::new()
@@ -164,7 +165,7 @@ impl PohService {
         poh_recorder: Arc<RwLock<PohRecorder>>,
         poh_config: &PohConfig,
         poh_exit: &AtomicBool,
-        record_receiver: Receiver<Record>,
+        record_receiver: Arc<ArrayQueue<Record>>,
     ) {
         let mut last_tick = Instant::now();
         while !poh_exit.load(Ordering::Relaxed) {
@@ -173,7 +174,7 @@ impl PohService {
                 .saturating_sub(last_tick.elapsed());
             Self::read_record_receiver_and_process(
                 &poh_recorder,
-                &record_receiver,
+                record_receiver.clone(),
                 remaining_tick_time,
             );
             if remaining_tick_time.is_zero() {
@@ -185,11 +186,11 @@ impl PohService {
 
     pub fn read_record_receiver_and_process(
         poh_recorder: &Arc<RwLock<PohRecorder>>,
-        record_receiver: &Receiver<Record>,
+        record_receiver: Arc<ArrayQueue<Record>>,
         timeout: Duration,
     ) {
         let record = record_receiver.recv_timeout(timeout);
-        if let Ok(record) = record {
+        if let Some(record) = record {
             if record
                 .sender
                 .send(poh_recorder.write().unwrap().record(
@@ -208,7 +209,7 @@ impl PohService {
         poh_recorder: Arc<RwLock<PohRecorder>>,
         poh_config: &PohConfig,
         poh_exit: &AtomicBool,
-        record_receiver: Receiver<Record>,
+        record_receiver: Arc<ArrayQueue<Record>>,
     ) {
         let mut warned = false;
         let mut elapsed_ticks = 0;
@@ -220,7 +221,7 @@ impl PohService {
                 .saturating_sub(last_tick.elapsed());
             Self::read_record_receiver_and_process(
                 &poh_recorder,
-                &record_receiver,
+                record_receiver.clone(),
                 Duration::from_millis(0),
             );
             if remaining_tick_time.is_zero() {
@@ -240,7 +241,7 @@ impl PohService {
         next_record: &mut Option<Record>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         timing: &mut PohTiming,
-        record_receiver: &Receiver<Record>,
+        record_receiver: Arc<ArrayQueue<Record>>,
         hashes_per_batch: u64,
         poh: &Arc<Mutex<Poh>>,
         target_ns_per_tick: u64,
@@ -265,7 +266,7 @@ impl PohService {
 
                     timing.total_send_record_result_us += send_record_result_us;
                     timing.num_hashes += 1; // note: may have also ticked inside record
-                    if let Ok(new_record) = record_receiver.try_recv() {
+                    if let Some(new_record) = record_receiver.pop() {
                         // we already have second request to record, so record again while we still have the mutex
                         record = new_record;
                     } else {
@@ -294,7 +295,7 @@ impl PohService {
                         return true;
                     }
                     // check to see if a record request has been sent
-                    if let Ok(record) = record_receiver.try_recv() {
+                    if let Some(record) = record_receiver.pop() {
                         // remember the record we just received as the next record to occur
                         *next_record = Some(record);
                         break;
@@ -310,7 +311,7 @@ impl PohService {
                     drop(poh_l);
                     while ideal_time > Instant::now() {
                         // check to see if a record request has been sent
-                        if let Ok(record) = record_receiver.try_recv() {
+                        if let Some(record) = record_receiver.pop() {
                             // remember the record we just received as the next record to occur
                             *next_record = Some(record);
                             break;
@@ -329,7 +330,7 @@ impl PohService {
         poh_exit: &AtomicBool,
         ticks_per_slot: u64,
         hashes_per_batch: u64,
-        record_receiver: Receiver<Record>,
+        record_receiver: Arc<ArrayQueue<Record>>,
         target_ns_per_tick: u64,
     ) {
         let poh = poh_recorder.read().unwrap().poh.clone();
@@ -340,7 +341,7 @@ impl PohService {
                 &mut next_record,
                 &poh_recorder,
                 &mut timing,
-                &record_receiver,
+                record_receiver.clone(),
                 hashes_per_batch,
                 &poh,
                 target_ns_per_tick,

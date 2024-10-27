@@ -19,6 +19,7 @@ use core::mem::{self, MaybeUninit};
 use core::panic::{RefUnwindSafe, UnwindSafe};
 use core::sync::atomic::{self, AtomicUsize, Ordering};
 use core::cell::Cell;
+use std::time::Duration;
 
 const SPIN_LIMIT: u32 = 6;
 const YIELD_LIMIT: u32 = 10;
@@ -717,6 +718,11 @@ impl<T> ArrayQueue<T> {
             }
         }
     }
+    pub fn recv_timeout(&self, t: Duration) -> Option<T> {
+        // Wait/Backoff and then pop.
+        //todo!();
+        self.pop()
+    }
 }
 
 impl<T> Drop for ArrayQueue<T> {
@@ -755,6 +761,12 @@ impl<T> Drop for ArrayQueue<T> {
                 }
             }
         }
+    }
+}
+
+impl<T> Clone for ArrayQueue<T> {
+    fn clone(&self) -> Self {
+        todo!()
     }
 }
 
