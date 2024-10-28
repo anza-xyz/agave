@@ -3986,6 +3986,31 @@ pub mod tests {
         }
     }
 
+    /// The purpose of this test is to ensure the correct control flow
+    /// of calculating and using the value of the tuning parameter
+    /// `ideal_storage_size`.
+    #[test]
+    fn test_ideal_storage_size_updated_before_used() {
+        let mut tuning = PackedAncientStorageTuning {
+            percent_of_alive_shrunk_data: 100,
+            max_ancient_slots: 100,
+            ..default_tuning()
+        };
+        let data_size = 1_000_000;
+        let num_slots = tuning.max_ancient_slots;
+        let (db, slot1) =
+            create_db_with_storages_and_index(true /*alive*/, num_slots, Some(data_size));
+        let non_ancient_slot = slot1 + (2 * tuning.max_ancient_slots) as u64;
+        create_storages_and_update_index(&db, None, non_ancient_slot, 1, true, Some(data_size));
+        let mut slot_vec = (slot1..(slot1 + num_slots as Slot)).collect::<Vec<_>>();
+        slot_vec.push(non_ancient_slot);
+        let infos = db.collect_sort_filter_ancient_slots(slot_vec.clone(), &mut tuning);
+        let ideal_storage_size = tuning.ideal_storage_size.get();
+        let max_resulting_storages = tuning.max_resulting_storages.get();
+        let expected_all_infos_len = max_resulting_storages * ideal_storage_size / data_size - 1;
+        assert_eq!(infos.all_infos.len(), expected_all_infos_len as usize);
+    }
+
     #[test_case(0, 1 => 0)]
     #[test_case(1, 1 => 1)]
     #[test_case(2, 1 => 2)]
