@@ -2473,6 +2473,8 @@ fn wait_for_supermajority(
                 _ => {}
             }
 
+            // Wait for supermajority should use final hash because the block should have
+            // been fully replayed at this point.
             if let Some(expected_bank_hash) = config.expected_bank_hash {
                 if bank.hash() != expected_bank_hash {
                     error!(

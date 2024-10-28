@@ -342,7 +342,7 @@ impl Tower {
         let (_progress, heaviest_subtree_fork_choice) =
             crate::replay_stage::ReplayStage::initialize_progress_and_fork_choice(
                 root_bank.deref(),
-                bank_forks.frozen_banks().values().cloned().collect(),
+                bank_forks.vote_only_frozen_banks().values().cloned().collect(),
                 node_pubkey,
                 vote_account,
                 vec![],
@@ -592,7 +592,7 @@ impl Tower {
         // `self.vote_state`
         self.record_bank_vote_and_update_lockouts(
             bank.slot(),
-            bank.hash(),
+            bank.vote_only_hash(),
             replay_tip_bank.slot(),
             replay_tip_bank.hash(),
             bank.feature_set

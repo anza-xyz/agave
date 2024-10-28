@@ -222,7 +222,7 @@ impl BankForks {
     }
 
     pub fn bank_hash(&self, slot: Slot) -> Option<Hash> {
-        self.get(slot).map(|bank| bank.hash())
+        self.get(slot).map(|bank| bank.vote_only_hash())
     }
 
     pub fn root_bank(&self) -> Arc<Bank> {

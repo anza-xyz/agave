@@ -1382,11 +1382,11 @@ impl ReplayStage {
                 .unwrap();
             let duplicate_slot_hashes = duplicate_slots.filter_map(|slot| {
                 let bank = bank_forks.get(slot)?;
-                Some((slot, bank.hash()))
+                Some((slot, bank.vote_only_hash()))
             });
             (
                 root_bank,
-                bank_forks.frozen_banks().values().cloned().collect(),
+                bank_forks.vote_only_frozen_banks().values().cloned().collect(),
                 duplicate_slot_hashes.collect::<Vec<(Slot, Hash)>>(),
             )
         };
@@ -1421,7 +1421,7 @@ impl ReplayStage {
         }
         let root = root_bank.slot();
         let mut heaviest_subtree_fork_choice = HeaviestSubtreeForkChoice::new_from_frozen_banks(
-            (root, root_bank.hash()),
+            (root, root_bank.vote_only_hash()),
             &frozen_banks,
         );
 
@@ -3096,7 +3096,7 @@ impl ReplayStage {
                     // shreds in the last FEC set, mark it dead. No reason to perform this check on our leader block.
                     match blockstore.check_last_fec_set_and_get_block_id(
                         bank.slot(),
-                        bank.hash(),
+                        bank.vote_only_hash(),
                         &bank.feature_set,
                     ) {
                         Ok(block_id) => block_id,
@@ -3180,7 +3180,7 @@ impl ReplayStage {
                         duplicate_confirmed_slots,
                         heaviest_subtree_fork_choice,
                         || false,
-                        || Some(bank.hash()),
+                        || Some(bank.vote_only_hash()),
                     );
                     check_slot_agrees_with_cluster(
                         bank.slot(),
@@ -3823,7 +3823,7 @@ impl ReplayStage {
                 .started
                 .elapsed()
                 .as_millis();
-            if !bank.is_frozen() {
+            if !bank.is_vote_only_frozen() {
                 continue;
             }
             if tower.is_slot_duplicate_confirmed(*slot, voted_stakes, total_stake) {
@@ -3835,7 +3835,7 @@ impl ReplayStage {
                     "validator-duplicate-confirmation",
                     ("duration_ms", duration, i64)
                 );
-                duplicate_confirmed_forks.push((*slot, bank.hash()));
+                duplicate_confirmed_forks.push((*slot, bank.vote_only_hash()));
             } else {
                 debug!(
                     "validator fork not confirmed {} {}ms {:?}",

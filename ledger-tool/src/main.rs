@@ -710,8 +710,9 @@ fn setup_slot_recording(
             let slot_callback = Arc::new(move |bank: &Bank| {
                 if slots.lock().unwrap().is_empty() {
                     error!(
-                        "Expected slot: not found got slot: {} hash: {}",
+                        "Expected slot: not found got slot: {} vote_only_hash: {} hash: {}",
                         bank.slot(),
+                        bank.vote_only_hash(),
                         bank.hash()
                     );
                 } else {
@@ -721,8 +722,8 @@ fn setup_slot_recording(
                         ..
                     } = slots.lock().unwrap().remove(0);
                     if bank.slot() != expected_slot || bank.hash().to_string() != expected_hash {
-                        error!("Expected slot: {expected_slot} hash: {expected_hash} got slot: {} hash: {}",
-                                    bank.slot(), bank.hash());
+                        error!("Expected slot: {expected_slot} hash: {expected_hash} got slot: {} vote_only_hash: {} hash: {}",
+                                    bank.slot(), bank.vote_only_hash(), bank.hash());
                     } else {
                         info!("Expected slot: {expected_slot} hash: {expected_hash} correct");
                     }
@@ -1824,6 +1825,7 @@ fn main() {
                         let slot_bank_hash = SlotBankHash {
                             slot: working_bank.slot(),
                             hash: working_bank.hash().to_string(),
+                            vote_only_hash: working_bank.vote_only_hash().to_string(),
                         };
                         println!("{}", output_format.formatted_string(&slot_bank_hash));
                     }

@@ -289,7 +289,7 @@ impl TowerSync {
     /// Creates a tower with consecutive votes for `slot - MAX_LOCKOUT_HISTORY + 1` to `slot` inclusive.
     /// If `slot >= MAX_LOCKOUT_HISTORY`, sets the root to `(slot - MAX_LOCKOUT_HISTORY)`
     /// Sets the hash to `hash` and leaves `block_id` unset.
-    pub fn new_from_slot(slot: Slot, hash: Hash) -> Self {
+    pub fn new_from_slot(slot: Slot, hash: Hash, replay_tip_slot: Slot, replay_tip_hash: Hash) -> Self {
         let lowest_slot = slot
             .saturating_add(1)
             .saturating_sub(MAX_LOCKOUT_HISTORY as u64);
@@ -297,8 +297,8 @@ impl TowerSync {
         Self::new_from_slots(
             slots,
             hash,
-            slot,
-            hash,
+            replay_tip_slot,
+            replay_tip_hash,
             (lowest_slot > 0).then(|| lowest_slot.saturating_sub(1)),
         )
     }

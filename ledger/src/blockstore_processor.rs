@@ -917,7 +917,7 @@ pub fn process_blockstore_from_root(
                 .set_limits(u64::MAX, u64::MAX, u64::MAX);
         }
         assert!(bank.parent().is_none());
-        (bank.slot(), bank.hash())
+        (bank.slot(), bank.vote_only_hash())
     };
 
     info!("Processing ledger from slot {}...", start_slot);

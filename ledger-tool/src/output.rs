@@ -111,6 +111,7 @@ impl Display for SlotBounds<'_> {
 pub struct SlotBankHash {
     pub slot: Slot,
     pub hash: String,
+    pub vote_only_hash: String,
 }
 
 impl VerboseDisplay for SlotBankHash {}
@@ -118,7 +119,7 @@ impl QuietDisplay for SlotBankHash {}
 
 impl Display for SlotBankHash {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        writeln!(f, "Bank hash for slot {}: {}", self.slot, self.hash)
+        writeln!(f, "Bank hash for slot {}: {} {}", self.slot, self.hash, self.vote_only_hash)
     }
 }
 

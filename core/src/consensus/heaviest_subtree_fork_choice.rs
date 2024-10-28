@@ -241,9 +241,9 @@ impl HeaviestSubtreeForkChoice {
                 // Make sure the list is sorted
                 assert!(bank.slot() > prev_slot);
                 prev_slot = bank.slot();
-                let bank_hash = bank.hash();
+                let bank_hash = bank.vote_only_hash();
                 assert_ne!(bank_hash, Hash::default());
-                let parent_bank_hash = bank.parent_hash();
+                let parent_bank_hash = bank.parent_vote_only_hash();
                 assert_ne!(parent_bank_hash, Hash::default());
                 heaviest_subtree_fork_choice.add_new_leaf_slot(
                     (bank.slot(), bank_hash),
@@ -261,7 +261,7 @@ impl HeaviestSubtreeForkChoice {
 
         frozen_banks.sort_by_key(|bank| bank.slot());
         let root_bank = bank_forks.root_bank();
-        Self::new_from_frozen_banks((root_bank.slot(), root_bank.hash()), &frozen_banks)
+        Self::new_from_frozen_banks((root_bank.slot(), root_bank.vote_only_hash()), &frozen_banks)
     }
 
     #[cfg(test)]

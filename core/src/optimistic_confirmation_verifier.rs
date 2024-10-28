@@ -37,7 +37,7 @@ impl OptimisticConfirmationVerifier {
         slots_before_root
             .into_iter()
             .filter(|(optimistic_slot, optimistic_hash)| {
-                (*optimistic_slot == root && *optimistic_hash != root_bank.hash())
+                (*optimistic_slot == root && *optimistic_hash != root_bank.vote_only_hash())
                     || (!root_ancestors.contains_key(optimistic_slot) &&
                     // In this second part of the `and`, we account for the possibility that
                     // there was some other root `rootX` set in BankForks where:
@@ -108,10 +108,11 @@ impl OptimisticConfirmationVerifier {
 
                 error!(
                     "{},
-                    hash: {},
+                    vote_only_hash: {},
                     epoch: {},
                     voted keys: {:?},
                     root: {},
+                    root bank vote_only_hash: {},
                     root bank hash: {},
                     voted stake: {},
                     total epoch stake: {},
@@ -124,6 +125,7 @@ impl OptimisticConfirmationVerifier {
                         .and_then(|s| s.optimistic_votes_tracker(hash))
                         .map(|s| s.voted()),
                     root,
+                    root_bank.vote_only_hash(),
                     root_bank.hash(),
                     voted_stake,
                     total_epoch_stake,
