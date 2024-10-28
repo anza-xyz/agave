@@ -1675,10 +1675,7 @@ pub fn process_stake_authorize(
             config.commitment,
         )?;
         let result = if no_wait {
-            rpc_client.send_transaction_with_config(
-                &tx,
-                config.send_transaction_config,
-            )
+            rpc_client.send_transaction_with_config(&tx, config.send_transaction_config)
         } else {
             rpc_client.send_and_confirm_transaction_with_spinner_and_config(
                 &tx,

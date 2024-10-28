@@ -17,7 +17,6 @@ use {
     solana_sdk::{
         hash::Hash,
         message::Message,
-        msg,
         signature::{Signature, SignerError},
         signers::Signers,
         transaction::{Transaction, TransactionError},
@@ -210,13 +209,13 @@ async fn send_transaction_with_rpc_fallback(
     } else {
         true
     };
-    //println!("skipPreflight: {}", skip_preflight);
     if send_over_rpc {
         if let Err(e) = rpc_client
             .send_transaction_with_config(
                 &transaction,
                 RpcSendTransactionConfig {
                     skip_preflight,
+                    preflight_commitment: Some(rpc_client.commitment().commitment),
                     ..RpcSendTransactionConfig::default()
                 },
             )
