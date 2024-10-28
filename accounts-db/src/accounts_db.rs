@@ -14283,7 +14283,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_clean_drop_dead_storage_handle_zero_single_ref_accounts() {
+    fn test_clean_drop_dead_storage_handle_zero_lamport_single_ref_accounts() {
         let db = AccountsDb::new_single_for_tests();
         let account_key1 = Pubkey::new_unique();
         let account_key2 = Pubkey::new_unique();
