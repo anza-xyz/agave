@@ -14385,7 +14385,7 @@ pub mod tests {
 
         // No stores should exist for slot 0 after clean
         assert_no_storages_at_slot(&db, 0);
-        // No store should exit for slot 1 too as it has only a zerolamport single ref account.
+        // No store should exit for slot 1 too as it has only a zero lamport single ref account.
         assert_no_storages_at_slot(&db, 1);
         // Store 2 should have a single account.
         assert_eq!(db.accounts_index.ref_count_from_storage(&account_key2), 1);
