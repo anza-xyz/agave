@@ -567,6 +567,7 @@ pub struct ProgramV4CommandConfig<'a> {
     pub authority: &'a dyn Signer,
     pub output_format: &'a OutputFormat,
     pub use_quic: bool,
+    pub rpc_send_transaction_config: RpcSendTransactionConfig,
 }
 
 impl<'a> ProgramV4CommandConfig<'a> {
@@ -578,6 +579,7 @@ impl<'a> ProgramV4CommandConfig<'a> {
             authority: config.signers[*auth_signer_index],
             output_format: &config.output_format,
             use_quic: config.use_quic,
+            rpc_send_transaction_config: config.send_transaction_config,
         }
     }
 }
@@ -1014,8 +1016,11 @@ fn send_messages(
                 let mut initial_transaction = Transaction::new_unsigned(message.clone());
                 initial_transaction
                     .try_sign(&[config.payer, initial_signer, config.authority], blockhash)?;
-                let result =
-                    rpc_client.send_and_confirm_transaction_with_spinner(&initial_transaction);
+                let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
+                    &initial_transaction,
+                    config.commitment,
+                    config.rpc_send_transaction_config,
+                );
                 log_instruction_custom_error_ex::<SystemError, _>(
                     result,
                     config.output_format,
@@ -1031,7 +1036,11 @@ fn send_messages(
 
             let mut initial_transaction = Transaction::new_unsigned(message.clone());
             initial_transaction.try_sign(&[config.payer, config.authority], blockhash)?;
-            let result = rpc_client.send_and_confirm_transaction_with_spinner(&initial_transaction);
+            let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
+                &initial_transaction,
+                config.commitment,
+                config.rpc_send_transaction_config,
+            );
             log_instruction_custom_error_ex::<SystemError, _>(
                 result,
                 config.output_format,
@@ -1082,6 +1091,7 @@ fn send_messages(
                     SendAndConfirmConfig {
                         resign_txs_count: Some(5),
                         with_spinner: true,
+                        skip_preflight: config.rpc_send_transaction_config.skip_preflight,
                     },
                 )
             }
@@ -1107,11 +1117,7 @@ fn send_messages(
             .send_and_confirm_transaction_with_spinner_and_config(
                 &final_tx,
                 config.commitment,
-                RpcSendTransactionConfig {
-                    skip_preflight: true,
-                    preflight_commitment: Some(config.commitment.commitment),
-                    ..RpcSendTransactionConfig::default()
-                },
+                config.rpc_send_transaction_config,
             )
             .map_err(|e| format!("Deploying program failed: {e}"))?;
     }

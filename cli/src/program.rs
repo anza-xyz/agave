@@ -47,7 +47,7 @@ use {
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::{
         client_error::ErrorKind as ClientErrorKind,
-        config::{RpcAccountInfoConfig, RpcProgramAccountsConfig, RpcSendTransactionConfig},
+        config::{RpcAccountInfoConfig, RpcProgramAccountsConfig},
         filter::{Memcmp, RpcFilterType},
         request::MAX_MULTIPLE_ACCOUNTS,
     },
@@ -1728,10 +1728,7 @@ fn process_set_authority(
             .send_and_confirm_transaction_with_spinner_and_config(
                 &tx,
                 config.commitment,
-                RpcSendTransactionConfig {
-                    preflight_commitment: Some(config.commitment.commitment),
-                    ..RpcSendTransactionConfig::default()
-                },
+                config.send_transaction_config,
             )
             .map_err(|e| format!("Setting authority failed: {e}"))?;
 
@@ -1790,10 +1787,7 @@ fn process_set_authority_checked(
             .send_and_confirm_transaction_with_spinner_and_config(
                 &tx,
                 config.commitment,
-                RpcSendTransactionConfig {
-                    preflight_commitment: Some(config.commitment.commitment),
-                    ..RpcSendTransactionConfig::default()
-                },
+                config.send_transaction_config,
             )
             .map_err(|e| format!("Setting authority failed: {e}"))?;
 
@@ -2132,10 +2126,7 @@ fn close(
     let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
         &tx,
         config.commitment,
-        RpcSendTransactionConfig {
-            preflight_commitment: Some(config.commitment.commitment),
-            ..RpcSendTransactionConfig::default()
-        },
+        config.send_transaction_config,
     );
     if let Err(err) = result {
         if let ClientErrorKind::TransactionError(TransactionError::InstructionError(
@@ -2358,10 +2349,7 @@ fn process_extend_program(
     let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
         &tx,
         config.commitment,
-        RpcSendTransactionConfig {
-            preflight_commitment: Some(config.commitment.commitment),
-            ..RpcSendTransactionConfig::default()
-        },
+        config.send_transaction_config,
     );
     if let Err(err) = result {
         if let ClientErrorKind::TransactionError(TransactionError::InstructionError(
@@ -2936,7 +2924,11 @@ fn send_deploy_messages(
             } else {
                 initial_transaction.try_sign(&[fee_payer_signer], blockhash)?;
             }
-            let result = rpc_client.send_and_confirm_transaction_with_spinner(&initial_transaction);
+            let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
+                &initial_transaction,
+                config.commitment,
+                config.send_transaction_config,
+            );
             log_instruction_custom_error::<SystemError>(result, config)
                 .map_err(|err| format!("Account allocation failed: {err}"))?;
         } else {
@@ -3011,6 +3003,7 @@ fn send_deploy_messages(
                         SendAndConfirmConfig {
                             resign_txs_count: Some(max_sign_attempts),
                             with_spinner: true,
+                            skip_preflight: config.send_transaction_config.skip_preflight,
                         },
                     )
                 },
@@ -3046,10 +3039,7 @@ fn send_deploy_messages(
                     .send_and_confirm_transaction_with_spinner_and_config(
                         &final_tx,
                         config.commitment,
-                        RpcSendTransactionConfig {
-                            preflight_commitment: Some(config.commitment.commitment),
-                            ..RpcSendTransactionConfig::default()
-                        },
+                        config.send_transaction_config,
                     )
                     .map_err(|e| format!("Deploying program failed: {e}"))?,
             ));

@@ -59,6 +59,7 @@ fn test_send_and_confirm_transactions_in_parallel_without_tpu_client() {
         SendAndConfirmConfig {
             with_spinner: false,
             resign_txs_count: Some(5),
+            skip_preflight: false,
         },
     );
     assert!(txs_errors.is_ok());
@@ -117,6 +118,7 @@ fn test_send_and_confirm_transactions_in_parallel_with_tpu_client() {
         SendAndConfirmConfig {
             with_spinner: false,
             resign_txs_count: Some(5),
+            skip_preflight: false,
         },
     );
     assert!(txs_errors.is_ok());

@@ -10,12 +10,14 @@ use {
     solana_rpc_client::spinner::{self, SendTransactionProgress},
     solana_rpc_client_api::{
         client_error::ErrorKind,
+        config::RpcSendTransactionConfig,
         request::{RpcError, RpcResponseErrorData, MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS},
         response::RpcSimulateTransactionResult,
     },
     solana_sdk::{
         hash::Hash,
         message::Message,
+        msg,
         signature::{Signature, SignerError},
         signers::Signers,
         transaction::{Transaction, TransactionError},
@@ -58,6 +60,7 @@ struct BlockHashData {
 pub struct SendAndConfirmConfig {
     pub with_spinner: bool,
     pub resign_txs_count: Option<usize>,
+    pub skip_preflight: bool,
 }
 
 /// Sends and confirms transactions concurrently in a sync context
@@ -195,6 +198,7 @@ async fn send_transaction_with_rpc_fallback(
     serialized_transaction: Vec<u8>,
     context: &SendingContext,
     index: usize,
+    skip_preflight: bool,
 ) -> Result<()> {
     let send_over_rpc = if let Some(tpu_client) = tpu_client {
         !tokio::time::timeout(
@@ -206,8 +210,18 @@ async fn send_transaction_with_rpc_fallback(
     } else {
         true
     };
+    //println!("skipPreflight: {}", skip_preflight);
     if send_over_rpc {
-        if let Err(e) = rpc_client.send_transaction(&transaction).await {
+        if let Err(e) = rpc_client
+            .send_transaction_with_config(
+                &transaction,
+                RpcSendTransactionConfig {
+                    skip_preflight,
+                    ..RpcSendTransactionConfig::default()
+                },
+            )
+            .await
+        {
             match &e.kind {
                 ErrorKind::Io(_) | ErrorKind::Reqwest(_) => {
                     // fall through on io error, we will retry the transaction
@@ -255,6 +269,7 @@ async fn sign_all_messages_and_send<T: Signers + ?Sized>(
     messages_with_index: Vec<(usize, Message)>,
     signers: &T,
     context: &SendingContext,
+    skip_preflight: bool,
 ) -> Result<()> {
     let current_transaction_count = messages_with_index.len();
     let mut futures = vec![];
@@ -304,6 +319,7 @@ async fn sign_all_messages_and_send<T: Signers + ?Sized>(
                 serialized_transaction,
                 context,
                 *index,
+                skip_preflight,
             )
             .await
         });
@@ -512,6 +528,7 @@ pub async fn send_and_confirm_transactions_in_parallel<T: Signers + ?Sized>(
             messages_with_index,
             signers,
             &context,
+            config.skip_preflight,
         )
         .await?;
         confirm_transactions_till_block_height_and_resend_unexpired_transaction_over_tpu(
