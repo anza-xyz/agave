@@ -149,9 +149,9 @@ where
     T: AsRef<[u8]>,
 {
     let size = packets.len();
-    let mut iovs = vec![MaybeUninit::<iovec>::uninit(); size];
-    let mut addrs = vec![MaybeUninit::<sockaddr_storage>::zeroed(); size];
-    let mut hdrs = vec![MaybeUninit::<mmsghdr>::uninit(); size];
+    let mut iovs = vec![MaybeUninit::uninit(); size];
+    let mut addrs = vec![MaybeUninit::zeroed(); size];
+    let mut hdrs = vec![MaybeUninit::uninit(); size];
     for ((pkt, dest), hdr, iov, addr) in izip!(packets, &mut hdrs, &mut iovs, &mut addrs) {
         mmsghdr_for_packet(pkt.as_ref(), dest.borrow(), iov, addr, hdr);
     }
