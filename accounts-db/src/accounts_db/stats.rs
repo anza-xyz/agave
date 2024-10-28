@@ -563,7 +563,7 @@ impl ShrinkStats {
                     i64
                 ),
                 (
-                    "marking_zero_dead_accounts",
+                    "num_zero_lamport_single_ref_accounts_found",
                     self.num_zero_lamport_single_ref_accounts_found
                         .swap(0, Ordering::Relaxed),
                     i64
