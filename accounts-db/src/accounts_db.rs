@@ -14325,7 +14325,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_shrink_unref_handle_zero_single_ref_accounts() {
+    fn test_shrink_unref_handle_zero_lamport_single_ref_accounts() {
         let db = AccountsDb::new_single_for_tests();
         let epoch_schedule = EpochSchedule::default();
         let account_key1 = Pubkey::new_unique();
