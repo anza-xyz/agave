@@ -35,7 +35,7 @@ use {
     },
     solana_compute_budget::{
         compute_budget::ComputeBudget,
-        compute_budget_limits::{self, get_prioritization_fee_for_test, MAX_COMPUTE_UNIT_LIMIT},
+        compute_budget_limits::{self, get_prioritization_fee, MAX_COMPUTE_UNIT_LIMIT},
     },
     solana_feature_set::{self as feature_set, FeatureSet},
     solana_inline_spl::token,
@@ -10314,10 +10314,7 @@ fn test_calculate_fee_compute_units() {
         assert_eq!(
             fee,
             lamports_per_signature
-                + get_prioritization_fee_for_test(
-                    PRIORITIZATION_FEE_RATE,
-                    requested_compute_units as u64
-                )
+                + get_prioritization_fee(PRIORITIZATION_FEE_RATE, requested_compute_units as u64)
         );
     }
 }
@@ -10331,8 +10328,7 @@ fn test_calculate_prioritization_fee() {
 
     let request_units = 1_000_000_u32;
     let request_unit_price = 2_000_000_000_u64;
-    let prioritization_fee =
-        get_prioritization_fee_for_test(request_unit_price, request_units as u64);
+    let prioritization_fee = get_prioritization_fee(request_unit_price, request_units as u64);
 
     let message = new_sanitized_message(Message::new(
         &[

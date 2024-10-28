@@ -40,12 +40,7 @@ impl Default for ComputeBudgetLimits {
     }
 }
 
-//#[cfg(test)]
-pub fn get_prioritization_fee_for_test(compute_unit_price: u64, compute_unit_limit: u64) -> u64 {
-    get_prioritization_fee(compute_unit_price, compute_unit_limit)
-}
-
-fn get_prioritization_fee(compute_unit_price: u64, compute_unit_limit: u64) -> u64 {
+pub fn get_prioritization_fee(compute_unit_price: u64, compute_unit_limit: u64) -> u64 {
     let micro_lamport_fee: MicroLamports =
         (compute_unit_price as u128).saturating_mul(compute_unit_limit as u128);
     micro_lamport_fee
