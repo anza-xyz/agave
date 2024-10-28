@@ -4,8 +4,11 @@
 use {
     itertools::izip,
     libc::{iovec, mmsghdr, msghdr, sockaddr_in, sockaddr_in6, sockaddr_storage, socklen_t},
-    std::mem::MaybeUninit,
-    std::os::unix::io::AsRawFd,
+    std::{
+        mem::{self, MaybeUninit},
+        os::unix::io::AsRawFd,
+        ptr,
+    },
 };
 use {
     solana_sdk::transport::TransportError,
@@ -63,8 +66,8 @@ fn mmsghdr_for_packet(
     addr: &mut MaybeUninit<sockaddr_storage>,
     hdr: &mut MaybeUninit<mmsghdr>,
 ) {
-    const SIZE_OF_SOCKADDR_IN: usize = std::mem::size_of::<sockaddr_in>();
-    const SIZE_OF_SOCKADDR_IN6: usize = std::mem::size_of::<sockaddr_in6>();
+    const SIZE_OF_SOCKADDR_IN: usize = mem::size_of::<sockaddr_in>();
+    const SIZE_OF_SOCKADDR_IN6: usize = mem::size_of::<sockaddr_in6>();
 
     iov.write(iovec {
         iov_base: packet.as_ptr() as *mut libc::c_void,
@@ -74,7 +77,7 @@ fn mmsghdr_for_packet(
     let msg_namelen = match dest {
         SocketAddr::V4(socket_addr_v4) => {
             unsafe {
-                std::ptr::write(
+                ptr::write(
                     addr.as_mut_ptr() as *mut _,
                     *nix::sys::socket::SockaddrIn::from(*socket_addr_v4).as_ref(),
                 );
@@ -83,7 +86,7 @@ fn mmsghdr_for_packet(
         }
         SocketAddr::V6(socket_addr_v6) => {
             unsafe {
-                std::ptr::write(
+                ptr::write(
                     addr.as_mut_ptr() as *mut _,
                     *nix::sys::socket::SockaddrIn6::from(*socket_addr_v6).as_ref(),
                 );
@@ -99,7 +102,7 @@ fn mmsghdr_for_packet(
             msg_namelen,
             msg_iov: iov.as_mut_ptr(),
             msg_iovlen: 1,
-            msg_control: std::ptr::null::<libc::c_void>() as *mut _,
+            msg_control: ptr::null::<libc::c_void>() as *mut _,
             msg_controllen: 0,
             msg_flags: 0,
         },
@@ -154,11 +157,11 @@ where
     }
     // mmsghdr_for_packet() performs initialization so we can safely transmute
     // the Vecs to their initialized counterparts
-    let _iovs = unsafe { std::mem::transmute::<Vec<MaybeUninit<iovec>>, Vec<iovec>>(iovs) };
+    let _iovs = unsafe { mem::transmute::<Vec<MaybeUninit<iovec>>, Vec<iovec>>(iovs) };
     let _addrs = unsafe {
-        std::mem::transmute::<Vec<MaybeUninit<sockaddr_storage>>, Vec<sockaddr_storage>>(addrs)
+        mem::transmute::<Vec<MaybeUninit<sockaddr_storage>>, Vec<sockaddr_storage>>(addrs)
     };
-    let mut hdrs = unsafe { std::mem::transmute::<Vec<MaybeUninit<mmsghdr>>, Vec<mmsghdr>>(hdrs) };
+    let mut hdrs = unsafe { mem::transmute::<Vec<MaybeUninit<mmsghdr>>, Vec<mmsghdr>>(hdrs) };
 
     sendmmsg_retry(sock, &mut hdrs)
 }
