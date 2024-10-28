@@ -249,9 +249,9 @@ fn normal_bin_widths() -> Vec<usize> {
     bin_widths
 }
 
-fn normal_ancient() -> Vec<usize> {
+fn normal_ancient(offset: i64) -> Vec<usize> {
     let mut bin_widths = vec![0];
-    bin_widths.push(432_000);
+    bin_widths.push((432_000 - offset) as usize);
     bin_widths
 }
 
@@ -305,7 +305,7 @@ fn main() {
             eprintln!("========");
 
             eprintln!("\n======== Normal Ancient Histogram");
-            calc(&info, normal_ancient(), offset);
+            calc(&info, normal_ancient(offset), offset);
             eprintln!("========");
         } else {
             panic!("couldn't read folder: {path:?}, {:?}", dir);
@@ -338,7 +338,6 @@ pub mod tests {
             .collect::<Vec<_>>();
         let offset = 100_000i64;
         calc(&info, normal_bin_widths(), offset);
-        calc(&info, normal_ancient(), offset);
-        calc(&info, normal_10k(), offset);
+        calc(&info, normal_ancient(offset), offset);
     }
 }
