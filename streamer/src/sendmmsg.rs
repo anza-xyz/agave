@@ -60,7 +60,7 @@ fn mmsghdr_for_packet(
     packet: &[u8],
     dest: &SocketAddr,
     iov: &mut MaybeUninit<iovec>,
-    addr: &mut sockaddr_storage,
+    addr: &mut MaybeUninit<sockaddr_storage>,
     hdr: &mut MaybeUninit<mmsghdr>,
 ) {
     const SIZE_OF_SOCKADDR_IN: usize = std::mem::size_of::<sockaddr_in>();
@@ -75,7 +75,7 @@ fn mmsghdr_for_packet(
         SocketAddr::V4(socket_addr_v4) => {
             unsafe {
                 std::ptr::write(
-                    addr as *mut _ as *mut _,
+                    addr.as_mut_ptr() as *mut _,
                     *nix::sys::socket::SockaddrIn::from(*socket_addr_v4).as_ref(),
                 );
             }
@@ -84,7 +84,7 @@ fn mmsghdr_for_packet(
         SocketAddr::V6(socket_addr_v6) => {
             unsafe {
                 std::ptr::write(
-                    addr as *mut _ as *mut _,
+                    addr.as_mut_ptr() as *mut _,
                     *nix::sys::socket::SockaddrIn6::from(*socket_addr_v6).as_ref(),
                 );
             }
@@ -147,7 +147,7 @@ where
 {
     let size = packets.len();
     let mut iovs = vec![MaybeUninit::<iovec>::uninit(); size];
-    let mut addrs = vec![unsafe { std::mem::zeroed() }; size];
+    let mut addrs = vec![MaybeUninit::<sockaddr_storage>::zeroed(); size];
     let mut hdrs = vec![MaybeUninit::<mmsghdr>::uninit(); size];
     for ((pkt, dest), hdr, iov, addr) in izip!(packets, &mut hdrs, &mut iovs, &mut addrs) {
         mmsghdr_for_packet(pkt.as_ref(), dest.borrow(), iov, addr, hdr);
@@ -155,6 +155,9 @@ where
     // mmsghdr_for_packet() performs initialization so we can safely transmute
     // the Vecs to their initialized counterparts
     let _iovs = unsafe { std::mem::transmute::<Vec<MaybeUninit<iovec>>, Vec<iovec>>(iovs) };
+    let _addrs = unsafe {
+        std::mem::transmute::<Vec<MaybeUninit<sockaddr_storage>>, Vec<sockaddr_storage>>(addrs)
+    };
     let mut hdrs = unsafe { std::mem::transmute::<Vec<MaybeUninit<mmsghdr>>, Vec<mmsghdr>>(hdrs) };
 
     sendmmsg_retry(sock, &mut hdrs)
