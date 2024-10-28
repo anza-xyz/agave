@@ -1176,8 +1176,16 @@ pub struct AccountStorageEntry {
 
     alive_bytes: AtomicUsize,
 
-    /// offsets to accounts that are zero lamport single ref stored in this storage.
-    /// These are still alive. But, shrink will be able to remove them.
+    /// offsets to accounts that are zero lamport single ref stored in this
+    /// storage. These are still alive. But, shrink will be able to remove them.
+    ///
+    /// NOTE: It's possible that one of these zero lamport single ref accounts
+    /// could be written in a new transaction (and later rooted & flushed) and a
+    /// later clean runs and marks this account dead before this storage gets a
+    /// chance to be shrunk, thus making the account dead in both "alive_bytes"
+    /// and as a zero lamport single ref. If this happens, we will count this
+    /// account as "dead" twice. However, this should be fine. It just makes
+    /// shrink more likely to visit this storage.
     zero_lamport_single_ref_offsets: RwLock<IntSet<Offset>>,
 }
 
@@ -3777,11 +3785,14 @@ impl AccountsDb {
         // storage being shrunk, the new storage will not have any zero lamport
         // single ref account anyway. Therefore, we don't need to worry about
         // marking zero lamport single ref offset on the new storage.
-        if let Some(store) = self.storage.get_slot_storage_entry_no_check(slot) {
+        if let Some(store) = self
+            .storage
+            .get_slot_storage_entry_shrinking_in_progress_ok(slot)
+        {
             if store.insert_zero_lamport_single_ref_account_offset(offset) {
                 // this wasn't previously marked as zero lamport single ref
                 self.shrink_stats
-                    .marking_zero_dead_accounts
+                    .num_zero_lamport_single_ref_accounts_found
                     .fetch_add(1, Ordering::Relaxed);
 
                 if store.num_zero_lamport_single_ref_accounts() == store.count() {

@@ -84,15 +84,6 @@ impl AccountStorage {
         self.get_slot_storage_entry_shrinking_in_progress_ok(slot)
     }
 
-    /// return the append vec for 'slot' if it exists.
-    ///
-    /// Warning: This is the 'unsafe' version of `get_slot_storage_entry`. It
-    /// means that you could get an old storage entry if a shrink is in
-    /// progress. Any update to the storage could by lost.
-    pub fn get_slot_storage_entry_no_check(&self, slot: Slot) -> Option<Arc<AccountStorageEntry>> {
-        self.get_slot_storage_entry_shrinking_in_progress_ok(slot)
-    }
-
     pub(crate) fn replace_storage_with_equivalent(
         &self,
         slot: Slot,

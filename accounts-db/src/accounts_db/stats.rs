@@ -403,7 +403,7 @@ pub struct ShrinkStats {
     pub num_dead_slots_added_to_clean: AtomicU64,
     pub num_slots_with_zero_lamport_accounts_added_to_shrink: AtomicU64,
     pub marking_zero_dead_accounts_in_non_shrinkable_store: AtomicU64,
-    pub marking_zero_dead_accounts: AtomicU64,
+    pub num_zero_lamport_single_ref_accounts_found: AtomicU64,
 }
 
 impl ShrinkStats {
@@ -564,7 +564,8 @@ impl ShrinkStats {
                 ),
                 (
                     "marking_zero_dead_accounts",
-                    self.marking_zero_dead_accounts.swap(0, Ordering::Relaxed),
+                    self.num_zero_lamport_single_ref_accounts_found
+                        .swap(0, Ordering::Relaxed),
                     i64
                 ),
             );
