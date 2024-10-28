@@ -3764,7 +3764,7 @@ impl AccountsDb {
     }
 
     /// This function handles the case when zero lamport single ref accounts are found during shrink.
-    pub(crate) fn zero_lamport_single_ref_found(&self, slot: Slot, offset: usize) {
+    pub(crate) fn zero_lamport_single_ref_found(&self, slot: Slot, offset: Offset) {
         // This function can be called when a zero lamport single ref account is
         // found during shrink. Therefore, we can't use the safe version of
         // `get_slot_storage_entry` because shrink_in_progress map may not be
