@@ -14365,7 +14365,7 @@ pub mod tests {
             1
         );
         // And now, slot 1 should be marked complete dead, which will be added
-        // to uncleaned slots, which handle dropping dead storage. And it WON"T
+        // to uncleaned slots, which handle dropping dead storage. And it WON'T
         // be participating shrinking in the next round.
         assert!(db.accounts_index.clone_uncleaned_roots().contains(&1));
         assert!(!db.shrink_candidate_slots.lock().unwrap().contains(&1));
