@@ -254,12 +254,6 @@ fn normal_ancient() -> Vec<usize> {
     bin_widths.push(432_000);
     bin_widths
 }
-fn normal_10k() -> Vec<usize> {
-    let mut bin_widths = vec![0];
-    bin_widths.push(432_000);
-    bin_widths.push(442_000);
-    bin_widths
-}
 
 fn main() {
     let matches = App::new(crate_name!())
@@ -312,10 +306,6 @@ fn main() {
 
             eprintln!("\n======== Normal Ancient Histogram");
             calc(&info, normal_ancient(), offset);
-            eprintln!("========");
-
-            eprintln!("\n======== Normal Ancient 10K Histogram");
-            calc(&info, normal_10k(), offset);
             eprintln!("========");
         } else {
             panic!("couldn't read folder: {path:?}, {:?}", dir);
