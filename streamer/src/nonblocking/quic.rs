@@ -1676,7 +1676,7 @@ pub mod test {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_quic_server_exit() {
         let SpawnTestServerResult {
             join_handle,
@@ -1689,7 +1689,7 @@ pub mod test {
         join_handle.await.unwrap();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_quic_timeout() {
         solana_logger::setup();
         let SpawnTestServerResult {
@@ -1705,7 +1705,7 @@ pub mod test {
         join_handle.await.unwrap();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_packet_batcher() {
         solana_logger::setup();
         let (pkt_batch_sender, pkt_batch_receiver) = unbounded();
@@ -1751,7 +1751,7 @@ pub mod test {
         handle.await.unwrap();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_quic_stream_timeout() {
         solana_logger::setup();
         let SpawnTestServerResult {
@@ -1786,7 +1786,7 @@ pub mod test {
         join_handle.await.unwrap();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_quic_server_block_multiple_connections() {
         solana_logger::setup();
         let SpawnTestServerResult {
@@ -1877,7 +1877,7 @@ pub mod test {
         join_handle.await.unwrap();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_quic_server_multiple_writes() {
         solana_logger::setup();
         let SpawnTestServerResult {
@@ -1892,7 +1892,7 @@ pub mod test {
         join_handle.await.unwrap();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_quic_server_staked_connection_removal() {
         solana_logger::setup();
 
@@ -1923,7 +1923,7 @@ pub mod test {
         assert_eq!(stats.connection_remove_failed.load(Ordering::Relaxed), 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_quic_server_zero_staked_connection_removal() {
         // In this test, the client has a pubkey, but is not in stake table.
         solana_logger::setup();
@@ -1955,7 +1955,7 @@ pub mod test {
         assert_eq!(stats.connection_remove_failed.load(Ordering::Relaxed), 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_quic_server_unstaked_connection_removal() {
         solana_logger::setup();
         let SpawnTestServerResult {
@@ -1979,7 +1979,7 @@ pub mod test {
         assert_eq!(stats.connection_remove_failed.load(Ordering::Relaxed), 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_quic_server_unstaked_node_connect_failure() {
         solana_logger::setup();
         let s = UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -2015,7 +2015,7 @@ pub mod test {
         t.await.unwrap();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_quic_server_multiple_streams() {
         solana_logger::setup();
         let s = UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -2383,7 +2383,7 @@ pub mod test {
         assert_eq!(ratio, max_ratio);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_throttling_check_no_packet_drop() {
         solana_logger::setup_with_default_filter();
 
