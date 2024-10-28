@@ -84,7 +84,7 @@
 use crate::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey};
 #[deprecated(since = "2.1.0", note = "Use `solana-sysvar-id` crate instead")]
 pub use solana_sysvar_id::{
-    check_id, declare_deprecated_sysvar_id, declare_sysvar_id, get_sysvar, id, SysvarId, ID,
+    check_id, declare_deprecated_sysvar_id, declare_sysvar_id, id, SysvarId, ID,
 };
 #[allow(deprecated)]
 pub use sysvar_ids::ALL_IDS;
@@ -201,6 +201,35 @@ macro_rules! impl_sysvar_get {
             }
         }
     };
+}
+
+/// Handler for retrieving a slice of sysvar data from the `sol_get_sysvar`
+/// syscall.
+fn get_sysvar(
+    dst: &mut [u8],
+    sysvar_id: &Pubkey,
+    offset: u64,
+    length: u64,
+) -> Result<(), ProgramError> {
+    // Check that the provided destination buffer is large enough to hold the
+    // requested data.
+    if dst.len() < length as usize {
+        return Err(ProgramError::InvalidArgument);
+    }
+
+    let sysvar_id = sysvar_id as *const _ as *const u8;
+    let var_addr = dst as *mut _ as *mut u8;
+
+    #[cfg(target_os = "solana")]
+    let result = unsafe { crate::syscalls::sol_get_sysvar(sysvar_id, var_addr, offset, length) };
+
+    #[cfg(not(target_os = "solana"))]
+    let result = crate::program_stubs::sol_get_sysvar(sysvar_id, var_addr, offset, length);
+
+    match result {
+        crate::entrypoint::SUCCESS => Ok(()),
+        e => Err(e.into()),
+    }
 }
 
 #[cfg(test)]

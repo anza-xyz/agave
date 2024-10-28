@@ -18,7 +18,6 @@
 //!
 //! [sysvardoc]: https://docs.solanalabs.com/runtime/sysvars
 
-use solana_program_error::ProgramError;
 /// Re-export types required for macros
 pub use solana_pubkey::{declare_deprecated_id, declare_id, Pubkey};
 
@@ -69,52 +68,5 @@ macro_rules! declare_deprecated_sysvar_id(
     )
 );
 
-const _SUCCESS: u64 = 0;
-#[cfg(test)]
-static_assertions::const_assert_eq!(_SUCCESS, solana_program_entrypoint::SUCCESS);
-
 // Owner pubkey for sysvar accounts
 solana_pubkey::declare_id!("Sysvar1111111111111111111111111111111111111");
-
-/// Handler for retrieving a slice of sysvar data from the `sol_get_sysvar`
-/// syscall.
-pub fn get_sysvar(
-    dst: &mut [u8],
-    sysvar_id: &Pubkey,
-    offset: u64,
-    length: u64,
-) -> Result<(), ProgramError> {
-    // Check that the provided destination buffer is large enough to hold the
-    // requested data.
-    if dst.len() < length as usize {
-        return Err(ProgramError::InvalidArgument);
-    }
-
-    get_sysvar_unchecked(dst, sysvar_id, offset, length)
-}
-
-/// Handler for retrieving a slice of sysvar data from the `sol_get_sysvar`
-/// syscall, without a client-side length check
-#[allow(unused_variables)]
-pub fn get_sysvar_unchecked(
-    dst: &mut [u8],
-    sysvar_id: &Pubkey,
-    offset: u64,
-    length: u64,
-) -> Result<(), ProgramError> {
-    #[cfg(target_os = "solana")]
-    {
-        let sysvar_id = sysvar_id as *const _ as *const u8;
-        let var_addr = dst as *mut _ as *mut u8;
-
-        let result =
-            unsafe { crate::syscalls::sol_get_sysvar(sysvar_id, var_addr, offset, length) };
-
-        match result {
-            _SUCCESS => Ok(()),
-            e => Err(e.into()),
-        }
-    }
-    #[cfg(not(target_os = "solana"))]
-    Err(ProgramError::UnsupportedSysvar)
-}

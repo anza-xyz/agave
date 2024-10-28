@@ -7084,7 +7084,6 @@ dependencies = [
 name = "solana-sysvar-id"
 version = "2.1.0"
 dependencies = [
- "solana-program-error",
  "solana-pubkey",
 ]
 
