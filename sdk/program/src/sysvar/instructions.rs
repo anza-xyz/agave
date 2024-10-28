@@ -45,7 +45,7 @@ use {
         serialize_utils::{read_pubkey, read_slice, read_u16, read_u8},
     },
     solana_sanitize::SanitizeError,
-    solana_sysvar::declare_sysvar_id,
+    solana_sysvar_id::declare_sysvar_id,
 };
 
 /// Instructions sysvar, dummy type.

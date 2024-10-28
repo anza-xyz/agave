@@ -82,8 +82,8 @@
 //! [sysvardoc]: https://docs.solanalabs.com/runtime/sysvars
 
 use crate::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey};
-#[deprecated(since = "2.1.0", note = "Use `solana-sysvar` crate instead")]
-pub use solana_sysvar::{
+#[deprecated(since = "2.1.0", note = "Use `solana-sysvar-id` crate instead")]
+pub use solana_sysvar_id::{
     check_id, declare_deprecated_sysvar_id, declare_sysvar_id, get_sysvar, id, SysvarId, ID,
 };
 #[allow(deprecated)]

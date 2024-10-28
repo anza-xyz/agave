@@ -38,7 +38,7 @@
 //!     Ok(())
 //! }
 //! #
-//! # use solana_sysvar::SysvarId;
+//! # use solana_sysvar_id::SysvarId;
 //! # let p = Clock::id();
 //! # let l = &mut 1169280;
 //! # let d = &mut vec![240, 153, 233, 7, 0, 0, 0, 0, 11, 115, 118, 98, 0, 0, 0, 0, 51, 1, 0, 0, 0, 0, 0, 0, 52, 1, 0, 0, 0, 0, 0, 0, 121, 50, 119, 98, 0, 0, 0, 0];
@@ -81,7 +81,7 @@
 //!     Ok(())
 //! }
 //! #
-//! # use solana_sysvar::SysvarId;
+//! # use solana_sysvar_id::SysvarId;
 //! # let p = Clock::id();
 //! # let l = &mut 1169280;
 //! # let d = &mut vec![240, 153, 233, 7, 0, 0, 0, 0, 11, 115, 118, 98, 0, 0, 0, 0, 51, 1, 0, 0, 0, 0, 0, 0, 52, 1, 0, 0, 0, 0, 0, 0, 121, 50, 119, 98, 0, 0, 0, 0];

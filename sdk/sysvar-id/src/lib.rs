@@ -18,9 +18,6 @@
 //!
 //! [sysvardoc]: https://docs.solanalabs.com/runtime/sysvars
 
-#[cfg(target_os = "solana")]
-pub mod syscalls;
-
 use solana_program_error::ProgramError;
 /// Re-export types required for macros
 pub use solana_pubkey::{declare_deprecated_id, declare_id, Pubkey};

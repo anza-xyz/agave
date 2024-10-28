@@ -49,7 +49,7 @@
 //!     Ok(())
 //! }
 //! #
-//! # use solana_sysvar::SysvarId;
+//! # use solana_sysvar_id::SysvarId;
 //! # let p = EpochRewards::id();
 //! # let l = &mut 1559040;
 //! # let epoch_rewards = EpochRewards {
@@ -99,7 +99,7 @@
 //!     Ok(())
 //! }
 //! #
-//! # use solana_sysvar::SysvarId;
+//! # use solana_sysvar_id::SysvarId;
 //! # let p = EpochRewards::id();
 //! # let l = &mut 1559040;
 //! # let epoch_rewards = EpochRewards {
@@ -162,7 +162,7 @@
 pub use crate::epoch_rewards::EpochRewards;
 use {
     crate::{impl_sysvar_get, program_error::ProgramError, sysvar::Sysvar},
-    solana_sysvar::declare_sysvar_id,
+    solana_sysvar_id::declare_sysvar_id,
 };
 
 declare_sysvar_id!("SysvarEpochRewards1111111111111111111111111", EpochRewards);

@@ -38,7 +38,7 @@
 //!     Ok(())
 //! }
 //! #
-//! # use solana_sysvar::SysvarId;
+//! # use solana_sysvar_id::SysvarId;
 //! # let p = EpochSchedule::id();
 //! # let l = &mut 1120560;
 //! # let d = &mut vec![0, 32, 0, 0, 0, 0, 0, 0, 0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
@@ -81,7 +81,7 @@
 //!     Ok(())
 //! }
 //! #
-//! # use solana_sysvar::SysvarId;
+//! # use solana_sysvar_id::SysvarId;
 //! # let p = EpochSchedule::id();
 //! # let l = &mut 1120560;
 //! # let d = &mut vec![0, 32, 0, 0, 0, 0, 0, 0, 0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];

@@ -39,7 +39,7 @@
 //!     Ok(())
 //! }
 //! #
-//! # use solana_sysvar::SysvarId;
+//! # use solana_sysvar_id::SysvarId;
 //! # let p = Rent::id();
 //! # let l = &mut 1009200;
 //! # let d = &mut vec![152, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64, 100];
@@ -82,7 +82,7 @@
 //!     Ok(())
 //! }
 //! #
-//! # use solana_sysvar::SysvarId;
+//! # use solana_sysvar_id::SysvarId;
 //! # let p = Rent::id();
 //! # let l = &mut 1009200;
 //! # let d = &mut vec![152, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64, 100];

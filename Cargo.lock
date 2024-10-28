@@ -6368,7 +6368,7 @@ dependencies = [
  "serde_derive",
  "solana-clock",
  "solana-sdk-macro",
- "solana-sysvar",
+ "solana-sysvar-id",
  "static_assertions",
 ]
 
@@ -6686,7 +6686,7 @@ dependencies = [
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-sdk-macro",
- "solana-sysvar",
+ "solana-sysvar-id",
  "static_assertions",
 ]
 
@@ -6977,6 +6977,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-sdk-macro",
+ "solana-sysvar-id",
 ]
 
 [[package]]
@@ -7460,7 +7461,7 @@ dependencies = [
  "solana-slot-hashes",
  "solana-slot-history",
  "solana-stable-layout",
- "solana-sysvar",
+ "solana-sysvar-id",
  "solana-transaction-error",
  "static_assertions",
  "test-case",
@@ -7702,7 +7703,7 @@ dependencies = [
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-sdk-macro",
- "solana-sysvar",
+ "solana-sysvar-id",
  "static_assertions",
 ]
 
@@ -8177,7 +8178,7 @@ dependencies = [
  "serde_derive",
  "solana-hash",
  "solana-sha256-hasher",
- "solana-sysvar",
+ "solana-sysvar-id",
 ]
 
 [[package]]
@@ -8187,6 +8188,7 @@ dependencies = [
  "bv",
  "serde",
  "serde_derive",
+ "solana-sysvar-id",
 ]
 
 [[package]]
@@ -8461,7 +8463,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-sysvar"
+name = "solana-sysvar-id"
 version = "2.1.0"
 dependencies = [
  "solana-program-entrypoint",

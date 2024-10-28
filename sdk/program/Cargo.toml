@@ -35,14 +35,8 @@ sha3 = { workspace = true }
 solana-account-info = { workspace = true, features = ["bincode"] }
 solana-atomic-u64 = { workspace = true }
 solana-bincode = { workspace = true }
-<<<<<<< HEAD
 solana-borsh = { workspace = true, optional = true }
-solana-clock = { workspace = true, features = ["serde"] }
-||||||| parent of 702bf288f8 (sdk: Extract `solana-sysvar` crate)
-solana-clock = { workspace = true, features = ["serde"] }
-=======
 solana-clock = { workspace = true, features = ["serde", "sysvar"] }
->>>>>>> 702bf288f8 (sdk: Extract `solana-sysvar` crate)
 solana-cpi = { workspace = true }
 solana-decode-error = { workspace = true }
 solana-epoch-schedule = { workspace = true, features = ["serde", "sysvar"] }
@@ -59,7 +53,7 @@ solana-instruction = { workspace = true, default-features = false, features = [
     "serde",
     "std",
 ] }
-solana-last-restart-slot = { workspace = true, features = ["serde"] }
+solana-last-restart-slot = { workspace = true, features = ["serde", "sysvar"] }
 solana-msg = { workspace = true }
 solana-native-token = { workspace = true }
 solana-program-entrypoint = { workspace = true }
@@ -77,9 +71,9 @@ solana-serialize-utils = { workspace = true }
 solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 solana-short-vec = { workspace = true }
 solana-slot-hashes = { workspace = true, features = ["serde", "sysvar"] }
-solana-slot-history = { workspace = true, features = ["serde"] }
+solana-slot-history = { workspace = true, features = ["serde", "sysvar"] }
 solana-stable-layout = { workspace = true }
-solana-sysvar = { workspace = true }
+solana-sysvar-id = { workspace = true }
 thiserror = { workspace = true }
 
 # This is currently needed to build on-chain programs reliably.

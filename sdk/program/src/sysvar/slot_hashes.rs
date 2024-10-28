@@ -9,8 +9,8 @@
 //! [`Sysvar::size_of`] methods in an on-chain program, and it can be accessed
 //! off-chain through RPC.
 //!
-//! [`SysvarId::id`]: https://docs.rs/solana-sysvar/latest/solana_sysvar/trait.SysvarId.html#tymethod.id
-//! [`SysvarId::check_id`]: https://docs.rs/solana-sysvar/latest/solana_sysvar/trait.SysvarId.html#tymethod.check_id
+//! [`SysvarId::id`]: https://docs.rs/solana-sysvar-id/latest/solana_sysvar_id/trait.SysvarId.html#tymethod.id
+//! [`SysvarId::check_id`]: https://docs.rs/solana-sysvar-id/latest/solana_sysvar_id/trait.SysvarId.html#tymethod.check_id
 //!
 //! # Examples
 //!
@@ -55,14 +55,16 @@ use {
     },
     bytemuck_derive::{Pod, Zeroable},
     solana_clock::Slot,
-    solana_sysvar::SysvarId,
 };
 
 const U64_SIZE: usize = std::mem::size_of::<u64>();
 
-pub use solana_slot_hashes::{
-    sysvar::{check_id, id, ID},
-    SlotHashes,
+pub use {
+    solana_slot_hashes::{
+        sysvar::{check_id, id, ID},
+        SlotHashes,
+    },
+    solana_sysvar_id::SysvarId,
 };
 
 impl Sysvar for SlotHashes {

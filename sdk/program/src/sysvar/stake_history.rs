@@ -52,7 +52,7 @@ use {
         sysvar::{get_sysvar, Sysvar, SysvarId},
     },
     solana_clock::Epoch,
-    solana_sysvar::declare_sysvar_id,
+    solana_sysvar_id::declare_sysvar_id,
 };
 
 declare_sysvar_id!("SysvarStakeHistory1111111111111111111111111", StakeHistory);
