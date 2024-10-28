@@ -3,7 +3,7 @@
 #[cfg(target_os = "linux")]
 use {
     itertools::izip,
-    libc::{iovec, mmsghdr, sockaddr_in, sockaddr_in6, sockaddr_storage},
+    libc::{iovec, mmsghdr, sockaddr_in, sockaddr_in6, sockaddr_storage, socklen_t},
     std::mem::MaybeUninit,
     std::os::unix::io::AsRawFd,
 };
@@ -83,7 +83,7 @@ fn mmsghdr_for_packet(
                     *nix::sys::socket::SockaddrIn::from(*socket_addr_v4).as_ref(),
                 );
             }
-            hdr.msg_hdr.msg_namelen = SIZE_OF_SOCKADDR_IN as u32;
+            hdr.msg_hdr.msg_namelen = SIZE_OF_SOCKADDR_IN as socklen_t;
         }
         SocketAddr::V6(socket_addr_v6) => {
             unsafe {
@@ -92,7 +92,7 @@ fn mmsghdr_for_packet(
                     *nix::sys::socket::SockaddrIn6::from(*socket_addr_v6).as_ref(),
                 );
             }
-            hdr.msg_hdr.msg_namelen = SIZE_OF_SOCKADDR_IN6 as u32;
+            hdr.msg_hdr.msg_namelen = SIZE_OF_SOCKADDR_IN6 as socklen_t;
         }
     }
 }
