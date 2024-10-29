@@ -879,7 +879,7 @@ impl Validator {
                 Some(pool)
             }
             _ => {
-                info!("no scheduler pool is installed for block verification...");
+                info!("no scheduler pool is installed for block verification/production...");
                 if let Some(count) = config.unified_scheduler_handler_threads {
                     warn!(
                         "--unified-scheduler-handler-threads={count} is ignored because unified \

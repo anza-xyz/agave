@@ -364,7 +364,7 @@ pub fn load_and_process_ledger(
             (Some(pool), Some(new_poh_recorder))
         }
         _ => {
-            info!("no scheduler pool is installed for block verification...");
+            info!("no scheduler pool is installed for block verification/production...");
             if let Some(count) = unified_scheduler_handler_threads {
                 warn!(
                     "--unified-scheduler-handler-threads={count} is ignored because unified \
