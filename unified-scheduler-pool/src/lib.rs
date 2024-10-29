@@ -107,7 +107,7 @@ pub struct HandlerContext {
     transaction_status_sender: Option<TransactionStatusSender>,
     replay_vote_sender: Option<ReplayVoteSender>,
     prioritization_fee_cache: Arc<PrioritizationFeeCache>,
-    transaction_recorder: Mutex<Option<TransactionRecorder>>,
+    transaction_recorder: Option<TransactionRecorder>,
     dummy_sender: Option<DummySender>,
 }
 
@@ -192,7 +192,7 @@ where
                 transaction_status_sender,
                 replay_vote_sender,
                 prioritization_fee_cache,
-                transaction_recorder: Mutex::new(transaction_recorder),
+                transaction_recorder,
                 dummy_sender,
             },
             weak_self: weak_self.clone(),
