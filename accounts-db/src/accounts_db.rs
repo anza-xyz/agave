@@ -13771,14 +13771,18 @@ pub mod tests {
             assert_eq!(storage.num_zero_lamport_single_ref_accounts(), num_keys);
 
             // assert the "alive_bytes_exclude_zero_lamport_single_ref_accounts"
-            if accounts_db.accounts_file_provider == AccountsFileProvider::AppendVec {
-                assert!(storage.alive_bytes_exclude_zero_lamport_single_ref_accounts() == 0);
-            } else {
-                // For tired-storage, alive bytes are only an approximation.
-                // Therefore, it won't be zero.
-                assert!(
-                    storage.alive_bytes_exclude_zero_lamport_single_ref_accounts() < alive_bytes
-                );
+            match accounts_db.accounts_file_provider {
+                AccountsFileProvider::AppendVec => {
+                    assert!(storage.alive_bytes_exclude_zero_lamport_single_ref_accounts() == 0);
+                }
+                _ => {
+                    // For tired-storage, alive bytes are only an approximation.
+                    // Therefore, it won't be zero.
+                    assert!(
+                        storage.alive_bytes_exclude_zero_lamport_single_ref_accounts()
+                            < alive_bytes
+                    );
+                }
             }
         }
     );
