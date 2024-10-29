@@ -9,7 +9,7 @@ use {
     },
     solana_core::{
         accounts_hash_verifier::AccountsHashVerifier,
-        snapshot_packager_service::PendingSnapshotPackages, validator::BlockVerificationMethod,
+        snapshot_packager_service::PendingSnapshotPackages, validator::{BlockProductionMethod, BlockVerificationMethod},
     },
     solana_geyser_plugin_manager::geyser_plugin_service::{
         GeyserPluginService, GeyserPluginServiceError,
