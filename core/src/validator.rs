@@ -889,7 +889,7 @@ impl Validator {
                 }
                 None
             }
-        }
+        };
 
         let entry_notification_sender = entry_notifier_service
             .as_ref()
