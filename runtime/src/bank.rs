@@ -5502,8 +5502,7 @@ impl Bank {
             .get_bank_hash_stats(slot)
             .expect("No bank hash stats were found for this bank, that should not be possible");
         info!(
-            "bank vote_only_frozen: {slot} vote_only_hash: {hash} hash: {} accounts_delta: {} signature_count: {} last_blockhash: {} capitalization: {}, stats: {bank_hash_stats:?}",
-            self.hash(),
+            "bank vote_only_frozen: {slot} vote_only_hash: {hash} accounts_delta: {} signature_count: {} last_blockhash: {} capitalization: {}, stats: {bank_hash_stats:?}",
             accounts_delta_hash.0,
             self.signature_count(),
             self.last_blockhash(),
