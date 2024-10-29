@@ -8984,13 +8984,12 @@ impl AccountsDb {
                 let (slot_list, ref_count) = slots_refs.unwrap();
                 if ref_count == 1 {
                     assert_eq!(slot_list.len(), 1);
-                    let (slot_alive, acct_info) = slot_list.first().unwrap();
+                    let (slot_alive, account_info) = slot_list.first().unwrap();
                     assert!(!account_info.is_cached());
-                    if acct_info.is_zero_lamport() {
+                    if account_info.is_zero_lamport() {
                         count += 1;
-                        self.zero_lamport_single_ref_found(*slot_alive, acct_info.offset());
+                        self.zero_lamport_single_ref_found(*slot_alive, account_info.offset());
                     }
-                }
                 }
                 AccountsIndexScanResult::OnlyKeepInMemoryIfDirty
             },
