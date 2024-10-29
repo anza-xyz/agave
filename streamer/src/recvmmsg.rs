@@ -92,7 +92,7 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
     const SOCKADDR_STORAGE_SIZE: usize = mem::size_of::<sockaddr_storage>();
 
     let mut iovs = [MaybeUninit::uninit(); NUM_RCVMMSGS];
-    let mut addrs: [sockaddr_storage; NUM_RCVMMSGS] = unsafe { mem::zeroed() };
+    let mut addrs = [MaybeUninit::zeroed(); NUM_RCVMMSGS];
     let mut hdrs = [MaybeUninit::uninit(); NUM_RCVMMSGS];
 
     let sock_fd = sock.as_raw_fd();
@@ -110,7 +110,7 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
         hdr.write(mmsghdr {
             msg_len: 0,
             msg_hdr: msghdr {
-                msg_name: addr as *mut _ as *mut _,
+                msg_name: addr.as_mut_ptr() as *mut _,
                 msg_namelen: SOCKADDR_STORAGE_SIZE as socklen_t,
                 msg_iov: iov.as_mut_ptr(),
                 msg_iovlen: 1,
@@ -143,17 +143,19 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
     };
     for (addr, hdr, pkt) in izip!(addrs, hdrs, packets.iter_mut()).take(nrecv) {
         let hdr_ref = unsafe { hdr.assume_init_ref() };
+        let addr_ref = unsafe { addr.assume_init_ref() };
         pkt.meta_mut().size = hdr_ref.msg_len as usize;
-        if let Some(addr) = cast_socket_addr(&addr, hdr_ref) {
+        if let Some(addr) = cast_socket_addr(addr_ref, hdr_ref) {
             pkt.meta_mut().set_socket_addr(&addr);
         }
     }
 
     // TODO - figure out in review whether we think we have to drop these OR if
     //        leaving as MaybeUninit (no drop) is ok
-    for (iov, hdr) in izip!(&mut iovs, &mut hdrs).take(count) {
+    for (iov, addr, hdr) in izip!(&mut iovs, &mut addrs, &mut hdrs).take(count) {
         unsafe {
             iov.assume_init_drop();
+            addr.assume_init_drop();
             hdr.assume_init_drop();
         }
     }
