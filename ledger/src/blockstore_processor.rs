@@ -583,6 +583,7 @@ pub fn process_entries_for_tests(
         &mut batch_timing,
         None,
         &ignored_prioritization_fee_cache,
+        true,  // do_register_tick
     );
 
     debug!("process_entries: {:?}", batch_timing);
@@ -598,6 +599,7 @@ fn process_entries(
     batch_timing: &mut BatchExecutionTiming,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
+    do_register_tick: bool,
 ) -> Result<()> {
     // accumulator for entries that can be processed in parallel
     let mut batches = vec![];
@@ -626,10 +628,12 @@ fn process_entries(
                         prioritization_fee_cache,
                     )?;
                     batches.clear();
-                    for hash in &tick_hashes {
-                        bank.register_tick(hash);
+                    if do_register_tick {
+                        for hash in &tick_hashes {
+                            bank.register_tick(hash);
+                        }
+                        tick_hashes.clear();
                     }
-                    tick_hashes.clear();
                 }
             }
             EntryType::Transactions(transactions) => {
@@ -696,8 +700,10 @@ fn process_entries(
         log_messages_bytes_limit,
         prioritization_fee_cache,
     )?;
-    for hash in tick_hashes {
-        bank.register_tick(hash);
+    if do_register_tick {
+        for hash in tick_hashes {
+            bank.register_tick(hash);
+        }
     }
     Ok(())
 }
@@ -1642,6 +1648,7 @@ fn confirm_slot_entries(
         batch_execute_timing,
         log_messages_bytes_limit,
         prioritization_fee_cache,
+        execute_votes_only,
     )
     .map_err(BlockstoreProcessorError::from);
     replay_timer.stop();
