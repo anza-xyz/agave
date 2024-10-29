@@ -856,9 +856,8 @@ impl Validator {
             )
         };
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
-        let mut unified_scheduler_pool = None;
 
-        match (
+        let mut unified_scheduler_pool = match (
             &config.block_verification_method,
             &config.block_production_method,
         ) {
@@ -878,7 +877,7 @@ impl Validator {
                     .write()
                     .unwrap()
                     .install_scheduler_pool(pool.clone());
-                unified_scheduler_pool = Some(pool);
+                Some(pool)
             }
             _ => {
                 info!("no scheduler pool is installed for block verification...");
@@ -888,6 +887,7 @@ impl Validator {
                          scheduler isn't enabled"
                     );
                 }
+                None
             }
         }
 
