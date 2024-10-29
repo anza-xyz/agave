@@ -8981,15 +8981,16 @@ impl AccountsDb {
         self.accounts_index.scan(
             pubkeys.iter(),
             |_pubkey, slots_refs, _entry| {
-                if let Some((slot_list, ref_count)) = slots_refs {
-                    if slot_list.len() == 1 && ref_count == 1 {
-                        if let Some((slot_alive, acct_info)) = slot_list.first() {
-                            if acct_info.is_zero_lamport() && !acct_info.is_cached() {
-                                count += 1;
-                                self.zero_lamport_single_ref_found(*slot_alive, acct_info.offset());
-                            }
-                        }
+                let (slot_list, ref_count) = slots_refs.unwrap();
+                if ref_count == 1 {
+                    assert_eq!(slot_list.len(), 1);
+                    let (slot_alive, acct_info) = slot_list.first().unwrap();
+                    assert!(!account_info.is_cached());
+                    if acct_info.is_zero_lamport() {
+                        count += 1;
+                        self.zero_lamport_single_ref_found(*slot_alive, acct_info.offset());
                     }
+                }
                 }
                 AccountsIndexScanResult::OnlyKeepInMemoryIfDirty
             },
