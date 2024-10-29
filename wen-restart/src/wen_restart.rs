@@ -203,11 +203,11 @@ pub(crate) enum WenRestartProgressInternalState {
         my_heaviest_fork: Option<HeaviestForkRecord>,
     },
     HeaviestFork {
-        final_restart_slot: Slot,
-        final_restart_hash: Hash,
+        my_heaviest_fork_slot: Slot,
+        my_heaviest_fork_hash: Hash,
     },
     GenerateSnapshot {
-        final_restart_slot: Slot,
+        my_heaviest_fork_slot: Slot,
         my_snapshot: Option<GenerateSnapshotRecord>,
     },
     Done {
@@ -466,13 +466,13 @@ fn check_slot_smaller_than_intended_snapshot_slot(
 // We don't use set_root() explicitly, because it may kick off snapshot requests, we
 // can't have multiple snapshot requests in progress. In bank_to_snapshot_archive()
 // everything set_root() does will be done (without bank_forks setting root). So
-// when we restart from the snapshot bank on final_restart_slot will become root.
+// when we restart from the snapshot bank on my_heaviest_fork_slot will become root.
 pub(crate) fn generate_snapshot(
     bank_forks: Arc<RwLock<BankForks>>,
     snapshot_config: &SnapshotConfig,
     accounts_background_request_sender: &AbsRequestSender,
     genesis_config_hash: Hash,
-    final_restart_slot: Slot,
+    my_heaviest_fork_slot: Slot,
 ) -> Result<GenerateSnapshotRecord> {
     let new_root_bank;
     {
@@ -481,16 +481,16 @@ pub(crate) fn generate_snapshot(
         if !old_root_bank
             .hard_forks()
             .iter()
-            .any(|(slot, _)| slot == &final_restart_slot)
+            .any(|(slot, _)| slot == &my_heaviest_fork_slot)
         {
-            old_root_bank.register_hard_fork(final_restart_slot);
+            old_root_bank.register_hard_fork(my_heaviest_fork_slot);
         }
-        // final_restart_slot is guaranteed to have a bank in bank_forks, it's checked in
+        // my_heaviest_fork_slot is guaranteed to have a bank in bank_forks, it's checked in
         // find_bankhash_of_heaviest_fork().
-        match my_bank_forks.get(final_restart_slot) {
+        match my_bank_forks.get(my_heaviest_fork_slot) {
             Some(bank) => new_root_bank = bank.clone(),
             None => {
-                return Err(WenRestartError::BlockNotFound(final_restart_slot).into());
+                return Err(WenRestartError::BlockNotFound(my_heaviest_fork_slot).into());
             }
         }
         let mut banks = vec![&new_root_bank];
@@ -498,7 +498,7 @@ pub(crate) fn generate_snapshot(
         banks.extend(parents.iter());
 
         let _ = my_bank_forks.send_eah_request_if_needed(
-            final_restart_slot,
+            my_heaviest_fork_slot,
             &banks,
             accounts_background_request_sender,
         )?;
@@ -523,7 +523,7 @@ pub(crate) fn generate_snapshot(
     };
     // In very rare cases it's possible that the local root is not on the heaviest fork, so the
     // validator generated snapshot for slots > local root. If the cluster agreed upon restart
-    // slot final_restart_slot is less than the the current highest full_snapshot_slot, that means the
+    // slot my_heaviest_fork_slot is less than the the current highest full_snapshot_slot, that means the
     // locally rooted full_snapshot_slot will be rolled back. this requires human inspection。
     //
     // In even rarer cases, the selected slot might be the latest full snapshot slot. We could
@@ -531,7 +531,7 @@ pub(crate) fn generate_snapshot(
     // but for now we just return an error to keep the code simple.
     check_slot_smaller_than_intended_snapshot_slot(
         full_snapshot_slot,
-        final_restart_slot,
+        my_heaviest_fork_slot,
         directory,
     )?;
     directory = &snapshot_config.incremental_snapshot_archives_dir;
@@ -540,7 +540,7 @@ pub(crate) fn generate_snapshot(
     {
         check_slot_smaller_than_intended_snapshot_slot(
             incremental_snapshot_slot,
-            final_restart_slot,
+            my_heaviest_fork_slot,
             directory,
         )?;
     }
@@ -557,11 +557,11 @@ pub(crate) fn generate_snapshot(
         compute_shred_version(&genesis_config_hash, Some(&new_root_bank.hard_forks()));
     let new_snapshot_path = archive_info.path().display().to_string();
     info!("wen_restart incremental snapshot generated on {new_snapshot_path} base slot {full_snapshot_slot}");
-    // We might have bank snapshots past the final_restart_slot, we need to purge them.
+    // We might have bank snapshots past the my_heaviest_fork_slot, we need to purge them.
     purge_all_bank_snapshots(&snapshot_config.bank_snapshots_dir);
     Ok(GenerateSnapshotRecord {
         path: new_snapshot_path,
-        slot: final_restart_slot,
+        slot: my_heaviest_fork_slot,
         bankhash: new_root_bank.hash().to_string(),
         shred_version: new_shred_version as u32,
     })
@@ -912,15 +912,15 @@ pub(crate) fn receive_restart_heaviest_fork(
 }
 
 pub(crate) fn send_and_receive_heaviest_fork(
-    final_restart_slot: Slot,
-    final_restart_hash: Hash,
+    my_heaviest_fork_slot: Slot,
+    my_heaviest_fork_hash: Hash,
     config: &WenRestartConfig,
     progress: &mut WenRestartProgress,
     pushfn: impl FnOnce(Slot, Hash),
 ) -> Result<(Slot, Hash)> {
     if config.cluster_info.id() == config.wen_restart_coordinator {
-        pushfn(final_restart_slot, final_restart_hash);
-        Ok((final_restart_slot, final_restart_hash))
+        pushfn(my_heaviest_fork_slot, my_heaviest_fork_hash);
+        Ok((my_heaviest_fork_slot, my_heaviest_fork_hash))
     } else {
         let (coordinator_slot, coordinator_hash) = receive_restart_heaviest_fork(
             config.wen_restart_coordinator,
@@ -929,7 +929,7 @@ pub(crate) fn send_and_receive_heaviest_fork(
             progress,
         )?;
         match verify_coordinator_heaviest_fork(
-            final_restart_slot,
+            my_heaviest_fork_slot,
             coordinator_slot,
             &coordinator_hash,
             config.bank_forks.clone(),
@@ -943,7 +943,7 @@ pub(crate) fn send_and_receive_heaviest_fork(
                     "Failed to verify coordinator heaviest fork: {:?}, exit soon",
                     e
                 );
-                pushfn(final_restart_slot, final_restart_hash);
+                pushfn(my_heaviest_fork_slot, my_heaviest_fork_hash);
                 sleep(Duration::from_millis(GOSSIP_SLEEP_MILLIS));
                 return Err(e);
             }
@@ -1046,12 +1046,12 @@ pub fn wait_for_wen_restart(config: WenRestartConfig) -> Result<()> {
                 }
             }
             WenRestartProgressInternalState::HeaviestFork {
-                final_restart_slot,
-                final_restart_hash,
+                my_heaviest_fork_slot,
+                my_heaviest_fork_hash,
             } => {
                 let (slot, hash) = send_and_receive_heaviest_fork(
-                    final_restart_slot,
-                    final_restart_hash,
+                    my_heaviest_fork_slot,
+                    my_heaviest_fork_hash,
                     &config,
                     &mut progress,
                     |slot, hash| {
@@ -1061,12 +1061,12 @@ pub fn wait_for_wen_restart(config: WenRestartConfig) -> Result<()> {
                     },
                 )?;
                 WenRestartProgressInternalState::HeaviestFork {
-                    final_restart_slot: slot,
-                    final_restart_hash: hash,
+                    my_heaviest_fork_slot: slot,
+                    my_heaviest_fork_hash: hash,
                 }
             }
             WenRestartProgressInternalState::GenerateSnapshot {
-                final_restart_slot,
+                my_heaviest_fork_slot,
                 my_snapshot,
             } => {
                 let snapshot_record = match my_snapshot {
@@ -1076,11 +1076,11 @@ pub fn wait_for_wen_restart(config: WenRestartConfig) -> Result<()> {
                         &config.snapshot_config,
                         &config.accounts_background_request_sender,
                         config.genesis_config_hash,
-                        final_restart_slot,
+                        my_heaviest_fork_slot,
                     )?,
                 };
                 WenRestartProgressInternalState::GenerateSnapshot {
-                    final_restart_slot,
+                    my_heaviest_fork_slot,
                     my_snapshot: Some(snapshot_record),
                 }
             }
@@ -1171,24 +1171,25 @@ pub(crate) fn increment_and_write_wen_restart_records(
             if let Some(my_heaviest_fork) = my_heaviest_fork {
                 progress.my_heaviest_fork = Some(my_heaviest_fork.clone());
                 WenRestartProgressInternalState::HeaviestFork {
-                    final_restart_slot: my_heaviest_fork.slot,
-                    final_restart_hash: Hash::from_str(&my_heaviest_fork.bankhash).unwrap(),
+                    my_heaviest_fork_slot: my_heaviest_fork.slot,
+                    my_heaviest_fork_hash: Hash::from_str(&my_heaviest_fork.bankhash).unwrap(),
                 }
             } else {
                 return Err(WenRestartError::UnexpectedState(RestartState::HeaviestFork).into());
             }
         }
         WenRestartProgressInternalState::HeaviestFork {
-            final_restart_slot, ..
+            my_heaviest_fork_slot,
+            ..
         } => {
             progress.set_state(RestartState::GenerateSnapshot);
             WenRestartProgressInternalState::GenerateSnapshot {
-                final_restart_slot,
+                my_heaviest_fork_slot,
                 my_snapshot: None,
             }
         }
         WenRestartProgressInternalState::GenerateSnapshot {
-            final_restart_slot: _,
+            my_heaviest_fork_slot: _,
             my_snapshot,
         } => {
             if let Some(my_snapshot) = my_snapshot {
@@ -1353,7 +1354,7 @@ pub(crate) fn initialize(
         )),
         RestartState::GenerateSnapshot => Ok((
             WenRestartProgressInternalState::GenerateSnapshot {
-                final_restart_slot: progress
+                my_heaviest_fork_slot: progress
                     .my_heaviest_fork
                     .as_ref()
                     .ok_or(WenRestartError::MalformedProgress(
@@ -1943,11 +1944,11 @@ mod tests {
         let old_root_bank = test_state.bank_forks.read().unwrap().root_bank();
 
         // Add bank last_vote + 1 linking directly to 0, tweak its epoch_stakes, and then add it to bank_forks.
-        let final_restart_slot = last_vote_slot + 1;
+        let my_heaviest_fork_slot = last_vote_slot + 1;
         let mut new_root_bank = Bank::new_from_parent(
             old_root_bank.clone(),
             &Pubkey::default(),
-            final_restart_slot,
+            my_heaviest_fork_slot,
         );
         assert_eq!(new_root_bank.epoch(), 1);
 
@@ -1985,7 +1986,7 @@ mod tests {
         let _ = insert_slots_into_blockstore(
             test_state.blockstore.clone(),
             0,
-            &[final_restart_slot],
+            &[my_heaviest_fork_slot],
             TICKS_PER_SLOT,
             old_root_bank.last_blockhash(),
         );
@@ -2038,7 +2039,7 @@ mod tests {
         // new_epoch_bank (slot = first slot in epoch 2). They both link to last_vote_slot + 1.
         // old_epoch_bank has everyone's votes except 0, so it has > 66% stake in the old epoch.
         // new_epoch_bank has 0's vote, so it has > 66% stake in the new epoch.
-        let old_epoch_slot = final_restart_slot + 1;
+        let old_epoch_slot = my_heaviest_fork_slot + 1;
         let _ = insert_slots_into_blockstore(
             test_state.blockstore.clone(),
             new_root_bank.slot(),
@@ -2049,7 +2050,7 @@ mod tests {
         let new_epoch_slot = new_root_bank.epoch_schedule().get_first_slot_in_epoch(2);
         let _ = insert_slots_into_blockstore(
             test_state.blockstore.clone(),
-            final_restart_slot,
+            my_heaviest_fork_slot,
             &[new_epoch_slot],
             TICKS_PER_SLOT,
             new_root_bank.last_blockhash(),
@@ -2068,9 +2069,9 @@ mod tests {
             let now = timestamp();
             // Validator 0 votes for the new_epoch_bank while everyone elese vote for old_epoch_bank.
             let last_voted_fork_slots = if index == 0 {
-                vec![new_epoch_slot, final_restart_slot, 0]
+                vec![new_epoch_slot, my_heaviest_fork_slot, 0]
             } else {
-                vec![old_epoch_slot, final_restart_slot, 0]
+                vec![old_epoch_slot, my_heaviest_fork_slot, 0]
             };
             push_restart_last_voted_fork_slots(
                 test_state.cluster_info.clone(),
@@ -2087,7 +2088,7 @@ mod tests {
                 wen_restart_path: test_state.wen_restart_proto_path,
                 wen_restart_coordinator: test_state.wen_restart_coordinator,
                 last_vote: VoteTransaction::from(Vote::new(
-                    vec![final_restart_slot],
+                    vec![my_heaviest_fork_slot],
                     last_vote_bankhash
                 )),
                 blockstore: test_state.blockstore,
@@ -2105,7 +2106,7 @@ mod tests {
             .unwrap(),
             WenRestartError::BlockNotLinkedToExpectedParent(
                 new_epoch_slot,
-                Some(final_restart_slot),
+                Some(my_heaviest_fork_slot),
                 old_epoch_slot
             )
         );
@@ -2387,7 +2388,7 @@ mod tests {
             .unwrap(),
             (
                 WenRestartProgressInternalState::GenerateSnapshot {
-                    final_restart_slot: 0,
+                    my_heaviest_fork_slot: 0,
                     my_snapshot: progress.my_snapshot.clone(),
                 },
                 progress,
@@ -2803,8 +2804,8 @@ mod tests {
                     }),
                 },
                 WenRestartProgressInternalState::HeaviestFork {
-                    final_restart_slot: 1,
-                    final_restart_hash: Hash::default(),
+                    my_heaviest_fork_slot: 1,
+                    my_heaviest_fork_hash: Hash::default(),
                 },
                 WenRestartProgress {
                     state: RestartState::HeaviestFork.into(),
@@ -2822,11 +2823,11 @@ mod tests {
             ),
             (
                 WenRestartProgressInternalState::HeaviestFork {
-                    final_restart_slot: 1,
-                    final_restart_hash: Hash::default(),
+                    my_heaviest_fork_slot: 1,
+                    my_heaviest_fork_hash: Hash::default(),
                 },
                 WenRestartProgressInternalState::GenerateSnapshot {
-                    final_restart_slot: 1,
+                    my_heaviest_fork_slot: 1,
                     my_snapshot: None,
                 },
                 WenRestartProgress {
@@ -2848,7 +2849,7 @@ mod tests {
             ),
             (
                 WenRestartProgressInternalState::GenerateSnapshot {
-                    final_restart_slot: 1,
+                    my_heaviest_fork_slot: 1,
                     my_snapshot: my_snapshot.clone(),
                 },
                 WenRestartProgressInternalState::Done {
