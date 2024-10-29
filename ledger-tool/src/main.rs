@@ -2500,7 +2500,7 @@ fn main() {
                         AccessType::Primary, // needed for purging already existing simulated block shreds...
                     ));
                     let genesis_config = open_genesis_config_by(&ledger_path, arg_matches);
-                    let LoadAndProcessLedgerOutput { bank_forks, unified_scheduler_pool, poh_recorder, .. } =
+                    let LoadAndProcessLedgerOutput { bank_forks, unified_scheduler_pool, new_poh_recorder, .. } =
                         load_and_process_ledger_or_exit(
                             arg_matches,
                             &genesis_config,
@@ -2524,7 +2524,7 @@ fn main() {
                         blockstore,
                         block_production_method,
                         unified_scheduler_pool,
-                        poh_recorder,
+                        new_poh_recorder,
                     ) {
                         Ok(()) => println!("Ok"),
                         Err(error) => {
