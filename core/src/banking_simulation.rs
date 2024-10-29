@@ -846,7 +846,6 @@ impl BankingSimulator {
 
         info!("Poh is starting!");
         let (poh_recorder, entry_receiver, record_receiver) = new_poh_recorder.unwrap();
-        solana_unified_scheduler_pool::MY_POH.lock().unwrap().insert(poh_recorder.read().unwrap().new_recorder());
         let poh_service = PohService::new(
             poh_recorder.clone(),
             &genesis_config.poh_config,
