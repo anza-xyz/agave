@@ -313,7 +313,7 @@ pub struct PohRecorder {
     pub is_exited: Arc<AtomicBool>,
 }
 
-pub type NewPohRecorder = (Self, Receiver<WorkingBankEntry>, Receiver<Record>);
+pub type NewPohRecorder = (PohRecorder, Receiver<WorkingBankEntry>, Receiver<Record>);
 
 impl PohRecorder {
     fn clear_bank(&mut self) {
