@@ -58,6 +58,7 @@ use {
     thiserror::Error,
 };
 use solana_unified_scheduler_pool::DefaultSchedulerPool;
+use solana_poh::poh_recorder::NewPohRecorder;
 
 /// This creates a simulated environment around `BankingStage` to produce leader's blocks based on
 /// recorded banking trace events (`TimedTracedEvent`).
