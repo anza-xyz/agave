@@ -489,7 +489,6 @@ pub trait TaskHandler: Send + Sync + Debug + Sized + 'static {
 pub struct DefaultTaskHandler;
 
 pub static MY_POH: Mutex<Option<TransactionRecorder>> = Mutex::new(None);
-pub static MY_SCHEDULER_POOL: Mutex<Option<Arc<DefaultSchedulerPool>>> = Mutex::new(None);
 
 impl TaskHandler for DefaultTaskHandler {
     fn handle(
