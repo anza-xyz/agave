@@ -453,9 +453,6 @@ fn main() {
         None,
         Some(leader_schedule_cache),
     );
-    if let BlockProductionMethod::UnifiedScheduler = block_production_method {
-        solana_unified_scheduler_pool::MY_POH.lock().unwrap().insert(poh_recorder.read().unwrap().new_recorder());
-    }
     let (banking_tracer, tracer_thread) =
         BankingTracer::new(matches.is_present("trace_banking").then_some((
             &blockstore.banking_trace_path(),
