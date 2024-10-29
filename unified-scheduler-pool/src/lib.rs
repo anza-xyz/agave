@@ -1470,7 +1470,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                             },
                                             SchedulingMode::BlockProduction => {
                                                 if slot == 282254387 {
-                                                    assert!(!mem::replace(&mut session_ending, true));
+                                                    // can't assert pause signal may have been emitted..
+                                                    session_ending = true;
                                                     "ending"
                                                 } else if !session_pausing && !context.can_commit() {
                                                     session_pausing = true;
