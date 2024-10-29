@@ -68,6 +68,7 @@ pub struct LoadAndProcessLedgerOutput {
     // if/when it finally checks the exit flag
     pub accounts_background_service: AccountsBackgroundService,
     pub unified_scheduler_pool: Option<Arc<DefaultSchedulerPool>>,
+    pub poh_recorder: Option<PohRecorder>,
 }
 
 const PROCESS_SLOTS_HELP_STRING: &str =
