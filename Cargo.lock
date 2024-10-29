@@ -193,6 +193,7 @@ dependencies = [
  "solana-log-collector",
  "solana-logger",
  "solana-measure",
+ "solana-poh",
  "solana-program-runtime",
  "solana-rpc",
  "solana-runtime",

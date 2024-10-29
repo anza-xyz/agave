@@ -54,6 +54,7 @@ use {
     },
     thiserror::Error,
 };
+use solana_poh::poh_recorder::PohRecorder;
 
 pub struct LoadAndProcessLedgerOutput {
     pub bank_forks: Arc<RwLock<BankForks>>,
