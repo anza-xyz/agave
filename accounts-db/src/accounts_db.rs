@@ -13773,7 +13773,10 @@ pub mod tests {
             // assert the "alive_bytes_exclude_zero_lamport_single_ref_accounts"
             match accounts_db.accounts_file_provider {
                 AccountsFileProvider::AppendVec => {
-                    assert!(storage.alive_bytes_exclude_zero_lamport_single_ref_accounts() == 0);
+                    assert_eq!(
+                        storage.alive_bytes_exclude_zero_lamport_single_ref_accounts(),
+                        0
+                    );
                 }
                 AccountsFileProvider::HotStorage => {
                     // For tired-storage, alive bytes are only an approximation.
