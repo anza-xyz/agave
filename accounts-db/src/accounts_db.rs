@@ -13775,7 +13775,7 @@ pub mod tests {
                 AccountsFileProvider::AppendVec => {
                     assert!(storage.alive_bytes_exclude_zero_lamport_single_ref_accounts() == 0);
                 }
-                _ => {
+                AccountsFileProvider::HotStorage => {
                     // For tired-storage, alive bytes are only an approximation.
                     // Therefore, it won't be zero.
                     assert!(
