@@ -493,6 +493,7 @@ pub mod loader_v4;
 pub mod loader_v4_instruction;
 pub mod log;
 pub mod message;
+pub mod nonce;
 pub mod program;
 pub mod program_error;
 pub mod program_stubs;
@@ -544,7 +545,7 @@ pub use {
     solana_account_info::{self as account_info, debug_account_data},
     solana_clock as clock,
     solana_msg::msg,
-    solana_native_token as native_token, solana_nonce as nonce,
+    solana_native_token as native_token,
     solana_program_entrypoint::{
         self as entrypoint, custom_heap_default, custom_panic_default, entrypoint,
         entrypoint_no_alloc,

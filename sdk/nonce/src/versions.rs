@@ -1,8 +1,11 @@
 //! State for durable transaction nonces.
 
-mod current;
-pub use current::{Data, DurableNonce, State};
-use {solana_hash::Hash, solana_pubkey::Pubkey, std::collections::HashSet};
+use {
+    crate::state::{Data, DurableNonce, State},
+    solana_hash::Hash,
+    solana_pubkey::Pubkey,
+    std::collections::HashSet,
+};
 
 #[cfg_attr(
     feature = "serde",

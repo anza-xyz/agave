@@ -93,7 +93,7 @@ impl State {
 
 #[cfg(test)]
 mod test {
-    use {super::*, crate::state::Versions};
+    use {super::*, crate::versions::Versions};
 
     #[test]
     fn default_is_uninitialized() {
