@@ -1476,6 +1476,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                                     session_pausing = true;
                                                     "pausing"
                                                 } else {
+                                                    trace!("ignoring too early close subch");
                                                     continue
                                                 }
                                             },
@@ -1823,7 +1824,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         }
     }
 
-    fn end_session(&mut self) {
+    fn do_end_session(&mut self, nonblocking: bool) {
         if self.are_threads_joined() {
             assert!(self.session_result_with_timings.is_some());
             debug!("end_session(): skipping; already joined the aborted threads..");
@@ -1847,6 +1848,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             return;
         }
 
+        if nonblocking {
+            return;
+        }
+
         // Even if abort is detected, it's guaranteed that the scheduler thread puts the last
         // message into the session_result_sender before terminating.
         let result_with_timings = self.session_result_receiver.recv().unwrap();
@@ -1856,6 +1861,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             self.ensure_join_threads_after_abort(false);
         }
         debug!("end_session(): ended session at {:?}...", thread::current());
+    }
+
+    fn end_session(&mut self) {
+        self.do_end_session(false)
     }
 
     fn start_session(
@@ -2005,7 +2014,10 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
     }
 
     fn pause_for_recent_blockhash(&mut self) {
-        self.inner.thread_manager.end_session();
+        // this fn is called from poh thread, while it's being locked. so, we can't wait scheduler
+        // termination here to avoid deadlock. just async signaling is enough
+        let nonblocking = matches!(self.context().mode(), SchedulingMode::BlockProduction);
+        self.inner.thread_manager.do_end_session(nonblocking);
     }
 }
 
