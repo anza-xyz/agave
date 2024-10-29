@@ -504,6 +504,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     read_cache_limit_bytes: None,
     write_cache_limit_bytes: None,
     ancient_append_vec_offset: None,
+    ancient_ideal_storage_size: None,
     skip_initial_hash_calc: false,
     exhaustively_verify_refcounts: false,
     create_ancient_storage: CreateAncientStorage::Pack,
@@ -526,6 +527,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     read_cache_limit_bytes: None,
     write_cache_limit_bytes: None,
     ancient_append_vec_offset: None,
+    ancient_ideal_storage_size: None,
     skip_initial_hash_calc: false,
     exhaustively_verify_refcounts: false,
     create_ancient_storage: CreateAncientStorage::Pack,
@@ -624,6 +626,10 @@ pub struct AccountsAddRootTiming {
 /// the account data for the slots are considered ancient by the
 /// shrinking algorithm.
 const ANCIENT_APPEND_VEC_DEFAULT_OFFSET: Option<i64> = Some(100_000);
+/// The smallest size of ideal ancient storage.
+/// The setting can be overridden on the command line
+/// with --accounts-db-ancient-ideal-storage-size option.
+const ANCIENT_IDEAL_STORAGE_SIZE: Option<u64> = Some(5_000_000);
 
 #[derive(Debug, Default, Clone)]
 pub struct AccountsDbConfig {
@@ -641,6 +647,7 @@ pub struct AccountsDbConfig {
     /// if None, ancient append vecs are set to ANCIENT_APPEND_VEC_DEFAULT_OFFSET
     /// Some(offset) means include slots up to (max_slot - (slots_per_epoch - 'offset'))
     pub ancient_append_vec_offset: Option<i64>,
+    pub ancient_ideal_storage_size: Option<u64>,
     pub test_skip_rewrites_but_include_in_bank_hash: bool,
     pub skip_initial_hash_calc: bool,
     pub exhaustively_verify_refcounts: bool,
@@ -1410,7 +1417,7 @@ pub struct AccountsDb {
     /// Some(offset) iff we want to squash old append vecs together into 'ancient append vecs'
     /// Some(offset) means for slots up to (max_slot - (slots_per_epoch - 'offset')), put them in ancient append vecs
     pub ancient_append_vec_offset: Option<i64>,
-
+    pub ancient_ideal_storage_size: Option<u64>,
     /// true iff we want to skip the initial hash calculation on startup
     pub skip_initial_hash_calc: bool,
 
@@ -1945,6 +1952,9 @@ impl AccountsDb {
             ancient_append_vec_offset: accounts_db_config
                 .ancient_append_vec_offset
                 .or(ANCIENT_APPEND_VEC_DEFAULT_OFFSET),
+            ancient_ideal_storage_size: accounts_db_config
+                .ancient_ideal_storage_size
+                .or(ANCIENT_IDEAL_STORAGE_SIZE),
             account_indexes: accounts_db_config.account_indexes.unwrap_or_default(),
             shrink_ratio: accounts_db_config.shrink_ratio,
             accounts_update_notifier,

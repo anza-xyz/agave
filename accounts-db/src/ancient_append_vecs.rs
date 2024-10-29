@@ -31,8 +31,6 @@ use {
 /// this many # of highest slot values should be treated as desirable to pack.
 /// This gives us high slots to move packed accounts into.
 const HIGH_SLOT_OFFSET: u64 = 100;
-/// The smallest size of ideal ancient storage.
-const MINIMAL_IDEAL_STORAGE_SIZE: u64 = 5_000_000;
 
 /// ancient packing algorithm tuning per pass
 #[derive(Debug)]
@@ -529,7 +527,7 @@ impl AccountsDb {
         // divided by half of max ancient slots
         tuning.ideal_storage_size = NonZeroU64::new(
             (ancient_slot_infos.total_alive_bytes.0 * 2 / tuning.max_ancient_slots.max(1) as u64)
-                .max(MINIMAL_IDEAL_STORAGE_SIZE),
+                .max(self.ancient_ideal_storage_size.unwrap()),
         )
         .unwrap();
 

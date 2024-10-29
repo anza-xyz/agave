@@ -1376,6 +1376,15 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .hidden(hidden_unless_forced()),
         )
         .arg(
+            Arg::with_name("accounts_db_ancient_ideal_storage_size")
+                .long("accounts-db-ancient-ideal-storage-size")
+                .value_name("BYTES")
+                .validator(is_parsable::<u64>)
+                .takes_value(true)
+                .help("The smallest size of ideal ancient storage.")
+                .hidden(hidden_unless_forced()),
+        )
+        .arg(
             Arg::with_name("accounts_db_cache_limit_mb")
                 .long("accounts-db-cache-limit-mb")
                 .value_name("MEGABYTES")
