@@ -325,6 +325,24 @@ pub fn load_and_process_ledger(
             let no_transaction_status_sender = None;
             let no_replay_vote_sender = None;
             let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
+
+            let poh_bank = &bank_forks.read().unwrap().working_bank();
+            let (poh_recorder, entry_receiver, record_receiver) = PohRecorder::new_with_clear_signal(
+                poh_bank.tick_height(),
+                poh_bank.last_blockhash(),
+                poh_bank.clone(),
+                None,
+                poh_bank.ticks_per_slot(),
+                false,
+                blockstore.clone(),
+                blockstore.get_new_shred_signal(0),
+                &leader_schedule_cache,
+                &genesis_config.poh_config,
+                None,
+                exit.clone(),
+            );
+            drop(poh_bank);
+
             let pool = DefaultSchedulerPool::new(
                 unified_scheduler_handler_threads,
                 process_options.runtime_config.log_messages_bytes_limit,
