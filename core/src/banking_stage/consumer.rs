@@ -1272,10 +1272,10 @@ mod tests {
                                 record.mixin,
                                 record.transactions,
                             );
-                            poh_recorder.write().unwrap().tick();
-                            if record.sender.send(record_response).is_err() {
+                            if record_response.is_err() {
                                 panic!("Error returning mixin hash");
                             }
+                            poh_recorder.write().unwrap().tick();
                         }
                         if is_exited.load(Ordering::Relaxed) {
                             break;

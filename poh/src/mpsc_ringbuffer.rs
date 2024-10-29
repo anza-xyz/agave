@@ -723,8 +723,8 @@ impl<T> ArrayQueue<T> {
     }
     pub fn pop_with_timeout(&self, t: Duration) -> Option<T> {
         // Wait/Backoff and then pop.
-        //todo!();
-        error!("recv_timeout {}ms", t.as_millis());
+        log::debug!("TODO: Implement wait.");
+        assert!(self.capacity() > 0);
         self.pop()
     }
 }
