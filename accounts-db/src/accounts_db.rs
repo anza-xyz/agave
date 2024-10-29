@@ -13754,11 +13754,11 @@ pub mod tests {
                 pubkeys.iter(),
                 |_pubkey, slots_refs, _entry| {
                     let (slot_list, ref_count) = slots_refs.unwrap();
-                    assert!(slot_list.len() == 1);
-                    assert!(ref_count == 1);
+                    assert_eq!(slot_list.len(), 1);
+                    assert_eq!(ref_count, 1);
 
                     let (slot, acct_info) = slot_list.first().unwrap();
-                    assert!(*slot == 0);
+                    assert_eq!(*slot, 0);
                     accounts_db.zero_lamport_single_ref_found(*slot, acct_info.offset());
                     AccountsIndexScanResult::OnlyKeepInMemoryIfDirty
                 },
