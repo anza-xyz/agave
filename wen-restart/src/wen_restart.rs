@@ -944,6 +944,9 @@ pub(crate) fn send_and_receive_heaviest_fork(
                     e
                 );
                 pushfn(my_heaviest_fork_slot, my_heaviest_fork_hash);
+                // flush_push_queue only flushes the messages to crds, doesn't guarantee
+                // sending them out, so we still need to wait for a while before exiting.
+                config.cluster_info.flush_push_queue();
                 sleep(Duration::from_millis(GOSSIP_SLEEP_MILLIS));
                 return Err(e);
             }
