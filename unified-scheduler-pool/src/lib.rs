@@ -541,8 +541,6 @@ impl TaskHandler for DefaultTaskHandler {
                             return false;
                         }
                         let summary = handler_context.transaction_recorder
-                            .lock()
-                            .unwrap()
                             .as_ref()
                             .unwrap()
                             .record_transactions(
