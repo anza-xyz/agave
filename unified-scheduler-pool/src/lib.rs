@@ -543,6 +543,8 @@ impl TaskHandler for DefaultTaskHandler {
                         let summary = handler_context.transaction_recorder
                             .lock()
                             .unwrap()
+                            .as_ref()
+                            .unwrap()
                             .record_transactions(
                                 scheduling_context.bank().slot(),
                                 vec![transaction.to_versioned_transaction()],
