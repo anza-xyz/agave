@@ -705,6 +705,7 @@ impl BankingSimulator {
         blockstore: Arc<Blockstore>,
         block_production_method: BlockProductionMethod,
         unified_scheduler_pool: Option<Arc<DefaultSchedulerPool>>,
+        poh_recorder: Option<PohRecorder>,
     ) -> (SenderLoop, SimulatorLoop, SimulatorThreads) {
         let parent_slot = self.parent_slot().unwrap();
         let mut packet_batches_by_time = self.banking_trace_events.packet_batches_by_time;
@@ -843,21 +844,6 @@ impl BankingSimulator {
             .collect::<Vec<_>>();
 
         info!("Poh is starting!");
-        let (poh_recorder, entry_receiver, record_receiver) = PohRecorder::new_with_clear_signal(
-            poh_bank.tick_height(),
-            poh_bank.last_blockhash(),
-            poh_bank.clone(),
-            None,
-            poh_bank.ticks_per_slot(),
-            false,
-            blockstore.clone(),
-            blockstore.get_new_shred_signal(0),
-            &leader_schedule_cache,
-            &genesis_config.poh_config,
-            None,
-            exit.clone(),
-        );
-        drop(poh_bank);
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
         solana_unified_scheduler_pool::MY_POH.lock().unwrap().insert(poh_recorder.read().unwrap().new_recorder());
         let poh_service = PohService::new(
@@ -956,6 +942,7 @@ impl BankingSimulator {
             blockstore,
             block_production_method,
             unified_scheduler_pool,
+            poh_recorder,
         );
 
         sender_loop.log_starting();
