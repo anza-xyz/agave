@@ -6432,6 +6432,7 @@ dependencies = [
  "anyhow",
  "arrayvec",
  "assert_matches",
+ "async-trait",
  "base64 0.22.1",
  "bincode",
  "bs58",
@@ -6501,6 +6502,7 @@ dependencies = [
  "solana-svm-transaction",
  "solana-timings",
  "solana-tpu-client",
+ "solana-tpu-client-next",
  "solana-transaction-status",
  "solana-turbine",
  "solana-unified-scheduler-pool",
@@ -6518,6 +6520,7 @@ dependencies = [
  "test-case",
  "thiserror",
  "tokio",
+ "tokio-util 0.7.12",
  "trees",
 ]
 
