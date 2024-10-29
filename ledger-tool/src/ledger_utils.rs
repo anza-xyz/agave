@@ -448,6 +448,7 @@ pub fn load_and_process_ledger(
         starting_snapshot_hashes,
         accounts_background_service,
         unified_scheduler_pool,
+        poh_recorder,
     })
     .map_err(LoadAndProcessLedgerError::ProcessBlockstoreFromRoot);
 
