@@ -863,7 +863,6 @@ impl Validator {
         ) {
             (BlockVerificationMethod::UnifiedScheduler, _)
             | (_, BlockProductionMethod::UnifiedScheduler) => {
-                solana_unified_scheduler_pool::MY_POH.lock().unwrap().insert(poh_recorder.read().unwrap().new_recorder());
                 let pool = DefaultSchedulerPool::new(
                     config.unified_scheduler_handler_threads,
                     config.runtime_config.log_messages_bytes_limit,
