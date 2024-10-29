@@ -367,7 +367,7 @@ fn main() {
     let (replay_vote_sender, _replay_vote_receiver) = unbounded();
     let bank0 = Bank::new_for_benches(&genesis_config);
     let bank_forks = BankForks::new_rw_arc(bank0);
-    let mut bank = bank_forks.read().unwrap().working_bank();
+    let mut bank = bank_forks.read().unwrap().working_bank_with_scheduler().clone_with_scheduler();
 
     // set cost tracker limits to MAX so it will not filter out TXs
     bank.write_cost_tracker()
@@ -542,8 +542,13 @@ fn main() {
         bank = bank_forks
             .read()
             .unwrap()
-            .working_bank()
+            .working_bank_with_scheduler()
+            .clone_with_scheduler()
     }
+    poh_recorder
+        .write()
+        .unwrap()
+        .reset(bank.clone(), Some((bank.slot(), bank.slot() + 1)));
 
     // This is so that the signal_receiver does not go out of scope after the closure.
     // If it is dropped before poh_service, then poh_service will error when
@@ -616,7 +621,10 @@ fn main() {
 
             let mut new_bank_time = Measure::start("new_bank");
             let new_slot = bank.slot() + 1;
-            let new_bank = Bank::new_from_parent(bank, &collector, new_slot);
+            let new_bank = Bank::new_from_parent(bank.clone(), &collector, new_slot);
+            if let Some((result, _timings)) = bank.wait_for_completed_scheduler() {
+               result.unwrap();
+            }
             new_bank_time.stop();
 
             let mut insert_time = Measure::start("insert_time");
@@ -625,7 +633,7 @@ fn main() {
                 .write()
                 .unwrap()
                 .insert(SchedulingMode::BlockProduction, new_bank);
-            bank = bank_forks.read().unwrap().working_bank();
+            bank = bank_forks.read().unwrap().working_bank_with_scheduler().clone_with_scheduler();
             insert_time.stop();
 
             // set cost tracker limits to MAX so it will not filter out TXs
