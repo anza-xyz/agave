@@ -705,7 +705,7 @@ impl BankingSimulator {
         blockstore: Arc<Blockstore>,
         block_production_method: BlockProductionMethod,
         unified_scheduler_pool: Option<Arc<DefaultSchedulerPool>>,
-        poh_recorder: Option<PohRecorder>,
+        new_poh_recorder: Option<NewPohRecorder>,
     ) -> (SenderLoop, SimulatorLoop, SimulatorThreads) {
         let parent_slot = self.parent_slot().unwrap();
         let mut packet_batches_by_time = self.banking_trace_events.packet_batches_by_time;
