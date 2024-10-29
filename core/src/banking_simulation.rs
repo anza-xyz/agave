@@ -846,7 +846,7 @@ impl BankingSimulator {
 
         info!("Poh is starting!");
         let (poh_recorder, entry_receiver, record_receiver) = new_poh_recorder.unwrap();
-        let poh_recorder = Arc::new(poh_recorder);
+        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
         let poh_service = PohService::new(
             poh_recorder.clone(),
             &genesis_config.poh_config,
