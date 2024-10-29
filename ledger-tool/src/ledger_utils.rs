@@ -311,20 +311,21 @@ pub fn load_and_process_ledger(
         "Using: block-verification-method: {}",
         block_verification_method,
     );
+    let block_production_method = value_t!(
+        arg_matches,
+        "block_production_method",
+        BlockProductionMethod
+    )
+    .unwrap_or_default();
+    info!(
+        "Using: block-production-method: {}",
+        block_production_method,
+    );
     let unified_scheduler_handler_threads =
         value_t!(arg_matches, "unified_scheduler_handler_threads", usize).ok();
-    let (unified_scheduler_pool, new_poh_recorder) = match block_verification_method {
-        BlockVerificationMethod::BlockstoreProcessor => {
-            info!("no scheduler pool is installed for block verification...");
-            if let Some(count) = unified_scheduler_handler_threads {
-                warn!(
-                    "--unified-scheduler-handler-threads={count} is ignored because unified \
-                     scheduler isn't enabled"
-                );
-            }
-            (None, None)
-        }
-        BlockVerificationMethod::UnifiedScheduler => {
+    let (unified_scheduler_pool, new_poh_recorder) = match (block_verification_method, block_production_method) {
+        (BlockVerificationMethod::UnifiedScheduler, _)
+        | (_, BlockProductionMethod::UnifiedScheduler) => {
             let no_transaction_status_sender = None;
             let no_replay_vote_sender = None;
             let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
@@ -361,6 +362,16 @@ pub fn load_and_process_ledger(
                 .unwrap()
                 .install_scheduler_pool(pool.clone());
             (Some(pool), Some(new_poh_recorder))
+        }
+        _ => {
+            info!("no scheduler pool is installed for block verification...");
+            if let Some(count) = unified_scheduler_handler_threads {
+                warn!(
+                    "--unified-scheduler-handler-threads={count} is ignored because unified \
+                     scheduler isn't enabled"
+                );
+            }
+            (None, None)
         }
     };
 
