@@ -728,7 +728,7 @@ impl BankingSimulator {
             simulated_leader, self.first_simulated_slot,
         );
 
-        let exit = Arc::new(AtomicBool::default());
+        let exit = new_poh_recorder.map(|(poh_recorder, ..)| poh_recorder.is_exited.clone()).unwrap_or_else(|| Arc::new(AtomicBool::default()));
 
         if let Some(end_slot) = blockstore
             .slot_meta_iterator(self.first_simulated_slot)
