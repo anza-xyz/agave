@@ -9693,7 +9693,7 @@ pub mod tests {
     });
 
     #[test]
-    fn test_generate_index_for_single_ref_zero_slot() {
+    fn test_generate_index_for_single_ref_zero_lamport_slot() {
         let db = AccountsDb::new_single_for_tests();
         let slot0 = 0;
         let pubkey = Pubkey::from([1; 32]);
