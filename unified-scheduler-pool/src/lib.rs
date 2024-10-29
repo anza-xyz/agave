@@ -488,8 +488,6 @@ pub trait TaskHandler: Send + Sync + Debug + Sized + 'static {
 #[derive(Debug)]
 pub struct DefaultTaskHandler;
 
-pub static MY_POH: Mutex<Option<TransactionRecorder>> = Mutex::new(None);
-
 impl TaskHandler for DefaultTaskHandler {
     fn handle(
         result: &mut Result<()>,
@@ -542,9 +540,7 @@ impl TaskHandler for DefaultTaskHandler {
                         if !scheduling_context.can_commit() {
                             return false;
                         }
-                        let summary = MY_POH
-                            .lock().unwrap()
-                            .as_ref()
+                        let summary = handler_context.transaction_recorder.
                             .unwrap()
                             .record_transactions(
                                 scheduling_context.bank().slot(),
