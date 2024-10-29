@@ -10,7 +10,7 @@ use {
     itertools::izip,
     libc::{iovec, mmsghdr, sockaddr_storage, socklen_t, AF_INET, AF_INET6, MSG_WAITFORONE},
     std::{
-        mem,
+        mem::{self, MaybeUninit},
         net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
         os::unix::io::AsRawFd,
     },
@@ -78,15 +78,13 @@ fn cast_socket_addr(addr: &sockaddr_storage, hdr: &mmsghdr) -> Option<SocketAddr
 }
 
 #[cfg(target_os = "linux")]
-#[allow(clippy::uninit_assumed_init)]
 pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num packets:*/ usize> {
     // Assert that there are no leftovers in packets.
     debug_assert!(packets.iter().all(|pkt| pkt.meta() == &Meta::default()));
     const SOCKADDR_STORAGE_SIZE: usize = mem::size_of::<sockaddr_storage>();
 
+    let mut iovs = [MaybeUninit::uninit(); NUM_RCVMMSGS];
     let mut hdrs: [mmsghdr; NUM_RCVMMSGS] = unsafe { mem::zeroed() };
-    let iovs = mem::MaybeUninit::<[iovec; NUM_RCVMMSGS]>::uninit();
-    let mut iovs: [iovec; NUM_RCVMMSGS] = unsafe { iovs.assume_init() };
     let mut addrs: [sockaddr_storage; NUM_RCVMMSGS] = unsafe { mem::zeroed() };
 
     let sock_fd = sock.as_raw_fd();
@@ -96,15 +94,16 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
         izip!(packets.iter_mut(), &mut hdrs, &mut iovs, &mut addrs).take(count)
     {
         let buffer = packet.buffer_mut();
-        *iov = iovec {
+        iov.write(iovec {
             iov_base: buffer.as_mut_ptr() as *mut libc::c_void,
             iov_len: buffer.len(),
-        };
+        });
         hdr.msg_hdr.msg_name = addr as *mut _ as *mut _;
         hdr.msg_hdr.msg_namelen = SOCKADDR_STORAGE_SIZE as socklen_t;
-        hdr.msg_hdr.msg_iov = iov;
+        hdr.msg_hdr.msg_iov = iov.as_mut_ptr();
         hdr.msg_hdr.msg_iovlen = 1;
     }
+
     let mut ts = libc::timespec {
         tv_sec: 1,
         tv_nsec: 0,
@@ -131,6 +130,13 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
             pkt.meta_mut().set_socket_addr(&addr);
         }
     }
+
+    // TODO - figure out in review whether we think we have to drop these OR if
+    //        leaving as MaybeUninit (no drop) is ok
+    for iov in &mut iovs[0..count] {
+        unsafe { iov.assume_init_drop() }
+    }
+
     Ok(nrecv)
 }
 
