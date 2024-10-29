@@ -8,11 +8,14 @@ use {
 #[cfg(target_os = "linux")]
 use {
     itertools::izip,
-    libc::{iovec, mmsghdr, sockaddr_storage, socklen_t, AF_INET, AF_INET6, MSG_WAITFORONE},
+    libc::{
+        iovec, mmsghdr, msghdr, sockaddr_storage, socklen_t, AF_INET, AF_INET6, MSG_WAITFORONE,
+    },
     std::{
         mem::{self, MaybeUninit},
         net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
         os::unix::io::AsRawFd,
+        ptr,
     },
 };
 
@@ -89,8 +92,8 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
     const SOCKADDR_STORAGE_SIZE: usize = mem::size_of::<sockaddr_storage>();
 
     let mut iovs = [MaybeUninit::uninit(); NUM_RCVMMSGS];
-    let mut hdrs: [mmsghdr; NUM_RCVMMSGS] = unsafe { mem::zeroed() };
     let mut addrs: [sockaddr_storage; NUM_RCVMMSGS] = unsafe { mem::zeroed() };
+    let mut hdrs = [MaybeUninit::uninit(); NUM_RCVMMSGS];
 
     let sock_fd = sock.as_raw_fd();
     let count = cmp::min(iovs.len(), packets.len());
@@ -103,10 +106,19 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
             iov_base: buffer.as_mut_ptr() as *mut libc::c_void,
             iov_len: buffer.len(),
         });
-        hdr.msg_hdr.msg_name = addr as *mut _ as *mut _;
-        hdr.msg_hdr.msg_namelen = SOCKADDR_STORAGE_SIZE as socklen_t;
-        hdr.msg_hdr.msg_iov = iov.as_mut_ptr();
-        hdr.msg_hdr.msg_iovlen = 1;
+
+        hdr.write(mmsghdr {
+            msg_len: 0,
+            msg_hdr: msghdr {
+                msg_name: addr as *mut _ as *mut _,
+                msg_namelen: SOCKADDR_STORAGE_SIZE as socklen_t,
+                msg_iov: iov.as_mut_ptr(),
+                msg_iovlen: 1,
+                msg_control: ptr::null::<libc::c_void>() as *mut _,
+                msg_controllen: 0,
+                msg_flags: 0,
+            },
+        });
     }
 
     let mut ts = libc::timespec {
@@ -118,7 +130,7 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
     let nrecv = unsafe {
         libc::recvmmsg(
             sock_fd,
-            &mut hdrs[0],
+            hdrs[0].assume_init_mut(),
             count as u32,
             MSG_WAITFORONE.try_into().unwrap(),
             &mut ts,
@@ -130,16 +142,20 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
         usize::try_from(nrecv).unwrap()
     };
     for (addr, hdr, pkt) in izip!(addrs, hdrs, packets.iter_mut()).take(nrecv) {
-        pkt.meta_mut().size = hdr.msg_len as usize;
-        if let Some(addr) = cast_socket_addr(&addr, &hdr) {
+        let hdr_ref = unsafe { hdr.assume_init_ref() };
+        pkt.meta_mut().size = hdr_ref.msg_len as usize;
+        if let Some(addr) = cast_socket_addr(&addr, hdr_ref) {
             pkt.meta_mut().set_socket_addr(&addr);
         }
     }
 
     // TODO - figure out in review whether we think we have to drop these OR if
     //        leaving as MaybeUninit (no drop) is ok
-    for iov in &mut iovs[0..count] {
-        unsafe { iov.assume_init_drop() }
+    for (iov, hdr) in izip!(&mut iovs, &mut hdrs).take(count) {
+        unsafe {
+            iov.assume_init_drop();
+            hdr.assume_init_drop();
+        }
     }
 
     Ok(nrecv)
