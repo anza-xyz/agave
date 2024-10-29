@@ -835,6 +835,7 @@ mod tests {
         },
         solana_perf::packet::{to_packet_batches, PacketBatch},
         solana_poh::{
+            mpsc_ringbuffer::ArrayQueue,
             poh_recorder::{
                 create_test_recorder, PohRecorderError, Record, RecordTransactionsSummary,
             },
@@ -858,7 +859,6 @@ mod tests {
             thread::sleep,
         },
     };
-    use solana_poh::mpsc_ringbuffer::ArrayQueue;
 
     pub(crate) fn new_test_cluster_info(keypair: Option<Arc<Keypair>>) -> (Node, ClusterInfo) {
         let keypair = keypair.unwrap_or_else(|| Arc::new(Keypair::new()));

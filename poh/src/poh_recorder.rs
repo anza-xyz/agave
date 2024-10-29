@@ -13,7 +13,10 @@
 #[cfg(feature = "dev-context-only-utils")]
 use solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo};
 use {
-    crate::{leader_bank_notifier::LeaderBankNotifier, poh_service::PohService},
+    crate::{
+        leader_bank_notifier::LeaderBankNotifier, mpsc_ringbuffer::ArrayQueue,
+        poh_service::PohService,
+    },
     crossbeam_channel::{
         bounded, unbounded, Receiver, RecvTimeoutError, SendError, Sender, TrySendError,
     },
@@ -44,7 +47,6 @@ use {
     },
     thiserror::Error,
 };
-use crate::mpsc_ringbuffer::ArrayQueue;
 
 pub const GRACE_TICKS_FACTOR: u64 = 2;
 pub const MAX_GRACE_SLOTS: u64 = 2;
@@ -1048,47 +1050,42 @@ impl PohRecorder {
         let record_sender = Arc::new(ArrayQueue::new(1000));
         let (leader_first_tick_height_including_grace_ticks, leader_last_tick_height, grace_ticks) =
             Self::compute_leader_slot_tick_heights(next_leader_slot, ticks_per_slot);
-        let poh =
-            Self {
-                poh,
-                tick_height,
-                tick_cache: vec![],
-                working_bank: None,
-                sender,
-                poh_timing_point_sender,
-                clear_bank_signal,
-                start_bank,
-                start_bank_active_descendants: vec![],
-                start_tick_height: tick_height + 1,
-                leader_first_tick_height_including_grace_ticks,
-                leader_last_tick_height,
-                grace_ticks,
-                blockstore,
-                leader_schedule_cache: leader_schedule_cache.clone(),
-                ticks_per_slot,
-                target_ns_per_tick,
-                record_lock_contention_us: 0,
-                flush_cache_tick_us: 0,
-                flush_cache_no_tick_us: 0,
-                send_entry_us: 0,
-                tick_lock_contention_us: 0,
-                record_us: 0,
-                report_metrics_us: 0,
-                total_sleep_us: 0,
-                ticks_from_record: 0,
-                last_metric: Instant::now(),
-                record_sender,
-                leader_bank_notifier: Arc::default(),
-                delay_leader_block_for_pending_fork,
-                last_reported_slot_for_pending_fork: Arc::default(),
-                is_exited,
-            };
-        let record_receiver = poh.get_record_receiver();
-        (
+        let poh = Self {
             poh,
-            receiver,
-            record_receiver,
-        )
+            tick_height,
+            tick_cache: vec![],
+            working_bank: None,
+            sender,
+            poh_timing_point_sender,
+            clear_bank_signal,
+            start_bank,
+            start_bank_active_descendants: vec![],
+            start_tick_height: tick_height + 1,
+            leader_first_tick_height_including_grace_ticks,
+            leader_last_tick_height,
+            grace_ticks,
+            blockstore,
+            leader_schedule_cache: leader_schedule_cache.clone(),
+            ticks_per_slot,
+            target_ns_per_tick,
+            record_lock_contention_us: 0,
+            flush_cache_tick_us: 0,
+            flush_cache_no_tick_us: 0,
+            send_entry_us: 0,
+            tick_lock_contention_us: 0,
+            record_us: 0,
+            report_metrics_us: 0,
+            total_sleep_us: 0,
+            ticks_from_record: 0,
+            last_metric: Instant::now(),
+            record_sender,
+            leader_bank_notifier: Arc::default(),
+            delay_leader_block_for_pending_fork,
+            last_reported_slot_for_pending_fork: Arc::default(),
+            is_exited,
+        };
+        let record_receiver = poh.get_record_receiver();
+        (poh, receiver, record_receiver)
     }
 
     /// A recorder to synchronize PoH with the following data structures

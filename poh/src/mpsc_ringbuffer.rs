@@ -11,16 +11,18 @@
 ///
 /// TODO: Currently this is still a MPMC ring buffer. Make it specific to single consumer.
 ///
-
 use std::boxed::Box;
-use core::cell::UnsafeCell;
-use core::fmt;
-use core::mem::{self, MaybeUninit};
-use core::panic::{RefUnwindSafe, UnwindSafe};
-use core::sync::atomic::{self, AtomicUsize, Ordering};
-use core::cell::Cell;
-use std::time::Duration;
-use log::error;
+use {
+    core::{
+        cell::{Cell, UnsafeCell},
+        fmt,
+        mem::{self, MaybeUninit},
+        panic::{RefUnwindSafe, UnwindSafe},
+        sync::atomic::{self, AtomicUsize, Ordering},
+    },
+    log::error,
+    std::time::Duration,
+};
 
 const SPIN_LIMIT: u32 = 6;
 const YIELD_LIMIT: u32 = 10;
@@ -538,7 +540,7 @@ impl<T> ArrayQueue<T> {
                 Ok(v)
             }
         })
-            .err()
+        .err()
     }
 
     /// Attempts to pop an element from the queue.

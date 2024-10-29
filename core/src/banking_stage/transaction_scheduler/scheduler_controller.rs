@@ -732,7 +732,10 @@ mod tests {
             get_tmp_ledger_path_auto_delete, leader_schedule_cache::LeaderScheduleCache,
         },
         solana_perf::packet::{to_packet_batches, PacketBatch, NUM_PACKETS},
-        solana_poh::poh_recorder::{PohRecorder, Record, WorkingBankEntry},
+        solana_poh::{
+            mpsc_ringbuffer::ArrayQueue,
+            poh_recorder::{PohRecorder, Record, WorkingBankEntry},
+        },
         solana_runtime::bank::Bank,
         solana_sdk::{
             compute_budget::ComputeBudgetInstruction, fee_calculator::FeeRateGovernor, hash::Hash,
@@ -742,7 +745,6 @@ mod tests {
         std::sync::{atomic::AtomicBool, Arc, RwLock},
         tempfile::TempDir,
     };
-    use solana_poh::mpsc_ringbuffer::ArrayQueue;
 
     fn create_channels<T>(num: usize) -> (Vec<Sender<T>>, Vec<Receiver<T>>) {
         (0..num).map(|_| unbounded()).unzip()

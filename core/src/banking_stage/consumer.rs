@@ -862,7 +862,10 @@ mod tests {
             leader_schedule_cache::LeaderScheduleCache,
         },
         solana_perf::packet::Packet,
-        solana_poh::poh_recorder::{PohRecorder, Record, WorkingBankEntry},
+        solana_poh::{
+            mpsc_ringbuffer::ArrayQueue,
+            poh_recorder::{PohRecorder, Record, WorkingBankEntry},
+        },
         solana_rpc::transaction_status_service::TransactionStatusService,
         solana_runtime::{bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache},
         solana_sdk::{
@@ -904,7 +907,6 @@ mod tests {
             time::Duration,
         },
     };
-    use solana_poh::mpsc_ringbuffer::ArrayQueue;
 
     fn execute_transactions_with_dummy_poh_service(
         bank: Arc<Bank>,

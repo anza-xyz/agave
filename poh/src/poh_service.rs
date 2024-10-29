@@ -1,7 +1,10 @@
 //! The `poh_service` module implements a service that records the passing of
 //! "ticks", a measure of time in the PoH stream
 use {
-    crate::poh_recorder::{PohRecorder, Record},
+    crate::{
+        mpsc_ringbuffer::ArrayQueue,
+        poh_recorder::{PohRecorder, Record},
+    },
     log::*,
     solana_entry::poh::Poh,
     solana_measure::{measure::Measure, measure_us},
@@ -15,7 +18,6 @@ use {
         time::{Duration, Instant},
     },
 };
-use crate::mpsc_ringbuffer::ArrayQueue;
 
 pub struct PohService {
     tick_producer: JoinHandle<()>,
