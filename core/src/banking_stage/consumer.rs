@@ -1263,7 +1263,7 @@ mod tests {
                     .name("solana-simulate_poh".to_string())
                     .spawn(move || loop {
                         let timeout = Duration::from_millis(10);
-                        let record = record_receiver.recv_timeout(timeout);
+                        let record = record_receiver.pop_with_timeout(timeout);
                         if let Some(record) = record {
                             let record_response = poh_recorder.write().unwrap().record(
                                 record.slot,

@@ -188,7 +188,7 @@ impl PohService {
         record_receiver: Arc<ArrayQueue<Record>>,
         timeout: Duration,
     ) {
-        let record = record_receiver.recv_timeout(timeout);
+        let record = record_receiver.pop_with_timeout(timeout);
         if let Some(record) = record {
             if record
                 .sender

@@ -821,7 +821,7 @@ mod tests {
     use {
         super::*,
         crate::banking_trace::{BankingPacketBatch, BankingTracer},
-        crossbeam_channel::{unbounded, Receiver},
+        crossbeam_channel::unbounded,
         itertools::Itertools,
         solana_entry::entry::{self, Entry, EntrySlice},
         solana_gossip::cluster_info::Node,
