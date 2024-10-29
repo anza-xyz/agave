@@ -540,7 +540,8 @@ impl TaskHandler for DefaultTaskHandler {
                         if !scheduling_context.can_commit() {
                             return false;
                         }
-                        let summary = handler_context.transaction_recorder.
+                        let summary = handler_context.transaction_recorder
+                            .lock()
                             .unwrap()
                             .record_transactions(
                                 scheduling_context.bank().slot(),
