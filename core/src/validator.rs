@@ -865,7 +865,7 @@ impl Validator {
             (BlockVerificationMethod::UnifiedScheduler, _)
             | (_, BlockProductionMethod::UnifiedScheduler) => {
                 solana_unified_scheduler_pool::MY_POH.lock().unwrap().insert(poh_recorder.read().unwrap().new_recorder());
-                let scheduler_pool = DefaultSchedulerPool::new(
+                let pool = DefaultSchedulerPool::new(
                     config.unified_scheduler_handler_threads,
                     config.runtime_config.log_messages_bytes_limit,
                     transaction_status_sender.clone(),
@@ -874,11 +874,11 @@ impl Validator {
                     Some(poh_recorder.read().unwrap().new_recorder()),
                     None,
                 );
-                unified_scheduler_pool = Some(scheduler_pool.clone());
                 bank_forks
                     .write()
                     .unwrap()
-                    .install_scheduler_pool(scheduler_pool);
+                    .install_scheduler_pool(pool.clone());
+                unified_scheduler_pool = Some(pool);
             }
             _ => {
                 info!("no scheduler pool is installed for block verification...");
