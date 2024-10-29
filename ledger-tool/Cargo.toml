@@ -42,6 +42,7 @@ solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
 solana-log-collector = { workspace = true }
 solana-logger = { workspace = true }
 solana-measure = { workspace = true }
+solana-poh = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-rpc = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
