@@ -14262,7 +14262,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_clean_drop_dead_zero_single_ref_accounts() {
+    fn test_clean_drop_dead_zero_lamport_single_ref_accounts() {
         let accounts_db = AccountsDb::new_single_for_tests();
         let epoch_schedule = EpochSchedule::default();
         let key1 = Pubkey::new_unique();
