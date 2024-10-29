@@ -472,12 +472,6 @@ extern crate self as solana_program;
 pub mod address_lookup_table;
 pub mod big_mod_exp;
 pub mod blake3;
-#[cfg(feature = "borsh")]
-pub mod borsh;
-#[cfg(feature = "borsh")]
-pub mod borsh0_10;
-#[cfg(feature = "borsh")]
-pub mod borsh1;
 pub mod bpf_loader;
 pub mod bpf_loader_deprecated;
 pub mod bpf_loader_upgradeable;
@@ -493,7 +487,6 @@ pub mod incinerator;
 pub mod instruction;
 pub mod keccak;
 pub mod lamports;
-pub mod last_restart_slot;
 pub mod loader_instruction;
 pub mod loader_upgradeable_instruction;
 pub mod loader_v4;
@@ -517,8 +510,19 @@ pub mod sysvar;
 pub mod vote;
 pub mod wasm;
 
+#[cfg(feature = "borsh")]
+#[deprecated(since = "2.1.0", note = "Use `solana-borsh` crate instead")]
+pub use solana_borsh::deprecated as borsh;
+#[cfg(feature = "borsh")]
+#[deprecated(since = "2.1.0", note = "Use `solana-borsh` crate instead")]
+pub use solana_borsh::v0_10 as borsh0_10;
+#[cfg(feature = "borsh")]
+#[deprecated(since = "2.1.0", note = "Use `solana-borsh` crate instead")]
+pub use solana_borsh::v1 as borsh1;
 #[deprecated(since = "2.1.0", note = "Use `solana-fee-calculator` crate instead")]
 pub use solana_fee_calculator as fee_calculator;
+#[deprecated(since = "2.1.0", note = "Use `solana-last-restart-slot` crate instead")]
+pub use solana_last_restart_slot as last_restart_slot;
 #[deprecated(since = "2.1.0", note = "Use `solana-program-memory` crate instead")]
 pub use solana_program_memory as program_memory;
 #[deprecated(since = "2.1.0", note = "Use `solana-program-pack` crate instead")]
@@ -602,6 +606,8 @@ pub mod sdk_ids {
 #[deprecated(since = "2.1.0", note = "Use `solana-decode-error` crate instead")]
 pub use solana_decode_error as decode_error;
 pub use solana_pubkey::{declare_deprecated_id, declare_id, pubkey};
+#[deprecated(since = "2.1.0", note = "Use `solana-sysvar-id` crate instead")]
+pub use solana_sysvar_id::{declare_deprecated_sysvar_id, declare_sysvar_id};
 
 #[macro_use]
 extern crate serde_derive;

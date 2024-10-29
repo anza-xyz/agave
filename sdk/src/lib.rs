@@ -74,14 +74,12 @@ pub mod fee;
 pub mod genesis_config;
 pub mod hard_forks;
 pub mod hash;
-pub mod inflation;
 pub mod inner_instruction;
 pub mod log;
 pub mod native_loader;
 pub mod net;
 pub mod nonce_account;
 pub mod offchain_message;
-pub mod packet;
 pub mod poh_config;
 pub mod precompiles;
 pub mod program_utils;
@@ -120,6 +118,10 @@ pub use solana_decode_error as decode_error;
 pub use solana_derivation_path as derivation_path;
 #[deprecated(since = "2.1.0", note = "Use `solana-feature-set` crate instead")]
 pub use solana_feature_set as feature_set;
+#[deprecated(since = "2.1.0", note = "Use `solana-inflation` crate instead")]
+pub use solana_inflation as inflation;
+#[deprecated(since = "2.1.0", note = "Use `solana-packet` crate instead")]
+pub use solana_packet as packet;
 #[deprecated(since = "2.1.0", note = "Use `solana-program-memory` crate instead")]
 pub use solana_program_memory as program_memory;
 #[deprecated(since = "2.1.0", note = "Use `solana_pubkey::pubkey` instead")]

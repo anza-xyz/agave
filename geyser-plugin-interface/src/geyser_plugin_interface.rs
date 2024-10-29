@@ -306,7 +306,7 @@ pub enum GeyserPluginError {
 }
 
 /// The current status of a slot
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(u32)]
 pub enum SlotStatus {
     /// The highest slot of the heaviest fork processed by the node. Ledger state at this slot is
@@ -328,6 +328,9 @@ pub enum SlotStatus {
 
     /// A new bank fork is created with the slot
     CreatedBank,
+
+    /// A slot is marked dead
+    Dead(String),
 }
 
 impl SlotStatus {
@@ -336,9 +339,10 @@ impl SlotStatus {
             SlotStatus::Confirmed => "confirmed",
             SlotStatus::Processed => "processed",
             SlotStatus::Rooted => "rooted",
-            SlotStatus::FirstShredReceived => "first_shread_received",
+            SlotStatus::FirstShredReceived => "first_shred_received",
             SlotStatus::Completed => "completed",
             SlotStatus::CreatedBank => "created_bank",
+            SlotStatus::Dead(_error) => "dead",
         }
     }
 }
@@ -419,7 +423,7 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
         &self,
         slot: Slot,
         parent: Option<u64>,
-        status: SlotStatus,
+        status: &SlotStatus,
     ) -> Result<()> {
         Ok(())
     }
