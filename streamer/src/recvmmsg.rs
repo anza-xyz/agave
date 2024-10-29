@@ -79,6 +79,11 @@ fn cast_socket_addr(addr: &sockaddr_storage, hdr: &mmsghdr) -> Option<SocketAddr
 
 #[cfg(target_os = "linux")]
 pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num packets:*/ usize> {
+    // Should never hit this, but bail if the caller didn't provide any Packets
+    // to receive into
+    if packets.is_empty() {
+        return Ok(0);
+    }
     // Assert that there are no leftovers in packets.
     debug_assert!(packets.iter().all(|pkt| pkt.meta() == &Meta::default()));
     const SOCKADDR_STORAGE_SIZE: usize = mem::size_of::<sockaddr_storage>();
