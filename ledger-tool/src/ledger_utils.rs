@@ -55,6 +55,7 @@ use {
     thiserror::Error,
 };
 use solana_poh::poh_recorder::{NewPohRecorder, PohRecorder};
+use solana_core::validator::supported_scheduling_mode;
 
 pub struct LoadAndProcessLedgerOutput {
     pub bank_forks: Arc<RwLock<BankForks>>,
