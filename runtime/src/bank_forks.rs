@@ -263,7 +263,10 @@ impl BankForks {
             );
         }
         let context = SchedulingContext::new(mode, bank.clone());
-        let scheduler = scheduler_pool.take_scheduler(context).expect("not disabled because of just retaking");
+        let Some(scheduler) = scheduler_pool.take_scheduler(context) else {
+            trace!("disabled for {}", context.mode());
+            return BankWithScheduler::new_without_scheduler(bank);
+        };
         let bank_with_scheduler = BankWithScheduler::new(bank, Some(scheduler));
         scheduler_pool.register_timeout_listener(bank_with_scheduler.create_timeout_listener());
         bank_with_scheduler

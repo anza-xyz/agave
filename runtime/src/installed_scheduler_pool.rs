@@ -565,7 +565,7 @@ impl BankWithSchedulerInner {
                 let mut scheduler = self.scheduler.write().unwrap();
                 trace!("with_active_scheduler: {:?}", scheduler);
                 scheduler.transition_from_stale_to_active(|pool, result_with_timings| {
-                    let scheduler = pool.take_resumed_scheduler(context, result_with_timings);
+                    let scheduler = pool.take_resumed_scheduler(context, result_with_timings).expect("not disabled because of just retaking");
                     info!(
                         "with_active_scheduler: bank (slot: {}) got active, taking scheduler (id: {})",
                         self.bank.slot(),
