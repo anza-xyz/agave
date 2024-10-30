@@ -52,7 +52,7 @@ pub fn initialized_result_with_timings() -> ResultWithTimings {
 pub type Index = u128;
 
 pub trait InstalledSchedulerPool: Send + Sync + Debug {
-    fn take_scheduler(&self, context: SchedulingContext) -> InstalledSchedulerBox {
+    fn take_scheduler(&self, context: SchedulingContext) -> Option<InstalledSchedulerBox> {
         self.take_resumed_scheduler(context, initialized_result_with_timings())
     }
 
@@ -60,7 +60,7 @@ pub trait InstalledSchedulerPool: Send + Sync + Debug {
         &self,
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
-    ) -> InstalledSchedulerBox;
+    ) -> Option<InstalledSchedulerBox>;
 
     fn register_timeout_listener(&self, timeout_listener: TimeoutListener);
 }
