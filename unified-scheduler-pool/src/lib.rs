@@ -1710,6 +1710,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     recv(banking_packet_receiver) -> banking_packet => {
                         let Ok(banking_packet) = banking_packet else {
                             info!("disconnected banking_packet_receiver");
+                            let current_thread = thread::current();
                             if finished_blocked_task_sender.send(Err(HandlerPanicked)).is_ok() {
                                 info!("notified a panic from {:?}", current_thread);
                             } else {
