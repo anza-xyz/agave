@@ -205,7 +205,11 @@ impl BlockProductionMethod {
     }
 }
 
-fn supported_scheduling_mode(verification_method: BlockVerificationMethod, production_method: BlockProductionMethod) -> SupportedSchedulingMode {
+fn supported_scheduling_mode(verification: BlockVerificationMethod, production: BlockProductionMethod) -> SupportedSchedulingMode {
+    match (verifications, production) {
+        (BlockVerificationMethod::UnifiedScheduler, BlockProductionMethod::UnifiedScheduler) => SupportedSchedulingMode::Both,
+        _ => panic!(),
+    }
 }
 
 /// Configuration for the block generator invalidator for replay.
