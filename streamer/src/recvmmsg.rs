@@ -142,7 +142,13 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
         usize::try_from(nrecv).unwrap()
     };
     for (addr, hdr, pkt) in izip!(addrs, hdrs, packets.iter_mut()).take(nrecv) {
+        // SAFETY: We initialized `count` elements of `hdrs` above. `count` is
+        // passed to recvmmsg() as the limit of messages that can be read. So,
+        // `nrevc <= count` which means we initialized this `hdr` and
+        // recvmmsg() will have updated it appropriately
         let hdr_ref = unsafe { hdr.assume_init_ref() };
+        // SAFETY: Similar to above, we initialized this `addr` and recvmmsg()
+        // will have populated it
         let addr_ref = unsafe { addr.assume_init_ref() };
         pkt.meta_mut().size = hdr_ref.msg_len as usize;
         if let Some(addr) = cast_socket_addr(addr_ref, hdr_ref) {
@@ -150,9 +156,14 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
         }
     }
 
-    // TODO - figure out in review whether we think we have to drop these OR if
-    //        leaving as MaybeUninit (no drop) is ok
     for (iov, addr, hdr) in izip!(&mut iovs, &mut addrs, &mut hdrs).take(count) {
+        // SAFETY: We initialized `count` elements of each array above
+        //
+        // It may be that `packets.len() != NUM_RCVMMSGS`; thus, some elements
+        // in `iovs` / `addrs` / `hdrs` may not get initialized. So, we must
+        // manually drop `count` elements from each array instead of being able
+        // to convert [MaybeUninit<T>] to [T] and letting `Drop` do the work
+        // for us when these items go out of scope at the end of the function
         unsafe {
             iov.assume_init_drop();
             addr.assume_init_drop();
