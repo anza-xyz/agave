@@ -82,7 +82,7 @@ impl SupportedSchedulingMode {
     fn is_supported(&self, requested_mode: SchedulingMode) -> bool {
         match (self, requested_mode) {
             (Self::Both, _) => true,
-            (Self::Either(ref supported), ref requested) if supported == requested => true, 
+            (Self::Either(ref supported), ref requested) if supported == requested => true,
             _ => false,
         }
     }
@@ -486,6 +486,10 @@ where
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
     ) -> Option<InstalledSchedulerBox> {
+        if !self.supported_scheduling_mode.is_supported(context.mode) {
+            return None;
+        }
+
         Some(Box::new(self.do_take_resumed_scheduler(context, result_with_timings, None::<(_, fn(BankingPacketBatch) -> Vec<Task>)>)))
     }
 
