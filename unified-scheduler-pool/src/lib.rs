@@ -72,11 +72,27 @@ enum CheckPoint {
 
 type AtomicSchedulerId = AtomicU64;
 
+pub enum SupportedSchedulingMode {
+    Either(SchedulingMode),
+    Both,
+}
+
+impl SupportedSchedulingMode {
+    fn is_supported(&self, requested_mode: SchedulingMode) -> bool {
+        match (self, requested_mode) {
+            (Self::Both, _) => true,
+            (Self::Either(supported), requested) if supported == requested => true, 
+            _ => false,
+        }
+    }
+}
+
 // SchedulerPool must be accessed as a dyn trait from solana-runtime, because SchedulerPool
 // contains some internal fields, whose types aren't available in solana-runtime (currently
 // TransactionStatusSender; also, PohRecorder in the future)...
 #[derive(Debug)]
 pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
+    supported_scheduling_mode: SupportedSchedulingMode,
     scheduler_inners: Mutex<Vec<(S::Inner, Instant)>>,
     block_producing_scheduler_inner: Mutex<(Option<(u64, Arc<BlockProducingUnifiedScheduler>)>, Option<S::Inner>)>,
     trashed_scheduler_inners: Mutex<Vec<S::Inner>>,
@@ -132,11 +148,6 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(12);
 // Along the lines, this isn't problematic for the development settings (= solana-test-validator),
 // because UsageQueueLoader won't grow that much to begin with.
 const DEFAULT_MAX_USAGE_QUEUE_COUNT: usize = 262_144;
-
-pub enum SupportedSchedulingMode {
-    Either(SchedulingMode),
-    Both,
-}
 
 impl<S, TH> SchedulerPool<S, TH>
 where
