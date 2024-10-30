@@ -206,7 +206,7 @@ impl BlockProductionMethod {
     }
 }
 
-pub fn supported_scheduling_mode(verification: BlockVerificationMethod, production: BlockProductionMethod) -> SupportedSchedulingMode {
+pub fn supported_scheduling_mode((verification, production): (&BlockVerificationMethod, &BlockProductionMethod)) -> SupportedSchedulingMode {
     match (verification, production) {
         (BlockVerificationMethod::UnifiedScheduler, BlockProductionMethod::UnifiedScheduler) => SupportedSchedulingMode::Both,
         (BlockVerificationMethod::UnifiedScheduler, _) => SupportedSchedulingMode::Either(SchedulingMode::BlockVerification),
