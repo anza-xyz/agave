@@ -6,8 +6,7 @@ use {
     itertools::Itertools,
     log::{info, trace},
     solana_accounts_db::{
-        accounts_db::{self, ACCOUNTS_DB_CONFIG_FOR_TESTING},
-        accounts_index::AccountSecondaryIndexes,
+        accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
         epoch_accounts_hash::EpochAccountsHash,
     },
     solana_core::{
@@ -20,7 +19,7 @@ use {
             AbsRequestHandlers, AbsRequestSender, AccountsBackgroundService,
             PrunedBanksRequestHandler, SendDroppedBankCallback, SnapshotRequestHandler,
         },
-        bank::Bank,
+        bank::{Bank, BankTestConfig},
         bank_forks::BankForks,
         genesis_utils::{create_genesis_config_with_leader, GenesisConfigInfo},
         runtime_config::RuntimeConfig,
@@ -55,7 +54,7 @@ use {
         time::{Duration, Instant},
     },
     tempfile::TempDir,
-    test_case::test_case,
+    test_case::{test_case, test_matrix},
 };
 
 struct SnapshotTestConfig {
@@ -96,9 +95,8 @@ impl SnapshotTestConfig {
         let bank0 = Bank::new_with_paths_for_tests(
             &genesis_config_info.genesis_config,
             Arc::<RuntimeConfig>::default(),
+            BankTestConfig::default(),
             vec![accounts_dir.clone()],
-            AccountSecondaryIndexes::default(),
-            accounts_db::AccountShrinkThreshold::default(),
         );
         bank0.freeze();
         bank0.set_startup_verification_complete();
@@ -160,9 +158,7 @@ fn restore_from_snapshot(
         &RuntimeConfig::default(),
         None,
         None,
-        AccountSecondaryIndexes::default(),
         None,
-        accounts_db::AccountShrinkThreshold::default(),
         check_hash_calculation,
         false,
         false,
@@ -611,9 +607,7 @@ fn restore_from_snapshots_and_check_banks_are_equal(
         &RuntimeConfig::default(),
         None,
         None,
-        AccountSecondaryIndexes::default(),
         None,
-        accounts_db::AccountShrinkThreshold::default(),
         false,
         false,
         false,
@@ -629,14 +623,22 @@ fn restore_from_snapshots_and_check_banks_are_equal(
     Ok(())
 }
 
-/// Spin up the background services fully and test taking snapshots
-#[test_case(V1_2_0, Development)]
-#[test_case(V1_2_0, Devnet)]
-#[test_case(V1_2_0, Testnet)]
-#[test_case(V1_2_0, MainnetBeta)]
+#[derive(Debug, Eq, PartialEq)]
+enum VerifyAccountsKind {
+    Merkle,
+    Lattice,
+}
+
+/// Spin up the background services fully then test taking & verifying snapshots
+#[test_matrix(
+    V1_2_0,
+    [Development, Devnet, Testnet, MainnetBeta],
+    [VerifyAccountsKind::Merkle, VerifyAccountsKind::Lattice]
+)]
 fn test_snapshots_with_background_services(
     snapshot_version: SnapshotVersion,
     cluster_type: ClusterType,
+    verify_accounts_kind: VerifyAccountsKind,
 ) {
     solana_logger::setup();
 
@@ -821,6 +823,10 @@ fn test_snapshots_with_background_services(
 
     // Load the snapshot and ensure it matches what's in BankForks
     let (_tmp_dir, temporary_accounts_dir) = create_tmp_accounts_dir_for_tests();
+    let accounts_db_config = AccountsDbConfig {
+        enable_experimental_accumulator_hash: verify_accounts_kind == VerifyAccountsKind::Lattice,
+        ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+    };
     let (deserialized_bank, ..) = snapshot_bank_utils::bank_from_latest_snapshot_archives(
         &snapshot_test_config.snapshot_config.bank_snapshots_dir,
         &snapshot_test_config
@@ -834,14 +840,12 @@ fn test_snapshots_with_background_services(
         &RuntimeConfig::default(),
         None,
         None,
-        AccountSecondaryIndexes::default(),
         None,
-        accounts_db::AccountShrinkThreshold::default(),
         false,
         false,
         false,
         false,
-        Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+        Some(accounts_db_config),
         None,
         exit.clone(),
     )

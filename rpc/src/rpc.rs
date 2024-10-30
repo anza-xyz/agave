@@ -11,6 +11,7 @@ use {
     jsonrpc_core::{futures::future, types::error, BoxFuture, Error, Metadata, Result},
     jsonrpc_derive::rpc,
     solana_account_decoder::{
+        encode_ui_account,
         parse_account_data::SplTokenAdditionalData,
         parse_token::{is_known_spl_token_id, token_amount_to_ui_amount_v2, UiTokenAmount},
         UiAccount, UiAccountEncoding, UiDataSliceConfig, MAX_BASE58_BYTES,
@@ -2380,7 +2381,7 @@ fn encode_account<T: ReadableAccount>(
             data: None,
         })
     } else {
-        Ok(UiAccount::encode(
+        Ok(encode_ui_account(
             pubkey, account, encoding, None, data_slice,
         ))
     }
@@ -3527,7 +3528,7 @@ pub mod rpc_full {
                                 .ok()
                                 .filter(|addr| socket_addr_space.check(addr)),
                             tpu_vote: contact_info
-                                .tpu_vote()
+                                .tpu_vote(Protocol::UDP)
                                 .ok()
                                 .filter(|addr| socket_addr_space.check(addr)),
                             serve_repair: contact_info
@@ -4329,6 +4330,7 @@ pub mod tests {
         jsonrpc_core::{futures, ErrorCode, MetaIoHandler, Output, Response, Value},
         jsonrpc_core_client::transports::local,
         serde::de::DeserializeOwned,
+        solana_accounts_db::accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
         solana_entry::entry::next_versioned_entry,
         solana_gossip::socketaddr,
         solana_ledger::{
@@ -4467,7 +4469,10 @@ pub mod tests {
         fn start_with_config(config: JsonRpcConfig) -> Self {
             let (bank_forks, mint_keypair, leader_vote_keypair) =
                 new_bank_forks_with_config(BankTestConfig {
-                    secondary_indexes: config.account_indexes.clone(),
+                    accounts_db_config: AccountsDbConfig {
+                        account_indexes: Some(config.account_indexes.clone()),
+                        ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+                    },
                 });
 
             let ledger_path = get_tmp_ledger_path!();
@@ -5498,7 +5503,7 @@ pub mod tests {
         let result: Vec<RpcKeyedAccount> = parse_success_result(rpc.handle_request_sync(request));
         let expected_value = vec![RpcKeyedAccount {
             pubkey: new_program_account_key.to_string(),
-            account: UiAccount::encode(
+            account: encode_ui_account(
                 &new_program_account_key,
                 &new_program_account,
                 UiAccountEncoding::Binary,
@@ -6653,7 +6658,7 @@ pub mod tests {
             EpochSchedule::custom(TEST_SLOTS_PER_EPOCH, TEST_SLOTS_PER_EPOCH, false);
         genesis_config.fee_rate_governor = FeeRateGovernor::new(TEST_SIGNATURE_FEE, 0);
 
-        let bank = Bank::new_for_tests_with_config(&genesis_config, config);
+        let bank = Bank::new_with_config_for_tests(&genesis_config, config);
         (
             BankForks::new_rw_arc(bank),
             mint_keypair,

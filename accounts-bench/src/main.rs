@@ -9,16 +9,13 @@ use {
         accounts::Accounts,
         accounts_db::{
             test_utils::{create_test_accounts, update_accounts_bench},
-            AccountShrinkThreshold, AccountsDb, CalcAccountsHashDataSource,
-            ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS,
+            AccountsDb, CalcAccountsHashDataSource, ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS,
         },
-        accounts_index::AccountSecondaryIndexes,
         ancestors::Ancestors,
     },
     solana_measure::measure::Measure,
     solana_sdk::{
-        genesis_config::ClusterType, pubkey::Pubkey, rent_collector::RentCollector,
-        sysvar::epoch_schedule::EpochSchedule,
+        pubkey::Pubkey, rent_collector::RentCollector, sysvar::epoch_schedule::EpochSchedule,
     },
     std::{env, fs, path::PathBuf, sync::Arc},
 };
@@ -72,9 +69,6 @@ fn main() {
     }
     let accounts_db = AccountsDb::new_with_config(
         vec![path],
-        &ClusterType::Testnet,
-        AccountSecondaryIndexes::default(),
-        AccountShrinkThreshold::default(),
         Some(ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS),
         None,
         Arc::default(),

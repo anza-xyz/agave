@@ -74,15 +74,14 @@ use {
         account_locks::validate_account_locks,
         accounts::{AccountAddressFilter, Accounts, PubkeyAccountSlot},
         accounts_db::{
-            AccountShrinkThreshold, AccountStorageEntry, AccountsDb, AccountsDbConfig,
-            CalcAccountsHashDataSource, DuplicatesLtHash, PubkeyHashAccount,
-            VerifyAccountsHashAndLamportsConfig,
+            AccountStorageEntry, AccountsDb, AccountsDbConfig, CalcAccountsHashDataSource,
+            DuplicatesLtHash, PubkeyHashAccount, VerifyAccountsHashAndLamportsConfig,
         },
         accounts_hash::{
             AccountHash, AccountsHash, AccountsLtHash, CalcAccountsHashConfig, HashStats,
             IncrementalAccountsHash,
         },
-        accounts_index::{AccountSecondaryIndexes, IndexKey, ScanConfig, ScanResult},
+        accounts_index::{IndexKey, ScanConfig, ScanResult},
         accounts_partition::{self, Partition, PartitionIndex},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         ancestors::{Ancestors, AncestorsForSerialization},
@@ -253,7 +252,7 @@ struct RentMetrics {
 pub type BankStatusCache = StatusCache<Result<()>>;
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "BswQL6n7kKwgHFKcwMCQcrWjt8h59Vh6KkNb75iaqG2B")
+    frozen_abi(digest = "BHg4qpwegtaJypLUqAdjQYzYeLfEGf6tA4U5cREbHMHi")
 )]
 pub type BankSlotDelta = SlotDelta<Result<()>>;
 
@@ -462,6 +461,8 @@ pub struct BankFieldsToDeserialize {
     pub(crate) accounts_data_len: u64,
     pub(crate) incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>,
     pub(crate) epoch_accounts_hash: Option<Hash>,
+    // When removing the accounts lt hash featurization code, also remove this Option wrapper
+    pub(crate) accounts_lt_hash: Option<AccountsLtHash>,
 }
 
 /// Bank's common fields shared by all supported snapshot versions for serialization.
@@ -505,6 +506,8 @@ pub struct BankFieldsToSerialize {
     pub is_delta: bool,
     pub accounts_data_len: u64,
     pub versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
+    // When removing the accounts lt hash featurization code, also remove this Option wrapper
+    pub accounts_lt_hash: Option<AccountsLtHash>,
 }
 
 // Can't derive PartialEq because RwLock doesn't implement PartialEq
@@ -582,6 +585,7 @@ impl PartialEq for Bank {
             transaction_account_lock_limit: _,
             fee_structure: _,
             cache_for_accounts_lt_hash: _,
+            block_id,
             // Ignore new fields explicitly if they do not impact PartialEq.
             // Adding ".." will remove compile-time checks that if a new field
             // is added to the struct, this PartialEq is accordingly updated.
@@ -621,6 +625,7 @@ impl PartialEq for Bank {
                 *hash_overrides.lock().unwrap() == *other.hash_overrides.lock().unwrap())
             && !(self.is_accounts_lt_hash_enabled() && other.is_accounts_lt_hash_enabled()
                 && *accounts_lt_hash.lock().unwrap() != *other.accounts_lt_hash.lock().unwrap())
+            && *block_id.read().unwrap() == *other.block_id.read().unwrap()
     }
 }
 
@@ -661,6 +666,7 @@ impl BankFieldsToSerialize {
             is_delta: bool::default(),
             accounts_data_len: u64::default(),
             versioned_epoch_stakes: HashMap::default(),
+            accounts_lt_hash: Some(AccountsLtHash(LtHash([0x7E57; LtHash::NUM_ELEMENTS]))),
         }
     }
 }
@@ -925,6 +931,11 @@ pub struct Bank {
     /// The accounts lt hash needs both the initial and final state of each
     /// account that was modified in this slot.  Cache the initial state here.
     cache_for_accounts_lt_hash: RwLock<AHashMap<Pubkey, InitialStateOfAccount>>,
+
+    /// The unique identifier for the corresponding block for this bank.
+    /// None for banks that have not yet completed replay or for leader banks as we cannot populate block_id
+    /// until bankless leader. Can be computed directly from shreds without needing to execute transactions.
+    block_id: RwLock<Option<Hash>>,
 }
 
 struct VoteWithStakeDelegations {
@@ -958,9 +969,19 @@ pub struct NewBankOptions {
     pub vote_only_bank: bool,
 }
 
-#[derive(Debug, Default)]
+#[cfg(feature = "dev-context-only-utils")]
+#[derive(Debug)]
 pub struct BankTestConfig {
-    pub secondary_indexes: AccountSecondaryIndexes,
+    pub accounts_db_config: AccountsDbConfig,
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+impl Default for BankTestConfig {
+    fn default() -> Self {
+        Self {
+            accounts_db_config: ACCOUNTS_DB_CONFIG_FOR_TESTING,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -1045,8 +1066,9 @@ impl Bank {
             fee_structure: FeeStructure::default(),
             #[cfg(feature = "dev-context-only-utils")]
             hash_overrides: Arc::new(Mutex::new(HashOverrides::default())),
-            accounts_lt_hash: Mutex::new(AccountsLtHash(LtHash([0xBAD1; LtHash::NUM_ELEMENTS]))),
+            accounts_lt_hash: Mutex::new(AccountsLtHash(LtHash::identity())),
             cache_for_accounts_lt_hash: RwLock::new(AHashMap::new()),
+            block_id: RwLock::new(None),
         };
 
         bank.transaction_processor =
@@ -1054,17 +1076,6 @@ impl Bank {
 
         let accounts_data_size_initial = bank.get_total_accounts_stats().unwrap().data_len as u64;
         bank.accounts_data_size_initial = accounts_data_size_initial;
-
-        let accounts_lt_hash = {
-            let mut accounts_lt_hash = AccountsLtHash(LtHash::identity());
-            let accounts = bank.get_all_accounts(false).unwrap();
-            for account in accounts {
-                let account_lt_hash = AccountsDb::lt_hash_account(&account.1, &account.0);
-                accounts_lt_hash.0.mix_in(&account_lt_hash.0);
-            }
-            accounts_lt_hash
-        };
-        *bank.accounts_lt_hash.get_mut().unwrap() = accounts_lt_hash;
 
         bank
     }
@@ -1076,8 +1087,6 @@ impl Bank {
         paths: Vec<PathBuf>,
         debug_keys: Option<Arc<HashSet<Pubkey>>>,
         additional_builtins: Option<&[BuiltinPrototype]>,
-        account_indexes: AccountSecondaryIndexes,
-        shrink_ratio: AccountShrinkThreshold,
         debug_do_not_add_builtins: bool,
         accounts_db_config: Option<AccountsDbConfig>,
         accounts_update_notifier: Option<AccountsUpdateNotifier>,
@@ -1086,15 +1095,8 @@ impl Bank {
         #[allow(unused)] genesis_hash: Option<Hash>,
         #[allow(unused)] feature_set: Option<FeatureSet>,
     ) -> Self {
-        let accounts_db = AccountsDb::new_with_config(
-            paths,
-            &genesis_config.cluster_type,
-            account_indexes,
-            shrink_ratio,
-            accounts_db_config,
-            accounts_update_notifier,
-            exit,
-        );
+        let accounts_db =
+            AccountsDb::new_with_config(paths, accounts_db_config, accounts_update_notifier, exit);
         let accounts = Accounts::new(Arc::new(accounts_db));
         let mut bank = Self::default_with_accounts(accounts);
         bank.ancestors = Ancestors::from(vec![bank.slot()]);
@@ -1321,6 +1323,7 @@ impl Bank {
             hash_overrides: parent.hash_overrides.clone(),
             accounts_lt_hash: Mutex::new(parent.accounts_lt_hash.lock().unwrap().clone()),
             cache_for_accounts_lt_hash: RwLock::new(AHashMap::new()),
+            block_id: RwLock::new(None),
         };
 
         let (_, ancestors_time_us) = measure_us!({
@@ -1699,8 +1702,9 @@ impl Bank {
             fee_structure: FeeStructure::default(),
             #[cfg(feature = "dev-context-only-utils")]
             hash_overrides: Arc::new(Mutex::new(HashOverrides::default())),
-            accounts_lt_hash: Mutex::new(AccountsLtHash(LtHash([0xBAD2; LtHash::NUM_ELEMENTS]))),
+            accounts_lt_hash: Mutex::new(AccountsLtHash(LtHash([0xBAD1; LtHash::NUM_ELEMENTS]))),
             cache_for_accounts_lt_hash: RwLock::new(AHashMap::new()),
+            block_id: RwLock::new(None),
         };
 
         bank.transaction_processor =
@@ -1721,16 +1725,26 @@ impl Bank {
             .fill_missing_sysvar_cache_entries(&bank);
         bank.rebuild_skipped_rewrites();
 
-        let calculate_accounts_lt_hash_duration = bank.is_accounts_lt_hash_enabled().then(|| {
-            let (_, duration) = meas_dur!({
-                *bank.accounts_lt_hash.get_mut().unwrap() = bank
-                    .rc
-                    .accounts
-                    .accounts_db
-                    .calculate_accounts_lt_hash_at_startup_from_index(&bank.ancestors, bank.slot());
+        let mut calculate_accounts_lt_hash_duration = None;
+        if bank.is_accounts_lt_hash_enabled() {
+            // Use the accounts lt hash from the snapshot, if present, otherwise calculate it.
+            // When there is a feature gate for the accounts lt hash, if the feature is enabled
+            // then it will be *required* that the snapshot contains an accounts lt hash.
+            let accounts_lt_hash = fields.accounts_lt_hash.unwrap_or_else(|| {
+                let (accounts_lt_hash, duration) = meas_dur!({
+                    bank.rc
+                        .accounts
+                        .accounts_db
+                        .calculate_accounts_lt_hash_at_startup_from_index(
+                            &bank.ancestors,
+                            bank.slot(),
+                        )
+                });
+                calculate_accounts_lt_hash_duration = Some(duration);
+                accounts_lt_hash
             });
-            duration
-        });
+            *bank.accounts_lt_hash.get_mut().unwrap() = accounts_lt_hash;
+        }
 
         // Sanity assertions between bank snapshot and genesis config
         // Consider removing from serializable bank state
@@ -1820,6 +1834,9 @@ impl Bank {
             is_delta: self.is_delta.load(Relaxed),
             accounts_data_len: self.load_accounts_data_size(),
             versioned_epoch_stakes,
+            accounts_lt_hash: self
+                .is_accounts_lt_hash_enabled()
+                .then(|| self.accounts_lt_hash.lock().unwrap().clone()),
         }
     }
 
@@ -3674,8 +3691,8 @@ impl Bank {
             RentCollectorWithMetrics::new(self.rent_collector.clone());
         let processing_environment = TransactionProcessingEnvironment {
             blockhash,
-            epoch_total_stake: self.epoch_total_stake(self.epoch()),
-            epoch_vote_accounts: self.epoch_vote_accounts(self.epoch()),
+            epoch_total_stake: Some(self.get_current_epoch_total_stake()),
+            epoch_vote_accounts: Some(self.get_current_epoch_vote_accounts()),
             feature_set: Arc::clone(&self.feature_set),
             fee_structure: Some(&self.fee_structure),
             lamports_per_signature,
@@ -3916,14 +3933,11 @@ impl Bank {
     ) {
         let mut fees = 0;
 
-        processing_results
-            .iter()
-            .for_each(|processing_result| match processing_result {
-                Ok(processed_tx) => {
-                    fees += processed_tx.fee_details().total_fee();
-                }
-                Err(_) => {}
-            });
+        processing_results.iter().for_each(|processing_result| {
+            if let Ok(processed_tx) = processing_result {
+                fees += processed_tx.fee_details().total_fee();
+            }
+        });
 
         self.collector_fees.fetch_add(fees, Relaxed);
     }
@@ -3935,14 +3949,11 @@ impl Bank {
     ) {
         let mut accumulated_fee_details = FeeDetails::default();
 
-        processing_results
-            .iter()
-            .for_each(|processing_result| match processing_result {
-                Ok(processed_tx) => {
-                    accumulated_fee_details.accumulate(&processed_tx.fee_details());
-                }
-                Err(_) => {}
-            });
+        processing_results.iter().for_each(|processing_result| {
+            if let Ok(processed_tx) = processing_result {
+                accumulated_fee_details.accumulate(&processed_tx.fee_details());
+            }
+        });
 
         self.collector_fee_details
             .write()
@@ -5589,8 +5600,14 @@ impl Bank {
         &self,
         base: Option<(Slot, /*capitalization*/ u64)>,
         mut config: VerifyAccountsHashConfig,
-        duplicates_lt_hash: Option<&DuplicatesLtHash>,
+        duplicates_lt_hash: Option<Box<DuplicatesLtHash>>,
     ) -> bool {
+        #[derive(Debug, Eq, PartialEq)]
+        enum VerifyKind {
+            Merkle,
+            Lattice,
+        }
+
         let accounts = &self.rc.accounts;
         // Wait until initial hash calc is complete before starting a new hash calc.
         // This should only occur when we halt at a slot in ledger-tool.
@@ -5600,14 +5617,33 @@ impl Bank {
             .wait_for_complete();
 
         let slot = self.slot();
-        let is_accounts_lt_hash_enabled = self.is_accounts_lt_hash_enabled();
+        let verify_kind = if self
+            .rc
+            .accounts
+            .accounts_db
+            .is_experimental_accumulator_hash_enabled()
+        {
+            VerifyKind::Lattice
+        } else {
+            VerifyKind::Merkle
+        };
+
+        if verify_kind == VerifyKind::Lattice {
+            // Calculating the accounts lt hash from storages *requires* a duplicates_lt_hash.
+            // If it is None here, then we must use the index instead, which also means we
+            // cannot run in the background.
+            if duplicates_lt_hash.is_none() {
+                config.run_in_background = false;
+            }
+        }
+
         if config.require_rooted_bank && !accounts.accounts_db.accounts_index.is_alive_root(slot) {
             if let Some(parent) = self.parent() {
                 info!(
                     "slot {slot} is not a root, so verify accounts hash on parent bank at slot {}",
                     parent.slot(),
                 );
-                if is_accounts_lt_hash_enabled {
+                if verify_kind == VerifyKind::Lattice {
                     // The duplicates_lt_hash is only valid for the current slot, so we must fall
                     // back to verifying the accounts lt hash with the index (which also means we
                     // cannot run in the background).
@@ -5618,15 +5654,6 @@ impl Bank {
                 // this will result in mismatch errors
                 // accounts hash calc doesn't include unrooted slots
                 panic!("cannot verify accounts hash because slot {slot} is not a root");
-            }
-        }
-
-        if is_accounts_lt_hash_enabled {
-            // Calculating the accounts lt hash from storages *requires* a duplicates_lt_hash.
-            // If it is None here, then we must use the index instead, which also means we
-            // cannot run in the background.
-            if duplicates_lt_hash.is_none() {
-                config.run_in_background = false;
             }
         }
 
@@ -5656,7 +5683,6 @@ impl Bank {
             let epoch_schedule = self.epoch_schedule().clone();
             let rent_collector = self.rent_collector().clone();
             let expected_accounts_lt_hash = self.accounts_lt_hash.lock().unwrap().clone();
-            let duplicates_lt_hash = duplicates_lt_hash.cloned();
             accounts.accounts_db.verify_accounts_hash_in_bg.start(|| {
                 Builder::new()
                     .name("solBgHashVerify".into())
@@ -5665,49 +5691,53 @@ impl Bank {
                         let start = Instant::now();
                         let mut lattice_verify_time = None;
                         let mut merkle_verify_time = None;
-                        if is_accounts_lt_hash_enabled {
-                            // accounts lt hash is *enabled* so use lattice-based verification
-                            let accounts_db = &accounts_.accounts_db;
-                            let (calculated_accounts_lt_hash, duration) =
-                                meas_dur!(accounts_db.thread_pool_hash.install(|| {
-                                    accounts_db.calculate_accounts_lt_hash_at_startup_from_storages(
-                                        snapshot_storages.0.as_slice(),
-                                        &duplicates_lt_hash.unwrap(),
-                                    )
-                                }));
-                            if calculated_accounts_lt_hash != expected_accounts_lt_hash {
-                                error!(
-                                    "Verifying accounts lt hash failed: hashes do not match, \
-                                     expected: {}, calculated: {}",
-                                    expected_accounts_lt_hash.0.checksum(),
-                                    calculated_accounts_lt_hash.0.checksum(),
+                        match verify_kind {
+                            VerifyKind::Lattice => {
+                                // accounts lt hash is *enabled* so use lattice-based verification
+                                let accounts_db = &accounts_.accounts_db;
+                                let (calculated_accounts_lt_hash, duration) =
+                                    meas_dur!(accounts_db.thread_pool_hash.install(|| {
+                                        accounts_db
+                                            .calculate_accounts_lt_hash_at_startup_from_storages(
+                                                snapshot_storages.0.as_slice(),
+                                                &duplicates_lt_hash.unwrap(),
+                                            )
+                                    }));
+                                if calculated_accounts_lt_hash != expected_accounts_lt_hash {
+                                    let expected = expected_accounts_lt_hash.0.checksum();
+                                    let calculated = calculated_accounts_lt_hash.0.checksum();
+                                    error!(
+                                        "Verifying accounts failed: accounts lattice hashes do not \
+                                         match, expected: {expected}, calculated: {calculated}",
+                                    );
+                                    return false;
+                                }
+                                lattice_verify_time = Some(duration);
+                            }
+                            VerifyKind::Merkle => {
+                                // accounts lt hash is *disabled* so use merkle-based verification
+                                let snapshot_storages_and_slots = (
+                                    snapshot_storages.0.as_slice(),
+                                    snapshot_storages.1.as_slice(),
                                 );
-                                return false;
+                                let (result, duration) = meas_dur!(accounts_
+                                    .verify_accounts_hash_and_lamports(
+                                        snapshot_storages_and_slots,
+                                        slot,
+                                        capitalization,
+                                        base,
+                                        VerifyAccountsHashAndLamportsConfig {
+                                            ancestors: &ancestors,
+                                            epoch_schedule: &epoch_schedule,
+                                            rent_collector: &rent_collector,
+                                            ..verify_config
+                                        },
+                                    ));
+                                if !result {
+                                    return false;
+                                }
+                                merkle_verify_time = Some(duration);
                             }
-                            lattice_verify_time = Some(duration);
-                        } else {
-                            // accounts lt hash is *disabled* so use merkle-based verification
-                            let snapshot_storages_and_slots = (
-                                snapshot_storages.0.as_slice(),
-                                snapshot_storages.1.as_slice(),
-                            );
-                            let (result, duration) = meas_dur!(accounts_
-                                .verify_accounts_hash_and_lamports(
-                                    snapshot_storages_and_slots,
-                                    slot,
-                                    capitalization,
-                                    base,
-                                    VerifyAccountsHashAndLamportsConfig {
-                                        ancestors: &ancestors,
-                                        epoch_schedule: &epoch_schedule,
-                                        rent_collector: &rent_collector,
-                                        ..verify_config
-                                    },
-                                ));
-                            if !result {
-                                return false;
-                            }
-                            merkle_verify_time = Some(duration);
                         }
                         accounts_
                             .accounts_db
@@ -5734,45 +5764,50 @@ impl Bank {
             });
             true // initial result is true. We haven't failed yet. If verification fails, we'll panic from bg thread.
         } else {
-            if is_accounts_lt_hash_enabled {
-                let expected_accounts_lt_hash = self.accounts_lt_hash.lock().unwrap().clone();
-                let calculated_accounts_lt_hash =
-                    if let Some(duplicates_lt_hash) = duplicates_lt_hash {
+            match verify_kind {
+                VerifyKind::Lattice => {
+                    let expected_accounts_lt_hash = self.accounts_lt_hash.lock().unwrap().clone();
+                    let calculated_accounts_lt_hash = if let Some(duplicates_lt_hash) =
+                        duplicates_lt_hash
+                    {
                         accounts
                             .accounts_db
                             .calculate_accounts_lt_hash_at_startup_from_storages(
                                 snapshot_storages.0.as_slice(),
-                                duplicates_lt_hash,
+                                &duplicates_lt_hash,
                             )
                     } else {
                         accounts
                             .accounts_db
                             .calculate_accounts_lt_hash_at_startup_from_index(&self.ancestors, slot)
                     };
-                if calculated_accounts_lt_hash != expected_accounts_lt_hash {
-                    error!(
-                        "Verifying accounts lt hash failed: hashes do not match, expected: {}, calculated: {}",
-                        expected_accounts_lt_hash.0.checksum(),
-                        calculated_accounts_lt_hash.0.checksum(),
-                    );
-                    return false;
+                    let is_ok = calculated_accounts_lt_hash == expected_accounts_lt_hash;
+                    if !is_ok {
+                        let expected = expected_accounts_lt_hash.0.checksum();
+                        let calculated = calculated_accounts_lt_hash.0.checksum();
+                        error!(
+                            "Verifying accounts failed: accounts lattice hashes do not \
+                             match, expected: {expected}, calculated: {calculated}",
+                        );
+                    }
+                    is_ok
                 }
-                // if we get here then the accounts lt hash is correct
+                VerifyKind::Merkle => {
+                    let snapshot_storages_and_slots = (
+                        snapshot_storages.0.as_slice(),
+                        snapshot_storages.1.as_slice(),
+                    );
+                    let result = accounts.verify_accounts_hash_and_lamports(
+                        snapshot_storages_and_slots,
+                        slot,
+                        capitalization,
+                        base,
+                        verify_config,
+                    );
+                    self.set_initial_accounts_hash_verification_completed();
+                    result
+                }
             }
-
-            let snapshot_storages_and_slots = (
-                snapshot_storages.0.as_slice(),
-                snapshot_storages.1.as_slice(),
-            );
-            let result = accounts.verify_accounts_hash_and_lamports(
-                snapshot_storages_and_slots,
-                slot,
-                capitalization,
-                base,
-                verify_config,
-            );
-            self.set_initial_accounts_hash_verification_completed();
-            result
         }
     }
 
@@ -6091,7 +6126,7 @@ impl Bank {
         force_clean: bool,
         latest_full_snapshot_slot: Slot,
         base: Option<(Slot, /*capitalization*/ u64)>,
-        duplicates_lt_hash: Option<&DuplicatesLtHash>,
+        duplicates_lt_hash: Option<Box<DuplicatesLtHash>>,
     ) -> bool {
         let (_, clean_time_us) = measure_us!({
             let should_clean = force_clean || (!skip_shrink && self.slot() > 0);
@@ -6309,11 +6344,25 @@ impl Bank {
             .map(|epoch_stakes| epoch_stakes.total_stake())
     }
 
+    /// Get the total epoch stake for the current Bank::epoch
+    pub fn get_current_epoch_total_stake(&self) -> u64 {
+        self.current_epoch_stakes().total_stake()
+    }
+
     /// vote accounts for the specific epoch along with the stake
     ///   attributed to each account
     pub fn epoch_vote_accounts(&self, epoch: Epoch) -> Option<&VoteAccountsHashMap> {
         let epoch_stakes = self.epoch_stakes.get(&epoch)?.stakes();
         Some(epoch_stakes.vote_accounts().as_ref())
+    }
+
+    /// Get the vote accounts along with the stake attributed to each account
+    /// for the current Bank::epoch
+    pub fn get_current_epoch_vote_accounts(&self) -> &VoteAccountsHashMap {
+        self.current_epoch_stakes()
+            .stakes()
+            .vote_accounts()
+            .as_ref()
     }
 
     /// Get the fixed authorized voter for the given vote account for the
@@ -6441,10 +6490,21 @@ impl Bank {
     }
 
     pub(crate) fn shrink_ancient_slots(&self) {
-        self.rc
+        let can_skip_rewrites = self.bank_hash_skips_rent_rewrites();
+        let test_skip_rewrites_but_include_in_bank_hash = self
+            .rc
             .accounts
             .accounts_db
-            .shrink_ancient_slots(self.epoch_schedule())
+            .test_skip_rewrites_but_include_in_bank_hash;
+        // Invoke ancient slot shrinking only when the validator is
+        // explicitly configured to do so. This condition may be
+        // removed when the skip rewrites feature is enabled.
+        if can_skip_rewrites || test_skip_rewrites_but_include_in_bank_hash {
+            self.rc
+                .accounts
+                .accounts_db
+                .shrink_ancient_slots(self.epoch_schedule())
+        }
     }
 
     pub fn read_cost_tracker(&self) -> LockResult<RwLockReadGuard<CostTracker>> {
@@ -6855,6 +6915,14 @@ impl Bank {
         &self.fee_structure
     }
 
+    pub fn block_id(&self) -> Option<Hash> {
+        *self.block_id.read().unwrap()
+    }
+
+    pub fn set_block_id(&self, block_id: Option<Hash>) {
+        *self.block_id.write().unwrap() = block_id;
+    }
+
     pub fn compute_budget(&self) -> Option<ComputeBudget> {
         self.compute_budget
     }
@@ -6949,7 +7017,7 @@ impl Bank {
     }
 
     pub fn new_for_tests(genesis_config: &GenesisConfig) -> Self {
-        Self::new_for_tests_with_config(genesis_config, BankTestConfig::default())
+        Self::new_with_config_for_tests(genesis_config, BankTestConfig::default())
     }
 
     pub fn new_with_mockup_builtin_for_tests(
@@ -6962,17 +7030,6 @@ impl Bank {
         bank.wrap_with_bank_forks_for_tests()
     }
 
-    pub fn new_for_tests_with_config(
-        genesis_config: &GenesisConfig,
-        test_config: BankTestConfig,
-    ) -> Self {
-        Self::new_with_config_for_tests(
-            genesis_config,
-            test_config.secondary_indexes,
-            AccountShrinkThreshold::default(),
-        )
-    }
-
     pub fn new_no_wallclock_throttle_for_tests(
         genesis_config: &GenesisConfig,
     ) -> (Arc<Self>, Arc<RwLock<BankForks>>) {
@@ -6982,26 +7039,23 @@ impl Bank {
         bank.wrap_with_bank_forks_for_tests()
     }
 
-    pub(crate) fn new_with_config_for_tests(
+    pub fn new_with_config_for_tests(
         genesis_config: &GenesisConfig,
-        account_indexes: AccountSecondaryIndexes,
-        shrink_ratio: AccountShrinkThreshold,
+        test_config: BankTestConfig,
     ) -> Self {
         Self::new_with_paths_for_tests(
             genesis_config,
             Arc::new(RuntimeConfig::default()),
+            test_config,
             Vec::new(),
-            account_indexes,
-            shrink_ratio,
         )
     }
 
     pub fn new_with_paths_for_tests(
         genesis_config: &GenesisConfig,
         runtime_config: Arc<RuntimeConfig>,
+        test_config: BankTestConfig,
         paths: Vec<PathBuf>,
-        account_indexes: AccountSecondaryIndexes,
-        shrink_ratio: AccountShrinkThreshold,
     ) -> Self {
         Self::new_with_paths(
             genesis_config,
@@ -7009,10 +7063,8 @@ impl Bank {
             paths,
             None,
             None,
-            account_indexes,
-            shrink_ratio,
             false,
-            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            Some(test_config.accounts_db_config),
             None,
             Some(Pubkey::new_unique()),
             Arc::default(),
@@ -7034,8 +7086,6 @@ impl Bank {
             paths,
             None,
             None,
-            AccountSecondaryIndexes::default(),
-            AccountShrinkThreshold::default(),
             false,
             Some(ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS),
             None,

@@ -25,7 +25,7 @@ use {
     serde::{Deserialize, Serialize},
     solana_accounts_db::{
         accounts::AccountAddressFilter,
-        accounts_db::{AccountShrinkThreshold, DEFAULT_ACCOUNTS_SHRINK_RATIO},
+        accounts_db::DEFAULT_ACCOUNTS_SHRINK_RATIO,
         accounts_hash::{AccountsDeltaHash, AccountsHasher},
         accounts_index::{
             AccountIndex, AccountSecondaryIndexes, IndexKey, ScanConfig, ScanError, ITER_BATCH_SIZE,
@@ -3429,58 +3429,90 @@ fn test_bank_parent_account_spend() {
     assert_eq!(parent.get_signature_status(&tx.signatures[0]), None);
 }
 
-#[test]
-fn test_bank_hash_internal_state() {
+#[test_case(false; "accounts lt hash disabled")]
+#[test_case(true; "accounts lt hash enabled")]
+fn test_bank_hash_internal_state(is_accounts_lt_hash_enabled: bool) {
     let (genesis_config, mint_keypair) =
         create_genesis_config_no_tx_fee_no_rent(sol_to_lamports(1.));
-    let (bank0, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let (bank1, bank_forks_1) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let amount = genesis_config.rent.minimum_balance(0);
+    let (bank0, _bank_forks0) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let (bank1, bank_forks1) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    bank0
+        .rc
+        .accounts
+        .accounts_db
+        .set_is_experimental_accumulator_hash_enabled(is_accounts_lt_hash_enabled);
+    bank1
+        .rc
+        .accounts
+        .accounts_db
+        .set_is_experimental_accumulator_hash_enabled(is_accounts_lt_hash_enabled);
+    assert_eq!(
+        bank0.is_accounts_lt_hash_enabled(),
+        is_accounts_lt_hash_enabled,
+    );
+    assert_eq!(
+        bank1.is_accounts_lt_hash_enabled(),
+        is_accounts_lt_hash_enabled,
+    );
+
     let initial_state = bank0.hash_internal_state();
     assert_eq!(bank1.hash_internal_state(), initial_state);
 
+    // Ensure calling hash_internal_state() again does *not* change the bank hash value
+    assert_eq!(bank1.hash_internal_state(), initial_state);
+
+    let amount = genesis_config.rent.minimum_balance(0);
     let pubkey = solana_sdk::pubkey::new_rand();
     bank0.transfer(amount, &mint_keypair, &pubkey).unwrap();
+    bank0.freeze();
     assert_ne!(bank0.hash_internal_state(), initial_state);
     bank1.transfer(amount, &mint_keypair, &pubkey).unwrap();
+    bank1.freeze();
     assert_eq!(bank0.hash_internal_state(), bank1.hash_internal_state());
 
     // Checkpointing should always result in a new state
-    let bank2 = new_from_parent_with_fork_next_slot(bank1.clone(), bank_forks_1.as_ref());
+    let bank2 = new_from_parent_with_fork_next_slot(bank1, &bank_forks1);
     assert_ne!(bank0.hash_internal_state(), bank2.hash_internal_state());
 
     let pubkey2 = solana_sdk::pubkey::new_rand();
-    info!("transfer 2 {}", pubkey2);
     bank2.transfer(amount, &mint_keypair, &pubkey2).unwrap();
-    add_root_and_flush_write_cache(&bank0);
-    add_root_and_flush_write_cache(&bank1);
-    add_root_and_flush_write_cache(&bank2);
-    bank2.update_accounts_hash_for_tests();
+    bank2.squash();
+    bank2.force_flush_accounts_cache();
+    bank2.update_accounts_hash(CalcAccountsHashDataSource::Storages, false, false);
     assert!(bank2.verify_accounts_hash(None, VerifyAccountsHashConfig::default_for_test(), None,));
 }
 
-#[test]
-fn test_bank_hash_internal_state_verify() {
-    for pass in 0..3 {
-        solana_logger::setup();
+#[test_case(false; "accounts lt hash disabled")]
+#[test_case(true; "accounts lt hash enabled")]
+fn test_bank_hash_internal_state_verify(is_accounts_lt_hash_enabled: bool) {
+    for pass in 0..4 {
         let (genesis_config, mint_keypair) =
             create_genesis_config_no_tx_fee_no_rent(sol_to_lamports(1.));
         let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        let amount = genesis_config.rent.minimum_balance(0);
+        bank0
+            .rc
+            .accounts
+            .accounts_db
+            .set_is_experimental_accumulator_hash_enabled(is_accounts_lt_hash_enabled);
+        assert_eq!(
+            bank0.is_accounts_lt_hash_enabled(),
+            is_accounts_lt_hash_enabled,
+        );
 
+        let amount = genesis_config.rent.minimum_balance(0);
         let pubkey = solana_sdk::pubkey::new_rand();
-        info!("transfer 0 {} mint: {}", pubkey, mint_keypair.pubkey());
         bank0.transfer(amount, &mint_keypair, &pubkey).unwrap();
 
         let bank0_state = bank0.hash_internal_state();
         // Checkpointing should result in a new state while freezing the parent
         let bank2 = new_bank_from_parent_with_bank_forks(
-            bank_forks.as_ref(),
+            &bank_forks,
             bank0.clone(),
             &solana_sdk::pubkey::new_rand(),
-            1,
+            2,
         );
         assert_ne!(bank0_state, bank2.hash_internal_state());
+
         // Checkpointing should modify the checkpoint's state when freezed
         assert_ne!(bank0_state, bank0.hash_internal_state());
 
@@ -3489,6 +3521,7 @@ fn test_bank_hash_internal_state_verify() {
         let bank0_state = bank0.hash_internal_state();
         if pass == 0 {
             // we later modify bank 2, so this flush is destructive to the test
+            bank2.freeze();
             add_root_and_flush_write_cache(&bank2);
             bank2.update_accounts_hash_for_tests();
             assert!(bank2.verify_accounts_hash(
@@ -3498,14 +3531,14 @@ fn test_bank_hash_internal_state_verify() {
             ));
         }
         let bank3 = new_bank_from_parent_with_bank_forks(
-            bank_forks.as_ref(),
+            &bank_forks,
             bank0.clone(),
             &solana_sdk::pubkey::new_rand(),
-            2,
+            3,
         );
         assert_eq!(bank0_state, bank0.hash_internal_state());
         if pass == 0 {
-            // this relies on us having set the bank hash in the pass==0 if above
+            // this relies on us having set bank2's accounts hash in the pass==0 if above
             assert!(bank2.verify_accounts_hash(
                 None,
                 VerifyAccountsHashConfig::default_for_test(),
@@ -3517,6 +3550,7 @@ fn test_bank_hash_internal_state_verify() {
             // flushing slot 3 here causes us to mark it as a root. Marking it as a root
             // prevents us from marking slot 2 as a root later since slot 2 is < slot 3.
             // Doing so throws an assert. So, we can't flush 3 until 2 is flushed.
+            bank3.freeze();
             add_root_and_flush_write_cache(&bank3);
             bank3.update_accounts_hash_for_tests();
             assert!(bank3.verify_accounts_hash(
@@ -3528,15 +3562,31 @@ fn test_bank_hash_internal_state_verify() {
         }
 
         let pubkey2 = solana_sdk::pubkey::new_rand();
-        info!("transfer 2 {}", pubkey2);
         bank2.transfer(amount, &mint_keypair, &pubkey2).unwrap();
-        add_root_and_flush_write_cache(&bank2);
-        bank2.update_accounts_hash_for_tests();
-        assert!(bank2.verify_accounts_hash(
-            None,
-            VerifyAccountsHashConfig::default_for_test(),
-            None,
-        ));
+        bank2.freeze(); // <-- keep freeze() *outside* `if pass == 2 {}`
+        if pass == 2 {
+            add_root_and_flush_write_cache(&bank2);
+            bank2.update_accounts_hash_for_tests();
+            assert!(bank2.verify_accounts_hash(
+                None,
+                VerifyAccountsHashConfig::default_for_test(),
+                None,
+            ));
+
+            if is_accounts_lt_hash_enabled {
+                // Verifying the accounts lt hash is only intended to be called at startup, and
+                // normally in the background.  Since here we're *not* at startup, and doing it
+                // in the foreground, the verification uses the accounts index.  The test just
+                // rooted bank2, and will root bank3 next; but they are on different forks,
+                // which is not valid.  This causes the accounts index to see accounts from
+                // bank2 and bank3, which causes verifying bank3's accounts lt hash to fail.
+                // To workaround this "issue", we cannot root bank2 when the accounts lt hash
+                // is enabled.
+                continue;
+            }
+        }
+
+        bank3.freeze();
         add_root_and_flush_write_cache(&bank3);
         bank3.update_accounts_hash_for_tests();
         assert!(bank3.verify_accounts_hash(
@@ -4548,10 +4598,15 @@ fn test_get_filtered_indexed_accounts_limit_exceeded() {
     let (genesis_config, _mint_keypair) = create_genesis_config(500);
     let mut account_indexes = AccountSecondaryIndexes::default();
     account_indexes.indexes.insert(AccountIndex::ProgramId);
+    let bank_config = BankTestConfig {
+        accounts_db_config: AccountsDbConfig {
+            account_indexes: Some(account_indexes),
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        },
+    };
     let bank = Arc::new(Bank::new_with_config_for_tests(
         &genesis_config,
-        account_indexes,
-        AccountShrinkThreshold::default(),
+        bank_config,
     ));
 
     let address = Pubkey::new_unique();
@@ -4575,10 +4630,15 @@ fn test_get_filtered_indexed_accounts() {
     let (genesis_config, _mint_keypair) = create_genesis_config(500);
     let mut account_indexes = AccountSecondaryIndexes::default();
     account_indexes.indexes.insert(AccountIndex::ProgramId);
+    let bank_config = BankTestConfig {
+        accounts_db_config: AccountsDbConfig {
+            account_indexes: Some(account_indexes),
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        },
+    };
     let bank = Arc::new(Bank::new_with_config_for_tests(
         &genesis_config,
-        account_indexes,
-        AccountShrinkThreshold::default(),
+        bank_config,
     ));
 
     let address = Pubkey::new_unique();
@@ -6485,8 +6545,7 @@ fn get_shrink_account_size() -> usize {
     // of the storage for this slot
     let bank0 = Arc::new(Bank::new_with_config_for_tests(
         &genesis_config,
-        AccountSecondaryIndexes::default(),
-        AccountShrinkThreshold::default(),
+        BankTestConfig::default(),
     ));
     bank0.restore_old_behavior_for_fragile_tests();
     goto_end_of_slot(bank0.clone());
@@ -6524,8 +6583,7 @@ fn test_clean_nonrooted() {
     // Set root for bank 0, with caching enabled
     let bank0 = Arc::new(Bank::new_with_config_for_tests(
         &genesis_config,
-        AccountSecondaryIndexes::default(),
-        AccountShrinkThreshold::default(),
+        BankTestConfig::default(),
     ));
 
     let account_zero = AccountSharedData::new(0, 0, &Pubkey::new_unique());
@@ -6599,8 +6657,7 @@ fn test_shrink_candidate_slots_cached() {
     // Set root for bank 0, with caching enabled
     let bank0 = Arc::new(Bank::new_with_config_for_tests(
         &genesis_config,
-        AccountSecondaryIndexes::default(),
-        AccountShrinkThreshold::default(),
+        BankTestConfig::default(),
     ));
     bank0.restore_old_behavior_for_fragile_tests();
 
@@ -8266,8 +8323,7 @@ fn test_store_scan_consistency<F>(
     genesis_config.rent = Rent::free();
     let bank0 = Arc::new(Bank::new_with_config_for_tests(
         &genesis_config,
-        AccountSecondaryIndexes::default(),
-        AccountShrinkThreshold::default(),
+        BankTestConfig::default(),
     ));
     bank0.set_callback(drop_callback);
 
@@ -9065,8 +9121,6 @@ fn test_epoch_schedule_from_genesis_config() {
         Vec::new(),
         None,
         None,
-        AccountSecondaryIndexes::default(),
-        AccountShrinkThreshold::default(),
         false,
         Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
         None,
@@ -9097,8 +9151,6 @@ where
         Vec::new(),
         None,
         None,
-        AccountSecondaryIndexes::default(),
-        AccountShrinkThreshold::default(),
         false,
         Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
         None,
@@ -12699,8 +12751,6 @@ fn test_rehash_with_skipped_rewrites() {
         Vec::default(),
         None,
         None,
-        AccountSecondaryIndexes::default(),
-        AccountShrinkThreshold::default(),
         false,
         Some(accounts_db_config),
         None,
@@ -12762,8 +12812,6 @@ fn test_rebuild_skipped_rewrites() {
         Vec::default(),
         None,
         None,
-        AccountSecondaryIndexes::default(),
-        AccountShrinkThreshold::default(),
         false,
         Some(accounts_db_config.clone()),
         None,
@@ -12839,9 +12887,7 @@ fn test_rebuild_skipped_rewrites() {
         &RuntimeConfig::default(),
         None,
         None,
-        AccountSecondaryIndexes::default(),
         None,
-        AccountShrinkThreshold::default(),
         false,
         false,
         false,
@@ -12874,8 +12920,6 @@ fn test_get_accounts_for_bank_hash_details(skip_rewrites: bool) {
         Vec::default(),
         None,
         None,
-        AccountSecondaryIndexes::default(),
-        AccountShrinkThreshold::default(),
         false,
         Some(accounts_db_config.clone()),
         None,
@@ -13233,6 +13277,11 @@ fn test_bank_epoch_stakes() {
     let initial_epochs = bank0.epoch_stake_keys();
     assert_eq!(initial_epochs, vec![0, 1]);
 
+    // Bank 0:
+
+    // First query with bank's epoch. As noted by the above check, the epoch
+    // stakes cache actually contains values for the _leader schedule_ epoch
+    // (N + 1). Therefore, we should be able to query both.
     assert_eq!(bank0.epoch(), 0);
     assert_eq!(bank0.epoch_total_stake(0), Some(total_stake));
     assert_eq!(bank0.epoch_node_id_to_stake(0, &Pubkey::new_unique()), None);
@@ -13242,6 +13291,37 @@ fn test_bank_epoch_stakes() {
             Some(stakes[i])
         );
     }
+
+    // Now query for epoch 1 on bank 0.
+    assert_eq!(bank0.epoch().saturating_add(1), 1);
+    assert_eq!(bank0.epoch_total_stake(1), Some(total_stake));
+    assert_eq!(bank0.epoch_node_id_to_stake(1, &Pubkey::new_unique()), None);
+    for (i, keypair) in voting_keypairs.iter().enumerate() {
+        assert_eq!(
+            bank0.epoch_node_id_to_stake(1, &keypair.node_keypair.pubkey()),
+            Some(stakes[i])
+        );
+    }
+
+    // Note using bank's `current_epoch_stake_*` methods should return the
+    // same values.
+    assert_eq!(bank0.get_current_epoch_total_stake(), total_stake);
+    assert_eq!(
+        bank0.get_current_epoch_total_stake(),
+        bank0.epoch_total_stake(1).unwrap(),
+    );
+    assert_eq!(
+        bank0.get_current_epoch_vote_accounts().len(),
+        voting_keypairs.len()
+    );
+    assert_eq!(
+        bank0.epoch_vote_accounts(1).unwrap(),
+        bank0.get_current_epoch_vote_accounts(),
+    );
+
+    // Bank 1:
+
+    // Run the same exercise. First query the bank's epoch.
     assert_eq!(bank1.epoch(), 1);
     assert_eq!(bank1.epoch_total_stake(1), Some(total_stake));
     assert_eq!(bank1.epoch_node_id_to_stake(1, &Pubkey::new_unique()), None);
@@ -13252,32 +13332,85 @@ fn test_bank_epoch_stakes() {
         );
     }
 
-    let new_epoch_stakes = EpochStakes::new_for_tests(
-        voting_keypairs
-            .iter()
-            .map(|keypair| {
-                let node_id = keypair.node_keypair.pubkey();
-                let authorized_voter = keypair.vote_keypair.pubkey();
-                let vote_account = VoteAccount::try_from(create_account_with_authorized(
-                    &node_id,
-                    &authorized_voter,
-                    &node_id,
-                    0,
-                    100,
-                ))
-                .unwrap();
-                (authorized_voter, (100_u64, vote_account))
-            })
-            .collect::<HashMap<_, _>>(),
-        1,
+    // Now query for epoch 2 on bank 1.
+    assert_eq!(bank1.epoch().saturating_add(1), 2);
+    assert_eq!(bank1.epoch_total_stake(2), Some(total_stake));
+    assert_eq!(bank1.epoch_node_id_to_stake(2, &Pubkey::new_unique()), None);
+    for (i, keypair) in voting_keypairs.iter().enumerate() {
+        assert_eq!(
+            bank1.epoch_node_id_to_stake(2, &keypair.node_keypair.pubkey()),
+            Some(stakes[i])
+        );
+    }
+
+    // Again, using bank's `current_epoch_stake_*` methods should return the
+    // same values.
+    assert_eq!(bank1.get_current_epoch_total_stake(), total_stake);
+    assert_eq!(
+        bank1.get_current_epoch_total_stake(),
+        bank1.epoch_total_stake(2).unwrap(),
     );
-    bank1.set_epoch_stakes_for_test(1, new_epoch_stakes);
-    assert_eq!(bank1.epoch_total_stake(1), Some(100 * num_of_nodes));
+    assert_eq!(
+        bank1.get_current_epoch_vote_accounts().len(),
+        voting_keypairs.len()
+    );
+    assert_eq!(
+        bank1.epoch_vote_accounts(2).unwrap(),
+        bank1.get_current_epoch_vote_accounts(),
+    );
+
+    // Setup new epoch stakes on Bank 1 for both leader schedule epochs.
+    let make_new_epoch_stakes = |stake_coefficient: u64| {
+        EpochStakes::new_for_tests(
+            voting_keypairs
+                .iter()
+                .map(|keypair| {
+                    let node_id = keypair.node_keypair.pubkey();
+                    let authorized_voter = keypair.vote_keypair.pubkey();
+                    let vote_account = VoteAccount::try_from(create_account_with_authorized(
+                        &node_id,
+                        &authorized_voter,
+                        &node_id,
+                        0,
+                        100,
+                    ))
+                    .unwrap();
+                    (authorized_voter, (stake_coefficient, vote_account))
+                })
+                .collect::<HashMap<_, _>>(),
+            1,
+        )
+    };
+    let stake_coefficient_epoch_1 = 100;
+    let stake_coefficient_epoch_2 = 500;
+    bank1.set_epoch_stakes_for_test(1, make_new_epoch_stakes(stake_coefficient_epoch_1));
+    bank1.set_epoch_stakes_for_test(2, make_new_epoch_stakes(stake_coefficient_epoch_2));
+
+    // Run the exercise again with the new stake. Now epoch 1 should have the
+    // stake added for epoch 1 (`stake_coefficient_epoch_1`).
+    assert_eq!(
+        bank1.epoch_total_stake(1),
+        Some(stake_coefficient_epoch_1 * num_of_nodes)
+    );
     assert_eq!(bank1.epoch_node_id_to_stake(1, &Pubkey::new_unique()), None);
     for keypair in voting_keypairs.iter() {
         assert_eq!(
             bank1.epoch_node_id_to_stake(1, &keypair.node_keypair.pubkey()),
-            Some(100)
+            Some(stake_coefficient_epoch_1)
+        );
+    }
+
+    // Now query for epoch 2 on bank 1. Epoch 2 should have the stake added for
+    // epoch 2 (`stake_coefficient_epoch_2`).
+    assert_eq!(
+        bank1.epoch_total_stake(2),
+        Some(stake_coefficient_epoch_2 * num_of_nodes)
+    );
+    assert_eq!(bank1.epoch_node_id_to_stake(2, &Pubkey::new_unique()), None);
+    for keypair in voting_keypairs.iter() {
+        assert_eq!(
+            bank1.epoch_node_id_to_stake(2, &keypair.node_keypair.pubkey()),
+            Some(stake_coefficient_epoch_2)
         );
     }
 }

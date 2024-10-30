@@ -347,6 +347,8 @@ pub struct ShrinkAncientStats {
     pub slots_eligible_to_shrink: AtomicU64,
     pub total_dead_bytes: AtomicU64,
     pub total_alive_bytes: AtomicU64,
+    pub slot: AtomicU64,
+    pub ideal_storage_size: AtomicU64,
 }
 
 #[derive(Debug, Default)]
@@ -399,6 +401,10 @@ pub struct ShrinkStats {
     pub num_ancient_slots_shrunk: AtomicU64,
     pub ancient_slots_added_to_shrink: AtomicU64,
     pub ancient_bytes_added_to_shrink: AtomicU64,
+    pub num_dead_slots_added_to_clean: AtomicU64,
+    pub num_slots_with_zero_lamport_accounts_added_to_shrink: AtomicU64,
+    pub marking_zero_dead_accounts_in_non_shrinkable_store: AtomicU64,
+    pub num_zero_lamport_single_ref_accounts_found: AtomicU64,
 }
 
 impl ShrinkStats {
@@ -537,6 +543,30 @@ impl ShrinkStats {
                 (
                     "initial_candidates_count",
                     self.initial_candidates_count.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "num_dead_slots_added_to_clean",
+                    self.num_dead_slots_added_to_clean
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "num_slots_with_zero_lamport_accounts_added_to_shrink",
+                    self.num_slots_with_zero_lamport_accounts_added_to_shrink
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "marking_zero_dead_accounts_in_non_shrinkable_store",
+                    self.marking_zero_dead_accounts_in_non_shrinkable_store
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "num_zero_lamport_single_ref_accounts_found",
+                    self.num_zero_lamport_single_ref_accounts_found
+                        .swap(0, Ordering::Relaxed),
                     i64
                 ),
             );
@@ -770,6 +800,12 @@ impl ShrinkAncientStats {
                 self.shrink_stats
                     .accounts_not_found_in_index
                     .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            ("slot", self.slot.load(Ordering::Relaxed), i64),
+            (
+                "ideal_storage_size",
+                self.ideal_storage_size.swap(0, Ordering::Relaxed),
                 i64
             ),
         );

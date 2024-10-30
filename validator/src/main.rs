@@ -433,7 +433,7 @@ fn get_cluster_shred_version(entrypoints: &[SocketAddr]) -> Option<u16> {
     for entrypoint in entrypoints {
         match solana_net_utils::get_cluster_shred_version(entrypoint) {
             Err(err) => eprintln!("get_cluster_shred_version failed: {entrypoint}, {err}"),
-            Ok(0) => eprintln!("zero shred-version from entrypoint: {entrypoint}"),
+            Ok(0) => eprintln!("entrypoint {entrypoint} returned shred-version zero"),
             Ok(shred_version) => {
                 info!(
                     "obtained shred-version {} from {}",
@@ -909,6 +909,18 @@ pub fn main() {
         _ => unreachable!(),
     };
 
+    let cli::thread_args::NumThreadConfig {
+        accounts_db_clean_threads,
+        accounts_db_foreground_threads,
+        accounts_db_hash_threads,
+        accounts_index_flush_threads,
+        ip_echo_server_threads,
+        replay_forks_threads,
+        replay_transactions_threads,
+        tvu_receive_threads,
+        tvu_sigverify_threads,
+    } = cli::thread_args::parse_num_threads_args(&matches);
+
     let identity_keypair = keypair_of(&matches, "identity").unwrap_or_else(|| {
         clap::Error::with_description(
             "The --identity <KEYPAIR> argument is required",
@@ -1098,7 +1110,7 @@ pub fn main() {
         exit(1);
     }
 
-    let accounts_shrink_ratio = if accounts_shrink_optimize_total_space {
+    let shrink_ratio = if accounts_shrink_optimize_total_space {
         AccountShrinkThreshold::TotalSpace { shrink_ratio }
     } else {
         AccountShrinkThreshold::IndividualStore { shrink_ratio }
@@ -1172,6 +1184,7 @@ pub fn main() {
 
     let mut accounts_index_config = AccountsIndexConfig {
         started_from_validator: true, // this is the only place this is set
+        num_flush_threads: Some(accounts_index_flush_threads),
         ..AccountsIndexConfig::default()
     };
     if let Ok(bins) = value_t!(matches, "accounts_index_bins", usize) {
@@ -1286,9 +1299,11 @@ pub fn main() {
 
     let accounts_db_config = AccountsDbConfig {
         index: Some(accounts_index_config),
+        account_indexes: Some(account_indexes.clone()),
         base_working_path: Some(ledger_path.clone()),
         accounts_hash_cache_path: Some(accounts_hash_cache_path),
         shrink_paths: account_shrink_run_paths,
+        shrink_ratio,
         read_cache_limit_bytes,
         write_cache_limit_bytes: value_t!(matches, "accounts_db_cache_limit_mb", u64)
             .ok()
@@ -1303,6 +1318,9 @@ pub fn main() {
         scan_filter_for_shrinking,
         enable_experimental_accumulator_hash: matches
             .is_present("accounts_db_experimental_accumulator_hash"),
+        num_clean_threads: Some(accounts_db_clean_threads),
+        num_foreground_threads: Some(accounts_db_foreground_threads),
+        num_hash_threads: Some(accounts_db_hash_threads),
         ..AccountsDbConfig::default()
     };
 
@@ -1386,14 +1404,6 @@ pub fn main() {
         };
 
     let full_api = matches.is_present("full_rpc_api");
-
-    let cli::thread_args::NumThreadConfig {
-        ip_echo_server_threads,
-        replay_forks_threads,
-        replay_transactions_threads,
-        tvu_receive_threads,
-        tvu_sigverify_threads,
-    } = cli::thread_args::parse_num_threads_args(&matches);
 
     let mut validator_config = ValidatorConfig {
         require_tower: matches.is_present("require_tower"),
@@ -1515,14 +1525,12 @@ pub fn main() {
         poh_hashes_per_batch: value_of(&matches, "poh_hashes_per_batch")
             .unwrap_or(poh_service::DEFAULT_HASHES_PER_BATCH),
         process_ledger_before_services: matches.is_present("process_ledger_before_services"),
-        account_indexes,
         accounts_db_test_hash_calculation: matches.is_present("accounts_db_test_hash_calculation"),
         accounts_db_config,
         accounts_db_skip_shrink: true,
         accounts_db_force_initial_clean: matches.is_present("no_skip_initial_accounts_db_clean"),
         tpu_coalesce,
         no_wait_for_vote_to_start_leader: matches.is_present("no_wait_for_vote_to_start_leader"),
-        accounts_shrink_ratio,
         runtime_config: RuntimeConfig {
             log_messages_bytes_limit: value_of(&matches, "log_messages_bytes_limit"),
             ..RuntimeConfig::default()

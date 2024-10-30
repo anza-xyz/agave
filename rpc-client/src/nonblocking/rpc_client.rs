@@ -12,7 +12,7 @@ use {crate::spinner, solana_sdk::clock::MAX_HASH_AGE_IN_SECONDS, std::cmp::min};
 use {
     crate::{
         http_sender::HttpSender,
-        mock_sender::MockSender,
+        mock_sender::{mock_encoded_account, MockSender},
         rpc_client::{
             GetConfirmedSignaturesForAddress2Config, RpcClientConfig, SerializableMessage,
             SerializableTransaction,
@@ -23,8 +23,8 @@ use {
     bincode::serialize,
     log::*,
     serde_json::{json, Value},
-    solana_account_decoder::{
-        parse_token::{TokenAccountType, UiTokenAccount, UiTokenAmount},
+    solana_account_decoder_client_types::{
+        token::{TokenAccountType, UiTokenAccount, UiTokenAmount},
         UiAccount, UiAccountData, UiAccountEncoding,
     },
     solana_rpc_client_api::{
@@ -2180,7 +2180,36 @@ impl RpcClient {
         commitment: CommitmentConfig,
         max_stake_percent: f32,
     ) -> ClientResult<()> {
+        self.wait_for_max_stake_below_threshold_with_timeout_helper(
+            commitment,
+            max_stake_percent,
+            None,
+        )
+        .await
+    }
+
+    pub async fn wait_for_max_stake_below_threshold_with_timeout(
+        &self,
+        commitment: CommitmentConfig,
+        max_stake_percent: f32,
+        timeout: Duration,
+    ) -> ClientResult<()> {
+        self.wait_for_max_stake_below_threshold_with_timeout_helper(
+            commitment,
+            max_stake_percent,
+            Some(timeout),
+        )
+        .await
+    }
+
+    async fn wait_for_max_stake_below_threshold_with_timeout_helper(
+        &self,
+        commitment: CommitmentConfig,
+        max_stake_percent: f32,
+        timeout: Option<Duration>,
+    ) -> ClientResult<()> {
         let mut current_percent;
+        let start = Instant::now();
         loop {
             let vote_accounts = self.get_vote_accounts_with_commitment(commitment).await?;
 
@@ -2197,12 +2226,20 @@ impl RpcClient {
             current_percent = 100f32 * max as f32 / total_active_stake as f32;
             if current_percent < max_stake_percent {
                 break;
+            } else if let Some(timeout) = timeout {
+                if start.elapsed() > timeout {
+                    return Err(ClientErrorKind::Custom(
+                        "timed out waiting for max stake to drop".to_string(),
+                    )
+                    .into());
+                }
             }
+
             info!(
                 "Waiting for stake to drop below {} current: {:.1}",
                 max_stake_percent, current_percent
             );
-            sleep(Duration::from_secs(10)).await;
+            sleep(Duration::from_secs(5)).await;
         }
         Ok(())
     }
@@ -3454,7 +3491,7 @@ impl RpcClient {
     /// #     pubkey::Pubkey,
     /// #     commitment_config::CommitmentConfig,
     /// # };
-    /// # use solana_account_decoder::UiAccountEncoding;
+    /// # use solana_account_decoder_client_types::UiAccountEncoding;
     /// # use std::str::FromStr;
     /// # futures::executor::block_on(async {
     /// #     let mocks = rpc_client::create_rpc_client_mocks();
@@ -3674,7 +3711,7 @@ impl RpcClient {
     /// #     signer::keypair::Keypair,
     /// #     commitment_config::CommitmentConfig,
     /// # };
-    /// # use solana_account_decoder::UiAccountEncoding;
+    /// # use solana_account_decoder_client_types::UiAccountEncoding;
     /// # futures::executor::block_on(async {
     /// #     let rpc_client = RpcClient::new_mock("succeeds".to_string());
     /// #     let alice = Keypair::new();
@@ -3948,7 +3985,7 @@ impl RpcClient {
     /// #     signer::keypair::Keypair,
     /// #     commitment_config::CommitmentConfig,
     /// # };
-    /// # use solana_account_decoder::{UiDataSliceConfig, UiAccountEncoding};
+    /// # use solana_account_decoder_client_types::{UiDataSliceConfig, UiAccountEncoding};
     /// # futures::executor::block_on(async {
     /// #     let rpc_client = RpcClient::new_mock("succeeds".to_string());
     /// #     let alice = Keypair::new();
@@ -4716,14 +4753,7 @@ pub fn create_rpc_client_mocks() -> crate::mock_sender::Mocks {
         },
         value: {
             let pubkey = Pubkey::from_str("BgvYtJEfmZYdVKiptmMjxGzv8iQoo4MWjsP3QsTkhhxa").unwrap();
-            let account = Account {
-                lamports: 1_000_000,
-                data: vec![],
-                owner: pubkey,
-                executable: false,
-                rent_epoch: 0,
-            };
-            UiAccount::encode(&pubkey, &account, UiAccountEncoding::Base64, None, None)
+            mock_encoded_account(&pubkey)
         },
     })
     .unwrap();

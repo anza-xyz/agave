@@ -16,9 +16,7 @@ use {
     rayon::{prelude::*, ThreadPool},
     scopeguard::defer,
     solana_accounts_db::{
-        accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
-        accounts_index::AccountSecondaryIndexes,
-        accounts_update_notifier_interface::AccountsUpdateNotifier,
+        accounts_db::AccountsDbConfig, accounts_update_notifier_interface::AccountsUpdateNotifier,
         epoch_accounts_hash::EpochAccountsHash,
     },
     solana_cost_model::cost_model::CostModel,
@@ -831,7 +829,6 @@ pub struct ProcessOptions {
     pub slot_callback: Option<ProcessSlotCallback>,
     pub new_hard_forks: Option<Vec<Slot>>,
     pub debug_keys: Option<Arc<HashSet<Pubkey>>>,
-    pub account_indexes: AccountSecondaryIndexes,
     pub limit_load_slot_count_from_snapshot: Option<usize>,
     pub allow_dead_slots: bool,
     pub accounts_db_test_hash_calculation: bool,
@@ -839,7 +836,6 @@ pub struct ProcessOptions {
     pub accounts_db_force_initial_clean: bool,
     pub accounts_db_config: Option<AccountsDbConfig>,
     pub verify_index: bool,
-    pub shrink_ratio: AccountShrinkThreshold,
     pub runtime_config: RuntimeConfig,
     pub on_halt_store_hash_raw_data_for_debug: bool,
     /// true if after processing the contents of the blockstore at startup, we should run an accounts hash calc
@@ -938,8 +934,6 @@ pub(crate) fn process_blockstore_for_bank_0(
         account_paths,
         opts.debug_keys.clone(),
         None,
-        opts.account_indexes.clone(),
-        opts.shrink_ratio,
         false,
         opts.accounts_db_config.clone(),
         accounts_update_notifier,
@@ -2138,6 +2132,7 @@ pub fn process_single_slot(
     replay_vote_sender: Option<&ReplayVoteSender>,
     timing: &mut ExecuteTimings,
 ) -> result::Result<(), BlockstoreProcessorError> {
+    let slot = bank.slot();
     // Mark corrupt slots as dead so validators don't replay this slot and
     // see AlreadyProcessed errors later in ReplayStage
     confirm_full_slot(
@@ -2160,7 +2155,6 @@ pub fn process_single_slot(
         Ok(())
     })
     .map_err(|err| {
-        let slot = bank.slot();
         warn!("slot {} failed to verify: {}", slot, err);
         if blockstore.is_primary_access() {
             blockstore
@@ -2178,6 +2172,17 @@ pub fn process_single_slot(
     if let Some((result, _timings)) = bank.wait_for_completed_scheduler() {
         result?
     }
+
+    let block_id = blockstore.check_last_fec_set_and_get_block_id(slot, bank.hash(), &bank.feature_set)
+        .inspect_err(|err| {
+            warn!("slot {} failed last fec set checks: {}", slot, err);
+            if blockstore.is_primary_access() {
+                blockstore.set_dead_slot(slot).expect("Failed to mark slot as dead in blockstore");
+            } else {
+                info!("Failed last fec set checks slot {slot} won't be marked dead due to being secondary blockstore access");
+            }
+    })?;
+    bank.set_block_id(block_id);
     bank.freeze(); // all banks handled by this routine are created from complete slots
 
     if let Some(slot_callback) = &opts.slot_callback {
@@ -2982,7 +2987,7 @@ pub mod tests {
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
         // Let `last_slot` be the number of slots in the first two epochs
-        let epoch_schedule = get_epoch_schedule(&genesis_config, Vec::new());
+        let epoch_schedule = get_epoch_schedule(&genesis_config);
         let last_slot = epoch_schedule.get_last_slot_in_epoch(1);
 
         // Create a single chain of slots with all indexes in the range [0, v + 1]
@@ -4285,17 +4290,8 @@ pub mod tests {
         assert_eq!(bank0.get_balance(&keypair.pubkey()), 1)
     }
 
-    fn get_epoch_schedule(
-        genesis_config: &GenesisConfig,
-        account_paths: Vec<PathBuf>,
-    ) -> EpochSchedule {
-        let bank = Bank::new_with_paths_for_tests(
-            genesis_config,
-            Arc::<RuntimeConfig>::default(),
-            account_paths,
-            AccountSecondaryIndexes::default(),
-            AccountShrinkThreshold::default(),
-        );
+    fn get_epoch_schedule(genesis_config: &GenesisConfig) -> EpochSchedule {
+        let bank = Bank::new_for_tests(genesis_config);
         bank.epoch_schedule().clone()
     }
 
