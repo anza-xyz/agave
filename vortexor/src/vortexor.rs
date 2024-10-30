@@ -3,14 +3,13 @@ use {
     solana_perf::packet::PacketBatch,
     solana_sdk::{quic::NotifyKeyUpdate, signature::Keypair},
     solana_streamer::{
-        quic::{spawn_server_multi, EndpointKeyUpdater},
+        quic::{spawn_server_multi, EndpointKeyUpdater, QuicServerParams},
         streamer::StakedNodes,
     },
     std::{
         net::UdpSocket,
         sync::{atomic::AtomicBool, Arc, Mutex, RwLock},
         thread::{self, JoinHandle},
-        time::Duration,
     },
 };
 
@@ -27,13 +26,7 @@ pub struct TpuStreamerConfig {
     pub tpu_metrics_name: &'static str,
     pub tpu_fwd_thread_name: &'static str,
     pub tpu_fwd_metrics_name: &'static str,
-    pub max_connections_per_peer: usize,
-    pub max_staked_connections: usize,
-    pub max_unstaked_connections: usize,
-    pub max_streams_per_ms: u64,
-    pub max_connections_per_ipaddr_per_min: u64,
-    pub wait_for_chunk_timeout: Duration,
-    pub sender_coalesce_duration: Duration,
+    pub quic_server_params: QuicServerParams,
 }
 
 pub struct Vortexor {
@@ -84,14 +77,9 @@ impl Vortexor {
             tpu_metrics_name,
             tpu_fwd_thread_name,
             tpu_fwd_metrics_name,
-            max_connections_per_peer,
-            max_staked_connections,
-            max_unstaked_connections,
-            max_streams_per_ms,
-            max_connections_per_ipaddr_per_min,
-            wait_for_chunk_timeout,
-            sender_coalesce_duration,
+            mut quic_server_params,
         } = config;
+
 
         let tpu_result = spawn_server_multi(
             tpu_thread_name,
@@ -100,17 +88,15 @@ impl Vortexor {
             keypair,
             tpu_sender.clone(),
             exit.clone(),
-            max_connections_per_peer,
             staked_nodes.clone(),
-            max_staked_connections,
-            max_unstaked_connections,
-            max_streams_per_ms,
-            max_connections_per_ipaddr_per_min,
-            wait_for_chunk_timeout,
-            sender_coalesce_duration,
+            quic_server_params.clone(),
         )
         .unwrap();
 
+        // Fot TPU forward -- we disallow unstaked connections. Allocate all connection resources
+        // for staked connections:
+        quic_server_params.max_staked_connections += quic_server_params.max_unstaked_connections;
+        quic_server_params.max_unstaked_connections = 0;
         let tpu_fwd_result = spawn_server_multi(
             tpu_fwd_thread_name,
             tpu_fwd_metrics_name,
@@ -118,14 +104,9 @@ impl Vortexor {
             keypair,
             tpu_fwd_sender,
             exit.clone(),
-            max_connections_per_peer,
             staked_nodes.clone(),
-            max_staked_connections,
-            max_unstaked_connections,
-            max_streams_per_ms,
-            max_connections_per_ipaddr_per_min,
-            wait_for_chunk_timeout,
-            sender_coalesce_duration,
+            quic_server_params
+
         )
         .unwrap();
 

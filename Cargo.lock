@@ -9702,7 +9702,7 @@ dependencies = [
 
 [[package]]
 name = "solana-vortexor"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "assert_matches",
  "async-channel",
@@ -9724,7 +9724,7 @@ dependencies = [
  "quinn",
  "quinn-proto",
  "rand 0.8.5",
- "rustls 0.23.15",
+ "rustls 0.23.16",
  "smallvec",
  "socket2 0.5.7",
  "solana-clap-utils",

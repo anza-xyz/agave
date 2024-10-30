@@ -4,7 +4,7 @@ use {
     solana_clap_utils::input_parsers::keypair_of,
     solana_net_utils::{bind_in_range_with_config, bind_more_with_config, SocketConfig},
     solana_sdk::net::DEFAULT_TPU_COALESCE,
-    solana_streamer::{nonblocking::quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT, streamer::StakedNodes},
+    solana_streamer::{nonblocking::quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT, quic::QuicServerParams, streamer::StakedNodes},
     solana_vortexor::{
         cli::{app, DefaultArgs},
         vortexor::{TpuSockets, TpuStreamerConfig, Vortexor},
@@ -54,13 +54,15 @@ pub fn main() {
         tpu_metrics_name: "quic_streamer_tpu",
         tpu_fwd_thread_name: "solQuicTpuFwd",
         tpu_fwd_metrics_name: "quic_streamer_tpu_forwards",
-        max_connections_per_peer: max_connections_per_peer.try_into().unwrap(),
-        max_staked_connections: max_tpu_staked_connections.try_into().unwrap(),
-        max_unstaked_connections: max_tpu_unstaked_connections.try_into().unwrap(),
-        max_streams_per_ms,
-        max_connections_per_ipaddr_per_min,
-        wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
-        sender_coalesce_duration: tpu_coalesce,
+        quic_server_params: QuicServerParams {
+            max_connections_per_peer: max_connections_per_peer.try_into().unwrap(),
+            max_staked_connections: max_tpu_staked_connections.try_into().unwrap(),
+            max_unstaked_connections: max_tpu_unstaked_connections.try_into().unwrap(),
+            max_streams_per_ms,
+            max_connections_per_ipaddr_per_min,
+            wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
+            coalesce: tpu_coalesce,
+            }
     };
 
     let quic_config = SocketConfig { reuseport: true };

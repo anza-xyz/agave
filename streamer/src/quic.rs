@@ -565,6 +565,7 @@ pub fn spawn_server(
     )
 }
 
+#[derive(Clone)]
 pub struct QuicServerParams {
     pub max_connections_per_peer: usize,
     pub max_staked_connections: usize,
