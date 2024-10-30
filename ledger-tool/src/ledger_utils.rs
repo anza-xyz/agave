@@ -331,6 +331,7 @@ pub fn load_and_process_ledger(
             let no_replay_vote_sender = None;
             let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
 
+            /*
             let exit = Arc::new(AtomicBool::new(false));
             let poh_bank = bank_forks.read().unwrap().working_bank();
             let new_poh_recorder = PohRecorder::new_with_clear_signal(
@@ -348,6 +349,7 @@ pub fn load_and_process_ledger(
                 exit.clone(),
             );
             drop(poh_bank);
+            */
 
             let pool = DefaultSchedulerPool::new(
                 supported_scheduling_mode(methods),
@@ -356,14 +358,14 @@ pub fn load_and_process_ledger(
                 no_transaction_status_sender,
                 no_replay_vote_sender,
                 ignored_prioritization_fee_cache,
-                Some(new_poh_recorder.0.new_recorder()),
+                None,//Some(new_poh_recorder.0.new_recorder()),
                 None,
             );
             bank_forks
                 .write()
                 .unwrap()
                 .install_scheduler_pool(pool.clone());
-            (Some(pool), Some(new_poh_recorder))
+            (Some(pool), None)//Some(new_poh_recorder))
         }
         _ => {
             info!("no scheduler pool is installed for block verification/production...");

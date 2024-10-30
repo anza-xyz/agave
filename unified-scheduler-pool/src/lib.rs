@@ -583,6 +583,7 @@ impl TaskHandler for DefaultTaskHandler {
                         if !scheduling_context.can_commit() {
                             return false;
                         }
+                        /*
                         let summary = handler_context.transaction_recorder
                             .as_ref()
                             .unwrap()
@@ -591,6 +592,8 @@ impl TaskHandler for DefaultTaskHandler {
                                 vec![transaction.to_versioned_transaction()],
                             );
                         summary.result.is_ok()
+                        */
+                        true
                     }),
                 };
 
@@ -1649,6 +1652,13 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 break;
                             }
                             Ok(NewTaskPayload::CloseSubchannel(_)) if matches!(state_machine.mode(), SchedulingMode::BlockProduction) => {
+                                if slot == 282254387 {
+                                    info!("the slot...");
+                                    result_with_timings = initialized_result_with_timings();
+                                    session_ending = false;
+                                    session_pausing = false;
+                                    break 'nonaborted_main_loop;
+                                }
                                 info!("ignoring duplicate CloseSubchannel...");
                             }
                             Ok(NewTaskPayload::Payload(task)) if matches!(state_machine.mode(), SchedulingMode::BlockProduction) => {
@@ -1730,11 +1740,11 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         let Ok(banking_packet) = banking_packet else {
                             info!("disconnected banking_packet_receiver");
                             let current_thread = thread::current();
-                            if finished_blocked_task_sender.send(Err(HandlerPanicked)).is_ok() {
-                                info!("notified a panic from {:?}", current_thread);
+                            if new_task_sender.upgrade().unwrap().send(NewTaskPayload::CloseSubchannel(enum_ptr::Unit::new()).into()).is_ok() {
+                                info!("notified a disconnect from {:?}", current_thread);
                             } else {
                                 // It seems that the scheduler thread has been aborted already...
-                                warn!("failed to notify a panic from {:?}", current_thread);
+                                warn!("failed to notify a disconnect from {:?}", current_thread);
                             }
                             break;
                         };
