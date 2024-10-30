@@ -324,8 +324,8 @@ pub fn load_and_process_ledger(
     let unified_scheduler_handler_threads =
         value_t!(arg_matches, "unified_scheduler_handler_threads", usize).ok();
     let (unified_scheduler_pool, new_poh_recorder) = match (block_verification_method, block_production_method) {
-        (BlockVerificationMethod::UnifiedScheduler, _)
-        | (_, BlockProductionMethod::UnifiedScheduler) => {
+        methods @ (BlockVerificationMethod::UnifiedScheduler, _)
+        | methods @ (_, BlockProductionMethod::UnifiedScheduler) => {
             let no_transaction_status_sender = None;
             let no_replay_vote_sender = None;
             let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
@@ -349,6 +349,7 @@ pub fn load_and_process_ledger(
             drop(poh_bank);
 
             let pool = DefaultSchedulerPool::new(
+                supported_scheduling_mode(methods),
                 unified_scheduler_handler_threads,
                 process_options.runtime_config.log_messages_bytes_limit,
                 no_transaction_status_sender,
