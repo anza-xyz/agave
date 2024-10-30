@@ -12,6 +12,7 @@ use {
         transaction_batch::TransactionBatch,
         vote_sender_types::ReplayVoteSender,
     },
+    solana_runtime_transaction::svm_transaction_adapter::SVMTransactionAdapter,
     solana_sdk::{pubkey::Pubkey, saturating_add_assign, transaction::SanitizedTransaction},
     solana_svm::{
         transaction_commit_result::{TransactionCommitResult, TransactionCommitResultExtensions},
@@ -22,7 +23,7 @@ use {
     solana_transaction_status::{
         token_balances::TransactionTokenBalancesSet, TransactionTokenBalance,
     },
-    std::{collections::HashMap, ops::Deref, sync::Arc},
+    std::{borrow::Borrow, collections::HashMap, sync::Arc},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -139,7 +140,7 @@ impl Committer {
             let txs = batch
                 .sanitized_transactions()
                 .iter()
-                .map(|tx| tx.deref().clone())
+                .map(|tx| tx.as_sanitized_transaction().borrow().clone())
                 .collect_vec();
             let post_balances = bank.collect_balances(batch);
             let post_token_balances =

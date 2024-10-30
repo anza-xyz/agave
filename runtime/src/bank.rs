@@ -107,7 +107,8 @@ use {
     },
     solana_runtime_transaction::{
         instructions_processor::process_compute_budget_instructions,
-        runtime_transaction::RuntimeTransaction,
+        runtime_transaction::RuntimeTransaction, svm_transaction_adapter::SVMTransactionAdapter,
+        transaction_meta::StaticMeta,
     },
     solana_sdk::{
         account::{
@@ -186,7 +187,7 @@ use {
         collections::{HashMap, HashSet},
         convert::TryFrom,
         fmt,
-        ops::{AddAssign, Deref, RangeFull, RangeInclusive},
+        ops::{AddAssign, RangeFull, RangeInclusive},
         path::PathBuf,
         slice,
         sync::{
@@ -3309,7 +3310,7 @@ impl Bank {
                 // Add the message hash to the status cache to ensure that this message
                 // won't be processed again with a different signature.
                 status_cache.insert(
-                    tx.message().recent_blockhash(),
+                    tx.recent_blockhash(),
                     tx.message_hash(),
                     self.slot(),
                     processed_tx.status(),
@@ -3318,7 +3319,7 @@ impl Bank {
                 // can be queried by transaction signature over RPC. In the future, this should
                 // only be added for API nodes because voting validators don't need to do this.
                 status_cache.insert(
-                    tx.message().recent_blockhash(),
+                    tx.recent_blockhash(),
                     tx.signature(),
                     self.slot(),
                     processed_tx.status(),
@@ -4036,7 +4037,7 @@ impl Bank {
                 .then(|| {
                     sanitized_txs
                         .iter()
-                        .map(|tx| tx.deref())
+                        .map(|tx| tx.as_sanitized_transaction())
                         .collect::<Vec<_>>()
                 });
 
@@ -6316,7 +6317,7 @@ impl Bank {
             })
             .filter(|(_, executed_tx)| executed_tx.was_successful())
             .flat_map(|(tx, executed_tx)| {
-                let num_account_keys = tx.message().account_keys().len();
+                let num_account_keys = tx.account_keys().len();
                 let loaded_tx = &executed_tx.loaded_transaction;
                 loaded_tx.accounts.iter().take(num_account_keys)
             })
