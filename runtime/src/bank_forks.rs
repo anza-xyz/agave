@@ -264,7 +264,7 @@ impl BankForks {
         }
         let context = SchedulingContext::new(mode, bank.clone());
         let Some(scheduler) = scheduler_pool.take_scheduler(context) else {
-            trace!("disabled for {:?}", context.mode());
+            trace!("disabled for {:?}", mode);
             return BankWithScheduler::new_without_scheduler(bank);
         };
         let bank_with_scheduler = BankWithScheduler::new(bank, Some(scheduler));
