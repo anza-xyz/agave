@@ -583,7 +583,6 @@ impl TaskHandler for DefaultTaskHandler {
                         if !scheduling_context.can_commit() {
                             return false;
                         }
-                        /*
                         let summary = handler_context.transaction_recorder
                             .as_ref()
                             .unwrap()
@@ -592,8 +591,6 @@ impl TaskHandler for DefaultTaskHandler {
                                 vec![transaction.to_versioned_transaction()],
                             );
                         summary.result.is_ok()
-                        */
-                        true
                     }),
                 };
 
