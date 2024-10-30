@@ -211,7 +211,7 @@ pub fn supported_scheduling_mode((verification, production): (&BlockVerification
         (BlockVerificationMethod::UnifiedScheduler, BlockProductionMethod::UnifiedScheduler) => SupportedSchedulingMode::Both,
         (BlockVerificationMethod::UnifiedScheduler, _) => SupportedSchedulingMode::Either(SchedulingMode::BlockVerification),
         (_, BlockProductionMethod::UnifiedScheduler) => SupportedSchedulingMode::Either(SchedulingMode::BlockProduction),
-        (_) => unreachable!("seems unified scheduler is disabled"),
+        _ => unreachable!("seems unified scheduler is disabled"),
     }
 }
 
