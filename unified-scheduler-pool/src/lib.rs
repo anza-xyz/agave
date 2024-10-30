@@ -72,6 +72,7 @@ enum CheckPoint {
 
 type AtomicSchedulerId = AtomicU64;
 
+#[derive(Debug)]
 pub enum SupportedSchedulingMode {
     Either(SchedulingMode),
     Both,
