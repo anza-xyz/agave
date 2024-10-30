@@ -138,6 +138,11 @@ enum SupportedSchedulingMode {
     Both,
 }
 
+impl SupportedSchedulingMode {
+    fn new(verification_method: BlockVerificationMethod, production_method: BlockProductionMethod) {
+    }
+}
+
 impl<S, TH> SchedulerPool<S, TH>
 where
     S: SpawnableScheduler<TH>,
