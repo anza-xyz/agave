@@ -159,6 +159,7 @@ where
     // `dyn InstalledSchedulerPool`. So don't merge this into `Self::new_dyn()`.
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub fn new(
+        supported_scheduling_mode: SupportedSchedulingMode,
         handler_count: Option<usize>,
         log_messages_bytes_limit: Option<usize>,
         transaction_status_sender: Option<TransactionStatusSender>,
@@ -168,6 +169,7 @@ where
         dummy_sender: Option<DummySender>,
     ) -> Arc<Self> {
         Self::do_new(
+            supported_scheduling_mode,
             handler_count,
             log_messages_bytes_limit,
             transaction_status_sender,
@@ -183,6 +185,7 @@ where
     }
 
     fn do_new(
+        supported_scheduling_mode: SupportedSchedulingMode,
         handler_count: Option<usize>,
         log_messages_bytes_limit: Option<usize>,
         transaction_status_sender: Option<TransactionStatusSender>,
@@ -199,6 +202,7 @@ where
         assert!(handler_count >= 1);
 
         let scheduler_pool = Arc::new_cyclic(|weak_self| Self {
+            supported_scheduling_mode,
             scheduler_inners: Mutex::default(),
             block_producing_scheduler_inner: Mutex::default(),
             trashed_scheduler_inners: Mutex::default(),
@@ -314,6 +318,7 @@ where
     // This apparently-meaningless wrapper is handy, because some callers explicitly want
     // `dyn InstalledSchedulerPool` to be returned for type inference convenience.
     pub fn new_dyn(
+        supported_scheduling_mode: SupportedSchedulingMode,
         handler_count: Option<usize>,
         log_messages_bytes_limit: Option<usize>,
         transaction_status_sender: Option<TransactionStatusSender>,
@@ -323,6 +328,7 @@ where
         dummy_sender: Option<DummySender>,
     ) -> InstalledSchedulerPoolArc {
         Self::new(
+            supported_scheduling_mode,
             handler_count,
             log_messages_bytes_limit,
             transaction_status_sender,
