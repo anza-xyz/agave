@@ -486,7 +486,7 @@ where
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
     ) -> Option<InstalledSchedulerBox> {
-        if !self.supported_scheduling_mode.is_supported(context.mode) {
+        if !self.supported_scheduling_mode.is_supported(context.mode()) {
             return None;
         }
 
