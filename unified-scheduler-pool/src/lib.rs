@@ -81,7 +81,7 @@ impl SupportedSchedulingMode {
     fn is_supported(&self, requested_mode: SchedulingMode) -> bool {
         match (self, requested_mode) {
             (Self::Both, _) => true,
-            (Self::Either(supported), requested) if supported == requested => true, 
+            (Self::Either(&supported), requested) if supported == requested => true, 
             _ => false,
         }
     }
