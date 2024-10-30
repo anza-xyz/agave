@@ -111,6 +111,7 @@ members = [
     "sdk/decode-error",
     "sdk/define-syscall",
     "sdk/derivation-path",
+    "sdk/deserialize-utils",
     "sdk/ed25519-instructions",
     "sdk/epoch-rewards",
     "sdk/epoch-schedule",
@@ -438,6 +439,7 @@ solana-curve25519 = { path = "curves/curve25519", version = "=2.2.0" }
 solana-decode-error = { path = "sdk/decode-error", version = "=2.2.0" }
 solana-define-syscall = { path = "sdk/define-syscall", version = "=2.2.0" }
 solana-derivation-path = { path = "sdk/derivation-path", version = "=2.2.0" }
+solana-deserialize-utils = { path = "sdk/deserialize-utils", version = "=2.2.0" }
 solana-download-utils = { path = "download-utils", version = "=2.2.0" }
 solana-ed25519-instructions = { path = "sdk/ed25519-instructions", version = "=2.2.0" }
 solana-entry = { path = "entry", version = "=2.2.0" }

@@ -5450,6 +5450,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-deserialize-utils"
+version = "2.2.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "solana-download-utils"
 version = "2.2.0"
 dependencies = [
@@ -7079,6 +7086,7 @@ dependencies = [
  "solana-commitment-config",
  "solana-decode-error",
  "solana-derivation-path",
+ "solana-deserialize-utils",
  "solana-ed25519-instructions",
  "solana-feature-set",
  "solana-fee-structure",

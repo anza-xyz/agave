@@ -105,6 +105,7 @@ solana-cluster-type = { workspace = true, features = [
 solana-commitment-config = { workspace = true, optional = true, features = ["serde"] }
 solana-decode-error = { workspace = true }
 solana-derivation-path = { workspace = true }
+solana-deserialize-utils = { workspace = true }
 solana-ed25519-instructions = { workspace = true, optional = true }
 solana-feature-set = { workspace = true }
 solana-fee-structure = { workspace = true, features = ["serde"] }

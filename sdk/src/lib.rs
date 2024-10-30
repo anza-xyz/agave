@@ -63,7 +63,6 @@ pub use solana_program::{borsh, borsh0_10, borsh1};
 pub use solana_signer::signers;
 pub mod client;
 pub mod compute_budget;
-pub mod deserialize_utils;
 pub mod entrypoint;
 pub mod entrypoint_deprecated;
 pub mod epoch_info;
@@ -119,6 +118,8 @@ pub use solana_bn254 as alt_bn128;
 pub use solana_decode_error as decode_error;
 #[deprecated(since = "2.1.0", note = "Use `solana-derivation-path` crate instead")]
 pub use solana_derivation_path as derivation_path;
+#[deprecated(since = "2.1.0", note = "Use `solana-deserialize-utils` crate instead")]
+pub use solana_deserialize_utils as deserialize_utils;
 #[cfg(feature = "full")]
 #[deprecated(
     since = "2.2.0",
