@@ -206,7 +206,7 @@ impl BlockProductionMethod {
 }
 
 fn supported_scheduling_mode(verification: BlockVerificationMethod, production: BlockProductionMethod) -> SupportedSchedulingMode {
-    match (verifications, production) {
+    match (verification, production) {
         (BlockVerificationMethod::UnifiedScheduler, BlockProductionMethod::UnifiedScheduler) => SupportedSchedulingMode::Both,
         _ => panic!(),
     }
