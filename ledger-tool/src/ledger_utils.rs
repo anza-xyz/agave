@@ -324,7 +324,7 @@ pub fn load_and_process_ledger(
     );
     let unified_scheduler_handler_threads =
         value_t!(arg_matches, "unified_scheduler_handler_threads", usize).ok();
-    let (unified_scheduler_pool, new_poh_recorder) = match (block_verification_method, block_production_method) {
+    let (unified_scheduler_pool, new_poh_recorder) = match (&block_verification_method, &block_production_method) {
         methods @ (BlockVerificationMethod::UnifiedScheduler, _)
         | methods @ (_, BlockProductionMethod::UnifiedScheduler) => {
             let no_transaction_status_sender = None;
