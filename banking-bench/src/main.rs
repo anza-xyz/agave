@@ -44,6 +44,7 @@ use {
         time::{Duration, Instant},
     },
 };
+use solana_unified_scheduler_pool::SupportedSchedulingMode;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
