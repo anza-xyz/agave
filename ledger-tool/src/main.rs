@@ -2516,8 +2516,6 @@ fn main() {
                     )
                     .unwrap_or_default();
 
-                    info!("Using: block-production-method: {block_production_method}");
-
                     match simulator.start(
                         genesis_config,
                         bank_forks,
