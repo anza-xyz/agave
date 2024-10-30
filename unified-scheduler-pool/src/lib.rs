@@ -1462,6 +1462,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 };
                                 state_machine.deschedule_task(&executed_task.task);
                                 if should_pause && !session_ending {
+                                    /*
                                     state_machine.reset_task(&executed_task.task);
                                     let ExecutedTask {
                                         task,
@@ -1469,6 +1470,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     } = *executed_task;
                                     state_machine.do_schedule_task(task, true);
                                     std::mem::forget(result_with_timings);
+                                    */
+                                    std::mem::forget(executed_task);
                                 } else {
                                     std::mem::forget(executed_task);
                                 }
