@@ -206,7 +206,7 @@ impl BlockProductionMethod {
     }
 }
 
-fn supported_scheduling_mode(verification: BlockVerificationMethod, production: BlockProductionMethod) -> SupportedSchedulingMode {
+pub fn supported_scheduling_mode(verification: BlockVerificationMethod, production: BlockProductionMethod) -> SupportedSchedulingMode {
     match (verification, production) {
         (BlockVerificationMethod::UnifiedScheduler, BlockProductionMethod::UnifiedScheduler) => SupportedSchedulingMode::Both,
         (BlockVerificationMethod::UnifiedScheduler, _) => SupportedSchedulingMode::Either(SchedulingMode::BlockVerification),
@@ -872,9 +872,10 @@ impl Validator {
             &config.block_verification_method,
             &config.block_production_method,
         ) {
-            (BlockVerificationMethod::UnifiedScheduler, _)
-            | (_, BlockProductionMethod::UnifiedScheduler) => {
+            methods @ (BlockVerificationMethod::UnifiedScheduler, _)
+            | methods @ (_, BlockProductionMethod::UnifiedScheduler) => {
                 let pool = DefaultSchedulerPool::new(
+                    supported_scheduling_mode(methods),
                     config.unified_scheduler_handler_threads,
                     config.runtime_config.log_messages_bytes_limit,
                     transaction_status_sender.clone(),
