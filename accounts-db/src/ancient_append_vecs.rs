@@ -342,7 +342,7 @@ impl AccountsDb {
     ) {
         let tuning = PackedAncientStorageTuning {
             // Slots old enough to be ancient.
-            max_ancient_slots: self.ancient_storages_max.unwrap(),
+            max_ancient_slots: self.ancient_storages_max,
             // Don't re-pack anything just to shrink.
             // shrink_candidate_slots will handle these old storages.
             percent_of_alive_shrunk_data: 0,
@@ -525,7 +525,7 @@ impl AccountsDb {
         // divided by half of max ancient slots
         tuning.ideal_storage_size = NonZeroU64::new(
             (ancient_slot_infos.total_alive_bytes.0 * 2 / tuning.max_ancient_slots.max(1) as u64)
-                .max(self.ancient_ideal_storage_size.unwrap()),
+                .max(self.ancient_ideal_storage_size),
         )
         .unwrap();
 
