@@ -498,6 +498,7 @@ fn main() {
             (None, false)
         };
         let scheduler_pool = DefaultSchedulerPool::new(
+            SupportedSchedulingMode::Either(SchedulingMode::BlockProduction),
             Some((num_banking_threads - 2) as usize),
             None,
             None,
