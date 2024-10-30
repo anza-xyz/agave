@@ -1038,7 +1038,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         (result, timings): &mut ResultWithTimings,
         executed_task: HandlerResult,
         error_count: &mut usize,
-        session_pausing: bool,
+        already_finishing: bool,
     ) -> Option<(Box<ExecutedTask>, bool)> {
         let Ok(executed_task) = executed_task else {
             return None;
@@ -1057,7 +1057,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 match executed_task.result_with_timings.0 {
                 Ok(()) => Some((executed_task, false)),
                 Err(TransactionError::CommitFailed) => {
-                    if !session_pausing {
+                    if !already_finishing {
                         info!("maybe reached max tick height...");
                     }
                     *error_count += 1;
@@ -1067,7 +1067,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 Err(ref e @ TransactionError::WouldExceedMaxVoteCostLimit) |
                 Err(ref e @ TransactionError::WouldExceedMaxAccountCostLimit) |
                 Err(ref e @ TransactionError::WouldExceedAccountDataBlockLimit) => {
-                    if !session_pausing {
+                    if !already_finishing {
                         info!("hit block cost: {e:?}");
                     }
                     *error_count += 1;
@@ -1413,12 +1413,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     &mut result_with_timings,
                                     executed_task.expect("alive handler"),
                                     &mut error_count,
-                                    session_pausing,
+                                    session_ending || session_pausing,
                                 ) else {
                                     break 'nonaborted_main_loop;
                                 };
                                 state_machine.deschedule_task(&executed_task.task);
-                                if should_pause {
+                                if should_pause && !session_ending {
                                     state_machine.reset_task(&executed_task.task);
                                     let ExecutedTask {
                                         task,
@@ -1500,7 +1500,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     &mut result_with_timings,
                                     executed_task.expect("alive handler"),
                                     &mut error_count,
-                                    session_pausing,
+                                    session_ending || session_pausing,
                                 ) else {
                                     break 'nonaborted_main_loop;
                                 };
