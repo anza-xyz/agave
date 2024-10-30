@@ -6773,6 +6773,7 @@ version = "2.2.0"
 dependencies = [
  "bincode",
  "serde",
+ "serde_derive",
 ]
 
 [[package]]
