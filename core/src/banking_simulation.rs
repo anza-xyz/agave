@@ -845,7 +845,23 @@ impl BankingSimulator {
             .collect::<Vec<_>>();
 
         info!("Poh is starting!");
-        let (poh_recorder, entry_receiver, record_receiver) = new_poh_recorder.unwrap();
+        let (poh_recorder, entry_receiver, record_receiver) = new_poh_recorder.unwrap_or_else(|| {
+            PohRecorder::new_with_clear_signal(
+                poh_bank.tick_height(),
+                poh_bank.last_blockhash(),
+                poh_bank.clone(),
+                None,
+                poh_bank.ticks_per_slot(),
+                false,
+                blockstore.clone(),
+                blockstore.get_new_shred_signal(0),
+                &leader_schedule_cache,
+                &genesis_config.poh_config,
+                None,
+                exit.clone(),
+            )
+        });
+        drop(poh_bank);
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
         let poh_service = PohService::new(
             poh_recorder.clone(),
