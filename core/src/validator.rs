@@ -208,7 +208,9 @@ impl BlockProductionMethod {
 fn supported_scheduling_mode(verification: BlockVerificationMethod, production: BlockProductionMethod) -> SupportedSchedulingMode {
     match (verification, production) {
         (BlockVerificationMethod::UnifiedScheduler, BlockProductionMethod::UnifiedScheduler) => SupportedSchedulingMode::Both,
-        _ => panic!(),
+        (BlockVerificationMethod::UnifiedScheduler, _) => SupportedSchedulingMode::Either(SchedulingMode::BlockVerification),
+        (_, BlockProductionMethod::UnifiedScheduler) => SupportedSchedulingMode::Either(SchedulingMode::BlockProduction),
+        (_) => unreachable!("seems unified scheduler is disabled"),
     }
 }
 
