@@ -204,6 +204,9 @@ impl BlockProductionMethod {
     }
 }
 
+fn supported_scheduling_mode(verification_method: BlockVerificationMethod, production_method: BlockProductionMethod) -> SupportedSchedulingMode {
+}
+
 /// Configuration for the block generator invalidator for replay.
 #[derive(Clone, Debug)]
 pub struct GeneratorConfig {
