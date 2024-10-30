@@ -462,8 +462,8 @@ where
         &self,
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
-    ) -> InstalledSchedulerBox {
-        Box::new(self.do_take_resumed_scheduler(context, result_with_timings, None::<(_, fn(BankingPacketBatch) -> Vec<Task>)>))
+    ) -> Option<InstalledSchedulerBox> {
+        Some(Box::new(self.do_take_resumed_scheduler(context, result_with_timings, None::<(_, fn(BankingPacketBatch) -> Vec<Task>)>)))
     }
 
     fn register_timeout_listener(&self, timeout_listener: TimeoutListener) {
