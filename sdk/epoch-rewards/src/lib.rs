@@ -2,9 +2,9 @@
 //!
 //! [sv]: https://docs.solanalabs.com/runtime/sysvars#epochrewards
 //!
-//! The sysvar ID is declared in [`solana_program::sysvar::epoch_rewards`].
+//! The sysvar ID is declared in [`sysvar`].
 //!
-//! [`solana_program::sysvar::epoch_rewards`]: https://docs.rs/solana-program/latest/solana_program/sysvar/epoch_rewards/index.html
+//! [`sysvar`]: crate::sysvar
 
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
