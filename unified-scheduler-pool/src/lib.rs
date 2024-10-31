@@ -407,7 +407,7 @@ where
             }
         } else {
             let mut g = self.block_producing_scheduler_inner.lock().expect("not poisoned");
-            g = self.block_producing_scheduler_condvar.wait_while(g, |a| { true }).unwrap();
+            g = self.block_producing_scheduler_condvar.wait_while(g, |a| { a.1.is_none() }).unwrap();
             if let Some(inner) = g.1.take()
             {
                 S::from_inner(inner, context, result_with_timings)
