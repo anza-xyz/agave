@@ -3951,7 +3951,6 @@ fn test_bank_update_sysvar_account() {
         // (since rent collection will update the rent epoch, thus causing the
         // subsequent checks to fail spuriously).
         let dummy_clock_id = Pubkey::from_str_const("64jsX5hwtsjsKR7eNcNU4yhgwjuXoU9KR2MpnV47iXXz");
-        let dummy_rent_epoch = 44;
         let (mut genesis_config, _mint_keypair) = create_genesis_config(500);
 
         let expected_previous_slot = 3;
@@ -3974,22 +3973,20 @@ fn test_bank_update_sysvar_account() {
                 bank1.update_sysvar_account(&dummy_clock_id, |optional_account| {
                     assert!(optional_account.is_none());
 
-                    let mut account = create_account(
+                    create_account(
                         &Clock {
                             slot: expected_previous_slot,
                             ..Clock::default()
                         },
                         bank1.inherit_specially_retained_account_fields(optional_account),
-                    );
-                    account.set_rent_epoch(dummy_rent_epoch);
-                    account
+                    )
                 });
                 let current_account = bank1.get_account(&dummy_clock_id).unwrap();
                 assert_eq!(
                     expected_previous_slot,
                     from_account::<Clock, _>(&current_account).unwrap().slot
                 );
-                assert_eq!(dummy_rent_epoch, current_account.rent_epoch());
+                assert_eq!(RENT_EXEMPT_RENT_EPOCH, current_account.rent_epoch());
             },
             |old, new| {
                 assert_eq!(
@@ -4053,7 +4050,7 @@ fn test_bank_update_sysvar_account() {
                     expected_next_slot,
                     from_account::<Clock, _>(&current_account).unwrap().slot
                 );
-                assert_eq!(dummy_rent_epoch, current_account.rent_epoch());
+                assert_eq!(RENT_EXEMPT_RENT_EPOCH, current_account.rent_epoch());
             },
             |old, new| {
                 // if existing, capitalization shouldn't change
@@ -6472,30 +6469,29 @@ fn test_bank_hash_consistency() {
     assert_eq!(bank.get_slots_in_epoch(0), 32);
     loop {
         goto_end_of_slot(bank.clone());
-
         if bank.slot == 0 {
             assert_eq!(
                 bank.hash().to_string(),
-                "Hn2FoJuoFWXVFVnwcQ6peuT24mUPmhDtXHXVjKD7M4yP",
+                "5twxs7hhHtqsMWjW3CVQdxp5f9FVTYtFs4obs5aPAPeY",
             );
         }
 
         if bank.slot == 32 {
             assert_eq!(
                 bank.hash().to_string(),
-                "7FPfwBut4b7bXtKPsobQS1cuFgF47SZHDb4teQcJRomv"
+                "7bLTgyPMtNYd853kzSgiFjipQFcCGxNCqCEbtymmjRBS"
             );
         }
         if bank.slot == 64 {
             assert_eq!(
                 bank.hash().to_string(),
-                "28CWiEuA3izdt5xe4LyS4Q1DTALmYgrVctSTazFiPVcW"
+                "G7yjmpzektRBH6KcQs7UXpueb1U5Xw8eL9dm7qiqjHLz"
             );
         }
         if bank.slot == 128 {
             assert_eq!(
                 bank.hash().to_string(),
-                "AdCmEvRXWKpvXb9fG6AFQhzGgB5ciAXnDajvaNK7YUg8"
+                "F5Z5MfY4pgpHKu6HrSc2bMqf3MXyNdHKaWYsponpSzVT"
             );
             break;
         }
