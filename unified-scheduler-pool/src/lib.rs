@@ -1971,7 +1971,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
         banking_context: Option<(BankingPacketReceiver, impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static)>,
     ) -> Self {
         info!(
-            "spawning new scheduler pool for slot: {}",
+            "spawning new scheduler for slot: {}",
             context.bank().slot()
         );
         let mut inner = Self::Inner {
