@@ -423,7 +423,7 @@ where
         }
     }
 
-    pub fn spawn_banking_scheduler(&self, bank_forks: &BankForks, recv: BankingPacketReceiver, on_banking_packet_receive: impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static) -> Arc<BlockProducingUnifiedScheduler> {
+    pub fn spawn_banking_scheduler(&self, bank_forks: &RwLock<BankForks>, recv: BankingPacketReceiver, on_banking_packet_receive: impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static) -> Arc<BlockProducingUnifiedScheduler> {
         info!("flash session: start!");
         let scheduler = {
             let banking_context = Some((recv, on_banking_packet_receive));
