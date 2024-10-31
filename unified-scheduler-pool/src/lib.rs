@@ -423,7 +423,7 @@ where
         }
     }
 
-    pub fn spawn_banking_scheduler(&self, &BankForks, recv: BankingPacketReceiver, on_banking_packet_receive: impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static) -> Arc<BlockProducingUnifiedScheduler> {
+    pub fn spawn_banking_scheduler(&self, bank_forks: &BankForks, recv: BankingPacketReceiver, on_banking_packet_receive: impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static) -> Arc<BlockProducingUnifiedScheduler> {
         info!("flash session: start!");
         let context = SchedulingContext::new(SchedulingMode::BlockProduction, root_bank);
         let scheduler = {
