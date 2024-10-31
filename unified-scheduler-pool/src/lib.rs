@@ -418,26 +418,22 @@ where
     }
 
     pub fn create_banking_scheduler(&self, root_bank: Arc<Bank>, recv: BankingPacketReceiver, on_banking_packet_receive: impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static) -> Arc<BlockProducingUnifiedScheduler> {
-        let s = self.block_producing_scheduler_inner.lock().unwrap().0.as_ref().map(|(id, bps)| bps).cloned();
-        if let Some(ss) = s {
-            return ss;
-        } else {
-            info!("flash session: start!");
-            let context = SchedulingContext::new(SchedulingMode::BlockProduction, root_bank);
-            let scheduler = {
-                let banking_context = Some((recv, on_banking_packet_receive));
-                let s = S::spawn(self.self_arc(), context, initialized_result_with_timings(), banking_context);
-                let bps = Arc::new(s.create_block_producing_scheduler());
-                let mut g = self.block_producing_scheduler_inner.lock().expect("not poisoned");
-                assert!(g.0.replace((s.id(), bps)).is_none());
-                s
-            };
-            let id = scheduler.id();
-            self.return_scheduler(scheduler.into_inner().1, id, false);
-            self.block_producing_scheduler_condvar.notify_all();
-            info!("flash session: end!");
-            self.block_producing_scheduler_inner.lock().unwrap().0.as_ref().map(|(id, bps)| bps).cloned().unwrap()
-        }
+        info!("flash session: start!");
+        let context = SchedulingContext::new(SchedulingMode::BlockProduction, root_bank);
+        let scheduler = {
+            let banking_context = Some((recv, on_banking_packet_receive));
+            let s = S::spawn(self.self_arc(), context, initialized_result_with_timings(), banking_context);
+            let bps = Arc::new(s.create_block_producing_scheduler());
+            let mut g = self.block_producing_scheduler_inner.lock().expect("not poisoned");
+            assert!(g.0.replace((s.id(), bps)).is_none());
+            s
+        };
+        let id = scheduler.id();
+        self.return_scheduler(scheduler.into_inner().1, id, false);
+        let bps = self.block_producing_scheduler_inner.lock().unwrap().0.as_ref().map(|(id, bps)| bps).cloned().unwrap();
+        self.block_producing_scheduler_condvar.notify_all();
+        info!("flash session: end!");
+        bps
     }
 
     #[cfg(feature = "dev-context-only-utils")]
