@@ -1,6 +1,14 @@
 //! Instructions for the [secp256r1 native program][np].
-//!
 //! [np]: https://docs.solana.com/developing/runtime-facilities/programs#secp256r1-program
+//!
+//! Note on Signature Malleability:
+//! This precompile requires low-S values in signatures (s <= half_curve_order) to prevent signature malleability.
+//! Signature malleability means that for a valid signature (r,s), (r, order-s) is also valid for the
+//! same message and public key.
+//!
+//! This property can be problematic for developers who assume each signature is unique. Without enforcing
+//! low-S values, the same message and key can produce two different valid signatures, potentially breaking
+//! replay protection schemes that rely on signature uniqueness.
 solana_pubkey::declare_id!("Secp256r1SigVerify1111111111111111111111111");
 
 use bytemuck::{Pod, Zeroable};
@@ -40,7 +48,7 @@ mod target_arch {
             ec::{EcGroup, EcKey, EcPoint},
             ecdsa::EcdsaSig,
             nid::Nid,
-            pkey::PKey,
+            pkey::{PKey, Private},
             sign::{Signer, Verifier},
         },
         solana_feature_set::FeatureSet,
@@ -74,13 +82,28 @@ mod target_arch {
         0xFF, 0xDE, 0x73, 0x7D, 0x56, 0xD3, 0x8B, 0xCF, 0x42, 0x79, 0xDC, 0xE5, 0x61, 0x7E, 0x31,
         0x92, 0xA8,
     ];
+    // Field size in bytes
+    const FIELD_SIZE: usize = 32;
 
     pub fn new_secp256r1_instruction(
         message: &[u8],
+        signing_key: EcKey<Private>,
     ) -> Result<Instruction, Box<dyn std::error::Error>> {
         let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
-        let signing_key = EcKey::generate(&group)?;
-        let signing_key_pkey = PKey::from_ec_key(signing_key.clone())?;
+        assert_eq!(
+            signing_key.group().curve_name(),
+            Some(Nid::X9_62_PRIME256V1),
+            "Signing key must be on the secp256r1 curve"
+        );
+
+        let mut ctx = BigNumContext::new()?;
+        let pubkey = signing_key.public_key().to_bytes(
+            &group,
+            openssl::ec::PointConversionForm::COMPRESSED,
+            &mut ctx,
+        )?;
+
+        let signing_key_pkey = PKey::from_ec_key(signing_key)?;
 
         let mut signer = Signer::new(openssl::hash::MessageDigest::sha256(), &signing_key_pkey)?;
         signer.update(message)?;
@@ -90,8 +113,8 @@ mod target_arch {
         let r = ecdsa_sig.r().to_vec();
         let s = ecdsa_sig.s().to_vec();
         let mut signature = vec![0u8; SIGNATURE_SERIALIZED_SIZE];
-        signature[..32].copy_from_slice(&r);
-        signature[32..].copy_from_slice(&s);
+        signature[..FIELD_SIZE].copy_from_slice(&r);
+        signature[FIELD_SIZE..].copy_from_slice(&s);
 
         // Check if s > half_order, if so, compute s = order - s
         let s_bignum = BigNum::from_slice(&s)?;
@@ -99,18 +122,10 @@ mod target_arch {
         let order = BigNum::from_slice(&SECP256R1_ORDER)?;
 
         if s_bignum > half_order {
-            let mut ctx = BigNumContext::new()?;
             let mut new_s = BigNum::new()?;
-            new_s.mod_sub(&order, &s_bignum, &order, &mut ctx)?;
-            signature[32..].copy_from_slice(&new_s.to_vec());
+            new_s.checked_sub(&order, &s_bignum)?;
+            signature[FIELD_SIZE..].copy_from_slice(&new_s.to_vec());
         }
-
-        let mut ctx = BigNumContext::new()?;
-        let pubkey = signing_key.public_key().to_bytes(
-            &group,
-            openssl::ec::PointConversionForm::COMPRESSED,
-            &mut ctx,
-        )?;
 
         assert_eq!(pubkey.len(), COMPRESSED_PUBKEY_SERIALIZED_SIZE);
         assert_eq!(signature.len(), SIGNATURE_SERIALIZED_SIZE);
@@ -232,16 +247,15 @@ mod target_arch {
                 offsets.message_data_size as usize,
             )?;
 
-            let r_bignum = BigNum::from_slice(&signature[..32])
+            let r_bignum = BigNum::from_slice(&signature[..FIELD_SIZE])
                 .map_err(|_| PrecompileError::InvalidSignature)?;
-            let s_bignum = BigNum::from_slice(&signature[32..])
+            let s_bignum = BigNum::from_slice(&signature[FIELD_SIZE..])
                 .map_err(|_| PrecompileError::InvalidSignature)?;
 
             // Check that r and s are within the proper range and enforce a low-S value
-            let within_range = r_bignum > one
+            let within_range = r_bignum >= one
                 && r_bignum <= order_minus_one
-                && s_bignum > one
-                && s_bignum <= order_minus_one
+                && s_bignum >= one
                 && s_bignum <= half_order;
 
             if !within_range {
@@ -250,6 +264,7 @@ mod target_arch {
 
             // Create an ECDSA signature object from the ASN.1 integers
             let ecdsa_sig = openssl::ecdsa::EcdsaSig::from_private_components(r_bignum, s_bignum)
+                .and_then(|sig| sig.to_der())
                 .map_err(|_| PrecompileError::InvalidSignature)?;
 
             let public_key_point = EcPoint::from_bytes(&group, pubkey, &mut ctx)
@@ -267,11 +282,7 @@ mod target_arch {
                 .map_err(|_| PrecompileError::InvalidSignature)?;
 
             if !verifier
-                .verify(
-                    &ecdsa_sig
-                        .to_der()
-                        .map_err(|_| PrecompileError::InvalidSignature)?,
-                )
+                .verify(&ecdsa_sig)
                 .map_err(|_| PrecompileError::InvalidSignature)?
             {
                 return Err(PrecompileError::InvalidSignature);
@@ -476,7 +487,9 @@ mod target_arch {
         fn test_secp256r1() {
             solana_logger::setup();
             let message_arr = b"hello";
-            let instruction = new_secp256r1_instruction(message_arr).unwrap();
+            let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+            let signing_key = EcKey::generate(&group).unwrap();
+            let instruction = new_secp256r1_instruction(message_arr, signing_key).unwrap();
             let mint_keypair = Keypair::new();
             let feature_set = FeatureSet::all_enabled();
 
@@ -507,6 +520,40 @@ mod target_arch {
             assert!(tx.verify_precompiles(&feature_set).is_err());
         }
 
+        #[test]
+        fn test_secp256r1_high_s() {
+            solana_logger::setup();
+            let message_arr = b"hello";
+            let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+            let signing_key = EcKey::generate(&group).unwrap();
+            let mut instruction = new_secp256r1_instruction(message_arr, signing_key).unwrap();
+
+            // Get the signature offset and modify the S value
+            let signature_offset = DATA_START + COMPRESSED_PUBKEY_SERIALIZED_SIZE;
+            let s_offset = signature_offset + FIELD_SIZE; // S comes after R
+
+            // Create a high S value by doing order - s
+            let order = BigNum::from_slice(&SECP256R1_ORDER).unwrap();
+            let current_s =
+                BigNum::from_slice(&instruction.data[s_offset..s_offset + FIELD_SIZE]).unwrap();
+            let mut high_s = BigNum::new().unwrap();
+            high_s.checked_sub(&order, &current_s).unwrap();
+
+            // Replace the S value in the signature with our high S
+            instruction.data[s_offset..s_offset + FIELD_SIZE].copy_from_slice(&high_s.to_vec());
+
+            let mint_keypair = Keypair::new();
+            let feature_set = FeatureSet::all_enabled();
+            let tx = Transaction::new_signed_with_payer(
+                &[instruction],
+                Some(&mint_keypair.pubkey()),
+                &[&mint_keypair],
+                Hash::default(),
+            );
+
+            // Should fail verification due to high s value
+            assert!(tx.verify_precompiles(&feature_set).is_err());
+        }
         #[test]
         fn test_secp256r1_order() {
             let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();

@@ -24,6 +24,7 @@ full = [
     "byteorder",
     "chrono",
     "memmap2",
+    "openssl",
     "rand",
     "rand0-7",
     "serde_json",
