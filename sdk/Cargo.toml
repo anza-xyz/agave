@@ -49,6 +49,7 @@ frozen-abi = [
     "solana-signature/frozen-abi",
     "solana-transaction-error/frozen-abi"
 ]
+openssl = ["solana-secp256r1-program/vendored"]
 
 [dependencies]
 bincode = { workspace = true }
@@ -108,7 +109,7 @@ solana-pubkey = { workspace = true, default-features = false, features = ["std"]
 solana-sanitize = { workspace = true }
 solana-sdk-macro = { workspace = true }
 solana-secp256k1-recover = { workspace = true }
-solana-secp256r1-program = { workspace = true }
+solana-secp256r1-program = { workspace = true, default-features = false }
 solana-serde-varint = { workspace = true }
 solana-short-vec = { workspace = true }
 solana-signature = { workspace = true, features = [
