@@ -96,7 +96,7 @@ impl SupportedSchedulingMode {
 pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     supported_scheduling_mode: SupportedSchedulingMode,
     scheduler_inners: Mutex<Vec<(S::Inner, Instant)>>,
-    block_producing_scheduler_inner: Mutex<(Option<(SchedulerId, Arc<BlockProducingUnifiedScheduler>)>, Option<S::Inner>)>,
+    block_producing_scheduler_inner: Mutex<(Option<(SchedulerId, Arc<BlockProducingUnifiedScheduler>)>, Option<S::Inner>, Option<SchedulingContext>)>,
     block_producing_scheduler_condvar: Condvar,
     trashed_scheduler_inners: Mutex<Vec<S::Inner>>,
     timeout_listeners: Mutex<Vec<(TimeoutListener, Instant)>>,
@@ -407,7 +407,13 @@ where
             }
         } else {
             let mut g = self.block_producing_scheduler_inner.lock().expect("not poisoned");
-            g = self.block_producing_scheduler_condvar.wait_while(g, |g| { info!("waiting for bps..."); g.0.is_none() }).unwrap();
+            g = self.block_producing_scheduler_condvar.wait_while(g, |g| { info!("waiting for bps..."); 
+                let not_yet = g.0.is_none();
+                if not_yet {
+                    *g.2 = Some(context.clone());
+                }
+                not_yet
+            }).unwrap();
             if let Some(inner) = g.1.take()
             {
                 S::from_inner(inner, context, result_with_timings)
