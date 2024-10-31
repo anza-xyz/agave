@@ -513,62 +513,6 @@ pub fn parse_program_v4_subcommand(
     Ok(response)
 }
 
-fn fetch_feature_set(rpc_client: &RpcClient) -> Result<FeatureSet, Box<dyn std::error::Error>> {
-    let mut feature_set = FeatureSet::default();
-    for feature_ids in FEATURE_NAMES
-        .keys()
-        .cloned()
-        .collect::<Vec<Pubkey>>()
-        .chunks(MAX_MULTIPLE_ACCOUNTS)
-    {
-        rpc_client
-            .get_multiple_accounts(feature_ids)?
-            .into_iter()
-            .zip(feature_ids)
-            .for_each(|(account, feature_id)| {
-                let activation_slot = account.and_then(status_from_account);
-
-                if let Some(CliFeatureStatus::Active(slot)) = activation_slot {
-                    feature_set.activate(feature_id, slot);
-                }
-            });
-    }
-
-    Ok(feature_set)
-}
-
-pub fn read_and_verify_elf(
-    program_location: &str,
-    rpc_client: &RpcClient,
-) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let feature_set = fetch_feature_set(rpc_client)?;
-
-    let mut file = File::open(program_location)
-        .map_err(|err| format!("Unable to open program file: {err}"))?;
-    let mut program_data = Vec::new();
-    file.read_to_end(&mut program_data)
-        .map_err(|err| format!("Unable to read program file: {err}"))?;
-
-    // Verify the program
-    let program_runtime_environment =
-        solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1(
-            &feature_set,
-            &ComputeBudget::default(),
-            true,
-            false,
-        )
-        .unwrap();
-    let executable =
-        Executable::<InvokeContext>::from_elf(&program_data, Arc::new(program_runtime_environment))
-            .map_err(|err| format!("ELF error: {err}"))?;
-
-    executable
-        .verify::<RequisiteVerifier>()
-        .map_err(|err| format!("ELF error: {err}"))?;
-
-    Ok(program_data)
-}
-
 pub fn process_program_v4_subcommand(
     rpc_client: Arc<RpcClient>,
     config: &CliConfig,
@@ -580,43 +524,30 @@ pub fn process_program_v4_subcommand(
             program_signer_index,
             authority_signer_index,
             use_rpc,
-        } => {
-            let program_data = read_and_verify_elf(program_location, &rpc_client)?;
-            let program_len = program_data.len() as u32;
-
-            process_deploy_program(
-                rpc_client,
-                &config,
-                authority_signer_index,
-                &config.signers[*program_signer_index].pubkey(),
-                &program_data,
-                program_len,
-                Some(config.signers[*program_signer_index]),
-                *use_rpc,
-            )
-        }
+        } => process_deploy_program(
+            rpc_client,
+            &config,
+            authority_signer_index,
+            &config.signers[*program_signer_index].pubkey(),
+            program_location,
+            Some(config.signers[*program_signer_index]),
+            *use_rpc,
+        ),
         ProgramV4CliCommand::Redeploy {
             program_location,
             program_address,
             buffer_signer_index,
             authority_signer_index,
             use_rpc,
-        } => {
-            let program_data = read_and_verify_elf(program_location, &rpc_client)?;
-            let program_len = program_data.len() as u32;
-            let buffer_signer = buffer_signer_index.map(|index| config.signers[index]);
-
-            process_deploy_program(
-                rpc_client,
-                &config,
-                authority_signer_index,
-                program_address,
-                &program_data,
-                program_len,
-                buffer_signer,
-                *use_rpc,
-            )
-        }
+        } => process_deploy_program(
+            rpc_client,
+            &config,
+            authority_signer_index,
+            program_address,
+            program_location,
+            buffer_signer_index.map(|index| config.signers[index]),
+            *use_rpc,
+        ),
         ProgramV4CliCommand::Undeploy {
             program_address,
             authority_signer_index,
@@ -669,14 +600,55 @@ pub fn process_deploy_program(
     config: &CliConfig,
     auth_signer_index: &SignerIndex,
     program_address: &Pubkey,
-    program_data: &[u8],
-    program_data_len: u32,
+    program_location: &str,
     buffer_signer: Option<&dyn Signer>,
     use_rpc: bool,
 ) -> ProcessResult {
     let blockhash = rpc_client.get_latest_blockhash()?;
     let payer_pubkey = config.signers[0].pubkey();
     let authority_pubkey = config.signers[*auth_signer_index].pubkey();
+
+    let mut feature_set = FeatureSet::default();
+    for feature_ids in FEATURE_NAMES
+        .keys()
+        .cloned()
+        .collect::<Vec<Pubkey>>()
+        .chunks(MAX_MULTIPLE_ACCOUNTS)
+    {
+        rpc_client
+            .get_multiple_accounts(feature_ids)?
+            .into_iter()
+            .zip(feature_ids)
+            .for_each(|(account, feature_id)| {
+                let activation_slot = account.and_then(status_from_account);
+
+                if let Some(CliFeatureStatus::Active(slot)) = activation_slot {
+                    feature_set.activate(feature_id, slot);
+                }
+            });
+    }
+
+    let mut file = File::open(program_location)
+        .map_err(|err| format!("Unable to open program file: {err}"))?;
+    let mut program_data = Vec::new();
+    file.read_to_end(&mut program_data)
+        .map_err(|err| format!("Unable to read program file: {err}"))?;
+
+    // Verify the program
+    let program_runtime_environment =
+        solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1(
+            &feature_set,
+            &ComputeBudget::default(),
+            true,
+            false,
+        )
+        .unwrap();
+    let executable =
+        Executable::<InvokeContext>::from_elf(&program_data, Arc::new(program_runtime_environment))
+            .map_err(|err| format!("ELF error: {err}"))?;
+    executable
+        .verify::<RequisiteVerifier>()
+        .map_err(|err| format!("ELF error: {err}"))?;
 
     let (initial_messages, balance_needed, buffer_address) =
         if let Some(buffer_signer) = buffer_signer {
@@ -687,7 +659,7 @@ pub fn process_deploy_program(
                 auth_signer_index,
                 program_address,
                 &buffer_address,
-                program_data_len,
+                program_data.len() as u32,
                 &blockhash,
             )?;
 
@@ -701,7 +673,7 @@ pub fn process_deploy_program(
                 rpc_client.clone(),
                 config,
                 auth_signer_index,
-                program_data_len,
+                program_data.len() as u32,
                 program_address,
             )
             .map(|(messages, balance_needed)| (messages, balance_needed, *program_address))?
@@ -1604,7 +1576,6 @@ mod tests {
     #[test]
     fn test_deploy() {
         let mut config = CliConfig::default();
-        let data = [5u8; 2048];
 
         let payer = keypair_from_seed(&[1u8; 32]).unwrap();
         let program_signer = keypair_from_seed(&[2u8; 32]).unwrap();
@@ -1618,8 +1589,7 @@ mod tests {
             &config,
             &1,
             &program_signer.pubkey(),
-            &data,
-            data.len() as u32,
+            &"tests/fixtures/noop.so",
             Some(&program_signer),
             true,
         )
@@ -1630,8 +1600,7 @@ mod tests {
             &config,
             &1,
             &program_signer.pubkey(),
-            &data,
-            data.len() as u32,
+            &"tests/fixtures/noop.so",
             Some(&program_signer),
             true,
         )
@@ -1642,8 +1611,7 @@ mod tests {
             &config,
             &1,
             &program_signer.pubkey(),
-            &data,
-            data.len() as u32,
+            &"tests/fixtures/noop.so",
             Some(&program_signer),
             true,
         )
@@ -1653,7 +1621,6 @@ mod tests {
     #[test]
     fn test_redeploy() {
         let mut config = CliConfig::default();
-        let data = [5u8; 2048];
 
         let payer = keypair_from_seed(&[1u8; 32]).unwrap();
         let program_address = Pubkey::new_unique();
@@ -1668,8 +1635,7 @@ mod tests {
             &config,
             &1,
             &program_address,
-            &data,
-            data.len() as u32,
+            &"tests/fixtures/noop.so",
             None,
             true,
         )
@@ -1680,8 +1646,7 @@ mod tests {
             &config,
             &1,
             &program_address,
-            &data,
-            data.len() as u32,
+            &"tests/fixtures/noop.so",
             None,
             true,
         )
@@ -1692,8 +1657,7 @@ mod tests {
             &config,
             &1,
             &program_address,
-            &data,
-            data.len() as u32,
+            &"tests/fixtures/noop.so",
             None,
             true,
         )
@@ -1704,8 +1668,7 @@ mod tests {
             &config,
             &1,
             &program_address,
-            &data,
-            data.len() as u32,
+            &"tests/fixtures/noop.so",
             None,
             true,
         )
@@ -1716,8 +1679,7 @@ mod tests {
             &config,
             &1,
             &program_address,
-            &data,
-            data.len() as u32,
+            &"tests/fixtures/noop.so",
             None,
             true,
         )
@@ -1728,8 +1690,7 @@ mod tests {
             &config,
             &1,
             &program_address,
-            &data,
-            data.len() as u32,
+            &"tests/fixtures/noop.so",
             None,
             true,
         )
@@ -1739,7 +1700,6 @@ mod tests {
     #[test]
     fn test_redeploy_from_source() {
         let mut config = CliConfig::default();
-        let data = [5u8; 2048];
 
         let payer = keypair_from_seed(&[1u8; 32]).unwrap();
         let buffer_signer = keypair_from_seed(&[2u8; 32]).unwrap();
@@ -1755,8 +1715,7 @@ mod tests {
             &config,
             &1,
             &program_address,
-            &data,
-            data.len() as u32,
+            &"tests/fixtures/noop.so",
             Some(&buffer_signer),
             true,
         )
@@ -1767,8 +1726,7 @@ mod tests {
             &config,
             &1,
             &program_address,
-            &data,
-            data.len() as u32,
+            &"tests/fixtures/noop.so",
             Some(&buffer_signer),
             true,
         )
@@ -1779,8 +1737,7 @@ mod tests {
             &config,
             &1,
             &program_address,
-            &data,
-            data.len() as u32,
+            &"tests/fixtures/noop.so",
             Some(&buffer_signer),
             true,
         )
