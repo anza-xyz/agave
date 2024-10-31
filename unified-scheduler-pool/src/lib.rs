@@ -666,6 +666,7 @@ pub enum SubchanneledPayload<P1: Aligned, P2: Aligned> {
     Payload(P1),
     OpenSubchannel(P2),
     CloseSubchannel(Unit),
+    Disconnect(Unit),
 }
 
 type NewTaskPayload = SubchanneledPayload<Task, Box<(SchedulingContext, ResultWithTimings)>>;
@@ -1531,7 +1532,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     }
                                     Ok(NewTaskPayload::OpenSubchannel(_context_and_result_with_timings)) =>
                                         unreachable!(),
-                                    Err(RecvError) => {
+                                    Ok(NewTaskPayload::Disconnect(_)) | Err(RecvError) => {
                                         // Mostly likely is that this scheduler is dropped for pruned blocks of
                                         // abandoned forks...
                                         // This short-circuiting is tested with test_scheduler_drop_short_circuiting.
@@ -1649,13 +1650,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 break;
                             }
                             Ok(NewTaskPayload::CloseSubchannel(_)) if matches!(state_machine.mode(), SchedulingMode::BlockProduction) => {
-                                if slot == 282254387 {
-                                    info!("the slot...");
-                                    result_with_timings = initialized_result_with_timings();
-                                    session_ending = false;
-                                    session_pausing = false;
-                                    break 'nonaborted_main_loop;
-                                }
                                 info!("ignoring duplicate CloseSubchannel...");
                             }
                             Ok(NewTaskPayload::Payload(task)) if matches!(state_machine.mode(), SchedulingMode::BlockProduction) => {
@@ -1666,7 +1660,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     log_scheduler!(trace, "rebuffer");
                                 }
                             }
-                            Err(_) => {
+                            Ok(NewTaskPayload::Disconnect(_)) | Err(_) => {
                                 // This unusual condition must be triggered by ThreadManager::drop().
                                 // Initialize result_with_timings with a harmless value...
                                 result_with_timings = initialized_result_with_timings();
@@ -1737,7 +1731,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         let Ok(banking_packet) = banking_packet else {
                             info!("disconnected banking_packet_receiver");
                             let current_thread = thread::current();
-                            if new_task_sender.upgrade().unwrap().send(NewTaskPayload::CloseSubchannel(enum_ptr::Unit::new()).into()).is_ok() {
+                            if new_task_sender.upgrade().unwrap().send(NewTaskPayload::Disconnect(enum_ptr::Unit::new()).into()).is_ok() {
                                 info!("notified a disconnect from {:?}", current_thread);
                             } else {
                                 // It seems that the scheduler thread has been aborted already...
