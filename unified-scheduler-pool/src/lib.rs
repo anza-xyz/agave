@@ -96,6 +96,7 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     supported_scheduling_mode: SupportedSchedulingMode,
     scheduler_inners: Mutex<Vec<(S::Inner, Instant)>>,
     block_producing_scheduler_inner: Mutex<(Option<(SchedulerId, Arc<BlockProducingUnifiedScheduler>)>, Option<S::Inner>)>,
+    block_producing_scheduler_condvar: Condvar,
     trashed_scheduler_inners: Mutex<Vec<S::Inner>>,
     timeout_listeners: Mutex<Vec<(TimeoutListener, Instant)>>,
     handler_count: usize,
