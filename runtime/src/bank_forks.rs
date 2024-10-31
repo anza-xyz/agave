@@ -243,14 +243,6 @@ impl BankForks {
         bank: Arc<Bank>,
         is_reinstall: bool,
     ) -> BankWithScheduler {
-        if !is_reinstall && bank.slot() == 0 && matches!(mode, SchedulingMode::BlockProduction) {
-            info!(
-                "Inserting bank (slot: {}) WITHOUT scheduler into bank_forks...",
-                bank.slot()
-            );
-            warn!("bt: {:?} {:?}", std::thread::current(), std::backtrace::Backtrace::force_capture());
-            return BankWithScheduler::new_without_scheduler(bank);
-        }
         if is_reinstall {
             info!(
                 "Reinserting bank (slot: {}) with scheduler into bank_forks...",
