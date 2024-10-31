@@ -709,7 +709,7 @@ impl BankingStage {
         let s: Arc<Mutex<Option<Arc<solana_unified_scheduler_pool::BlockProducingUnifiedScheduler>>>> = Arc::new(Mutex::new(None));
         let s2 = s.clone();
         let decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
-        let ss = unified_scheduler_pool.spawn_banking_scheduler(bank_forks, non_vote_receiver,
+        let ss = unified_scheduler_pool.spawn_banking_scheduler(&bank_forks, non_vote_receiver,
             move |aaa| {
                 let decision = decision_maker.make_consume_or_forward_decision();
                 if matches!(decision, BufferedPacketsDecision::Forward) {
