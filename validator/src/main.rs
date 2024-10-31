@@ -1309,13 +1309,13 @@ pub fn main() {
             .ok()
             .map(|mb| mb * MB as u64),
         ancient_append_vec_offset: value_t!(matches, "accounts_db_ancient_append_vecs", i64).ok(),
-        ancient_ideal_storage_size: value_t!(
+        ancient_storage_ideal_size: value_t!(
             matches,
-            "accounts_db_ancient_ideal_storage_size",
+            "accounts_db_ancient_storage_ideal_size",
             u64
         )
         .ok(),
-        ancient_storages_max: value_t!(matches, "accounts_db_ancient_storages_max", usize).ok(),
+        max_ancient_storages: value_t!(matches, "accounts_db_max_ancient_storages", usize).ok(),
         exhaustively_verify_refcounts: matches.is_present("accounts_db_verify_refcounts"),
         create_ancient_storage,
         test_partitioned_epoch_rewards,
