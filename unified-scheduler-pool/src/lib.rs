@@ -429,6 +429,7 @@ where
                 let banking_context = Some((recv, on_banking_packet_receive));
                 let s = S::spawn(self.self_arc(), context, initialized_result_with_timings(), banking_context);
                 let bps = Arc::new(s.create_block_producing_scheduler());
+                let mut g = self.block_producing_scheduler_inner.lock().expect("not poisoned");
                 assert!(g.0.replace((s.id(), bps)).is_none());
                 s
             };
