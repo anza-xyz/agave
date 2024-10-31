@@ -422,15 +422,23 @@ where
         let context = SchedulingContext::new(SchedulingMode::BlockProduction, root_bank);
         let scheduler = {
             let banking_context = Some((recv, on_banking_packet_receive));
+            info!("fsa1");
             let s = S::spawn(self.self_arc(), context, initialized_result_with_timings(), banking_context);
+            info!("fsa2");
             let bps = Arc::new(s.create_block_producing_scheduler());
+            info!("fsa3");
             let mut g = self.block_producing_scheduler_inner.lock().expect("not poisoned");
+            info!("fsa4");
             assert!(g.0.replace((s.id(), bps)).is_none());
+            info!("fsa5");
             s
         };
         let id = scheduler.id();
+        info!("fsa6");
         self.return_scheduler(scheduler.into_inner().1, id, false);
+        info!("fsa7");
         let bps = self.block_producing_scheduler_inner.lock().unwrap().0.as_ref().map(|(id, bps)| bps).cloned().unwrap();
+        info!("fsa8");
         self.block_producing_scheduler_condvar.notify_all();
         info!("flash session: end!");
         bps
