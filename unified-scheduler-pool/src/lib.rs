@@ -425,15 +425,17 @@ where
 
     pub fn spawn_banking_scheduler(&self, bank_forks: &BankForks, recv: BankingPacketReceiver, on_banking_packet_receive: impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static) -> Arc<BlockProducingUnifiedScheduler> {
         info!("flash session: start!");
-        let context = SchedulingContext::new(SchedulingMode::BlockProduction, root_bank);
         let scheduler = {
             let banking_context = Some((recv, on_banking_packet_receive));
             info!("fsa1");
+            let mut g = self.block_producing_scheduler_inner.lock().expect("not poisoned");
+            let context = g.2.take().unwrap_or_else(|| {
+                SchedulingContext::new(SchedulingMode::BlockProduction, bank_forks.read().unwrap().root_bank())
+            });
             let s = S::spawn(self.self_arc(), context, initialized_result_with_timings(), banking_context);
             info!("fsa2");
             let bps = Arc::new(s.create_block_producing_scheduler());
             info!("fsa3");
-            let mut g = self.block_producing_scheduler_inner.lock().expect("not poisoned");
             info!("fsa4");
             assert!(g.0.replace((s.id(), bps)).is_none());
             info!("fsa5");
