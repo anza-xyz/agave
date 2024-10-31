@@ -434,6 +434,7 @@ where
             };
             let id = scheduler.id();
             self.return_scheduler(scheduler.into_inner().1, id, false);
+            self.block_producing_scheduler_condvar.notify_all();
             info!("flash session: end!");
             self.block_producing_scheduler_inner.lock().unwrap().0.as_ref().map(|(id, bps)| bps).cloned().unwrap()
         }
