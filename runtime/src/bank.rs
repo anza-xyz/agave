@@ -1940,6 +1940,15 @@ impl Bank {
         // More generally, this code always re-calculates for possible sysvar data size change,
         // although there is no such sysvars currently.
         self.adjust_sysvar_balance_for_rent(&mut new_account);
+
+        // When new sysvar comes into existence, this code ensures that the
+        // sysvar's rent_epoch is set to RENT_EXEMPT_EPOCH (i.e. U64::MAX). This
+        // is because sysvars are never deleted, and are always rent exempt.
+        // Currently, it relies on rent collection code to update rent_epoch to
+        // RENT_EXEMPT_EPOCH. In the future, we will remove rent collection
+        // code. Therefore, we should set rent_epoch here, and don't depend on
+        // rent collection code to update rent_epoch..
+        self.adjust_sysvar_rent_epoch(&mut new_account);
         self.store_account_and_update_capitalization(pubkey, &new_account);
     }
 
@@ -6686,6 +6695,10 @@ impl Bank {
             self.get_minimum_balance_for_rent_exemption(account.data().len())
                 .max(account.lamports()),
         );
+    }
+
+    fn adjust_sysvar_rent_epoch(&self, account: &mut AccountSharedData) {
+        account.set_rent_epoch(solana_sdk::rent_collector::RENT_EXEMPT_RENT_EPOCH);
     }
 
     /// Compute the active feature set based on the current bank state,
