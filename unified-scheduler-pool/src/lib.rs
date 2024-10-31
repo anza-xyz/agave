@@ -425,11 +425,13 @@ where
         } else {
             info!("flash session: start!");
             let context = SchedulingContext::new(SchedulingMode::BlockProduction, root_bank);
-            let scheduler = self.do_take_resumed_scheduler(
-                context,
-                initialized_result_with_timings(),
-                Some((recv, on_banking_packet_receive)),
-            );
+            let scheduler = {
+                let banking_context = Some((recv, on_banking_packet_receive));
+                let s = S::spawn(self.self_arc(), context, initialized_result_with_timings(), banking_context);
+                let bps = Arc::new(s.create_block_producing_scheduler());
+                assert!(g.0.replace((s.id(), bps)).is_none());
+                s
+            };
             let id = scheduler.id();
             self.return_scheduler(scheduler.into_inner().1, id, false);
             info!("flash session: end!");
