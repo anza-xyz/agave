@@ -14,20 +14,20 @@
 ## **1. Install rustc, cargo and rustfmt.**
 
 ```bash
-$ curl https://sh.rustup.rs -sSf | sh
-$ source $HOME/.cargo/env
-$ rustup component add rustfmt
+curl https://sh.rustup.rs -sSf | sh
+source $HOME/.cargo/env
+rustup component add rustfmt
 ```
 
 When building the master branch, please make sure you are using the latest stable rust version by running:
 
 ```bash
-$ rustup update
+rustup update
 ```
 
 When building a specific release branch, you should check the rust version in `ci/rust-version.sh` and if necessary, install that version by running:
 ```bash
-$ rustup install VERSION
+rustup install VERSION
 ```
 Note that if this is not the latest rust version on your machine, cargo commands may require an [override](https://rust-lang.github.io/rustup/overrides.html) in order to use the correct version.
 
@@ -35,26 +35,26 @@ On Linux systems you may need to install libssl-dev, pkg-config, zlib1g-dev, pro
 
 On Ubuntu:
 ```bash
-$ sudo apt-get update
-$ sudo apt-get install libssl-dev libudev-dev pkg-config zlib1g-dev llvm clang cmake make libprotobuf-dev protobuf-compiler
+sudo apt-get update
+sudo apt-get install libssl-dev libudev-dev pkg-config zlib1g-dev llvm clang cmake make libprotobuf-dev protobuf-compiler
 ```
 
 On Fedora:
 ```bash
-$ sudo dnf install openssl-devel systemd-devel pkg-config zlib-devel llvm clang cmake make protobuf-devel protobuf-compiler perl-core
+sudo dnf install openssl-devel systemd-devel pkg-config zlib-devel llvm clang cmake make protobuf-devel protobuf-compiler perl-core
 ```
 
 ## **2. Download the source code.**
 
 ```bash
-$ git clone https://github.com/anza-xyz/agave.git
-$ cd agave
+git clone https://github.com/anza-xyz/agave.git
+cd agave
 ```
 
 ## **3. Build.**
 
 ```bash
-$ ./cargo build
+./cargo build
 ```
 
 # Testing
@@ -62,7 +62,7 @@ $ ./cargo build
 **Run the test suite:**
 
 ```bash
-$ ./cargo test
+./cargo test
 ```
 
 ### Starting a local testnet
@@ -80,13 +80,13 @@ First, install the nightly build of rustc. `cargo bench` requires the use of the
 unstable features only available in the nightly build.
 
 ```bash
-$ rustup install nightly
+rustup install nightly
 ```
 
 Run the benchmarks:
 
 ```bash
-$ cargo +nightly bench
+cargo +nightly bench
 ```
 
 # Release Process
@@ -98,8 +98,8 @@ The release process for this project is described [here](RELEASE.md).
 To generate code coverage statistics:
 
 ```bash
-$ scripts/coverage.sh
-$ open target/cov/lcov-local/index.html
+scripts/coverage.sh
+open target/cov/lcov-local/index.html
 ```
 
 Why coverage? While most see coverage as a code quality metric, we see it primarily as a developer
