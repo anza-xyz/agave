@@ -1858,14 +1858,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
     fn ensure_join_threads_after_abort(
         &mut self,
         should_receive_aborted_session_result: bool,
-    ) -> TransactionError {
+    ) {
         self.ensure_join_threads(should_receive_aborted_session_result);
-        self.session_result_with_timings
-            .as_mut()
-            .unwrap()
-            .0
-            .clone()
-            .unwrap_err()
     }
 
     fn are_threads_joined(&self) -> bool {
@@ -2057,7 +2051,15 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
     fn recover_error_after_abort(&mut self) -> TransactionError {
         self.inner
             .thread_manager
-            .ensure_join_threads_after_abort(true)
+            .ensure_join_threads_after_abort(true);
+        self.inner
+            .thread_manager
+            .session_result_with_timings
+            .as_mut()
+            .unwrap()
+            .0
+            .clone()
+            .unwrap_err()
     }
 
     fn wait_for_termination(
