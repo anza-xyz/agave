@@ -488,7 +488,7 @@ where
             return None;
         }
 
-        Some(Box::new(self.do_take_resumed_scheduler(context, result_with_timings, None::<(_, fn(BankingPacketBatch) -> Vec<Task>)>)))
+        Some(Box::new(self.do_take_resumed_scheduler(context, result_with_timings)))
     }
 
     fn register_timeout_listener(&self, timeout_listener: TimeoutListener) {
