@@ -407,7 +407,7 @@ where
             }
         } else {
             let mut g = self.block_producing_scheduler_inner.lock().expect("not poisoned");
-            g = self.block_producing_scheduler_condvar.wait_while(g, |g| { g.0.is_none() }).unwrap();
+            g = self.block_producing_scheduler_condvar.wait_while(g, |g| { info!("waiting for bps..."); g.0.is_none() }).unwrap();
             if let Some(inner) = g.1.take()
             {
                 S::from_inner(inner, context, result_with_timings)
