@@ -66,12 +66,14 @@ pub enum ProgramV4CliCommand {
         program_location: String,
         program_signer_index: SignerIndex,
         authority_signer_index: SignerIndex,
+        use_rpc: bool,
     },
     Redeploy {
         program_location: String,
         program_address: Pubkey,
         buffer_signer_index: Option<SignerIndex>,
         authority_signer_index: SignerIndex,
+        use_rpc: bool,
     },
     Undeploy {
         program_address: Pubkey,
@@ -138,7 +140,10 @@ impl ProgramV4SubCommands for App<'_, '_> {
                                 .help(
                                     "Program authority [default: the default configured keypair]",
                                 ),
-                        ),
+                        )
+                        .arg(Arg::with_name("use_rpc").long("use-rpc").help(
+                            "Send transactions to the configured RPC instead of validator TPUs",
+                        )),
                 )
                 .subcommand(
                     SubCommand::with_name("redeploy")
@@ -177,7 +182,10 @@ impl ProgramV4SubCommands for App<'_, '_> {
                                 .help(
                                     "Program authority [default: the default configured keypair]",
                                 ),
-                        ),
+                        )
+                        .arg(Arg::with_name("use_rpc").long("use-rpc").help(
+                            "Send transactions to the configured RPC instead of validator TPUs",
+                        )),
                 )
                 .subcommand(
                     SubCommand::with_name("undeploy")
@@ -352,6 +360,7 @@ pub fn parse_program_v4_subcommand(
                     authority_signer_index: signer_info
                         .index_of(authority_pubkey)
                         .expect("Authority signer is missing"),
+                    use_rpc: matches.is_present("use_rpc"),
                 }),
                 signers: signer_info.signers,
             }
@@ -389,6 +398,7 @@ pub fn parse_program_v4_subcommand(
                     authority_signer_index: signer_info
                         .index_of(authority_pubkey)
                         .expect("Authority signer is missing"),
+                    use_rpc: matches.is_present("use_rpc"),
                 }),
                 signers: signer_info.signers,
             }
@@ -569,6 +579,7 @@ pub fn process_program_v4_subcommand(
             program_location,
             program_signer_index,
             authority_signer_index,
+            use_rpc,
         } => {
             let program_data = read_and_verify_elf(program_location, &rpc_client)?;
             let program_len = program_data.len() as u32;
@@ -581,6 +592,7 @@ pub fn process_program_v4_subcommand(
                 &program_data,
                 program_len,
                 Some(config.signers[*program_signer_index]),
+                *use_rpc,
             )
         }
         ProgramV4CliCommand::Redeploy {
@@ -588,6 +600,7 @@ pub fn process_program_v4_subcommand(
             program_address,
             buffer_signer_index,
             authority_signer_index,
+            use_rpc,
         } => {
             let program_data = read_and_verify_elf(program_location, &rpc_client)?;
             let program_len = program_data.len() as u32;
@@ -601,6 +614,7 @@ pub fn process_program_v4_subcommand(
                 &program_data,
                 program_len,
                 buffer_signer,
+                *use_rpc,
             )
         }
         ProgramV4CliCommand::Undeploy {
@@ -658,6 +672,7 @@ pub fn process_deploy_program(
     program_data: &[u8],
     program_data_len: u32,
     buffer_signer: Option<&dyn Signer>,
+    use_rpc: bool,
 ) -> ProcessResult {
     let blockhash = rpc_client.get_latest_blockhash()?;
     let payer_pubkey = config.signers[0].pubkey();
@@ -747,6 +762,7 @@ pub fn process_deploy_program(
         &write_messages,
         &final_messages,
         buffer_signer,
+        use_rpc,
     )?;
 
     let program_id = CliProgramId {
@@ -805,6 +821,7 @@ fn process_undeploy_program(
         &[],
         &[],
         None,
+        true,
     )?;
 
     let program_id = CliProgramId {
@@ -844,6 +861,7 @@ fn process_transfer_authority_of_program(
         &[],
         &[],
         None,
+        true,
     )?;
 
     let program_id = CliProgramId {
@@ -883,6 +901,7 @@ fn process_finalize_program(
         &[],
         &[],
         None,
+        true,
     )?;
 
     let program_id = CliProgramId {
@@ -1004,6 +1023,7 @@ fn send_messages(
     write_messages: &[Message],
     final_messages: &[Message],
     program_signer: Option<&dyn Signer>,
+    use_rpc: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     for message in initial_messages {
         if message.header.num_required_signatures == 3 {
@@ -1086,14 +1106,16 @@ fn send_messages(
                         solana_client::tpu_client::TpuClientConfig::default(),
                         cache,
                     );
-                let tpu_client = rpc_client
-                    .runtime()
-                    .block_on(tpu_client_fut)
-                    .expect("Should return a valid tpu client");
+                let tpu_client = (!use_rpc).then(|| {
+                    rpc_client
+                        .runtime()
+                        .block_on(tpu_client_fut)
+                        .expect("Should return a valid tpu client")
+                });
 
                 send_and_confirm_transactions_in_parallel_blocking_v2(
                     rpc_client.clone(),
-                    Some(tpu_client),
+                    tpu_client,
                     write_messages,
                     &[config.signers[0], config.signers[*auth_signer_index]],
                     SendAndConfirmConfigV2 {
@@ -1599,6 +1621,7 @@ mod tests {
             &data,
             data.len() as u32,
             Some(&program_signer),
+            true,
         )
         .is_ok());
 
@@ -1610,6 +1633,7 @@ mod tests {
             &data,
             data.len() as u32,
             Some(&program_signer),
+            true,
         )
         .is_err());
 
@@ -1621,6 +1645,7 @@ mod tests {
             &data,
             data.len() as u32,
             Some(&program_signer),
+            true,
         )
         .is_err());
     }
@@ -1646,6 +1671,7 @@ mod tests {
             &data,
             data.len() as u32,
             None,
+            true,
         )
         .is_err());
 
@@ -1657,6 +1683,7 @@ mod tests {
             &data,
             data.len() as u32,
             None,
+            true,
         )
         .is_ok());
 
@@ -1668,6 +1695,7 @@ mod tests {
             &data,
             data.len() as u32,
             None,
+            true,
         )
         .is_ok());
 
@@ -1679,6 +1707,7 @@ mod tests {
             &data,
             data.len() as u32,
             None,
+            true,
         )
         .is_err());
 
@@ -1690,6 +1719,7 @@ mod tests {
             &data,
             data.len() as u32,
             None,
+            true,
         )
         .is_err());
 
@@ -1701,6 +1731,7 @@ mod tests {
             &data,
             data.len() as u32,
             None,
+            true,
         )
         .is_err());
     }
@@ -1727,6 +1758,7 @@ mod tests {
             &data,
             data.len() as u32,
             Some(&buffer_signer),
+            true,
         )
         .is_err());
 
@@ -1738,6 +1770,7 @@ mod tests {
             &data,
             data.len() as u32,
             Some(&buffer_signer),
+            true,
         )
         .is_err());
 
@@ -1749,6 +1782,7 @@ mod tests {
             &data,
             data.len() as u32,
             Some(&buffer_signer),
+            true,
         )
         .is_err());
     }
@@ -1908,6 +1942,7 @@ mod tests {
                     program_location: "/Users/test/program.so".to_string(),
                     program_signer_index: 1,
                     authority_signer_index: 2,
+                    use_rpc: false,
                 }),
                 signers: vec![
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
@@ -1954,6 +1989,7 @@ mod tests {
                     program_address: program_keypair.pubkey(),
                     authority_signer_index: 1,
                     buffer_signer_index: None,
+                    use_rpc: false,
                 }),
                 signers: vec![
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
@@ -1986,6 +2022,7 @@ mod tests {
                     program_address: program_keypair.pubkey(),
                     buffer_signer_index: Some(1),
                     authority_signer_index: 2,
+                    use_rpc: false,
                 }),
                 signers: vec![
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
