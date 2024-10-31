@@ -617,7 +617,7 @@ pub struct AccountsAddRootTiming {
 /// |  older  |<- abs(offset) ->|<- slots in an epoch ->| max root
 /// | ancient |                 modern                  |
 ///
-/// Note that another constant ANCIENT_STORAGES_MAX sets a
+/// Note that another constant DEFAULT_MAX_ANCIENT_STORAGES sets a
 /// threshold for combining ancient storages so that their overall
 /// number is under a certain limit, whereas this constant establishes
 /// the distance from the max root slot beyond which storages holding
