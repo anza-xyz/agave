@@ -390,7 +390,6 @@ where
         &self,
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
-        banking_context: Option<(BankingPacketReceiver, impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static)>,
     ) -> S {
         assert_matches!(result_with_timings, (Ok(_), _));
 
@@ -401,8 +400,7 @@ where
             {
                 S::from_inner(inner, context, result_with_timings)
             } else {
-                assert!(banking_context.is_none());
-                S::spawn(self.self_arc(), context, result_with_timings, banking_context)
+                S::spawn(self.self_arc(), context, result_with_timings, None)
             }
         } else {
             let mut g = self.block_producing_scheduler_inner.lock().expect("not poisoned");
@@ -410,10 +408,7 @@ where
             {
                 S::from_inner(inner, context, result_with_timings)
             } else {
-                let s = S::spawn(self.self_arc(), context, result_with_timings, banking_context);
-                let bps = Arc::new(s.create_block_producing_scheduler());
-                assert!(g.0.replace((s.id(), bps)).is_none());
-                s
+                panic!();
             }
         }
     }
