@@ -410,7 +410,7 @@ where
             g = self.block_producing_scheduler_condvar.wait_while(g, |g| { info!("waiting for bps..."); 
                 let not_yet = g.0.is_none();
                 if not_yet {
-                    *g.2 = Some(context.clone());
+                    g.2 = Some(context.clone());
                 }
                 not_yet
             }).unwrap();
