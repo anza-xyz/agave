@@ -12372,6 +12372,17 @@ where
     let bank = new_from_parent_next_epoch(bank, &bank_forks, 2);
     bank.freeze(); // trigger rent collection
 
+    // advance to the next slot to create a new bank, which is cleanable. The
+    // previous bank is at epoch boundary. An epoch boundary bank is not
+    // cleanable because epoch rewards sysvar is written in this slot. Before
+    // #3398, it was cleanable because rent collection will rewrite the epoch
+    // rewards sysvar due to rent_epoch not setting to u64::MAX. With #3398,
+    // rent_epoch is set to u64::MAX at creating time, so epoch rewards sysvar
+    // is not rewritten. Therefore, the slot at epoch boundary is now
+    // uncleanable. This is why we need to advance to the next slot.
+    let slot = bank.slot() + 1;
+    let bank = new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &collector, slot);
+
     // create zero-lamports account to be cleaned
     let account = AccountSharedData::new(0, len1, &program);
     let slot = bank.slot() + 1;
@@ -12419,9 +12430,9 @@ fn test_create_zero_lamport_with_clean() {
         bank.squash();
         bank.force_flush_accounts_cache();
         // do clean and assert that it actually did its job
-        assert_eq!(5, bank.get_snapshot_storages(None).len());
+        assert_eq!(6, bank.get_snapshot_storages(None).len());
         bank.clean_accounts();
-        assert_eq!(4, bank.get_snapshot_storages(None).len());
+        assert_eq!(5, bank.get_snapshot_storages(None).len());
     });
 }
 
