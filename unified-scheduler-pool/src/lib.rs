@@ -206,6 +206,7 @@ where
             supported_scheduling_mode,
             scheduler_inners: Mutex::default(),
             block_producing_scheduler_inner: Mutex::default(),
+            block_producing_scheduler_condvar: Condvar::new(),
             trashed_scheduler_inners: Mutex::default(),
             timeout_listeners: Mutex::default(),
             handler_count,
