@@ -185,22 +185,23 @@ impl<T: Serialize + Clone> StatusCache<T> {
         let max_key_index = key.as_ref().len().saturating_sub(CACHED_KEY_SIZE + 1);
 
         // Get the cache entry for this blockhash.
-        let hash_map = self.cache.entry(*transaction_blockhash).or_insert_with(|| {
-            let key_index = thread_rng().gen_range(0..max_key_index + 1);
-            (slot, key_index, HashMap::new())
-        });
+        let (max_slot, key_index, hash_map) =
+            self.cache.entry(*transaction_blockhash).or_insert_with(|| {
+                let key_index = thread_rng().gen_range(0..max_key_index + 1);
+                (slot, key_index, HashMap::new())
+            });
 
         // Update the max slot observed to contain txs using this blockhash.
-        hash_map.0 = std::cmp::max(slot, hash_map.0);
+        *max_slot = std::cmp::max(slot, *max_slot);
 
         // Grab the key slice.
-        let key_index = hash_map.1.min(max_key_index);
+        let key_index = (*key_index).min(max_key_index);
         let mut key_slice = [0u8; CACHED_KEY_SIZE];
         key_slice.clone_from_slice(&key.as_ref()[key_index..key_index + CACHED_KEY_SIZE]);
 
         // Insert the slot and tx result into the cache entry associated with
         // this blockhash and keyslice.
-        let forks = hash_map.2.entry(key_slice).or_default();
+        let forks = hash_map.entry(key_slice).or_default();
         forks.push((slot, res.clone()));
 
         self.add_to_slot_delta(transaction_blockhash, slot, key_index, key_slice, res);
