@@ -37,7 +37,6 @@ use {
     solana_sdk::{
         account::Account,
         feature_set::{FeatureSet, FEATURE_NAMES},
-        hash::Hash,
         instruction::Instruction,
         loader_v4::{
             self, LoaderV4State,
@@ -565,6 +564,7 @@ pub fn process_deploy_program(
     let payer_pubkey = config.signers[0].pubkey();
     let authority_pubkey = config.signers[*auth_signer_index].pubkey();
 
+    // Download feature set
     let mut feature_set = FeatureSet::default();
     for feature_ids in FEATURE_NAMES
         .keys()
@@ -585,6 +585,7 @@ pub fn process_deploy_program(
             });
     }
 
+    // Load program ELF from filesystem
     let mut file = File::open(program_location)
         .map_err(|err| format!("Unable to open program file: {err}"))?;
     let mut program_data = Vec::new();
@@ -612,6 +613,9 @@ pub fn process_deploy_program(
         upload_range.end,
         program_data.len(),
     );
+    let lamports_required = rpc_client.get_minimum_balance_for_rent_exemption(
+        LoaderV4State::program_data_offset().saturating_add(program_data.len() as usize),
+    )?;
 
     // Verify the program
     let program_runtime_environment =
@@ -629,42 +633,82 @@ pub fn process_deploy_program(
         .verify::<RequisiteVerifier>()
         .map_err(|err| format!("ELF error: {err}"))?;
 
-    let (initial_messages, balance_needed, buffer_address) =
-        if let Some(buffer_signer) = buffer_signer {
-            let buffer_address = buffer_signer.pubkey();
-            let (create_buffer_message, required_lamports) = build_create_buffer_message(
-                rpc_client.clone(),
-                config,
-                auth_signer_index,
-                program_address,
-                &buffer_address,
-                program_data.len() as u32,
-                &blockhash,
-            )?;
+    // Create and add retract message
+    let mut initial_messages = Vec::default();
+    let program_account = rpc_client
+        .get_account_with_commitment(program_address, config.commitment)?
+        .value;
+    let program_account_exists = program_account.is_some();
+    let mut retract_instruction = None;
+    if let Some(program_account) = program_account.as_ref() {
+        retract_instruction =
+            build_retract_instruction(program_account, program_address, &authority_pubkey)?;
+    }
 
-            if let Some(message) = create_buffer_message {
-                (vec![message], required_lamports, buffer_address)
-            } else {
-                (vec![], 0, buffer_address)
-            }
-        } else {
-            build_retract_and_truncate_messages(
-                rpc_client.clone(),
-                config,
-                auth_signer_index,
-                program_data.len() as u32,
-                program_address,
-            )
-            .map(|(messages, balance_needed)| (messages, balance_needed, *program_address))?
-        };
+    let (buffer_address, buffer_account) = if let Some(buffer_signer) = buffer_signer {
+        // Deploy new program or redeploy with a buffer account
+        let buffer_address = buffer_signer.pubkey();
+        let buffer_account = rpc_client
+            .get_account_with_commitment(&buffer_address, config.commitment)?
+            .value;
+        if buffer_account.is_none() {
+            // Create and add create_buffer message
+            initial_messages.push(Message::new_with_blockhash(
+                &loader_v4::create_buffer(
+                    &payer_pubkey,
+                    &buffer_address,
+                    lamports_required,
+                    &authority_pubkey,
+                    program_data.len() as u32,
+                    &payer_pubkey,
+                ),
+                Some(&payer_pubkey),
+                &blockhash,
+            ));
+        }
+        (buffer_address, buffer_account)
+    } else {
+        // Redeploy without a buffer account
+        (*program_address, program_account)
+    };
+
+    if buffer_signer.is_none() || &buffer_address != program_address {
+        // Redeploy an existing program
+        if !program_account_exists {
+            return Err("Program account does not exist".into());
+        }
+    } else {
+        // Deploy new program
+        if program_account_exists {
+            return Err("Program account does exist already".into());
+        }
+    }
+
+    // Create and add truncate message
+    if let Some(buffer_account) = buffer_account.as_ref() {
+        let (truncate_instructions, _lamports_required) = build_truncate_instructions(
+            rpc_client.clone(),
+            config,
+            auth_signer_index,
+            buffer_account,
+            &buffer_address,
+            program_data.len() as u32,
+        )?;
+        if !truncate_instructions.is_empty() {
+            initial_messages.push(Message::new_with_blockhash(
+                &truncate_instructions,
+                Some(&payer_pubkey),
+                &blockhash,
+            ));
+        }
+    }
 
     // Create and add write messages
+    let mut write_messages = vec![];
     let create_msg = |offset: u32, bytes: Vec<u8>| {
         let instruction = loader_v4::write(&buffer_address, &authority_pubkey, offset, bytes);
         Message::new_with_blockhash(&[instruction], Some(&payer_pubkey), &blockhash)
     };
-
-    let mut write_messages = vec![];
     let chunk_size = calculate_max_chunk_size(&create_msg);
     for (chunk, i) in program_data[upload_range.clone()]
         .chunks(chunk_size)
@@ -676,27 +720,42 @@ pub fn process_deploy_program(
         ));
     }
 
-    let final_messages = if *program_address != buffer_address {
-        build_retract_and_deploy_messages(
-            rpc_client.clone(),
-            config,
-            auth_signer_index,
+    // Create and add deploy messages
+    let final_messages = [if &buffer_address != program_address {
+        // Redeploy with a buffer account
+        let mut instructions = Vec::default();
+        if let Some(retract_instruction) = retract_instruction {
+            instructions.push(retract_instruction);
+        }
+        instructions.push(loader_v4::deploy_from_source(
             program_address,
+            &authority_pubkey,
             &buffer_address,
-        )?
+        ));
+        Message::new_with_blockhash(&instructions, Some(&payer_pubkey), &blockhash)
     } else {
-        // Create and add deploy message
-        vec![Message::new_with_blockhash(
+        // Deploy new program or redeploy without a buffer account
+        if let Some(retract_instruction) = retract_instruction {
+            initial_messages.insert(
+                0,
+                Message::new_with_blockhash(
+                    &[retract_instruction],
+                    Some(&payer_pubkey),
+                    &blockhash,
+                ),
+            );
+        }
+        Message::new_with_blockhash(
             &[loader_v4::deploy(program_address, &authority_pubkey)],
             Some(&payer_pubkey),
             &blockhash,
-        )]
-    };
+        )
+    }];
 
     check_payer(
         rpc_client.clone(),
         config,
-        balance_needed,
+        lamports_required,
         &initial_messages,
         &write_messages,
         &final_messages,
@@ -1104,175 +1163,6 @@ fn send_messages(
     }
 
     Ok(())
-}
-
-fn build_create_buffer_message(
-    rpc_client: Arc<RpcClient>,
-    config: &CliConfig,
-    auth_signer_index: &SignerIndex,
-    program_address: &Pubkey,
-    buffer_address: &Pubkey,
-    program_data_length: u32,
-    blockhash: &Hash,
-) -> Result<(Option<Message>, u64), Box<dyn std::error::Error>> {
-    let payer_pubkey = config.signers[0].pubkey();
-    let authority_pubkey = config.signers[*auth_signer_index].pubkey();
-    let expected_account_data_len =
-        LoaderV4State::program_data_offset().saturating_add(program_data_length as usize);
-    let lamports_required =
-        rpc_client.get_minimum_balance_for_rent_exemption(expected_account_data_len)?;
-
-    if let Some(account) = rpc_client
-        .get_account_with_commitment(buffer_address, config.commitment)?
-        .value
-    {
-        if !loader_v4::check_id(&account.owner) {
-            return Err("Buffer account passed is already in use by another program".into());
-        }
-
-        if account.lamports < lamports_required || account.data.len() != expected_account_data_len {
-            if program_address == buffer_address {
-                return Err(
-                    "Buffer account passed could be for a different deploy? It has different \
-                     size/lamports"
-                        .into(),
-                );
-            }
-
-            let (truncate_instructions, balance_needed) = build_truncate_instructions(
-                rpc_client,
-                config,
-                auth_signer_index,
-                &account,
-                buffer_address,
-                program_data_length,
-            )?;
-            if !truncate_instructions.is_empty() {
-                Ok((
-                    Some(Message::new_with_blockhash(
-                        &truncate_instructions,
-                        Some(&payer_pubkey),
-                        blockhash,
-                    )),
-                    balance_needed,
-                ))
-            } else {
-                Ok((None, 0))
-            }
-        } else {
-            Ok((None, 0))
-        }
-    } else {
-        Ok((
-            Some(Message::new_with_blockhash(
-                &loader_v4::create_buffer(
-                    &payer_pubkey,
-                    buffer_address,
-                    lamports_required,
-                    &authority_pubkey,
-                    program_data_length,
-                    &payer_pubkey,
-                ),
-                Some(&payer_pubkey),
-                blockhash,
-            )),
-            lamports_required,
-        ))
-    }
-}
-
-fn build_retract_and_truncate_messages(
-    rpc_client: Arc<RpcClient>,
-    config: &CliConfig,
-    auth_signer_index: &SignerIndex,
-    program_data_len: u32,
-    program_address: &Pubkey,
-) -> Result<(Vec<Message>, u64), Box<dyn std::error::Error>> {
-    let blockhash = rpc_client.get_latest_blockhash()?;
-    let payer_pubkey = config.signers[0].pubkey();
-    let authority_pubkey = config.signers[*auth_signer_index].pubkey();
-    let Some(program_account) = rpc_client
-        .get_account_with_commitment(program_address, config.commitment)?
-        .value
-    else {
-        return Err("Program account does not exist".into());
-    };
-
-    let retract_instruction =
-        build_retract_instruction(&program_account, program_address, &authority_pubkey)?;
-
-    let mut messages = if let Some(instruction) = retract_instruction {
-        vec![Message::new_with_blockhash(
-            &[instruction],
-            Some(&payer_pubkey),
-            &blockhash,
-        )]
-    } else {
-        vec![]
-    };
-
-    let (truncate_instructions, balance_needed) = build_truncate_instructions(
-        rpc_client.clone(),
-        config,
-        auth_signer_index,
-        &program_account,
-        program_address,
-        program_data_len,
-    )?;
-
-    if !truncate_instructions.is_empty() {
-        messages.push(Message::new_with_blockhash(
-            &truncate_instructions,
-            Some(&payer_pubkey),
-            &blockhash,
-        ));
-    }
-
-    Ok((messages, balance_needed))
-}
-
-fn build_retract_and_deploy_messages(
-    rpc_client: Arc<RpcClient>,
-    config: &CliConfig,
-    auth_signer_index: &SignerIndex,
-    program_address: &Pubkey,
-    buffer_address: &Pubkey,
-) -> Result<Vec<Message>, Box<dyn std::error::Error>> {
-    let blockhash = rpc_client.get_latest_blockhash()?;
-    let payer_pubkey = config.signers[0].pubkey();
-    let authority_pubkey = config.signers[*auth_signer_index].pubkey();
-
-    let Some(program_account) = rpc_client
-        .get_account_with_commitment(program_address, config.commitment)?
-        .value
-    else {
-        return Err("Program account does not exist".into());
-    };
-
-    let retract_instruction =
-        build_retract_instruction(&program_account, program_address, &authority_pubkey)?;
-
-    let mut messages = if let Some(instruction) = retract_instruction {
-        vec![Message::new_with_blockhash(
-            &[instruction],
-            Some(&payer_pubkey),
-            &blockhash,
-        )]
-    } else {
-        vec![]
-    };
-
-    // Create and add deploy message
-    messages.push(Message::new_with_blockhash(
-        &[loader_v4::deploy_from_source(
-            program_address,
-            &authority_pubkey,
-            buffer_address,
-        )],
-        Some(&payer_pubkey),
-        &blockhash,
-    ));
-    Ok(messages)
 }
 
 fn build_retract_instruction(
