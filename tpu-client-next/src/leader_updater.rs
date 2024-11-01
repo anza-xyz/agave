@@ -35,7 +35,7 @@ pub trait LeaderUpdater: Send {
     /// If the current leader estimation is incorrect and transactions are sent to
     /// only one estimated leader, there is a risk of losing all the transactions,
     /// depending on the forwarding policy.
-    fn next_leaders(&self, lookahead_slots: u64) -> Vec<SocketAddr>;
+    fn next_leaders(&mut self, lookahead_slots: u64) -> Vec<SocketAddr>;
 
     /// Stop [`LeaderUpdater`] and releases all associated resources.
     async fn stop(&mut self);
@@ -98,7 +98,7 @@ struct LeaderUpdaterService {
 
 #[async_trait]
 impl LeaderUpdater for LeaderUpdaterService {
-    fn next_leaders(&self, lookahead_slots: u64) -> Vec<SocketAddr> {
+    fn next_leaders(&mut self, lookahead_slots: u64) -> Vec<SocketAddr> {
         self.leader_tpu_service.leader_tpu_sockets(lookahead_slots)
     }
 
@@ -116,7 +116,7 @@ struct PinnedLeaderUpdater {
 
 #[async_trait]
 impl LeaderUpdater for PinnedLeaderUpdater {
-    fn next_leaders(&self, _lookahead_slots: u64) -> Vec<SocketAddr> {
+    fn next_leaders(&mut self, _lookahead_slots: u64) -> Vec<SocketAddr> {
         self.address.clone()
     }
 
