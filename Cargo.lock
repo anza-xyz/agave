@@ -8017,6 +8017,7 @@ dependencies = [
  "solana-precompile-error",
  "solana-pubkey",
  "solana-sdk",
+ "solana-transaction-error",
 ]
 
 [[package]]

@@ -63,21 +63,21 @@ mod target_arch {
     pub const DATA_START: usize = SIGNATURE_OFFSETS_SERIALIZED_SIZE + SIGNATURE_OFFSETS_START;
 
     // Order as defined in SEC2: 2.7.2 Recommended Parameters secp256r1
-    pub const SECP256R1_ORDER: [u8; 32] = [
+    pub const SECP256R1_ORDER: [u8; FIELD_SIZE] = [
         0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
         0xFF, 0xBC, 0xE6, 0xFA, 0xAD, 0xA7, 0x17, 0x9E, 0x84, 0xF3, 0xB9, 0xCA, 0xC2, 0xFC, 0x63,
         0x25, 0x51,
     ];
 
     // Computed SECP256R1_ORDER - 1
-    pub const SECP256R1_ORDER_MINUS_ONE: [u8; 32] = [
+    pub const SECP256R1_ORDER_MINUS_ONE: [u8; FIELD_SIZE] = [
         0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
         0xFF, 0xBC, 0xE6, 0xFA, 0xAD, 0xA7, 0x17, 0x9E, 0x84, 0xF3, 0xB9, 0xCA, 0xC2, 0xFC, 0x63,
         0x25, 0x50,
     ];
 
     // Computed half order
-    const SECP256R1_HALF_ORDER: [u8; 32] = [
+    const SECP256R1_HALF_ORDER: [u8; FIELD_SIZE] = [
         0x7F, 0xFF, 0xFF, 0xFF, 0x80, 0x00, 0x00, 0x00, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
         0xFF, 0xDE, 0x73, 0x7D, 0x56, 0xD3, 0x8B, 0xCF, 0x42, 0x79, 0xDC, 0xE5, 0x61, 0x7E, 0x31,
         0x92, 0xA8,
@@ -120,7 +120,6 @@ mod target_arch {
         let s_bignum = BigNum::from_slice(&s)?;
         let half_order = BigNum::from_slice(&SECP256R1_HALF_ORDER)?;
         let order = BigNum::from_slice(&SECP256R1_ORDER)?;
-
         if s_bignum > half_order {
             let mut new_s = BigNum::new()?;
             new_s.checked_sub(&order, &s_bignum)?;
@@ -252,14 +251,14 @@ mod target_arch {
             let s_bignum = BigNum::from_slice(&signature[FIELD_SIZE..])
                 .map_err(|_| PrecompileError::InvalidSignature)?;
 
-            // Check that r and s are within the proper range and enforce a low-S value
+            // Check that the signature is generally in range
             let within_range = r_bignum >= one
                 && r_bignum <= order_minus_one
                 && s_bignum >= one
                 && s_bignum <= half_order;
 
             if !within_range {
-                return Err(PrecompileError::InvalidSignature);
+                return Err(PrecompileError::InvalidSignatureRange);
             }
 
             // Create an ECDSA signature object from the ASN.1 integers
@@ -407,7 +406,10 @@ mod target_arch {
             };
             assert_eq!(
                 test_case(1, &offsets),
-                Err(PrecompileError::InvalidSignature)
+                // Since r and s parsing happens before the verification we hit
+                // a range value error since the zero-signature gets interpreted
+                // as out of range
+                Err(PrecompileError::InvalidSignatureRange)
             );
 
             let offsets = Secp256r1SignatureOffsets {
@@ -528,9 +530,19 @@ mod target_arch {
             let signing_key = EcKey::generate(&group).unwrap();
             let mut instruction = new_secp256r1_instruction(message_arr, signing_key).unwrap();
 
-            // Get the signature offset and modify the S value
-            let signature_offset = DATA_START + COMPRESSED_PUBKEY_SERIALIZED_SIZE;
-            let s_offset = signature_offset + FIELD_SIZE; // S comes after R
+            // To double check that the untampered low-S value signature passes
+            let feature_set = FeatureSet::all_enabled();
+            let tx_pass = verify(
+                instruction.data.as_slice(),
+                &[instruction.data.as_slice()],
+                &feature_set,
+            );
+            assert!(tx_pass.is_ok());
+
+            // Determine offsets at which to perform the S-value manipulation
+            let public_key_offset = DATA_START;
+            let signature_offset = public_key_offset + COMPRESSED_PUBKEY_SERIALIZED_SIZE;
+            let s_offset = signature_offset + FIELD_SIZE;
 
             // Create a high S value by doing order - s
             let order = BigNum::from_slice(&SECP256R1_ORDER).unwrap();
@@ -542,18 +554,18 @@ mod target_arch {
             // Replace the S value in the signature with our high S
             instruction.data[s_offset..s_offset + FIELD_SIZE].copy_from_slice(&high_s.to_vec());
 
-            let mint_keypair = Keypair::new();
-            let feature_set = FeatureSet::all_enabled();
-            let tx = Transaction::new_signed_with_payer(
-                &[instruction],
-                Some(&mint_keypair.pubkey()),
-                &[&mint_keypair],
-                Hash::default(),
+            // Since Transaction::verify_precompiles only returns a vague
+            // `InvalidAccountIndex` error on precompile failure, we use verify()
+            // here direclty to check for the specific
+            // InvalidSignatureValueRange error
+            let tx_fail = verify(
+                instruction.data.as_slice(),
+                &[instruction.data.as_slice()],
+                &feature_set,
             );
-
-            // Should fail verification due to high s value
-            assert!(tx.verify_precompiles(&feature_set).is_err());
+            assert!(tx_fail.unwrap_err() == PrecompileError::InvalidSignatureRange);
         }
+
         #[test]
         fn test_secp256r1_order() {
             let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();

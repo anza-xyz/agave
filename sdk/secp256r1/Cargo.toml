@@ -16,23 +16,31 @@ solana-instruction = { workspace = true, features = ["std"] }
 solana-precompile-error = { workspace = true }
 solana-pubkey = { workspace = true }
 
-#[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "solana")))'.dependencies]
-openssl = { workspace = true, optional = true }
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "solana")))'.dependencies]
+openssl = { workspace = true }
 
 [dev-dependencies]
 rand = { workspace = true }
 rand0-7 = { package = "rand", version = "0.7" }
 solana-logger = { workspace = true }
 solana-sdk = { path = "../" }
+solana-transaction-error = { workspace = true }
 
 [features]
-default = ["openssl"]
-vendored = ["openssl", "openssl/vendored"]
+default = []
+vendored = ["openssl/vendored"]
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]
+
+# This section is key for IDE support of test dependencies
+[package.metadata.rust-analyzer]
+# Ensures rust-analyzer loads cfg(test) code
+all_targets = true
+# Ensures proper completion and analysis of tests
+all_features = true
 
 [lints]
 workspace = true
