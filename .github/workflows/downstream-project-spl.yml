@@ -144,7 +144,10 @@ jobs:
           - [name-service/program]
           - [stake-pool/program]
           - [single-pool/program]
+<<<<<<< HEAD
 
+=======
+>>>>>>> f9af09ccc6 (CI: Re-enable downstream SPL jobs (#3416))
     steps:
       - uses: actions/checkout@v4
 
