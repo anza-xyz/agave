@@ -27,11 +27,27 @@ pub struct ConnectionCacheClient<T: TpuInfo + std::marker::Send + 'static> {
     leader_forward_count: u64,
 }
 
+// Manual implementation of Clone without requiring T to be Clone
+impl<T> Clone for ConnectionCacheClient<T>
+where
+    T: TpuInfo + std::marker::Send + 'static,
+{
+    fn clone(&self) -> Self {
+        Self {
+            connection_cache: Arc::clone(&self.connection_cache),
+            tpu_address: self.tpu_address,
+            tpu_peers: self.tpu_peers.clone(),
+            leader_info_provider: Arc::clone(&self.leader_info_provider),
+            leader_forward_count: self.leader_forward_count,
+        }
+    }
+}
+
 impl<T> ConnectionCacheClient<T>
 where
     T: TpuInfo + std::marker::Send + 'static,
 {
-    fn new(
+    pub fn new(
         connection_cache: Arc<ConnectionCache>,
         tpu_address: SocketAddr,
         tpu_peers: Option<Vec<SocketAddr>>,

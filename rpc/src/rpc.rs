@@ -377,7 +377,7 @@ impl JsonRpcRequestProcessor {
             &bank_forks,
             None,
             receiver,
-            &connection_cache,
+            connection_cache,
             1000,
             1,
             exit.clone(),
