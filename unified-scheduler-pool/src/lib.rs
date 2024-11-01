@@ -1525,7 +1525,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     }
                                     Ok(NewTaskPayload::OpenSubchannel(_context_and_result_with_timings)) =>
                                         unreachable!(),
-                                    Ok(NewTaskPayload::Disconnect(_)) | Err(RecvError) => {
+                                    Ok(NewTaskPayload::Disconnect(_)) | Ok(NewTaskPayload::Reset(_)) | Err(RecvError) => {
                                         // Mostly likely is that this scheduler is dropped for pruned blocks of
                                         // abandoned forks...
                                         // This short-circuiting is tested with test_scheduler_drop_short_circuiting.
@@ -1653,7 +1653,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     log_scheduler!(trace, "rebuffer");
                                 }
                             }
-                            Ok(NewTaskPayload::Disconnect(_)) | Err(_) => {
+                            Ok(NewTaskPayload::Disconnect(_)) | Ok(NewTaskPayload::Reset(_)) | Err(_) => {
                                 // This unusual condition must be triggered by ThreadManager::drop().
                                 // Initialize result_with_timings with a harmless value...
                                 result_with_timings = initialized_result_with_timings();
