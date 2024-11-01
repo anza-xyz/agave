@@ -209,10 +209,8 @@ impl PrioritizationFeeCache {
                 );
 
                 let message = sanitized_transaction.message();
-                let lock_result = validate_account_locks(
-                    message.account_keys(),
-                    bank.get_transaction_account_lock_limit(),
-                );
+                let lock_result =
+                    validate_account_locks(message, bank.get_transaction_account_lock_limit());
 
                 if compute_budget_limits.is_err() || lock_result.is_err() {
                     continue;

@@ -566,7 +566,7 @@ impl Accounts {
         // Validate the account locks, then get iterator if successful validation.
         let tx_account_locks_results: Vec<Result<_>> = txs
             .map(|tx| {
-                validate_account_locks(tx.account_keys(), tx_account_lock_limit)
+                validate_account_locks(tx, tx_account_lock_limit)
                     .map(|_| TransactionAccountLocksIterator::new(tx))
             })
             .collect();
@@ -584,7 +584,7 @@ impl Accounts {
         let tx_account_locks_results: Vec<Result<_>> = txs
             .zip(results)
             .map(|(tx, result)| match result {
-                Ok(()) => validate_account_locks(tx.account_keys(), tx_account_lock_limit)
+                Ok(()) => validate_account_locks(tx, tx_account_lock_limit)
                     .map(|_| TransactionAccountLocksIterator::new(tx)),
                 Err(err) => Err(err),
             })

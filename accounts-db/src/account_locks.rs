@@ -1,5 +1,6 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
+use solana_svm_transaction::svm_message::SVMMessage;
 use {
     ahash::{AHashMap, AHashSet},
     solana_sdk::{
@@ -115,13 +116,13 @@ impl AccountLocks {
 }
 
 /// Validate account locks before locking.
-pub fn validate_account_locks(
-    account_keys: AccountKeys,
+pub fn validate_account_locks<'a, Tx: SVMMessage + 'a>(
+    tx: &'a Tx,
     tx_account_lock_limit: usize,
 ) -> Result<(), TransactionError> {
-    if account_keys.len() > tx_account_lock_limit {
+    if tx.num_write_locks() > tx_account_lock_limit as u64 {
         Err(TransactionError::TooManyAccountLocks)
-    } else if has_duplicates(account_keys) {
+    } else if has_duplicates(tx.account_keys()) {
         Err(TransactionError::AccountLoadedTwice)
     } else {
         Ok(())
@@ -158,7 +159,58 @@ fn has_duplicates(account_keys: AccountKeys) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, solana_sdk::message::v0::LoadedAddresses};
+    use {
+        super::*,
+        solana_sdk::{
+            hash::Hash,
+            instruction::CompiledInstruction,
+            message::{
+                v0::{self, LoadedAddresses, MessageAddressTableLookup},
+                MessageHeader, SanitizedMessage, SanitizedVersionedMessage, SimpleAddressLoader,
+                VersionedMessage,
+            },
+        },
+        std::collections::HashSet,
+    };
+
+    fn create_message_for_test(
+        num_signers: u8,
+        num_writable: u8,
+        account_keys: Vec<Pubkey>,
+        instructions: Vec<CompiledInstruction>,
+        loaded_addresses: LoadedAddresses,
+    ) -> SanitizedMessage {
+        let header = MessageHeader {
+            num_required_signatures: num_signers,
+            num_readonly_signed_accounts: 0,
+            num_readonly_unsigned_accounts: u8::try_from(account_keys.len()).unwrap()
+                - num_writable,
+        };
+        let (versioned_message, loader) = (
+            VersionedMessage::V0(v0::Message {
+                header,
+                account_keys,
+                recent_blockhash: Hash::default(),
+                instructions,
+                address_table_lookups: vec![MessageAddressTableLookup {
+                    account_key: Pubkey::new_unique(),
+                    writable_indexes: (0..loaded_addresses.writable.len())
+                        .map(|x| x as u8)
+                        .collect(),
+                    readonly_indexes: (0..loaded_addresses.readonly.len())
+                        .map(|x| (loaded_addresses.writable.len() + x) as u8)
+                        .collect(),
+                }],
+            }),
+            SimpleAddressLoader::Enabled(loaded_addresses),
+        );
+        SanitizedMessage::try_new(
+            SanitizedVersionedMessage::try_new(versioned_message).unwrap(),
+            loader,
+            &HashSet::new(),
+        )
+        .unwrap()
+    }
 
     #[test]
     fn test_account_locks() {
@@ -200,69 +252,57 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_account_locks_valid_no_dynamic() {
-        let static_keys = &[Pubkey::new_unique(), Pubkey::new_unique()];
-        let account_keys = AccountKeys::new(static_keys, None);
-        assert!(validate_account_locks(account_keys, MAX_TX_ACCOUNT_LOCKS).is_ok());
+    fn test_validate_account_locks_valid_no_writable() {
+        let message = create_message_for_test(
+            1,
+            0,
+            vec![Pubkey::new_unique()],
+            vec![],
+            LoadedAddresses {
+                writable: vec![],
+                readonly: vec![],
+            },
+        );
+
+        assert!(validate_account_locks(&message, MAX_TX_ACCOUNT_LOCKS).is_ok());
     }
 
     #[test]
-    fn test_validate_account_locks_too_many_no_dynamic() {
-        let static_keys = &[Pubkey::new_unique(), Pubkey::new_unique()];
-        let account_keys = AccountKeys::new(static_keys, None);
+    fn test_validate_account_locks_too_many() {
+        let account_keys = vec![Pubkey::new_unique(), Pubkey::new_unique()];
+
+        let message: SanitizedMessage = create_message_for_test(
+            1,
+            2,
+            account_keys.clone(),
+            vec![],
+            LoadedAddresses {
+                writable: account_keys,
+                readonly: vec![],
+            },
+        );
+
         assert_eq!(
-            validate_account_locks(account_keys, 1),
+            validate_account_locks(&message, 1),
             Err(TransactionError::TooManyAccountLocks)
         );
     }
 
     #[test]
-    fn test_validate_account_locks_duplicate_no_dynamic() {
-        let duplicate_key = Pubkey::new_unique();
-        let static_keys = &[duplicate_key, Pubkey::new_unique(), duplicate_key];
-        let account_keys = AccountKeys::new(static_keys, None);
-        assert_eq!(
-            validate_account_locks(account_keys, MAX_TX_ACCOUNT_LOCKS),
-            Err(TransactionError::AccountLoadedTwice)
+    fn test_validate_account_locks_duplicate() {
+        let duplicate_key: Pubkey = Pubkey::new_unique();
+        let message: SanitizedMessage = create_message_for_test(
+            1,
+            2,
+            vec![duplicate_key, duplicate_key],
+            vec![],
+            LoadedAddresses {
+                writable: vec![],
+                readonly: vec![],
+            },
         );
-    }
-
-    #[test]
-    fn test_validate_account_locks_valid_dynamic() {
-        let static_keys = &[Pubkey::new_unique(), Pubkey::new_unique()];
-        let dynamic_keys = LoadedAddresses {
-            writable: vec![Pubkey::new_unique()],
-            readonly: vec![Pubkey::new_unique()],
-        };
-        let account_keys = AccountKeys::new(static_keys, Some(&dynamic_keys));
-        assert!(validate_account_locks(account_keys, MAX_TX_ACCOUNT_LOCKS).is_ok());
-    }
-
-    #[test]
-    fn test_validate_account_locks_too_many_dynamic() {
-        let static_keys = &[Pubkey::new_unique()];
-        let dynamic_keys = LoadedAddresses {
-            writable: vec![Pubkey::new_unique()],
-            readonly: vec![Pubkey::new_unique()],
-        };
-        let account_keys = AccountKeys::new(static_keys, Some(&dynamic_keys));
         assert_eq!(
-            validate_account_locks(account_keys, 2),
-            Err(TransactionError::TooManyAccountLocks)
-        );
-    }
-
-    #[test]
-    fn test_validate_account_locks_duplicate_dynamic() {
-        let duplicate_key = Pubkey::new_unique();
-        let static_keys = &[duplicate_key];
-        let dynamic_keys = LoadedAddresses {
-            writable: vec![Pubkey::new_unique()],
-            readonly: vec![duplicate_key],
-        };
-        let account_keys = AccountKeys::new(static_keys, Some(&dynamic_keys));
-        assert_eq!(
-            validate_account_locks(account_keys, MAX_TX_ACCOUNT_LOCKS),
+            validate_account_locks(&message, MAX_TX_ACCOUNT_LOCKS),
             Err(TransactionError::AccountLoadedTwice)
         );
     }

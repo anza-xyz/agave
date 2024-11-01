@@ -539,11 +539,7 @@ impl<T: LikeClusterInfo> SchedulerController<T> {
                 })
                 .inspect(|_| saturating_add_assign!(post_sanitization_count, 1))
                 .filter(|(_packet, tx, _deactivation_slot)| {
-                    validate_account_locks(
-                        tx.message().account_keys(),
-                        transaction_account_lock_limit,
-                    )
-                    .is_ok()
+                    validate_account_locks(tx.message(), transaction_account_lock_limit).is_ok()
                 })
                 .filter_map(|(packet, tx, deactivation_slot)| {
                     process_compute_budget_instructions(SVMMessage::program_instructions_iter(&tx))

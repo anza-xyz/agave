@@ -175,12 +175,7 @@ fn consume_scan_should_process_packet(
         let message = sanitized_transaction.message();
 
         // Check the number of locks and whether there are duplicates
-        if validate_account_locks(
-            message.account_keys(),
-            bank.get_transaction_account_lock_limit(),
-        )
-        .is_err()
-        {
+        if validate_account_locks(message, bank.get_transaction_account_lock_limit()).is_err() {
             payload
                 .message_hash_to_transaction
                 .remove(packet.message_hash());
