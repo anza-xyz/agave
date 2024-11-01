@@ -95,7 +95,7 @@ impl Vortexor {
 
         // Fot TPU forward -- we disallow unstaked connections. Allocate all connection resources
         // for staked connections:
-        quic_server_params.max_staked_connections += quic_server_params.max_unstaked_connections;
+        quic_server_params.max_staked_connections += quic_server_params.max_staked_connections.saturating_add(quic_server_params.max_unstaked_connections);
         quic_server_params.max_unstaked_connections = 0;
         let tpu_fwd_result = spawn_server_multi(
             tpu_fwd_thread_name,
