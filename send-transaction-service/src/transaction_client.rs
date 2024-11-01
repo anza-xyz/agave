@@ -12,7 +12,7 @@ use {
     },
     std::{
         net::{Ipv4Addr, SocketAddr},
-        sync::{atomic::Ordering, Arc, Mutex, RwLock},
+        sync::{atomic::Ordering, Arc, Mutex},
         time::{Duration, Instant},
     },
     tokio::{
