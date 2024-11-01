@@ -28,10 +28,10 @@ pub(crate) struct Client {
 }
 
 impl Client {
-    pub fn get_cli_config<'a>(&'a self) -> CliConfig<'a> {
+    pub fn get_cli_config(&'_ self) -> CliConfig<'_> {
         CliConfig {
             websocket_url: self.websocket_url.clone(),
-            commitment: self.commitment.clone(),
+            commitment: self.commitment,
             signers: vec![&self.cli_signers[0], &self.cli_signers[1]],
             send_transaction_config: self.send_transaction_config,
             ..CliConfig::default()

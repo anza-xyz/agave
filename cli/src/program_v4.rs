@@ -498,7 +498,7 @@ pub fn process_program_v4_subcommand(
                 .map_err(|err| format!("Unable to read program file: {err}"))?;
             process_deploy_program(
                 rpc_client,
-                &config,
+                config,
                 authority_signer_index,
                 &program_address
                     .unwrap_or_else(|| config.signers[program_signer_index.unwrap()].pubkey()),
@@ -513,14 +513,14 @@ pub fn process_program_v4_subcommand(
         ProgramV4CliCommand::Undeploy {
             program_address,
             authority_signer_index,
-        } => process_undeploy_program(rpc_client, &config, authority_signer_index, program_address),
+        } => process_undeploy_program(rpc_client, config, authority_signer_index, program_address),
         ProgramV4CliCommand::TransferAuthority {
             program_address,
             authority_signer_index,
             new_authority_signer_index,
         } => process_transfer_authority_of_program(
             rpc_client,
-            &config,
+            config,
             authority_signer_index,
             program_address,
             config.signers[*new_authority_signer_index],
@@ -531,7 +531,7 @@ pub fn process_program_v4_subcommand(
             next_version_signer_index,
         } => process_finalize_program(
             rpc_client,
-            &config,
+            config,
             authority_signer_index,
             program_address,
             config.signers[*next_version_signer_index],
@@ -540,11 +540,11 @@ pub fn process_program_v4_subcommand(
             account_pubkey,
             authority,
             all,
-        } => process_show(rpc_client, &config, *account_pubkey, *authority, *all),
+        } => process_show(rpc_client, config, *account_pubkey, *authority, *all),
         ProgramV4CliCommand::Dump {
             account_pubkey,
             output_location,
-        } => process_dump(rpc_client, &config, *account_pubkey, output_location),
+        } => process_dump(rpc_client, config, *account_pubkey, output_location),
     }
 }
 
@@ -624,7 +624,7 @@ pub fn process_deploy_program(
         program_data.len(),
     );
     let executable =
-        Executable::<InvokeContext>::from_elf(&program_data, Arc::new(program_runtime_environment))
+        Executable::<InvokeContext>::from_elf(program_data, Arc::new(program_runtime_environment))
             .map_err(|err| format!("ELF error: {err}"))?;
     executable
         .verify::<RequisiteVerifier>()
@@ -643,7 +643,7 @@ pub fn process_deploy_program(
     }
 
     let lamports_required = rpc_client.get_minimum_balance_for_rent_exemption(
-        LoaderV4State::program_data_offset().saturating_add(program_data.len() as usize),
+        LoaderV4State::program_data_offset().saturating_add(program_data.len()),
     )?;
     let (buffer_address, buffer_account) = if let Some(buffer_signer) = buffer_signer {
         // Deploy new program or redeploy with a buffer account
