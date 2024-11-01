@@ -10,6 +10,9 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+# TODO(klykov): remove this dependency when trait for leader updater
+# will be changed
+async-trait = { workspace = true }
 crossbeam-channel = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
@@ -19,7 +22,9 @@ solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-runtime = { workspace = true }
 solana-sdk = { workspace = true }
-solana-tpu-client = { workspace = true }
+solana-tpu-client-next = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+tokio-util = { workspace = true }
 
 [dev-dependencies]
 solana-logger = { workspace = true }
