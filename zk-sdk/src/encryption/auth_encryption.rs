@@ -25,13 +25,10 @@ use {
     sha3::Digest,
     sha3::Sha3_512,
     solana_derivation_path::DerivationPath,
-    solana_sdk::{
-        signature::Signature,
-        signer::{
-            keypair::generate_seed_from_seed_phrase_and_passphrase, EncodableKey, SeedDerivable,
-            Signer, SignerError,
-        },
-    },
+    solana_seed_derivable::SeedDerivable,
+    solana_seed_phrase::generate_seed_from_seed_phrase_and_passphrase,
+    solana_signature::Signature,
+    solana_signer::{EncodableKey, Signer, SignerError},
     std::{
         error,
         io::{Read, Write},
@@ -282,7 +279,8 @@ impl fmt::Display for AeCiphertext {
 mod tests {
     use {
         super::*,
-        solana_sdk::{pubkey::Pubkey, signature::Keypair, signer::null_signer::NullSigner},
+        solana_pubkey::Pubkey,
+        solana_signer::{keypair::Keypair, null_signer::NullSigner},
     };
 
     #[test]
