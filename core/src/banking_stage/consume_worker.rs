@@ -317,7 +317,7 @@ impl ConsumeWorkerMetrics {
             .find_and_send_votes_us
             .fetch_add(*find_and_send_votes_us, Ordering::Relaxed);
         self.timing_metrics
-            .commit_count
+            .num_batches_processed
             .fetch_add(1, Ordering::Relaxed);
     }
 
@@ -522,7 +522,7 @@ struct ConsumeWorkerTimingMetrics {
     find_and_send_votes_us: AtomicU64,
     wait_for_bank_success_us: AtomicU64,
     wait_for_bank_failure_us: AtomicU64,
-    commit_count: AtomicU64,
+    num_batches_processed: AtomicU64,
 }
 
 impl ConsumeWorkerTimingMetrics {
@@ -556,8 +556,8 @@ impl ConsumeWorkerTimingMetrics {
                 i64
             ),
             (
-                "commit_count",
-                self.commit_count.swap(0, Ordering::Relaxed),
+                "num_batches_processed",
+                self.num_batches_processed.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
