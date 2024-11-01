@@ -8,7 +8,7 @@ use {
         feature::{status_from_account, CliFeatureStatus},
         program::calculate_max_chunk_size,
     },
-    clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
+    clap::{value_t, App, AppSettings, Arg, ArgMatches, SubCommand},
     log::*,
     solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
     solana_clap_utils::{
@@ -46,7 +46,7 @@ use {
         message::Message,
         pubkey::Pubkey,
         signature::Signer,
-        system_instruction::{self, SystemError},
+        system_instruction::{self, SystemError, MAX_PERMITTED_DATA_LENGTH},
         transaction::Transaction,
     },
     std::{
@@ -55,6 +55,7 @@ use {
         io::{Read, Write},
         mem::size_of,
         num::Saturating,
+        ops::Range,
         rc::Rc,
         sync::Arc,
     },
@@ -63,11 +64,12 @@ use {
 #[derive(Debug, PartialEq, Eq)]
 pub enum ProgramV4CliCommand {
     Deploy {
-        program_location: String,
         program_address: Option<Pubkey>,
         program_signer_index: Option<SignerIndex>,
         buffer_signer_index: Option<SignerIndex>,
         authority_signer_index: SignerIndex,
+        program_location: String,
+        upload_range: Range<Option<usize>>,
         use_rpc: bool,
     },
     Undeploy {
@@ -109,11 +111,25 @@ impl ProgramV4SubCommands for App<'_, '_> {
                     SubCommand::with_name("deploy")
                         .about("Deploy a new or redeploy an existing program")
                         .arg(
-                            Arg::with_name("program_location")
+                            Arg::with_name("program-location")
                                 .index(1)
                                 .value_name("PROGRAM_FILEPATH")
                                 .takes_value(true)
                                 .help("/path/to/program.so"),
+                        )
+                        .arg(
+                            Arg::with_name("start-offset")
+                                .long("start-offset")
+                                .value_name("START_OFFSET")
+                                .takes_value(true)
+                                .help("Optionally starts writing at this byte offset"),
+                        )
+                        .arg(
+                            Arg::with_name("end-offset")
+                                .long("end-offset")
+                                .value_name("END_OFFSET")
+                                .takes_value(true)
+                                .help("Optionally stops writing after this byte offset"),
                         )
                         .arg(
                             Arg::with_name("program")
@@ -302,7 +318,7 @@ pub fn parse_program_v4_subcommand(
             )];
 
             let program_location = matches
-                .value_of("program_location")
+                .value_of("program-location")
                 .map(|location| location.to_string());
 
             let program_address = pubkey_of(matches, "program-id");
@@ -337,13 +353,15 @@ pub fn parse_program_v4_subcommand(
 
             CliCommandInfo {
                 command: CliCommand::ProgramV4(ProgramV4CliCommand::Deploy {
-                    program_location: program_location.expect("Program location is missing"),
                     program_address,
                     program_signer_index,
                     buffer_signer_index: signer_info.index_of_or_none(buffer_pubkey),
                     authority_signer_index: signer_info
                         .index_of(authority_pubkey)
                         .expect("Authority signer is missing"),
+                    program_location: program_location.expect("Program location is missing"),
+                    upload_range: value_t!(matches, "start-offset", usize).ok()
+                        ..value_t!(matches, "end-offset", usize).ok(),
                     use_rpc: matches.is_present("use_rpc"),
                 }),
                 signers: signer_info.signers,
@@ -466,11 +484,12 @@ pub fn process_program_v4_subcommand(
 ) -> ProcessResult {
     match program_subcommand {
         ProgramV4CliCommand::Deploy {
-            program_location,
             program_address,
             program_signer_index,
             buffer_signer_index,
             authority_signer_index,
+            program_location,
+            upload_range,
             use_rpc,
         } => process_deploy_program(
             rpc_client,
@@ -479,6 +498,7 @@ pub fn process_program_v4_subcommand(
             &program_address
                 .unwrap_or_else(|| config.signers[program_signer_index.unwrap()].pubkey()),
             program_location,
+            upload_range.clone(),
             program_signer_index
                 .or(*buffer_signer_index)
                 .map(|index| config.signers[index]),
@@ -537,6 +557,7 @@ pub fn process_deploy_program(
     auth_signer_index: &SignerIndex,
     program_address: &Pubkey,
     program_location: &str,
+    upload_range: Range<Option<usize>>,
     buffer_signer: Option<&dyn Signer>,
     use_rpc: bool,
 ) -> ProcessResult {
@@ -569,6 +590,28 @@ pub fn process_deploy_program(
     let mut program_data = Vec::new();
     file.read_to_end(&mut program_data)
         .map_err(|err| format!("Unable to read program file: {err}"))?;
+    let upload_range =
+        upload_range.start.unwrap_or(0)..upload_range.end.unwrap_or(program_data.len());
+    const MAX_LEN: usize =
+        (MAX_PERMITTED_DATA_LENGTH as usize).saturating_sub(LoaderV4State::program_data_offset());
+    assert!(
+        program_data.len() <= MAX_LEN,
+        "Program length {} exeeds maximum length {}",
+        program_data.len(),
+        MAX_LEN,
+    );
+    assert!(
+        upload_range.start < upload_range.end,
+        "Range {}..{} is empty",
+        upload_range.start,
+        upload_range.end,
+    );
+    assert!(
+        upload_range.end <= program_data.len(),
+        "Range end {} exeeds program length {}",
+        upload_range.end,
+        program_data.len(),
+    );
 
     // Verify the program
     let program_runtime_environment =
@@ -623,15 +666,12 @@ pub fn process_deploy_program(
 
     let mut write_messages = vec![];
     let chunk_size = calculate_max_chunk_size(&create_msg);
-    for (chunk, i) in program_data.chunks(chunk_size).zip(0usize..) {
+    for (chunk, i) in program_data[upload_range.clone()]
+        .chunks(chunk_size)
+        .zip(0usize..)
+    {
         write_messages.push(create_msg(
-            i.saturating_mul(chunk_size).try_into().map_err(|_| {
-                format!(
-                    "Program data size exceeds {}: {}",
-                    u32::MAX,
-                    program_data.len()
-                )
-            })?,
+            (upload_range.start as u32).saturating_add(i.saturating_mul(chunk_size) as u32),
             chunk.to_vec(),
         ));
     }
@@ -1526,6 +1566,7 @@ mod tests {
             &1,
             &program_signer.pubkey(),
             &"tests/fixtures/noop.so",
+            None..None,
             Some(&program_signer),
             true,
         )
@@ -1537,6 +1578,7 @@ mod tests {
             &1,
             &program_signer.pubkey(),
             &"tests/fixtures/noop.so",
+            None..None,
             Some(&program_signer),
             true,
         )
@@ -1548,6 +1590,7 @@ mod tests {
             &1,
             &program_signer.pubkey(),
             &"tests/fixtures/noop.so",
+            None..None,
             Some(&program_signer),
             true,
         )
@@ -1572,6 +1615,7 @@ mod tests {
             &1,
             &program_address,
             &"tests/fixtures/noop.so",
+            None..None,
             None,
             true,
         )
@@ -1583,6 +1627,7 @@ mod tests {
             &1,
             &program_address,
             &"tests/fixtures/noop.so",
+            None..None,
             None,
             true,
         )
@@ -1594,6 +1639,7 @@ mod tests {
             &1,
             &program_address,
             &"tests/fixtures/noop.so",
+            None..None,
             None,
             true,
         )
@@ -1605,6 +1651,7 @@ mod tests {
             &1,
             &program_address,
             &"tests/fixtures/noop.so",
+            None..None,
             None,
             true,
         )
@@ -1616,6 +1663,7 @@ mod tests {
             &1,
             &program_address,
             &"tests/fixtures/noop.so",
+            None..None,
             None,
             true,
         )
@@ -1627,6 +1675,7 @@ mod tests {
             &1,
             &program_address,
             &"tests/fixtures/noop.so",
+            None..None,
             None,
             true,
         )
@@ -1652,6 +1701,7 @@ mod tests {
             &1,
             &program_address,
             &"tests/fixtures/noop.so",
+            None..None,
             Some(&buffer_signer),
             true,
         )
@@ -1663,6 +1713,7 @@ mod tests {
             &1,
             &program_address,
             &"tests/fixtures/noop.so",
+            None..None,
             Some(&buffer_signer),
             true,
         )
@@ -1674,6 +1725,7 @@ mod tests {
             &1,
             &program_address,
             &"tests/fixtures/noop.so",
+            None..None,
             Some(&buffer_signer),
             true,
         )
@@ -1836,11 +1888,12 @@ mod tests {
             parse_command(&test_command, &default_signer, &mut None).unwrap(),
             CliCommandInfo {
                 command: CliCommand::ProgramV4(ProgramV4CliCommand::Deploy {
-                    program_location: "/Users/test/program.so".to_string(),
                     program_address: None,
                     program_signer_index: Some(1),
                     buffer_signer_index: None,
                     authority_signer_index: 2,
+                    program_location: "/Users/test/program.so".to_string(),
+                    upload_range: None..None,
                     use_rpc: false,
                 }),
                 signers: vec![
@@ -1865,11 +1918,12 @@ mod tests {
             parse_command(&test_command, &default_signer, &mut None).unwrap(),
             CliCommandInfo {
                 command: CliCommand::ProgramV4(ProgramV4CliCommand::Deploy {
-                    program_location: "/Users/test/program.so".to_string(),
                     program_address: Some(program_keypair.pubkey()),
                     program_signer_index: None,
                     buffer_signer_index: None,
                     authority_signer_index: 1,
+                    program_location: "/Users/test/program.so".to_string(),
+                    upload_range: None..None,
                     use_rpc: false,
                 }),
                 signers: vec![
@@ -1895,12 +1949,50 @@ mod tests {
             parse_command(&test_command, &default_signer, &mut None).unwrap(),
             CliCommandInfo {
                 command: CliCommand::ProgramV4(ProgramV4CliCommand::Deploy {
-                    program_location: "/Users/test/program.so".to_string(),
                     program_address: Some(program_keypair.pubkey()),
                     program_signer_index: None,
                     buffer_signer_index: Some(1),
                     authority_signer_index: 2,
+                    program_location: "/Users/test/program.so".to_string(),
+                    upload_range: None..None,
                     use_rpc: false,
+                }),
+                signers: vec![
+                    Box::new(read_keypair_file(&keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&buffer_keypair_file).unwrap()),
+                    Box::new(read_keypair_file(&authority_keypair_file).unwrap())
+                ],
+            }
+        );
+
+        let test_command = test_commands.clone().get_matches_from(vec![
+            "test",
+            "program-v4",
+            "deploy",
+            "/Users/test/program.so",
+            "--start-offset",
+            "16",
+            "--end-offset",
+            "32",
+            "--program-id",
+            &program_keypair_file,
+            "--buffer",
+            &buffer_keypair_file,
+            "--authority",
+            &authority_keypair_file,
+            "--use-rpc",
+        ]);
+        assert_eq!(
+            parse_command(&test_command, &default_signer, &mut None).unwrap(),
+            CliCommandInfo {
+                command: CliCommand::ProgramV4(ProgramV4CliCommand::Deploy {
+                    program_address: Some(program_keypair.pubkey()),
+                    program_signer_index: None,
+                    buffer_signer_index: Some(1),
+                    authority_signer_index: 2,
+                    program_location: "/Users/test/program.so".to_string(),
+                    upload_range: Some(16)..Some(32),
+                    use_rpc: true,
                 }),
                 signers: vec![
                     Box::new(read_keypair_file(&keypair_file).unwrap()),
