@@ -112,7 +112,7 @@ impl ProgramV4SubCommands for App<'_, '_> {
                 .setting(AppSettings::SubcommandRequiredElseHelp)
                 .subcommand(
                     SubCommand::with_name("deploy")
-                        .about("Deploy a program")
+                        .about("Deploy a new or redeploy an existing program")
                         .arg(
                             Arg::with_name("program_location")
                                 .index(1)
@@ -127,40 +127,15 @@ impl ProgramV4SubCommands for App<'_, '_> {
                                 .takes_value(true)
                                 .validator(is_valid_signer)
                                 .help(
-                                    "Program account signer. The program data is written to the \
-                                     associated account.",
+                                    "Program account signer for deploying a new program",
                                 ),
-                        )
-                        .arg(
-                            Arg::with_name("authority")
-                                .long("authority")
-                                .value_name("AUTHORITY_SIGNER")
-                                .takes_value(true)
-                                .validator(is_valid_signer)
-                                .help(
-                                    "Program authority [default: the default configured keypair]",
-                                ),
-                        )
-                        .arg(Arg::with_name("use_rpc").long("use-rpc").help(
-                            "Send transactions to the configured RPC instead of validator TPUs",
-                        )),
-                )
-                .subcommand(
-                    SubCommand::with_name("redeploy")
-                        .about("Redeploy a previously deployed program")
-                        .arg(
-                            Arg::with_name("program_location")
-                                .index(1)
-                                .value_name("PROGRAM_FILEPATH")
-                                .takes_value(true)
-                                .help("/path/to/program.so"),
                         )
                         .arg(
                             Arg::with_name("program-id")
                                 .long("program-id")
                                 .value_name("PROGRAM_ID")
                                 .takes_value(true)
-                                .help("Executable program's address"),
+                                .help("Program address for redeploying an existing program"),
                         )
                         .arg(
                             Arg::with_name("buffer")
@@ -169,8 +144,7 @@ impl ProgramV4SubCommands for App<'_, '_> {
                                 .takes_value(true)
                                 .validator(is_valid_signer)
                                 .help(
-                                    "Optional intermediate buffer account to write data to, which \
-                                     can be used to resume a failed deploy",
+                                    "Optional intermediate buffer account to write data to",
                                 ),
                         )
                         .arg(
@@ -345,35 +319,6 @@ pub fn parse_program_v4_subcommand(
                 pubkey_of_signer(matches, "program", wallet_manager)?
             };
 
-            let (authority, authority_pubkey) = signer_of(matches, "authority", wallet_manager)?;
-            bulk_signers.push(authority);
-
-            let signer_info =
-                default_signer.generate_unique_signers(bulk_signers, matches, wallet_manager)?;
-
-            CliCommandInfo {
-                command: CliCommand::ProgramV4(ProgramV4CliCommand::Deploy {
-                    program_location: program_location.expect("Program location is missing"),
-                    program_signer_index: signer_info
-                        .index_of(program_pubkey)
-                        .expect("Program signer is missing"),
-                    authority_signer_index: signer_info
-                        .index_of(authority_pubkey)
-                        .expect("Authority signer is missing"),
-                    use_rpc: matches.is_present("use_rpc"),
-                }),
-                signers: signer_info.signers,
-            }
-        }
-        ("redeploy", Some(matches)) => {
-            let mut bulk_signers = vec![Some(
-                default_signer.signer_from_path(matches, wallet_manager)?,
-            )];
-
-            let program_location = matches
-                .value_of("program_location")
-                .map(|location| location.to_string());
-
             let buffer_pubkey = if let Ok((buffer_signer, Some(buffer_pubkey))) =
                 signer_of(matches, "buffer", wallet_manager)
             {
@@ -389,8 +334,19 @@ pub fn parse_program_v4_subcommand(
             let signer_info =
                 default_signer.generate_unique_signers(bulk_signers, matches, wallet_manager)?;
 
-            CliCommandInfo {
-                command: CliCommand::ProgramV4(ProgramV4CliCommand::Redeploy {
+            let command = if matches.value_of("program").is_some() {
+                ProgramV4CliCommand::Deploy {
+                    program_location: program_location.expect("Program location is missing"),
+                    program_signer_index: signer_info
+                        .index_of(program_pubkey)
+                        .expect("Program signer is missing"),
+                    authority_signer_index: signer_info
+                        .index_of(authority_pubkey)
+                        .expect("Authority signer is missing"),
+                    use_rpc: matches.is_present("use_rpc"),
+                }
+            } else {
+                ProgramV4CliCommand::Redeploy {
                     program_location: program_location.expect("Program location is missing"),
                     program_address: pubkey_of(matches, "program-id")
                         .expect("Program address is missing"),
@@ -399,7 +355,11 @@ pub fn parse_program_v4_subcommand(
                         .index_of(authority_pubkey)
                         .expect("Authority signer is missing"),
                     use_rpc: matches.is_present("use_rpc"),
-                }),
+                }
+            };
+
+            CliCommandInfo {
+                command: CliCommand::ProgramV4(command),
                 signers: signer_info.signers,
             }
         }
@@ -1931,7 +1891,7 @@ mod tests {
         let test_command = test_commands.clone().get_matches_from(vec![
             "test",
             "program-v4",
-            "redeploy",
+            "deploy",
             "/Users/test/program.so",
             "--program-id",
             &program_keypair_file,
@@ -1962,7 +1922,7 @@ mod tests {
         let test_command = test_commands.clone().get_matches_from(vec![
             "test",
             "program-v4",
-            "redeploy",
+            "deploy",
             "/Users/test/program.so",
             "--program-id",
             &program_keypair_file,
