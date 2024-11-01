@@ -490,19 +490,26 @@ pub fn process_program_v4_subcommand(
             program_location,
             upload_range,
             use_rpc,
-        } => process_deploy_program(
-            rpc_client,
-            &config,
-            authority_signer_index,
-            &program_address
-                .unwrap_or_else(|| config.signers[program_signer_index.unwrap()].pubkey()),
-            program_location,
-            upload_range.clone(),
-            program_signer_index
-                .or(*buffer_signer_index)
-                .map(|index| config.signers[index]),
-            *use_rpc,
-        ),
+        } => {
+            let mut program_data = Vec::new();
+            let mut file = File::open(program_location)
+                .map_err(|err| format!("Unable to open program file: {err}"))?;
+            file.read_to_end(&mut program_data)
+                .map_err(|err| format!("Unable to read program file: {err}"))?;
+            process_deploy_program(
+                rpc_client,
+                &config,
+                authority_signer_index,
+                &program_address
+                    .unwrap_or_else(|| config.signers[program_signer_index.unwrap()].pubkey()),
+                &program_data,
+                upload_range.clone(),
+                program_signer_index
+                    .or(*buffer_signer_index)
+                    .map(|index| config.signers[index]),
+                *use_rpc,
+            )
+        }
         ProgramV4CliCommand::Undeploy {
             program_address,
             authority_signer_index,
@@ -555,7 +562,7 @@ pub fn process_deploy_program(
     config: &CliConfig,
     auth_signer_index: &SignerIndex,
     program_address: &Pubkey,
-    program_location: &str,
+    program_data: &[u8],
     upload_range: Range<Option<usize>>,
     buffer_signer: Option<&dyn Signer>,
     use_rpc: bool,
@@ -584,13 +591,16 @@ pub fn process_deploy_program(
                 }
             });
     }
+    let program_runtime_environment =
+        solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1(
+            &feature_set,
+            &ComputeBudget::default(),
+            true,
+            false,
+        )
+        .unwrap();
 
-    // Load program ELF from filesystem
-    let mut file = File::open(program_location)
-        .map_err(|err| format!("Unable to open program file: {err}"))?;
-    let mut program_data = Vec::new();
-    file.read_to_end(&mut program_data)
-        .map_err(|err| format!("Unable to read program file: {err}"))?;
+    // Verify the program
     let upload_range =
         upload_range.start.unwrap_or(0)..upload_range.end.unwrap_or(program_data.len());
     const MAX_LEN: usize =
@@ -613,19 +623,6 @@ pub fn process_deploy_program(
         upload_range.end,
         program_data.len(),
     );
-    let lamports_required = rpc_client.get_minimum_balance_for_rent_exemption(
-        LoaderV4State::program_data_offset().saturating_add(program_data.len() as usize),
-    )?;
-
-    // Verify the program
-    let program_runtime_environment =
-        solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1(
-            &feature_set,
-            &ComputeBudget::default(),
-            true,
-            false,
-        )
-        .unwrap();
     let executable =
         Executable::<InvokeContext>::from_elf(&program_data, Arc::new(program_runtime_environment))
             .map_err(|err| format!("ELF error: {err}"))?;
@@ -645,6 +642,9 @@ pub fn process_deploy_program(
             build_retract_instruction(program_account, program_address, &authority_pubkey)?;
     }
 
+    let lamports_required = rpc_client.get_minimum_balance_for_rent_exemption(
+        LoaderV4State::program_data_offset().saturating_add(program_data.len() as usize),
+    )?;
     let (buffer_address, buffer_account) = if let Some(buffer_signer) = buffer_signer {
         // Deploy new program or redeploy with a buffer account
         let buffer_address = buffer_signer.pubkey();
@@ -1442,6 +1442,9 @@ mod tests {
     #[test]
     fn test_deploy() {
         let mut config = CliConfig::default();
+        let mut program_data = Vec::new();
+        let mut file = File::open("tests/fixtures/noop.so").unwrap();
+        file.read_to_end(&mut program_data).unwrap();
 
         let payer = keypair_from_seed(&[1u8; 32]).unwrap();
         let program_signer = keypair_from_seed(&[2u8; 32]).unwrap();
@@ -1455,7 +1458,7 @@ mod tests {
             &config,
             &1,
             &program_signer.pubkey(),
-            &"tests/fixtures/noop.so",
+            &program_data,
             None..None,
             Some(&program_signer),
             true,
@@ -1467,7 +1470,7 @@ mod tests {
             &config,
             &1,
             &program_signer.pubkey(),
-            &"tests/fixtures/noop.so",
+            &program_data,
             None..None,
             Some(&program_signer),
             true,
@@ -1479,7 +1482,7 @@ mod tests {
             &config,
             &1,
             &program_signer.pubkey(),
-            &"tests/fixtures/noop.so",
+            &program_data,
             None..None,
             Some(&program_signer),
             true,
@@ -1490,6 +1493,9 @@ mod tests {
     #[test]
     fn test_redeploy() {
         let mut config = CliConfig::default();
+        let mut program_data = Vec::new();
+        let mut file = File::open("tests/fixtures/noop.so").unwrap();
+        file.read_to_end(&mut program_data).unwrap();
 
         let payer = keypair_from_seed(&[1u8; 32]).unwrap();
         let program_address = Pubkey::new_unique();
@@ -1504,7 +1510,7 @@ mod tests {
             &config,
             &1,
             &program_address,
-            &"tests/fixtures/noop.so",
+            &program_data,
             None..None,
             None,
             true,
@@ -1516,7 +1522,7 @@ mod tests {
             &config,
             &1,
             &program_address,
-            &"tests/fixtures/noop.so",
+            &program_data,
             None..None,
             None,
             true,
@@ -1528,7 +1534,7 @@ mod tests {
             &config,
             &1,
             &program_address,
-            &"tests/fixtures/noop.so",
+            &program_data,
             None..None,
             None,
             true,
@@ -1540,7 +1546,7 @@ mod tests {
             &config,
             &1,
             &program_address,
-            &"tests/fixtures/noop.so",
+            &program_data,
             None..None,
             None,
             true,
@@ -1552,7 +1558,7 @@ mod tests {
             &config,
             &1,
             &program_address,
-            &"tests/fixtures/noop.so",
+            &program_data,
             None..None,
             None,
             true,
@@ -1564,7 +1570,7 @@ mod tests {
             &config,
             &1,
             &program_address,
-            &"tests/fixtures/noop.so",
+            &program_data,
             None..None,
             None,
             true,
@@ -1575,6 +1581,9 @@ mod tests {
     #[test]
     fn test_redeploy_from_source() {
         let mut config = CliConfig::default();
+        let mut program_data = Vec::new();
+        let mut file = File::open("tests/fixtures/noop.so").unwrap();
+        file.read_to_end(&mut program_data).unwrap();
 
         let payer = keypair_from_seed(&[1u8; 32]).unwrap();
         let buffer_signer = keypair_from_seed(&[2u8; 32]).unwrap();
@@ -1590,7 +1599,7 @@ mod tests {
             &config,
             &1,
             &program_address,
-            &"tests/fixtures/noop.so",
+            &program_data,
             None..None,
             Some(&buffer_signer),
             true,
@@ -1602,7 +1611,7 @@ mod tests {
             &config,
             &1,
             &program_address,
-            &"tests/fixtures/noop.so",
+            &program_data,
             None..None,
             Some(&buffer_signer),
             true,
@@ -1614,7 +1623,7 @@ mod tests {
             &config,
             &1,
             &program_address,
-            &"tests/fixtures/noop.so",
+            &program_data,
             None..None,
             Some(&buffer_signer),
             true,
