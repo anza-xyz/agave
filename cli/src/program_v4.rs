@@ -64,13 +64,8 @@ use {
 pub enum ProgramV4CliCommand {
     Deploy {
         program_location: String,
-        program_signer_index: SignerIndex,
-        authority_signer_index: SignerIndex,
-        use_rpc: bool,
-    },
-    Redeploy {
-        program_location: String,
-        program_address: Pubkey,
+        program_address: Option<Pubkey>,
+        program_signer_index: Option<SignerIndex>,
         buffer_signer_index: Option<SignerIndex>,
         authority_signer_index: SignerIndex,
         use_rpc: bool,
@@ -310,6 +305,7 @@ pub fn parse_program_v4_subcommand(
                 .value_of("program_location")
                 .map(|location| location.to_string());
 
+            let program_address = pubkey_of(matches, "program-id");
             let program_pubkey = if let Ok((program_signer, Some(program_pubkey))) =
                 signer_of(matches, "program", wallet_manager)
             {
@@ -333,33 +329,23 @@ pub fn parse_program_v4_subcommand(
 
             let signer_info =
                 default_signer.generate_unique_signers(bulk_signers, matches, wallet_manager)?;
+            let program_signer_index = signer_info.index_of_or_none(program_pubkey);
+            assert!(
+                program_address.is_some() != program_signer_index.is_some(),
+                "Requires either program signer or program address",
+            );
 
-            let command = if matches.value_of("program").is_some() {
-                ProgramV4CliCommand::Deploy {
+            CliCommandInfo {
+                command: CliCommand::ProgramV4(ProgramV4CliCommand::Deploy {
                     program_location: program_location.expect("Program location is missing"),
-                    program_signer_index: signer_info
-                        .index_of(program_pubkey)
-                        .expect("Program signer is missing"),
-                    authority_signer_index: signer_info
-                        .index_of(authority_pubkey)
-                        .expect("Authority signer is missing"),
-                    use_rpc: matches.is_present("use_rpc"),
-                }
-            } else {
-                ProgramV4CliCommand::Redeploy {
-                    program_location: program_location.expect("Program location is missing"),
-                    program_address: pubkey_of(matches, "program-id")
-                        .expect("Program address is missing"),
+                    program_address,
+                    program_signer_index,
                     buffer_signer_index: signer_info.index_of_or_none(buffer_pubkey),
                     authority_signer_index: signer_info
                         .index_of(authority_pubkey)
                         .expect("Authority signer is missing"),
                     use_rpc: matches.is_present("use_rpc"),
-                }
-            };
-
-            CliCommandInfo {
-                command: CliCommand::ProgramV4(command),
+                }),
                 signers: signer_info.signers,
             }
         }
@@ -481,21 +467,8 @@ pub fn process_program_v4_subcommand(
     match program_subcommand {
         ProgramV4CliCommand::Deploy {
             program_location,
-            program_signer_index,
-            authority_signer_index,
-            use_rpc,
-        } => process_deploy_program(
-            rpc_client,
-            &config,
-            authority_signer_index,
-            &config.signers[*program_signer_index].pubkey(),
-            program_location,
-            Some(config.signers[*program_signer_index]),
-            *use_rpc,
-        ),
-        ProgramV4CliCommand::Redeploy {
-            program_location,
             program_address,
+            program_signer_index,
             buffer_signer_index,
             authority_signer_index,
             use_rpc,
@@ -503,9 +476,12 @@ pub fn process_program_v4_subcommand(
             rpc_client,
             &config,
             authority_signer_index,
-            program_address,
+            &program_address
+                .unwrap_or_else(|| config.signers[program_signer_index.unwrap()].pubkey()),
             program_location,
-            buffer_signer_index.map(|index| config.signers[index]),
+            program_signer_index
+                .or(*buffer_signer_index)
+                .map(|index| config.signers[index]),
             *use_rpc,
         ),
         ProgramV4CliCommand::Undeploy {
@@ -1838,6 +1814,10 @@ mod tests {
         let program_keypair_file = make_tmp_path("program_keypair_file");
         write_keypair_file(&program_keypair, &program_keypair_file).unwrap();
 
+        let buffer_keypair = Keypair::new();
+        let buffer_keypair_file = make_tmp_path("buffer_keypair_file");
+        write_keypair_file(&buffer_keypair, &buffer_keypair_file).unwrap();
+
         let authority_keypair = Keypair::new();
         let authority_keypair_file = make_tmp_path("authority_keypair_file");
         write_keypair_file(&authority_keypair, &authority_keypair_file).unwrap();
@@ -1857,7 +1837,9 @@ mod tests {
             CliCommandInfo {
                 command: CliCommand::ProgramV4(ProgramV4CliCommand::Deploy {
                     program_location: "/Users/test/program.so".to_string(),
-                    program_signer_index: 1,
+                    program_address: None,
+                    program_signer_index: Some(1),
+                    buffer_signer_index: None,
                     authority_signer_index: 2,
                     use_rpc: false,
                 }),
@@ -1868,25 +1850,6 @@ mod tests {
                 ],
             }
         );
-    }
-
-    #[test]
-    #[allow(clippy::cognitive_complexity)]
-    fn test_cli_parse_redeploy() {
-        let test_commands = get_clap_app("test", "desc", "version");
-
-        let default_keypair = Keypair::new();
-        let keypair_file = make_tmp_path("keypair_file");
-        write_keypair_file(&default_keypair, &keypair_file).unwrap();
-        let default_signer = DefaultSigner::new("", &keypair_file);
-
-        let program_keypair = Keypair::new();
-        let program_keypair_file = make_tmp_path("program_keypair_file");
-        write_keypair_file(&program_keypair, &program_keypair_file).unwrap();
-
-        let authority_keypair = Keypair::new();
-        let authority_keypair_file = make_tmp_path("authority_keypair_file");
-        write_keypair_file(&authority_keypair, &authority_keypair_file).unwrap();
 
         let test_command = test_commands.clone().get_matches_from(vec![
             "test",
@@ -1901,11 +1864,12 @@ mod tests {
         assert_eq!(
             parse_command(&test_command, &default_signer, &mut None).unwrap(),
             CliCommandInfo {
-                command: CliCommand::ProgramV4(ProgramV4CliCommand::Redeploy {
+                command: CliCommand::ProgramV4(ProgramV4CliCommand::Deploy {
                     program_location: "/Users/test/program.so".to_string(),
-                    program_address: program_keypair.pubkey(),
-                    authority_signer_index: 1,
+                    program_address: Some(program_keypair.pubkey()),
+                    program_signer_index: None,
                     buffer_signer_index: None,
+                    authority_signer_index: 1,
                     use_rpc: false,
                 }),
                 signers: vec![
@@ -1914,10 +1878,6 @@ mod tests {
                 ],
             }
         );
-
-        let buffer_keypair = Keypair::new();
-        let buffer_keypair_file = make_tmp_path("buffer_keypair_file");
-        write_keypair_file(&buffer_keypair, &buffer_keypair_file).unwrap();
 
         let test_command = test_commands.clone().get_matches_from(vec![
             "test",
@@ -1934,9 +1894,10 @@ mod tests {
         assert_eq!(
             parse_command(&test_command, &default_signer, &mut None).unwrap(),
             CliCommandInfo {
-                command: CliCommand::ProgramV4(ProgramV4CliCommand::Redeploy {
+                command: CliCommand::ProgramV4(ProgramV4CliCommand::Deploy {
                     program_location: "/Users/test/program.so".to_string(),
-                    program_address: program_keypair.pubkey(),
+                    program_address: Some(program_keypair.pubkey()),
+                    program_signer_index: None,
                     buffer_signer_index: Some(1),
                     authority_signer_index: 2,
                     use_rpc: false,
