@@ -134,6 +134,7 @@ pub fn execute_batch(
     timings: &mut ExecuteTimings,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
+    skip_commit: bool,
 ) -> Result<()> {
     let TransactionBatchWithIndexes {
         batch,
@@ -156,6 +157,7 @@ pub fn execute_batch(
         ExecutionRecordingConfig::new_single_setting(transaction_status_sender.is_some()),
         timings,
         log_messages_bytes_limit,
+        skip_commit,
     );
 
     bank_utils::find_and_send_votes(
@@ -281,6 +283,7 @@ fn execute_batches_internal(
     replay_vote_sender: Option<&ReplayVoteSender>,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
+    skip_commit: bool,
 ) -> Result<ExecuteBatchesInternalMetrics> {
     assert!(!batches.is_empty());
     let execution_timings_per_thread: Mutex<HashMap<usize, ThreadExecuteTimings>> =
@@ -302,6 +305,7 @@ fn execute_batches_internal(
                     &mut timings,
                     log_messages_bytes_limit,
                     prioritization_fee_cache,
+                    skip_commit,
                 ));
 
                 let thread_index = replay_tx_thread_pool.current_thread_index().unwrap();
@@ -360,8 +364,9 @@ fn process_batches(
     batch_execution_timing: &mut BatchExecutionTiming,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
+    skip_commit: bool,
 ) -> Result<()> {
-    if bank.has_installed_scheduler() {
+    if skip_commit || bank.has_installed_scheduler() {
         debug!(
             "process_batches()/schedule_batches_for_execution({} batches)",
             batches.len()
@@ -403,6 +408,7 @@ fn process_batches(
             batch_execution_timing,
             log_messages_bytes_limit,
             prioritization_fee_cache,
+            skip_commit,
         )
     }
 }
@@ -456,6 +462,7 @@ fn rebatch_and_execute_batches(
     timing: &mut BatchExecutionTiming,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
+    skip_commit: bool,
 ) -> Result<()> {
     if batches.is_empty() {
         return Ok(());
@@ -524,6 +531,7 @@ fn rebatch_and_execute_batches(
         replay_vote_sender,
         log_messages_bytes_limit,
         prioritization_fee_cache,
+        skip_commit,
     )?;
 
     // Pass false because this code-path is never touched by unified scheduler.
@@ -584,6 +592,7 @@ pub fn process_entries_for_tests(
         None,
         &ignored_prioritization_fee_cache,
         true,  // do_register_tick
+        false,  // skip_commit
     );
 
     debug!("process_entries: {:?}", batch_timing);
@@ -600,7 +609,10 @@ fn process_entries(
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
     do_register_tick: bool,
+    execute_votes_only: bool,
 ) -> Result<()> {
+    let skip_commit = execute_votes_only;
+    let do_register_tick = execute_votes_only;
     // accumulator for entries that can be processed in parallel
     let mut batches = vec![];
     let mut tick_hashes = vec![];
@@ -626,6 +638,7 @@ fn process_entries(
                         batch_timing,
                         log_messages_bytes_limit,
                         prioritization_fee_cache,
+                        skip_commit,
                     )?;
                     batches.clear();
                     if do_register_tick {
@@ -683,6 +696,7 @@ fn process_entries(
                             batch_timing,
                             log_messages_bytes_limit,
                             prioritization_fee_cache,
+                            skip_commit,
                         )?;
                         batches.clear();
                     }
@@ -699,6 +713,7 @@ fn process_entries(
         batch_timing,
         log_messages_bytes_limit,
         prioritization_fee_cache,
+        skip_commit,
     )?;
     if do_register_tick {
         for hash in tick_hashes {

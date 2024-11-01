@@ -4754,6 +4754,7 @@ impl Bank {
         recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
+        skip_commit: bool,
     ) -> (Vec<TransactionCommitResult>, TransactionBalancesSet) {
         let pre_balances = if collect_balances {
             self.collect_balances(batch)
@@ -4780,12 +4781,16 @@ impl Bank {
             },
         );
 
-        let commit_results = self.commit_transactions(
-            batch.sanitized_transactions(),
-            processing_results,
-            &processed_counts,
-            timings,
-        );
+        let commit_results = if skip_commit {
+            Self::create_commit_results(processing_results)
+        } else {
+            self.commit_transactions(
+                batch.sanitized_transactions(),
+                processing_results,
+                &processed_counts,
+                timings,
+            )
+        };
         let post_balances = if collect_balances {
             self.collect_balances(batch)
         } else {
@@ -4826,6 +4831,7 @@ impl Bank {
             },
             &mut ExecuteTimings::default(),
             Some(1000 * 1000),
+            false, // skip_commit
         );
 
         commit_results.remove(0)
@@ -4865,6 +4871,7 @@ impl Bank {
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
             None,
+            false,  // skip_commit
         )
         .0
         .into_iter()
