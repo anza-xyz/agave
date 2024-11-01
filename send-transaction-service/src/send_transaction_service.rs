@@ -1,5 +1,11 @@
 use {
-    crate::tpu_info::TpuInfo,
+    crate::{
+        send_transaction_service_stats::{
+            SendTransactionServiceStats, SendTransactionServiceStatsReport,
+        },
+        tpu_info::TpuInfo,
+        transaction_client::CurrentLeaderInfo,
+    },
     crossbeam_channel::{Receiver, RecvTimeoutError},
     log::*,
     solana_client::connection_cache::{ConnectionCache, Protocol},
@@ -8,7 +14,7 @@ use {
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_sdk::{
         clock::Slot, hash::Hash, nonce_account, pubkey::Pubkey, saturating_add_assign,
-        signature::Signature, timing::AtomicInterval, transport::TransportError,
+        signature::Signature, transport::TransportError,
     },
     std::{
         collections::{
@@ -17,7 +23,7 @@ use {
         },
         net::SocketAddr,
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
+            atomic::{AtomicBool, Ordering},
             Arc, Mutex, RwLock,
         },
         thread::{self, sleep, Builder, JoinHandle},
@@ -134,199 +140,6 @@ impl Default for Config {
 /// The maximum duration the retry thread may be configured to sleep before
 /// processing the transactions that need to be retried.
 pub const MAX_RETRY_SLEEP_MS: u64 = 1000;
-
-/// The leader info refresh rate.
-pub const LEADER_INFO_REFRESH_RATE_MS: u64 = 1000;
-
-/// A struct responsible for holding up-to-date leader information
-/// used for sending transactions.
-pub struct CurrentLeaderInfo<T>
-where
-    T: TpuInfo + std::marker::Send + 'static,
-{
-    /// The last time the leader info was refreshed
-    last_leader_refresh: Option<Instant>,
-
-    /// The leader info
-    leader_info: Option<T>,
-
-    /// How often to refresh the leader info
-    refresh_rate: Duration,
-}
-
-impl<T> CurrentLeaderInfo<T>
-where
-    T: TpuInfo + std::marker::Send + 'static,
-{
-    /// Get the leader info, refresh if expired
-    pub fn get_leader_info(&mut self) -> Option<&T> {
-        if let Some(leader_info) = self.leader_info.as_mut() {
-            let now = Instant::now();
-            let need_refresh = self
-                .last_leader_refresh
-                .map(|last| now.duration_since(last) >= self.refresh_rate)
-                .unwrap_or(true);
-
-            if need_refresh {
-                leader_info.refresh_recent_peers();
-                self.last_leader_refresh = Some(now);
-            }
-        }
-        self.leader_info.as_ref()
-    }
-
-    pub fn new(leader_info: Option<T>) -> Self {
-        Self {
-            last_leader_refresh: None,
-            leader_info,
-            refresh_rate: Duration::from_millis(LEADER_INFO_REFRESH_RATE_MS),
-        }
-    }
-}
-
-/// Metrics of the send-transaction-service.
-#[derive(Default)]
-struct SendTransactionServiceStats {
-    /// Count of the received transactions
-    received_transactions: AtomicU64,
-
-    /// Count of the received duplicate transactions
-    received_duplicate_transactions: AtomicU64,
-
-    /// Count of transactions sent in batch
-    sent_transactions: AtomicU64,
-
-    /// Count of transactions not being added to retry queue
-    /// due to queue size limit
-    retry_queue_overflow: AtomicU64,
-
-    /// retry queue size
-    retry_queue_size: AtomicU64,
-
-    /// The count of calls of sending transactions which can be in batch or single.
-    send_attempt_count: AtomicU64,
-
-    /// Time spent on transactions in micro seconds
-    send_us: AtomicU64,
-
-    /// Send failure count
-    send_failure_count: AtomicU64,
-
-    /// Count of nonced transactions
-    nonced_transactions: AtomicU64,
-
-    /// Count of rooted transactions
-    rooted_transactions: AtomicU64,
-
-    /// Count of expired transactions
-    expired_transactions: AtomicU64,
-
-    /// Count of transactions exceeding max retries
-    transactions_exceeding_max_retries: AtomicU64,
-
-    /// Count of retries of transactions
-    retries: AtomicU64,
-
-    /// Count of transactions failed
-    failed_transactions: AtomicU64,
-}
-
-#[derive(Default)]
-struct SendTransactionServiceStatsReport {
-    stats: SendTransactionServiceStats,
-    last_report: AtomicInterval,
-}
-
-impl SendTransactionServiceStatsReport {
-    /// report metrics of the send transaction service
-    fn report(&self) {
-        if self
-            .last_report
-            .should_update(SEND_TRANSACTION_METRICS_REPORT_RATE_MS)
-        {
-            datapoint_info!(
-                "send_transaction_service",
-                (
-                    "recv-tx",
-                    self.stats.received_transactions.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "recv-duplicate",
-                    self.stats
-                        .received_duplicate_transactions
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "sent-tx",
-                    self.stats.sent_transactions.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "retry-queue-overflow",
-                    self.stats.retry_queue_overflow.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "retry-queue-size",
-                    self.stats.retry_queue_size.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "send-us",
-                    self.stats.send_us.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "send-attempt-count",
-                    self.stats.send_attempt_count.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "send-failure-count",
-                    self.stats.send_failure_count.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "nonced-tx",
-                    self.stats.nonced_transactions.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "rooted-tx",
-                    self.stats.rooted_transactions.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "expired-tx",
-                    self.stats.expired_transactions.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "max-retries-exceeded-tx",
-                    self.stats
-                        .transactions_exceeding_max_retries
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "retries",
-                    self.stats.retries.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "failed-tx",
-                    self.stats.failed_transactions.swap(0, Ordering::Relaxed),
-                    i64
-                )
-            );
-        }
-    }
-}
-
-/// Report the send transaction memtrics for every 5 seconds.
-const SEND_TRANSACTION_METRICS_REPORT_RATE_MS: u64 = 5000;
 
 impl SendTransactionService {
     pub fn new<T: TpuInfo + std::marker::Send + 'static>(
