@@ -659,6 +659,7 @@ pub enum SubchanneledPayload<P1: Aligned, P2: Aligned> {
     OpenSubchannel(P2),
     CloseSubchannel(Unit),
     Disconnect(Unit),
+    Reset(Unit),
 }
 
 type NewTaskPayload = SubchanneledPayload<Task, Box<(SchedulingContext, ResultWithTimings)>>;
