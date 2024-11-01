@@ -80,7 +80,6 @@ impl Vortexor {
             mut quic_server_params,
         } = config;
 
-
         let tpu_result = spawn_server_multi(
             tpu_thread_name,
             tpu_metrics_name,
@@ -95,7 +94,9 @@ impl Vortexor {
 
         // Fot TPU forward -- we disallow unstaked connections. Allocate all connection resources
         // for staked connections:
-        quic_server_params.max_staked_connections += quic_server_params.max_staked_connections.saturating_add(quic_server_params.max_unstaked_connections);
+        quic_server_params.max_staked_connections += quic_server_params
+            .max_staked_connections
+            .saturating_add(quic_server_params.max_unstaked_connections);
         quic_server_params.max_unstaked_connections = 0;
         let tpu_fwd_result = spawn_server_multi(
             tpu_fwd_thread_name,
@@ -105,8 +106,7 @@ impl Vortexor {
             tpu_fwd_sender,
             exit.clone(),
             staked_nodes.clone(),
-            quic_server_params
-
+            quic_server_params,
         )
         .unwrap();
 

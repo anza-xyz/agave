@@ -4,7 +4,10 @@ use {
     solana_clap_utils::input_parsers::keypair_of,
     solana_net_utils::{bind_in_range_with_config, bind_more_with_config, SocketConfig},
     solana_sdk::net::DEFAULT_TPU_COALESCE,
-    solana_streamer::{nonblocking::quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT, quic::QuicServerParams, streamer::StakedNodes},
+    solana_streamer::{
+        nonblocking::quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT, quic::QuicServerParams,
+        streamer::StakedNodes,
+    },
     solana_vortexor::{
         cli::{app, DefaultArgs},
         vortexor::{TpuSockets, TpuStreamerConfig, Vortexor},
@@ -62,7 +65,7 @@ pub fn main() {
             max_connections_per_ipaddr_per_min,
             wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             coalesce: tpu_coalesce,
-            }
+        },
     };
 
     let quic_config = SocketConfig { reuseport: true };
