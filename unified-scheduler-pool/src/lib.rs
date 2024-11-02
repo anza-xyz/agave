@@ -171,7 +171,7 @@ struct BlockProductionSchedulerRespawner {
     block_production_context_builder: BBB,
     bank_forks: Arc<RwLock<BankForks>>,
     banking_packet_receiver: BankingPacketReceiver,
-};
+}
 
 impl std::fmt::Debug for BlockProductionSchedulerRespawner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
