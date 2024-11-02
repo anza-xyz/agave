@@ -35,7 +35,7 @@ use {
     },
     solana_compute_budget::{
         compute_budget::ComputeBudget,
-        compute_budget_limits::{self, get_prioritization_fee, MAX_COMPUTE_UNIT_LIMIT},
+        compute_budget_limits::{self, ComputeBudgetLimits, MAX_COMPUTE_UNIT_LIMIT},
     },
     solana_feature_set::{self as feature_set, FeatureSet},
     solana_inline_spl::token,
@@ -10311,10 +10311,14 @@ fn test_calculate_fee_compute_units() {
             Some(&Pubkey::new_unique()),
         ));
         let fee = calculate_test_fee(&message, 1, &fee_structure);
+        let fee_budget_limits = FeeBudgetLimits::from(ComputeBudgetLimits {
+            compute_unit_price: PRIORITIZATION_FEE_RATE,
+            compute_unit_limit: requested_compute_units,
+            ..ComputeBudgetLimits::default()
+        });
         assert_eq!(
             fee,
-            lamports_per_signature
-                + get_prioritization_fee(PRIORITIZATION_FEE_RATE, requested_compute_units as u64)
+            lamports_per_signature + fee_budget_limits.prioritization_fee
         );
     }
 }
@@ -10328,7 +10332,11 @@ fn test_calculate_prioritization_fee() {
 
     let request_units = 1_000_000_u32;
     let request_unit_price = 2_000_000_000_u64;
-    let prioritization_fee = get_prioritization_fee(request_unit_price, request_units as u64);
+    let fee_budget_limits = FeeBudgetLimits::from(ComputeBudgetLimits {
+        compute_unit_price: request_unit_price,
+        compute_unit_limit: request_units,
+        ..ComputeBudgetLimits::default()
+    });
 
     let message = new_sanitized_message(Message::new(
         &[
@@ -10345,7 +10353,7 @@ fn test_calculate_prioritization_fee() {
     );
     assert_eq!(
         fee,
-        fee_structure.lamports_per_signature + prioritization_fee
+        fee_structure.lamports_per_signature + fee_budget_limits.prioritization_fee
     );
 }
 

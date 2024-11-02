@@ -1,5 +1,5 @@
 use {
-    solana_program_entrypoint::HEAP_LENGTH, solana_fee_structure::FeeBudgetLimits,
+    solana_fee_structure::FeeBudgetLimits, solana_program_entrypoint::HEAP_LENGTH,
     std::num::NonZeroU32,
 };
 
@@ -40,7 +40,7 @@ impl Default for ComputeBudgetLimits {
     }
 }
 
-pub fn get_prioritization_fee(compute_unit_price: u64, compute_unit_limit: u64) -> u64 {
+fn get_prioritization_fee(compute_unit_price: u64, compute_unit_limit: u64) -> u64 {
     let micro_lamport_fee: MicroLamports =
         (compute_unit_price as u128).saturating_mul(compute_unit_limit as u128);
     micro_lamport_fee
