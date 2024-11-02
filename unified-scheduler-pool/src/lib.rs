@@ -956,7 +956,6 @@ impl TaskCreator {
 #[derive(Debug)]
 pub struct PooledSchedulerInner<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     thread_manager: ThreadManager<S, TH>,
-    block_verification_usage_queue_loader: UsageQueueLoader,
     task_creator: TaskCreator,
 }
 
@@ -1029,7 +1028,7 @@ where
     }
 
     fn is_overgrown(&self) -> bool {
-        self.block_verification_usage_queue_loader.count() > self.thread_manager.pool.max_usage_queue_count
+        self.task_creator.usage_queue_loader().count() > self.thread_manager.pool.max_usage_queue_count
     }
 }
 
@@ -2023,7 +2022,6 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
         };
         let mut inner = Self::Inner {
             thread_manager: ThreadManager::new(pool),
-            block_verification_usage_queue_loader: UsageQueueLoader::default(),
             task_creator,
         };
         inner
@@ -2082,7 +2080,7 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
     ) -> ScheduleResult {
         assert_matches!(self.context().mode(), SchedulingMode::BlockVerification);
         let task = SchedulingStateMachine::create_task(transaction.clone(), index, &mut |pubkey| {
-            self.inner.block_verification_usage_queue_loader.load(pubkey)
+            self.inner.task_creator.usage_queue_loader().load(pubkey)
         });
         self.inner.thread_manager.send_task(task)
     }
@@ -2311,14 +2309,16 @@ mod tests {
         for _ in 0..REDUCED_MAX_USAGE_QUEUE_COUNT {
             small_scheduler
                 .inner
-                .block_verification_usage_queue_loader
+                .task_creator()
+                .usage_queue_loader()
                 .load(Pubkey::new_unique());
         }
         let big_scheduler = pool.do_take_scheduler(context2);
         for _ in 0..REDUCED_MAX_USAGE_QUEUE_COUNT + 1 {
             big_scheduler
                 .inner
-                .block_verification_usage_queue_loader
+                .task_creator()
+                .usage_queue_loader()
                 .load(Pubkey::new_unique());
         }
 
