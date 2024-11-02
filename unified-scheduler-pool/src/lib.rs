@@ -930,6 +930,7 @@ pub struct PooledScheduler<TH: TaskHandler> {
     context: SchedulingContext,
 }
 
+#[derive(Debug)]
 enum TaskCreator {
     BlockVerification {
         usage_queue_loader: UsageQueueLoader,
