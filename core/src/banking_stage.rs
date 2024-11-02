@@ -714,7 +714,7 @@ impl BankingStage {
                 let bank_forks = bank_forks.clone();
                 let mut id_generator = MonotonicIdGenerator::new();
 
-                Box::new(move |aaa: BankingPacketBatch| {
+                let b = Box::new(move |aaa: BankingPacketBatch| {
                     let decision = decision_maker.make_consume_or_forward_decision();
                     if matches!(decision, BufferedPacketsDecision::Forward) {
                         return vec![];
@@ -784,8 +784,9 @@ impl BankingStage {
                         }
                     }
                     tasks
-                })
+                });
                 info!("create_block_producing_scheduler: end!");
+                b
             })
         );
 
