@@ -155,6 +155,10 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(12);
 // because UsageQueueLoader won't grow that much to begin with.
 const DEFAULT_MAX_USAGE_QUEUE_COUNT: usize = 262_144;
 
+trait AAA: FnMut(BankingPacketBatch) -> Vec<Task> {
+}
+     
+
 impl<S, TH> SchedulerPool<S, TH>
 where
     S: SpawnableScheduler<TH>,
@@ -433,7 +437,7 @@ where
         })
     }
 
-    pub fn spawn_block_production_scheduler2(&self, bank_forks: &RwLock<BankForks>, recv: BankingPacketReceiver, mut on_on_banking_packet_receive: Box<dyn FnMut(Arc<BankingStageAdapter>) -> Box<dyn FnMut(BankingPacketBatch) -> Vec<Task>>>) 
+    pub fn spawn_block_production_scheduler2(&self, bank_forks: &RwLock<BankForks>, recv: BankingPacketReceiver, mut on_on_banking_packet_receive: Box<dyn FnMut(Arc<BankingStageAdapter>) -> Box<dyn AAA>>) 
     {
         info!("flash session: start!");
         /*
