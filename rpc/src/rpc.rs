@@ -20,7 +20,7 @@ use {
         accounts::AccountAddressFilter,
         accounts_index::{AccountIndex, AccountSecondaryIndexes, IndexKey, ScanConfig},
     },
-    solana_client::connection_cache::{ConnectionCache, Protocol},
+    solana_client::connection_cache::Protocol,
     solana_entry::entry::Entry,
     solana_faucet::faucet::request_airdrop_transaction,
     solana_feature_set as feature_set,
@@ -81,9 +81,8 @@ use {
         },
     },
     solana_send_transaction_service::{
+        create_client_for_tests::ClientWithCreator,
         send_transaction_service::{SendTransactionService, TransactionInfo},
-        tpu_info::NullTpuInfo,
-        transaction_client::ConnectionCacheClient,
     },
     solana_stake_program,
     solana_storage_bigtable::Error as StorageError,
@@ -349,11 +348,11 @@ impl JsonRpcRequestProcessor {
         )
     }
 
+    // TODO(klykov): Why don't than declare it for tests?
     // Useful for unit testing
-    pub fn new_from_bank(
+    pub fn new_from_bank<Client: ClientWithCreator>(
         bank: Bank,
         socket_addr_space: SocketAddrSpace,
-        connection_cache: Arc<ConnectionCache>,
     ) -> Self {
         let genesis_hash = bank.hash();
         let bank_forks = BankForks::new_rw_arc(bank);
@@ -368,18 +367,10 @@ impl JsonRpcRequestProcessor {
             );
             ClusterInfo::new(contact_info, keypair, socket_addr_space)
         });
-        let tpu_address = cluster_info
-            .my_contact_info()
-            .tpu(connection_cache.protocol())
-            .unwrap();
+        let my_tpu_address = cluster_info.my_contact_info().tpu(Protocol::QUIC).unwrap();
         let (sender, receiver) = unbounded();
-        let client = ConnectionCacheClient::<NullTpuInfo>::new(
-            connection_cache.clone(),
-            tpu_address,
-            None,
-            None,
-            1,
-        );
+
+        let client = Client::create_client(my_tpu_address, None, 1);
         SendTransactionService::new(&bank_forks, receiver, client, 1000, exit.clone());
 
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
@@ -4375,6 +4366,10 @@ pub mod tests {
             },
             vote::state::VoteState,
         },
+        solana_send_transaction_service::{
+            create_client_for_tests::CreateClient, tpu_info::NullTpuInfo,
+            transaction_client::ConnectionCacheClient,
+        },
         solana_transaction_status::{
             EncodedConfirmedBlock, EncodedTransaction, EncodedTransactionWithStatusMeta,
             TransactionDetails,
@@ -4759,11 +4754,9 @@ pub mod tests {
         let bob_pubkey = solana_sdk::pubkey::new_rand();
         let genesis = create_genesis_config(100);
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let connection_cache = Arc::new(ConnectionCache::new("connection_cache_test"));
-        let meta = JsonRpcRequestProcessor::new_from_bank(
+        let meta = JsonRpcRequestProcessor::new_from_bank::<ConnectionCacheClient<NullTpuInfo>>(
             bank,
             SocketAddrSpace::Unspecified,
-            connection_cache,
         );
 
         let bank = meta.bank_forks.read().unwrap().root_bank();
@@ -4782,11 +4775,9 @@ pub mod tests {
         let genesis = create_genesis_config(20);
         let mint_pubkey = genesis.mint_keypair.pubkey();
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let connection_cache = Arc::new(ConnectionCache::new("connection_cache_test"));
-        let meta = JsonRpcRequestProcessor::new_from_bank(
+        let meta = JsonRpcRequestProcessor::new_from_bank::<ConnectionCacheClient<NullTpuInfo>>(
             bank,
             SocketAddrSpace::Unspecified,
-            connection_cache,
         );
 
         let mut io = MetaIoHandler::default();
@@ -4814,11 +4805,9 @@ pub mod tests {
         let genesis = create_genesis_config(20);
         let mint_pubkey = genesis.mint_keypair.pubkey();
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let connection_cache = Arc::new(ConnectionCache::new("connection_cache_test"));
-        let meta = JsonRpcRequestProcessor::new_from_bank(
+        let meta = JsonRpcRequestProcessor::new_from_bank::<ConnectionCacheClient<NullTpuInfo>>(
             bank,
             SocketAddrSpace::Unspecified,
-            connection_cache,
         );
 
         let mut io = MetaIoHandler::default();
@@ -4942,11 +4931,9 @@ pub mod tests {
         let bob_pubkey = solana_sdk::pubkey::new_rand();
         let genesis = create_genesis_config(10);
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let connection_cache = Arc::new(ConnectionCache::new("connection_cache_test"));
-        let meta = JsonRpcRequestProcessor::new_from_bank(
+        let meta = JsonRpcRequestProcessor::new_from_bank::<ConnectionCacheClient<NullTpuInfo>>(
             bank,
             SocketAddrSpace::Unspecified,
-            connection_cache,
         );
 
         let mut io = MetaIoHandler::default();
@@ -6412,11 +6399,9 @@ pub mod tests {
     fn test_rpc_send_bad_tx() {
         let genesis = create_genesis_config(100);
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let connection_cache = Arc::new(ConnectionCache::new("connection_cache_test"));
-        let meta = JsonRpcRequestProcessor::new_from_bank(
+        let meta = JsonRpcRequestProcessor::new_from_bank::<ConnectionCacheClient<NullTpuInfo>>(
             bank,
             SocketAddrSpace::Unspecified,
-            connection_cache,
         );
 
         let mut io = MetaIoHandler::default();
@@ -6456,11 +6441,7 @@ pub mod tests {
             );
             ClusterInfo::new(contact_info, keypair, SocketAddrSpace::Unspecified)
         });
-        let connection_cache = Arc::new(ConnectionCache::new("connection_cache_test"));
-        let tpu_address = cluster_info
-            .my_contact_info()
-            .tpu(connection_cache.protocol())
-            .unwrap();
+        let my_tpu_address = cluster_info.my_contact_info().tpu(Protocol::QUIC).unwrap();
         let (meta, receiver) = JsonRpcRequestProcessor::new(
             JsonRpcConfig::default(),
             None,
@@ -6480,13 +6461,7 @@ pub mod tests {
             Arc::new(AtomicU64::default()),
             Arc::new(PrioritizationFeeCache::default()),
         );
-        let client = ConnectionCacheClient::<NullTpuInfo>::new(
-            connection_cache.clone(),
-            tpu_address,
-            None,
-            None,
-            1,
-        );
+        let client = ConnectionCacheClient::<NullTpuInfo>::create_client(my_tpu_address, None, 1);
         SendTransactionService::new(&bank_forks, receiver, client, 1000, exit);
 
         let mut bad_transaction = system_transaction::transfer(
@@ -6726,13 +6701,9 @@ pub mod tests {
         )));
 
         let cluster_info = Arc::new(new_test_cluster_info());
-        let connection_cache = Arc::new(ConnectionCache::new("connection_cache_test"));
-        let tpu_address = cluster_info
-            .my_contact_info()
-            .tpu(connection_cache.protocol())
-            .unwrap();
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
+        let my_tpu_address = cluster_info.my_contact_info().tpu(Protocol::QUIC).unwrap();
         let (request_processor, receiver) = JsonRpcRequestProcessor::new(
             JsonRpcConfig::default(),
             None,
@@ -6752,13 +6723,7 @@ pub mod tests {
             Arc::new(AtomicU64::default()),
             Arc::new(PrioritizationFeeCache::default()),
         );
-        let client = ConnectionCacheClient::<NullTpuInfo>::new(
-            connection_cache.clone(),
-            tpu_address,
-            None,
-            None,
-            1,
-        );
+        let client = ConnectionCacheClient::<NullTpuInfo>::create_client(my_tpu_address, None, 1);
         SendTransactionService::new(&bank_forks, receiver, client, 1000, exit);
         assert_eq!(
             request_processor.get_block_commitment(0),

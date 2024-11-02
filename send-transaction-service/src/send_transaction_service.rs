@@ -475,14 +475,11 @@ mod test {
     use {
         super::*,
         crate::{
+            create_client_for_tests::ClientWithCreator,
             tpu_info::NullTpuInfo,
-            transaction_client::{
-                spawn_tpu_client_send_txs, Cancelable, ConnectionCacheClient, TpuClientNextClient,
-            },
+            transaction_client::{ConnectionCacheClient, TpuClientNextClient},
         },
         crossbeam_channel::{bounded, unbounded},
-        solana_client::connection_cache::ConnectionCache,
-        solana_quic_client::quic_client::RUNTIME,
         solana_sdk::{
             account::AccountSharedData,
             genesis_config::create_genesis_config,
@@ -494,56 +491,12 @@ mod test {
         std::ops::Sub,
     };
 
-    trait CreateClient: TransactionClient {
-        fn create_client(tpu_peers: Option<Vec<SocketAddr>>, leader_forward_count: u64) -> Self;
-    }
-
-    impl CreateClient for ConnectionCacheClient<NullTpuInfo> {
-        fn create_client(tpu_peers: Option<Vec<SocketAddr>>, leader_forward_count: u64) -> Self {
-            let tpu_address = "127.0.0.1:0".parse().unwrap();
-            let connection_cache = Arc::new(ConnectionCache::new("connection_cache_test"));
-
-            ConnectionCacheClient::new(
-                connection_cache,
-                tpu_address,
-                tpu_peers,
-                None,
-                leader_forward_count,
-            )
-        }
-    }
-
-    impl CreateClient for TpuClientNextClient {
-        fn create_client(tpu_peers: Option<Vec<SocketAddr>>, leader_forward_count: u64) -> Self {
-            let runtime = &*RUNTIME;
-            let tpu_address = "127.0.0.1:0".parse().unwrap();
-
-            spawn_tpu_client_send_txs::<NullTpuInfo>(
-                runtime,
-                tpu_address,
-                tpu_peers,
-                None,
-                leader_forward_count,
-            )
-        }
-    }
-
-    // Define type alias to simplify definition of test functions.
-    trait ClientWithCreator:
-        CreateClient + TransactionClient + Cancelable + Send + Clone + 'static
-    {
-    }
-    impl<T> ClientWithCreator for T where
-        T: CreateClient + TransactionClient + Cancelable + Send + Clone + 'static
-    {
-    }
-
     fn service_exit<C: ClientWithCreator>() {
         let bank = Bank::default_for_tests();
         let bank_forks = BankForks::new_rw_arc(bank);
         let (sender, receiver) = unbounded();
 
-        let client = C::create_client(None, 1);
+        let client = C::create_client("127.0.0.1:0".parse().unwrap(), None, 1);
 
         let send_transaction_service = SendTransactionService::new(
             &bank_forks,
@@ -584,7 +537,7 @@ mod test {
         };
 
         let exit = Arc::new(AtomicBool::new(false));
-        let client = C::create_client(None, 1);
+        let client = C::create_client("127.0.0.1:0".parse().unwrap(), None, 1);
         let _send_transaction_service =
             SendTransactionService::new(&bank_forks, receiver, client.clone(), 1000, exit.clone());
 
@@ -675,7 +628,11 @@ mod test {
             ),
         );
 
-        let client = C::create_client(config.tpu_peers, leader_forward_count);
+        let client = C::create_client(
+            "127.0.0.1:0".parse().unwrap(),
+            config.tpu_peers,
+            leader_forward_count,
+        );
         let result = SendTransactionService::process_transactions(
             &working_bank,
             &root_bank,
