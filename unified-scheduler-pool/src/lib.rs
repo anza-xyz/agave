@@ -487,7 +487,7 @@ where
             }).unwrap_or_else(|| {
                 SchedulingContext::new(SchedulingMode::BlockProduction, bank_forks.read().unwrap().root_bank())
             });
-            let s = S::spawn(self.self_arc(), context, initialized_result_with_timings(), banking_stage_context, adapter);
+            let s = S::spawn(self.self_arc(), context, initialized_result_with_timings(), banking_stage_context, Some(adapter));
             assert!(g.0.replace(s.id()).is_none());
             s
         };
