@@ -1993,7 +1993,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
 
     fn create_block_producing_scheduler(&self) -> Arc<BlockProducingUnifiedScheduler> {
         Arc::new(BlockProducingUnifiedScheduler {
-            usage_queue_loader: UsageQueueLoader::default(),
+            usage_queue_loader2: UsageQueueLoader::default(),
             deduper: DashSet::with_capacity(1_000_000),
         })
     }
