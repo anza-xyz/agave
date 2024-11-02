@@ -944,7 +944,7 @@ enum TaskCreator {
 pub struct PooledSchedulerInner<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     thread_manager: ThreadManager<S, TH>,
     block_verification_usage_queue_loader: UsageQueueLoader,
-    task_creator: Option<TaskCreator>,
+    task_creator: TaskCreator,
 }
 
 impl<S, TH> Drop for ThreadManager<S, TH>
@@ -1998,9 +1998,17 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
             "spawning new scheduler for slot: {}",
             context.bank().slot()
         );
+        let task_creator = match context.mode() {
+            SchedulingMode::BlockVerification => {
+            },
+            SchedulingMode::BlockProduction => {
+                TaskCreator::BlockProduction { banking_stage_adapter: banking_stage_adapter.unwrap() }
+            },
+        }
         let mut inner = Self::Inner {
             thread_manager: ThreadManager::new(pool),
             block_verification_usage_queue_loader: UsageQueueLoader::default(),
+            task_creator,
         };
         inner
             .thread_manager
