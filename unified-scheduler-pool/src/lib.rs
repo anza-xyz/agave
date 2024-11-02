@@ -926,7 +926,7 @@ pub struct PooledScheduler<TH: TaskHandler> {
 #[derive(Debug)]
 pub struct PooledSchedulerInner<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     thread_manager: ThreadManager<S, TH>,
-    usage_queue_loader: Arc<UsageQueueLoader>,
+    usage_queue_loader: UsageQueueLoader,
 }
 
 impl<S, TH> Drop for ThreadManager<S, TH>
@@ -2001,7 +2001,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
 
 #[derive(Clone, Debug)]
 pub struct BlockProducingUnifiedScheduler {
-    usage_queue_loader: Arc<UsageQueueLoader>,
+    usage_queue_loader2: UsageQueueLoader,
     deduper: DashSet<Hash>,
 }
 
