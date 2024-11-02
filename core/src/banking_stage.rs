@@ -711,6 +711,7 @@ impl BankingStage {
         let decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
         unified_scheduler_pool.spawn_block_production_scheduler2(bank_forks.clone(), non_vote_receiver,
             Box::new(|adapter: Arc<BankingStageAdapter>| {
+                let decision_maker = decision_maker.clone();
 
                 Box::new(move |aaa: BankingPacketBatch| {
                     let decision = decision_maker.make_consume_or_forward_decision();
