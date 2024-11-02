@@ -167,6 +167,12 @@ impl Clone for Box<dyn AAA> {
 
 type BBB = Box<dyn FnMut(Arc<BankingStageAdapter>) -> Box<dyn AAA> + Send>;
 
+impl std::fmt::Debug for BBB {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        todo!();
+    }
+}
+
 
 impl<S, TH> SchedulerPool<S, TH>
 where
