@@ -433,7 +433,10 @@ where
         })
     }
 
-    pub fn spawn_block_production_scheduler2<F: FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static> (&self, bank_forks: &RwLock<BankForks>, recv: BankingPacketReceiver, on_banking_packet_receive: F) {
+    pub fn spawn_block_production_scheduler2<F>(&self, bank_forks: &RwLock<BankForks>, recv: BankingPacketReceiver, on_banking_packet_receive: F) 
+    where
+        F: FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static
+    {
     }
 
     pub fn spawn_block_production_scheduler(&self, bank_forks: &RwLock<BankForks>, recv: BankingPacketReceiver, on_banking_packet_receive: impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static) {
