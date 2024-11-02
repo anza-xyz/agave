@@ -2055,7 +2055,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
     }
 }
 
-trait IsIdle {
+trait IsIdle: Send {
     fn is_idle(&self) -> bool;
 }
 
