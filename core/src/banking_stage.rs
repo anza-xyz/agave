@@ -707,6 +707,14 @@ impl BankingStage {
         }
         let decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
 
+        struct S(DecisionMaker);
+
+        impl IsIdle for S {
+            fn is_idle(&self) -> bool {
+                matches!(self.0.make_consume_or_forward_decision(), BufferedPacketsDecision::Forward)
+            }
+        }
+
         unified_scheduler_pool.prepare_to_spawn_block_production_scheduler(
             bank_forks.clone(),
             non_vote_receiver,

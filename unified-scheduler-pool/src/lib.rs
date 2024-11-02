@@ -2056,7 +2056,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
     }
 }
 
-trait IsIdle: Send + Debug {
+pub trait IsIdle: Send + Debug {
     fn is_idle(&self) -> bool;
 }
 
