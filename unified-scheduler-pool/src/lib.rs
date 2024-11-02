@@ -1958,7 +1958,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 }
 
 trait SchedulerInner {
-    fn id() -> usize {
+    fn id(&self) -> usize {
         0
     }
 
@@ -1966,7 +1966,7 @@ trait SchedulerInner {
         true
     }
 
-    fn is_outgrown() -> bool {
+    fn is_outgrown(&self) -> bool {
         true
     }
 }
