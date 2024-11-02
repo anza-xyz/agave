@@ -168,7 +168,7 @@ where
 
 clone_trait_object!(AAA);
 
-type BBB = Box<dyn FnMut(Arc<BankingStageAdapter>) -> Box<dyn AAA>>;
+type BBB = Box<Send + dyn FnMut(Arc<BankingStageAdapter>) -> Box<dyn AAA>>;
 
 struct BlockProductionSchedulerRespawner {
     on_spawn_block_production_scheduler: BBB,
