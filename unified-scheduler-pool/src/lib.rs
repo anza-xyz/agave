@@ -158,7 +158,7 @@ const DEFAULT_MAX_USAGE_QUEUE_COUNT: usize = 262_144;
 trait AAA: FnMut(BankingPacketBatch) -> Vec<Task> {
 }
 
-trait BBB: AAA + Clone {
+trait BBB: AAA {
 }
      
 
