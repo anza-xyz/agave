@@ -443,7 +443,6 @@ where
     pub fn spawn_block_production_scheduler2(&self, bank_forks: &RwLock<BankForks>, recv: BankingPacketReceiver, mut on_on_banking_packet_receive: Box<dyn FnMut(Arc<BankingStageAdapter>) -> Box<dyn BBB>>) 
     {
         info!("flash session: start!");
-        /*
         let on_banking_packet_receive = on_on_banking_packet_receive(self.banking_stage_adapter());
         let banking_stage_context = Some((recv, on_banking_packet_receive));
         let scheduler = {
@@ -460,7 +459,6 @@ where
         let id = scheduler.id();
         self.return_scheduler(scheduler.into_inner().1, id, false);
         self.block_production_scheduler_condvar.notify_all();
-        */
         info!("flash session: end!");
     }
 
