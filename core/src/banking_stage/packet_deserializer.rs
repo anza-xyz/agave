@@ -18,7 +18,7 @@ use {
     },
 };
 
-use solana_unified_scheduler_pool::SigverifyTracerPacketStats;
+use solana_perf::packet::SigverifyTracerPacketStats;
 
 /// Results from deserializing packet batches.
 pub struct ReceivePacketResults {
