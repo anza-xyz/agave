@@ -2087,6 +2087,10 @@ impl BankingStageAdapter {
             self.usage_queue_loader.load(pubkey)
         }))
     }
+
+    fn is_idle(&self) -> bool {
+        todo!()
+    }
 }
 
 impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
