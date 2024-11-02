@@ -1991,15 +1991,15 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
         Self { inner, context }
     }
 
-    fn create_block_producing_scheduler(&self) -> BlockProducingUnifiedScheduler {
-        BlockProducingUnifiedScheduler {
+    fn create_block_producing_scheduler(&self) -> Arc<BlockProducingUnifiedScheduler> {
+        Arc::new(BlockProducingUnifiedScheduler {
             usage_queue_loader: self.inner.usage_queue_loader.clone(),
             deduper: DashSet::with_capacity(1_000_000),
-        }
+        })
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct BlockProducingUnifiedScheduler {
     usage_queue_loader2: UsageQueueLoader,
     deduper: DashSet<Hash>,
