@@ -7102,6 +7102,7 @@ dependencies = [
  "bincode",
  "bv",
  "caps",
+ "crossbeam-channel",
  "curve25519-dalek 4.1.3",
  "dlopen2",
  "fnv",
