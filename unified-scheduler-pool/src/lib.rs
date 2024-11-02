@@ -1958,6 +1958,17 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 }
 
 trait SchedulerInner {
+    fn id() -> usize {
+        0
+    }
+
+    fn is_idle(&self) -> bool {
+        true
+    }
+
+    fn is_outgrown() -> bool {
+        true
+    }
 }
 
 pub trait SpawnableScheduler<TH: TaskHandler>: InstalledScheduler {
