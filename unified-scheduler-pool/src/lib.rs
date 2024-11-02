@@ -2091,7 +2091,7 @@ impl BankingStageAdapter {
     }
 
     fn is_idle(&self) -> bool {
-        self.idling_detector.lock().as_ref().unwrap().is_idle()
+        self.idling_detector.lock().unwrap().as_ref().unwrap().is_idle()
     }
 }
 
