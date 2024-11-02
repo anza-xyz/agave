@@ -706,10 +706,9 @@ impl BankingStage {
         let mut id_generator = MonotonicIdGenerator::new();
         info!("create_block_producing_scheduler: start!");
         use std::sync::Mutex;
-        let s: Arc<Mutex<Option<Arc<solana_unified_scheduler_pool::BlockProducingUnifiedScheduler>>>> = Arc::new(Mutex::new(None));
-        let s2 = s.clone();
+        let adapter = unified_scheduler_pool.banking_stage_adapter();
         let decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
-        let ss = unified_scheduler_pool.spawn_banking_scheduler(&bank_forks.clone(), non_vote_receiver,
+        unified_scheduler_pool.spawn_block_production_scheduler(&bank_forks.clone(), non_vote_receiver,
             move |aaa| {
                 let decision = decision_maker.make_consume_or_forward_decision();
                 if matches!(decision, BufferedPacketsDecision::Forward) {
@@ -783,7 +782,6 @@ impl BankingStage {
                 tasks
             }
         );
-        s.lock().unwrap().insert(ss);
         info!("create_block_producing_scheduler: end!");
 
         Self { bank_thread_hdls: vec![] }
