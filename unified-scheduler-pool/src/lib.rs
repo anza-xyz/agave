@@ -101,7 +101,7 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     scheduler_inners: Mutex<Vec<(S::Inner, Instant)>>,
     block_production_scheduler_inner: Mutex<(Option<SchedulerId>, Option<S::Inner>, Option<SchedulingContext>)>,
     block_production_scheduler_condvar: Condvar,
-    bbb: Mutex<Option<BBB>>,
+    bbb: Mutex<Option<BlockProductionSchedulerRespawner>>,
     trashed_scheduler_inners: Mutex<Vec<S::Inner>>,
     timeout_listeners: Mutex<Vec<(TimeoutListener, Instant)>>,
     handler_count: usize,
@@ -165,9 +165,15 @@ impl Clone for Box<dyn AAA> {
     }
 }
 
-struct BBB(Box<dyn FnMut(Arc<BankingStageAdapter>) -> Box<dyn AAA> + Send>);
+type BBB = Box<dyn FnMut(Arc<BankingStageAdapter>) -> Box<dyn AAA> + Send>;
 
-impl std::fmt::Debug for BBB {
+struct BlockProductionSchedulerRespawner {
+    block_production_context_builder: BBB,
+    bank_forks: Arc<RwLock<BankForks>>,
+    banking_packet_receiver: BankingPacketReceiver,
+};
+
+impl std::fmt::Debug for BlockProductionSchedulerRespawner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         todo!();
     }
@@ -456,7 +462,7 @@ where
     pub fn spawn_block_production_scheduler2(&self, bank_forks: &RwLock<BankForks>, recv: BankingPacketReceiver, mut on_on_banking_packet_receive: BBB) 
     {
         info!("flash session: start!");
-        let on_banking_packet_receive = on_on_banking_packet_receive.0(self.banking_stage_adapter());
+        let on_banking_packet_receive = on_on_banking_packet_receive(self.banking_stage_adapter());
         let banking_stage_context = Some((recv, on_banking_packet_receive));
         let scheduler = {
             let mut g = self.block_production_scheduler_inner.lock().expect("not poisoned");
