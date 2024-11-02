@@ -230,6 +230,7 @@ where
             scheduler_inners: Mutex::default(),
             block_production_scheduler_inner: Mutex::default(),
             block_production_scheduler_condvar: Condvar::default(),
+            bbb: Mutex::default(),
             trashed_scheduler_inners: Mutex::default(),
             timeout_listeners: Mutex::default(),
             handler_count,
