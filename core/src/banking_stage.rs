@@ -705,7 +705,6 @@ impl BankingStage {
         }
         let mut id_generator = MonotonicIdGenerator::new();
         info!("create_block_producing_scheduler: start!");
-        use std::sync::Mutex;
         let adapter = unified_scheduler_pool.banking_stage_adapter();
         let decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
         unified_scheduler_pool.spawn_block_production_scheduler(&bank_forks.clone(), non_vote_receiver,
