@@ -2055,6 +2055,10 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
     }
 }
 
+trait IsIdle {
+    fn is_idle(&self) -> bool;
+}
+
 #[derive(Debug)]
 pub struct BankingStageAdapter {
     usage_queue_loader: UsageQueueLoader,
