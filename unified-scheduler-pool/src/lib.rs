@@ -475,11 +475,12 @@ where
     }
 
     pub fn spawn_block_production_scheduler(&self) {
+        let bbbl = self.bbb.lock().unwrap();
         let BlockProductionSchedulerRespawner {
             bank_forks,
             banking_packet_receiver,
             on_spawn_block_production_scheduler,
-        } = &mut *self.bbb.lock().unwrap().as_mut().unwrap();
+        } = &mut *bbbl.as_mut().unwrap();
 
         let on_banking_packet_receive = on_spawn_block_production_scheduler(self.banking_stage_adapter());
         let banking_stage_context = Some((banking_packet_receiver.clone(), on_banking_packet_receive));
