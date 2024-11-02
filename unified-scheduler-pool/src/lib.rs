@@ -464,7 +464,7 @@ where
         })
     }
 
-    pub fn spawn_block_production_scheduler2(&self, bank_forks: Arc<RwLock<BankForks>>, recv: BankingPacketReceiver, mut on_spawn_block_production_scheduler: BBB) {
+    pub fn spawn_block_production_scheduler2(&self, bank_forks: Arc<RwLock<BankForks>>, banking_packet_receiver: BankingPacketReceiver, mut on_spawn_block_production_scheduler: BBB) {
         info!("flash session: start!");
         let bbbl = self.bbb.lock().unwrap();
         *bbbl = Some(BlockProductionSchedulerRespawner {
