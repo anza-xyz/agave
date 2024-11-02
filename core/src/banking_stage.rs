@@ -58,6 +58,7 @@ use {
     },
 };
 use solana_perf::packet::BankingPacketBatch;
+use solana_unified_scheduler_pool::BankingStageAdapter;
 
 // Below modules are pub to allow use by banking_stage bench
 pub mod committer;
