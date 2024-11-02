@@ -940,6 +940,19 @@ enum TaskCreator {
     },
 }
 
+impl TaskCreator {
+    fn usage_queue_loader(&self) -> &UsageQueueLoader {
+        match self {
+            Self::BlockVerification {
+                usage_queue_loader
+            } => usage_queue_loader,
+            Self::BlockProduction {
+                banking_stage_adapter
+            } => banking_stage_adapter.block_production_usage_queue_loader,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct PooledSchedulerInner<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     thread_manager: ThreadManager<S, TH>,
