@@ -429,7 +429,9 @@ where
         let banking_context = Some((recv, on_banking_packet_receive));
         let scheduler = {
             let mut g = self.block_producing_scheduler_inner.lock().expect("not poisoned");
-            let context = g.2.take().unwrap_or_else(|| {
+            let context = g.2.take().inspect(|context| {
+                assert_matches!(context.mode(), SchedulingMode::BlockProduction);
+            }).unwrap_or_else(|| {
                 SchedulingContext::new(SchedulingMode::BlockProduction, bank_forks.read().unwrap().root_bank())
             });
             let s = S::spawn(self.self_arc(), context, initialized_result_with_timings(), banking_context);
