@@ -16,6 +16,7 @@ assert_matches = { workspace = true }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true }
 derivative = { workspace = true }
+dyn-clone = "1.0.17"
 enum-ptr = "0.2.0"
 log = { workspace = true }
 qualifier_attr = { workspace = true }
