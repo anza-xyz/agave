@@ -331,6 +331,7 @@ where
 
                 let mut g = scheduler_pool.block_production_scheduler_inner.lock().unwrap();
                 if let Some(pooled) = g.1.take_if(|pooled| pooled.is_idle() && pooled.is_outgrown()) {
+                    g.1.take();
                     drop(g);
                     drop(pooled);
                 }
