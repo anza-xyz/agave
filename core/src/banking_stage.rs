@@ -707,8 +707,13 @@ impl BankingStage {
         }
         let decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
 
-        #[derive(Debug)]
         struct S(DecisionMaker);
+
+        impl std::fmt::Debug for S {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                todo!();
+            }
+        }
 
         use solana_unified_scheduler_pool::IsIdle;
         impl IsIdle for S {
