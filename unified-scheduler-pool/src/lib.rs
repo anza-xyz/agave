@@ -1993,6 +1993,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
         banking_stage_context: Option<(BankingPacketReceiver, impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static)>,
+        banking_stage_adapter: Option<Arc<BankingStageAdapter>>,
     ) -> Self {
         info!(
             "spawning new scheduler for slot: {}",
