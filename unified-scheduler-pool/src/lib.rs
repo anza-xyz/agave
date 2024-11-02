@@ -442,7 +442,7 @@ where
         self.return_scheduler(scheduler.into_inner().1, id, false);
         self.block_producing_scheduler_condvar.notify_all();
         info!("flash session: end!");
-        s.create_block_producing_scheduler();
+        s.create_block_producing_scheduler()
     }
 
     #[cfg(feature = "dev-context-only-utils")]
