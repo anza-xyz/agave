@@ -435,7 +435,7 @@ where
             {
                 S::from_inner(inner, context, result_with_timings)
             } else {
-                S::spawn(self.self_arc(), context, result_with_timings, None::<(_, fn(BankingPacketBatch) -> Vec<Task>)>)
+                S::spawn(self.self_arc(), context, result_with_timings, None::<(_, fn(BankingPacketBatch) -> Vec<Task>)>, None)
             }
         } else {
             let mut g = self.block_production_scheduler_inner.lock().expect("not poisoned");
