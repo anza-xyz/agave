@@ -155,7 +155,6 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(12);
 // because UsageQueueLoader won't grow that much to begin with.
 const DEFAULT_MAX_USAGE_QUEUE_COUNT: usize = 262_144;
 
-
 impl<S, TH> SchedulerPool<S, TH>
 where
     S: SpawnableScheduler<TH>,
@@ -432,6 +431,9 @@ where
             block_production_usage_queue_loader: UsageQueueLoader::default(),
             transaction_deduper: DashSet::with_capacity(1_000_000),
         })
+    }
+
+    pub fn spawn_block_production_scheduler2<F: FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static> (&self, bank_forks: &RwLock<BankForks>, recv: BankingPacketReceiver, on_banking_packet_receive: F) {
     }
 
     pub fn spawn_block_production_scheduler(&self, bank_forks: &RwLock<BankForks>, recv: BankingPacketReceiver, on_banking_packet_receive: impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static) {
