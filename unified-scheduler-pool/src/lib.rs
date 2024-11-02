@@ -483,6 +483,7 @@ where
         let adapter = Arc::new(BankingStageAdapter {
             usage_queue_loader: UsageQueueLoader::default(),
             transaction_deduper: DashSet::with_capacity(1_000_000),
+            idling_detector: Mutex::default(),
         });
 
         let on_banking_packet_receive = on_spawn_block_production_scheduler(adapter.clone());
