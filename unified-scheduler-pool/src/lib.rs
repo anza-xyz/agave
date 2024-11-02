@@ -59,6 +59,7 @@ use solana_perf::packet::BankingPacketReceiver;
 use std::sync::Condvar;
 use std::sync::RwLock;
 use dyn_clone::DynClone;
+use dyn_clone::clone_trait_object;
 
 mod sleepless_testing;
 use crate::sleepless_testing::BuilderTracked;
