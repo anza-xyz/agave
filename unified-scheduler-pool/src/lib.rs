@@ -329,6 +329,11 @@ where
                     count
                 };
 
+                let g = scheduler_pool.block_production_scheduler_inner.lock().unwrap();
+                if let Some(pooled) = g.1 {
+                    pooled.is_outgrown();
+                }
+
                 info!(
                     "Scheduler pool cleaner: dropped {} idle inners, {} trashed inners, triggered {} timeout listeners",
                     idle_inner_count, trashed_inner_count, triggered_timeout_listener_count,
