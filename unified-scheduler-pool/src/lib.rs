@@ -1961,9 +1961,11 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 }
 
 trait SchedulerInner {
+    /*
     fn id(&self) -> usize {
         0
     }
+    */
 
     fn is_idle(&self) -> bool {
         true
@@ -2157,6 +2159,9 @@ where
     S: SpawnableScheduler<TH, Inner = PooledSchedulerInner<S, TH>>,
     TH: TaskHandler,
 {
+    fn is_outgrown(&self) -> bool {
+        self.task_creator.usage_queue_loader().count() > self.thread_manager.pool.max_usage_queue_count
+    }
 }
 
 #[cfg(test)]
