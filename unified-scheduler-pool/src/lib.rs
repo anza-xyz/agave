@@ -1957,8 +1957,11 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
     }
 }
 
+trait SchedulerInner {
+}
+
 pub trait SpawnableScheduler<TH: TaskHandler>: InstalledScheduler {
-    type Inner: Debug + Send + Sync;
+    type Inner: SchedulerInner + Debug + Send + Sync;
 
     fn into_inner(self) -> (ResultWithTimings, Self::Inner);
 
