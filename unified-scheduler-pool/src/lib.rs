@@ -942,7 +942,7 @@ enum TaskCreator {
 
 impl TaskCreator {
     fn usage_queue_loader(&self) -> &UsageQueueLoader {
-        use Self::*;
+        use TaskCreator::*;
 
         match self {
             BlockVerification { usage_queue_loader } => usage_queue_loader,
