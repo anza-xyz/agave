@@ -773,7 +773,7 @@ impl BankingStage {
                     .collect::<Vec<_>>();
 
                     for (a, b) in ppp {
-                        if let Some(task) = banking_stage_adapter.create_task(&(&a, b)) {
+                        if let Some(task) = adapter.create_task(&(&a, b)) {
                             tasks.push(task);
                         }
                     }
