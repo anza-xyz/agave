@@ -1983,7 +1983,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
         );
         let mut inner = Self::Inner {
             thread_manager: ThreadManager::new(pool),
-            usage_queue_loader: Arc::new(UsageQueueLoader::default()),
+            usage_queue_loader: UsageQueueLoader::default(),
         };
         inner
             .thread_manager
