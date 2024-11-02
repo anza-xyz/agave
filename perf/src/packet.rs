@@ -224,6 +224,51 @@ pub fn to_packet_batches<T: Serialize>(items: &[T], chunk_size: usize) -> Vec<Pa
         .collect()
 }
 
+use solana_sdk::saturating_add_assign;
+use serde::Serialize;
+use serde::Deserialize;
+type BankingPacketBatch = Arc<(Vec<PacketBatch>, Option<SigverifyTracerPacketStats>)>;
+type BankingPacketReceiver = crossbeam_channel::Receiver<std::sync::Arc<(Vec<PacketBatch>, std::option::Option<SigverifyTracerPacketStats>)>>;
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SigverifyTracerPacketStats {
+    pub total_removed_before_sigverify_stage: usize,
+    pub total_tracer_packets_received_in_sigverify_stage: usize,
+    pub total_tracer_packets_deduped: usize,
+    pub total_excess_tracer_packets: usize,
+    pub total_tracker_packets_passed_sigverify: usize,
+}
+
+impl SigverifyTracerPacketStats {
+    pub fn is_default(&self) -> bool {
+        *self == SigverifyTracerPacketStats::default()
+    }
+
+    pub fn aggregate(&mut self, other: &SigverifyTracerPacketStats) {
+        saturating_add_assign!(
+            self.total_removed_before_sigverify_stage,
+            other.total_removed_before_sigverify_stage
+        );
+        saturating_add_assign!(
+            self.total_tracer_packets_received_in_sigverify_stage,
+            other.total_tracer_packets_received_in_sigverify_stage
+        );
+        saturating_add_assign!(
+            self.total_tracer_packets_deduped,
+            other.total_tracer_packets_deduped
+        );
+        saturating_add_assign!(
+            self.total_excess_tracer_packets,
+            other.total_excess_tracer_packets
+        );
+        saturating_add_assign!(
+            self.total_tracker_packets_passed_sigverify,
+            other.total_tracker_packets_passed_sigverify
+        );
+    }
+}
+
+
 #[cfg(test)]
 fn to_packet_batches_for_tests<T: Serialize>(items: &[T]) -> Vec<PacketBatch> {
     to_packet_batches(items, NUM_PACKETS)
