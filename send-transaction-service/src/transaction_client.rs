@@ -22,6 +22,10 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
+// Alias trait to shorten function definitions.
+pub trait TpuInfoWithSendStatic: TpuInfo + std::marker::Send + 'static {}
+impl<T> TpuInfoWithSendStatic for T where T: TpuInfo + std::marker::Send + 'static {}
+
 pub trait TransactionClient {
     fn send_transactions_in_batch(
         &self,
@@ -30,7 +34,11 @@ pub trait TransactionClient {
     );
 }
 
-pub struct ConnectionCacheClient<T: TpuInfo + std::marker::Send + 'static> {
+pub trait Cancelable {
+    fn cancel(&self);
+}
+
+pub struct ConnectionCacheClient<T: TpuInfoWithSendStatic> {
     connection_cache: Arc<ConnectionCache>,
     tpu_address: SocketAddr,
     tpu_peers: Option<Vec<SocketAddr>>,
@@ -38,10 +46,10 @@ pub struct ConnectionCacheClient<T: TpuInfo + std::marker::Send + 'static> {
     leader_forward_count: u64,
 }
 
-// Manual implementation of Clone without requiring T to be Clone
+// Manual implementation of Clone to avoid requiring T to be Clone
 impl<T> Clone for ConnectionCacheClient<T>
 where
-    T: TpuInfo + std::marker::Send + 'static,
+    T: TpuInfoWithSendStatic,
 {
     fn clone(&self) -> Self {
         Self {
@@ -56,7 +64,7 @@ where
 
 impl<T> ConnectionCacheClient<T>
 where
-    T: TpuInfo + std::marker::Send + 'static,
+    T: TpuInfoWithSendStatic,
 {
     pub fn new(
         connection_cache: Arc<ConnectionCache>,
@@ -114,7 +122,7 @@ where
 
 impl<T> TransactionClient for ConnectionCacheClient<T>
 where
-    T: TpuInfo + std::marker::Send + 'static,
+    T: TpuInfoWithSendStatic,
 {
     fn send_transactions_in_batch(
         &self,
@@ -138,7 +146,14 @@ where
     }
 }
 
-pub struct SendTransactionServiceLeaderUpdater<T: TpuInfo + std::marker::Send + 'static> {
+impl<T> Cancelable for ConnectionCacheClient<T>
+where
+    T: TpuInfoWithSendStatic,
+{
+    fn cancel(&self) {}
+}
+
+pub struct SendTransactionServiceLeaderUpdater<T: TpuInfoWithSendStatic> {
     leader_info_provider: CurrentLeaderInfo<T>,
     my_tpu_address: SocketAddr,
     tpu_peers: Option<Vec<SocketAddr>>,
@@ -148,7 +163,7 @@ pub struct SendTransactionServiceLeaderUpdater<T: TpuInfo + std::marker::Send + 
 #[async_trait]
 impl<T> LeaderUpdater for SendTransactionServiceLeaderUpdater<T>
 where
-    T: TpuInfo + std::marker::Send + 'static,
+    T: TpuInfoWithSendStatic,
 {
     //TODO(klykov): So each call will lead to shit tons of allocations, I think
     //we should recalculate only once a slot or something?
@@ -168,8 +183,16 @@ where
     async fn stop(&mut self) {}
 }
 
-struct TpuClientNextClient {
+#[derive(Clone)]
+pub struct TpuClientNextClient {
     sender: Sender<TransactionBatch>,
+    cancel: CancellationToken,
+}
+
+impl Cancelable for TpuClientNextClient {
+    fn cancel(&self) {
+        self.cancel.cancel();
+    }
 }
 
 impl TransactionClient for TpuClientNextClient {
@@ -194,43 +217,46 @@ impl TransactionClient for TpuClientNextClient {
 }
 
 pub(crate) fn spawn_tpu_client_send_txs<T>(
-    runtime: Runtime,
+    runtime: &Runtime,
     my_tpu_address: SocketAddr,
     tpu_peers: Option<Vec<SocketAddr>>,
     leader_info: Option<T>,
     leader_forward_count: u64,
-) -> Sender<TransactionBatch>
+) -> TpuClientNextClient
 where
-    T: TpuInfo + std::marker::Send + 'static,
+    T: TpuInfoWithSendStatic,
 {
     let leader_info_provider = CurrentLeaderInfo::new(leader_info);
 
-    let (transaction_sender, transaction_receiver) = mpsc::channel(16); // random number of now
+    let (sender, receiver) = mpsc::channel(16); // random number of now
     let validator_identity = None;
-    runtime.spawn(async move {
-        let cancel = CancellationToken::new();
-        let leader_updater = SendTransactionServiceLeaderUpdater {
-            leader_info_provider,
-            my_tpu_address,
-            tpu_peers,
-        };
-        let config = ConnectionWorkersSchedulerConfig {
-            bind: SocketAddr::new(Ipv4Addr::new(0, 0, 0, 0).into(), 0),
-            stake_identity: validator_identity, //TODO In CC, do we send with identity?
-            num_connections: 1,
-            skip_check_transaction_age: true,
-            worker_channel_size: 2,
-            max_reconnect_attempts: 4,
-            lookahead_slots: leader_forward_count,
-        };
-        let _scheduler = tokio::spawn(ConnectionWorkersScheduler::run(
-            config,
-            Box::new(leader_updater),
-            transaction_receiver,
-            cancel.clone(),
-        ));
+    let cancel = CancellationToken::new();
+    let _handle = runtime.spawn({
+        let cancel = cancel.clone();
+        async move {
+            let leader_updater = SendTransactionServiceLeaderUpdater {
+                leader_info_provider,
+                my_tpu_address,
+                tpu_peers,
+            };
+            let config = ConnectionWorkersSchedulerConfig {
+                bind: SocketAddr::new(Ipv4Addr::new(0, 0, 0, 0).into(), 0),
+                stake_identity: validator_identity, //TODO In CC, do we send with identity?
+                num_connections: 1,
+                skip_check_transaction_age: true,
+                worker_channel_size: 2,
+                max_reconnect_attempts: 4,
+                lookahead_slots: leader_forward_count,
+            };
+            let _scheduler = tokio::spawn(ConnectionWorkersScheduler::run(
+                config,
+                Box::new(leader_updater),
+                receiver,
+                cancel.clone(),
+            ));
+        }
     });
-    transaction_sender
+    TpuClientNextClient { sender, cancel }
 }
 
 /// The leader info refresh rate.
@@ -240,7 +266,7 @@ pub const LEADER_INFO_REFRESH_RATE_MS: u64 = 1000;
 /// used for sending transactions.
 pub(crate) struct CurrentLeaderInfo<T>
 where
-    T: TpuInfo + std::marker::Send + 'static,
+    T: TpuInfoWithSendStatic,
 {
     /// The last time the leader info was refreshed
     last_leader_refresh: Option<Instant>,
@@ -254,7 +280,7 @@ where
 
 impl<T> CurrentLeaderInfo<T>
 where
-    T: TpuInfo + std::marker::Send + 'static,
+    T: TpuInfoWithSendStatic,
 {
     /// Get the leader info, refresh if expired
     pub fn get_leader_info(&mut self) -> Option<&T> {

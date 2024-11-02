@@ -29,6 +29,7 @@ tokio-util = { workspace = true }
 [dev-dependencies]
 solana-logger = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-quic-client = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
