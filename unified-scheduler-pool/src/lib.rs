@@ -168,7 +168,7 @@ where
 
 clone_trait_object!(AAA);
 
-type BBB = Box<dyn (FnMut(Arc<BankingStageAdapter>) -> Box<dyn AAA>) + Send>;
+type BBB = Box<dyn (FnMut(&Arc<BankingStageAdapter>) -> Box<dyn AAA>) + Send>;
 
 struct BlockProductionSchedulerRespawner {
     on_spawn_block_production_scheduler: BBB,
@@ -478,7 +478,7 @@ where
             transaction_deduper: DashSet::with_capacity(1_000_000),
         });
 
-        let on_banking_packet_receive = on_spawn_block_production_scheduler(adapter.clone());
+        let on_banking_packet_receive = on_spawn_block_production_scheduler(&adapter);
         let banking_stage_context = (banking_packet_receiver.clone(), on_banking_packet_receive);
         let scheduler = {
             let mut g = self.block_production_scheduler_inner.lock().expect("not poisoned");
