@@ -2002,7 +2002,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
         );
         let task_creator = match context.mode() {
             SchedulingMode::BlockVerification => {
-                panic!();
+                TaskCreator::BlockVerification { usage_queue_loader: UsageQueueLoader::default() }
             },
             SchedulingMode::BlockProduction => {
                 TaskCreator::BlockProduction { banking_stage_adapter: banking_stage_adapter.unwrap() }
