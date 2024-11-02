@@ -226,8 +226,6 @@ pub fn to_packet_batches<T: Serialize>(items: &[T], chunk_size: usize) -> Vec<Pa
 
 use std::sync::Arc;
 use solana_sdk::saturating_add_assign;
-use serde::Serialize;
-use serde::Deserialize;
 type BankingPacketBatch = Arc<(Vec<PacketBatch>, Option<SigverifyTracerPacketStats>)>;
 type BankingPacketReceiver = crossbeam_channel::Receiver<std::sync::Arc<(Vec<PacketBatch>, std::option::Option<SigverifyTracerPacketStats>)>>;
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
