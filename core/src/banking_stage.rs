@@ -710,7 +710,7 @@ impl BankingStage {
         unified_scheduler_pool.prepare_to_spawn_block_production_scheduler(
             bank_forks.clone(),
             non_vote_receiver,
-            Box::new(move |adapter: Arc<BankingStageAdapter>| {
+            Box::new(move |adapter: &Arc<BankingStageAdapter>| {
                 info!("create_block_producing_scheduler: start!");
                 let decision_maker = decision_maker.clone();
                 let bank_forks = bank_forks.clone();
