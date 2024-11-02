@@ -3,7 +3,7 @@ use {
     std::collections::HashSet,
 };
 
-use solana_unified_scheduler_pool::SigverifyTracerPacketStats;
+use solana_perf::packet::SigverifyTracerPacketStats;
 
 #[derive(Debug, Default)]
 pub struct BankingStageTracerPacketStats {
