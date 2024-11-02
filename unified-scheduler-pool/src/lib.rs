@@ -475,7 +475,7 @@ where
     }
 
     pub fn spawn_block_production_scheduler(&self) {
-        let bbbl = self.bbb.lock().unwrap();
+        let mut bbbl = self.bbb.lock().unwrap();
         let BlockProductionSchedulerRespawner {
             bank_forks,
             banking_packet_receiver,
