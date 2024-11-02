@@ -474,7 +474,7 @@ where
         } = &mut *bbbl.as_mut().unwrap();
 
         let adapter = Arc::new(BankingStageAdapter {
-            block_production_usage_queue_loader: UsageQueueLoader::default(),
+            usage_queue_loader: UsageQueueLoader::default(),
             transaction_deduper: DashSet::with_capacity(1_000_000),
         });
 
@@ -942,13 +942,11 @@ enum TaskCreator {
 
 impl TaskCreator {
     fn usage_queue_loader(&self) -> &UsageQueueLoader {
+        use Self::*;
+
         match self {
-            Self::BlockVerification {
-                usage_queue_loader
-            } => usage_queue_loader,
-            Self::BlockProduction {
-                banking_stage_adapter
-            } => &banking_stage_adapter.block_production_usage_queue_loader,
+            BlockVerification { usage_queue_loader } => usage_queue_loader,
+            BlockProduction { banking_stage_adapter } => &banking_stage_adapter.usage_queue_loader,
         }
     }
 }
@@ -2033,7 +2031,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
 
 #[derive(Debug)]
 pub struct BankingStageAdapter {
-    block_production_usage_queue_loader: UsageQueueLoader,
+    usage_queue_loader: UsageQueueLoader,
     transaction_deduper: DashSet<Hash>,
     //T: AdapterInner
 }
@@ -2060,7 +2058,7 @@ impl BankingStageAdapter {
         }
 
         Some(SchedulingStateMachine::create_task(transaction.clone(), index, &mut |pubkey| {
-            self.block_production_usage_queue_loader.load(pubkey)
+            self.usage_queue_loader.load(pubkey)
         }))
     }
 }
