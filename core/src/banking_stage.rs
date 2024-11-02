@@ -772,9 +772,8 @@ impl BankingStage {
                     })
                     .collect::<Vec<_>>();
 
-                    let ss = s2.lock().unwrap();
                     for (a, b) in ppp {
-                        if let Some(task) = ss.as_ref().unwrap().create_task(&(&a, b)) {
+                        if let Some(task) = banking_stage_adapter.create_task(&(&a, b)) {
                             tasks.push(task);
                         }
                     }
