@@ -2035,6 +2035,7 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
         &self,
         &(transaction, index): &(&SanitizedTransaction, Index),
     ) -> ScheduleResult {
+        assert_matches!(self.context().mode(), SchedulingMode::BlockVerification);
         let task = SchedulingStateMachine::create_task(transaction.clone(), index, &mut |pubkey| {
             self.inner.usage_queue_loader.load(pubkey)
         });
