@@ -707,6 +707,7 @@ impl BankingStage {
         }
         let decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
 
+        #[derive(Debug)]
         struct S(DecisionMaker);
 
         use solana_unified_scheduler_pool::IsIdle;
