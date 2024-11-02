@@ -154,7 +154,7 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(12);
 const DEFAULT_MAX_USAGE_QUEUE_COUNT: usize = 262_144;
 
 
-fn create_block_producing_scheduler(&self) -> Arc<BlockProducingUnifiedScheduler> {
+fn create_block_producing_scheduler() -> Arc<BlockProducingUnifiedScheduler> {
     Arc::new(BlockProducingUnifiedScheduler {
         usage_queue_loader2: UsageQueueLoader::default(),
         deduper: DashSet::with_capacity(1_000_000),
