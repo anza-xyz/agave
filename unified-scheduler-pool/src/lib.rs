@@ -2064,7 +2064,7 @@ pub trait IsIdle: Send + Debug {
 pub struct BankingStageAdapter {
     usage_queue_loader: UsageQueueLoader,
     transaction_deduper: DashSet<Hash>,
-    idling_detector: Mutex<Option<Box<dyn IsIdle>>>,
+    pub idling_detector: Mutex<Option<Box<dyn IsIdle>>>,
 }
 
 /*

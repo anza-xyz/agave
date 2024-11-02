@@ -730,6 +730,7 @@ impl BankingStage {
                 let decision_maker = decision_maker.clone();
                 let bank_forks = bank_forks.clone();
                 let mut id_generator = MonotonicIdGenerator::new();
+                *adapter.idling_detector.lock().unwrap() = Box::new(S(decision_maker.clone()));
 
                 let b = Box::new(move |aaa: BankingPacketBatch| {
                     let decision = decision_maker.make_consume_or_forward_decision();
