@@ -455,7 +455,7 @@ where
     pub fn spawn_block_production_scheduler2(&self, bank_forks: &RwLock<BankForks>, recv: BankingPacketReceiver, mut on_on_banking_packet_receive: BBB) 
     {
         info!("flash session: start!");
-        let on_banking_packet_receive = on_on_banking_packet_receive(self.banking_stage_adapter());
+        let on_banking_packet_receive = on_on_banking_packet_receive.0(self.banking_stage_adapter());
         let banking_stage_context = Some((recv, on_banking_packet_receive));
         let scheduler = {
             let mut g = self.block_production_scheduler_inner.lock().expect("not poisoned");
