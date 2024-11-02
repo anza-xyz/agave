@@ -165,7 +165,7 @@ impl Clone for Box<dyn AAA> {
     }
 }
 
-type BBB = Box<dyn FnMut(Arc<BankingStageAdapter>) -> Box<dyn AAA>> + Send;
+type BBB = Box<dyn FnMut(Arc<BankingStageAdapter>) -> Box<dyn AAA> + Send>;
 
 
 impl<S, TH> SchedulerPool<S, TH>
