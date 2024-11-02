@@ -479,7 +479,7 @@ where
         });
 
         let on_banking_packet_receive = on_spawn_block_production_scheduler(adapter.clone());
-        let banking_stage_context = Some((banking_packet_receiver.clone(), on_banking_packet_receive));
+        let banking_stage_context = (banking_packet_receiver.clone(), on_banking_packet_receive);
         let scheduler = {
             let mut g = self.block_production_scheduler_inner.lock().expect("not poisoned");
             let context = g.2.take().inspect(|context| {
@@ -487,7 +487,7 @@ where
             }).unwrap_or_else(|| {
                 SchedulingContext::new(SchedulingMode::BlockProduction, bank_forks.read().unwrap().root_bank())
             });
-            let s = S::spawn(self.self_arc(), context, initialized_result_with_timings(), banking_stage_context, Some(adapter));
+            let s = S::spawn(self.self_arc(), context, initialized_result_with_timings(), Some(banking_stage_context), Some(adapter));
             assert!(g.0.replace(s.id()).is_none());
             s
         };
