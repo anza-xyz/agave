@@ -2138,6 +2138,13 @@ where
     }
 }
 
+impl<S, TH> SchedulerInner for PooledSchedulerInner<S, TH>
+where
+    S: SpawnableScheduler<TH, Inner = PooledSchedulerInner<S, TH>>,
+    TH: TaskHandler,
+{
+}
+
 #[cfg(test)]
 mod tests {
     use {
