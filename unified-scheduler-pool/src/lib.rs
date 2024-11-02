@@ -427,7 +427,6 @@ where
     pub fn spawn_banking_scheduler(&self, bank_forks: &RwLock<BankForks>, recv: BankingPacketReceiver, on_banking_packet_receive: impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static) -> Arc<BlockProducingUnifiedScheduler> {
         info!("flash session: start!");
         let banking_context = Some((recv, on_banking_packet_receive));
-        let bps;
         let scheduler = {
             let mut g = self.block_producing_scheduler_inner.lock().expect("not poisoned");
             let context = g.2.take().inspect(|context| {
@@ -436,7 +435,6 @@ where
                 SchedulingContext::new(SchedulingMode::BlockProduction, bank_forks.read().unwrap().root_bank())
             });
             let s = S::spawn(self.self_arc(), context, initialized_result_with_timings(), banking_context);
-            bps = s.create_block_producing_scheduler();
             assert!(g.0.replace(s.id()).is_none());
             s
         };
@@ -444,7 +442,7 @@ where
         self.return_scheduler(scheduler.into_inner().1, id, false);
         self.block_producing_scheduler_condvar.notify_all();
         info!("flash session: end!");
-        bps
+        s.create_block_producing_scheduler();
     }
 
     #[cfg(feature = "dev-context-only-utils")]
