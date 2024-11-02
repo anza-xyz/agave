@@ -154,8 +154,8 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(12);
 const DEFAULT_MAX_USAGE_QUEUE_COUNT: usize = 262_144;
 
 
-fn create_block_producing_scheduler() -> Arc<BlockProducingUnifiedScheduler> {
-    Arc::new(BlockProducingUnifiedScheduler {
+fn create_block_producing_scheduler() -> Arc<BankingStageAdapter> {
+    Arc::new(BankingStageAdapter {
         usage_queue_loader2: UsageQueueLoader::default(),
         deduper: DashSet::with_capacity(1_000_000),
     })
@@ -2002,7 +2002,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
 }
 
 #[derive(Debug)]
-pub struct BlockProductionAdapter {
+pub struct BankingStageAdapter {
     usage_queue_loader2: UsageQueueLoader,
     deduper: DashSet<Hash>,
     //T: BankingStage
@@ -2012,13 +2012,13 @@ pub struct BlockProductionAdapter {
 trait BankingStage {
     fn is_idle() -> bool ;
 }
-impl BlockProductionAdapter {
+impl BankingStageAdapter {
     fn clean() {
     }
 }
 */
 
-impl BlockProductionAdapter {
+impl BankingStageAdapter {
     pub fn create_task(
         &self,
         &(transaction, index): &(&SanitizedTransaction, Index),
