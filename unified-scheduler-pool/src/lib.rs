@@ -1960,6 +1960,7 @@ pub trait SpawnableScheduler<TH: TaskHandler>: InstalledScheduler {
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
         banking_stage_context: Option<(BankingPacketReceiver, impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static)>,
+        banking_stage_adapter: Option<Arc<BankingStageAdapter>>,
     ) -> Self
     where
         Self: Sized;
