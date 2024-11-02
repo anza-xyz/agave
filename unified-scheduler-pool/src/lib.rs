@@ -55,6 +55,7 @@ use {
     vec_extract_if_polyfill::MakeExtractIf,
 };
 use solana_perf::packet::BankingPacketBatch;
+use solana_perf::packet::BankingPacketReceiver;
 use std::sync::Condvar;
 use std::sync::RwLock;
 
