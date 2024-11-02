@@ -173,7 +173,7 @@ impl Clone for Box<dyn AAA> {
 type BBB = Box<dyn FnMut(Arc<BankingStageAdapter>) -> Box<dyn AAA> + Send>;
 
 struct BlockProductionSchedulerRespawner {
-    block_production_context_builder: BBB,
+    on_spawn_block_production_scheduler: BBB,
     bank_forks: Arc<RwLock<BankForks>>,
     banking_packet_receiver: BankingPacketReceiver,
 }
@@ -464,10 +464,13 @@ where
         })
     }
 
-    pub fn spawn_block_production_scheduler2(&self, bank_forks: Arc<RwLock<BankForks>>, recv: BankingPacketReceiver, mut on_on_banking_packet_receive: BBB) {
+    pub fn spawn_block_production_scheduler2(&self, bank_forks: Arc<RwLock<BankForks>>, recv: BankingPacketReceiver, mut on_spawn_block_production_scheduler: BBB) {
         info!("flash session: start!");
         let bbbl = self.bbb.lock().unwrap();
         *bbbl = Some(BlockProductionSchedulerRespawner {
+            bank_forks,
+            banking_packet_receiver,
+            on_spawn_block_production_scheduler,
         });
         /*
         let on_banking_packet_receive = on_on_banking_packet_receive(self.banking_stage_adapter());
