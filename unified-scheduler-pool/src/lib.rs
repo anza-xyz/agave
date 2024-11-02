@@ -482,7 +482,7 @@ where
         } = &mut *self.bbb.lock().unwrap().as_mut().unwrap();
 
         let on_banking_packet_receive = on_spawn_block_production_scheduler(self.banking_stage_adapter());
-        let banking_stage_context = Some((banking_packet_receiver, on_banking_packet_receive));
+        let banking_stage_context = Some((banking_packet_receiver.clone(), on_banking_packet_receive));
         let scheduler = {
             let mut g = self.block_production_scheduler_inner.lock().expect("not poisoned");
             let context = g.2.take().inspect(|context| {
