@@ -367,7 +367,7 @@ where
                 // Delay drop()-ing this trashed returned scheduler inner by stashing it in
                 // self.trashed_scheduler_inners, which is periodically drained by the `solScCleaner`
                 // thread. Dropping it could take long time (in fact,
-                // PooledSchedulerInner::usage_queue_loader can contain many entries to drop).
+                // PooledSchedulerInner::block_verification_usage_queue_loader can contain many entries to drop).
                 self.trashed_scheduler_inners
                     .lock()
                     .expect("not poisoned")
@@ -429,8 +429,8 @@ where
 
     pub fn banking_stage_adapter(&self) -> Arc<BankingStageAdapter> {
         Arc::new(BankingStageAdapter {
-            usage_queue_loader2: UsageQueueLoader::default(),
-            deduper: DashSet::with_capacity(1_000_000),
+            block_production_usage_queue_loader: UsageQueueLoader::default(),
+            transaction_deduper: DashSet::with_capacity(1_000_000),
         })
     }
 
@@ -890,7 +890,7 @@ pub struct PooledScheduler<TH: TaskHandler> {
 #[derive(Debug)]
 pub struct PooledSchedulerInner<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     thread_manager: ThreadManager<S, TH>,
-    usage_queue_loader: UsageQueueLoader,
+    block_verification_usage_queue_loader: UsageQueueLoader,
 }
 
 impl<S, TH> Drop for ThreadManager<S, TH>
@@ -962,7 +962,7 @@ where
     }
 
     fn is_overgrown(&self) -> bool {
-        self.usage_queue_loader.count() > self.thread_manager.pool.max_usage_queue_count
+        self.block_verification_usage_queue_loader.count() > self.thread_manager.pool.max_usage_queue_count
     }
 }
 
@@ -1945,7 +1945,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
         );
         let mut inner = Self::Inner {
             thread_manager: ThreadManager::new(pool),
-            usage_queue_loader: UsageQueueLoader::default(),
+            block_verification_usage_queue_loader: UsageQueueLoader::default(),
         };
         inner
             .thread_manager
@@ -1956,8 +1956,8 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
 
 #[derive(Debug)]
 pub struct BankingStageAdapter {
-    usage_queue_loader2: UsageQueueLoader,
-    deduper: DashSet<Hash>,
+    block_production_usage_queue_loader: UsageQueueLoader,
+    transaction_deduper: DashSet<Hash>,
     //T: AdapterInner
 }
 
@@ -1976,14 +1976,14 @@ impl BankingStageAdapter {
         &self,
         &(transaction, index): &(&SanitizedTransaction, Index),
     ) -> Option<Task> {
-        if self.deduper.contains(transaction.message_hash()) {
+        if self.transaction_deduper.contains(transaction.message_hash()) {
             return None;
         } else {
-            self.deduper.insert(*transaction.message_hash());
+            self.transaction_deduper.insert(*transaction.message_hash());
         }
 
         Some(SchedulingStateMachine::create_task(transaction.clone(), index, &mut |pubkey| {
-            self.usage_queue_loader2.load(pubkey)
+            self.block_production_usage_queue_loader.load(pubkey)
         }))
     }
 }
@@ -2003,7 +2003,7 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
     ) -> ScheduleResult {
         assert_matches!(self.context().mode(), SchedulingMode::BlockVerification);
         let task = SchedulingStateMachine::create_task(transaction.clone(), index, &mut |pubkey| {
-            self.inner.usage_queue_loader.load(pubkey)
+            self.inner.block_verification_usage_queue_loader.load(pubkey)
         });
         self.inner.thread_manager.send_task(task)
     }
@@ -2232,14 +2232,14 @@ mod tests {
         for _ in 0..REDUCED_MAX_USAGE_QUEUE_COUNT {
             small_scheduler
                 .inner
-                .usage_queue_loader
+                .block_verification_usage_queue_loader
                 .load(Pubkey::new_unique());
         }
         let big_scheduler = pool.do_take_scheduler(context2);
         for _ in 0..REDUCED_MAX_USAGE_QUEUE_COUNT + 1 {
             big_scheduler
                 .inner
-                .usage_queue_loader
+                .block_verification_usage_queue_loader
                 .load(Pubkey::new_unique());
         }
 
