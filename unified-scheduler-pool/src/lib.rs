@@ -160,6 +160,12 @@ trait AAA: (FnMut(BankingPacketBatch) -> Vec<Task>) + Send + 'static {
 
 trait BBB: AAA {
 }
+
+impl Clone for Box<dyn BBB> {
+    fn clone(&self) -> Self {
+        panic!();
+    }
+}
      
 
 impl<S, TH> SchedulerPool<S, TH>
