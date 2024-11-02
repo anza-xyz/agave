@@ -1685,19 +1685,20 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         }
                     },
                     recv(banking_packet_receiver) -> banking_packet => {
+                        let Some(new_task_sender) = new_task_sender.upgrade() else {
+                            info!("dead new_task_sender");
+                            break;
+                        };
+
                         let Ok(banking_packet) = banking_packet else {
                             info!("disconnected banking_packet_receiver");
                             let current_thread = thread::current();
-                            if new_task_sender.upgrade().unwrap().send(NewTaskPayload::Disconnect(enum_ptr::Unit::new()).into()).is_ok() {
+                            if new_task_sender.send(NewTaskPayload::Disconnect(Unit::new()).into()).is_ok() {
                                 info!("notified a disconnect from {:?}", current_thread);
                             } else {
                                 // It seems that the scheduler thread has been aborted already...
                                 warn!("failed to notify a disconnect from {:?}", current_thread);
                             }
-                            break;
-                        };
-                        let Some(new_task_sender) = new_task_sender.upgrade() else {
-                            info!("dead new_task_sender");
                             break;
                         };
                         let tasks = on_recv.as_mut().unwrap()((banking_packet));
@@ -1846,7 +1847,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
         let mut abort_detected = self
             .new_task_sender
-            .send(NewTaskPayload::CloseSubchannel(enum_ptr::Unit::new()).into())
+            .send(NewTaskPayload::CloseSubchannel(Unit::new()).into())
             .is_err();
 
         if abort_detected {
