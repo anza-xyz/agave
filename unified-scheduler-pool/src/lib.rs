@@ -162,7 +162,7 @@ pub trait AAA: DynClone + (FnMut(BankingPacketBatch) -> Vec<Task>) + Send {
 
 impl<T> AAA for T
 where
-    T: (FnMut(BankingPacketBatch) -> Vec<Task>) + Send {
+    T: DynClone + (FnMut(BankingPacketBatch) -> Vec<Task>) + Send {
 }
 
 impl Clone for Box<dyn AAA> {
