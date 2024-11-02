@@ -936,7 +936,7 @@ enum TaskCreator {
         usage_queue_loader: UsageQueueLoader,
     },
     BlockProduction {
-        banking_stage_adapter: BankingStageAdapter,
+        banking_stage_adapter: Arc<BankingStageAdapter>,
     },
 }
 
