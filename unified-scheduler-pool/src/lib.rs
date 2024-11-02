@@ -153,6 +153,14 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(12);
 // because UsageQueueLoader won't grow that much to begin with.
 const DEFAULT_MAX_USAGE_QUEUE_COUNT: usize = 262_144;
 
+
+fn create_block_producing_scheduler(&self) -> Arc<BlockProducingUnifiedScheduler> {
+    Arc::new(BlockProducingUnifiedScheduler {
+        usage_queue_loader2: UsageQueueLoader::default(),
+        deduper: DashSet::with_capacity(1_000_000),
+    })
+}
+
 impl<S, TH> SchedulerPool<S, TH>
 where
     S: SpawnableScheduler<TH>,
@@ -442,7 +450,7 @@ where
         self.return_scheduler(scheduler.into_inner().1, id, false);
         self.block_producing_scheduler_condvar.notify_all();
         info!("flash session: end!");
-        s.create_block_producing_scheduler()
+        create_block_producing_scheduler()
     }
 
     #[cfg(feature = "dev-context-only-utils")]
@@ -1944,8 +1952,6 @@ pub trait SpawnableScheduler<TH: TaskHandler>: InstalledScheduler {
     ) -> Self
     where
         Self: Sized;
-
-    fn create_block_producing_scheduler(&self) -> Arc<BlockProducingUnifiedScheduler>;
 }
 
 impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
@@ -1989,13 +1995,6 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
             .thread_manager
             .start_threads(context.clone(), result_with_timings, banking_context);
         Self { inner, context }
-    }
-
-    fn create_block_producing_scheduler(&self) -> Arc<BlockProducingUnifiedScheduler> {
-        Arc::new(BlockProducingUnifiedScheduler {
-            usage_queue_loader2: UsageQueueLoader::default(),
-            deduper: DashSet::with_capacity(1_000_000),
-        })
     }
 }
 
