@@ -2004,7 +2004,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
             SchedulingMode::BlockProduction => {
                 TaskCreator::BlockProduction { banking_stage_adapter: banking_stage_adapter.unwrap() }
             },
-        }
+        };
         let mut inner = Self::Inner {
             thread_manager: ThreadManager::new(pool),
             block_verification_usage_queue_loader: UsageQueueLoader::default(),
