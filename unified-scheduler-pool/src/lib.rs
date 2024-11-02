@@ -97,8 +97,8 @@ impl SupportedSchedulingMode {
 pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     supported_scheduling_mode: SupportedSchedulingMode,
     scheduler_inners: Mutex<Vec<(S::Inner, Instant)>>,
-    block_producing_scheduler_inner: Mutex<(Option<SchedulerId>, Option<S::Inner>, Option<SchedulingContext>)>,
-    block_producing_scheduler_condvar: Condvar,
+    block_production_scheduler_inner: Mutex<(Option<SchedulerId>, Option<S::Inner>, Option<SchedulingContext>)>,
+    block_production_scheduler_condvar: Condvar,
     trashed_scheduler_inners: Mutex<Vec<S::Inner>>,
     timeout_listeners: Mutex<Vec<(TimeoutListener, Instant)>>,
     handler_count: usize,
@@ -208,8 +208,8 @@ where
         let scheduler_pool = Arc::new_cyclic(|weak_self| Self {
             supported_scheduling_mode,
             scheduler_inners: Mutex::default(),
-            block_producing_scheduler_inner: Mutex::default(),
-            block_producing_scheduler_condvar: Condvar::default(),
+            block_production_scheduler_inner: Mutex::default(),
+            block_production_scheduler_condvar: Condvar::default(),
             trashed_scheduler_inners: Mutex::default(),
             timeout_listeners: Mutex::default(),
             handler_count,
@@ -359,7 +359,7 @@ where
     // `::wait_for_termination()` call.
     fn return_scheduler(&self, scheduler: S::Inner, id: u64, should_trash: bool) {
         debug!("return_scheduler(): id: {id} should_trash: {should_trash}");
-        let bp_id: Option<u64> = self.block_producing_scheduler_inner.lock().unwrap().0.as_ref().copied();
+        let bp_id: Option<u64> = self.block_production_scheduler_inner.lock().unwrap().0.as_ref().copied();
         if should_trash {
             if Some(id) != bp_id {
                 // Delay drop()-ing this trashed returned scheduler inner by stashing it in
@@ -372,7 +372,7 @@ where
                     .push(scheduler);
             } else {
                 // handle (outgrown) trash bp sch....
-                assert!(self.block_producing_scheduler_inner.lock().unwrap().1.replace(scheduler).is_none());
+                assert!(self.block_production_scheduler_inner.lock().unwrap().1.replace(scheduler).is_none());
             }
         } else {
             if Some(id) != bp_id {
@@ -381,7 +381,7 @@ where
                     .expect("not poisoned")
                     .push((scheduler, Instant::now()));
             } else {
-                assert!(self.block_producing_scheduler_inner.lock().unwrap().1.replace(scheduler).is_none());
+                assert!(self.block_production_scheduler_inner.lock().unwrap().1.replace(scheduler).is_none());
             }
         }
     }
@@ -408,8 +408,8 @@ where
                 S::spawn(self.self_arc(), context, result_with_timings, None::<(_, fn(BankingPacketBatch) -> Vec<Task>)>)
             }
         } else {
-            let mut g = self.block_producing_scheduler_inner.lock().expect("not poisoned");
-            g = self.block_producing_scheduler_condvar.wait_while(g, |g| { info!("waiting for bps..."); 
+            let mut g = self.block_production_scheduler_inner.lock().expect("not poisoned");
+            g = self.block_production_scheduler_condvar.wait_while(g, |g| { info!("waiting for bps..."); 
                 let not_yet = g.0.is_none();
                 if not_yet {
                     g.2 = Some(context.clone());
@@ -436,7 +436,7 @@ where
         info!("flash session: start!");
         let banking_context = Some((recv, on_banking_packet_receive));
         let scheduler = {
-            let mut g = self.block_producing_scheduler_inner.lock().expect("not poisoned");
+            let mut g = self.block_production_scheduler_inner.lock().expect("not poisoned");
             let context = g.2.take().inspect(|context| {
                 assert_matches!(context.mode(), SchedulingMode::BlockProduction);
             }).unwrap_or_else(|| {
@@ -448,7 +448,7 @@ where
         };
         let id = scheduler.id();
         self.return_scheduler(scheduler.into_inner().1, id, false);
-        self.block_producing_scheduler_condvar.notify_all();
+        self.block_production_scheduler_condvar.notify_all();
         info!("flash session: end!");
     }
 
