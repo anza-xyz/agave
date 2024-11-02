@@ -2017,7 +2017,7 @@ impl BlockProducingUnifiedScheduler {
         }
 
         Some(SchedulingStateMachine::create_task(transaction.clone(), index, &mut |pubkey| {
-            self.usage_queue_loader.load(pubkey)
+            self.usage_queue_loader2.load(pubkey)
         }))
     }
 }
