@@ -933,10 +933,10 @@ pub struct PooledScheduler<TH: TaskHandler> {
 enum TaskCreator {
     BlockVerification {
         usage_queue_loader: UsageQueueLoader,
-    }
+    },
     BlockProduction {
         banking_stage_adapter: BankingStageAdapter,
-    }
+    },
 }
 
 #[derive(Debug)]
