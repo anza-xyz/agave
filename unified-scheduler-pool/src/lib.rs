@@ -433,7 +433,7 @@ where
                 SchedulingContext::new(SchedulingMode::BlockProduction, bank_forks.read().unwrap().root_bank())
             });
             let s = S::spawn(self.self_arc(), context, initialized_result_with_timings(), banking_context);
-            let bps = Arc::new(s.create_block_producing_scheduler());
+            let bps = s.create_block_producing_scheduler();
             assert!(g.0.replace((s.id(), bps)).is_none());
             s
         };
