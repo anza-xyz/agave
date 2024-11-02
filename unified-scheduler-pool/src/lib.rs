@@ -157,6 +157,9 @@ const DEFAULT_MAX_USAGE_QUEUE_COUNT: usize = 262_144;
 
 trait AAA: FnMut(BankingPacketBatch) -> Vec<Task> {
 }
+
+trait BBB: AAA + Clone {
+}
      
 
 impl<S, TH> SchedulerPool<S, TH>
@@ -437,7 +440,7 @@ where
         })
     }
 
-    pub fn spawn_block_production_scheduler2(&self, bank_forks: &RwLock<BankForks>, recv: BankingPacketReceiver, mut on_on_banking_packet_receive: Box<dyn FnMut(Arc<BankingStageAdapter>) -> Box<dyn AAA>>) 
+    pub fn spawn_block_production_scheduler2(&self, bank_forks: &RwLock<BankForks>, recv: BankingPacketReceiver, mut on_on_banking_packet_receive: Box<dyn FnMut(Arc<BankingStageAdapter>) -> Box<dyn BBB>>) 
     {
         info!("flash session: start!");
         /*
