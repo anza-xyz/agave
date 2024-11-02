@@ -434,7 +434,7 @@ where
 
     pub fn spawn_block_production_scheduler(&self, bank_forks: &RwLock<BankForks>, recv: BankingPacketReceiver, on_banking_packet_receive: impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static) {
         info!("flash session: start!");
-        let banking_context = Some((recv, on_banking_packet_receive));
+        let banking_stage_context = Some((recv, on_banking_packet_receive));
         let scheduler = {
             let mut g = self.block_production_scheduler_inner.lock().expect("not poisoned");
             let context = g.2.take().inspect(|context| {
@@ -442,7 +442,7 @@ where
             }).unwrap_or_else(|| {
                 SchedulingContext::new(SchedulingMode::BlockProduction, bank_forks.read().unwrap().root_bank())
             });
-            let s = S::spawn(self.self_arc(), context, initialized_result_with_timings(), banking_context);
+            let s = S::spawn(self.self_arc(), context, initialized_result_with_timings(), banking_stage_context);
             assert!(g.0.replace(s.id()).is_none());
             s
         };
@@ -1146,7 +1146,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         &mut self,
         mut context: SchedulingContext,
         mut result_with_timings: ResultWithTimings,
-        banking_context: Option<(BankingPacketReceiver, impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static)>,
+        banking_stage_context: Option<(BankingPacketReceiver, impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static)>,
     ) {
         let scheduler_id = self.scheduler_id;
         let mut slot = context.bank().slot();
@@ -1264,7 +1264,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         // 5. the handler thread reply back to the scheduler thread as an executed task.
         // 6. the scheduler thread post-processes the executed task.
         let scheduler_main_loop = {
-            let banking_context = banking_context.clone();
+            let banking_stage_context = banking_stage_context.clone();
             let handler_count = self.pool.handler_count;
             let session_result_sender = self.session_result_sender.clone();
             // Taking new_task_receiver here is important to ensure there's a single receiver. In
@@ -1342,7 +1342,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 let mut cpu_log_reported_at = cpu_session_started_at;
                 let mut error_count = 0;
 
-                let (banking_packet_receiver, _on_recv) = banking_context.unzip();
+                let (banking_packet_receiver, _on_recv) = banking_stage_context.unzip();
                 let banking_packet_receiver = banking_packet_receiver.unwrap_or_else(|| never());
 
                 macro_rules! log_scheduler {
@@ -1698,7 +1698,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         };
 
         let handler_main_loop = || {
-            let (banking_packet_receiver, mut on_recv) = banking_context.clone().unzip();
+            let (banking_packet_receiver, mut on_recv) = banking_stage_context.clone().unzip();
             let banking_packet_receiver = banking_packet_receiver.unwrap_or_else(|| never());
             let new_task_sender = Arc::downgrade(&self.new_task_sender);
 
@@ -1947,7 +1947,7 @@ pub trait SpawnableScheduler<TH: TaskHandler>: InstalledScheduler {
         pool: Arc<SchedulerPool<Self, TH>>,
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
-        banking_context: Option<(BankingPacketReceiver, impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static)>,
+        banking_stage_context: Option<(BankingPacketReceiver, impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static)>,
     ) -> Self
     where
         Self: Sized;
@@ -1980,7 +1980,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
         pool: Arc<SchedulerPool<Self, TH>>,
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
-        banking_context: Option<(BankingPacketReceiver, impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static)>,
+        banking_stage_context: Option<(BankingPacketReceiver, impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static)>,
     ) -> Self {
         info!(
             "spawning new scheduler for slot: {}",
@@ -1992,7 +1992,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
         };
         inner
             .thread_manager
-            .start_threads(context.clone(), result_with_timings, banking_context);
+            .start_threads(context.clone(), result_with_timings, banking_stage_context);
         Self { inner, context }
     }
 }
@@ -2001,11 +2001,11 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
 pub struct BankingStageAdapter {
     usage_queue_loader2: UsageQueueLoader,
     deduper: DashSet<Hash>,
-    //T: BankingStage
+    //T: AdapterInner
 }
 
 /*
-trait BankingStage {
+trait AdapterInner {
     fn is_idle() -> bool ;
 }
 impl BankingStageAdapter {
