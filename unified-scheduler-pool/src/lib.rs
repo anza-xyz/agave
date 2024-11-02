@@ -165,11 +165,7 @@ where
     T: DynClone + (FnMut(BankingPacketBatch) -> Vec<Task>) + Send {
 }
 
-impl Clone for Box<dyn AAA> {
-    fn clone(&self) -> Self {
-        panic!();
-    }
-}
+clone_trait_object!(AAA);
 
 type BBB = Box<dyn FnMut(Arc<BankingStageAdapter>) -> Box<dyn AAA> + Send>;
 
