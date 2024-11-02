@@ -159,6 +159,11 @@ const DEFAULT_MAX_USAGE_QUEUE_COUNT: usize = 262_144;
 trait AAA: (FnMut(BankingPacketBatch) -> Vec<Task>) + Send {
 }
 
+impl<T> AAA for T
+where
+    T: (FnMut(BankingPacketBatch) -> Vec<Task>) + Send {
+}
+
 impl Clone for Box<dyn AAA> {
     fn clone(&self) -> Self {
         panic!();
