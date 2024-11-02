@@ -101,6 +101,7 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     scheduler_inners: Mutex<Vec<(S::Inner, Instant)>>,
     block_production_scheduler_inner: Mutex<(Option<SchedulerId>, Option<S::Inner>, Option<SchedulingContext>)>,
     block_production_scheduler_condvar: Condvar,
+    bbb: Mutex<Option<BBB>>,
     trashed_scheduler_inners: Mutex<Vec<S::Inner>>,
     timeout_listeners: Mutex<Vec<(TimeoutListener, Instant)>>,
     handler_count: usize,
@@ -165,7 +166,7 @@ impl Clone for Box<dyn AAA> {
 }
 
 type BBB = Box<dyn FnMut(Arc<BankingStageAdapter>) -> Box<dyn AAA>>;
-     
+
 
 impl<S, TH> SchedulerPool<S, TH>
 where
