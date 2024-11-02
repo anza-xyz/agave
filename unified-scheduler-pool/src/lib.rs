@@ -432,7 +432,11 @@ where
         }
     }
 
-    pub fn spawn_banking_scheduler(&self, bank_forks: &RwLock<BankForks>, recv: BankingPacketReceiver, on_banking_packet_receive: impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static) -> Arc<BlockProducingUnifiedScheduler> {
+    pub fn block_production_adapter(&self) -> Arc<BlockProducingUnifiedScheduler> {
+        create_block_producing_scheduler()
+    }
+
+    pub fn spawn_banking_scheduler(&self, bank_forks: &RwLock<BankForks>, recv: BankingPacketReceiver, on_banking_packet_receive: impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static) {
         info!("flash session: start!");
         let banking_context = Some((recv, on_banking_packet_receive));
         let scheduler = {
@@ -450,7 +454,6 @@ where
         self.return_scheduler(scheduler.into_inner().1, id, false);
         self.block_producing_scheduler_condvar.notify_all();
         info!("flash session: end!");
-        create_block_producing_scheduler()
     }
 
     #[cfg(feature = "dev-context-only-utils")]
@@ -1999,12 +2002,23 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
 }
 
 #[derive(Debug)]
-pub struct BlockProducingUnifiedScheduler {
+pub struct BlockProductionAdapter {
     usage_queue_loader2: UsageQueueLoader,
     deduper: DashSet<Hash>,
+    //T: BankingStage
 }
 
-impl BlockProducingUnifiedScheduler {
+/*
+trait BankingStage {
+    fn is_idle() -> bool ;
+}
+impl BlockProductionAdapter {
+    fn clean() {
+    }
+}
+*/
+
+impl BlockProductionAdapter {
     pub fn create_task(
         &self,
         &(transaction, index): &(&SanitizedTransaction, Index),
