@@ -154,13 +154,6 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(12);
 const DEFAULT_MAX_USAGE_QUEUE_COUNT: usize = 262_144;
 
 
-fn create_block_producing_scheduler() -> Arc<BankingStageAdapter> {
-    Arc::new(BankingStageAdapter {
-        usage_queue_loader2: UsageQueueLoader::default(),
-        deduper: DashSet::with_capacity(1_000_000),
-    })
-}
-
 impl<S, TH> SchedulerPool<S, TH>
 where
     S: SpawnableScheduler<TH>,
@@ -432,8 +425,11 @@ where
         }
     }
 
-    pub fn block_production_adapter(&self) -> Arc<BlockProducingUnifiedScheduler> {
-        create_block_producing_scheduler()
+    pub fn banking_stage_adapter(&self) -> Arc<BankingStageAdapter> {
+        Arc::new(BankingStageAdapter {
+            usage_queue_loader2: UsageQueueLoader::default(),
+            deduper: DashSet::with_capacity(1_000_000),
+        })
     }
 
     pub fn spawn_banking_scheduler(&self, bank_forks: &RwLock<BankForks>, recv: BankingPacketReceiver, on_banking_packet_receive: impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static) {
