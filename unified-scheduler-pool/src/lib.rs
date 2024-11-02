@@ -955,6 +955,15 @@ impl TaskCreator {
             BlockProduction { banking_stage_adapter } => &banking_stage_adapter.usage_queue_loader,
         }
     }
+
+    fn is_idle(&self) -> bool {
+        use TaskCreator::*;
+
+        match self {
+            BlockVerification { usage_queue_loader } => todo!(),
+            BlockProduction { banking_stage_adapter } => banking_stage_adapter.is_idle(),
+        }
+    }
 }
 
 #[derive(Debug)]
