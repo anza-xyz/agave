@@ -930,6 +930,15 @@ pub struct PooledScheduler<TH: TaskHandler> {
     context: SchedulingContext,
 }
 
+enum TaskCreator {
+    BlockVerification {
+        usage_queue_loader: UsageQueueLoader,
+    }
+    BlockProduction {
+        banking_stage_adapter: BankingStageAdapter,
+    }
+}
+
 #[derive(Debug)]
 pub struct PooledSchedulerInner<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     thread_manager: ThreadManager<S, TH>,
