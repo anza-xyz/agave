@@ -706,10 +706,10 @@ impl BankingStage {
         }
         let mut id_generator = MonotonicIdGenerator::new();
         info!("create_block_producing_scheduler: start!");
-        let adapter = unified_scheduler_pool.banking_stage_adapter();
+        //let adapter = unified_scheduler_pool.banking_stage_adapter();
         let decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
         unified_scheduler_pool.spawn_block_production_scheduler2(bank_forks.clone(), non_vote_receiver,
-            Box::new(|adapter: usize| {
+            Box::new(|adapter: Arc<BankingStageAdapter>| {
 
                 Box::new(move |aaa: BankingPacketBatch| {
                     let decision = decision_maker.make_consume_or_forward_decision();
