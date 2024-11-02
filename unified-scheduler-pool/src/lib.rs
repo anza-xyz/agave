@@ -2059,7 +2059,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
 pub struct BankingStageAdapter {
     usage_queue_loader: UsageQueueLoader,
     transaction_deduper: DashSet<Hash>,
-    //T: AdapterInner
+    idling_detector: Mutex<Option<Box<dyn IsIdle>>>,
 }
 
 /*
