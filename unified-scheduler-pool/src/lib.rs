@@ -155,7 +155,7 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(12);
 // because UsageQueueLoader won't grow that much to begin with.
 const DEFAULT_MAX_USAGE_QUEUE_COUNT: usize = 262_144;
 
-trait AAA: (FnMut(BankingPacketBatch) -> Vec<Task>) + Clone + 'static {
+trait AAA: (FnMut(BankingPacketBatch) -> Vec<Task>) + Send + 'static {
 }
 
 trait BBB: AAA {
