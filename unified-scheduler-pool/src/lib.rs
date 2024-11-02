@@ -387,7 +387,7 @@ where
 
     // This fn needs to return immediately due to being part of the blocking
     // `::wait_for_termination()` call.
-    fn return_scheduler(&self, scheduler: S::Inner, id: u64, should_trash: bool) {
+    fn return_scheduler(&self, id: u64, scheduler: S::Inner, should_trash: bool) {
         debug!("return_scheduler(): id: {id} should_trash: {should_trash}");
         let bp_id: Option<u64> = self.block_production_scheduler_inner.lock().unwrap().0.as_ref().copied();
         if should_trash {
@@ -491,8 +491,7 @@ where
             assert!(g.0.replace(s.id()).is_none());
             s
         };
-        let id = scheduler.id();
-        self.return_scheduler(scheduler.into_inner().1, id, false);
+        self.return_scheduler(scheduler.id(), scheduler.into_inner().1, false);
         self.block_production_scheduler_condvar.notify_all();
         info!("flash session: end!");
     }
@@ -2122,14 +2121,13 @@ where
         // Refer to the comment in is_trashed() as to the exact definition of the concept of
         // _trashed_ and the interaction among different parts of unified scheduler.
         let should_trash = self.is_trashed();
-        let id = self.id();
         if should_trash {
-            info!("trashing scheduler (id: {})...", id);
+            info!("trashing scheduler (id: {})...", self.id());
         }
         self.thread_manager
             .pool
             .clone()
-            .return_scheduler(*self, id, should_trash);
+            .return_scheduler(self.id(), *self, should_trash);
     }
 }
 
