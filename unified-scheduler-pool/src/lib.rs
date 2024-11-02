@@ -948,7 +948,7 @@ impl TaskCreator {
             } => usage_queue_loader,
             Self::BlockProduction {
                 banking_stage_adapter
-            } => banking_stage_adapter.block_production_usage_queue_loader,
+            } => &banking_stage_adapter.block_production_usage_queue_loader,
         }
     }
 }
