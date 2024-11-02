@@ -455,13 +455,6 @@ where
         }
     }
 
-    pub fn banking_stage_adapter(&self) -> Arc<BankingStageAdapter> {
-        Arc::new(BankingStageAdapter {
-            block_production_usage_queue_loader: UsageQueueLoader::default(),
-            transaction_deduper: DashSet::with_capacity(1_000_000),
-        })
-    }
-
     pub fn prepare_to_spawn_block_production_scheduler(&self, bank_forks: Arc<RwLock<BankForks>>, banking_packet_receiver: BankingPacketReceiver, mut on_spawn_block_production_scheduler: BBB) {
         info!("flash session: start!");
         let mut bbbl = self.bbb.lock().unwrap();
@@ -480,7 +473,12 @@ where
             on_spawn_block_production_scheduler,
         } = &mut *bbbl.as_mut().unwrap();
 
-        let on_banking_packet_receive = on_spawn_block_production_scheduler(self.banking_stage_adapter());
+        let adapter = Arc::new(BankingStageAdapter {
+            block_production_usage_queue_loader: UsageQueueLoader::default(),
+            transaction_deduper: DashSet::with_capacity(1_000_000),
+        });
+
+        let on_banking_packet_receive = on_spawn_block_production_scheduler(adapter);
         let banking_stage_context = Some((banking_packet_receiver.clone(), on_banking_packet_receive));
         let scheduler = {
             let mut g = self.block_production_scheduler_inner.lock().expect("not poisoned");

@@ -791,6 +791,7 @@ impl BankingStage {
                 b
             })
         );
+        unified_scheduler_pool.spawn_block_production_scheduler();
 
         Self { bank_thread_hdls: vec![] }
     }
