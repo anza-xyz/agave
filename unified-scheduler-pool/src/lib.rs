@@ -1967,13 +1967,8 @@ trait SchedulerInner {
     }
     */
 
-    fn is_idle(&self) -> bool {
-        true
-    }
-
-    fn is_outgrown(&self) -> bool {
-        true
-    }
+    fn is_idle(&self) -> bool;
+    fn is_outgrown(&self) -> bool;
 }
 
 pub trait SpawnableScheduler<TH: TaskHandler>: InstalledScheduler {
@@ -2161,6 +2156,10 @@ where
 {
     fn is_outgrown(&self) -> bool {
         self.task_creator.usage_queue_loader().count() > self.thread_manager.pool.max_usage_queue_count
+    }
+
+    fn is_idle(&self) -> bool {
+        self.task_creator.is_idle()
     }
 }
 
