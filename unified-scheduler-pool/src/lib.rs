@@ -334,6 +334,7 @@ where
                     g.1.take();
                     drop(g);
                     drop(pooled);
+                    scheduler_pool.spawn_block_production_scheduler();
                 }
 
                 info!(
