@@ -224,6 +224,7 @@ pub fn to_packet_batches<T: Serialize>(items: &[T], chunk_size: usize) -> Vec<Pa
         .collect()
 }
 
+use std::sync::Arc;
 use solana_sdk::saturating_add_assign;
 use serde::Serialize;
 use serde::Deserialize;
