@@ -19,7 +19,7 @@ use {
     thiserror::Error,
 };
 
-use solana_unified_scheduler_pool::SigverifyTracerPacketStats;
+use solana_perf::packet::SigverifyTracerPacketStats;
 
 pub type BankingPacketBatch = Arc<(Vec<PacketBatch>, Option<SigverifyTracerPacketStats>)>;
 pub type BankingPacketSender = TracedSender;
