@@ -2068,9 +2068,6 @@ pub struct BankingStageAdapter {
 }
 
 /*
-trait AdapterInner {
-    fn is_idle() -> bool ;
-}
 impl BankingStageAdapter {
     fn clean() {
     }
@@ -2094,7 +2091,7 @@ impl BankingStageAdapter {
     }
 
     fn is_idle(&self) -> bool {
-        todo!()
+        self.idling_detector.lock().as_ref().unwrap().is_idle()
     }
 }
 
