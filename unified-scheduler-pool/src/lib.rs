@@ -332,17 +332,24 @@ where
                 let mut g = scheduler_pool.block_production_scheduler_inner.lock().unwrap();
                 if let Some(pooled) = g.1.take_if(|pooled| {
                     if pooled.is_idle() {
+                        info!("sch {} IS idle", pooled.id());
                         if pooled.is_overgrown(false) {
+                            info!("sch {} is overgrown!", pooled.id());
                             return true;
                         } else {
+                            info!("sch {} isn't overgrown", pooled.id());
                             pooled.reset();
                         }
+                    } else {
+                        info!("sch {} isn't idle", pooled.id());
                     }
                     false
                 }) {
-                    g.1.take();
+                    assert!(g.1.take().is_some());
                     drop(g);
+                    info!("dropping sch {}", pooled.id());
                     drop(pooled);
+                    info!("dropped sch {}", pooled.id());
                     scheduler_pool.spawn_block_production_scheduler();
                 }
 
@@ -983,14 +990,19 @@ impl TaskCreator {
         match self {
             BlockVerification { usage_queue_loader } => {
                 assert!(on_hot_path);
+                // This check must be done on hot path everytime scheduler are returned to reliably
+                // detect too large loaders...
                 usage_queue_loader.count() > max_usage_queue_count
             }
             BlockProduction { banking_stage_adapter } => {
                 if on_hot_path {
+                    // the slow path can be ensured to be called periodically.
                     false
                 } else {
-                    banking_stage_adapter.usage_queue_loader.count() > max_usage_queue_count ||
-                        banking_stage_adapter.transaction_deduper.len() > 1_000_000
+                    let current_usage_queue_count = banking_stage_adapter.usage_queue_loader.count();
+                    let current_transaction_count = banking_stage_adapter.transaction_deduper.len();
+
+                    current_usage_queue_count > max_usage_queue_count || current_transaction_count > 1_000_000
                 }
             }
         }
