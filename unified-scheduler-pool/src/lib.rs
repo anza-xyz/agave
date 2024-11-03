@@ -1999,7 +1999,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 }
 
 trait SchedulerInner {
-    fn id(&self) -> SchedulerId {
+    fn id(&self) -> SchedulerId;
     fn is_idle(&self) -> bool;
     fn is_outgrown(&self) -> bool;
     fn reset(&self);
