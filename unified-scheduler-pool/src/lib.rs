@@ -1989,6 +1989,7 @@ trait SchedulerInner {
 
     fn is_idle(&self) -> bool;
     fn is_outgrown(&self) -> bool;
+    fn reset(&self);
 }
 
 pub trait SpawnableScheduler<TH: TaskHandler>: InstalledScheduler {
@@ -2185,6 +2186,9 @@ where
 
     fn is_idle(&self) -> bool {
         self.task_creator.is_idle()
+    }
+
+    fn reset(&self) {
     }
 }
 
