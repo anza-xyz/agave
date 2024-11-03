@@ -332,7 +332,7 @@ where
                 let mut g = scheduler_pool.block_production_scheduler_inner.lock().unwrap();
                 if let Some(pooled) = g.1.take_if(|pooled| {
                     if pooled.is_idle() {
-                        if pooled.is_outgrown() {
+                        if pooled.is_overgrown(false) {
                             return true;
                         } else {
                             pooled.reset();
