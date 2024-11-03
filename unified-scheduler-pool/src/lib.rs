@@ -338,8 +338,8 @@ where
                             if pooled.is_overgrown(false) {
                                 info!("sch {} is overgrown!", pooled.id());
                                 drop(pooled);
-                                g.0.take();
                                 let pooled = g.1.take().unwrap();
+                                assert_eq!(Some(pooled.id()), g.0.take());
                                 drop(g);
                                 let id = pooled.id();
                                 info!("dropping sch {id}");
@@ -353,8 +353,8 @@ where
                         }
                         BankingStageStatus::Exited => {
                             drop(pooled);
-                            g.0.take();
                             let pooled = g.1.take().unwrap();
+                            assert_eq!(Some(pooled.id()), g.0.take());
                             drop(g);
                             let id = pooled.id();
                             info!("dropping sch {id}");
