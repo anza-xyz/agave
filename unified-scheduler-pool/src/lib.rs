@@ -438,7 +438,7 @@ where
                     .expect("not poisoned")
                     .push(scheduler);
             } else {
-                assert_eq!(Some(bp_id), g.0.take());
+                assert_eq!(bp_id, g.0.take());
                 self.trashed_scheduler_inners
                     .lock()
                     .expect("not poisoned")
