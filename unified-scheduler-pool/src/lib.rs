@@ -484,7 +484,7 @@ where
             g = self.block_production_scheduler_condvar.wait_while(g, |g| {
                 let not_yet = g.0.is_none();
                 if not_yet {
-                    info!("will wait for bps..."); 
+                    info!("will wait for bps...");
                     g.2 = Some(context.clone());
                 }
                 not_yet
