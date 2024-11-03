@@ -1006,9 +1006,6 @@ pub fn main() {
     let tpu_coalesce = value_t!(matches, "tpu_coalesce_ms", u64)
         .map(Duration::from_millis)
         .unwrap_or(DEFAULT_TPU_COALESCE);
-    let wal_recovery_mode = matches
-        .value_of("wal_recovery_mode")
-        .map(BlockstoreRecoveryMode::from);
 
     // Canonicalize ledger path to avoid issues with symlink creation
     let ledger_path = create_and_canonicalize_directories([&ledger_path])
@@ -1021,6 +1018,10 @@ pub fn main() {
         })
         .pop()
         .unwrap();
+
+    let wal_recovery_mode = matches
+        .value_of("wal_recovery_mode")
+        .map(BlockstoreRecoveryMode::from);
 
     let accounts_hash_cache_path = matches
         .value_of("accounts_hash_cache_path")
