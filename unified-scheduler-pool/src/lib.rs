@@ -339,7 +339,7 @@ where
                                 info!("sch {} is overgrown!", pooled.id());
                                 drop(pooled);
                                 g.0.take();
-                                let poolied = g.1.take().unwrap();
+                                let pooled = g.1.take().unwrap();
                                 drop(g);
                                 let id = pooled.id();
                                 info!("dropping sch {id}");
