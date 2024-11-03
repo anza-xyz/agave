@@ -708,7 +708,7 @@ impl BankingStage {
         }
         let decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
 
-        struct S(DecisionMaker);
+        struct S(DecisionMaker, Arc<AtomicBool>);
 
         impl std::fmt::Debug for S {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -718,7 +718,8 @@ impl BankingStage {
 
         impl IsIdle for S {
             fn is_idle(&self) -> bool {
-                let r = matches!(self.0.make_consume_or_forward_decision(), BufferedPacketsDecision::Forward);
+                let r = matches!(self.0.make_consume_or_forward_decision(), BufferedPacketsDecision::Forward) ||
+                    self.0.load(Ordering::Relaxed);
                 info!("IsIdle::is_idle() -> {r}...");
                 r
             }
@@ -732,7 +733,7 @@ impl BankingStage {
                 let decision_maker = decision_maker.clone();
                 let bank_forks = bank_forks.clone();
                 let mut id_generator = MonotonicIdGenerator::new();
-                *adapter.idling_detector.lock().unwrap() = Some(Box::new(S(decision_maker.clone())));
+                *adapter.idling_detector.lock().unwrap() = Some(Box::new(S(decision_maker.clone(), poh_recorder.read().unwrap().is_exited.clone())));
 
                 let b = Box::new(move |aaa: BankingPacketBatch| {
                     let decision = decision_maker.make_consume_or_forward_decision();
