@@ -2234,7 +2234,9 @@ where
     }
 
     fn reset(&self) {
-        self.thread_manager.new_task_sender.send(NewTaskPayload::Reset(Unit::new()).into()).unwrap();
+        if let Err(a) = self.thread_manager.new_task_sender.send(NewTaskPayload::Reset(Unit::new()).into()) {
+            warn!("failed to send a reset due to error: {a:?}");
+        }
     }
 }
 
