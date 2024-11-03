@@ -347,9 +347,10 @@ where
                 }) {
                     assert!(g.1.take().is_some());
                     drop(g);
-                    info!("dropping sch {}", pooled.id());
+                    let id = pooled.id()
+                    info!("dropping sch {id}");
                     drop(pooled);
-                    info!("dropped sch {}", pooled.id());
+                    info!("dropped sch {id}");
                     scheduler_pool.spawn_block_production_scheduler();
                 }
 
