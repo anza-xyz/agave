@@ -976,6 +976,25 @@ impl TaskCreator {
             BlockProduction { banking_stage_adapter } => banking_stage_adapter.is_idle(),
         }
     }
+
+    fn is_overgrown(&self, usage_queue_limit: usize, on_hot_path: bool) -> bool {
+        use TaskCreator::*;
+
+        match self {
+            BlockVerification { usage_queue_loader } => {
+                assert!(on_hot_path);
+                usage_queue_loader.count() > usage_queue_limit
+            }
+            BlockProduction { banking_stage_adapter } => {
+                if on_hot_path {
+                    false
+                } else {
+                    banking_stage_adapter.usage_queue_loader.count() > usage_queue_limit ||
+                        banking_stage_adapter.transaction_deduper.len() > 1_000_000
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -1049,7 +1068,7 @@ where
     }
 
     fn is_overgrown(&self) -> bool {
-        self.task_creator.usage_queue_loader().count() > self.thread_manager.pool.max_usage_queue_count
+        self.task_creator.is_overgrown(self.thread_manager.pool.max_usage_queue_count, true)
     }
 }
 
