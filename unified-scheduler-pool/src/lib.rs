@@ -330,28 +330,39 @@ where
                 };
 
                 let mut g = scheduler_pool.block_production_scheduler_inner.lock().unwrap();
-                if let Some(pooled) = g.1.take_if(|pooled| {
-                    if pooled.banking_stage_status() {
-                        info!("sch {} IS idle", pooled.id());
-                        if pooled.is_overgrown(false) {
-                            info!("sch {} is overgrown!", pooled.id());
-                            return true;
-                        } else {
-                            info!("sch {} isn't overgrown", pooled.id());
-                            pooled.reset();
+                if let Some(pooled) = &g.1 {
+                    match pooled.banking_stage_status() {
+                        BankingStageStatus::Active => (),
+                        BankingStageStatus::Inactive => {
+                            info!("sch {} IS idle", pooled.id());
+                            if pooled.is_overgrown(false) {
+                                info!("sch {} is overgrown!", pooled.id());
+                                drop(pooled);
+                                g.0.take();
+                                let pool = g.1.take();
+                                drop(g);
+                                let id = pooled.id();
+                                info!("dropping sch {id}");
+                                drop(pooled);
+                                info!("dropped sch {id}");
+                                scheduler_pool.spawn_block_production_scheduler();
+                            } else {
+                                info!("sch {} isn't overgrown", pooled.id());
+                                pooled.reset();
+                            }
                         }
-                    } else {
-                        info!("sch {} isn't idle", pooled.id());
+                        BankingStageStatus::Exited => {
+                            drop(pooled);
+                            g.0.take();
+                            let pool = g.1.take();
+                            drop(g);
+                            let id = pooled.id();
+                            info!("dropping sch {id}");
+                            drop(pooled);
+                            info!("dropped sch {id}");
+                            scheduler_pool.reset_respawner();
+                        }
                     }
-                    false
-                }) {
-                    assert!(g.1.take().is_some());
-                    drop(g);
-                    let id = pooled.id();
-                    info!("dropping sch {id}");
-                    drop(pooled);
-                    info!("dropped sch {id}");
-                    scheduler_pool.spawn_block_production_scheduler();
                 }
 
                 info!(
@@ -487,6 +498,10 @@ where
             banking_packet_receiver,
             on_spawn_block_production_scheduler,
         });
+    }
+
+    pub fn reset_respawner(&self) {
+        *self.block_production_scheduler_respawner.lock().unwrap() = None;
     }
 
     pub fn spawn_block_production_scheduler(&self) {
