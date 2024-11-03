@@ -1328,6 +1328,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             } else {
                 (false, false)
             };
+            let mut session_resetting = false;
 
             // Now, this is the main loop for the scheduler thread, which is a special beast.
             //
@@ -1577,9 +1578,14 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                             },
                                         }
                                     }
+                                    Ok(NewTaskPayload::Reset(_)) => {
+                                        session_pausing = true;
+                                        session_resetting = true;
+                                        "resetting"
+                                    }
                                     Ok(NewTaskPayload::OpenSubchannel(_context_and_result_with_timings)) =>
                                         unreachable!(),
-                                    Ok(NewTaskPayload::Disconnect(_)) | Ok(NewTaskPayload::Reset(_)) | Err(RecvError) => {
+                                    Ok(NewTaskPayload::Disconnect(_)) | Err(RecvError) => {
                                         // Mostly likely is that this scheduler is dropped for pruned blocks of
                                         // abandoned forks...
                                         // This short-circuiting is tested with test_scheduler_drop_short_circuiting.
@@ -1617,7 +1623,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 }
                             }
                         };
-                        let force_log = if step_type == "ending" || step_type == "pausing" {
+                        let force_log = if step_type == "ending" || step_type == "pausing" || step_type == "resetting" {
                             true
                         } else {
                             false
@@ -1662,6 +1668,17 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
                     // Prepare for the new session.
                     loop {
+                        if session_resetting {
+                            while let Some(task) = state_machine.schedule_next_buffered_task() {
+                                state_machine.deschedule_task(task);
+                                if log_interval.increment() {
+                                    log_scheduler!(info, "resetting");
+                                } else {
+                                    log_scheduler!(trace, "resetting");
+                                }
+                            }
+                            session_resetting = false;
+                        }
                         match new_task_receiver.recv().map(|a| a.into()) {
                             Ok(NewTaskPayload::OpenSubchannel(context_and_result_with_timings)) => {
                                 let (new_context, new_result_with_timings) =
@@ -1699,6 +1716,9 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             Ok(NewTaskPayload::CloseSubchannel(_)) if matches!(state_machine.mode(), SchedulingMode::BlockProduction) => {
                                 info!("ignoring duplicate CloseSubchannel...");
                             }
+                            Ok(NewTaskPayload::Reset(_)) if matches!(state_machine.mode(), SchedulingMode::BlockProduction) => {
+                                session_resetting = true;
+                            }
                             Ok(NewTaskPayload::Payload(task)) if matches!(state_machine.mode(), SchedulingMode::BlockProduction) => {
                                 assert!(state_machine.do_schedule_task(task, true).is_none());
                                 if log_interval.increment() {
@@ -1707,7 +1727,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     log_scheduler!(trace, "rebuffer");
                                 }
                             }
-                            Ok(NewTaskPayload::Disconnect(_)) | Ok(NewTaskPayload::Reset(_)) | Err(_) => {
+                            Ok(NewTaskPayload::Disconnect(_)) | Err(_) => {
                                 // This unusual condition must be triggered by ThreadManager::drop().
                                 // Initialize result_with_timings with a harmless value...
                                 result_with_timings = initialized_result_with_timings();
