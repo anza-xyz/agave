@@ -2123,6 +2123,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
     }
 }
 
+#[derive(Debug)]
 pub enum BankingStageStatus {
     Active,
     Inactive,
