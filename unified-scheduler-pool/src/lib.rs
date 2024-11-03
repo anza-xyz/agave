@@ -1670,7 +1670,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     loop {
                         if session_resetting {
                             while let Some(task) = state_machine.schedule_next_buffered_task() {
-                                state_machine.deschedule_task(task);
+                                state_machine.deschedule_task(&task);
                                 if log_interval.increment() {
                                     log_scheduler!(info, "resetting");
                                 } else {
