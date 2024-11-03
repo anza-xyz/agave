@@ -347,7 +347,7 @@ where
                 }) {
                     assert!(g.1.take().is_some());
                     drop(g);
-                    let id = pooled.id()
+                    let id = pooled.id();
                     info!("dropping sch {id}");
                     drop(pooled);
                     info!("dropped sch {id}");
