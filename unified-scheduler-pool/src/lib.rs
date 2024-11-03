@@ -2189,6 +2189,7 @@ where
     }
 
     fn reset(&self) {
+        self.thread_manager.new_task_sender.send(3).unwrap();
     }
 }
 
