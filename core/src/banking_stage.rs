@@ -60,6 +60,7 @@ use {
 use solana_perf::packet::BankingPacketBatch;
 use solana_unified_scheduler_pool::BankingStageAdapter;
 use solana_unified_scheduler_pool::IsIdle;
+use std::sync::atomic::AtomicBool;
 
 // Below modules are pub to allow use by banking_stage bench
 pub mod committer;
@@ -719,7 +720,7 @@ impl BankingStage {
         impl IsIdle for S {
             fn is_idle(&self) -> bool {
                 let r = matches!(self.0.make_consume_or_forward_decision(), BufferedPacketsDecision::Forward) ||
-                    self.0.load(Ordering::Relaxed);
+                    self.1.load(Ordering::Relaxed);
                 info!("IsIdle::is_idle() -> {r}...");
                 r
             }
