@@ -404,7 +404,8 @@ where
 
     // This fn needs to return immediately due to being part of the blocking
     // `::wait_for_termination()` call.
-    fn return_scheduler(&self, id: u64, scheduler: S::Inner, should_trash: bool) {
+    fn return_scheduler(&self, scheduler: S::Inner, should_trash: bool) {
+        let id = scheduler.id();
         debug!("return_scheduler(): id: {id} should_trash: {should_trash}");
         let bp_id: Option<u64> = self.block_production_scheduler_inner.lock().unwrap().0.as_ref().copied();
         if should_trash {
@@ -509,7 +510,7 @@ where
             assert!(g.0.replace(s.id()).is_none());
             s
         };
-        self.return_scheduler(scheduler.id(), scheduler.into_inner().1, false);
+        self.return_scheduler(scheduler.into_inner().1, false);
         self.block_production_scheduler_condvar.notify_all();
         info!("flash session: end!");
     }
@@ -1023,10 +1024,6 @@ where
     S: SpawnableScheduler<TH>,
     TH: TaskHandler,
 {
-    fn id(&self) -> SchedulerId {
-        self.thread_manager.scheduler_id
-    }
-
     fn is_trashed(&self) -> bool {
         self.is_aborted() || self.is_overgrown()
     }
@@ -2002,12 +1999,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 }
 
 trait SchedulerInner {
-    /*
-    fn id(&self) -> usize {
-        0
-    }
-    */
-
+    fn id(&self) -> SchedulerId {
     fn is_idle(&self) -> bool;
     fn is_outgrown(&self) -> bool;
     fn reset(&self);
@@ -2192,7 +2184,7 @@ where
         self.thread_manager
             .pool
             .clone()
-            .return_scheduler(self.id(), *self, should_trash);
+            .return_scheduler(*self, should_trash);
     }
 }
 
@@ -2201,6 +2193,10 @@ where
     S: SpawnableScheduler<TH, Inner = PooledSchedulerInner<S, TH>>,
     TH: TaskHandler,
 {
+    fn id(&self) -> SchedulerId {
+        self.thread_manager.scheduler_id
+    }
+
     fn is_outgrown(&self) -> bool {
         self.task_creator.usage_queue_loader().count() > self.thread_manager.pool.max_usage_queue_count
     }
