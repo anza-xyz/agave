@@ -59,6 +59,7 @@ use {
 };
 use solana_perf::packet::BankingPacketBatch;
 use solana_unified_scheduler_pool::BankingStageAdapter;
+use solana_unified_scheduler_pool::IsIdle;
 
 // Below modules are pub to allow use by banking_stage bench
 pub mod committer;
@@ -715,7 +716,6 @@ impl BankingStage {
             }
         }
 
-        use solana_unified_scheduler_pool::IsIdle;
         impl IsIdle for S {
             fn is_idle(&self) -> bool {
                 let r = matches!(self.0.make_consume_or_forward_decision(), BufferedPacketsDecision::Forward);
@@ -728,7 +728,7 @@ impl BankingStage {
             bank_forks.clone(),
             non_vote_receiver,
             Box::new(move |adapter: Arc<BankingStageAdapter>| {
-                info!("create_block_producing_scheduler: start!");
+                info!("on_block_production_scheduler_spawn: start!");
                 let decision_maker = decision_maker.clone();
                 let bank_forks = bank_forks.clone();
                 let mut id_generator = MonotonicIdGenerator::new();
@@ -805,7 +805,7 @@ impl BankingStage {
                     }
                     tasks
                 });
-                info!("create_block_producing_scheduler: end!");
+                info!("on_block_production_scheduler_spawn: end!");
                 b
             })
         );

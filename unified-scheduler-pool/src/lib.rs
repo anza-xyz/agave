@@ -103,7 +103,7 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     scheduler_inners: Mutex<Vec<(S::Inner, Instant)>>,
     block_production_scheduler_inner: Mutex<(Option<SchedulerId>, Option<S::Inner>, Option<SchedulingContext>)>,
     block_production_scheduler_condvar: Condvar,
-    bbb: Mutex<Option<BlockProductionSchedulerRespawner>>,
+    block_production_scheduler_respawner: Mutex<Option<BlockProductionSchedulerRespawner>>,
     trashed_scheduler_inners: Mutex<Vec<S::Inner>>,
     timeout_listeners: Mutex<Vec<(TimeoutListener, Instant)>>,
     handler_count: usize,
@@ -239,7 +239,7 @@ where
             scheduler_inners: Mutex::default(),
             block_production_scheduler_inner: Mutex::default(),
             block_production_scheduler_condvar: Condvar::default(),
-            bbb: Mutex::default(),
+            block_production_scheduler_respawner: Mutex::default(),
             trashed_scheduler_inners: Mutex::default(),
             timeout_listeners: Mutex::default(),
             handler_count,
@@ -482,8 +482,8 @@ where
     }
 
     pub fn prepare_to_spawn_block_production_scheduler(&self, bank_forks: Arc<RwLock<BankForks>>, banking_packet_receiver: BankingPacketReceiver, mut on_spawn_block_production_scheduler: BBB) {
-        let mut bbbl = self.bbb.lock().unwrap();
-        *bbbl = Some(BlockProductionSchedulerRespawner {
+        let mut respawner_write = self.block_production_scheduler_respawner.lock().unwrap();
+        *respawner_write = Some(BlockProductionSchedulerRespawner {
             bank_forks,
             banking_packet_receiver,
             on_spawn_block_production_scheduler,
@@ -492,12 +492,12 @@ where
 
     pub fn spawn_block_production_scheduler(&self) {
         info!("flash session: start!");
-        let mut bbbl = self.bbb.lock().unwrap();
+        let mut respawner_write = self.block_production_scheduler_respawner.lock().unwrap();
         let BlockProductionSchedulerRespawner {
             bank_forks,
             banking_packet_receiver,
             on_spawn_block_production_scheduler,
-        } = &mut *bbbl.as_mut().unwrap();
+        } = &mut *respawner_write.as_mut().unwrap();
 
         let adapter = Arc::new(BankingStageAdapter {
             usage_queue_loader: UsageQueueLoader::default(),
