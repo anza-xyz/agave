@@ -383,13 +383,13 @@ fn set_repair_whitelist(
 
 /// Returns the default fifo shred storage size (include both data and coding
 /// shreds) based on the validator config.
-fn default_fifo_shred_storage_size(vc: &ValidatorConfig) -> Option<u64> {
+fn default_fifo_shred_storage_size(max_ledger_shreds: Option<u64>) -> Option<u64> {
     // The max shred size is around 1228 bytes.
     // Here we reserve a little bit more than that to give extra storage for FIFO
     // to prevent it from purging data that have not yet being marked as obsoleted
     // by LedgerCleanupService.
     const RESERVED_BYTES_PER_SHRED: u64 = 1500;
-    vc.max_ledger_shreds.map(|max_ledger_shreds| {
+    max_ledger_shreds.map(|max_ledger_shreds| {
         // x2 as we have data shred and coding shred.
         max_ledger_shreds * RESERVED_BYTES_PER_SHRED * 2
     })
@@ -1040,7 +1040,7 @@ pub fn main() {
         None
     };
 
-    validator_config.ledger_column_options = LedgerColumnOptions {
+    let ledger_column_options = LedgerColumnOptions {
         compression_type: match matches.value_of("rocksdb_ledger_compression") {
             None => BlockstoreCompressionType::default(),
             Some(ledger_compression_string) => match ledger_compression_string {
@@ -1066,7 +1066,7 @@ pub fn main() {
                     );
                     match matches.value_of("rocksdb_fifo_shred_storage_size") {
                         None => ShredStorageType::rocks_fifo(default_fifo_shred_storage_size(
-                            &validator_config,
+                            max_ledger_shreds,
                         )),
                         Some(_) => ShredStorageType::rocks_fifo(Some(value_t_or_exit!(
                             matches,
@@ -1553,6 +1553,7 @@ pub fn main() {
         gossip_validators,
         wal_recovery_mode,
         max_ledger_shreds,
+        ledger_column_options,
         run_verification: !(matches.is_present("skip_poh_verify")
             || matches.is_present("skip_startup_ledger_verification")),
         debug_keys,
