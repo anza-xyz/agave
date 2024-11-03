@@ -1023,7 +1023,7 @@ pub fn main() {
         .value_of("wal_recovery_mode")
         .map(BlockstoreRecoveryMode::from);
 
-    if matches.is_present("limit_ledger_size") {
+    let max_ledger_shreds = if matches.is_present("limit_ledger_size") {
         let limit_ledger_size = match matches.value_of("limit_ledger_size") {
             Some(_) => value_t_or_exit!(matches, "limit_ledger_size", u64),
             None => DEFAULT_MAX_LEDGER_SHREDS,
@@ -1035,8 +1035,10 @@ pub fn main() {
             );
             exit(1);
         }
-        validator_config.max_ledger_shreds = Some(limit_ledger_size);
-    }
+        Some(limit_ledger_size)
+    } else {
+        None
+    };
 
     let accounts_hash_cache_path = matches
         .value_of("accounts_hash_cache_path")
@@ -1505,6 +1507,7 @@ pub fn main() {
         repair_whitelist,
         gossip_validators,
         wal_recovery_mode,
+        max_ledger_shreds,
         run_verification: !(matches.is_present("skip_poh_verify")
             || matches.is_present("skip_startup_ledger_verification")),
         debug_keys,
