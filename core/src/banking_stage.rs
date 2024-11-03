@@ -718,7 +718,9 @@ impl BankingStage {
         use solana_unified_scheduler_pool::IsIdle;
         impl IsIdle for S {
             fn is_idle(&self) -> bool {
-                matches!(self.0.make_consume_or_forward_decision(), BufferedPacketsDecision::Forward)
+                let r = matches!(self.0.make_consume_or_forward_decision(), BufferedPacketsDecision::Forward);
+                info!("IsIdle::is_idle() -> {r}...");
+                r
             }
         }
 
