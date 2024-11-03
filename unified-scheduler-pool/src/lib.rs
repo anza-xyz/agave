@@ -2205,7 +2205,7 @@ where
 
 impl<S, TH> SchedulerInner for PooledSchedulerInner<S, TH>
 where
-    S: SpawnableScheduler<TH, Inner = PooledSchedulerInner<S, TH>>,
+    S: SpawnableScheduler<TH, Inner = Self>,
     TH: TaskHandler,
 {
     fn id(&self) -> SchedulerId {
