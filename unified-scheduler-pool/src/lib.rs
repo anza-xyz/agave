@@ -442,7 +442,7 @@ where
                 self.trashed_scheduler_inners
                     .lock()
                     .expect("not poisoned")
-                    .push(scheduler)
+                    .push(scheduler);
                 drop(g);
                 self.spawn_block_production_scheduler();
             }
