@@ -424,9 +424,11 @@ where
     fn return_scheduler(&self, scheduler: S::Inner, should_trash: bool) {
         let id = scheduler.id();
         debug!("return_scheduler(): id: {id} should_trash: {should_trash}");
-        let bp_id: Option<u64> = self.block_production_scheduler_inner.lock().unwrap().0.as_ref().copied();
+        let g = self.block_production_scheduler_inner.lock().unwrap();
+        let bp_id: Option<SchedulerId> = g.0.as_ref().copied();
         if should_trash {
             if Some(id) != bp_id {
+                drop(g);
                 // Delay drop()-ing this trashed returned scheduler inner by stashing it in
                 // self.trashed_scheduler_inners, which is periodically drained by the `solScCleaner`
                 // thread. Dropping it could take long time (in fact,
@@ -436,10 +438,16 @@ where
                     .expect("not poisoned")
                     .push(scheduler);
             } else {
-                // handle to trash aborted bp sch....
-                assert!(self.block_production_scheduler_inner.lock().unwrap().1.replace(scheduler).is_none());
+                assert_eq!(Some(bp_id), g.0.take());
+                self.trashed_scheduler_inners
+                    .lock()
+                    .expect("not poisoned")
+                    .push(scheduler)
+                drop(g);
+                self.spawn_block_production_scheduler();
             }
         } else {
+            drop(g);
             if Some(id) != bp_id {
                 self.scheduler_inners
                     .lock()
@@ -1757,7 +1765,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             }
                             Ok(NewTaskPayload::Reset(_)) if matches!(state_machine.mode(), SchedulingMode::BlockProduction) => {
                                 session_resetting = true;
-                                log_scheduler!(info, "reset");
+                                log_scheduler!(info, "resetting");
                             }
                             Ok(NewTaskPayload::Payload(task)) if matches!(state_machine.mode(), SchedulingMode::BlockProduction) => {
                                 assert!(state_machine.do_schedule_task(task, true).is_none());
