@@ -1040,7 +1040,7 @@ where
 
 impl<S, TH> PooledSchedulerInner<S, TH>
 where
-    S: SpawnableScheduler<TH>,
+    S: SpawnableScheduler<TH, Inner = Self>,
     TH: TaskHandler,
 {
     fn is_trashed(&self, on_hot_path: bool) -> bool {
