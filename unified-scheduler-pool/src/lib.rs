@@ -2186,7 +2186,7 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
 
 impl<S, TH> UninstalledScheduler for PooledSchedulerInner<S, TH>
 where
-    S: SpawnableScheduler<TH, Inner = PooledSchedulerInner<S, TH>>,
+    S: SpawnableScheduler<TH, Inner = Self>,
     TH: TaskHandler,
 {
     fn return_to_pool(self: Box<Self>) {
