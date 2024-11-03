@@ -725,7 +725,7 @@ impl BankingStage {
                 r
             }
         }
-        let s = Box::new(S(decision_maker.clone(), poh_recorder.read().unwrap().is_exited.clone()));
+        let s = 
 
         unified_scheduler_pool.prepare_to_spawn_block_production_scheduler(
             bank_forks.clone(),
@@ -733,9 +733,10 @@ impl BankingStage {
             Box::new(move |adapter: Arc<BankingStageAdapter>| {
                 info!("on_block_production_scheduler_spawn: start!");
                 let decision_maker = decision_maker.clone();
+                let poh_recorder = poh_recorder.clone();
                 let bank_forks = bank_forks.clone();
                 let mut id_generator = MonotonicIdGenerator::new();
-                *adapter.idling_detector.lock().unwrap() = Some(s);
+                *adapter.idling_detector.lock().unwrap() = Some(Box::new(S(decision_maker.clone(), poh_recorder.read().unwrap().is_exited.clone())));
 
                 let b = Box::new(move |aaa: BankingPacketBatch| {
                     let decision = decision_maker.make_consume_or_forward_decision();
