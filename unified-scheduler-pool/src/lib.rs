@@ -1066,10 +1066,6 @@ where
         // scheduler to the pool, considering is_trashed() is checked immediately before that.
         self.thread_manager.are_threads_joined()
     }
-
-    fn is_overgrown(&self, on_hot_path: bool) -> bool {
-        self.task_creator.is_overgrown(self.thread_manager.pool.max_usage_queue_count, on_hot_path)
-    }
 }
 
 // This type manages the OS threads for scheduling and executing transactions. The term
@@ -2020,7 +2016,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 trait SchedulerInner {
     fn id(&self) -> SchedulerId;
     fn is_idle(&self) -> bool;
-    fn is_outgrown(&self) -> bool;
+    fn is_overgrown(&self, on_hot_path: bool) -> bool;
     fn reset(&self);
 }
 
@@ -2216,8 +2212,8 @@ where
         self.thread_manager.scheduler_id
     }
 
-    fn is_outgrown(&self) -> bool {
-        self.task_creator.usage_queue_loader().count() > self.thread_manager.pool.max_usage_queue_count
+    fn is_overgrown(&self, on_hot_path: bool) -> bool {
+        self.task_creator.is_overgrown(self.thread_manager.pool.max_usage_queue_count, on_hot_path)
     }
 
     fn is_idle(&self) -> bool {
