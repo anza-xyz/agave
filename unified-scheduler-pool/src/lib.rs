@@ -1001,6 +1001,7 @@ impl TaskCreator {
                 } else {
                     let current_usage_queue_count = banking_stage_adapter.usage_queue_loader.count();
                     let current_transaction_count = banking_stage_adapter.transaction_deduper.len();
+                    info!("bsa: {current_usage_queue_count} {current_transaction_count}");
 
                     current_usage_queue_count > max_usage_queue_count || current_transaction_count > 1_000_000
                 }
