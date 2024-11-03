@@ -1023,6 +1023,21 @@ pub fn main() {
         .value_of("wal_recovery_mode")
         .map(BlockstoreRecoveryMode::from);
 
+    if matches.is_present("limit_ledger_size") {
+        let limit_ledger_size = match matches.value_of("limit_ledger_size") {
+            Some(_) => value_t_or_exit!(matches, "limit_ledger_size", u64),
+            None => DEFAULT_MAX_LEDGER_SHREDS,
+        };
+        if limit_ledger_size < DEFAULT_MIN_MAX_LEDGER_SHREDS {
+            eprintln!(
+                "The provided --limit-ledger-size value was too small, the minimum value is \
+                 {DEFAULT_MIN_MAX_LEDGER_SHREDS}"
+            );
+            exit(1);
+        }
+        validator_config.max_ledger_shreds = Some(limit_ledger_size);
+    }
+
     let accounts_hash_cache_path = matches
         .value_of("accounts_hash_cache_path")
         .map(Into::into)
@@ -1782,21 +1797,6 @@ pub fn main() {
              (if enabled)",
         );
         exit(1);
-    }
-
-    if matches.is_present("limit_ledger_size") {
-        let limit_ledger_size = match matches.value_of("limit_ledger_size") {
-            Some(_) => value_t_or_exit!(matches, "limit_ledger_size", u64),
-            None => DEFAULT_MAX_LEDGER_SHREDS,
-        };
-        if limit_ledger_size < DEFAULT_MIN_MAX_LEDGER_SHREDS {
-            eprintln!(
-                "The provided --limit-ledger-size value was too small, the minimum value is \
-                 {DEFAULT_MIN_MAX_LEDGER_SHREDS}"
-            );
-            exit(1);
-        }
-        validator_config.max_ledger_shreds = Some(limit_ledger_size);
     }
 
     configure_banking_trace_dir_byte_limit(&mut validator_config, &matches);
