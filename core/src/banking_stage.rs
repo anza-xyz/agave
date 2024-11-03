@@ -719,7 +719,7 @@ impl BankingStage {
         }
 
         impl BankingStageMonitor for S {
-            fn banking_stage_stutus(&self) -> BankingStageStats {
+            fn banking_stage_stutus(&self) -> BankingStageStatus {
                 let r = if self.1.load(Ordering::Relaxed) {
                     BankingStageStatus::Exited
                 } else if matches!(self.0.make_consume_or_forward_decision(), BufferedPacketsDecision::Forward) {
