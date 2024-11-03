@@ -1040,6 +1040,51 @@ pub fn main() {
         None
     };
 
+    validator_config.ledger_column_options = LedgerColumnOptions {
+        compression_type: match matches.value_of("rocksdb_ledger_compression") {
+            None => BlockstoreCompressionType::default(),
+            Some(ledger_compression_string) => match ledger_compression_string {
+                "none" => BlockstoreCompressionType::None,
+                "snappy" => BlockstoreCompressionType::Snappy,
+                "lz4" => BlockstoreCompressionType::Lz4,
+                "zlib" => BlockstoreCompressionType::Zlib,
+                _ => panic!("Unsupported ledger_compression: {ledger_compression_string}"),
+            },
+        },
+        shred_storage_type: match matches.value_of("rocksdb_shred_compaction") {
+            None => ShredStorageType::default(),
+            Some(shred_compaction_string) => match shred_compaction_string {
+                "level" => ShredStorageType::RocksLevel,
+                "fifo" => {
+                    warn!(
+                        "The value \"fifo\" for --rocksdb-shred-compaction has been deprecated. \
+                         Use of \"fifo\" will still work for now, but is planned for full removal \
+                         in v2.1. To update, use \"level\" for --rocksdb-shred-compaction, or \
+                         remove the --rocksdb-shred-compaction argument altogether. Note that the \
+                         entire \"rocksdb_fifo\" subdirectory within the ledger directory will \
+                         need to be manually removed once the validator is running with \"level\"."
+                    );
+                    match matches.value_of("rocksdb_fifo_shred_storage_size") {
+                        None => ShredStorageType::rocks_fifo(default_fifo_shred_storage_size(
+                            &validator_config,
+                        )),
+                        Some(_) => ShredStorageType::rocks_fifo(Some(value_t_or_exit!(
+                            matches,
+                            "rocksdb_fifo_shred_storage_size",
+                            u64
+                        ))),
+                    }
+                }
+                _ => panic!("Unrecognized rocksdb-shred-compaction: {shred_compaction_string}"),
+            },
+        },
+        rocks_perf_sample_interval: value_t_or_exit!(
+            matches,
+            "rocksdb_perf_sample_interval",
+            usize
+        ),
+    };
+
     let accounts_hash_cache_path = matches
         .value_of("accounts_hash_cache_path")
         .map(Into::into)
@@ -1818,51 +1863,6 @@ pub fn main() {
     validator_config.enable_block_production_forwarding = staked_nodes_overrides_path.is_some();
     validator_config.unified_scheduler_handler_threads =
         value_t!(matches, "unified_scheduler_handler_threads", usize).ok();
-
-    validator_config.ledger_column_options = LedgerColumnOptions {
-        compression_type: match matches.value_of("rocksdb_ledger_compression") {
-            None => BlockstoreCompressionType::default(),
-            Some(ledger_compression_string) => match ledger_compression_string {
-                "none" => BlockstoreCompressionType::None,
-                "snappy" => BlockstoreCompressionType::Snappy,
-                "lz4" => BlockstoreCompressionType::Lz4,
-                "zlib" => BlockstoreCompressionType::Zlib,
-                _ => panic!("Unsupported ledger_compression: {ledger_compression_string}"),
-            },
-        },
-        shred_storage_type: match matches.value_of("rocksdb_shred_compaction") {
-            None => ShredStorageType::default(),
-            Some(shred_compaction_string) => match shred_compaction_string {
-                "level" => ShredStorageType::RocksLevel,
-                "fifo" => {
-                    warn!(
-                        "The value \"fifo\" for --rocksdb-shred-compaction has been deprecated. \
-                         Use of \"fifo\" will still work for now, but is planned for full removal \
-                         in v2.1. To update, use \"level\" for --rocksdb-shred-compaction, or \
-                         remove the --rocksdb-shred-compaction argument altogether. Note that the \
-                         entire \"rocksdb_fifo\" subdirectory within the ledger directory will \
-                         need to be manually removed once the validator is running with \"level\"."
-                    );
-                    match matches.value_of("rocksdb_fifo_shred_storage_size") {
-                        None => ShredStorageType::rocks_fifo(default_fifo_shred_storage_size(
-                            &validator_config,
-                        )),
-                        Some(_) => ShredStorageType::rocks_fifo(Some(value_t_or_exit!(
-                            matches,
-                            "rocksdb_fifo_shred_storage_size",
-                            u64
-                        ))),
-                    }
-                }
-                _ => panic!("Unrecognized rocksdb-shred-compaction: {shred_compaction_string}"),
-            },
-        },
-        rocks_perf_sample_interval: value_t_or_exit!(
-            matches,
-            "rocksdb_perf_sample_interval",
-            usize
-        ),
-    };
 
     let public_rpc_addr = matches.value_of("public_rpc_addr").map(|addr| {
         solana_net_utils::parse_host_port(addr).unwrap_or_else(|e| {
