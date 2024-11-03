@@ -1676,6 +1676,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 } else {
                                     log_scheduler!(trace, "resetting");
                                 }
+                                std::mem::forget(task);
                             }
                             session_resetting = false;
                         }
