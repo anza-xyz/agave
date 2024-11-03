@@ -481,9 +481,10 @@ where
             }
         } else {
             let mut g = self.block_production_scheduler_inner.lock().expect("not poisoned");
-            g = self.block_production_scheduler_condvar.wait_while(g, |g| { info!("waiting for bps..."); 
+            g = self.block_production_scheduler_condvar.wait_while(g, |g| {
                 let not_yet = g.0.is_none();
                 if not_yet {
+                    info!("will wait for bps..."); 
                     g.2 = Some(context.clone());
                 }
                 not_yet
