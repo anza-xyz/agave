@@ -1068,7 +1068,7 @@ where
     }
 
     fn is_overgrown(&self, on_hot_path: bool) -> bool {
-        self.task_creator.is_overgrown(self.thread_manager.pool.max_usage_queue_count)
+        self.task_creator.is_overgrown(self.thread_manager.pool.max_usage_queue_count, on_hot_path)
     }
 }
 
