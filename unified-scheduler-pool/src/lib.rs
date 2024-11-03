@@ -482,8 +482,7 @@ where
     }
 
     pub fn prepare_to_spawn_block_production_scheduler(&self, bank_forks: Arc<RwLock<BankForks>>, banking_packet_receiver: BankingPacketReceiver, mut on_spawn_block_production_scheduler: BBB) {
-        let mut respawner_write = self.block_production_scheduler_respawner.lock().unwrap();
-        *respawner_write = Some(BlockProductionSchedulerRespawner {
+        *self.block_production_scheduler_respawner.lock().unwrap() = Some(BlockProductionSchedulerRespawner {
             bank_forks,
             banking_packet_receiver,
             on_spawn_block_production_scheduler,
