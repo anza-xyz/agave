@@ -572,7 +572,8 @@ mod tests {
         solana_compute_budget::{compute_budget::ComputeBudget, compute_budget_limits},
         solana_feature_set::FeatureSet,
         solana_program_runtime::loaded_programs::{
-            ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheForTxBatch,
+            ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
+            ProgramCacheForTxBatch,
         },
         solana_sdk::{
             account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
@@ -1437,10 +1438,7 @@ mod tests {
             .insert(bpf_loader::id(), loader_data.clone());
         mock_bank
             .accounts_map
-            .insert(native_loader::id(), loader_data);
-
-        let mut error_metrics = TransactionErrorMetrics::default();
-        let mut loaded_programs = ProgramCacheForTxBatch::default();
+            .insert(native_loader::id(), loader_data.clone());
 
         let transaction =
             SanitizedTransaction::from_transaction_for_tests(Transaction::new_signed_with_payer(
@@ -1454,32 +1452,17 @@ mod tests {
                 Hash::default(),
             ));
 
-        let result = load_transaction_accounts(
-            &mock_bank,
-            transaction.message(),
-            LoadedTransactionAccount {
-                account: account_data.clone(),
-                ..LoadedTransactionAccount::default()
-            },
-            &ComputeBudgetLimits::default(),
-            &mut error_metrics,
-            None,
-            &FeatureSet::default(),
-            &RentCollector::default(),
-            &loaded_programs,
-        );
-
-        // without cache, program is invalid
-        assert_eq!(
-            result.err(),
-            Some(TransactionError::InvalidProgramForExecution)
-        );
-
+        let mut loaded_programs = ProgramCacheForTxBatch::default();
         loaded_programs.replenish(
             program_keypair.pubkey(),
-            Arc::new(ProgramCacheEntry::default()),
+            Arc::new(ProgramCacheEntry::new_tombstone(
+                0,
+                ProgramCacheEntryOwner::LoaderV2,
+                ProgramCacheEntryType::Closed,
+            )),
         );
 
+        let mut error_metrics = TransactionErrorMetrics::default();
         let result = load_transaction_accounts(
             &mock_bank,
             transaction.message(),
@@ -1495,9 +1478,9 @@ mod tests {
             &loaded_programs,
         );
 
-        // with cache, executable flag is bypassed
+        // Executable flag is bypassed
         let mut cached_program = AccountSharedData::default();
-        cached_program.set_owner(native_loader::id());
+        cached_program.set_owner(bpf_loader::id());
         cached_program.set_executable(true);
 
         assert_eq!(
@@ -1506,6 +1489,7 @@ mod tests {
                 accounts: vec![
                     (account_keypair.pubkey(), account_data.clone()),
                     (program_keypair.pubkey(), cached_program),
+                    (bpf_loader::id(), loader_data),
                 ],
                 program_indices: vec![vec![1]],
                 rent: 0,
