@@ -60,6 +60,7 @@ use {
 use solana_perf::packet::BankingPacketBatch;
 use solana_unified_scheduler_pool::BankingStageAdapter;
 use solana_unified_scheduler_pool::BankingStageStatus;
+use solana_unified_scheduler_pool::BankingStageMonitor;
 use std::sync::atomic::AtomicBool;
 
 // Below modules are pub to allow use by banking_stage bench
