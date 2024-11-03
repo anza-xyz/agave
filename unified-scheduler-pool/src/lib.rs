@@ -1627,7 +1627,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     Ok(NewTaskPayload::Reset(_)) => {
                                         session_pausing = true;
                                         session_resetting = true;
-                                        "resetting"
+                                        "draining"
                                     }
                                     Ok(NewTaskPayload::OpenSubchannel(_context_and_result_with_timings)) =>
                                         unreachable!(),
@@ -1669,7 +1669,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 }
                             }
                         };
-                        let force_log = if step_type == "ending" || step_type == "pausing" || step_type == "resetting" {
+                        let force_log = if step_type == "ending" || step_type == "pausing" || step_type == "draining" {
                             true
                         } else {
                             false
@@ -1718,12 +1718,13 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             while let Some(task) = state_machine.schedule_next_buffered_task() {
                                 state_machine.deschedule_task(&task);
                                 if log_interval.increment() {
-                                    log_scheduler!(info, "resetting");
+                                    log_scheduler!(info, "drained_desc");
                                 } else {
-                                    log_scheduler!(trace, "resetting");
+                                    log_scheduler!(trace, "drained_desc");
                                 }
                                 std::mem::forget(task);
                             }
+                            log_scheduler!(info, "drained");
                             session_resetting = false;
                         }
                         match new_task_receiver.recv().map(|a| a.into()) {
@@ -1765,7 +1766,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             }
                             Ok(NewTaskPayload::Reset(_)) if matches!(state_machine.mode(), SchedulingMode::BlockProduction) => {
                                 session_resetting = true;
-                                log_scheduler!(info, "resetting");
+                                log_scheduler!(info, "drain_rebuf");
                             }
                             Ok(NewTaskPayload::Payload(task)) if matches!(state_machine.mode(), SchedulingMode::BlockProduction) => {
                                 assert!(state_machine.do_schedule_task(task, true).is_none());
