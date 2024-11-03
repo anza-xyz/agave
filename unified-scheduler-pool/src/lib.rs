@@ -439,17 +439,15 @@ where
                 .push(scheduler);
 
             if is_block_production_scheduler_returned {
-                assert_eq!(bp_id, g.0.take());
-            } else {
-                drop(g);
+                g.0.take();
             }
             if is_block_production_scheduler_returned {
-                self.spawn_block_production_scheduler();
                 drop(g);
+                self.spawn_block_production_scheduler();
             }
         } else {
             drop(g);
-            if Some(id) != bp_id {
+            if !is_block_production_scheduler_returned {
                 self.scheduler_inners
                     .lock()
                     .expect("not poisoned")
