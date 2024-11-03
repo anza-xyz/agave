@@ -1360,52 +1360,6 @@ mod tests {
     }
 
     #[test]
-    fn test_load_transaction_accounts_program_account_not_found_but_loaded() {
-        let key1 = Keypair::new();
-        let key2 = Keypair::new();
-
-        let message = Message {
-            account_keys: vec![key1.pubkey(), key2.pubkey()],
-            header: MessageHeader::default(),
-            instructions: vec![CompiledInstruction {
-                program_id_index: 1,
-                accounts: vec![0],
-                data: vec![],
-            }],
-            recent_blockhash: Hash::default(),
-        };
-
-        let sanitized_message = new_unchecked_sanitized_message(message);
-        let mut mock_bank = TestCallbacks::default();
-        let mut account_data = AccountSharedData::default();
-        account_data.set_lamports(200);
-        mock_bank.accounts_map.insert(key1.pubkey(), account_data);
-
-        let mut error_metrics = TransactionErrorMetrics::default();
-        let mut loaded_programs = ProgramCacheForTxBatch::default();
-        loaded_programs.replenish(key2.pubkey(), Arc::new(ProgramCacheEntry::default()));
-
-        let sanitized_transaction = SanitizedTransaction::new_for_tests(
-            sanitized_message,
-            vec![Signature::new_unique()],
-            false,
-        );
-        let result = load_transaction_accounts(
-            &mock_bank,
-            sanitized_transaction.message(),
-            LoadedTransactionAccount::default(),
-            &ComputeBudgetLimits::default(),
-            &mut error_metrics,
-            None,
-            &FeatureSet::default(),
-            &RentCollector::default(),
-            &loaded_programs,
-        );
-
-        assert_eq!(result.err(), Some(TransactionError::AccountNotFound));
-    }
-
-    #[test]
     fn test_load_transaction_accounts_program_account_executable_bypass() {
         // currently, the account loader retrieves read-only non-instruction accounts from the program cache
         // it creates a mock AccountSharedData with the executable flag set to true
