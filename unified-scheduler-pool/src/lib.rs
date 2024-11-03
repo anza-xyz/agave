@@ -983,7 +983,7 @@ impl TaskCreator {
         match self {
             BlockVerification { usage_queue_loader } => {
                 assert!(on_hot_path);
-                usage_queue_loader.count() > usage_queue_limit
+                usage_queue_loader.count() > max_usage_queue_count
             }
             BlockProduction { banking_stage_adapter } => {
                 if on_hot_path {
