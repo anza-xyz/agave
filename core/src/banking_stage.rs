@@ -727,7 +727,7 @@ impl BankingStage {
                 } else {
                     BankingStageStatus::Active
                 };
-                info!("BankingStageStatus::banking_stage_stats() -> {r}...");
+                info!("BankingStageStatus::banking_stage_stats() -> {r:?}...");
                 r
             }
         }
