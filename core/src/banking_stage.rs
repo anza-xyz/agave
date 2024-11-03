@@ -723,7 +723,7 @@ impl BankingStage {
                 let r = if self.1.load(Ordering::Relaxed) {
                     BankingStageStatus::Exited
                 } else if matches!(self.0.make_consume_or_forward_decision(), BufferedPacketsDecision::Forward) {
-                    BankingStageStatus::InActive
+                    BankingStageStatus::Inactive
                 } else {
                     BankingStageStatus::Active
                 };
