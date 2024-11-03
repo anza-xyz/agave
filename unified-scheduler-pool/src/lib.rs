@@ -337,7 +337,6 @@ where
                             info!("sch {} IS idle", pooled.id());
                             if pooled.is_overgrown(false) {
                                 info!("sch {} is overgrown!", pooled.id());
-                                drop(pooled);
                                 let pooled = g.1.take().unwrap();
                                 assert_eq!(Some(pooled.id()), g.0.take());
                                 drop(g);
@@ -352,7 +351,6 @@ where
                             }
                         }
                         BankingStageStatus::Exited => {
-                            drop(pooled);
                             let pooled = g.1.take().unwrap();
                             assert_eq!(Some(pooled.id()), g.0.take());
                             drop(g);
