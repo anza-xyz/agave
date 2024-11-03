@@ -59,7 +59,7 @@ use {
 };
 use solana_perf::packet::BankingPacketBatch;
 use solana_unified_scheduler_pool::BankingStageAdapter;
-use solana_unified_scheduler_pool::IsIdle;
+use solana_unified_scheduler_pool::BankingStageStatus;
 use std::sync::atomic::AtomicBool;
 
 // Below modules are pub to allow use by banking_stage bench
@@ -717,11 +717,16 @@ impl BankingStage {
             }
         }
 
-        impl IsIdle for S {
-            fn is_idle(&self) -> bool {
-                let r = matches!(self.0.make_consume_or_forward_decision(), BufferedPacketsDecision::Forward) ||
-                    self.1.load(Ordering::Relaxed);
-                info!("IsIdle::is_idle() -> {r}...");
+        impl BankingStageStatus for S {
+            fn banking_stage_stats(&self) -> BankingStageStats {
+                let r = if self.1.load(Ordering::Relaxed) {
+                    BankingStageStatus::Exited
+                } else if matches!(self.0.make_consume_or_forward_decision(), BufferedPacketsDecision::Forward)
+                    BankingStageStatus::InActive
+                } else {
+                    BankingStageStatus::Active
+                }
+                info!("BankingStageStatus::banking_stage_stats() -> {r}...");
                 r
             }
         }

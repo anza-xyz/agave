@@ -331,7 +331,7 @@ where
 
                 let mut g = scheduler_pool.block_production_scheduler_inner.lock().unwrap();
                 if let Some(pooled) = g.1.take_if(|pooled| {
-                    if pooled.is_idle() {
+                    if pooled.banking_stage_status() {
                         info!("sch {} IS idle", pooled.id());
                         if pooled.is_overgrown(false) {
                             info!("sch {} is overgrown!", pooled.id());
@@ -975,12 +975,12 @@ impl TaskCreator {
         }
     }
 
-    fn is_idle(&self) -> bool {
+    fn banking_stage_status(&self) -> BankingStageStatus {
         use TaskCreator::*;
 
         match self {
             BlockVerification { usage_queue_loader } => todo!(),
-            BlockProduction { banking_stage_adapter } => banking_stage_adapter.is_idle(),
+            BlockProduction { banking_stage_adapter } => banking_stage_adapter.banking_stage_status(),
         }
     }
 
@@ -2028,7 +2028,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
 trait SchedulerInner {
     fn id(&self) -> SchedulerId;
-    fn is_idle(&self) -> bool;
+    fn banking_stage_status(&self) -> BankingStageStatus;
     fn is_overgrown(&self, on_hot_path: bool) -> bool;
     fn reset(&self);
 }
@@ -2108,15 +2108,21 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
     }
 }
 
-pub trait IsIdle: Send + Debug {
-    fn is_idle(&self) -> bool;
+enum BankingStageStatus {
+    Active
+    Inactive,
+    Exited,
+}
+
+pub trait BankingStageMonitor: Send + Debug {
+    fn banking_stage_status(&self) -> BankingStageStatus;
 }
 
 #[derive(Debug)]
 pub struct BankingStageAdapter {
     usage_queue_loader: UsageQueueLoader,
     transaction_deduper: DashSet<Hash>,
-    pub idling_detector: Mutex<Option<Box<dyn IsIdle>>>,
+    pub idling_detector: Mutex<Option<Box<dyn BankingStageMonitor>>>,
 }
 
 /*
@@ -2142,8 +2148,8 @@ impl BankingStageAdapter {
         }))
     }
 
-    fn is_idle(&self) -> bool {
-        self.idling_detector.lock().unwrap().as_ref().unwrap().is_idle()
+    fn banking_stage_status(&self) -> BankingStageStatus {
+        self.idling_detector.lock().unwrap().as_ref().unwrap().banking_stage_status()
     }
 }
 
@@ -2229,8 +2235,8 @@ where
         self.task_creator.is_overgrown(self.thread_manager.pool.max_usage_queue_count, on_hot_path)
     }
 
-    fn is_idle(&self) -> bool {
-        self.task_creator.is_idle()
+    fn banking_stage_status(&self) -> BankingStageStatus {
+        self.task_creator.banking_stage_status()
     }
 
     fn reset(&self) {
