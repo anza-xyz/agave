@@ -977,7 +977,7 @@ impl TaskCreator {
         }
     }
 
-    fn is_overgrown(&self, usage_queue_limit: usize, on_hot_path: bool) -> bool {
+    fn is_overgrown(&self, max_usage_queue_count: usize, on_hot_path: bool) -> bool {
         use TaskCreator::*;
 
         match self {
@@ -989,7 +989,7 @@ impl TaskCreator {
                 if on_hot_path {
                     false
                 } else {
-                    banking_stage_adapter.usage_queue_loader.count() > usage_queue_limit ||
+                    banking_stage_adapter.usage_queue_loader.count() > max_usage_queue_count ||
                         banking_stage_adapter.transaction_deduper.len() > 1_000_000
                 }
             }
@@ -1043,8 +1043,8 @@ where
     S: SpawnableScheduler<TH>,
     TH: TaskHandler,
 {
-    fn is_trashed(&self) -> bool {
-        self.is_aborted() || self.is_overgrown()
+    fn is_trashed(&self, on_hot_path: bool) -> bool {
+        self.is_aborted() || self.is_overgrown(on_hot_path)
     }
 
     fn is_aborted(&self) -> bool {
@@ -1067,8 +1067,8 @@ where
         self.thread_manager.are_threads_joined()
     }
 
-    fn is_overgrown(&self) -> bool {
-        self.task_creator.is_overgrown(self.thread_manager.pool.max_usage_queue_count, true)
+    fn is_overgrown(&self, on_hot_path: bool) -> bool {
+        self.task_creator.is_overgrown(self.thread_manager.pool.max_usage_queue_count)
     }
 }
 
