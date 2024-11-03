@@ -717,7 +717,7 @@ impl BankingStage {
             }
         }
 
-        impl BankingStageStatus for S {
+        impl BankingStageMonitor for S {
             fn banking_stage_stats(&self) -> BankingStageStats {
                 let r = if self.1.load(Ordering::Relaxed) {
                     BankingStageStatus::Exited
