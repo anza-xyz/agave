@@ -424,27 +424,28 @@ where
     fn return_scheduler(&self, scheduler: S::Inner, should_trash: bool) {
         let id = scheduler.id();
         debug!("return_scheduler(): id: {id} should_trash: {should_trash}");
-        let g = self.block_production_scheduler_inner.lock().unwrap();
+        let mut g = self.block_production_scheduler_inner.lock().unwrap();
         let bp_id: Option<SchedulerId> = g.0.as_ref().copied();
+        let is_block_production_scheduler_returned = Some(id) == bp_id;
+
         if should_trash {
-            if Some(id) != bp_id {
-                drop(g);
-                // Delay drop()-ing this trashed returned scheduler inner by stashing it in
-                // self.trashed_scheduler_inners, which is periodically drained by the `solScCleaner`
-                // thread. Dropping it could take long time (in fact,
-                // PooledSchedulerInner::block_verification_usage_queue_loader can contain many entries to drop).
-                self.trashed_scheduler_inners
-                    .lock()
-                    .expect("not poisoned")
-                    .push(scheduler);
-            } else {
+            // Delay drop()-ing this trashed returned scheduler inner by stashing it in
+            // self.trashed_scheduler_inners, which is periodically drained by the `solScCleaner`
+            // thread. Dropping it could take long time (in fact,
+            // PooledSchedulerInner::block_verification_usage_queue_loader can contain many entries to drop).
+            self.trashed_scheduler_inners
+                .lock()
+                .expect("not poisoned")
+                .push(scheduler);
+
+            if is_block_production_scheduler_returned {
                 assert_eq!(bp_id, g.0.take());
-                self.trashed_scheduler_inners
-                    .lock()
-                    .expect("not poisoned")
-                    .push(scheduler);
+            } else {
                 drop(g);
+            }
+            if is_block_production_scheduler_returned {
                 self.spawn_block_production_scheduler();
+                drop(g);
             }
         } else {
             drop(g);
