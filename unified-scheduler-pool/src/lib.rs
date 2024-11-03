@@ -2124,7 +2124,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
 }
 
 enum BankingStageStatus {
-    Active
+    Active,
     Inactive,
     Exited,
 }
