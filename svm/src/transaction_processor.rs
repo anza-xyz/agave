@@ -389,12 +389,19 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             program_cache_for_tx_batch
         });
 
-        let mut account_loader = AccountLoader::new(
+        // Determine a capacity for the internal account cache. This
+        // over-allocates but avoids ever reallocating, and spares us from
+        // deduplicating the account keys lists.
+        let account_keys_in_batch = sanitized_txs.iter().map(|tx| tx.account_keys().len()).sum();
+
+        // Create the account loader, which wraps all external account fetching.
+        let mut account_loader = AccountLoader::new_with_account_cache_capacity(
             config.account_overrides,
             program_cache_for_tx_batch,
             program_accounts_map,
             callbacks,
             environment.feature_set.clone(),
+            account_keys_in_batch,
         );
 
         let enable_transaction_loading_failure_fees = environment
@@ -439,6 +446,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 TransactionLoadResult::NotLoaded(err) => Err(err),
                 TransactionLoadResult::FeesOnly(fees_only_tx) => {
                     if enable_transaction_loading_failure_fees {
+                        // Update loaded accounts cache with nonce and fee-payer
+                        account_loader
+                            .update_accounts_for_failed_tx(tx, &fees_only_tx.rollback_accounts);
+
                         Ok(ProcessedTransaction::FeesOnly(Box::new(fees_only_tx)))
                     } else {
                         Err(fees_only_tx.load_error)
@@ -455,13 +466,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         config,
                     );
 
-                    // Update batch specific cache of the loaded programs with the modifications
-                    // made by the transaction, if it executed successfully.
-                    if executed_tx.was_successful() {
-                        account_loader
-                            .program_cache
-                            .merge(&executed_tx.programs_modified_by_tx);
-                    }
+                    // Update loaded accounts cache with account states which might have changed.
+                    // Also update local program cache with modifications made by the transaction,
+                    // if it executed successfully.
+                    account_loader.update_accounts_for_executed_tx(tx, &executed_tx);
 
                     Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
                 }
