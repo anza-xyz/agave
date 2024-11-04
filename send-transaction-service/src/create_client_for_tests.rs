@@ -52,6 +52,7 @@ impl CreateClient for TpuClientNextClient {
             tpu_peers,
             None,
             leader_forward_count,
+            None,
         )
     }
 }

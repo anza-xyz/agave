@@ -5,6 +5,7 @@ use {
     solana_client::connection_cache::{ConnectionCache, Protocol},
     solana_connection_cache::client_connection::ClientConnection as TpuConnection,
     solana_measure::measure::Measure,
+    solana_sdk::signature::Keypair,
     solana_tpu_client_next::{
         connection_workers_scheduler::ConnectionWorkersSchedulerConfig,
         leader_updater::LeaderUpdater, transaction_batch::TransactionBatch,
@@ -226,12 +227,13 @@ impl TransactionClient for TpuClientNextClient {
     }
 }
 
-pub(crate) fn spawn_tpu_client_send_txs<T>(
+pub fn spawn_tpu_client_send_txs<T>(
     runtime: &Runtime,
     my_tpu_address: SocketAddr,
     tpu_peers: Option<Vec<SocketAddr>>,
     leader_info: Option<T>,
     leader_forward_count: u64,
+    validator_identity: Option<Keypair>,
 ) -> TpuClientNextClient
 where
     T: TpuInfoWithSendStatic,
@@ -239,7 +241,6 @@ where
     let leader_info_provider = CurrentLeaderInfo::new(leader_info);
 
     let (sender, receiver) = mpsc::channel(16); // random number of now
-    let validator_identity = None;
     let cancel = CancellationToken::new();
     let _handle = runtime.spawn({
         let cancel = cancel.clone();
@@ -251,7 +252,7 @@ where
             };
             let config = ConnectionWorkersSchedulerConfig {
                 bind: SocketAddr::new(Ipv4Addr::new(0, 0, 0, 0).into(), 0),
-                stake_identity: validator_identity, //TODO In CC, do we send with identity?
+                stake_identity: validator_identity,
                 num_connections: 1,
                 skip_check_transaction_age: true,
                 worker_channel_size: 2,
