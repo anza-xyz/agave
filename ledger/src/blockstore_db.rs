@@ -10,7 +10,7 @@ use {
             PERF_METRIC_OP_NAME_WRITE_BATCH,
         },
         blockstore_options::{
-            AccessType, BlockstoreOptions, LedgerColumnOptions, ShredStorageType,
+            AccessType, BlockstoreOptions, LedgerColumnOptions,
         },
     },
     bincode::{deserialize, serialize},
@@ -22,8 +22,8 @@ use {
         compaction_filter::CompactionFilter,
         compaction_filter_factory::{CompactionFilterContext, CompactionFilterFactory},
         properties as RocksProperties, ColumnFamily, ColumnFamilyDescriptor, CompactionDecision,
-        DBCompactionStyle, DBCompressionType, DBIterator, DBPinnableSlice, DBRawIterator,
-        FifoCompactOptions, IteratorMode as RocksIteratorMode, LiveFile, Options,
+        DBCompressionType, DBIterator, DBPinnableSlice, DBRawIterator,
+        IteratorMode as RocksIteratorMode, LiveFile, Options,
         WriteBatch as RWriteBatch, DB,
     },
     serde::{de::DeserializeOwned, Serialize},
@@ -51,7 +51,6 @@ use {
 const BLOCKSTORE_METRICS_ERROR: i64 = -1;
 
 const MAX_WRITE_BUFFER_SIZE: u64 = 256 * 1024 * 1024; // 256MB
-const FIFO_WRITE_BUFFER_SIZE: u64 = 2 * MAX_WRITE_BUFFER_SIZE;
 
 // SST files older than this value will be picked up for compaction. This value
 // was chosen to be one day to strike a balance between storage getting
@@ -2070,79 +2069,10 @@ fn new_cf_descriptor_pair_shreds<
     options: &BlockstoreOptions,
     oldest_slot: &OldestSlot,
 ) -> (ColumnFamilyDescriptor, ColumnFamilyDescriptor) {
-    match &options.column_options.shred_storage_type {
-        ShredStorageType::RocksLevel => (
-            new_cf_descriptor::<D>(options, oldest_slot),
-            new_cf_descriptor::<C>(options, oldest_slot),
-        ),
-        ShredStorageType::RocksFifo(fifo_options) => (
-            new_cf_descriptor_fifo::<D>(&fifo_options.shred_data_cf_size, &options.column_options),
-            new_cf_descriptor_fifo::<C>(&fifo_options.shred_code_cf_size, &options.column_options),
-        ),
-    }
-}
-
-fn new_cf_descriptor_fifo<C: 'static + Column + ColumnName>(
-    max_cf_size: &u64,
-    column_options: &LedgerColumnOptions,
-) -> ColumnFamilyDescriptor {
-    if *max_cf_size > FIFO_WRITE_BUFFER_SIZE {
-        ColumnFamilyDescriptor::new(
-            C::NAME,
-            get_cf_options_fifo::<C>(max_cf_size, column_options),
-        )
-    } else {
-        panic!(
-            "{} cf_size must be greater than write buffer size {} when using \
-             ShredStorageType::RocksFifo.",
-            C::NAME,
-            FIFO_WRITE_BUFFER_SIZE
-        );
-    }
-}
-
-/// Returns the RocksDB Column Family Options which use FIFO Compaction.
-///
-/// Note that this CF options is optimized for workloads which write-keys
-/// are mostly monotonically increasing over time.  For workloads where
-/// write-keys do not follow any order in general should use get_cf_options
-/// instead.
-///
-/// - [`max_cf_size`]: the maximum allowed column family size.  Note that
-///   rocksdb will start deleting the oldest SST file when the column family
-///   size reaches `max_cf_size` - `FIFO_WRITE_BUFFER_SIZE` to strictly
-///   maintain the size limit.
-fn get_cf_options_fifo<C: 'static + Column + ColumnName>(
-    max_cf_size: &u64,
-    column_options: &LedgerColumnOptions,
-) -> Options {
-    let mut options = Options::default();
-
-    options.set_max_write_buffer_number(8);
-    options.set_write_buffer_size(FIFO_WRITE_BUFFER_SIZE as usize);
-    // FIFO always has its files in L0 so we only have one level.
-    options.set_num_levels(1);
-    // Since FIFO puts all its file in L0, it is suggested to have unlimited
-    // number of open files.  The actual total number of open files will
-    // be close to max_cf_size / write_buffer_size.
-    options.set_max_open_files(-1);
-
-    let mut fifo_compact_options = FifoCompactOptions::default();
-
-    // Note that the following actually specifies size trigger for deleting
-    // the oldest SST file instead of specifying the size limit as its name
-    // might suggest.  As a result, we should trigger the file deletion when
-    // the size reaches `max_cf_size - write_buffer_size` in order to correctly
-    // maintain the storage size limit.
-    fifo_compact_options
-        .set_max_table_files_size((*max_cf_size).saturating_sub(FIFO_WRITE_BUFFER_SIZE));
-
-    options.set_compaction_style(DBCompactionStyle::Fifo);
-    options.set_fifo_compaction_options(&fifo_compact_options);
-
-    process_cf_options_advanced::<C>(&mut options, column_options);
-
-    options
+    (
+        new_cf_descriptor::<D>(options, oldest_slot),
+        new_cf_descriptor::<C>(options, oldest_slot),
+    )
 }
 
 fn get_db_options(access_type: &AccessType) -> Options {
