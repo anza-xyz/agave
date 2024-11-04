@@ -4367,8 +4367,9 @@ pub mod tests {
             vote::state::VoteState,
         },
         solana_send_transaction_service::{
-            create_client_for_tests::CreateClient, tpu_info::NullTpuInfo,
-            transaction_client::ConnectionCacheClient,
+            create_client_for_tests::CreateClient,
+            tpu_info::NullTpuInfo,
+            transaction_client::{ConnectionCacheClient, TpuClientNextClient},
         },
         solana_transaction_status::{
             EncodedConfirmedBlock, EncodedTransaction, EncodedTransactionWithStatusMeta,
@@ -4749,15 +4750,11 @@ pub mod tests {
         }
     }
 
-    #[test]
-    fn test_rpc_request_processor_new() {
+    fn rpc_request_processor_new<C: ClientWithCreator>() {
         let bob_pubkey = solana_sdk::pubkey::new_rand();
         let genesis = create_genesis_config(100);
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let meta = JsonRpcRequestProcessor::new_from_bank::<ConnectionCacheClient<NullTpuInfo>>(
-            bank,
-            SocketAddrSpace::Unspecified,
-        );
+        let meta = JsonRpcRequestProcessor::new_from_bank::<C>(bank, SocketAddrSpace::Unspecified);
 
         let bank = meta.bank_forks.read().unwrap().root_bank();
         bank.transfer(20, &genesis.mint_keypair, &bob_pubkey)
@@ -4771,14 +4768,20 @@ pub mod tests {
     }
 
     #[test]
-    fn test_rpc_get_balance() {
+    fn test_rpc_request_processor_new_connection_cache() {
+        rpc_request_processor_new::<ConnectionCacheClient<NullTpuInfo>>();
+    }
+
+    #[test]
+    fn test_rpc_request_processor_new_tpu_client_next() {
+        rpc_request_processor_new::<TpuClientNextClient>();
+    }
+
+    fn rpc_get_balance<C: ClientWithCreator>() {
         let genesis = create_genesis_config(20);
         let mint_pubkey = genesis.mint_keypair.pubkey();
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let meta = JsonRpcRequestProcessor::new_from_bank::<ConnectionCacheClient<NullTpuInfo>>(
-            bank,
-            SocketAddrSpace::Unspecified,
-        );
+        let meta = JsonRpcRequestProcessor::new_from_bank::<C>(bank, SocketAddrSpace::Unspecified);
 
         let mut io = MetaIoHandler::default();
         io.extend_with(rpc_minimal::MinimalImpl.to_delegate());
@@ -4801,14 +4804,20 @@ pub mod tests {
     }
 
     #[test]
-    fn test_rpc_get_balance_via_client() {
+    fn test_rpc_get_balance_new_connection_cache() {
+        rpc_get_balance::<ConnectionCacheClient<NullTpuInfo>>();
+    }
+
+    #[test]
+    fn test_rpc_get_balance_new_tpu_client_next() {
+        rpc_get_balance::<TpuClientNextClient>();
+    }
+
+    fn rpc_get_balance_via_client<C: ClientWithCreator>() {
         let genesis = create_genesis_config(20);
         let mint_pubkey = genesis.mint_keypair.pubkey();
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let meta = JsonRpcRequestProcessor::new_from_bank::<ConnectionCacheClient<NullTpuInfo>>(
-            bank,
-            SocketAddrSpace::Unspecified,
-        );
+        let meta = JsonRpcRequestProcessor::new_from_bank::<C>(bank, SocketAddrSpace::Unspecified);
 
         let mut io = MetaIoHandler::default();
         io.extend_with(rpc_minimal::MinimalImpl.to_delegate());
@@ -4830,6 +4839,15 @@ pub mod tests {
         };
         let (response, _) = futures::executor::block_on(fut);
         assert_eq!(response, 20);
+    }
+
+    #[test]
+    fn test_rpc_get_balance_via_client_connection_cache() {
+        rpc_get_balance_via_client::<ConnectionCacheClient<NullTpuInfo>>();
+    }
+    #[test]
+    fn test_rpc_get_balance_via_client_tpu_client_next() {
+        rpc_get_balance_via_client::<TpuClientNextClient>();
     }
 
     #[test]
@@ -4926,15 +4944,11 @@ pub mod tests {
         assert_eq!(result, expected);
     }
 
-    #[test]
-    fn test_rpc_get_tx_count() {
+    fn rpc_get_tx_count<C: ClientWithCreator>() {
         let bob_pubkey = solana_sdk::pubkey::new_rand();
         let genesis = create_genesis_config(10);
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let meta = JsonRpcRequestProcessor::new_from_bank::<ConnectionCacheClient<NullTpuInfo>>(
-            bank,
-            SocketAddrSpace::Unspecified,
-        );
+        let meta = JsonRpcRequestProcessor::new_from_bank::<C>(bank, SocketAddrSpace::Unspecified);
 
         let mut io = MetaIoHandler::default();
         io.extend_with(rpc_minimal::MinimalImpl.to_delegate());
@@ -4958,6 +4972,15 @@ pub mod tests {
         let result: Response = serde_json::from_str(&res.expect("actual response"))
             .expect("actual response deserialization");
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_rpc_get_tx_count_connection_cache() {
+        rpc_get_tx_count::<ConnectionCacheClient<NullTpuInfo>>();
+    }
+    #[test]
+    fn test_rpc_get_tx_count_tpu_client_next() {
+        rpc_get_tx_count::<TpuClientNextClient>();
     }
 
     #[test]
@@ -6395,8 +6418,7 @@ pub mod tests {
         assert_eq!(result, expected);
     }
 
-    #[test]
-    fn test_rpc_send_bad_tx() {
+    fn rpc_send_bad_tx<C: ClientWithCreator>() {
         let genesis = create_genesis_config(100);
         let bank = Bank::new_for_tests(&genesis.genesis_config);
         let meta = JsonRpcRequestProcessor::new_from_bank::<ConnectionCacheClient<NullTpuInfo>>(
@@ -6415,7 +6437,15 @@ pub mod tests {
     }
 
     #[test]
-    fn test_rpc_send_transaction_preflight() {
+    fn test_rpc_send_bad_tx_connection_cache() {
+        rpc_send_bad_tx::<ConnectionCacheClient<NullTpuInfo>>();
+    }
+    #[test]
+    fn test_rpc_send_bad_tx_tpu_client_next() {
+        rpc_send_bad_tx::<TpuClientNextClient>();
+    }
+
+    fn rpc_send_transaction_preflight<C: ClientWithCreator>() {
         let exit = Arc::new(AtomicBool::new(false));
         let validator_exit = create_validator_exit(exit.clone());
         let ledger_path = get_tmp_ledger_path!();
@@ -6461,7 +6491,7 @@ pub mod tests {
             Arc::new(AtomicU64::default()),
             Arc::new(PrioritizationFeeCache::default()),
         );
-        let client = ConnectionCacheClient::<NullTpuInfo>::create_client(my_tpu_address, None, 1);
+        let client = C::create_client(my_tpu_address, None, 1);
         SendTransactionService::new(&bank_forks, receiver, client, 1000, exit);
 
         let mut bad_transaction = system_transaction::transfer(
@@ -6563,6 +6593,16 @@ pub mod tests {
                 r#"{"jsonrpc":"2.0","error":{"code":-32602,"message":"invalid transaction: Transaction failed to sanitize accounts offsets correctly"},"id":1}"#.to_string(),
             )
         );
+    }
+
+    #[test]
+    fn test_rpc_send_transaction_preflight_with_connection_cache() {
+        rpc_send_transaction_preflight::<ConnectionCacheClient<NullTpuInfo>>();
+    }
+
+    #[test]
+    fn test_rpc_send_transaction_preflight_with_tpu_client_next() {
+        rpc_send_transaction_preflight::<TpuClientNextClient>();
     }
 
     #[test]
@@ -6677,8 +6717,7 @@ pub mod tests {
         assert_eq!(result, expected);
     }
 
-    #[test]
-    fn test_rpc_processor_get_block_commitment() {
+    fn rpc_processor_get_block_commitment<C: ClientWithCreator>() {
         let exit = Arc::new(AtomicBool::new(false));
         let validator_exit = create_validator_exit(exit.clone());
         let bank_forks = new_bank_forks().0;
@@ -6723,7 +6762,7 @@ pub mod tests {
             Arc::new(AtomicU64::default()),
             Arc::new(PrioritizationFeeCache::default()),
         );
-        let client = ConnectionCacheClient::<NullTpuInfo>::create_client(my_tpu_address, None, 1);
+        let client = C::create_client(my_tpu_address, None, 1);
         SendTransactionService::new(&bank_forks, receiver, client, 1000, exit);
         assert_eq!(
             request_processor.get_block_commitment(0),
@@ -6746,6 +6785,16 @@ pub mod tests {
                 total_stake: 42,
             }
         );
+    }
+
+    #[test]
+    fn test_rpc_processor_get_block_commitment_with_connection_cache() {
+        rpc_processor_get_block_commitment::<ConnectionCacheClient<NullTpuInfo>>();
+    }
+
+    #[test]
+    fn test_rpc_processor_get_block_commitment_with_tpu_client_next() {
+        rpc_processor_get_block_commitment::<TpuClientNextClient>();
     }
 
     #[test]
