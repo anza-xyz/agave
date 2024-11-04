@@ -13,7 +13,6 @@ use {
     },
     solana_feature_set::{self as feature_set, FeatureSet},
     solana_runtime_transaction::{
-        instructions_processor::process_compute_budget_instructions,
         runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
     },
     solana_sdk::{
@@ -158,7 +157,7 @@ impl CostModel {
 
     /// Return (programs_execution_cost, loaded_accounts_data_size_cost, data_bytes_cost)
     fn get_transaction_cost(
-        transaction: &impl SVMMessage,
+        transaction: &RuntimeTransaction<impl SVMMessage>,
         feature_set: &FeatureSet,
     ) -> (u64, u64, u64) {
         let mut programs_execution_costs = 0u64;
@@ -192,15 +191,20 @@ impl CostModel {
             }
         }
 
-        // if failed to process compute_budget instructions, the transaction will not be executed
-        // by `bank`, therefore it should be considered as no execution cost by cost model.
-        match process_compute_budget_instructions(transaction.program_instructions_iter()) {
+        // if failed to process compute budget instructions, the transaction
+        // will not be executed by `bank`, therefore it should be considered
+        // as no execution cost by cost model.
+        match transaction.compute_budget_limits(feature_set) {
             Ok(compute_budget_limits) => {
-                // if tx contained user-space instructions and a more accurate estimate available correct it,
-                // where "user-space instructions" must be specifically checked by
-                // 'compute_unit_limit_is_set' flag, because compute_budget does not distinguish
-                // builtin and bpf instructions when calculating default compute-unit-limit. (see
-                // compute_budget.rs test `test_process_mixed_instructions_without_compute_budget`)
+                // if tx contained user-space instructions and a more accurate
+                // estimate available correct it, where
+                // "user-space instructions" must be specifically checked by
+                // 'compute_unit_limit_is_set' flag, because compute_budget
+                // does not distinguish builtin and bpf instructions when
+                // calculating default compute-unit-limit.
+                //
+                // (see compute_budget.rs test
+                // `test_process_mixed_instructions_without_compute_budget`)
                 if has_user_space_instructions && compute_unit_limit_is_set {
                     programs_execution_costs = u64::from(compute_budget_limits.compute_unit_limit);
                 }
@@ -614,6 +618,45 @@ mod tests {
         // If cu-limit is specified, that would the cost for all programs
         assert_eq!(12_345, program_execution_cost);
         assert_eq!(1, data_bytes_cost);
+    }
+
+    #[test]
+    fn test_cost_model_with_failed_compute_budget_transaction() {
+        let (mint_keypair, start_hash) = test_setup();
+
+        let instructions = vec![
+            CompiledInstruction::new(3, &(), vec![1, 2, 0]),
+            CompiledInstruction::new_from_raw_parts(
+                4,
+                ComputeBudgetInstruction::SetComputeUnitLimit(12_345)
+                    .pack()
+                    .unwrap(),
+                vec![],
+            ),
+            // to trigger failure in `sanitize_and_convert_to_compute_budget_limits`
+            CompiledInstruction::new_from_raw_parts(
+                4,
+                ComputeBudgetInstruction::SetLoadedAccountsDataSizeLimit(0)
+                    .pack()
+                    .unwrap(),
+                vec![],
+            ),
+        ];
+        let tx = Transaction::new_with_compiled_instructions(
+            &[&mint_keypair],
+            &[
+                solana_sdk::pubkey::new_rand(),
+                solana_sdk::pubkey::new_rand(),
+            ],
+            start_hash,
+            vec![Pubkey::new_unique(), compute_budget::id()],
+            instructions,
+        );
+        let token_transaction = RuntimeTransaction::from_transaction_for_tests(tx);
+
+        let (program_execution_cost, _loaded_accounts_data_size_cost, _data_bytes_cost) =
+            CostModel::get_transaction_cost(&token_transaction, &FeatureSet::all_enabled());
+        assert_eq!(0, program_execution_cost);
     }
 
     #[test]
