@@ -5713,7 +5713,7 @@ impl Bank {
                         let start = Instant::now();
                         let mut lattice_verify_time = None;
                         let mut merkle_verify_time = None;
-                        match verify_kind {
+                        let is_ok = match verify_kind {
                             VerifyKind::Lattice => {
                                 // accounts lt hash is *enabled* so use lattice-based verification
                                 let accounts_db = &accounts_.accounts_db;
@@ -5725,16 +5725,18 @@ impl Bank {
                                                 &duplicates_lt_hash.unwrap(),
                                             )
                                     }));
-                                if calculated_accounts_lt_hash != expected_accounts_lt_hash {
+                                let is_ok =
+                                    calculated_accounts_lt_hash == expected_accounts_lt_hash;
+                                if !is_ok {
                                     let expected = expected_accounts_lt_hash.0.checksum();
                                     let calculated = calculated_accounts_lt_hash.0.checksum();
                                     error!(
                                         "Verifying accounts failed: accounts lattice hashes do not \
                                          match, expected: {expected}, calculated: {calculated}",
                                     );
-                                    return false;
                                 }
                                 lattice_verify_time = Some(duration);
+                                is_ok
                             }
                             VerifyKind::Merkle => {
                                 // accounts lt hash is *disabled* so use merkle-based verification
@@ -5742,7 +5744,7 @@ impl Bank {
                                     snapshot_storages.0.as_slice(),
                                     snapshot_storages.1.as_slice(),
                                 );
-                                let (result, duration) = meas_dur!(accounts_
+                                let (is_ok, duration) = meas_dur!(accounts_
                                     .verify_accounts_hash_and_lamports(
                                         snapshot_storages_and_slots,
                                         slot,
@@ -5755,12 +5757,10 @@ impl Bank {
                                             ..verify_config
                                         },
                                     ));
-                                if !result {
-                                    return false;
-                                }
                                 merkle_verify_time = Some(duration);
+                                is_ok
                             }
-                        }
+                        };
                         accounts_
                             .accounts_db
                             .verify_accounts_hash_in_bg
@@ -5780,7 +5780,7 @@ impl Bank {
                             ),
                         );
                         info!("Initial background accounts hash verification has stopped");
-                        true
+                        is_ok
                     })
                     .unwrap()
             });
@@ -5819,7 +5819,7 @@ impl Bank {
                         snapshot_storages.0.as_slice(),
                         snapshot_storages.1.as_slice(),
                     );
-                    let result = accounts.verify_accounts_hash_and_lamports(
+                    let is_ok = accounts.verify_accounts_hash_and_lamports(
                         snapshot_storages_and_slots,
                         slot,
                         capitalization,
@@ -5827,7 +5827,7 @@ impl Bank {
                         verify_config,
                     );
                     self.set_initial_accounts_hash_verification_completed();
-                    result
+                    is_ok
                 }
             }
         }
