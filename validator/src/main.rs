@@ -44,8 +44,8 @@ use {
     solana_ledger::{
         blockstore_cleanup_service::{DEFAULT_MAX_LEDGER_SHREDS, DEFAULT_MIN_MAX_LEDGER_SHREDS},
         blockstore_options::{
-            BlockstoreCompressionType, BlockstoreRecoveryMode, LedgerColumnOptions,
-            ShredStorageType,
+            AccessType, BlockstoreCompressionType, BlockstoreOptions, BlockstoreRecoveryMode,
+            LedgerColumnOptions, ShredStorageType,
         },
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
@@ -1019,7 +1019,7 @@ pub fn main() {
         .pop()
         .unwrap();
 
-    let wal_recovery_mode = matches
+    let recovery_mode = matches
         .value_of("wal_recovery_mode")
         .map(BlockstoreRecoveryMode::from);
 
@@ -1040,7 +1040,7 @@ pub fn main() {
         None
     };
 
-    let ledger_column_options = LedgerColumnOptions {
+    let column_options = LedgerColumnOptions {
         compression_type: match matches.value_of("rocksdb_ledger_compression") {
             None => BlockstoreCompressionType::default(),
             Some(ledger_compression_string) => match ledger_compression_string {
@@ -1083,6 +1083,16 @@ pub fn main() {
             "rocksdb_perf_sample_interval",
             usize
         ),
+    };
+
+    let blockstore_options = BlockstoreOptions {
+        recovery_mode,
+        column_options,
+        // The validator needs to open many files, check that the process has
+        // permission to do so in order to fail quickly and give a direct error
+        enforce_ulimit_nofile: true,
+        // The validator needs primary (read/write)
+        access_type: AccessType::Primary,
     };
 
     let accounts_hash_cache_path = matches
@@ -1551,9 +1561,8 @@ pub fn main() {
         repair_validators,
         repair_whitelist,
         gossip_validators,
-        wal_recovery_mode,
         max_ledger_shreds,
-        ledger_column_options,
+        blockstore_options,
         run_verification: !(matches.is_present("skip_poh_verify")
             || matches.is_present("skip_startup_ledger_verification")),
         debug_keys,
