@@ -1,4 +1,5 @@
 #![allow(clippy::arithmetic_side_effects)]
+pub use solana_file_downloader::DownloadProgressRecord;
 use {
     log::*,
     solana_file_downloader::{download_file, DownloadProgressCallbackOption},
@@ -16,29 +17,6 @@ use {
         time::Duration,
     },
 };
-
-/// Structure modeling information about download progress
-#[derive(Debug)]
-pub struct DownloadProgressRecord {
-    // Duration since the beginning of the download
-    pub elapsed_time: Duration,
-    // Duration since the the last notification
-    pub last_elapsed_time: Duration,
-    // the bytes/sec speed measured for the last notification period
-    pub last_throughput: f32,
-    // the bytes/sec speed measured from the beginning
-    pub total_throughput: f32,
-    // total bytes of the download
-    pub total_bytes: usize,
-    // bytes downloaded so far
-    pub current_bytes: usize,
-    // percentage downloaded
-    pub percentage_done: f32,
-    // Estimated remaining time (in seconds) to finish the download if it keeps at the the last download speed
-    pub estimated_remaining_time: f32,
-    // The times of the progress is being notified, it starts from 1 and increments by 1 each time
-    pub notification_count: u64,
-}
 
 pub fn download_genesis_if_missing(
     rpc_addr: &SocketAddr,
