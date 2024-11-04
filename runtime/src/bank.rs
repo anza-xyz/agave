@@ -3295,7 +3295,7 @@ impl Bank {
 
     fn update_transaction_statuses(
         &self,
-        sanitized_txs: &[RuntimeTransaction<SanitizedTransaction>],
+        sanitized_txs: &[RuntimeTransaction<impl SVMTransaction>],
         processing_results: &[TransactionProcessingResult],
     ) {
         let mut status_cache = self.status_cache.write().unwrap();
@@ -3987,7 +3987,7 @@ impl Bank {
 
     pub fn commit_transactions(
         &self,
-        sanitized_txs: &[RuntimeTransaction<SanitizedTransaction>],
+        sanitized_txs: &[RuntimeTransaction<impl SVMTransactionAdapter>],
         processing_results: Vec<TransactionProcessingResult>,
         processed_counts: &ProcessedTransactionCounts,
         timings: &mut ExecuteTimings,
@@ -6296,7 +6296,7 @@ impl Bank {
     /// a bank-level cache of vote accounts and stake delegation info
     fn update_stakes_cache(
         &self,
-        txs: &[RuntimeTransaction<SanitizedTransaction>],
+        txs: &[impl SVMMessage],
         processing_results: &[TransactionProcessingResult],
     ) {
         debug_assert_eq!(txs.len(), processing_results.len());
