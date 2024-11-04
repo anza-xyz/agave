@@ -931,7 +931,11 @@ mod test {
             ),
         );
         let stats = SendTransactionServiceStats::default();
-        let client = C::create_client(config.tpu_peers, leader_forward_count);
+        let client = C::create_client(
+            "127.0.0.1:0".parse().unwrap(),
+            config.tpu_peers,
+            leader_forward_count,
+        );
         let result = SendTransactionService::process_transactions(
             &working_bank,
             &root_bank,
