@@ -569,11 +569,13 @@ impl<T> ArrayQueue<T> {
     pub fn pop(&self) -> Option<T> {
         let backoff = Backoff::new();
         let mut head = self.head.load(Ordering::Relaxed);
+        let head_peek_mask = self.get_head_peek_mask();
 
         loop {
             // Deconstruct the head.
             let index = head & (self.one_lap - 1);
-            let lap = head & !(self.one_lap - 1);
+            let index_peek = head & head_peek_mask;
+            let lap = head & !(self.one_lap - 1 | index_peek);
 
             // Inspect the corresponding slot.
             debug_assert!(index < self.buffer.len());
