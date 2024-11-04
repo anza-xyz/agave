@@ -380,12 +380,18 @@ impl<T> ArrayQueue<T> {
     /// let q = ArrayQueue::<i32>::new(100);
     /// ```
     pub fn new(cap: usize) -> Self {
-        assert!(cap > 0, "capacity must be non-zero");
+        assert!(cap > 0 && cap < std::usize::MAX, "capacity must be non-zero and less than usize::max");
 
         // Head is initialized to `{ lap: 0, index: 0 }`.
         // Tail is initialized to `{ lap: 0, index: 0 }`.
         let head = 0;
         let tail = 0;
+
+        // One lap is the smallest power of two greater than `cap`.
+        let one_lap = (cap + 1).next_power_of_two();
+        let max_capacity = 2usize.pow((size_of::<usize>()*8/2 -1) as u32);
+        // Keep number of bits for both head markers. And keep at least 1 bit for overflow
+        assert!(mem::size_of::<usize>()*8 > 2*one_lap.ilog2() as usize, "Max capacity is: {max_capacity}");
 
         // Allocate a buffer of `cap` slots initialized
         // with stamps.
@@ -398,9 +404,6 @@ impl<T> ArrayQueue<T> {
                 }
             })
             .collect();
-
-        // One lap is the smallest power of two greater than `cap`.
-        let one_lap = (cap + 1).next_power_of_two();
 
         Self {
             buffer,
@@ -831,7 +834,7 @@ impl<T> Iterator for IntoIter<T> {
 }
 
 #[test]
-fn smoke() {
+fn test_smoke() {
     let q = ArrayQueue::new(1);
 
     q.push(7).unwrap();
@@ -843,7 +846,7 @@ fn smoke() {
 }
 
 #[test]
-fn capacity() {
+fn test_capacity() {
     for i in 1..10 {
         let q = ArrayQueue::<i32>::new(i);
         assert_eq!(q.capacity(), i);
@@ -852,12 +855,12 @@ fn capacity() {
 
 #[test]
 #[should_panic(expected = "capacity must be non-zero")]
-fn zero_capacity() {
+fn test_zero_capacity() {
     let _ = ArrayQueue::<i32>::new(0);
 }
 
 #[test]
-fn len_empty_full() {
+fn test_len_empty_full() {
     let q = ArrayQueue::new(2);
 
     assert_eq!(q.len(), 0);
@@ -884,7 +887,7 @@ fn len_empty_full() {
 }
 
 #[test]
-fn len() {
+fn test_len() {
     #[cfg(miri)]
     const COUNT: usize = 30;
     #[cfg(not(miri))]
@@ -947,7 +950,7 @@ fn len() {
 }
 
 #[test]
-fn spsc() {
+fn test_spsc() {
     #[cfg(miri)]
     const COUNT: usize = 50;
     #[cfg(not(miri))]
@@ -977,7 +980,7 @@ fn spsc() {
 }
 
 #[test]
-fn spsc_ring_buffer() {
+fn test_spsc_ring_buffer() {
     #[cfg(miri)]
     const COUNT: usize = 50;
     #[cfg(not(miri))]
@@ -1017,7 +1020,7 @@ fn spsc_ring_buffer() {
 }
 
 #[test]
-fn mpmc() {
+fn test_mpmc() {
     #[cfg(miri)]
     const COUNT: usize = 50;
     #[cfg(not(miri))]
@@ -1055,7 +1058,7 @@ fn mpmc() {
 }
 
 #[test]
-fn mpmc_ring_buffer() {
+fn test_mpmc_ring_buffer() {
     #[cfg(miri)]
     const COUNT: usize = 50;
     #[cfg(not(miri))]
@@ -1100,7 +1103,7 @@ fn mpmc_ring_buffer() {
 }
 
 #[test]
-fn drops() {
+fn test_drops() {
     let runs: usize = if cfg!(miri) { 3 } else { 100 };
     let steps: usize = if cfg!(miri) { 50 } else { 10_000 };
     let additional: usize = if cfg!(miri) { 10 } else { 50 };
@@ -1153,7 +1156,7 @@ fn drops() {
 }
 
 #[test]
-fn linearizable() {
+fn test_linearizable() {
     #[cfg(miri)]
     const COUNT: usize = 100;
     #[cfg(not(miri))]
@@ -1183,7 +1186,7 @@ fn linearizable() {
 }
 
 #[test]
-fn into_iter() {
+fn test_into_iter() {
     let q = ArrayQueue::new(100);
     for i in 0..100 {
         q.push(i).unwrap();
@@ -1191,4 +1194,11 @@ fn into_iter() {
     for (i, j) in q.into_iter().enumerate() {
         assert_eq!(i, j);
     }
+}
+
+#[test]
+#[should_panic(expected = "Max capacity is: 2147483648")]
+fn test_overflow() {
+    let q = ArrayQueue::new((std::usize::MAX/2 - 100) as usize);
+    q.push(1).unwrap();
 }
