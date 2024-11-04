@@ -3693,7 +3693,7 @@ impl Bank {
 
     pub fn load_and_execute_transactions(
         &self,
-        batch: &TransactionBatch<SanitizedTransaction>,
+        batch: &TransactionBatch<impl SVMTransaction>,
         max_age: usize,
         timings: &mut ExecuteTimings,
         error_counters: &mut TransactionErrorMetrics,
@@ -3752,7 +3752,7 @@ impl Bank {
             .zip(sanitized_txs)
         {
             if let Some(debug_keys) = &self.transaction_debug_keys {
-                for key in tx.message().account_keys().iter() {
+                for key in tx.account_keys().iter() {
                     if debug_keys.contains(key) {
                         let result = processing_result.flattened_result();
                         info!("slot: {} result: {:?} tx: {:?}", self.slot, result, tx);
@@ -3766,7 +3766,7 @@ impl Bank {
                 // is processed, otherwise a mismatched count between banking
                 // and replay could occur
                 processed_counts.signature_count +=
-                    u64::from(tx.message().header().num_required_signatures);
+                    tx.signature_details().num_transaction_signatures();
                 processed_counts.processed_transactions_count += 1;
 
                 if !tx.is_simple_vote_transaction() {
@@ -3795,7 +3795,7 @@ impl Bank {
 
     fn collect_logs(
         &self,
-        transactions: &[RuntimeTransaction<SanitizedTransaction>],
+        transactions: &[RuntimeTransaction<impl SVMTransaction>],
         processing_results: &[TransactionProcessingResult],
     ) {
         let transaction_log_collector_config =
@@ -3838,7 +3838,7 @@ impl Bank {
 
     fn collect_transaction_logs(
         transaction_log_collector_config: &TransactionLogCollectorConfig,
-        transaction: &SanitizedTransaction,
+        transaction: &RuntimeTransaction<impl SVMTransaction>,
         execution_details: &TransactionExecutionDetails,
     ) -> Option<(TransactionLogInfo, Vec<Pubkey>)> {
         // Skip log collection if no log messages were recorded
@@ -3849,7 +3849,7 @@ impl Bank {
             .mentioned_addresses
             .is_empty()
         {
-            for key in transaction.message().account_keys().iter() {
+            for key in transaction.account_keys().iter() {
                 if transaction_log_collector_config
                     .mentioned_addresses
                     .contains(key)
