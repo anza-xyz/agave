@@ -57,7 +57,7 @@ use {
         transaction_commit_result::{TransactionCommitResult, TransactionCommitResultExtensions},
         transaction_processor::ExecutionRecordingConfig,
     },
-    solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
     solana_timings::{report_execute_timings, ExecuteTimingType, ExecuteTimings},
     solana_transaction_status::token_balances::TransactionTokenBalancesSet,
     solana_vote::vote_account::VoteAccountsHashMap,
@@ -109,7 +109,7 @@ fn first_err(results: &[Result<()>]) -> Result<()> {
 
 // Includes transaction signature for unit-testing
 fn get_first_error(
-    batch: &TransactionBatch<SanitizedTransaction>,
+    batch: &TransactionBatch<impl SVMTransaction>,
     commit_results: &[TransactionCommitResult],
 ) -> Option<(Result<()>, Signature)> {
     let mut first_err = None;
@@ -144,7 +144,7 @@ fn create_thread_pool(num_threads: usize) -> ThreadPool {
 }
 
 pub fn execute_batch(
-    batch: &TransactionBatchWithIndexes<SanitizedTransaction>,
+    batch: &TransactionBatchWithIndexes<impl SVMTransactionAdapter>,
     bank: &Arc<Bank>,
     transaction_status_sender: Option<&TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
@@ -240,7 +240,7 @@ pub fn execute_batch(
 fn check_block_cost_limits(
     bank: &Bank,
     commit_results: &[TransactionCommitResult],
-    sanitized_transactions: &[RuntimeTransaction<SanitizedTransaction>],
+    sanitized_transactions: &[RuntimeTransaction<impl SVMMessage>],
 ) -> Result<()> {
     assert_eq!(sanitized_transactions.len(), commit_results.len());
 
