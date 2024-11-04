@@ -21,7 +21,7 @@ use {
         ancestor_iterator::AncestorIterator,
         blockstore::{Blockstore, PurgeType},
         blockstore_db::{self, Column, ColumnName, Database},
-        blockstore_options::{AccessType},
+        blockstore_options::AccessType,
         shred::Shred,
     },
     solana_sdk::{

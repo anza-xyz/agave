@@ -12,8 +12,7 @@ use {
         blockstore_meta::*,
         blockstore_metrics::BlockstoreRpcApiMetrics,
         blockstore_options::{
-            AccessType, BlockstoreOptions, LedgerColumnOptions,
-            BLOCKSTORE_DIRECTORY_ROCKS_LEVEL,
+            AccessType, BlockstoreOptions, LedgerColumnOptions, BLOCKSTORE_DIRECTORY_ROCKS_LEVEL,
         },
         blockstore_processor::BlockstoreProcessorError,
         leader_schedule_cache::LeaderScheduleCache,

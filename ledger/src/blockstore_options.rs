@@ -1,6 +1,4 @@
-use {
-    rocksdb::{DBCompressionType as RocksCompressionType, DBRecoveryMode},
-};
+use rocksdb::{DBCompressionType as RocksCompressionType, DBRecoveryMode};
 
 /// The subdirectory under ledger directory where the Blockstore lives
 pub const BLOCKSTORE_DIRECTORY_ROCKS_LEVEL: &str = "rocksdb";
