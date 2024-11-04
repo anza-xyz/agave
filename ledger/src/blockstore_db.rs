@@ -476,8 +476,6 @@ impl Rocks {
     ) -> Vec<ColumnFamilyDescriptor> {
         use columns::*;
 
-        let (cf_descriptor_shred_data, cf_descriptor_shred_code) =
-            new_cf_descriptor_pair_shreds::<ShredData, ShredCode>(options, oldest_slot);
         let mut cf_descriptors = vec![
             new_cf_descriptor::<SlotMeta>(options, oldest_slot),
             new_cf_descriptor::<DeadSlots>(options, oldest_slot),
@@ -487,8 +485,8 @@ impl Rocks {
             new_cf_descriptor::<BankHash>(options, oldest_slot),
             new_cf_descriptor::<Root>(options, oldest_slot),
             new_cf_descriptor::<Index>(options, oldest_slot),
-            cf_descriptor_shred_data,
-            cf_descriptor_shred_code,
+            new_cf_descriptor::<ShredData>(options, oldest_slot),
+            new_cf_descriptor::<ShredCode>(options, oldest_slot),
             new_cf_descriptor::<TransactionStatus>(options, oldest_slot),
             new_cf_descriptor::<AddressSignatures>(options, oldest_slot),
             new_cf_descriptor::<TransactionMemos>(options, oldest_slot),
@@ -2052,24 +2050,6 @@ fn process_cf_options_advanced<C: 'static + Column + ColumnName>(
                 .to_rocksdb_compression_type(),
         );
     }
-}
-
-/// Creates and returns the column family descriptors for both data shreds and
-/// coding shreds column families.
-///
-/// @return a pair of ColumnFamilyDescriptor where the first / second elements
-/// are associated to the first / second template class respectively.
-fn new_cf_descriptor_pair_shreds<
-    D: 'static + Column + ColumnName, // Column Family for Data Shred
-    C: 'static + Column + ColumnName, // Column Family for Coding Shred
->(
-    options: &BlockstoreOptions,
-    oldest_slot: &OldestSlot,
-) -> (ColumnFamilyDescriptor, ColumnFamilyDescriptor) {
-    (
-        new_cf_descriptor::<D>(options, oldest_slot),
-        new_cf_descriptor::<C>(options, oldest_slot),
-    )
 }
 
 fn get_db_options(access_type: &AccessType) -> Options {
