@@ -2,7 +2,6 @@
 
 use {
     crate::{
-        cluster_tpu_info::ClusterTpuInfo,
         max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         rpc::{rpc_accounts::*, rpc_accounts_scan::*, rpc_bank::*, rpc_full::*, rpc_minimal::*, *},
@@ -16,7 +15,6 @@ use {
         RequestMiddlewareAction, ServerBuilder,
     },
     regex::Regex,
-    solana_client::connection_cache::ConnectionCache,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         bigtable_upload::ConfirmedBlockUploadConfig,
@@ -25,7 +23,6 @@ use {
     },
     solana_metrics::inc_new_counter_info,
     solana_perf::thread::renice_this_thread,
-    solana_poh::poh_recorder::PohRecorder,
     solana_runtime::{
         bank_forks::BankForks, commitment::BlockCommitmentCache,
         prioritization_fee_cache::PrioritizationFeeCache,
@@ -38,7 +35,7 @@ use {
     },
     solana_send_transaction_service::{
         send_transaction_service::{self, SendTransactionService},
-        transaction_client::ConnectionCacheClient,
+        transaction_client::TransactionClient,
     },
     solana_storage_bigtable::CredentialType,
     std::{
@@ -335,7 +332,7 @@ fn process_rest(bank_forks: &Arc<RwLock<BankForks>>, path: &str) -> Option<Strin
 
 impl JsonRpcService {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub fn new<Client: TransactionClient + Clone + std::marker::Send + 'static>(
         rpc_addr: SocketAddr,
         config: JsonRpcConfig,
         snapshot_config: Option<SnapshotConfig>,
@@ -343,7 +340,6 @@ impl JsonRpcService {
         block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
         blockstore: Arc<Blockstore>,
         cluster_info: Arc<ClusterInfo>,
-        poh_recorder: Option<Arc<RwLock<PohRecorder>>>,
         genesis_hash: Hash,
         ledger_path: &Path,
         validator_exit: Arc<RwLock<Exit>>,
@@ -354,7 +350,7 @@ impl JsonRpcService {
         send_transaction_service_config: send_transaction_service::Config,
         max_slots: Arc<MaxSlots>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
-        connection_cache: Arc<ConnectionCache>,
+        client: Client,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
         max_complete_rewards_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
@@ -375,11 +371,6 @@ impl JsonRpcService {
         let largest_accounts_cache = Arc::new(RwLock::new(LargestAccountsCache::new(
             LARGEST_ACCOUNTS_CACHE_DURATION,
         )));
-
-        let tpu_address = cluster_info
-            .my_contact_info()
-            .tpu(connection_cache.protocol())
-            .map_err(|err| format!("{err}"))?;
 
         // sadly, some parts of our current rpc implemention block the jsonrpc's
         // _socket-listening_ event loop for too long, due to (blocking) long IO or intesive CPU,
@@ -475,15 +466,6 @@ impl JsonRpcService {
             prioritization_fee_cache,
         );
 
-        let leader_info =
-            poh_recorder.map(|recorder| ClusterTpuInfo::new(cluster_info.clone(), recorder));
-        let client = ConnectionCacheClient::new(
-            connection_cache,
-            tpu_address,
-            send_transaction_service_config.tpu_peers.clone(), //TODO(klykov): check if we can avoid cloning
-            leader_info,
-            send_transaction_service_config.leader_forward_count,
-        );
         let _send_transaction_service = SendTransactionService::new_with_config(
             &bank_forks,
             receiver,
@@ -591,6 +573,7 @@ mod tests {
     use {
         super::*,
         crate::rpc::{create_validator_exit, tests::new_test_cluster_info},
+        solana_client::connection_cache::Protocol,
         solana_ledger::{
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
             get_tmp_ledger_path_auto_delete,
@@ -601,6 +584,12 @@ mod tests {
             genesis_config::{ClusterType, DEFAULT_GENESIS_ARCHIVE},
             signature::Signer,
         },
+        solana_send_transaction_service::{
+            create_client_for_tests::ClientWithCreator,
+            send_transaction_service::{self},
+            tpu_info::NullTpuInfo,
+            transaction_client::{ConnectionCacheClient, TpuClientNextClient},
+        },
         std::{
             io::Write,
             net::{IpAddr, Ipv4Addr},
@@ -608,8 +597,7 @@ mod tests {
         tokio::runtime::Runtime,
     };
 
-    #[test]
-    fn test_rpc_new() {
+    fn rpc_new<C: ClientWithCreator>() {
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
@@ -630,7 +618,19 @@ mod tests {
         let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
-        let connection_cache = Arc::new(ConnectionCache::new("connection_cache_test"));
+
+        let send_transaction_service_config = send_transaction_service::Config {
+            retry_rate_ms: 1000,
+            leader_forward_count: 1,
+            ..send_transaction_service::Config::default()
+        };
+
+        let my_tpu_address = cluster_info.my_contact_info().tpu(Protocol::QUIC).unwrap();
+        let client = C::create_client(
+            my_tpu_address,
+            send_transaction_service_config.tpu_peers.clone(),
+            send_transaction_service_config.leader_forward_count,
+        );
         let mut rpc_service = JsonRpcService::new(
             rpc_addr,
             JsonRpcConfig::default(),
@@ -639,7 +639,6 @@ mod tests {
             block_commitment_cache,
             blockstore,
             cluster_info,
-            None,
             Hash::default(),
             &PathBuf::from("farf"),
             validator_exit,
@@ -647,14 +646,10 @@ mod tests {
             Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicBool::new(true)),
             optimistically_confirmed_bank,
-            send_transaction_service::Config {
-                retry_rate_ms: 1000,
-                leader_forward_count: 1,
-                ..send_transaction_service::Config::default()
-            },
+            send_transaction_service_config,
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
-            connection_cache,
+            client,
             Arc::new(AtomicU64::default()),
             Arc::new(AtomicU64::default()),
             Arc::new(PrioritizationFeeCache::default()),
@@ -673,6 +668,16 @@ mod tests {
         );
         rpc_service.exit();
         rpc_service.join().unwrap();
+    }
+
+    #[test]
+    fn test_rpc_new_with_connection_cache() {
+        rpc_new::<ConnectionCacheClient<NullTpuInfo>>();
+    }
+
+    #[test]
+    fn test_rpc_new_with_tpu_client_next() {
+        rpc_new::<TpuClientNextClient>();
     }
 
     fn create_bank_forks() -> Arc<RwLock<BankForks>> {

@@ -32,6 +32,8 @@ pub trait TransactionClient {
         wire_transactions: Vec<Vec<u8>>,
         stats: &SendTransactionServiceStats,
     );
+
+    fn protocol(&self) -> Protocol;
 }
 
 pub trait Cancelable {
@@ -144,6 +146,10 @@ where
             self.send_transactions(address, wire_transactions.clone(), stats);
         }
     }
+
+    fn protocol(&self) -> Protocol {
+        self.connection_cache.protocol()
+    }
 }
 
 impl<T> Cancelable for ConnectionCacheClient<T>
@@ -213,6 +219,10 @@ impl TransactionClient for TpuClientNextClient {
                 stats.send_failure_count.fetch_add(1, Ordering::Relaxed);
             }
         }
+    }
+
+    fn protocol(&self) -> Protocol {
+        Protocol::QUIC
     }
 }
 

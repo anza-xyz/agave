@@ -83,6 +83,7 @@ use {
     },
     solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
     solana_rpc::{
+        cluster_tpu_info::ClusterTpuInfo,
         max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::{
             BankNotificationSenderConfig, OptimisticallyConfirmedBank,
@@ -125,6 +126,7 @@ use {
         timing::timestamp,
     },
     solana_send_transaction_service::send_transaction_service,
+    solana_send_transaction_service::transaction_client::ConnectionCacheClient,
     solana_streamer::{socket::SocketAddrSpace, streamer::StakedNodes},
     solana_turbine::{self, broadcast_stage::BroadcastStageType},
     solana_unified_scheduler_pool::DefaultSchedulerPool,
@@ -1044,6 +1046,18 @@ impl Validator {
                 None
             };
 
+            let my_tpu_address = cluster_info
+                .my_contact_info()
+                .tpu(connection_cache.protocol())
+                .map_err(|err| ValidatorError::Other(format!("{err}")))?;
+            let leader_info = ClusterTpuInfo::new(cluster_info.clone(), poh_recorder.clone());
+            let client = ConnectionCacheClient::new(
+                connection_cache.clone(),
+                my_tpu_address,
+                config.send_transaction_service_config.tpu_peers.clone(),
+                Some(leader_info),
+                config.send_transaction_service_config.leader_forward_count,
+            );
             let json_rpc_service = JsonRpcService::new(
                 rpc_addr,
                 config.rpc_config.clone(),
@@ -1052,7 +1066,6 @@ impl Validator {
                 block_commitment_cache.clone(),
                 blockstore.clone(),
                 cluster_info.clone(),
-                Some(poh_recorder.clone()),
                 genesis_config.hash(),
                 ledger_path,
                 config.validator_exit.clone(),
@@ -1063,7 +1076,7 @@ impl Validator {
                 config.send_transaction_service_config.clone(),
                 max_slots.clone(),
                 leader_schedule_cache.clone(),
-                connection_cache.clone(),
+                client,
                 max_complete_transaction_status_slot,
                 max_complete_rewards_slot,
                 prioritization_fee_cache.clone(),

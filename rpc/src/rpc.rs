@@ -348,7 +348,6 @@ impl JsonRpcRequestProcessor {
         )
     }
 
-    // TODO(klykov): Why don't than declare it for tests?
     // Useful for unit testing
     pub fn new_from_bank<Client: ClientWithCreator>(
         bank: Bank,
@@ -4367,7 +4366,6 @@ pub mod tests {
             vote::state::VoteState,
         },
         solana_send_transaction_service::{
-            create_client_for_tests::CreateClient,
             tpu_info::NullTpuInfo,
             transaction_client::{ConnectionCacheClient, TpuClientNextClient},
         },
@@ -6421,10 +6419,7 @@ pub mod tests {
     fn rpc_send_bad_tx<C: ClientWithCreator>() {
         let genesis = create_genesis_config(100);
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let meta = JsonRpcRequestProcessor::new_from_bank::<ConnectionCacheClient<NullTpuInfo>>(
-            bank,
-            SocketAddrSpace::Unspecified,
-        );
+        let meta = JsonRpcRequestProcessor::new_from_bank::<C>(bank, SocketAddrSpace::Unspecified);
 
         let mut io = MetaIoHandler::default();
         io.extend_with(rpc_full::FullImpl.to_delegate());
