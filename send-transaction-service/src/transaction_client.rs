@@ -64,10 +64,7 @@ where
         }
     }
 
-    fn get_tpu_addresses_with_slots<'a>(
-        &'a self,
-        leader_info: Option<&'a T>,
-    ) -> Vec<&'a SocketAddr> {
+    fn get_tpu_addresses<'a>(&'a self, leader_info: Option<&'a T>) -> Vec<&'a SocketAddr> {
         leader_info
             .map(|leader_info| {
                 leader_info
@@ -118,7 +115,7 @@ where
             .unwrap_or_default();
         let mut leader_info_provider = self.leader_info_provider.lock().unwrap();
         let leader_info = leader_info_provider.get_leader_info();
-        let leader_addresses = self.get_tpu_addresses_with_slots(leader_info);
+        let leader_addresses = self.get_tpu_addresses(leader_info);
         addresses.extend(leader_addresses);
 
         for address in &addresses {
