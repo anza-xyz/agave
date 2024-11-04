@@ -349,7 +349,7 @@ impl JsonRpcRequestProcessor {
         )
     }
 
-    // Useful for unit testing
+    #[cfg(test)]
     pub fn new_from_bank(
         bank: Bank,
         socket_addr_space: SocketAddrSpace,
