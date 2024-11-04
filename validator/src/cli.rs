@@ -1557,6 +1557,16 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 ),
         )
         .arg(
+            Arg::with_name("use_tpu_client_next")
+                .hidden(hidden_unless_forced())
+                .long("use-tpu-client-next")
+                .takes_value(false)
+                .help(
+                    "Use tpu-client-next crate to send transactions over TPU ports. If not set,\
+                    ConnectionCache is used instead."
+                ),
+        )
+        .arg(
             Arg::with_name("block_verification_method")
                 .long("block-verification-method")
                 .value_name("METHOD")
