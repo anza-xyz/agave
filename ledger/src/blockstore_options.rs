@@ -92,7 +92,7 @@ impl From<BlockstoreRecoveryMode> for DBRecoveryMode {
 /// Options for LedgerColumn.
 /// Each field might also be used as a tag that supports group-by operation when
 /// reporting metrics.
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct LedgerColumnOptions {
     // Determine the way to compress column families which are eligible for
     // compression.
@@ -102,15 +102,6 @@ pub struct LedgerColumnOptions {
     // If the value is greater than 0, then RocksDB read/write perf sample
     // will be collected once for every `rocks_perf_sample_interval` ops.
     pub rocks_perf_sample_interval: usize,
-}
-
-impl Default for LedgerColumnOptions {
-    fn default() -> Self {
-        Self {
-            compression_type: BlockstoreCompressionType::default(),
-            rocks_perf_sample_interval: 0,
-        }
-    }
 }
 
 impl LedgerColumnOptions {

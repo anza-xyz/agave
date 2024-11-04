@@ -45,7 +45,7 @@ use {
         blockstore_cleanup_service::{DEFAULT_MAX_LEDGER_SHREDS, DEFAULT_MIN_MAX_LEDGER_SHREDS},
         blockstore_options::{
             AccessType, BlockstoreCompressionType, BlockstoreOptions, BlockstoreRecoveryMode,
-            LedgerColumnOptions, ShredStorageType,
+            LedgerColumnOptions,
         },
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
