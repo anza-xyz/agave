@@ -546,6 +546,12 @@ impl<T> ArrayQueue<T> {
         .err()
     }
 
+    #[inline(always)]
+    pub fn get_head_peek_mask(&self) -> usize {
+        // head_peek_mask has same number of bits as the head
+        // e.g., head_peek_mask (0xFFFF0000) = 2^(2* one_lap bits)(0xFFFFFFFF) - one_lap(0x0000FFFF)
+        2usize.pow(2*self.one_lap.ilog2()) - 2usize.pow(self.one_lap.ilog2())
+    }
     /// Attempts to pop an element from the queue.
     ///
     /// If the queue is empty, `None` is returned.
@@ -1201,4 +1207,17 @@ fn test_into_iter() {
 fn test_overflow() {
     let q = ArrayQueue::new((std::usize::MAX/2 - 100) as usize);
     q.push(1).unwrap();
+}
+
+
+#[test]
+fn test_head_peek_mask() {
+    let q: ArrayQueue<u32> = ArrayQueue::new((10) as usize);
+    assert_eq!(q.get_head_peek_mask(), 0x000000F0);
+    let q: ArrayQueue<u32> = ArrayQueue::new((7) as usize);
+    assert_eq!(q.get_head_peek_mask(), 0x00000038);
+    let q: ArrayQueue<u32> = ArrayQueue::new((0xFFFF) as usize);
+    assert_eq!(q.get_head_peek_mask(), 0xFFFF0000);
+    let q: ArrayQueue<u32> = ArrayQueue::new((0x1FFFF) as usize);
+    assert_eq!(q.get_head_peek_mask(), 0x3FFFE0000);
 }
