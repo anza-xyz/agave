@@ -884,15 +884,7 @@ pub fn withdraw(
         // Don't allow withdrawing the reserved rent balance or active stake
         let lamports_and_reserve = checked_add(lamports, reserve)?;
         if lamports_and_reserve > stake_account.get_lamports() {
-            // if the stake is active, we mustn't allow the account to go away
-            if is_staked {
-                return Err(InstructionError::InsufficientFunds);
-            }
-
-            // fail if not a full withdrawal
-            if lamports != stake_account.get_lamports() {
-                return Err(InstructionError::InsufficientFunds);
-            }
+            return Err(InstructionError::InsufficientFunds);
         }
     }
 
