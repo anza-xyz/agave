@@ -2071,7 +2071,6 @@ mod tests {
             &ReservedAccountKeys::empty_key_set(),
         )
         .unwrap();
-        let loaded_addresses = sanitized_tx.get_loaded_addresses();
 
         let entry = next_versioned_entry(&genesis_config.hash(), 1, vec![tx]);
         let entries = vec![entry];
@@ -2136,7 +2135,7 @@ mod tests {
             );
             let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
-            let _ = consumer.process_and_record_transactions(&bank, &[sanitized_tx], 0);
+            let _ = consumer.process_and_record_transactions(&bank, &[sanitized_tx.clone()], 0);
 
             drop(consumer); // drop/disconnect transaction_status_sender
             transaction_status_service.join().unwrap();
@@ -2154,7 +2153,7 @@ mod tests {
                     pre_token_balances: Some(vec![]),
                     post_token_balances: Some(vec![]),
                     rewards: Some(vec![]),
-                    loaded_addresses,
+                    loaded_addresses: sanitized_tx.get_loaded_addresses(),
                     compute_units_consumed: Some(0),
                     ..TransactionStatusMeta::default()
                 }

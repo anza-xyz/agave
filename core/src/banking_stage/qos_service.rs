@@ -642,27 +642,20 @@ mod tests {
 
         // make a vec of txs
         let keypair = Keypair::new();
-        let transfer_tx = || {
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-                &keypair,
-                &keypair.pubkey(),
-                1,
+        let transfer_tx = RuntimeTransaction::from_transaction_for_tests(
+            system_transaction::transfer(&keypair, &keypair.pubkey(), 1, Hash::default()),
+        );
+        let vote_tx = RuntimeTransaction::from_transaction_for_tests(
+            vote_transaction::new_tower_sync_transaction(
+                TowerSync::from(vec![(42, 1)]),
                 Hash::default(),
-            ))
-        };
-        let vote_tx = || {
-            RuntimeTransaction::from_transaction_for_tests(
-                vote_transaction::new_tower_sync_transaction(
-                    TowerSync::from(vec![(42, 1)]),
-                    Hash::default(),
-                    &keypair,
-                    &keypair,
-                    &keypair,
-                    None,
-                ),
-            )
-        };
-        let txs = vec![transfer_tx(), vote_tx(), vote_tx(), transfer_tx()];
+                &keypair,
+                &keypair,
+                &keypair,
+                None,
+            ),
+        );
+        let txs = vec![transfer_tx.clone(), vote_tx.clone(), vote_tx, transfer_tx];
 
         let qos_service = QosService::new(1);
         let txs_costs = qos_service.compute_transaction_costs(
@@ -692,30 +685,24 @@ mod tests {
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
 
         let keypair = Keypair::new();
-        let transfer_tx = || {
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-                &keypair,
-                &keypair.pubkey(),
-                1,
+        let transfer_tx = RuntimeTransaction::from_transaction_for_tests(
+            system_transaction::transfer(&keypair, &keypair.pubkey(), 1, Hash::default()),
+        );
+        let vote_tx = RuntimeTransaction::from_transaction_for_tests(
+            vote_transaction::new_tower_sync_transaction(
+                TowerSync::from(vec![(42, 1)]),
                 Hash::default(),
-            ))
-        };
-        let vote_tx = || {
-            RuntimeTransaction::from_transaction_for_tests(
-                vote_transaction::new_tower_sync_transaction(
-                    TowerSync::from(vec![(42, 1)]),
-                    Hash::default(),
-                    &keypair,
-                    &keypair,
-                    &keypair,
-                    None,
-                ),
-            )
-        };
+                &keypair,
+                &keypair,
+                &keypair,
+                None,
+            ),
+        );
+        let transfer_tx_cost =
+            CostModel::calculate_cost(&transfer_tx, &FeatureSet::all_enabled()).sum();
+        let vote_tx_cost = CostModel::calculate_cost(&vote_tx, &FeatureSet::all_enabled()).sum();
         // make a vec of txs
-        let txs = vec![transfer_tx(), vote_tx(), transfer_tx(), vote_tx()];
-        let transfer_tx_cost = CostModel::calculate_cost(&txs[0], &FeatureSet::all_enabled()).sum();
-        let vote_tx_cost = CostModel::calculate_cost(&txs[1], &FeatureSet::all_enabled()).sum();
+        let txs = vec![transfer_tx.clone(), vote_tx.clone(), transfer_tx, vote_tx];
 
         let qos_service = QosService::new(1);
         let txs_costs = qos_service.compute_transaction_costs(
@@ -759,8 +746,9 @@ mod tests {
             ],
             Some(&keypair.pubkey()),
         ));
+        let transfer_tx = RuntimeTransaction::from_transaction_for_tests(transaction.clone());
         let txs: Vec<_> = (0..transaction_count)
-            .map(|_| RuntimeTransaction::from_transaction_for_tests(transaction.clone()))
+            .map(|_| transfer_tx.clone())
             .collect();
         let execute_units_adjustment: u64 = 10;
         let loaded_accounts_data_size_adjustment: u32 = 32000;

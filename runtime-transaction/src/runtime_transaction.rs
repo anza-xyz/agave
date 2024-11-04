@@ -36,6 +36,7 @@ use {
     std::collections::HashSet,
 };
 
+#[cfg_attr(feature = "dev-context-only-utils", derive(Clone))]
 #[derive(Debug)]
 pub struct RuntimeTransaction<T> {
     transaction: T,

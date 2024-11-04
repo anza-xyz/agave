@@ -407,6 +407,7 @@ impl SanitizedMessage {
 /// Transaction signature details including the number of transaction signatures
 /// and precompile signatures.
 #[derive(Debug, Default)]
+#[cfg_attr(feature = "dev-context-only-utils", derive(Clone))]
 pub struct TransactionSignatureDetails {
     num_transaction_signatures: u64,
     num_secp256k1_instruction_signatures: u64,

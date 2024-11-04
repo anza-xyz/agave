@@ -274,9 +274,16 @@ mod tests {
     #[should_panic(expected = "already unprocessed")]
     fn test_transition_to_unprocessed_panic() {
         let mut transaction_state = create_transaction_state(0);
-        let mut other_state = create_transaction_state(1);
 
-        let transaction_ttl = other_state.transition_to_pending();
+        // Manually clone `SanitizedTransactionTTL`
+        let SanitizedTransactionTTL {
+            transaction,
+            max_age,
+        } = transaction_state.transaction_ttl();
+        let transaction_ttl = SanitizedTransactionTTL {
+            transaction: transaction.clone(),
+            max_age: *max_age,
+        };
         transaction_state.transition_to_unprocessed(transaction_ttl); // invalid transition
     }
 

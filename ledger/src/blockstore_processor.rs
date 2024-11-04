@@ -2356,7 +2356,7 @@ pub mod tests {
             vote_state::{TowerSync, VoteState, VoteStateVersions, MAX_LOCKOUT_HISTORY},
             vote_transaction,
         },
-        std::{array, collections::BTreeSet, sync::RwLock},
+        std::{collections::BTreeSet, sync::RwLock},
         trees::tr,
     };
 
@@ -5146,15 +5146,13 @@ pub mod tests {
         } = create_genesis_config_with_leader(500, &dummy_leader_pubkey, 100);
         let bank = Bank::new_for_tests(&genesis_config);
 
-        let txs: [_; 2] = array::from_fn(|_| {
-            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-                &mint_keypair,
-                &Pubkey::new_unique(),
-                1,
-                genesis_config.hash(),
-            ))
-        });
-        let mut tx_cost = CostModel::calculate_cost(&txs[0], &bank.feature_set);
+        let tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            genesis_config.hash(),
+        ));
+        let mut tx_cost = CostModel::calculate_cost(&tx, &bank.feature_set);
         let actual_execution_cu = 1;
         let actual_loaded_accounts_data_size = 64 * 1024;
         let TransactionCost::Transaction(ref mut usage_cost_details) = tx_cost else {
@@ -5172,6 +5170,7 @@ pub mod tests {
         bank.write_cost_tracker()
             .unwrap()
             .set_limits(u64::MAX, block_limit, u64::MAX);
+        let txs = vec![tx.clone(), tx];
         let commit_results = vec![
             Ok(CommittedTransaction {
                 status: Ok(()),

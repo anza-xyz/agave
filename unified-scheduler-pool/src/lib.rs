@@ -2652,7 +2652,14 @@ mod tests {
             ignored_prioritization_fee_cache,
         );
 
-        // Create two contexts
+        // Create a dummy tx and two contexts
+        let dummy_tx =
+            RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+                &mint_keypair,
+                &solana_sdk::pubkey::new_rand(),
+                2,
+                genesis_config.hash(),
+            ));
         let context0 = &SchedulingContext::new(bank0.clone());
         let context1 = &SchedulingContext::new(bank1.clone());
 
@@ -2662,16 +2669,10 @@ mod tests {
             .cycle()
             .take(10000)
         {
-            let dummy_tx =
-                RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-                    &mint_keypair,
-                    &solana_sdk::pubkey::new_rand(),
-                    2,
-                    genesis_config.hash(),
-                ));
-
             let scheduler = pool.take_scheduler(context.clone());
-            scheduler.schedule_execution(dummy_tx, index).unwrap();
+            scheduler
+                .schedule_execution(dummy_tx.clone(), index)
+                .unwrap();
             scheduler.wait_for_termination(false).1.return_to_pool();
         }
     }
