@@ -4948,7 +4948,7 @@ impl Bank {
     #[must_use]
     fn process_transaction_batch(
         &self,
-        batch: &TransactionBatch<SanitizedTransaction>,
+        batch: &TransactionBatch<impl SVMTransactionAdapter>,
     ) -> Vec<Result<()>> {
         self.load_execute_and_commit_transactions(
             batch,
