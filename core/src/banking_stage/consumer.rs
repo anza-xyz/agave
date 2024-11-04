@@ -26,7 +26,7 @@ use {
     },
     solana_runtime_transaction::{
         instructions_processor::process_compute_budget_instructions,
-        runtime_transaction::RuntimeTransaction,
+        runtime_transaction::RuntimeTransaction, svm_transaction_adapter::SVMTransactionAdapter,
     },
     solana_sdk::{
         clock::{FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, MAX_PROCESSING_AGE},
@@ -34,7 +34,7 @@ use {
         message::SanitizedMessage,
         saturating_add_assign,
         timing::timestamp,
-        transaction::{self, SanitizedTransaction, TransactionError},
+        transaction::{self, TransactionError},
     },
     solana_svm::{
         account_loader::{validate_fee_payer, TransactionCheckResult},
@@ -231,7 +231,7 @@ impl Consumer {
         &self,
         bank: &Arc<Bank>,
         bank_creation_time: &Instant,
-        sanitized_transactions: &[RuntimeTransaction<SanitizedTransaction>],
+        sanitized_transactions: &[RuntimeTransaction<impl SVMTransactionAdapter>],
         banking_stage_stats: &BankingStageStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) -> ProcessTransactionsSummary {
@@ -287,7 +287,7 @@ impl Consumer {
         &self,
         bank: &Arc<Bank>,
         bank_creation_time: &Instant,
-        transactions: &[RuntimeTransaction<SanitizedTransaction>],
+        transactions: &[RuntimeTransaction<impl SVMTransactionAdapter>],
     ) -> ProcessTransactionsSummary {
         let mut chunk_start = 0;
         let mut all_retryable_tx_indexes = vec![];
@@ -389,7 +389,7 @@ impl Consumer {
     pub fn process_and_record_transactions(
         &self,
         bank: &Arc<Bank>,
-        txs: &[RuntimeTransaction<SanitizedTransaction>],
+        txs: &[RuntimeTransaction<impl SVMTransactionAdapter>],
         chunk_offset: usize,
     ) -> ProcessTransactionBatchOutput {
         let mut error_counters = TransactionErrorMetrics::default();
@@ -432,7 +432,7 @@ impl Consumer {
     pub fn process_and_record_aged_transactions(
         &self,
         bank: &Arc<Bank>,
-        txs: &[RuntimeTransaction<SanitizedTransaction>],
+        txs: &[RuntimeTransaction<impl SVMTransactionAdapter>],
         max_ages: &[MaxAge],
     ) -> ProcessTransactionBatchOutput {
         let move_precompile_verification_to_svm = bank
@@ -476,7 +476,7 @@ impl Consumer {
     fn process_and_record_transactions_with_pre_results(
         &self,
         bank: &Arc<Bank>,
-        txs: &[RuntimeTransaction<SanitizedTransaction>],
+        txs: &[RuntimeTransaction<impl SVMTransactionAdapter>],
         chunk_offset: usize,
         pre_results: impl Iterator<Item = Result<(), TransactionError>>,
     ) -> ProcessTransactionBatchOutput {
@@ -556,7 +556,7 @@ impl Consumer {
     fn execute_and_commit_transactions_locked(
         &self,
         bank: &Arc<Bank>,
-        batch: &TransactionBatch<SanitizedTransaction>,
+        batch: &TransactionBatch<impl SVMTransactionAdapter>,
     ) -> ExecuteAndCommitTransactionsOutput {
         let transaction_status_sender_enabled = self.committer.transaction_status_sender_enabled();
         let mut execute_and_commit_timings = LeaderExecuteAndCommitTimings::default();
@@ -807,7 +807,7 @@ impl Consumer {
     /// * `pending_indexes` - identifies which indexes in the `transactions` list are still pending
     fn filter_pending_packets_from_pending_txs(
         bank: &Bank,
-        transactions: &[RuntimeTransaction<SanitizedTransaction>],
+        transactions: &[RuntimeTransaction<impl SVMMessage>],
         pending_indexes: &[usize],
     ) -> Vec<usize> {
         let filter =
@@ -2347,7 +2347,7 @@ mod tests {
 
             let lock_account = transactions[0].message.account_keys[1];
             let manual_lock_tx =
-                SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
+                RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
                     &Keypair::new(),
                     &lock_account,
                     1,
