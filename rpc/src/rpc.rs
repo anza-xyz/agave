@@ -113,7 +113,6 @@ use {
         time::Duration,
     },
 };
-
 #[cfg(test)]
 use {
     solana_client::connection_cache::ConnectionCache,
