@@ -23,25 +23,35 @@ default = [
 full = [
     "byteorder",
     "chrono",
-    "generic-array",
     "memmap2",
     "rand",
     "rand0-7",
     "serde_json",
+    "solana-signature",
     "ed25519-dalek",
     "ed25519-dalek-bip32",
     "libsecp256k1",
     "sha3",
+    "solana-commitment-config",
     "digest",
+    "solana-pubkey/rand",
+    "dep:solana-precompile-error",
+    "dep:solana-transaction-error"
 ]
 borsh = ["dep:borsh", "solana-program/borsh", "solana-secp256k1-recover/borsh"]
-dev-context-only-utils = ["qualifier_attr"]
+dev-context-only-utils = ["qualifier_attr", "solana-account/dev-context-only-utils"]
 frozen-abi = [
-    "dep:rustc_version",
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
+    "solana-feature-set/frozen-abi",
+    "solana-fee-structure/frozen-abi",
+    "solana-account/frozen-abi",
+    "solana-inflation/frozen-abi",
     "solana-program/frozen-abi",
+    "solana-reward-info/frozen-abi",
     "solana-short-vec/frozen-abi",
+    "solana-signature/frozen-abi",
+    "solana-transaction-error/frozen-abi"
 ]
 
 [dependencies]
@@ -54,7 +64,6 @@ bytemuck_derive = { workspace = true }
 byteorder = { workspace = true, optional = true }
 chrono = { workspace = true, features = ["alloc"], optional = true }
 curve25519-dalek = { workspace = true, optional = true }
-derivation-path = { workspace = true }
 digest = { workspace = true, optional = true }
 ed25519-dalek = { workspace = true, optional = true }
 ed25519-dalek-bip32 = { workspace = true, optional = true }
@@ -68,9 +77,10 @@ lazy_static = { workspace = true }
 libsecp256k1 = { workspace = true, optional = true, features = ["hmac"] }
 log = { workspace = true }
 memmap2 = { workspace = true, optional = true }
+num-derive = { workspace = true }
+num-traits = { workspace = true }
 num_enum = { workspace = true }
 pbkdf2 = { workspace = true }
-qstring = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
 rand = { workspace = true, optional = true }
 rand0-7 = { package = "rand", version = "0.7", optional = true }
@@ -82,18 +92,42 @@ serde_with = { workspace = true, features = ["macros"] }
 sha2 = { workspace = true }
 sha3 = { workspace = true, optional = true }
 siphasher = { workspace = true }
+solana-account = { workspace = true, features = ["bincode"] }
 solana-bn254 = { workspace = true }
+solana-commitment-config = { workspace = true, optional = true, features = ["serde"] }
 solana-decode-error = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true }
-solana-frozen-abi-macro = { workspace = true, optional = true }
+solana-derivation-path = { workspace = true }
+solana-feature-set = { workspace = true }
+solana-fee-structure = { workspace = true, features = ["serde"] }
+solana-frozen-abi = { workspace = true, optional = true, features = [
+    "frozen-abi",
+] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = [
+    "frozen-abi",
+] }
+solana-inflation = { workspace = true, features = ["serde"] }
+solana-instruction = { workspace = true }
+solana-native-token = { workspace = true }
+solana-packet = { workspace = true, features = ["bincode", "serde"] }
+solana-precompile-error = { workspace = true, optional = true }
 solana-program = { workspace = true }
 solana-program-memory = { workspace = true }
+solana-pubkey = { workspace = true, default-features = false, features = ["std"] }
+solana-reward-info = { workspace = true, features = ["serde"] }
 solana-sanitize = { workspace = true }
 solana-sdk-macro = { workspace = true }
 solana-secp256k1-recover = { workspace = true }
+solana-serde-varint = { workspace = true }
 solana-short-vec = { workspace = true }
+solana-signature = { workspace = true, features = [
+    "rand",
+    "serde",
+    "std",
+    "verify",
+], optional = true }
+solana-time-utils = { workspace = true }
+solana-transaction-error = { workspace = true, features = ["serde"], optional = true }
 thiserror = { workspace = true }
-uriparse = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.1", features = ["wasm-bindgen"] }
@@ -111,11 +145,11 @@ solana-sdk = { path = ".", features = ["dev-context-only-utils"] }
 static_assertions = { workspace = true }
 tiny-bip39 = { workspace = true }
 
-[build-dependencies]
-rustc_version = { workspace = true, optional = true }
-
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
+
+[lints]
+workspace = true

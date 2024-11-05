@@ -91,51 +91,14 @@ pull_request_rules:
           - automerge
       comment:
         message: automerge label removed due to a CI failure
-  - name: v1.18 feature-gate backport
-    conditions:
-      - label=v1.18
-      - label=feature-gate
-    actions:
-      backport:
-        assignees: &BackportAssignee
-          - "{{ merged_by|replace('mergify[bot]', label|select('equalto', 'community')|first|default(author)|replace('community', '@anza-xyz/community-pr-subscribers')) }}"
-        title: "{{ destination_branch }}: {{ title }} (backport of #{{ number }})"
-        ignore_conflicts: true
-        labels:
-          - feature-gate
-        branches:
-          - v1.18
-  - name: v1.18 non-feature-gate backport
-    conditions:
-      - label=v1.18
-      - label!=feature-gate
-    actions:
-      backport:
-        assignees: *BackportAssignee
-        title: "{{ destination_branch }}: {{ title }} (backport of #{{ number }})"
-        ignore_conflicts: true
-        branches:
-          - v1.18
-  - name: v1.18 backport warning comment
-    conditions:
-      - label=v1.18
-    actions:
-      comment:
-        message: >
-          Backports to the stable branch are to be avoided unless absolutely
-          necessary for fixing bugs, security issues, and perf regressions.
-          Changes intended for backport should be structured such that a
-          minimum effective diff can be committed separately from any
-          refactoring, plumbing, cleanup, etc that are not strictly
-          necessary to achieve the goal. Any of the latter should go only
-          into master and ride the normal stabilization schedule.
   - name: v2.0 feature-gate backport
     conditions:
       - label=v2.0
       - label=feature-gate
     actions:
       backport:
-        assignees: *BackportAssignee
+        assignees: &BackportAssignee
+          - "{{ merged_by|replace('mergify[bot]', label|select('equalto', 'community')|first|default(author)|replace('community', '@anza-xyz/community-pr-subscribers')) }}"
         title: "{{ destination_branch }}: {{ title }} (backport of #{{ number }})"
         ignore_conflicts: true
         labels:
@@ -156,6 +119,43 @@ pull_request_rules:
   - name: v2.0 backport warning comment
     conditions:
       - label=v2.0
+    actions:
+      comment:
+        message: >
+          Backports to the stable branch are to be avoided unless absolutely
+          necessary for fixing bugs, security issues, and perf regressions.
+          Changes intended for backport should be structured such that a
+          minimum effective diff can be committed separately from any
+          refactoring, plumbing, cleanup, etc that are not strictly
+          necessary to achieve the goal. Any of the latter should go only
+          into master and ride the normal stabilization schedule.
+  - name: v2.1 feature-gate backport
+    conditions:
+      - label=v2.1
+      - label=feature-gate
+    actions:
+      backport:
+        assignees: *BackportAssignee
+        title: "{{ destination_branch }}: {{ title }} (backport of #{{ number }})"
+        ignore_conflicts: true
+        labels:
+          - feature-gate
+        branches:
+          - v2.1
+  - name: v2.1 non-feature-gate backport
+    conditions:
+      - label=v2.1
+      - label!=feature-gate
+    actions:
+      backport:
+        assignees: *BackportAssignee
+        title: "{{ destination_branch }}: {{ title }} (backport of #{{ number }})"
+        ignore_conflicts: true
+        branches:
+          - v2.1
+  - name: v2.1 backport warning comment
+    conditions:
+      - label=v2.1
     actions:
       comment:
         message: >
@@ -183,6 +183,29 @@ pull_request_rules:
           2. Open a follow-up PR to update the JavaScript client `@solana/web3.js` ([example](https://github.com/solana-labs/solana-web3.js/pull/2868/files))
 
           Thank you for keeping the RPC clients in sync with the server API @{{author}}.
+  - name: Reminder to add Firedancer team to changes in `programs/` and `sdk/`
+    conditions:
+      - or:
+        - files~=^programs/address-lookup-table/src/.*\.rs$
+        - files~=^programs/bpf_loader/src/.*\.rs$
+        - files~=^programs/compute_budget/src/.*\.rs$
+        - files~=^programs/config/src/.*\.rs$
+        - files~=^programs/loader-v4/src/.*\.rs$
+        - files~=^programs/stake/src/.*\.rs$
+        - files~=^programs/system/src/.*\.rs$
+        - files~=^programs/vote/src/.*\.rs$
+        - files~=^programs/zk-elgamal-proof/src/.*\.rs$
+        - files~=^sdk/program/src/stake.*\.rs$  # includes stake_history.rs
+        - files~=^sdk/program/src/vote/.*\.rs$
+    actions:
+      comment:
+        message: |
+          The Firedancer team maintains a line-for-line reimplementation of the
+          native programs, and until native programs are moved to BPF, those
+          implementations must exactly match their Agave counterparts.
+          If this PR represents a change to a native program implementation (not
+          tests), please include a reviewer from the Firedancer team. And please
+          keep refactors to a minimum.
 
 commands_restrictions:
   # The author of copied PRs is the Mergify user.

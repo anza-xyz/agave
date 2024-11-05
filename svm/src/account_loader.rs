@@ -1,21 +1,23 @@
 use {
     crate::{
-        account_overrides::AccountOverrides, account_rent_state::RentState, nonce_info::NonceInfo,
-        rollback_accounts::RollbackAccounts, transaction_error_metrics::TransactionErrorMetrics,
-        transaction_processing_callback::TransactionProcessingCallback,
+        account_overrides::AccountOverrides,
+        nonce_info::NonceInfo,
+        rollback_accounts::RollbackAccounts,
+        transaction_error_metrics::TransactionErrorMetrics,
+        transaction_processing_callback::{AccountState, TransactionProcessingCallback},
     },
     itertools::Itertools,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
+    solana_feature_set::{self as feature_set, FeatureSet},
     solana_program_runtime::loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
     solana_sdk::{
         account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
-        feature_set::{self, FeatureSet},
         fee::FeeDetails,
         native_loader,
         nonce::State as NonceState,
         pubkey::Pubkey,
         rent::RentDue,
-        rent_collector::{CollectedInfo, RentCollector, RENT_EXEMPT_RENT_EPOCH},
+        rent_collector::{CollectedInfo, RENT_EXEMPT_RENT_EPOCH},
         rent_debits::RentDebits,
         saturating_add_assign,
         sysvar::{
@@ -25,6 +27,7 @@ use {
         transaction::{Result, TransactionError},
         transaction_context::{IndexOfAccount, TransactionAccount},
     },
+    solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_system_program::{get_system_account_kind, SystemAccountKind},
     std::num::NonZeroU32,
@@ -35,7 +38,19 @@ pub(crate) type TransactionRent = u64;
 pub(crate) type TransactionProgramIndices = Vec<Vec<IndexOfAccount>>;
 pub type TransactionCheckResult = Result<CheckedTransactionDetails>;
 pub type TransactionValidationResult = Result<ValidatedTransactionDetails>;
-pub type TransactionLoadResult = Result<LoadedTransaction>;
+
+#[derive(PartialEq, Eq, Debug)]
+pub enum TransactionLoadResult {
+    /// All transaction accounts were loaded successfully
+    Loaded(LoadedTransaction),
+    /// Some transaction accounts needed for execution were unable to be loaded
+    /// but the fee payer and any nonce account needed for fee collection were
+    /// loaded successfully
+    FeesOnly(FeesOnlyTransaction),
+    /// Some transaction accounts needed for fee collection were unable to be
+    /// loaded
+    NotLoaded(TransactionError),
+}
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct CheckedTransactionDetails {
@@ -49,8 +64,15 @@ pub struct ValidatedTransactionDetails {
     pub rollback_accounts: RollbackAccounts,
     pub compute_budget_limits: ComputeBudgetLimits,
     pub fee_details: FeeDetails,
-    pub fee_payer_account: AccountSharedData,
-    pub fee_payer_rent_debit: u64,
+    pub loaded_fee_payer_account: LoadedTransactionAccount,
+}
+
+#[derive(PartialEq, Eq, Debug, Clone)]
+#[cfg_attr(feature = "dev-context-only-utils", derive(Default))]
+pub struct LoadedTransactionAccount {
+    pub(crate) account: AccountSharedData,
+    pub(crate) loaded_size: usize,
+    pub(crate) rent_collected: u64,
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
@@ -66,17 +88,24 @@ pub struct LoadedTransaction {
     pub loaded_accounts_data_size: u32,
 }
 
+#[derive(PartialEq, Eq, Debug, Clone)]
+pub struct FeesOnlyTransaction {
+    pub load_error: TransactionError,
+    pub rollback_accounts: RollbackAccounts,
+    pub fee_details: FeeDetails,
+}
+
 /// Collect rent from an account if rent is still enabled and regardless of
 /// whether rent is enabled, set the rent epoch to u64::MAX if the account is
 /// rent exempt.
 pub fn collect_rent_from_account(
     feature_set: &FeatureSet,
-    rent_collector: &RentCollector,
+    rent_collector: &dyn SVMRentCollector,
     address: &Pubkey,
     account: &mut AccountSharedData,
 ) -> CollectedInfo {
     if !feature_set.is_active(&feature_set::disable_rent_fees_collection::id()) {
-        rent_collector.collect_from_existing_account(address, account)
+        rent_collector.collect_rent(address, account)
     } else {
         // When rent fee collection is disabled, we won't collect rent for any account. If there
         // are any rent paying accounts, their `rent_epoch` won't change either. However, if the
@@ -106,7 +135,7 @@ pub fn validate_fee_payer(
     payer_account: &mut AccountSharedData,
     payer_index: IndexOfAccount,
     error_metrics: &mut TransactionErrorMetrics,
-    rent_collector: &RentCollector,
+    rent_collector: &dyn SVMRentCollector,
     fee: u64,
 ) -> Result<()> {
     if payer_account.lamports() == 0 {
@@ -122,7 +151,9 @@ pub fn validate_fee_payer(
         SystemAccountKind::Nonce => {
             // Should we ever allow a fees charge to zero a nonce account's
             // balance. The state MUST be set to uninitialized in that case
-            rent_collector.rent.minimum_balance(NonceState::size())
+            rent_collector
+                .get_rent()
+                .minimum_balance(NonceState::size())
         }
     };
 
@@ -135,13 +166,13 @@ pub fn validate_fee_payer(
             TransactionError::InsufficientFundsForFee
         })?;
 
-    let payer_pre_rent_state = RentState::from_account(payer_account, &rent_collector.rent);
+    let payer_pre_rent_state = rent_collector.get_account_rent_state(payer_account);
     payer_account
         .checked_sub_lamports(fee)
         .map_err(|_| TransactionError::InsufficientFundsForFee)?;
 
-    let payer_post_rent_state = RentState::from_account(payer_account, &rent_collector.rent);
-    RentState::check_rent_state_with_account(
+    let payer_post_rent_state = rent_collector.get_account_rent_state(payer_account);
+    rent_collector.check_rent_state_with_account(
         &payer_pre_rent_state,
         &payer_post_rent_state,
         payer_address,
@@ -162,42 +193,95 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
     error_metrics: &mut TransactionErrorMetrics,
     account_overrides: Option<&AccountOverrides>,
     feature_set: &FeatureSet,
-    rent_collector: &RentCollector,
+    rent_collector: &dyn SVMRentCollector,
     loaded_programs: &ProgramCacheForTxBatch,
 ) -> Vec<TransactionLoadResult> {
     txs.iter()
         .zip(validation_results)
-        .map(|etx| match etx {
-            (tx, Ok(tx_details)) => {
-                // load transactions
-                load_transaction_accounts(
-                    callbacks,
-                    tx,
-                    tx_details,
-                    error_metrics,
-                    account_overrides,
-                    feature_set,
-                    rent_collector,
-                    loaded_programs,
-                )
-            }
-            (_, Err(e)) => Err(e),
+        .map(|(transaction, validation_result)| {
+            load_transaction(
+                callbacks,
+                transaction,
+                validation_result,
+                error_metrics,
+                account_overrides,
+                feature_set,
+                rent_collector,
+                loaded_programs,
+            )
         })
         .collect()
+}
+
+fn load_transaction<CB: TransactionProcessingCallback>(
+    callbacks: &CB,
+    message: &impl SVMMessage,
+    validation_result: TransactionValidationResult,
+    error_metrics: &mut TransactionErrorMetrics,
+    account_overrides: Option<&AccountOverrides>,
+    feature_set: &FeatureSet,
+    rent_collector: &dyn SVMRentCollector,
+    loaded_programs: &ProgramCacheForTxBatch,
+) -> TransactionLoadResult {
+    match validation_result {
+        Err(e) => TransactionLoadResult::NotLoaded(e),
+        Ok(tx_details) => {
+            let load_result = load_transaction_accounts(
+                callbacks,
+                message,
+                tx_details.loaded_fee_payer_account,
+                &tx_details.compute_budget_limits,
+                error_metrics,
+                account_overrides,
+                feature_set,
+                rent_collector,
+                loaded_programs,
+            );
+
+            match load_result {
+                Ok(loaded_tx_accounts) => TransactionLoadResult::Loaded(LoadedTransaction {
+                    accounts: loaded_tx_accounts.accounts,
+                    program_indices: loaded_tx_accounts.program_indices,
+                    fee_details: tx_details.fee_details,
+                    rent: loaded_tx_accounts.rent,
+                    rent_debits: loaded_tx_accounts.rent_debits,
+                    rollback_accounts: tx_details.rollback_accounts,
+                    compute_budget_limits: tx_details.compute_budget_limits,
+                    loaded_accounts_data_size: loaded_tx_accounts.loaded_accounts_data_size,
+                }),
+                Err(err) => TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
+                    load_error: err,
+                    fee_details: tx_details.fee_details,
+                    rollback_accounts: tx_details.rollback_accounts,
+                }),
+            }
+        }
+    }
+}
+
+#[derive(PartialEq, Eq, Debug, Clone)]
+struct LoadedTransactionAccounts {
+    pub accounts: Vec<TransactionAccount>,
+    pub program_indices: TransactionProgramIndices,
+    pub rent: TransactionRent,
+    pub rent_debits: RentDebits,
+    pub loaded_accounts_data_size: u32,
 }
 
 fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     message: &impl SVMMessage,
-    tx_details: ValidatedTransactionDetails,
+    loaded_fee_payer_account: LoadedTransactionAccount,
+    compute_budget_limits: &ComputeBudgetLimits,
     error_metrics: &mut TransactionErrorMetrics,
     account_overrides: Option<&AccountOverrides>,
     feature_set: &FeatureSet,
-    rent_collector: &RentCollector,
+    rent_collector: &dyn SVMRentCollector,
     loaded_programs: &ProgramCacheForTxBatch,
-) -> Result<LoadedTransaction> {
+) -> Result<LoadedTransactionAccounts> {
     let mut tx_rent: TransactionRent = 0;
     let account_keys = message.account_keys();
+    let mut accounts = Vec::with_capacity(account_keys.len());
     let mut accounts_found = Vec::with_capacity(account_keys.len());
     let mut rent_debits = RentDebits::default();
     let mut accumulated_accounts_data_size: u32 = 0;
@@ -208,85 +292,49 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
         .unique()
         .collect::<Vec<&u8>>();
 
-    let mut accounts = account_keys
-        .iter()
-        .enumerate()
-        .map(|(i, key)| {
-            let mut account_found = true;
-            #[allow(clippy::collapsible_else_if)]
-            let account = if solana_sdk::sysvar::instructions::check_id(key) {
-                construct_instructions_account(message)
-            } else {
-                let is_fee_payer = i == 0;
-                let instruction_account = u8::try_from(i)
-                    .map(|i| instruction_accounts.contains(&&i))
-                    .unwrap_or(false);
-                let (account_size, account, rent) = if is_fee_payer {
-                    (
-                        tx_details.fee_payer_account.data().len(),
-                        tx_details.fee_payer_account.clone(),
-                        tx_details.fee_payer_rent_debit,
-                    )
-                } else if let Some(account_override) =
-                    account_overrides.and_then(|overrides| overrides.get(key))
-                {
-                    (account_override.data().len(), account_override.clone(), 0)
-                } else if let Some(program) = (!instruction_account && !message.is_writable(i))
-                    .then_some(())
-                    .and_then(|_| loaded_programs.find(key))
-                {
-                    callbacks
-                        .get_account_shared_data(key)
-                        .ok_or(TransactionError::AccountNotFound)?;
-                    // Optimization to skip loading of accounts which are only used as
-                    // programs in top-level instructions and not passed as instruction accounts.
-                    let program_account = account_shared_data_from_program(&program);
-                    (program.account_size, program_account, 0)
-                } else {
-                    callbacks
-                        .get_account_shared_data(key)
-                        .map(|mut account| {
-                            if message.is_writable(i) {
-                                let rent_due = collect_rent_from_account(
-                                    feature_set,
-                                    rent_collector,
-                                    key,
-                                    &mut account,
-                                )
-                                .rent_amount;
+    let mut collect_loaded_account = |key, (loaded_account, found)| -> Result<()> {
+        let LoadedTransactionAccount {
+            account,
+            loaded_size,
+            rent_collected,
+        } = loaded_account;
 
-                                (account.data().len(), account, rent_due)
-                            } else {
-                                (account.data().len(), account, 0)
-                            }
-                        })
-                        .unwrap_or_else(|| {
-                            account_found = false;
-                            let mut default_account = AccountSharedData::default();
-                            // All new accounts must be rent-exempt (enforced in Bank::execute_loaded_transaction).
-                            // Currently, rent collection sets rent_epoch to u64::MAX, but initializing the account
-                            // with this field already set would allow us to skip rent collection for these accounts.
-                            default_account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
-                            (default_account.data().len(), default_account, 0)
-                        })
-                };
-                accumulate_and_check_loaded_account_data_size(
-                    &mut accumulated_accounts_data_size,
-                    account_size,
-                    tx_details.compute_budget_limits.loaded_accounts_bytes,
-                    error_metrics,
-                )?;
+        accumulate_and_check_loaded_account_data_size(
+            &mut accumulated_accounts_data_size,
+            loaded_size,
+            compute_budget_limits.loaded_accounts_bytes,
+            error_metrics,
+        )?;
 
-                tx_rent += rent;
-                rent_debits.insert(key, rent, account.lamports());
+        tx_rent += rent_collected;
+        rent_debits.insert(key, rent_collected, account.lamports());
 
-                account
-            };
+        accounts.push((*key, account));
+        accounts_found.push(found);
+        Ok(())
+    };
 
-            accounts_found.push(account_found);
-            Ok((*key, account))
-        })
-        .collect::<Result<Vec<_>>>()?;
+    // Since the fee payer is always the first account, collect it first. Note
+    // that account overrides are already applied during fee payer validation so
+    // it's fine to use the fee payer directly here rather than checking account
+    // overrides again.
+    collect_loaded_account(message.fee_payer(), (loaded_fee_payer_account, true))?;
+
+    // Attempt to load and collect remaining non-fee payer accounts
+    for (account_index, account_key) in account_keys.iter().enumerate().skip(1) {
+        let (loaded_account, account_found) = load_transaction_account(
+            callbacks,
+            message,
+            account_key,
+            account_index,
+            &instruction_accounts[..],
+            account_overrides,
+            feature_set,
+            rent_collector,
+            loaded_programs,
+        )?;
+        collect_loaded_account(account_key, (loaded_account, account_found))?;
+    }
 
     let builtins_start_index = accounts.len();
     let program_indices = message
@@ -308,7 +356,9 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                 return Err(TransactionError::ProgramAccountNotFound);
             }
 
-            if !program_account.executable() {
+            if !feature_set.is_active(&feature_set::remove_accounts_executable_flag_checks::id())
+                && !program_account.executable()
+            {
                 error_metrics.invalid_program_for_execution += 1;
                 return Err(TransactionError::InvalidProgramForExecution);
             }
@@ -325,7 +375,9 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
             {
                 if let Some(owner_account) = callbacks.get_account_shared_data(owner_id) {
                     if !native_loader::check_id(owner_account.owner())
-                        || !owner_account.executable()
+                        || (!feature_set
+                            .is_active(&feature_set::remove_accounts_executable_flag_checks::id())
+                            && !owner_account.executable())
                     {
                         error_metrics.invalid_program_for_execution += 1;
                         return Err(TransactionError::InvalidProgramForExecution);
@@ -333,7 +385,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                     accumulate_and_check_loaded_account_data_size(
                         &mut accumulated_accounts_data_size,
                         owner_account.data().len(),
-                        tx_details.compute_budget_limits.loaded_accounts_bytes,
+                        compute_budget_limits.loaded_accounts_bytes,
                         error_metrics,
                     )?;
                     accounts.push((*owner_id, owner_account));
@@ -346,16 +398,106 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
         })
         .collect::<Result<Vec<Vec<IndexOfAccount>>>>()?;
 
-    Ok(LoadedTransaction {
+    Ok(LoadedTransactionAccounts {
         accounts,
         program_indices,
-        fee_details: tx_details.fee_details,
-        rollback_accounts: tx_details.rollback_accounts,
-        compute_budget_limits: tx_details.compute_budget_limits,
         rent: tx_rent,
         rent_debits,
         loaded_accounts_data_size: accumulated_accounts_data_size,
     })
+}
+
+fn load_transaction_account<CB: TransactionProcessingCallback>(
+    callbacks: &CB,
+    message: &impl SVMMessage,
+    account_key: &Pubkey,
+    account_index: usize,
+    instruction_accounts: &[&u8],
+    account_overrides: Option<&AccountOverrides>,
+    feature_set: &FeatureSet,
+    rent_collector: &dyn SVMRentCollector,
+    loaded_programs: &ProgramCacheForTxBatch,
+) -> Result<(LoadedTransactionAccount, bool)> {
+    let mut account_found = true;
+    let is_instruction_account = u8::try_from(account_index)
+        .map(|i| instruction_accounts.contains(&&i))
+        .unwrap_or(false);
+    let is_writable = message.is_writable(account_index);
+    let loaded_account = if solana_sdk::sysvar::instructions::check_id(account_key) {
+        // Since the instructions sysvar is constructed by the SVM and modified
+        // for each transaction instruction, it cannot be overridden.
+        LoadedTransactionAccount {
+            loaded_size: 0,
+            account: construct_instructions_account(message),
+            rent_collected: 0,
+        }
+    } else if let Some(account_override) =
+        account_overrides.and_then(|overrides| overrides.get(account_key))
+    {
+        LoadedTransactionAccount {
+            loaded_size: account_override.data().len(),
+            account: account_override.clone(),
+            rent_collected: 0,
+        }
+    } else if let Some(program) = (!is_instruction_account && !is_writable)
+        .then_some(())
+        .and_then(|_| loaded_programs.find(account_key))
+    {
+        callbacks
+            .get_account_shared_data(account_key)
+            .ok_or(TransactionError::AccountNotFound)?;
+        // Optimization to skip loading of accounts which are only used as
+        // programs in top-level instructions and not passed as instruction accounts.
+        LoadedTransactionAccount {
+            loaded_size: program.account_size,
+            account: account_shared_data_from_program(&program),
+            rent_collected: 0,
+        }
+    } else {
+        callbacks
+            .get_account_shared_data(account_key)
+            .map(|mut account| {
+                // Inspect the account prior to collecting rent, since
+                // rent collection can modify the account.
+                callbacks.inspect_account(account_key, AccountState::Alive(&account), is_writable);
+
+                let rent_collected = if is_writable {
+                    collect_rent_from_account(
+                        feature_set,
+                        rent_collector,
+                        account_key,
+                        &mut account,
+                    )
+                    .rent_amount
+                } else {
+                    0
+                };
+
+                LoadedTransactionAccount {
+                    loaded_size: account.data().len(),
+                    account,
+                    rent_collected,
+                }
+            })
+            .unwrap_or_else(|| {
+                callbacks.inspect_account(account_key, AccountState::Dead, is_writable);
+
+                account_found = false;
+                let mut default_account = AccountSharedData::default();
+
+                // All new accounts must be rent-exempt (enforced in Bank::execute_loaded_transaction).
+                // Currently, rent collection sets rent_epoch to u64::MAX, but initializing the account
+                // with this field already set would allow us to skip rent collection for these accounts.
+                default_account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
+                LoadedTransactionAccount {
+                    loaded_size: default_account.data().len(),
+                    account: default_account,
+                    rent_collected: 0,
+                }
+            })
+    };
+
+    Ok((loaded_account, account_found))
 }
 
 fn account_shared_data_from_program(loaded_program: &ProgramCacheEntry) -> AccountSharedData {
@@ -432,20 +574,22 @@ mod tests {
         },
         nonce::state::Versions as NonceVersions,
         solana_compute_budget::{compute_budget::ComputeBudget, compute_budget_limits},
-        solana_program_runtime::loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
+        solana_feature_set::FeatureSet,
+        solana_program_runtime::loaded_programs::{
+            ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheForTxBatch,
+        },
         solana_sdk::{
             account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
-            bpf_loader_upgradeable,
+            bpf_loader, bpf_loader_upgradeable,
             epoch_schedule::EpochSchedule,
-            feature_set::FeatureSet,
             hash::Hash,
-            instruction::CompiledInstruction,
+            instruction::{AccountMeta, CompiledInstruction, Instruction},
             message::{
                 v0::{LoadedAddresses, LoadedMessage},
                 LegacyMessage, Message, MessageHeader, SanitizedMessage,
             },
             native_loader,
-            native_token::sol_to_lamports,
+            native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
             nonce,
             pubkey::Pubkey,
             rent::Rent,
@@ -457,12 +601,15 @@ mod tests {
             transaction::{Result, SanitizedTransaction, Transaction, TransactionError},
             transaction_context::{TransactionAccount, TransactionContext},
         },
-        std::{borrow::Cow, collections::HashMap, sync::Arc},
+        std::{borrow::Cow, cell::RefCell, collections::HashMap, sync::Arc},
     };
 
     #[derive(Default)]
     struct TestCallbacks {
         accounts_map: HashMap<Pubkey, AccountSharedData>,
+        #[allow(clippy::type_complexity)]
+        inspected_accounts:
+            RefCell<HashMap<Pubkey, Vec<(Option<AccountSharedData>, /* is_writable */ bool)>>>,
     }
 
     impl TransactionProcessingCallback for TestCallbacks {
@@ -472,6 +619,23 @@ mod tests {
 
         fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
             self.accounts_map.get(pubkey).cloned()
+        }
+
+        fn inspect_account(
+            &self,
+            address: &Pubkey,
+            account_state: AccountState,
+            is_writable: bool,
+        ) {
+            let account = match account_state {
+                AccountState::Dead => None,
+                AccountState::Alive(account) => Some(account.clone()),
+            };
+            self.inspected_accounts
+                .borrow_mut()
+                .entry(*address)
+                .or_default()
+                .push((account, is_writable));
         }
     }
 
@@ -489,12 +653,18 @@ mod tests {
         for (pubkey, account) in accounts {
             accounts_map.insert(*pubkey, account.clone());
         }
-        let callbacks = TestCallbacks { accounts_map };
+        let callbacks = TestCallbacks {
+            accounts_map,
+            ..Default::default()
+        };
         load_accounts(
             &callbacks,
             &[sanitized_tx],
             vec![Ok(ValidatedTransactionDetails {
-                fee_payer_account,
+                loaded_fee_payer_account: LoadedTransactionAccount {
+                    account: fee_payer_account,
+                    ..LoadedTransactionAccount::default()
+                },
                 ..ValidatedTransactionDetails::default()
             })],
             error_metrics,
@@ -520,6 +690,28 @@ mod tests {
             message,
             &ReservedAccountKeys::empty_key_set(),
         ))
+    }
+
+    fn new_unchecked_sanitized_transaction_with_writable_program(
+        program_id: Pubkey,
+        fee_payer: Pubkey,
+    ) -> SanitizedTransaction {
+        let mut message = Message::new(
+            &[Instruction::new_with_bytes(program_id, &[], vec![])],
+            Some(&fee_payer),
+        );
+        message.header.num_readonly_unsigned_accounts = 0;
+
+        let legacy_message = LegacyMessage {
+            message: Cow::Owned(message),
+            is_writable_account_cache: vec![true, true],
+        };
+
+        SanitizedTransaction::new_for_tests(
+            SanitizedMessage::Legacy(legacy_message),
+            vec![Signature::default()],
+            false,
+        )
     }
 
     fn load_accounts_aux_test(
@@ -575,14 +767,17 @@ mod tests {
             instructions,
         );
 
-        let loaded_accounts = load_accounts_aux_test(tx, &accounts, &mut error_metrics);
+        let load_results = load_accounts_aux_test(tx, &accounts, &mut error_metrics);
 
         assert_eq!(error_metrics.account_not_found, 1);
-        assert_eq!(loaded_accounts.len(), 1);
-        assert_eq!(
-            loaded_accounts[0],
-            Err(TransactionError::ProgramAccountNotFound)
-        );
+        assert_eq!(load_results.len(), 1);
+        assert!(matches!(
+            load_results[0],
+            TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
+                load_error: TransactionError::ProgramAccountNotFound,
+                ..
+            }),
+        ));
     }
 
     #[test]
@@ -617,13 +812,14 @@ mod tests {
         assert_eq!(error_metrics.account_not_found, 0);
         assert_eq!(loaded_accounts.len(), 1);
         match &loaded_accounts[0] {
-            Ok(loaded_transaction) => {
+            TransactionLoadResult::Loaded(loaded_transaction) => {
                 assert_eq!(loaded_transaction.accounts.len(), 3);
                 assert_eq!(loaded_transaction.accounts[0].1, accounts[0].1);
                 assert_eq!(loaded_transaction.program_indices.len(), 1);
                 assert_eq!(loaded_transaction.program_indices[0].len(), 0);
             }
-            Err(e) => panic!("{e}"),
+            TransactionLoadResult::FeesOnly(fees_only_tx) => panic!("{}", fees_only_tx.load_error),
+            TransactionLoadResult::NotLoaded(e) => panic!("{e}"),
         }
     }
 
@@ -653,14 +849,17 @@ mod tests {
             instructions,
         );
 
-        let loaded_accounts = load_accounts_aux_test(tx, &accounts, &mut error_metrics);
+        let load_results = load_accounts_aux_test(tx, &accounts, &mut error_metrics);
 
         assert_eq!(error_metrics.account_not_found, 1);
-        assert_eq!(loaded_accounts.len(), 1);
-        assert_eq!(
-            loaded_accounts[0],
-            Err(TransactionError::ProgramAccountNotFound)
-        );
+        assert_eq!(load_results.len(), 1);
+        assert!(matches!(
+            load_results[0],
+            TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
+                load_error: TransactionError::ProgramAccountNotFound,
+                ..
+            }),
+        ));
     }
 
     #[test]
@@ -687,14 +886,25 @@ mod tests {
             instructions,
         );
 
-        let loaded_accounts = load_accounts_aux_test(tx, &accounts, &mut error_metrics);
+        let mut feature_set = FeatureSet::all_enabled();
+        feature_set.deactivate(&feature_set::remove_accounts_executable_flag_checks::id());
+        let load_results = load_accounts_with_features_and_rent(
+            tx,
+            &accounts,
+            &RentCollector::default(),
+            &mut error_metrics,
+            &mut feature_set,
+        );
 
         assert_eq!(error_metrics.invalid_program_for_execution, 1);
-        assert_eq!(loaded_accounts.len(), 1);
-        assert_eq!(
-            loaded_accounts[0],
-            Err(TransactionError::InvalidProgramForExecution)
-        );
+        assert_eq!(load_results.len(), 1);
+        assert!(matches!(
+            load_results[0],
+            TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
+                load_error: TransactionError::InvalidProgramForExecution,
+                ..
+            }),
+        ));
     }
 
     #[test]
@@ -741,14 +951,15 @@ mod tests {
         assert_eq!(error_metrics.account_not_found, 0);
         assert_eq!(loaded_accounts.len(), 1);
         match &loaded_accounts[0] {
-            Ok(loaded_transaction) => {
+            TransactionLoadResult::Loaded(loaded_transaction) => {
                 assert_eq!(loaded_transaction.accounts.len(), 4);
                 assert_eq!(loaded_transaction.accounts[0].1, accounts[0].1);
                 assert_eq!(loaded_transaction.program_indices.len(), 2);
                 assert_eq!(loaded_transaction.program_indices[0], &[1]);
                 assert_eq!(loaded_transaction.program_indices[1], &[2]);
             }
-            Err(e) => panic!("{e}"),
+            TransactionLoadResult::FeesOnly(fees_only_tx) => panic!("{}", fees_only_tx.load_error),
+            TransactionLoadResult::NotLoaded(e) => panic!("{e}"),
         }
     }
 
@@ -764,7 +975,10 @@ mod tests {
         for (pubkey, account) in accounts {
             accounts_map.insert(*pubkey, account.clone());
         }
-        let callbacks = TestCallbacks { accounts_map };
+        let callbacks = TestCallbacks {
+            accounts_map,
+            ..Default::default()
+        };
         load_accounts(
             &callbacks,
             &[tx],
@@ -791,9 +1005,15 @@ mod tests {
             instructions,
         );
 
-        let loaded_accounts = load_accounts_no_store(&[], tx, None);
-        assert_eq!(loaded_accounts.len(), 1);
-        assert!(loaded_accounts[0].is_err());
+        let load_results = load_accounts_no_store(&[], tx, None);
+        assert_eq!(load_results.len(), 1);
+        assert!(matches!(
+            load_results[0],
+            TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
+                load_error: TransactionError::ProgramAccountNotFound,
+                ..
+            }),
+        ));
     }
 
     #[test]
@@ -819,10 +1039,15 @@ mod tests {
         let loaded_accounts =
             load_accounts_no_store(&[(keypair.pubkey(), account)], tx, Some(&account_overrides));
         assert_eq!(loaded_accounts.len(), 1);
-        let loaded_transaction = loaded_accounts[0].as_ref().unwrap();
-        assert_eq!(loaded_transaction.accounts[0].0, keypair.pubkey());
-        assert_eq!(loaded_transaction.accounts[1].0, slot_history_id);
-        assert_eq!(loaded_transaction.accounts[1].1.lamports(), 42);
+        match &loaded_accounts[0] {
+            TransactionLoadResult::Loaded(loaded_transaction) => {
+                assert_eq!(loaded_transaction.accounts[0].0, keypair.pubkey());
+                assert_eq!(loaded_transaction.accounts[1].0, slot_history_id);
+                assert_eq!(loaded_transaction.accounts[1].1.lamports(), 42);
+            }
+            TransactionLoadResult::FeesOnly(fees_only_tx) => panic!("{}", fees_only_tx.load_error),
+            TransactionLoadResult::NotLoaded(e) => panic!("{e}"),
+        }
     }
 
     #[test]
@@ -1029,11 +1254,11 @@ mod tests {
         let mut mock_bank = TestCallbacks::default();
 
         let fee_payer_balance = 200;
-        let mut fee_payer_account_data = AccountSharedData::default();
-        fee_payer_account_data.set_lamports(fee_payer_balance);
+        let mut fee_payer_account = AccountSharedData::default();
+        fee_payer_account.set_lamports(fee_payer_balance);
         mock_bank
             .accounts_map
-            .insert(fee_payer_address, fee_payer_account_data.clone());
+            .insert(fee_payer_address, fee_payer_account.clone());
         let fee_payer_rent_debit = 42;
 
         let mut error_metrics = TransactionErrorMetrics::default();
@@ -1047,11 +1272,12 @@ mod tests {
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
-            ValidatedTransactionDetails {
-                fee_payer_account: fee_payer_account_data.clone(),
-                fee_payer_rent_debit,
-                ..ValidatedTransactionDetails::default()
+            LoadedTransactionAccount {
+                loaded_size: fee_payer_account.data().len(),
+                account: fee_payer_account.clone(),
+                rent_collected: fee_payer_rent_debit,
             },
+            &ComputeBudgetLimits::default(),
             &mut error_metrics,
             None,
             &FeatureSet::default(),
@@ -1066,12 +1292,9 @@ mod tests {
         };
         assert_eq!(
             result.unwrap(),
-            LoadedTransaction {
-                accounts: vec![(fee_payer_address, fee_payer_account_data),],
+            LoadedTransactionAccounts {
+                accounts: vec![(fee_payer_address, fee_payer_account)],
                 program_indices: vec![],
-                fee_details: FeeDetails::default(),
-                rollback_accounts: RollbackAccounts::default(),
-                compute_budget_limits: ComputeBudgetLimits::default(),
                 rent: fee_payer_rent_debit,
                 rent_debits: expected_rent_debits,
                 loaded_accounts_data_size: 0,
@@ -1098,11 +1321,11 @@ mod tests {
         mock_bank
             .accounts_map
             .insert(native_loader::id(), AccountSharedData::default());
-        let mut fee_payer_account_data = AccountSharedData::default();
-        fee_payer_account_data.set_lamports(200);
+        let mut fee_payer_account = AccountSharedData::default();
+        fee_payer_account.set_lamports(200);
         mock_bank
             .accounts_map
-            .insert(key1.pubkey(), fee_payer_account_data.clone());
+            .insert(key1.pubkey(), fee_payer_account.clone());
 
         let mut error_metrics = TransactionErrorMetrics::default();
         let loaded_programs = ProgramCacheForTxBatch::default();
@@ -1115,10 +1338,11 @@ mod tests {
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
-            ValidatedTransactionDetails {
-                fee_payer_account: fee_payer_account_data.clone(),
-                ..ValidatedTransactionDetails::default()
+            LoadedTransactionAccount {
+                account: fee_payer_account.clone(),
+                ..LoadedTransactionAccount::default()
             },
+            &ComputeBudgetLimits::default(),
             &mut error_metrics,
             None,
             &FeatureSet::default(),
@@ -1128,18 +1352,15 @@ mod tests {
 
         assert_eq!(
             result.unwrap(),
-            LoadedTransaction {
+            LoadedTransactionAccounts {
                 accounts: vec![
-                    (key1.pubkey(), fee_payer_account_data),
+                    (key1.pubkey(), fee_payer_account),
                     (
                         native_loader::id(),
                         mock_bank.accounts_map[&native_loader::id()].clone()
                     )
                 ],
                 program_indices: vec![vec![]],
-                fee_details: FeeDetails::default(),
-                rollback_accounts: RollbackAccounts::default(),
-                compute_budget_limits: ComputeBudgetLimits::default(),
                 rent: 0,
                 rent_debits: RentDebits::default(),
                 loaded_accounts_data_size: 0,
@@ -1181,7 +1402,8 @@ mod tests {
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
-            ValidatedTransactionDetails::default(),
+            LoadedTransactionAccount::default(),
+            &ComputeBudgetLimits::default(),
             &mut error_metrics,
             None,
             &FeatureSet::default(),
@@ -1190,6 +1412,178 @@ mod tests {
         );
 
         assert_eq!(result.err(), Some(TransactionError::AccountNotFound));
+    }
+
+    #[test]
+    fn test_load_transaction_accounts_program_account_executable_bypass() {
+        // currently, the account loader retrieves read-only non-instruction accounts from the program cache
+        // it creates a mock AccountSharedData with the executable flag set to true
+        // however, it does not check whether these accounts are actually executable before doing so
+        // this affects consensus: a transaction that uses a cached non-executable program executes and fails
+        // but if the transaction gets the program from accounts-db, it will be dropped during account loading
+        // this test enforces the current behavior, so that future account loader changes do not break consensus
+
+        let mut mock_bank = TestCallbacks::default();
+        let account_keypair = Keypair::new();
+        let program_keypair = Keypair::new();
+
+        let mut account_data = AccountSharedData::default();
+        account_data.set_lamports(200);
+        mock_bank
+            .accounts_map
+            .insert(account_keypair.pubkey(), account_data.clone());
+
+        let mut program_data = AccountSharedData::default();
+        program_data.set_lamports(200);
+        program_data.set_owner(bpf_loader::id());
+        mock_bank
+            .accounts_map
+            .insert(program_keypair.pubkey(), program_data);
+
+        let mut loader_data = AccountSharedData::default();
+        loader_data.set_lamports(200);
+        loader_data.set_executable(true);
+        loader_data.set_owner(native_loader::id());
+        mock_bank
+            .accounts_map
+            .insert(bpf_loader::id(), loader_data.clone());
+        mock_bank
+            .accounts_map
+            .insert(native_loader::id(), loader_data);
+
+        let mut error_metrics = TransactionErrorMetrics::default();
+        let mut loaded_programs = ProgramCacheForTxBatch::default();
+
+        let transaction =
+            SanitizedTransaction::from_transaction_for_tests(Transaction::new_signed_with_payer(
+                &[Instruction::new_with_bytes(
+                    program_keypair.pubkey(),
+                    &[],
+                    vec![],
+                )],
+                Some(&account_keypair.pubkey()),
+                &[&account_keypair],
+                Hash::default(),
+            ));
+
+        let result = load_transaction_accounts(
+            &mock_bank,
+            transaction.message(),
+            LoadedTransactionAccount {
+                account: account_data.clone(),
+                ..LoadedTransactionAccount::default()
+            },
+            &ComputeBudgetLimits::default(),
+            &mut error_metrics,
+            None,
+            &FeatureSet::default(),
+            &RentCollector::default(),
+            &loaded_programs,
+        );
+
+        // without cache, program is invalid
+        assert_eq!(
+            result.err(),
+            Some(TransactionError::InvalidProgramForExecution)
+        );
+
+        loaded_programs.replenish(
+            program_keypair.pubkey(),
+            Arc::new(ProgramCacheEntry::default()),
+        );
+
+        let result = load_transaction_accounts(
+            &mock_bank,
+            transaction.message(),
+            LoadedTransactionAccount {
+                account: account_data.clone(),
+                ..LoadedTransactionAccount::default()
+            },
+            &ComputeBudgetLimits::default(),
+            &mut error_metrics,
+            None,
+            &FeatureSet::default(),
+            &RentCollector::default(),
+            &loaded_programs,
+        );
+
+        // with cache, executable flag is bypassed
+        let mut cached_program = AccountSharedData::default();
+        cached_program.set_owner(native_loader::id());
+        cached_program.set_executable(true);
+
+        assert_eq!(
+            result.unwrap(),
+            LoadedTransactionAccounts {
+                accounts: vec![
+                    (account_keypair.pubkey(), account_data.clone()),
+                    (program_keypair.pubkey(), cached_program),
+                ],
+                program_indices: vec![vec![1]],
+                rent: 0,
+                rent_debits: RentDebits::default(),
+                loaded_accounts_data_size: 0,
+            }
+        );
+
+        let transaction =
+            SanitizedTransaction::from_transaction_for_tests(Transaction::new_signed_with_payer(
+                &[Instruction::new_with_bytes(
+                    program_keypair.pubkey(),
+                    &[],
+                    vec![AccountMeta::new_readonly(program_keypair.pubkey(), false)],
+                )],
+                Some(&account_keypair.pubkey()),
+                &[&account_keypair],
+                Hash::default(),
+            ));
+
+        let result = load_transaction_accounts(
+            &mock_bank,
+            transaction.message(),
+            LoadedTransactionAccount {
+                account: account_data.clone(),
+                ..LoadedTransactionAccount::default()
+            },
+            &ComputeBudgetLimits::default(),
+            &mut error_metrics,
+            None,
+            &FeatureSet::default(),
+            &RentCollector::default(),
+            &loaded_programs,
+        );
+
+        // including program as instruction account bypasses executable bypass
+        assert_eq!(
+            result.err(),
+            Some(TransactionError::InvalidProgramForExecution)
+        );
+
+        let transaction = new_unchecked_sanitized_transaction_with_writable_program(
+            program_keypair.pubkey(),
+            account_keypair.pubkey(),
+        );
+
+        let result = load_transaction_accounts(
+            &mock_bank,
+            transaction.message(),
+            LoadedTransactionAccount {
+                account: account_data.clone(),
+                ..LoadedTransactionAccount::default()
+            },
+            &ComputeBudgetLimits::default(),
+            &mut error_metrics,
+            None,
+            &FeatureSet::default(),
+            &RentCollector::default(),
+            &loaded_programs,
+        );
+
+        // including program as writable bypasses executable bypass
+        assert_eq!(
+            result.err(),
+            Some(TransactionError::InvalidProgramForExecution)
+        );
     }
 
     #[test]
@@ -1225,7 +1619,8 @@ mod tests {
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
-            ValidatedTransactionDetails::default(),
+            LoadedTransactionAccount::default(),
+            &ComputeBudgetLimits::default(),
             &mut error_metrics,
             None,
             &FeatureSet::default(),
@@ -1269,7 +1664,8 @@ mod tests {
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
-            ValidatedTransactionDetails::default(),
+            LoadedTransactionAccount::default(),
+            &ComputeBudgetLimits::default(),
             &mut error_metrics,
             None,
             &FeatureSet::default(),
@@ -1306,11 +1702,11 @@ mod tests {
         account_data.set_executable(true);
         mock_bank.accounts_map.insert(key1.pubkey(), account_data);
 
-        let mut fee_payer_account_data = AccountSharedData::default();
-        fee_payer_account_data.set_lamports(200);
+        let mut fee_payer_account = AccountSharedData::default();
+        fee_payer_account.set_lamports(200);
         mock_bank
             .accounts_map
-            .insert(key2.pubkey(), fee_payer_account_data.clone());
+            .insert(key2.pubkey(), fee_payer_account.clone());
         let mut error_metrics = TransactionErrorMetrics::default();
         let loaded_programs = ProgramCacheForTxBatch::default();
 
@@ -1322,10 +1718,11 @@ mod tests {
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
-            ValidatedTransactionDetails {
-                fee_payer_account: fee_payer_account_data.clone(),
-                ..ValidatedTransactionDetails::default()
+            LoadedTransactionAccount {
+                account: fee_payer_account.clone(),
+                ..LoadedTransactionAccount::default()
             },
+            &ComputeBudgetLimits::default(),
             &mut error_metrics,
             None,
             &FeatureSet::default(),
@@ -1335,17 +1732,14 @@ mod tests {
 
         assert_eq!(
             result.unwrap(),
-            LoadedTransaction {
+            LoadedTransactionAccounts {
                 accounts: vec![
-                    (key2.pubkey(), fee_payer_account_data),
+                    (key2.pubkey(), fee_payer_account),
                     (
                         key1.pubkey(),
                         mock_bank.accounts_map[&key1.pubkey()].clone()
                     ),
                 ],
-                fee_details: FeeDetails::default(),
-                rollback_accounts: RollbackAccounts::default(),
-                compute_budget_limits: ComputeBudgetLimits::default(),
                 program_indices: vec![vec![1]],
                 rent: 0,
                 rent_debits: RentDebits::default(),
@@ -1390,7 +1784,8 @@ mod tests {
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
-            ValidatedTransactionDetails::default(),
+            LoadedTransactionAccount::default(),
+            &ComputeBudgetLimits::default(),
             &mut error_metrics,
             None,
             &FeatureSet::default(),
@@ -1443,7 +1838,8 @@ mod tests {
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
-            ValidatedTransactionDetails::default(),
+            LoadedTransactionAccount::default(),
+            &ComputeBudgetLimits::default(),
             &mut error_metrics,
             None,
             &FeatureSet::default(),
@@ -1481,11 +1877,11 @@ mod tests {
         account_data.set_owner(key3.pubkey());
         mock_bank.accounts_map.insert(key1.pubkey(), account_data);
 
-        let mut fee_payer_account_data = AccountSharedData::default();
-        fee_payer_account_data.set_lamports(200);
+        let mut fee_payer_account = AccountSharedData::default();
+        fee_payer_account.set_lamports(200);
         mock_bank
             .accounts_map
-            .insert(key2.pubkey(), fee_payer_account_data.clone());
+            .insert(key2.pubkey(), fee_payer_account.clone());
 
         let mut account_data = AccountSharedData::default();
         account_data.set_executable(true);
@@ -1503,10 +1899,11 @@ mod tests {
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
-            ValidatedTransactionDetails {
-                fee_payer_account: fee_payer_account_data.clone(),
-                ..ValidatedTransactionDetails::default()
+            LoadedTransactionAccount {
+                account: fee_payer_account.clone(),
+                ..LoadedTransactionAccount::default()
             },
+            &ComputeBudgetLimits::default(),
             &mut error_metrics,
             None,
             &FeatureSet::default(),
@@ -1516,9 +1913,9 @@ mod tests {
 
         assert_eq!(
             result.unwrap(),
-            LoadedTransaction {
+            LoadedTransactionAccounts {
                 accounts: vec![
-                    (key2.pubkey(), fee_payer_account_data),
+                    (key2.pubkey(), fee_payer_account),
                     (
                         key1.pubkey(),
                         mock_bank.accounts_map[&key1.pubkey()].clone()
@@ -1529,9 +1926,6 @@ mod tests {
                     ),
                 ],
                 program_indices: vec![vec![1]],
-                fee_details: FeeDetails::default(),
-                rollback_accounts: RollbackAccounts::default(),
-                compute_budget_limits: ComputeBudgetLimits::default(),
                 rent: 0,
                 rent_debits: RentDebits::default(),
                 loaded_accounts_data_size: 0,
@@ -1571,11 +1965,11 @@ mod tests {
         account_data.set_owner(key3.pubkey());
         mock_bank.accounts_map.insert(key1.pubkey(), account_data);
 
-        let mut fee_payer_account_data = AccountSharedData::default();
-        fee_payer_account_data.set_lamports(200);
+        let mut fee_payer_account = AccountSharedData::default();
+        fee_payer_account.set_lamports(200);
         mock_bank
             .accounts_map
-            .insert(key2.pubkey(), fee_payer_account_data.clone());
+            .insert(key2.pubkey(), fee_payer_account.clone());
 
         let mut account_data = AccountSharedData::default();
         account_data.set_executable(true);
@@ -1593,10 +1987,11 @@ mod tests {
         let result = load_transaction_accounts(
             &mock_bank,
             sanitized_transaction.message(),
-            ValidatedTransactionDetails {
-                fee_payer_account: fee_payer_account_data.clone(),
-                ..ValidatedTransactionDetails::default()
+            LoadedTransactionAccount {
+                account: fee_payer_account.clone(),
+                ..LoadedTransactionAccount::default()
             },
+            &ComputeBudgetLimits::default(),
             &mut error_metrics,
             None,
             &FeatureSet::default(),
@@ -1608,9 +2003,9 @@ mod tests {
         account_data.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
         assert_eq!(
             result.unwrap(),
-            LoadedTransaction {
+            LoadedTransactionAccounts {
                 accounts: vec![
-                    (key2.pubkey(), fee_payer_account_data),
+                    (key2.pubkey(), fee_payer_account),
                     (
                         key1.pubkey(),
                         mock_bank.accounts_map[&key1.pubkey()].clone()
@@ -1622,9 +2017,6 @@ mod tests {
                     ),
                 ],
                 program_indices: vec![vec![1], vec![1]],
-                fee_details: FeeDetails::default(),
-                rollback_accounts: RollbackAccounts::default(),
-                compute_budget_limits: ComputeBudgetLimits::default(),
                 rent: 0,
                 rent_debits: RentDebits::default(),
                 loaded_accounts_data_size: 0,
@@ -1661,7 +2053,7 @@ mod tests {
         let num_accounts = tx.message().account_keys.len();
         let sanitized_tx = SanitizedTransaction::from_transaction_for_tests(tx);
         let mut error_metrics = TransactionErrorMetrics::default();
-        let loaded_txs = load_accounts(
+        let mut load_results = load_accounts(
             &bank,
             &[sanitized_tx.clone()],
             vec![Ok(ValidatedTransactionDetails::default())],
@@ -1672,21 +2064,26 @@ mod tests {
             &ProgramCacheForTxBatch::default(),
         );
 
+        let TransactionLoadResult::Loaded(loaded_transaction) = load_results.swap_remove(0) else {
+            panic!("transaction loading failed");
+        };
+
         let compute_budget = ComputeBudget::new(u64::from(
             compute_budget_limits::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
         ));
+        let rent_collector = RentCollector::default();
         let transaction_context = TransactionContext::new(
-            loaded_txs[0].as_ref().unwrap().accounts.clone(),
-            Rent::default(),
+            loaded_transaction.accounts,
+            rent_collector.get_rent().clone(),
             compute_budget.max_instruction_stack_depth,
             compute_budget.max_instruction_trace_length,
         );
 
         assert_eq!(
             TransactionAccountStateInfo::new(
-                &Rent::default(),
                 &transaction_context,
-                sanitized_tx.message()
+                sanitized_tx.message(),
+                &rent_collector,
             )
             .len(),
             num_accounts,
@@ -1725,11 +2122,11 @@ mod tests {
         account_data.set_owner(key3.pubkey());
         mock_bank.accounts_map.insert(key1.pubkey(), account_data);
 
-        let mut fee_payer_account_data = AccountSharedData::default();
-        fee_payer_account_data.set_lamports(200);
+        let mut fee_payer_account = AccountSharedData::default();
+        fee_payer_account.set_lamports(200);
         mock_bank
             .accounts_map
-            .insert(key2.pubkey(), fee_payer_account_data.clone());
+            .insert(key2.pubkey(), fee_payer_account.clone());
 
         let mut account_data = AccountSharedData::default();
         account_data.set_executable(true);
@@ -1745,11 +2142,14 @@ mod tests {
             false,
         );
         let validation_result = Ok(ValidatedTransactionDetails {
-            fee_payer_account: fee_payer_account_data,
+            loaded_fee_payer_account: LoadedTransactionAccount {
+                account: fee_payer_account,
+                ..LoadedTransactionAccount::default()
+            },
             ..ValidatedTransactionDetails::default()
         });
 
-        let results = load_accounts(
+        let mut load_results = load_accounts(
             &mock_bank,
             &[sanitized_transaction],
             vec![validation_result],
@@ -1763,10 +2163,12 @@ mod tests {
         let mut account_data = AccountSharedData::default();
         account_data.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
 
-        assert_eq!(results.len(), 1);
-        let loaded_result = results[0].clone();
+        assert_eq!(load_results.len(), 1);
+        let TransactionLoadResult::Loaded(loaded_transaction) = load_results.swap_remove(0) else {
+            panic!("transaction loading failed");
+        };
         assert_eq!(
-            loaded_result.unwrap(),
+            loaded_transaction,
             LoadedTransaction {
                 accounts: vec![
                     (
@@ -1819,7 +2221,7 @@ mod tests {
         );
 
         let validation_result = Ok(ValidatedTransactionDetails::default());
-        let result = load_accounts(
+        let load_results = load_accounts(
             &mock_bank,
             &[sanitized_transaction.clone()],
             vec![validation_result.clone()],
@@ -1830,14 +2232,17 @@ mod tests {
             &ProgramCacheForTxBatch::default(),
         );
 
-        assert_eq!(
-            result,
-            vec![Err(TransactionError::InvalidProgramForExecution)]
-        );
+        assert!(matches!(
+            load_results[0],
+            TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
+                load_error: TransactionError::InvalidProgramForExecution,
+                ..
+            }),
+        ));
 
         let validation_result = Err(TransactionError::InvalidWritableAccount);
 
-        let result = load_accounts(
+        let load_results = load_accounts(
             &mock_bank,
             &[sanitized_transaction.clone()],
             vec![validation_result],
@@ -1848,7 +2253,10 @@ mod tests {
             &ProgramCacheForTxBatch::default(),
         );
 
-        assert_eq!(result, vec![Err(TransactionError::InvalidWritableAccount)]);
+        assert!(matches!(
+            load_results[0],
+            TransactionLoadResult::NotLoaded(TransactionError::InvalidWritableAccount),
+        ));
     }
 
     #[test]
@@ -1920,5 +2328,381 @@ mod tests {
         );
         assert_eq!(account.rent_epoch(), 0);
         assert_eq!(account.lamports(), 0);
+    }
+
+    // Ensure `TransactionProcessingCallback::inspect_account()` is called when
+    // loading accounts for transaction processing.
+    #[test]
+    fn test_inspect_account_non_fee_payer() {
+        let mut mock_bank = TestCallbacks::default();
+
+        let address0 = Pubkey::new_unique(); // <-- fee payer
+        let address1 = Pubkey::new_unique(); // <-- initially alive
+        let address2 = Pubkey::new_unique(); // <-- initially dead
+        let address3 = Pubkey::new_unique(); // <-- program
+
+        let mut account0 = AccountSharedData::default();
+        account0.set_lamports(1_000_000_000);
+        mock_bank.accounts_map.insert(address0, account0.clone());
+
+        let mut account1 = AccountSharedData::default();
+        account1.set_lamports(2_000_000_000);
+        mock_bank.accounts_map.insert(address1, account1.clone());
+
+        // account2 *not* added to the bank's accounts_map
+
+        let mut account3 = AccountSharedData::default();
+        account3.set_lamports(4_000_000_000);
+        account3.set_executable(true);
+        account3.set_owner(native_loader::id());
+        mock_bank.accounts_map.insert(address3, account3.clone());
+
+        let message = Message {
+            account_keys: vec![address0, address1, address2, address3],
+            header: MessageHeader::default(),
+            instructions: vec![
+                CompiledInstruction {
+                    program_id_index: 3,
+                    accounts: vec![0],
+                    data: vec![],
+                },
+                CompiledInstruction {
+                    program_id_index: 3,
+                    accounts: vec![1, 2],
+                    data: vec![],
+                },
+                CompiledInstruction {
+                    program_id_index: 3,
+                    accounts: vec![1],
+                    data: vec![],
+                },
+            ],
+            recent_blockhash: Hash::new_unique(),
+        };
+        let sanitized_message = new_unchecked_sanitized_message(message);
+        let sanitized_transaction = SanitizedTransaction::new_for_tests(
+            sanitized_message,
+            vec![Signature::new_unique()],
+            false,
+        );
+        let validation_result = Ok(ValidatedTransactionDetails {
+            loaded_fee_payer_account: LoadedTransactionAccount {
+                account: account0.clone(),
+                ..LoadedTransactionAccount::default()
+            },
+            ..ValidatedTransactionDetails::default()
+        });
+        let _load_results = load_accounts(
+            &mock_bank,
+            &[sanitized_transaction],
+            vec![validation_result],
+            &mut TransactionErrorMetrics::default(),
+            None,
+            &FeatureSet::default(),
+            &RentCollector::default(),
+            &ProgramCacheForTxBatch::default(),
+        );
+
+        // ensure the loaded accounts are inspected
+        let mut actual_inspected_accounts: Vec<_> = mock_bank
+            .inspected_accounts
+            .borrow()
+            .iter()
+            .map(|(k, v)| (*k, v.clone()))
+            .collect();
+        actual_inspected_accounts.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+
+        let mut expected_inspected_accounts = vec![
+            // *not* key0, since it is loaded during fee payer validation
+            (address1, vec![(Some(account1), true)]),
+            (address2, vec![(None, true)]),
+            (address3, vec![(Some(account3), false)]),
+        ];
+        expected_inspected_accounts.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+
+        assert_eq!(actual_inspected_accounts, expected_inspected_accounts,);
+    }
+
+    #[test]
+    fn test_load_transaction_accounts_data_sizes() {
+        let mut mock_bank = TestCallbacks::default();
+
+        let mut next_size = 1;
+        let mut make_account = |pubkey, owner, executable| {
+            let size = next_size;
+            let account = AccountSharedData::create(
+                LAMPORTS_PER_SOL,
+                vec![0; size],
+                owner,
+                executable,
+                u64::MAX,
+            );
+
+            mock_bank.accounts_map.insert(pubkey, account.clone());
+
+            // accounts are counted at most twice
+            // by multiplying account size by 4, we ensure all totals are unique
+            next_size *= 4;
+
+            (size as u32, account)
+        };
+
+        let (native_loader_size, _) = make_account(native_loader::id(), native_loader::id(), true);
+        let (bpf_loader_size, _) = make_account(bpf_loader::id(), native_loader::id(), true);
+        let (upgradeable_loader_size, _) =
+            make_account(bpf_loader_upgradeable::id(), native_loader::id(), true);
+
+        let program1_keypair = Keypair::new();
+        let program1 = program1_keypair.pubkey();
+        let (program1_size, _) = make_account(program1, bpf_loader::id(), true);
+
+        let program2 = Pubkey::new_unique();
+        let (program2_size, _) = make_account(program2, bpf_loader_upgradeable::id(), true);
+
+        let programdata2 = Pubkey::new_unique();
+        let (programdata2_size, _) =
+            make_account(programdata2, bpf_loader_upgradeable::id(), false);
+
+        let fee_payer_keypair = Keypair::new();
+        let fee_payer = fee_payer_keypair.pubkey();
+        let (fee_payer_size, fee_payer_account) =
+            make_account(fee_payer, system_program::id(), false);
+
+        let account1 = Pubkey::new_unique();
+        let (account1_size, _) = make_account(account1, program1, false);
+
+        let account2 = Pubkey::new_unique();
+        let (account2_size, _) = make_account(account2, program2, false);
+
+        let test_transaction_data_size_with_cache = |transaction, cache, expected_size| {
+            let loaded_transaction_accounts = load_transaction_accounts(
+                &mock_bank,
+                &transaction,
+                LoadedTransactionAccount {
+                    account: fee_payer_account.clone(),
+                    loaded_size: fee_payer_size as usize,
+                    rent_collected: 0,
+                },
+                &ComputeBudgetLimits::default(),
+                &mut TransactionErrorMetrics::default(),
+                None,
+                &FeatureSet::default(),
+                &RentCollector::default(),
+                &cache,
+            )
+            .unwrap();
+
+            assert_eq!(
+                loaded_transaction_accounts.loaded_accounts_data_size,
+                expected_size
+            );
+        };
+
+        let test_data_size_with_cache = |instructions: Vec<_>, cache, expected_size| {
+            let transaction = SanitizedTransaction::from_transaction_for_tests(
+                Transaction::new_signed_with_payer(
+                    &instructions,
+                    Some(&fee_payer),
+                    &[&fee_payer_keypair],
+                    Hash::default(),
+                ),
+            );
+
+            test_transaction_data_size_with_cache(transaction, cache, expected_size)
+        };
+
+        for account_meta in [AccountMeta::new, AccountMeta::new_readonly] {
+            let test_data_size = |instructions, expected_size| {
+                test_data_size_with_cache(
+                    instructions,
+                    ProgramCacheForTxBatch::default(),
+                    expected_size,
+                )
+            };
+
+            // one program plus loader
+            let ixns = vec![Instruction::new_with_bytes(program1, &[], vec![])];
+            test_data_size(ixns, program1_size + bpf_loader_size + fee_payer_size);
+
+            // two programs, two loaders, two accounts
+            let ixns = vec![
+                Instruction::new_with_bytes(program1, &[], vec![account_meta(account1, false)]),
+                Instruction::new_with_bytes(program2, &[], vec![account_meta(account2, false)]),
+            ];
+            test_data_size(
+                ixns,
+                account1_size
+                    + account2_size
+                    + program1_size
+                    + program2_size
+                    + bpf_loader_size
+                    + upgradeable_loader_size
+                    + fee_payer_size,
+            );
+
+            // ordinary owners not counted
+            let ixns = vec![Instruction::new_with_bytes(
+                program1,
+                &[],
+                vec![account_meta(account2, false)],
+            )];
+            test_data_size(
+                ixns,
+                account2_size + program1_size + bpf_loader_size + fee_payer_size,
+            );
+
+            // program and loader counted once
+            let ixns = vec![
+                Instruction::new_with_bytes(program1, &[], vec![]),
+                Instruction::new_with_bytes(program1, &[], vec![]),
+            ];
+            test_data_size(ixns, program1_size + bpf_loader_size + fee_payer_size);
+
+            // native loader not counted if loader
+            let ixns = vec![Instruction::new_with_bytes(bpf_loader::id(), &[], vec![])];
+            test_data_size(ixns, bpf_loader_size + fee_payer_size);
+
+            // native loader counted if instruction
+            let ixns = vec![Instruction::new_with_bytes(
+                bpf_loader::id(),
+                &[],
+                vec![account_meta(native_loader::id(), false)],
+            )];
+            test_data_size(ixns, bpf_loader_size + native_loader_size + fee_payer_size);
+
+            // native loader counted if invoked
+            let ixns = vec![Instruction::new_with_bytes(
+                native_loader::id(),
+                &[],
+                vec![],
+            )];
+            test_data_size(ixns, native_loader_size + fee_payer_size);
+
+            // native loader counted once if invoked and instruction
+            let ixns = vec![Instruction::new_with_bytes(
+                native_loader::id(),
+                &[],
+                vec![account_meta(native_loader::id(), false)],
+            )];
+            test_data_size(ixns, native_loader_size + fee_payer_size);
+
+            // loader counted twice if included in instruction
+            let ixns = vec![Instruction::new_with_bytes(
+                program1,
+                &[],
+                vec![account_meta(bpf_loader::id(), false)],
+            )];
+            test_data_size(ixns, program1_size + bpf_loader_size * 2 + fee_payer_size);
+
+            // cover that case with multiple loaders to be sure
+            let ixns = vec![
+                Instruction::new_with_bytes(
+                    program1,
+                    &[],
+                    vec![
+                        account_meta(bpf_loader::id(), false),
+                        account_meta(bpf_loader_upgradeable::id(), false),
+                    ],
+                ),
+                Instruction::new_with_bytes(program2, &[], vec![account_meta(account1, false)]),
+                Instruction::new_with_bytes(
+                    bpf_loader_upgradeable::id(),
+                    &[],
+                    vec![account_meta(account1, false)],
+                ),
+            ];
+            test_data_size(
+                ixns,
+                account1_size
+                    + program1_size
+                    + program2_size
+                    + bpf_loader_size * 2
+                    + upgradeable_loader_size * 2
+                    + fee_payer_size,
+            );
+
+            // loader counted twice even if included first
+            let ixns = vec![
+                Instruction::new_with_bytes(bpf_loader::id(), &[], vec![]),
+                Instruction::new_with_bytes(program1, &[], vec![]),
+            ];
+            test_data_size(ixns, program1_size + bpf_loader_size * 2 + fee_payer_size);
+
+            // fee-payer counted once
+            let ixns = vec![Instruction::new_with_bytes(
+                program1,
+                &[],
+                vec![account_meta(fee_payer, false)],
+            )];
+            test_data_size(ixns, program1_size + bpf_loader_size + fee_payer_size);
+
+            // edge cases involving program cache
+            let mut program_cache = ProgramCacheForTxBatch::default();
+
+            let program2_entry = ProgramCacheEntry {
+                account_size: (program2_size + programdata2_size) as usize,
+                account_owner: ProgramCacheEntryOwner::LoaderV3,
+                ..ProgramCacheEntry::default()
+            };
+            program_cache.replenish(program2, Arc::new(program2_entry));
+
+            // normal function call uses the combined cache size
+            let ixns = vec![Instruction::new_with_bytes(program2, &[], vec![])];
+            test_data_size_with_cache(
+                ixns,
+                program_cache.clone(),
+                program2_size + programdata2_size + upgradeable_loader_size + fee_payer_size,
+            );
+
+            // program as instruction account bypasses the cache
+            let ixns = vec![Instruction::new_with_bytes(
+                program2,
+                &[],
+                vec![account_meta(program2, false)],
+            )];
+            test_data_size_with_cache(
+                ixns,
+                program_cache.clone(),
+                program2_size + upgradeable_loader_size + fee_payer_size,
+            );
+
+            // programdata as instruction account double-counts it
+            let ixns = vec![Instruction::new_with_bytes(
+                program2,
+                &[],
+                vec![account_meta(programdata2, false)],
+            )];
+            test_data_size_with_cache(
+                ixns,
+                program_cache.clone(),
+                program2_size + programdata2_size * 2 + upgradeable_loader_size + fee_payer_size,
+            );
+
+            // both as instruction accounts, for completeness
+            let ixns = vec![Instruction::new_with_bytes(
+                program2,
+                &[],
+                vec![
+                    account_meta(program2, false),
+                    account_meta(programdata2, false),
+                ],
+            )];
+            test_data_size_with_cache(
+                ixns,
+                program_cache.clone(),
+                program2_size + programdata2_size + upgradeable_loader_size + fee_payer_size,
+            );
+
+            // writable program bypasses the cache
+            let tx = new_unchecked_sanitized_transaction_with_writable_program(program2, fee_payer);
+            test_transaction_data_size_with_cache(
+                tx,
+                program_cache.clone(),
+                program2_size + upgradeable_loader_size + fee_payer_size,
+            );
+
+            // NOTE for the new loader we *must* also test arbitrary permutations of the cache transactions
+            // to ensure that the batched loading is overridden on a tx-per-tx basis
+        }
     }
 }

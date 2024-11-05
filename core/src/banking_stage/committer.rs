@@ -6,21 +6,24 @@ use {
     },
     solana_measure::measure_us,
     solana_runtime::{
-        bank::{Bank, ExecutedTransactionCounts, TransactionBalancesSet},
+        bank::{Bank, ProcessedTransactionCounts, TransactionBalancesSet},
         bank_utils,
         prioritization_fee_cache::PrioritizationFeeCache,
         transaction_batch::TransactionBatch,
         vote_sender_types::ReplayVoteSender,
     },
-    solana_sdk::{hash::Hash, pubkey::Pubkey, saturating_add_assign},
+    solana_runtime_transaction::svm_transaction_adapter::SVMTransactionAdapter,
+    solana_sdk::{pubkey::Pubkey, saturating_add_assign, transaction::SanitizedTransaction},
     solana_svm::{
         transaction_commit_result::{TransactionCommitResult, TransactionCommitResultExtensions},
-        transaction_execution_result::TransactionExecutionResult,
+        transaction_processing_result::{
+            TransactionProcessingResult, TransactionProcessingResultExtensions,
+        },
     },
     solana_transaction_status::{
         token_balances::TransactionTokenBalancesSet, TransactionTokenBalance,
     },
-    std::{collections::HashMap, sync::Arc},
+    std::{borrow::Borrow, collections::HashMap, sync::Arc},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -63,31 +66,26 @@ impl Committer {
         self.transaction_status_sender.is_some()
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn commit_transactions(
         &self,
-        batch: &TransactionBatch,
-        execution_results: Vec<TransactionExecutionResult>,
-        last_blockhash: Hash,
-        lamports_per_signature: u64,
+        batch: &TransactionBatch<SanitizedTransaction>,
+        processing_results: Vec<TransactionProcessingResult>,
         starting_transaction_index: Option<usize>,
         bank: &Arc<Bank>,
         pre_balance_info: &mut PreBalanceInfo,
         execute_and_commit_timings: &mut LeaderExecuteAndCommitTimings,
-        execution_counts: &ExecutedTransactionCounts,
+        processed_counts: &ProcessedTransactionCounts,
     ) -> (u64, Vec<CommitTransactionDetails>) {
-        let executed_transactions = execution_results
+        let processed_transactions = processing_results
             .iter()
             .zip(batch.sanitized_transactions())
-            .filter_map(|(execution_result, tx)| execution_result.was_executed().then_some(tx))
+            .filter_map(|(processing_result, tx)| processing_result.was_processed().then_some(tx))
             .collect_vec();
 
         let (commit_results, commit_time_us) = measure_us!(bank.commit_transactions(
             batch.sanitized_transactions(),
-            execution_results,
-            last_blockhash,
-            lamports_per_signature,
-            execution_counts,
+            processing_results,
+            processed_counts,
             &mut execute_and_commit_timings.execute_timings,
         ));
         execute_and_commit_timings.commit_us = commit_time_us;
@@ -99,7 +97,7 @@ impl Committer {
                 // transaction committed to block. qos_service uses these information to adjust
                 // reserved block space.
                 Ok(committed_tx) => CommitTransactionDetails::Committed {
-                    compute_units: committed_tx.execution_details.executed_units,
+                    compute_units: committed_tx.executed_units,
                     loaded_accounts_data_size: committed_tx
                         .loaded_account_stats
                         .loaded_accounts_data_size,
@@ -122,7 +120,7 @@ impl Committer {
                 starting_transaction_index,
             );
             self.prioritization_fee_cache
-                .update(bank, executed_transactions.into_iter());
+                .update(bank, processed_transactions.into_iter());
         });
         execute_and_commit_timings.find_and_send_votes_us = find_and_send_votes_us;
         (commit_time_us, commit_transaction_statuses)
@@ -132,12 +130,18 @@ impl Committer {
         &self,
         commit_results: Vec<TransactionCommitResult>,
         bank: &Arc<Bank>,
-        batch: &TransactionBatch,
+        batch: &TransactionBatch<SanitizedTransaction>,
         pre_balance_info: &mut PreBalanceInfo,
         starting_transaction_index: Option<usize>,
     ) {
         if let Some(transaction_status_sender) = &self.transaction_status_sender {
-            let txs = batch.sanitized_transactions().to_vec();
+            // Clone `SanitizedTransaction` out of `RuntimeTransaction`, this is
+            // done to send over the status sender.
+            let txs = batch
+                .sanitized_transactions()
+                .iter()
+                .map(|tx| tx.as_sanitized_transaction().borrow().clone())
+                .collect_vec();
             let post_balances = bank.collect_balances(batch);
             let post_token_balances =
                 collect_token_balances(bank, batch, &mut pre_balance_info.mint_decimals);
@@ -145,7 +149,7 @@ impl Committer {
             let batch_transaction_indexes: Vec<_> = commit_results
                 .iter()
                 .map(|commit_result| {
-                    if commit_result.was_executed() {
+                    if commit_result.was_committed() {
                         let this_transaction_index = transaction_index;
                         saturating_add_assign!(transaction_index, 1);
                         this_transaction_index
@@ -155,7 +159,7 @@ impl Committer {
                 })
                 .collect();
             transaction_status_sender.send_transaction_status_batch(
-                bank.clone(),
+                bank.slot(),
                 txs,
                 commit_results,
                 TransactionBalancesSet::new(

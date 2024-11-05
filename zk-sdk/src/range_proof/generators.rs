@@ -4,14 +4,14 @@ use {
         digest::{ExtendableOutput, Update, XofReader},
         ristretto::RistrettoPoint,
     },
-    sha3::{Sha3XofReader, Shake256},
+    sha3::{Shake256, Shake256Reader},
 };
 
 const MAX_GENERATOR_LENGTH: usize = u32::MAX as usize;
 
 /// Generators for Pedersen vector commitments that are used for inner-product proofs.
 struct GeneratorsChain {
-    reader: Sha3XofReader,
+    reader: Shake256Reader,
 }
 
 impl GeneratorsChain {
@@ -95,13 +95,13 @@ impl RangeProofGens {
         }
 
         self.G_vec.extend(
-            &mut GeneratorsChain::new(&[b'G'])
+            &mut GeneratorsChain::new(b"G")
                 .fast_forward(self.gens_capacity)
                 .take(new_capacity - self.gens_capacity),
         );
 
         self.H_vec.extend(
-            &mut GeneratorsChain::new(&[b'H'])
+            &mut GeneratorsChain::new(b"H")
                 .fast_forward(self.gens_capacity)
                 .take(new_capacity - self.gens_capacity),
         );

@@ -65,7 +65,7 @@ fn do_nested_invokes(num_nested_invokes: u64, accounts: &[AccountInfo]) -> Progr
     Ok(())
 }
 
-solana_program::entrypoint!(process_instruction);
+solana_program::entrypoint_no_alloc!(process_instruction);
 fn process_instruction<'a>(
     program_id: &Pubkey,
     accounts: &[AccountInfo<'a>],
@@ -1481,6 +1481,44 @@ fn process_instruction<'a>(
                     instruction_data.to_vec(),
                 ),
                 accounts,
+            )
+            .unwrap();
+        }
+        TEST_ACCOUNT_INFO_IN_ACCOUNT => {
+            msg!("TEST_ACCOUNT_INFO_IN_ACCOUNT");
+
+            let account_offset = usize::from_le_bytes(instruction_data[1..9].try_into().unwrap());
+
+            let mut instruction_data = vec![TEST_WRITE_ACCOUNT, 1];
+            instruction_data.extend_from_slice(&1u64.to_le_bytes());
+            instruction_data.push(1);
+
+            let data = accounts[ARGUMENT_INDEX].data.borrow().as_ptr();
+            let len = accounts.len();
+
+            let account_info_in_account: &mut [AccountInfo] = unsafe {
+                std::slice::from_raw_parts_mut(data.add(account_offset) as *mut AccountInfo, len)
+            };
+
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    accounts.as_ptr(),
+                    account_info_in_account.as_mut_ptr(),
+                    len,
+                );
+            }
+
+            invoke(
+                &create_instruction(
+                    *program_id,
+                    &[
+                        (program_id, false, false),
+                        (accounts[1].key, true, false),
+                        (accounts[0].key, false, false),
+                    ],
+                    instruction_data.to_vec(),
+                ),
+                account_info_in_account,
             )
             .unwrap();
         }

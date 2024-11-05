@@ -1,13 +1,15 @@
-#![cfg_attr(RUSTC_WITH_SPECIALIZATION, feature(min_specialization))]
+#![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
 
 #[macro_use]
 extern crate lazy_static;
 
+mod account_saver;
 pub mod accounts_background_service;
 pub mod bank;
 pub mod bank_client;
 pub mod bank_forks;
+pub mod bank_hash_cache;
 pub mod bank_utils;
 pub mod commitment;
 pub mod epoch_stakes;
@@ -17,6 +19,7 @@ pub mod loader_utils;
 pub mod non_circulating_supply;
 pub mod prioritization_fee;
 pub mod prioritization_fee_cache;
+pub mod rent_collector;
 pub mod root_bank_cache;
 pub mod serde_snapshot;
 pub mod snapshot_archive_info;
@@ -33,6 +36,7 @@ pub mod stakes;
 pub mod static_ids;
 pub mod status_cache;
 pub mod transaction_batch;
+pub mod verify_precompiles;
 pub mod vote_sender_types;
 
 #[macro_use]

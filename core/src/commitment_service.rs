@@ -202,19 +202,17 @@ impl AggregateCommitmentService {
             }
             let vote_state = if pubkey == node_vote_pubkey {
                 // Override old vote_state in bank with latest one for my own vote pubkey
-                Ok(node_vote_state)
+                node_vote_state
             } else {
                 account.vote_state()
             };
-            if let Ok(vote_state) = vote_state {
-                Self::aggregate_commitment_for_vote_account(
-                    &mut commitment,
-                    &mut rooted_stake,
-                    vote_state,
-                    ancestors,
-                    *lamports,
-                );
-            }
+            Self::aggregate_commitment_for_vote_account(
+                &mut commitment,
+                &mut rooted_stake,
+                vote_state,
+                ancestors,
+                *lamports,
+            );
         }
 
         (commitment, rooted_stake)
@@ -277,7 +275,10 @@ mod tests {
         solana_sdk::{account::Account, pubkey::Pubkey, signature::Signer},
         solana_stake_program::stake_state,
         solana_vote_program::{
-            vote_state::{self, process_slot_vote_unchecked, VoteStateVersions},
+            vote_state::{
+                self, process_slot_vote_unchecked, TowerSync, VoteStateVersions,
+                MAX_LOCKOUT_HISTORY,
+            },
             vote_transaction,
         },
     };
@@ -543,7 +544,7 @@ mod tests {
     fn test_highest_super_majority_root_advance() {
         fn get_vote_state(vote_pubkey: Pubkey, bank: &Bank) -> VoteState {
             let vote_account = bank.get_vote_account(&vote_pubkey).unwrap();
-            vote_account.vote_state().cloned().unwrap()
+            vote_account.vote_state().clone()
         }
 
         let block_commitment_cache = RwLock::new(BlockCommitmentCache::new_for_tests());
@@ -568,9 +569,9 @@ mod tests {
                 &Pubkey::default(),
                 x + 1,
             );
-            let vote = vote_transaction::new_vote_transaction(
-                vec![x],
-                previous_bank.hash(),
+            let tower_sync = TowerSync::new_from_slot(x, previous_bank.hash());
+            let vote = vote_transaction::new_tower_sync_transaction(
+                tower_sync,
                 previous_bank.last_blockhash(),
                 &validator_vote_keypairs.node_keypair,
                 &validator_vote_keypairs.vote_keypair,
@@ -601,9 +602,9 @@ mod tests {
             &Pubkey::default(),
             34,
         );
-        let vote33 = vote_transaction::new_vote_transaction(
-            vec![33],
-            bank33.hash(),
+        let tower_sync = TowerSync::new_from_slot(33, bank33.hash());
+        let vote33 = vote_transaction::new_tower_sync_transaction(
+            tower_sync,
             bank33.last_blockhash(),
             &validator_vote_keypairs.node_keypair,
             &validator_vote_keypairs.vote_keypair,
@@ -683,9 +684,13 @@ mod tests {
                 &Pubkey::default(),
                 x + 1,
             );
-            let vote = vote_transaction::new_vote_transaction(
-                vec![x],
-                previous_bank.hash(),
+            // Skip 34 as it is not part of this fork.
+            let lowest_slot = x - MAX_LOCKOUT_HISTORY as u64;
+            let slots: Vec<_> = (lowest_slot..(x + 1)).filter(|s| *s != 34).collect();
+            let tower_sync =
+                TowerSync::new_from_slots(slots, previous_bank.hash(), Some(lowest_slot - 1));
+            let vote = vote_transaction::new_tower_sync_transaction(
+                tower_sync,
                 previous_bank.last_blockhash(),
                 &validator_vote_keypairs.node_keypair,
                 &validator_vote_keypairs.vote_keypair,

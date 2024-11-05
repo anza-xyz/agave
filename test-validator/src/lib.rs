@@ -15,6 +15,7 @@ use {
         consensus::tower_storage::TowerStorage,
         validator::{Validator, ValidatorConfig, ValidatorStartProgress},
     },
+    solana_feature_set::FEATURE_NAMES,
     solana_geyser_plugin_manager::{
         geyser_plugin_manager::GeyserPluginManager, GeyserPluginManagerRequest,
     },
@@ -43,7 +44,6 @@ use {
         commitment_config::CommitmentConfig,
         epoch_schedule::EpochSchedule,
         exit::Exit,
-        feature_set::FEATURE_NAMES,
         fee_calculator::FeeRateGovernor,
         instruction::{AccountMeta, Instruction},
         message::Message,
@@ -428,6 +428,32 @@ impl TestValidatorGenesis {
         Ok(self)
     }
 
+    pub fn clone_feature_set(&mut self, rpc_client: &RpcClient) -> Result<&mut Self, String> {
+        for feature_ids in FEATURE_NAMES
+            .keys()
+            .cloned()
+            .collect::<Vec<Pubkey>>()
+            .chunks(MAX_MULTIPLE_ACCOUNTS)
+        {
+            rpc_client
+                .get_multiple_accounts(feature_ids)
+                .map_err(|err| format!("Failed to fetch: {err}"))?
+                .into_iter()
+                .zip(feature_ids)
+                .for_each(|(maybe_account, feature_id)| {
+                    if maybe_account
+                        .as_ref()
+                        .and_then(solana_sdk::feature::from_account)
+                        .and_then(|feature| feature.activated_at)
+                        .is_none()
+                    {
+                        self.deactivate_feature_set.insert(*feature_id);
+                    }
+                });
+        }
+        Ok(self)
+    }
+
     pub fn add_accounts_from_json_files(
         &mut self,
         accounts: &[AccountInfo],
@@ -602,14 +628,13 @@ impl TestValidatorGenesis {
             socket_addr_space,
             rpc_to_plugin_manager_receiver,
         )
-        .map(|test_validator| {
+        .inspect(|test_validator| {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_io()
                 .enable_time()
                 .build()
                 .unwrap();
             runtime.block_on(test_validator.wait_for_nonzero_fees());
-            test_validator
         })
     }
 
@@ -950,6 +975,7 @@ impl TestValidator {
                 started_from_validator: true,
                 ..AccountsIndexConfig::default()
             }),
+            account_indexes: Some(config.rpc_config.account_indexes.clone()),
             ..AccountsDbConfig::default()
         });
 
@@ -993,7 +1019,6 @@ impl TestValidator {
                 incremental_snapshot_archives_dir: ledger_path.to_path_buf(),
                 ..SnapshotConfig::default()
             },
-            enforce_ulimit_nofile: false,
             warp_slot: config.warp_slot,
             validator_exit: config.validator_exit.clone(),
             max_ledger_shreds: config.max_ledger_shreds,
@@ -1001,7 +1026,6 @@ impl TestValidator {
             staked_nodes_overrides: config.staked_nodes_overrides.clone(),
             accounts_db_config,
             runtime_config,
-            account_indexes: config.rpc_config.account_indexes.clone(),
             ..ValidatorConfig::default_for_test()
         };
         if let Some(ref tower_storage) = config.tower_storage {

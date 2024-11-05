@@ -8,7 +8,6 @@ use {
         completed_data_sets_service::CompletedDataSetsSender,
         repair::{
             ancestor_hashes_service::AncestorHashesReplayUpdateReceiver,
-            quic_endpoint::LocalRequest,
             repair_response,
             repair_service::{
                 DumpedSlotsReceiver, OutstandingShredRepairs, PopularPrunedForksSender, RepairInfo,
@@ -17,8 +16,10 @@ use {
         },
         result::{Error, Result},
     },
+    bytes::Bytes,
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     rayon::{prelude::*, ThreadPool},
+    solana_feature_set as feature_set,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred},
@@ -32,7 +33,7 @@ use {
     solana_runtime::bank_forks::BankForks,
     solana_sdk::{
         clock::{Slot, DEFAULT_MS_PER_SLOT},
-        feature_set,
+        pubkey::Pubkey,
     },
     solana_turbine::cluster_nodes,
     std::{
@@ -159,11 +160,6 @@ fn run_check_duplicate(
             root_bank = bank_forks.read().unwrap().root_bank();
         }
         let shred_slot = shred.slot();
-        let merkle_conflict_duplicate_proofs = cluster_nodes::check_feature_activation(
-            &feature_set::merkle_conflict_duplicate_proofs::id(),
-            shred_slot,
-            &root_bank,
-        );
         let chained_merkle_conflict_duplicate_proofs = cluster_nodes::check_feature_activation(
             &feature_set::chained_merkle_conflict_duplicate_proofs::id(),
             shred_slot,
@@ -171,25 +167,8 @@ fn run_check_duplicate(
         );
         let (shred1, shred2) = match shred {
             PossibleDuplicateShred::LastIndexConflict(shred, conflict)
-            | PossibleDuplicateShred::ErasureConflict(shred, conflict) => (shred, conflict),
-            PossibleDuplicateShred::MerkleRootConflict(shred, conflict) => {
-                if merkle_conflict_duplicate_proofs {
-                    // Although this proof can be immediately stored on detection, we wait until
-                    // here in order to check the feature flag, as storage in blockstore can
-                    // preclude the detection of other duplicate proofs in this slot
-                    if blockstore.has_duplicate_shreds_in_slot(shred_slot) {
-                        return Ok(());
-                    }
-                    blockstore.store_duplicate_slot(
-                        shred_slot,
-                        conflict.clone(),
-                        shred.clone().into_payload(),
-                    )?;
-                    (shred, conflict)
-                } else {
-                    return Ok(());
-                }
-            }
+            | PossibleDuplicateShred::ErasureConflict(shred, conflict)
+            | PossibleDuplicateShred::MerkleRootConflict(shred, conflict) => (shred, conflict),
             PossibleDuplicateShred::ChainedMerkleRootConflict(shred, conflict) => {
                 if chained_merkle_conflict_duplicate_proofs {
                     // Although this proof can be immediately stored on detection, we wait until
@@ -398,8 +377,9 @@ impl WindowService {
         retransmit_sender: Sender<Vec<ShredPayload>>,
         repair_socket: Arc<UdpSocket>,
         ancestor_hashes_socket: Arc<UdpSocket>,
-        repair_quic_endpoint_sender: AsyncSender<LocalRequest>,
-        repair_quic_endpoint_response_sender: Sender<(SocketAddr, Vec<u8>)>,
+        repair_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
+        ancestor_hashes_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
+        ancestor_hashes_response_quic_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
         exit: Arc<AtomicBool>,
         repair_info: RepairInfo,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
@@ -423,8 +403,9 @@ impl WindowService {
             exit.clone(),
             repair_socket,
             ancestor_hashes_socket,
-            repair_quic_endpoint_sender,
-            repair_quic_endpoint_response_sender,
+            repair_request_quic_sender,
+            ancestor_hashes_request_quic_sender,
+            ancestor_hashes_response_quic_receiver,
             repair_info,
             verified_vote_receiver,
             outstanding_repair_requests.clone(),

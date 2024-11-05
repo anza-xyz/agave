@@ -193,10 +193,10 @@ impl AncestorRequestStatus {
     /// Record the response from `from_addr`. Returns Some(DuplicateAncestorDecision)
     /// if we have finalized a decision based on the responses. We can finalize a decision when
     /// one of the following conditions is met:
-    /// 1) We have heard from all the validators, OR
-    /// 2) >= MINIMUM_ANCESTOR_AGREEMENT_SIZE have agreed that we have the correct versions
-    /// of nth ancestor, for some `n>0`, AND >= MINIMUM_ANCESTOR_AGREEMENT_SIZE have
-    /// agreed we have the wrong version of the `n-1` ancestor.
+    /// 1. We have heard from all the validators
+    /// 2. Or >= MINIMUM_ANCESTOR_AGREEMENT_SIZE have agreed that we have the correct versions
+    ///    of nth ancestor, for some `n>0`, AND >= MINIMUM_ANCESTOR_AGREEMENT_SIZE have
+    ///    agreed we have the wrong version of the `n-1` ancestor.
     pub fn add_response(
         &mut self,
         from_addr: &SocketAddr,
@@ -319,14 +319,14 @@ impl AncestorRequestStatus {
                             agreed_response[*mismatch_i];
                         let mismatch_our_frozen_hash = blockstore.get_bank_hash(mismatch_slot);
                         info!(
-                            "When processing the ancestor sample for {}, there was a mismatch
-                            for {mismatch_slot}: we had frozen hash {:?} and the cluster agreed upon
-                            {mismatch_agreed_upon_hash}. However for a later ancestor {ancestor_slot}
-                            we have agreement on {our_frozen_hash} as the bank hash. This should never
-                            be possible, something is wrong or the cluster sample is invalid.
-                            Rejecting and queuing the ancestor hashes request for retry",
-                            self.requested_mismatched_slot,
-                            mismatch_our_frozen_hash
+                            "When processing the ancestor sample for {}, there was a mismatch \
+                             for {mismatch_slot}: we had frozen hash {:?} and the cluster agreed \
+                             upon {mismatch_agreed_upon_hash}. However for a later ancestor \
+                             {ancestor_slot} we have agreement on {our_frozen_hash} as the bank \
+                             hash. This should never be possible, something is wrong or the \
+                             cluster sample is invalid. Rejecting and queuing the ancestor hashes \
+                             request for retry",
+                            self.requested_mismatched_slot, mismatch_our_frozen_hash
                         );
                         return DuplicateAncestorDecision::InvalidSample;
                     }
@@ -346,13 +346,14 @@ impl AncestorRequestStatus {
                         let (mismatch_slot, mismatch_agreed_upon_hash) =
                             agreed_response[*mismatch_i];
                         info!(
-                            "When processing the ancestor sample for {}, an earlier ancestor {mismatch_slot}
-                            was agreed upon by the cluster with hash {mismatch_agreed_upon_hash} but not
-                            frozen in our blockstore. However for a later ancestor {ancestor_slot} we have
-                            agreement on {our_frozen_hash} as the bank hash. This should only be possible if
-                            we have just started from snapshot and immediately encountered a duplicate block on
-                            a popular pruned fork, otherwise something is seriously wrong. Continuing with the
-                            repair",
+                            "When processing the ancestor sample for {}, an earlier ancestor \
+                             {mismatch_slot} was agreed upon by the cluster with hash \
+                             {mismatch_agreed_upon_hash} but not frozen in our blockstore. \
+                             However for a later ancestor {ancestor_slot} we have agreement on \
+                             {our_frozen_hash} as the bank hash. This should only be possible if \
+                             we have just started from snapshot and immediately encountered a \
+                             duplicate block on a popular pruned fork, otherwise something is \
+                             seriously wrong. Continuing with the repair",
                             self.requested_mismatched_slot
                         );
                     }

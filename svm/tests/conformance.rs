@@ -7,6 +7,7 @@ use {
     prost::Message,
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
     solana_compute_budget::compute_budget::ComputeBudget,
+    solana_feature_set::{FeatureSet, FEATURE_NAMES},
     solana_log_collector::LogCollector,
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext},
@@ -19,7 +20,6 @@ use {
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         bpf_loader_upgradeable,
-        feature_set::{FeatureSet, FEATURE_NAMES},
         hash::Hash,
         instruction::AccountMeta,
         message::SanitizedMessage,
@@ -36,6 +36,7 @@ use {
         account_loader::CheckedTransactionDetails,
         program_loader,
         transaction_processing_callback::TransactionProcessingCallback,
+        transaction_processing_result::TransactionProcessingResultExtensions,
         transaction_processor::{
             ExecutionRecordingConfig, TransactionBatchProcessor, TransactionProcessingConfig,
             TransactionProcessingEnvironment,
@@ -243,7 +244,7 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
         create_program_runtime_environment_v1(&feature_set, &compute_budget, false, false).unwrap();
 
     mock_bank.override_feature_set(feature_set);
-    let batch_processor = TransactionBatchProcessor::<MockForkGraph>::new(42, 2, HashSet::new());
+    let batch_processor = TransactionBatchProcessor::<MockForkGraph>::new_uninitialized(42, 2);
 
     let fork_graph = Arc::new(RwLock::new(MockForkGraph {}));
     {
@@ -311,17 +312,8 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
     );
 
     // Assert that the transaction has worked without errors.
-    if !result.execution_results[0].was_executed()
-        || result.execution_results[0]
-            .details()
-            .unwrap()
-            .status
-            .is_err()
-    {
-        if matches!(
-            result.execution_results[0].flattened_result(),
-            Err(TransactionError::InsufficientFundsForRent { .. })
-        ) {
+    if let Err(err) = result.processing_results[0].flattened_result() {
+        if matches!(err, TransactionError::InsufficientFundsForRent { .. }) {
             // This is a transaction error not an instruction error, so execute the instruction
             // instead.
             execute_fixture_as_instr(
@@ -344,7 +336,10 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
         return;
     }
 
-    let executed_tx = result.execution_results[0].executed_transaction().unwrap();
+    let processed_tx = result.processing_results[0]
+        .processed_transaction()
+        .unwrap();
+    let executed_tx = processed_tx.executed_transaction().unwrap();
     let execution_details = &executed_tx.execution_details;
     let loaded_accounts = &executed_tx.loaded_transaction.accounts;
     verify_accounts_and_data(

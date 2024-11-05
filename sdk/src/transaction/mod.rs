@@ -126,18 +126,19 @@ use {
         signers::Signers,
     },
     serde::Serialize,
+    solana_feature_set as feature_set,
     solana_program::{system_instruction::SystemInstruction, system_program},
     solana_sanitize::{Sanitize, SanitizeError},
-    solana_sdk::feature_set,
     solana_short_vec as short_vec,
     std::result,
 };
 
-mod error;
 mod sanitized;
 mod versioned;
 
-pub use {error::*, sanitized::*, versioned::*};
+#[deprecated(since = "2.1.0", note = "Use solana_transaction_error crate instead")]
+pub use solana_transaction_error::*;
+pub use {sanitized::*, versioned::*};
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum TransactionVerificationMode {
@@ -172,7 +173,7 @@ pub type Result<T> = result::Result<T, TransactionError>;
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "5LPHxp7TKPeV7GZ9pcT4NxNxJa3ZhvToDekCMAPvNWLv")
+    frozen_abi(digest = "686AAhRhjXpqKidmJEdHHcJCL9XxCxebu8Xmku9shp83")
 )]
 #[derive(Debug, PartialEq, Default, Eq, Clone, Serialize, Deserialize)]
 pub struct Transaction {
@@ -200,7 +201,7 @@ pub struct Transaction {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "5LPHxp7TKPeV7GZ9pcT4NxNxJa3ZhvToDekCMAPvNWLv")
+    frozen_abi(digest = "H7xQFcd1MtMv9QKZWGatBAXwhg28tpeX59P3s8ZZLAY4")
 )]
 #[derive(Debug, PartialEq, Default, Eq, Clone, Serialize, Deserialize)]
 pub struct Transaction {

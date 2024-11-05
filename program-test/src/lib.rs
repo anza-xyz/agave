@@ -8,14 +8,13 @@ use {
     base64::{prelude::BASE64_STANDARD, Engine},
     chrono_humanize::{Accuracy, HumanTime, Tense},
     log::*,
-    solana_accounts_db::{
-        accounts_db::AccountShrinkThreshold, accounts_index::AccountSecondaryIndexes,
-        epoch_accounts_hash::EpochAccountsHash,
-    },
+    solana_accounts_db::epoch_accounts_hash::EpochAccountsHash,
     solana_banks_client::start_client,
     solana_banks_server::banks_server::start_local_server,
     solana_bpf_loader_program::serialization::serialize_parameters,
     solana_compute_budget::compute_budget::ComputeBudget,
+    solana_feature_set::FEATURE_NAMES,
+    solana_instruction::{error::InstructionError, Instruction},
     solana_log_collector::ic_msg,
     solana_program_runtime::{
         invoke_context::BuiltinFunctionWithContext, loaded_programs::ProgramCacheEntry, stable_log,
@@ -33,11 +32,9 @@ use {
         account_info::AccountInfo,
         clock::{Epoch, Slot},
         entrypoint::{deserialize, ProgramResult, SUCCESS},
-        feature_set::FEATURE_NAMES,
         fee_calculator::{FeeRateGovernor, DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE},
         genesis_config::{ClusterType, GenesisConfig},
         hash::Hash,
-        instruction::{Instruction, InstructionError},
         native_token::sol_to_lamports,
         poh_config::PohConfig,
         program_error::{ProgramError, UNSUPPORTED_SYSVAR},
@@ -56,6 +53,7 @@ use {
         fs::File,
         io::{self, Read},
         mem::transmute,
+        panic::AssertUnwindSafe,
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -112,7 +110,6 @@ pub fn invoke_builtin_function(
 
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
-    let instruction_data = instruction_context.get_instruction_data();
     let instruction_account_indices = 0..instruction_context.get_number_of_instruction_accounts();
 
     // mock builtin program must consume units
@@ -131,24 +128,35 @@ pub fn invoke_builtin_function(
 
     // Serialize entrypoint parameters with SBF ABI
     let (mut parameter_bytes, _regions, _account_lengths) = serialize_parameters(
-        invoke_context.transaction_context,
-        invoke_context
-            .transaction_context
-            .get_current_instruction_context()?,
+        transaction_context,
+        instruction_context,
         true, // copy_account_data // There is no VM so direct mapping can not be implemented here
     )?;
 
     // Deserialize data back into instruction params
-    let (program_id, account_infos, _input) =
+    let (program_id, account_infos, input) =
         unsafe { deserialize(&mut parameter_bytes.as_slice_mut()[0] as *mut u8) };
 
     // Execute the program
-    builtin_function(program_id, &account_infos, instruction_data).map_err(|err| {
-        let err = InstructionError::from(u64::from(err));
-        stable_log::program_failure(&log_collector, program_id, &err);
-        let err: Box<dyn std::error::Error> = Box::new(err);
-        err
-    })?;
+    match std::panic::catch_unwind(AssertUnwindSafe(|| {
+        builtin_function(program_id, &account_infos, input)
+    })) {
+        Ok(program_result) => {
+            program_result.map_err(|program_error| {
+                let err = InstructionError::from(u64::from(program_error));
+                stable_log::program_failure(&log_collector, program_id, &err);
+                let err: Box<dyn std::error::Error> = Box::new(err);
+                err
+            })?;
+        }
+        Err(_panic_error) => {
+            let err = InstructionError::ProgramFailedToComplete;
+            stable_log::program_failure(&log_collector, program_id, &err);
+            let err: Box<dyn std::error::Error> = Box::new(err);
+            Err(err)?;
+        }
+    };
+
     stable_log::program_success(&log_collector, program_id);
 
     // Lookup table for AccountInfo
@@ -727,8 +735,6 @@ impl ProgramTest {
 
             // If SBF is not required (i.e., we were invoked with `test`), use the provided
             // processor function as is.
-            //
-            // TODO: figure out why tests hang if a processor panics when running native code.
             (false, _, Some(builtin_function)) => {
                 self.add_builtin_program(program_name, program_id, builtin_function)
             }
@@ -850,13 +856,12 @@ impl ProgramTest {
             Vec::default(),
             None,
             None,
-            AccountSecondaryIndexes::default(),
-            AccountShrinkThreshold::default(),
             false,
             None,
             None,
             None,
             Arc::default(),
+            None,
             None,
         );
 

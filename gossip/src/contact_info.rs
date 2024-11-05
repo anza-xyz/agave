@@ -1,6 +1,6 @@
 pub use solana_client::connection_cache::Protocol;
 use {
-    crate::{crds_value::MAX_WALLCLOCK, legacy_contact_info::LegacyContactInfo},
+    crate::{crds_data::MAX_WALLCLOCK, legacy_contact_info::LegacyContactInfo},
     assert_matches::{assert_matches, debug_assert_matches},
     serde::{Deserialize, Deserializer, Serialize},
     solana_sanitize::{Sanitize, SanitizeError},
@@ -8,12 +8,12 @@ use {
         pubkey::Pubkey,
         quic::QUIC_PORT_OFFSET,
         rpc_port::{DEFAULT_RPC_PORT, DEFAULT_RPC_PUBSUB_PORT},
-        serde_varint,
     },
-    solana_short_vec as short_vec,
+    solana_serde_varint as serde_varint, solana_short_vec as short_vec,
     solana_streamer::socket::SocketAddrSpace,
     static_assertions::const_assert_eq,
     std::{
+        cmp::Ordering,
         collections::HashSet,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         time::{SystemTime, UNIX_EPOCH},
@@ -34,10 +34,11 @@ const SOCKET_TAG_TPU_FORWARDS: u8 = 6;
 const SOCKET_TAG_TPU_FORWARDS_QUIC: u8 = 7;
 const SOCKET_TAG_TPU_QUIC: u8 = 8;
 const SOCKET_TAG_TPU_VOTE: u8 = 9;
+const SOCKET_TAG_TPU_VOTE_QUIC: u8 = 12;
 const SOCKET_TAG_TVU: u8 = 10;
 const SOCKET_TAG_TVU_QUIC: u8 = 11;
-const_assert_eq!(SOCKET_CACHE_SIZE, 12);
-const SOCKET_CACHE_SIZE: usize = SOCKET_TAG_TVU_QUIC as usize + 1usize;
+const_assert_eq!(SOCKET_CACHE_SIZE, 13);
+const SOCKET_CACHE_SIZE: usize = SOCKET_TAG_TPU_VOTE_QUIC as usize + 1usize;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -181,11 +182,7 @@ impl ContactInfo {
         Self {
             pubkey,
             wallclock,
-            outset: {
-                let now = SystemTime::now();
-                let elapsed = now.duration_since(UNIX_EPOCH).unwrap();
-                u64::try_from(elapsed.as_micros()).unwrap()
-            },
+            outset: get_node_outset(),
             shred_version,
             version: solana_version::Version::default(),
             addrs: Vec::<IpAddr>::default(),
@@ -215,8 +212,11 @@ impl ContactInfo {
         &self.version
     }
 
-    pub fn set_pubkey(&mut self, pubkey: Pubkey) {
-        self.pubkey = pubkey
+    pub fn hot_swap_pubkey(&mut self, pubkey: Pubkey) {
+        self.pubkey = pubkey;
+        // Need to update ContactInfo.outset so that this node's contact-info
+        // will override older node with the same pubkey.
+        self.outset = get_node_outset();
     }
 
     pub fn set_wallclock(&mut self, wallclock: u64) {
@@ -241,7 +241,7 @@ impl ContactInfo {
         SOCKET_TAG_TPU_FORWARDS,
         SOCKET_TAG_TPU_FORWARDS_QUIC
     );
-    get_socket!(tpu_vote, SOCKET_TAG_TPU_VOTE);
+    get_socket!(tpu_vote, SOCKET_TAG_TPU_VOTE, SOCKET_TAG_TPU_VOTE_QUIC);
     get_socket!(tvu, SOCKET_TAG_TVU, SOCKET_TAG_TVU_QUIC);
 
     set_socket!(set_gossip, SOCKET_TAG_GOSSIP);
@@ -256,6 +256,7 @@ impl ContactInfo {
         SOCKET_TAG_TPU_FORWARDS_QUIC
     );
     set_socket!(set_tpu_vote, SOCKET_TAG_TPU_VOTE);
+    set_socket!(set_tpu_vote_quic, SOCKET_TAG_TPU_VOTE_QUIC);
     set_socket!(set_tvu, SOCKET_TAG_TVU);
     set_socket!(set_tvu_quic, SOCKET_TAG_TVU_QUIC);
 
@@ -435,6 +436,38 @@ impl ContactInfo {
         node.set_serve_repair_quic((addr, port + 4)).unwrap();
         node
     }
+
+    // Returns true if the other contact-info is a duplicate instance of this
+    // node, with a more recent `outset` timestamp.
+    #[inline]
+    #[must_use]
+    pub(crate) fn check_duplicate(&self, other: &ContactInfo) -> bool {
+        self.pubkey == other.pubkey && self.outset < other.outset
+    }
+
+    // Returns None if the contact-infos have different pubkey.
+    // Otherwise returns true if (self.outset, self.wallclock) tuple is larger
+    // than (other.outset, other.wallclock).
+    // If the tuples are equal it returns None.
+    #[inline]
+    #[must_use]
+    pub(crate) fn overrides(&self, other: &ContactInfo) -> Option<bool> {
+        if self.pubkey != other.pubkey {
+            return None;
+        }
+        let other = (other.outset, other.wallclock);
+        match (self.outset, self.wallclock).cmp(&other) {
+            Ordering::Less => Some(false),
+            Ordering::Greater => Some(true),
+            Ordering::Equal => None,
+        }
+    }
+}
+
+fn get_node_outset() -> u64 {
+    let now = SystemTime::now();
+    let elapsed = now.duration_since(UNIX_EPOCH).unwrap();
+    u64::try_from(elapsed.as_micros()).unwrap()
 }
 
 impl Default for ContactInfo {
@@ -594,7 +627,7 @@ pub(crate) fn get_quic_socket(socket: &SocketAddr) -> Result<SocketAddr, Error> 
     ))
 }
 
-#[cfg(all(test, RUSTC_WITH_SPECIALIZATION, feature = "frozen-abi"))]
+#[cfg(all(test, feature = "frozen-abi"))]
 impl solana_frozen_abi::abi_example::AbiExample for ContactInfo {
     fn example() -> Self {
         Self {
@@ -622,6 +655,7 @@ mod tests {
             iter::repeat_with,
             net::{Ipv4Addr, Ipv6Addr},
             ops::Range,
+            time::Duration,
         },
     };
 
@@ -668,7 +702,8 @@ mod tests {
         assert_matches!(ci.tpu(Protocol::UDP), Err(Error::InvalidPort(0)));
         assert_matches!(ci.tpu_forwards(Protocol::QUIC), Err(Error::InvalidPort(0)));
         assert_matches!(ci.tpu_forwards(Protocol::UDP), Err(Error::InvalidPort(0)));
-        assert_matches!(ci.tpu_vote(), Err(Error::InvalidPort(0)));
+        assert_matches!(ci.tpu_vote(Protocol::UDP), Err(Error::InvalidPort(0)));
+        assert_matches!(ci.tpu_vote(Protocol::QUIC), Err(Error::InvalidPort(0)));
         assert_matches!(ci.tvu(Protocol::QUIC), Err(Error::InvalidPort(0)));
         assert_matches!(ci.tvu(Protocol::UDP), Err(Error::InvalidPort(0)));
     }
@@ -824,8 +859,12 @@ mod tests {
                 sockets.get(&SOCKET_TAG_TPU_FORWARDS_QUIC)
             );
             assert_eq!(
-                node.tpu_vote().ok().as_ref(),
+                node.tpu_vote(Protocol::UDP).ok().as_ref(),
                 sockets.get(&SOCKET_TAG_TPU_VOTE)
+            );
+            assert_eq!(
+                node.tpu_vote(Protocol::QUIC).ok().as_ref(),
+                sockets.get(&SOCKET_TAG_TPU_VOTE_QUIC)
             );
             assert_eq!(
                 node.tvu(Protocol::UDP).ok().as_ref(),
@@ -922,7 +961,10 @@ mod tests {
                 old.tpu(Protocol::UDP).unwrap().port() + QUIC_PORT_OFFSET
             )
         );
-        assert_eq!(old.tpu_vote().unwrap(), node.tpu_vote().unwrap());
+        assert_eq!(
+            old.tpu_vote().unwrap(),
+            node.tpu_vote(Protocol::UDP).unwrap()
+        );
         assert_eq!(
             old.tvu(Protocol::QUIC).unwrap(),
             node.tvu(Protocol::QUIC).unwrap()
@@ -1015,5 +1057,96 @@ mod tests {
             node.tpu_forwards(Protocol::QUIC),
             Err(Error::InvalidPort(0))
         );
+    }
+
+    #[test]
+    fn test_check_duplicate() {
+        let mut rng = rand::thread_rng();
+        let mut node = ContactInfo::new(
+            Keypair::new().pubkey(),
+            rng.gen(), // wallclock
+            rng.gen(), // shred_version
+        );
+        // Same contact-info is not a duplicate instance.
+        {
+            let other = node.clone();
+            assert!(!node.check_duplicate(&other));
+            assert!(!other.check_duplicate(&node));
+            assert_eq!(node.overrides(&other), None);
+            assert_eq!(other.overrides(&node), None);
+        }
+        // Updated socket address is not a duplicate instance.
+        {
+            let mut other = node.clone();
+            while other.set_gossip(new_rand_socket(&mut rng)).is_err() {}
+            while other.set_serve_repair(new_rand_socket(&mut rng)).is_err() {}
+            assert!(!node.check_duplicate(&other));
+            assert!(!other.check_duplicate(&node));
+            assert_eq!(node.overrides(&other), None);
+            assert_eq!(other.overrides(&node), None);
+            other.remove_serve_repair();
+            assert!(!node.check_duplicate(&other));
+            assert!(!other.check_duplicate(&node));
+            assert_eq!(node.overrides(&other), None);
+            assert_eq!(other.overrides(&node), None);
+        }
+        // Updated wallclock is not a duplicate instance.
+        {
+            let other = node.clone();
+            node.set_wallclock(rng.gen());
+            assert!(!node.check_duplicate(&other));
+            assert!(!other.check_duplicate(&node));
+            assert_eq!(
+                node.overrides(&other),
+                Some(other.wallclock < node.wallclock)
+            );
+            assert_eq!(
+                other.overrides(&node),
+                Some(node.wallclock < other.wallclock)
+            );
+        }
+        // Different pubkey is not a duplicate instance.
+        {
+            let other = ContactInfo::new(
+                Keypair::new().pubkey(),
+                rng.gen(), // wallclock
+                rng.gen(), // shred_version
+            );
+            assert!(!node.check_duplicate(&other));
+            assert!(!other.check_duplicate(&node));
+            assert_eq!(node.overrides(&other), None);
+            assert_eq!(other.overrides(&node), None);
+
+            // Need to sleep here so that get_node_outset
+            // returns a larger value.
+            std::thread::sleep(Duration::from_millis(1));
+
+            node.hot_swap_pubkey(*other.pubkey());
+            assert!(node.outset > other.outset);
+            assert!(!node.check_duplicate(&other));
+            assert!(other.check_duplicate(&node));
+            assert_eq!(node.overrides(&other), Some(true));
+            assert_eq!(other.overrides(&node), Some(false));
+        }
+        // Same pubkey, more recent outset timestamp is a duplicate instance.
+        {
+            std::thread::sleep(Duration::from_millis(1));
+            let other = ContactInfo::new(
+                node.pubkey,
+                rng.gen(), // wallclock
+                rng.gen(), // shred_version
+            );
+            assert!(node.outset < other.outset);
+            assert!(node.check_duplicate(&other));
+            assert!(!other.check_duplicate(&node));
+            assert_eq!(node.overrides(&other), Some(false));
+            assert_eq!(other.overrides(&node), Some(true));
+            node.set_wallclock(other.wallclock);
+            assert!(node.outset < other.outset);
+            assert!(node.check_duplicate(&other));
+            assert!(!other.check_duplicate(&node));
+            assert_eq!(node.overrides(&other), Some(false));
+            assert_eq!(other.overrides(&node), Some(true));
+        }
     }
 }

@@ -1,11 +1,7 @@
 use {
-    crate::{
-        stake_account::StakeAccount,
-        stakes::{Stakes, StakesEnum},
-    },
-    serde::{Deserialize, Deserializer, Serialize, Serializer},
-    solana_sdk::{clock::Epoch, pubkey::Pubkey, stake::state::Stake},
-    solana_stake_program::stake_state::Delegation,
+    crate::stakes::{serde_stakes_to_delegation_format, SerdeStakesToStakeFormat, StakesEnum},
+    serde::{Deserialize, Serialize},
+    solana_sdk::{clock::Epoch, pubkey::Pubkey},
     solana_vote::vote_account::VoteAccountsHashMap,
     std::{collections::HashMap, sync::Arc},
 };
@@ -24,7 +20,7 @@ pub struct NodeVoteAccounts {
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 pub struct EpochStakes {
-    #[serde(with = "crate::stakes::serde_stakes_enum_compat")]
+    #[serde(with = "serde_stakes_to_delegation_format")]
     stakes: Arc<StakesEnum>,
     total_stake: u64,
     node_id_to_vote_accounts: Arc<NodeIdToVoteAccounts>,
@@ -42,6 +38,21 @@ impl EpochStakes {
             node_id_to_vote_accounts: Arc::new(node_id_to_vote_accounts),
             epoch_authorized_voters: Arc::new(epoch_authorized_voters),
         }
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn new_for_tests(
+        vote_accounts_hash_map: VoteAccountsHashMap,
+        leader_schedule_epoch: Epoch,
+    ) -> Self {
+        Self::new(
+            Arc::new(StakesEnum::Accounts(crate::stakes::Stakes::new_for_tests(
+                0,
+                solana_vote::vote_account::VoteAccounts::from(Arc::new(vote_accounts_hash_map)),
+                im::HashMap::default(),
+            ))),
+            leader_schedule_epoch,
+        )
     }
 
     pub fn stakes(&self) -> &StakesEnum {
@@ -90,20 +101,6 @@ impl EpochStakes {
             .iter()
             .filter_map(|(key, (stake, account))| {
                 let vote_state = account.vote_state();
-                let vote_state = match vote_state.as_ref() {
-                    Err(_) => {
-                        datapoint_warn!(
-                            "parse_epoch_vote_accounts",
-                            (
-                                "warn",
-                                format!("Unable to get vote_state from account {key}"),
-                                String
-                            ),
-                        );
-                        return None;
-                    }
-                    Ok(vote_state) => vote_state,
-                };
 
                 if *stake > 0 {
                     if let Some(authorized_voter) = vote_state
@@ -139,72 +136,11 @@ impl EpochStakes {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum VersionedEpochStakes {
     Current {
-        stakes: StakesSerdeWrapper,
+        stakes: SerdeStakesToStakeFormat,
         total_stake: u64,
         node_id_to_vote_accounts: Arc<NodeIdToVoteAccounts>,
         epoch_authorized_voters: Arc<EpochAuthorizedVoters>,
     },
-}
-
-/// Wrapper struct with custom serialization to support serializing
-/// `Stakes<StakeAccount>` as `Stakes<Stake>` without doing a full deep clone of
-/// the stake data. Serialization works by building a `Stakes<&Stake>` map which
-/// borrows `&Stake` from `StakeAccount` entries in `Stakes<StakeAccount>`. Note
-/// that `Stakes<&Stake>` still copies `Pubkey` keys so the `Stakes<&Stake>`
-/// data structure still allocates a fair amount of memory but the memory only
-/// remains allocated during serialization.
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
-#[derive(Debug, Clone)]
-pub enum StakesSerdeWrapper {
-    Stake(Stakes<Stake>),
-    Account(Stakes<StakeAccount<Delegation>>),
-}
-
-#[cfg(feature = "dev-context-only-utils")]
-impl PartialEq<Self> for StakesSerdeWrapper {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Stake(stakes), Self::Stake(other)) => stakes == other,
-            (Self::Account(stakes), Self::Account(other)) => stakes == other,
-            (Self::Stake(stakes), Self::Account(other)) => {
-                stakes == &Stakes::<Stake>::from(other.clone())
-            }
-            (Self::Account(stakes), Self::Stake(other)) => {
-                other == &Stakes::<Stake>::from(stakes.clone())
-            }
-        }
-    }
-}
-
-impl From<StakesSerdeWrapper> for StakesEnum {
-    fn from(stakes: StakesSerdeWrapper) -> Self {
-        match stakes {
-            StakesSerdeWrapper::Stake(stakes) => Self::Stakes(stakes),
-            StakesSerdeWrapper::Account(stakes) => Self::Accounts(stakes),
-        }
-    }
-}
-
-impl Serialize for StakesSerdeWrapper {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self {
-            Self::Stake(stakes) => stakes.serialize(serializer),
-            Self::Account(stakes) => Stakes::<&Stake>::from(stakes).serialize(serializer),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for StakesSerdeWrapper {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let stakes = Stakes::<Stake>::deserialize(deserializer)?;
-        Ok(Self::Stake(stakes))
-    }
 }
 
 impl From<VersionedEpochStakes> for EpochStakes {
@@ -262,7 +198,7 @@ pub(crate) fn split_epoch_stakes(
                 versioned_epoch_stakes.insert(
                     epoch,
                     VersionedEpochStakes::Current {
-                        stakes: StakesSerdeWrapper::Account(stakes.clone()),
+                        stakes: SerdeStakesToStakeFormat::Account(stakes.clone()),
                         total_stake,
                         node_id_to_vote_accounts,
                         epoch_authorized_voters,
@@ -273,7 +209,7 @@ pub(crate) fn split_epoch_stakes(
                 versioned_epoch_stakes.insert(
                     epoch,
                     VersionedEpochStakes::Current {
-                        stakes: StakesSerdeWrapper::Stake(stakes.clone()),
+                        stakes: SerdeStakesToStakeFormat::Stake(stakes.clone()),
                         total_stake,
                         node_id_to_vote_accounts,
                         epoch_authorized_voters,
@@ -289,11 +225,13 @@ pub(crate) fn split_epoch_stakes(
 pub(crate) mod tests {
     use {
         super::*,
-        crate::{stake_account::StakeAccount, stakes::StakesCache},
-        im::HashMap as ImHashMap,
+        crate::{
+            stake_account::StakeAccount,
+            stakes::{Stakes, StakesCache},
+        },
         solana_sdk::{account::AccountSharedData, rent::Rent},
-        solana_stake_program::stake_state::{self, Delegation},
-        solana_vote::vote_account::{VoteAccount, VoteAccounts},
+        solana_stake_program::stake_state::{self, Delegation, Stake},
+        solana_vote::vote_account::VoteAccount,
         solana_vote_program::vote_state::{self, create_account_with_authorized},
         std::iter,
     };
@@ -492,7 +430,7 @@ pub(crate) mod tests {
         assert_eq!(
             versioned.get(&epoch),
             Some(&VersionedEpochStakes::Current {
-                stakes: StakesSerdeWrapper::Account(test_stakes),
+                stakes: SerdeStakesToStakeFormat::Account(test_stakes),
                 total_stake: epoch_stakes.total_stake,
                 node_id_to_vote_accounts: epoch_stakes.node_id_to_vote_accounts,
                 epoch_authorized_voters: epoch_stakes.epoch_authorized_voters,
@@ -521,7 +459,7 @@ pub(crate) mod tests {
         assert_eq!(
             versioned.get(&epoch),
             Some(&VersionedEpochStakes::Current {
-                stakes: StakesSerdeWrapper::Stake(test_stakes),
+                stakes: SerdeStakesToStakeFormat::Stake(test_stakes),
                 total_stake: epoch_stakes.total_stake,
                 node_id_to_vote_accounts: epoch_stakes.node_id_to_vote_accounts,
                 epoch_authorized_voters: epoch_stakes.epoch_authorized_voters,
@@ -575,7 +513,7 @@ pub(crate) mod tests {
         assert_eq!(
             versioned.get(&epoch2),
             Some(&VersionedEpochStakes::Current {
-                stakes: StakesSerdeWrapper::Account(Stakes::default()),
+                stakes: SerdeStakesToStakeFormat::Account(Stakes::default()),
                 total_stake: 200,
                 node_id_to_vote_accounts: Arc::default(),
                 epoch_authorized_voters: Arc::default(),
@@ -584,7 +522,7 @@ pub(crate) mod tests {
         assert_eq!(
             versioned.get(&epoch3),
             Some(&VersionedEpochStakes::Current {
-                stakes: StakesSerdeWrapper::Stake(Stakes::default()),
+                stakes: SerdeStakesToStakeFormat::Stake(Stakes::default()),
                 total_stake: 300,
                 node_id_to_vote_accounts: Arc::default(),
                 epoch_authorized_voters: Arc::default(),
@@ -606,14 +544,7 @@ pub(crate) mod tests {
         let epoch_vote_accounts = new_epoch_vote_accounts(&vote_accounts_map, |node_id| {
             *node_id_to_stake_map.get(node_id).unwrap()
         });
-        let epoch_stakes = EpochStakes::new(
-            Arc::new(StakesEnum::Accounts(Stakes::new_for_tests(
-                0,
-                VoteAccounts::from(Arc::new(epoch_vote_accounts)),
-                ImHashMap::default(),
-            ))),
-            0,
-        );
+        let epoch_stakes = EpochStakes::new_for_tests(epoch_vote_accounts, 0);
 
         assert_eq!(epoch_stakes.total_stake(), 11000);
         for (node_id, stake) in node_id_to_stake_map.iter() {

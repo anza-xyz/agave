@@ -6,8 +6,10 @@ use {
         cost_tracker::{CostTracker, UpdatedCosts},
         transaction_cost::TransactionCost,
     },
+    solana_feature_set::FeatureSet,
     solana_perf::packet::Packet,
-    solana_sdk::{feature_set::FeatureSet, transaction::SanitizedTransaction},
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_svm_transaction::svm_message::SVMMessage,
     std::sync::Arc,
 };
 
@@ -104,7 +106,7 @@ impl ForwardPacketBatchesByAccounts {
 
     pub fn try_add_packet(
         &mut self,
-        sanitized_transaction: &SanitizedTransaction,
+        sanitized_transaction: &RuntimeTransaction<impl SVMMessage>,
         immutable_packet: Arc<ImmutableDeserializedPacket>,
         feature_set: &FeatureSet,
     ) -> bool {
@@ -145,7 +147,7 @@ impl ForwardPacketBatchesByAccounts {
     // put into batch #3 to satisfy all batch limits.
     fn get_batch_index_by_updated_costs(
         &self,
-        tx_cost: &TransactionCost,
+        tx_cost: &TransactionCost<impl SVMMessage>,
         updated_costs: &UpdatedCosts,
     ) -> usize {
         let Some(batch_index_by_block_limit) =
@@ -169,10 +171,15 @@ mod tests {
     use {
         super::*,
         crate::banking_stage::unprocessed_packet_batches::DeserializedPacket,
-        solana_cost_model::transaction_cost::UsageCostDetails,
+        lazy_static::lazy_static,
+        solana_cost_model::transaction_cost::{UsageCostDetails, WritableKeysTransaction},
+        solana_feature_set::FeatureSet,
         solana_sdk::{
-            compute_budget::ComputeBudgetInstruction, feature_set::FeatureSet, message::Message,
-            pubkey::Pubkey, system_instruction, transaction::Transaction,
+            compute_budget::ComputeBudgetInstruction,
+            message::Message,
+            pubkey::Pubkey,
+            system_instruction,
+            transaction::{SanitizedTransaction, Transaction},
         },
     };
 
@@ -181,7 +188,11 @@ mod tests {
     fn build_test_transaction_and_packet(
         priority: u64,
         write_to_account: &Pubkey,
-    ) -> (SanitizedTransaction, DeserializedPacket, u32) {
+    ) -> (
+        RuntimeTransaction<SanitizedTransaction>,
+        DeserializedPacket,
+        u32,
+    ) {
         let from_account = solana_sdk::pubkey::new_rand();
 
         let transaction = Transaction::new_unsigned(Message::new(
@@ -192,7 +203,7 @@ mod tests {
             Some(&from_account),
         ));
         let sanitized_transaction =
-            SanitizedTransaction::from_transaction_for_tests(transaction.clone());
+            RuntimeTransaction::from_transaction_for_tests(transaction.clone());
         let tx_cost = CostModel::calculate_cost(&sanitized_transaction, &FeatureSet::all_enabled());
         let cost = tx_cost.sum();
         let deserialized_packet =
@@ -202,6 +213,23 @@ mod tests {
         let limit_ratio: u32 =
             ((block_cost_limits::MAX_WRITABLE_ACCOUNT_UNITS - cost + 1) / cost) as u32;
         (sanitized_transaction, deserialized_packet, limit_ratio)
+    }
+
+    fn zero_transaction_cost() -> TransactionCost<'static, WritableKeysTransaction> {
+        lazy_static! {
+            static ref DUMMY_TRANSACTION: RuntimeTransaction<WritableKeysTransaction> =
+                RuntimeTransaction::new_for_tests(WritableKeysTransaction(vec![]));
+        };
+
+        TransactionCost::Transaction(UsageCostDetails {
+            transaction: &DUMMY_TRANSACTION,
+            signature_cost: 0,
+            write_lock_cost: 0,
+            data_bytes_cost: 0,
+            programs_execution_cost: 0,
+            loaded_accounts_data_size_cost: 0,
+            allocated_accounts_data_size: 0,
+        })
     }
 
     #[test]
@@ -349,8 +377,10 @@ mod tests {
                 ForwardPacketBatchesByAccounts::new_with_default_batch_limits();
             forward_packet_batches_by_accounts.batch_vote_limit = test_cost + 1;
 
+            let dummy_transaction =
+                RuntimeTransaction::new_for_tests(WritableKeysTransaction(vec![]));
             let transaction_cost = TransactionCost::SimpleVote {
-                writable_accounts: vec![],
+                transaction: &dummy_transaction,
             };
             assert_eq!(
                 0,
@@ -380,7 +410,7 @@ mod tests {
                 ForwardPacketBatchesByAccounts::new_with_default_batch_limits();
             forward_packet_batches_by_accounts.batch_block_limit = test_cost + 1;
 
-            let transaction_cost = TransactionCost::Transaction(UsageCostDetails::default());
+            let transaction_cost = zero_transaction_cost();
             assert_eq!(
                 0,
                 forward_packet_batches_by_accounts.get_batch_index_by_updated_costs(
@@ -409,7 +439,7 @@ mod tests {
                 ForwardPacketBatchesByAccounts::new_with_default_batch_limits();
             forward_packet_batches_by_accounts.batch_account_limit = test_cost + 1;
 
-            let transaction_cost = TransactionCost::Transaction(UsageCostDetails::default());
+            let transaction_cost = zero_transaction_cost();
             assert_eq!(
                 0,
                 forward_packet_batches_by_accounts.get_batch_index_by_updated_costs(
@@ -443,7 +473,7 @@ mod tests {
             forward_packet_batches_by_accounts.batch_vote_limit = test_cost / 2 + 1;
             forward_packet_batches_by_accounts.batch_account_limit = test_cost / 3 + 1;
 
-            let transaction_cost = TransactionCost::Transaction(UsageCostDetails::default());
+            let transaction_cost = zero_transaction_cost();
             assert_eq!(
                 2,
                 forward_packet_batches_by_accounts.get_batch_index_by_updated_costs(

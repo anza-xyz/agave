@@ -1,13 +1,5 @@
 //! Plain Old Data types for the ElGamal encryption scheme.
 
-use {
-    crate::encryption::{
-        pod::impl_from_str, DECRYPT_HANDLE_LEN, ELGAMAL_CIPHERTEXT_LEN, ELGAMAL_PUBKEY_LEN,
-    },
-    base64::{prelude::BASE64_STANDARD, Engine},
-    bytemuck::Zeroable,
-    std::fmt,
-};
 #[cfg(not(target_os = "solana"))]
 use {
     crate::{
@@ -16,12 +8,29 @@ use {
     },
     curve25519_dalek::ristretto::CompressedRistretto,
 };
+use {
+    crate::{
+        encryption::{DECRYPT_HANDLE_LEN, ELGAMAL_CIPHERTEXT_LEN, ELGAMAL_PUBKEY_LEN},
+        pod::{impl_from_bytes, impl_from_str},
+    },
+    base64::{prelude::BASE64_STANDARD, Engine},
+    bytemuck::Zeroable,
+    std::fmt,
+};
+#[cfg(target_arch = "wasm32")]
+use {
+    js_sys::{Array, Uint8Array},
+    wasm_bindgen::prelude::*,
+};
 
 /// Maximum length of a base64 encoded ElGamal public key
 const ELGAMAL_PUBKEY_MAX_BASE64_LEN: usize = 44;
 
 /// Maximum length of a base64 encoded ElGamal ciphertext
 const ELGAMAL_CIPHERTEXT_MAX_BASE64_LEN: usize = 88;
+
+/// Maximum length of a base64 encoded ElGamal decrypt handle
+const DECRYPT_HANDLE_MAX_BASE64_LEN: usize = 44;
 
 /// The `ElGamalCiphertext` type as a `Pod`.
 #[derive(Clone, Copy, bytemuck_derive::Pod, bytemuck_derive::Zeroable, PartialEq, Eq)]
@@ -52,6 +61,11 @@ impl_from_str!(
     BASE64_LEN = ELGAMAL_CIPHERTEXT_MAX_BASE64_LEN
 );
 
+impl_from_bytes!(
+    TYPE = PodElGamalCiphertext,
+    BYTES_LEN = ELGAMAL_CIPHERTEXT_LEN
+);
+
 #[cfg(not(target_os = "solana"))]
 impl From<ElGamalCiphertext> for PodElGamalCiphertext {
     fn from(decoded_ciphertext: ElGamalCiphertext) -> Self {
@@ -71,7 +85,76 @@ impl TryFrom<PodElGamalCiphertext> for ElGamalCiphertext {
 /// The `ElGamalPubkey` type as a `Pod`.
 #[derive(Clone, Copy, Default, bytemuck_derive::Pod, bytemuck_derive::Zeroable, PartialEq, Eq)]
 #[repr(transparent)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub struct PodElGamalPubkey(pub(crate) [u8; ELGAMAL_PUBKEY_LEN]);
+
+#[cfg(target_arch = "wasm32")]
+#[allow(non_snake_case)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+impl PodElGamalPubkey {
+    /// Create a new `PodElGamalPubkey` object
+    ///
+    /// * `value` - optional public key as a base64 encoded string, `Uint8Array`, `[number]`
+    #[wasm_bindgen(constructor)]
+    pub fn constructor(value: JsValue) -> Result<PodElGamalPubkey, JsValue> {
+        if let Some(base64_str) = value.as_string() {
+            base64_str
+                .parse::<PodElGamalPubkey>()
+                .map_err(|e| e.to_string().into())
+        } else if let Some(uint8_array) = value.dyn_ref::<Uint8Array>() {
+            bytemuck::try_from_bytes(&uint8_array.to_vec())
+                .map_err(|err| JsValue::from(format!("Invalid Uint8Array ElGamalPubkey: {err:?}")))
+                .map(|pubkey| *pubkey)
+        } else if let Some(array) = value.dyn_ref::<Array>() {
+            let mut bytes = vec![];
+            let iterator = js_sys::try_iter(&array.values())?.expect("array to be iterable");
+            for x in iterator {
+                let x = x?;
+
+                if let Some(n) = x.as_f64() {
+                    if (0. ..=255.).contains(&n) {
+                        bytes.push(n as u8);
+                        continue;
+                    }
+                }
+                return Err(format!("Invalid array argument: {:?}", x).into());
+            }
+
+            bytemuck::try_from_bytes(&bytes)
+                .map_err(|err| JsValue::from(format!("Invalid Array pubkey: {err:?}")))
+                .map(|pubkey| *pubkey)
+        } else if value.is_undefined() {
+            Ok(PodElGamalPubkey::default())
+        } else {
+            Err("Unsupported argument".into())
+        }
+    }
+
+    /// Return the base64 string representation of the public key
+    pub fn toString(&self) -> String {
+        self.to_string()
+    }
+
+    /// Checks if two `ElGamalPubkey`s are equal
+    pub fn equals(&self, other: &PodElGamalPubkey) -> bool {
+        self == other
+    }
+
+    /// Return the `Uint8Array` representation of the public key
+    pub fn toBytes(&self) -> Box<[u8]> {
+        self.0.into()
+    }
+
+    pub fn compressed(decoded: &ElGamalPubkey) -> PodElGamalPubkey {
+        (*decoded).into()
+    }
+
+    pub fn decompressed(&self) -> Result<ElGamalPubkey, JsValue> {
+        (*self)
+            .try_into()
+            .map_err(|err| JsValue::from(format!("Invalid ElGamalPubkey: {err:?}")))
+    }
+}
 
 impl fmt::Debug for PodElGamalPubkey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -90,6 +173,8 @@ impl_from_str!(
     BYTES_LEN = ELGAMAL_PUBKEY_LEN,
     BASE64_LEN = ELGAMAL_PUBKEY_MAX_BASE64_LEN
 );
+
+impl_from_bytes!(TYPE = PodElGamalPubkey, BYTES_LEN = ELGAMAL_PUBKEY_LEN);
 
 #[cfg(not(target_os = "solana"))]
 impl From<ElGamalPubkey> for PodElGamalPubkey {
@@ -141,6 +226,20 @@ impl TryFrom<PodDecryptHandle> for DecryptHandle {
         Self::from_bytes(&pod_handle.0).ok_or(ElGamalError::CiphertextDeserialization)
     }
 }
+
+impl fmt::Display for PodDecryptHandle {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", BASE64_STANDARD.encode(self.0))
+    }
+}
+
+impl_from_str!(
+    TYPE = PodDecryptHandle,
+    BYTES_LEN = DECRYPT_HANDLE_LEN,
+    BASE64_LEN = DECRYPT_HANDLE_MAX_BASE64_LEN
+);
+
+impl_from_bytes!(TYPE = PodDecryptHandle, BYTES_LEN = DECRYPT_HANDLE_LEN);
 
 #[cfg(test)]
 mod tests {

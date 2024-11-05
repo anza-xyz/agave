@@ -32,8 +32,13 @@ solana-clap-utils = { workspace = true }
 solana-client = { workspace = true }
 solana-connection-cache = { workspace = true }
 solana-entry = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true }
-solana-frozen-abi-macro = { workspace = true, optional = true }
+solana-feature-set = { workspace = true }
+solana-frozen-abi = { workspace = true, optional = true, features = [
+    "frozen-abi",
+] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = [
+    "frozen-abi",
+] }
 solana-ledger = { workspace = true }
 solana-logger = { workspace = true }
 solana-measure = { workspace = true }
@@ -45,6 +50,7 @@ solana-rpc-client = { workspace = true }
 solana-runtime = { workspace = true }
 solana-sanitize = { workspace = true }
 solana-sdk = { workspace = true }
+solana-serde-varint = { workspace = true }
 solana-short-vec = { workspace = true }
 solana-streamer = { workspace = true }
 solana-tpu-client = { workspace = true }
@@ -57,15 +63,12 @@ thiserror = { workspace = true }
 [dev-dependencies]
 num_cpus = { workspace = true }
 serial_test = { workspace = true }
+solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 test-case = { workspace = true }
 
-[build-dependencies]
-rustc_version = { workspace = true, optional = true }
-
 [features]
 frozen-abi = [
-    "dep:rustc_version",
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-bloom/frozen-abi",
@@ -94,3 +97,6 @@ path = "src/main.rs"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+
+[lints]
+workspace = true

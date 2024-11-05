@@ -4,12 +4,12 @@
 
 use {
     crate::{
-        derivation_path::DerivationPath,
         pubkey::Pubkey,
         signature::{PresignerError, Signature},
-        transaction::TransactionError,
     },
     itertools::Itertools,
+    solana_derivation_path::DerivationPath,
+    solana_transaction_error::TransactionError,
     std::{
         error,
         fs::{self, File, OpenOptions},

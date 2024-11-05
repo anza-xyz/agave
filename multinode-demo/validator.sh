@@ -182,6 +182,12 @@ while [[ -n $1 ]]; do
     elif [[ $1 == --block-production-method ]]; then
       args+=("$1" "$2")
       shift 2
+    elif [[ $1 == --wen-restart ]]; then
+      args+=("$1" "$2")
+      shift 2
+    elif [[ $1 == --wen-restart-coordinator ]]; then
+      args+=("$1" "$2")
+      shift 2
     elif [[ $1 = -h ]]; then
       usage "$@"
     else

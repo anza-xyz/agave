@@ -62,7 +62,7 @@ impl CiphertextCiphertextEqualityProof {
     /// * `source_keypair` - The ElGamal keypair associated with the first ciphertext to be proved
     /// * `destination_pubkey` - The ElGamal pubkey associated with the second ElGamal ciphertext
     /// * `source_ciphertext` - The first ElGamal ciphertext for which the prover knows a
-    /// decryption key for
+    ///   decryption key for
     /// * `destination_opening` - The opening (randomness) associated with the second ElGamal ciphertext
     /// * `amount` - The message associated with the ElGamal ciphertext and Pedersen commitment
     /// * `transcript` - The transcript that does the bookkeeping for the Fiat-Shamir heuristic
@@ -189,7 +189,7 @@ impl CiphertextCiphertextEqualityProof {
             vec![
                 &self.z_s,            // z_s
                 &(-&c),               // -c
-                &(-&Scalar::one()),   // -identity
+                &(-&Scalar::ONE),     // -identity
                 &(&w * &self.z_x),    // w * z_x
                 &(&w * &self.z_s),    // w * z_s
                 &(&w_negated * &c),   // -w * c

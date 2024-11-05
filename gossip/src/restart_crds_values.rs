@@ -1,10 +1,11 @@
 use {
-    crate::crds_value::{new_rand_timestamp, sanitize_wallclock},
+    crate::crds_data::{new_rand_timestamp, sanitize_wallclock},
     bv::BitVec,
     itertools::Itertools,
     rand::Rng,
     solana_sanitize::{Sanitize, SanitizeError},
-    solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey, serde_varint},
+    solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey},
+    solana_serde_varint as serde_varint,
     thiserror::Error,
 };
 
@@ -218,7 +219,8 @@ mod test {
         super::*,
         crate::{
             cluster_info::MAX_CRDS_OBJECT_SIZE,
-            crds_value::{CrdsData, CrdsValue, CrdsValueLabel},
+            crds_data::CrdsData,
+            crds_value::{CrdsValue, CrdsValueLabel},
         },
         bincode::serialized_size,
         solana_sdk::{signature::Signer, signer::keypair::Keypair, timing::timestamp},
@@ -365,7 +367,7 @@ mod test {
         };
         assert_eq!(fork.sanitize(), Ok(()));
         assert_eq!(fork.observed_stake, 800_000);
-        fork.wallclock = crate::crds_value::MAX_WALLCLOCK;
+        fork.wallclock = crate::crds_data::MAX_WALLCLOCK;
         assert_eq!(fork.sanitize(), Err(SanitizeError::ValueOutOfBounds));
     }
 }

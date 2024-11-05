@@ -1,22 +1,38 @@
 use {
-    crate::bank::Bank,
-    solana_sdk::transaction::{Result, SanitizedTransaction},
-    std::borrow::Cow,
+    crate::bank::Bank, core::ops::Deref,
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_sdk::transaction::Result, solana_svm_transaction::svm_message::SVMMessage,
 };
 
+pub enum OwnedOrBorrowed<'a, T> {
+    Owned(Vec<T>),
+    Borrowed(&'a [T]),
+}
+
+impl<T> Deref for OwnedOrBorrowed<'_, T> {
+    type Target = [T];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            OwnedOrBorrowed::Owned(v) => v,
+            OwnedOrBorrowed::Borrowed(v) => v,
+        }
+    }
+}
+
 // Represents the results of trying to lock a set of accounts
-pub struct TransactionBatch<'a, 'b> {
+pub struct TransactionBatch<'a, 'b, Tx: SVMMessage> {
     lock_results: Vec<Result<()>>,
     bank: &'a Bank,
-    sanitized_txs: Cow<'b, [SanitizedTransaction]>,
+    sanitized_txs: OwnedOrBorrowed<'b, RuntimeTransaction<Tx>>,
     needs_unlock: bool,
 }
 
-impl<'a, 'b> TransactionBatch<'a, 'b> {
+impl<'a, 'b, Tx: SVMMessage> TransactionBatch<'a, 'b, Tx> {
     pub fn new(
         lock_results: Vec<Result<()>>,
         bank: &'a Bank,
-        sanitized_txs: Cow<'b, [SanitizedTransaction]>,
+        sanitized_txs: OwnedOrBorrowed<'b, RuntimeTransaction<Tx>>,
     ) -> Self {
         assert_eq!(lock_results.len(), sanitized_txs.len());
         Self {
@@ -31,7 +47,7 @@ impl<'a, 'b> TransactionBatch<'a, 'b> {
         &self.lock_results
     }
 
-    pub fn sanitized_transactions(&self) -> &[SanitizedTransaction] {
+    pub fn sanitized_transactions(&self) -> &[RuntimeTransaction<Tx>] {
         &self.sanitized_txs
     }
 
@@ -82,7 +98,7 @@ impl<'a, 'b> TransactionBatch<'a, 'b> {
 }
 
 // Unlock all locked accounts in destructor.
-impl<'a, 'b> Drop for TransactionBatch<'a, 'b> {
+impl<'a, 'b, Tx: SVMMessage> Drop for TransactionBatch<'a, 'b, Tx> {
     fn drop(&mut self) {
         if self.needs_unlock() {
             self.set_needs_unlock(false);
@@ -100,7 +116,11 @@ mod tests {
     use {
         super::*,
         crate::genesis_utils::{create_genesis_config_with_leader, GenesisConfigInfo},
-        solana_sdk::{signature::Keypair, system_transaction, transaction::TransactionError},
+        solana_sdk::{
+            signature::Keypair,
+            system_transaction,
+            transaction::{SanitizedTransaction, TransactionError},
+        },
     };
 
     #[test]
@@ -172,7 +192,7 @@ mod tests {
         );
     }
 
-    fn setup(insert_conflicting_tx: bool) -> (Bank, Vec<SanitizedTransaction>) {
+    fn setup(insert_conflicting_tx: bool) -> (Bank, Vec<RuntimeTransaction<SanitizedTransaction>>) {
         let dummy_leader_pubkey = solana_sdk::pubkey::new_rand();
         let GenesisConfigInfo {
             genesis_config,
@@ -185,15 +205,15 @@ mod tests {
         let keypair2 = Keypair::new();
         let pubkey2 = solana_sdk::pubkey::new_rand();
 
-        let mut txs = vec![SanitizedTransaction::from_transaction_for_tests(
+        let mut txs = vec![RuntimeTransaction::from_transaction_for_tests(
             system_transaction::transfer(&mint_keypair, &pubkey, 1, genesis_config.hash()),
         )];
         if insert_conflicting_tx {
-            txs.push(SanitizedTransaction::from_transaction_for_tests(
+            txs.push(RuntimeTransaction::from_transaction_for_tests(
                 system_transaction::transfer(&mint_keypair, &pubkey2, 1, genesis_config.hash()),
             ));
         }
-        txs.push(SanitizedTransaction::from_transaction_for_tests(
+        txs.push(RuntimeTransaction::from_transaction_for_tests(
             system_transaction::transfer(&keypair2, &pubkey2, 1, genesis_config.hash()),
         ));
 

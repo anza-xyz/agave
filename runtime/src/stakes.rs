@@ -27,7 +27,8 @@ use {
 };
 
 mod serde_stakes;
-pub(crate) use serde_stakes::serde_stakes_enum_compat;
+pub(crate) use serde_stakes::serde_stakes_to_delegation_format;
+pub use serde_stakes::SerdeStakesToStakeFormat;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -97,11 +98,6 @@ impl StakesCache {
             if VoteStateVersions::is_correct_size_and_initialized(account.data()) {
                 match VoteAccount::try_from(account.to_account_shared_data()) {
                     Ok(vote_account) => {
-                        {
-                            // Called to eagerly deserialize vote state
-                            let _res = vote_account.vote_state();
-                        }
-
                         // drop the old account after releasing the lock
                         let _old_vote_account = {
                             let mut stakes = self.0.write().unwrap();
@@ -319,7 +315,7 @@ impl Stakes<StakeAccount> {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn new_for_tests(
         epoch: Epoch,
         vote_accounts: VoteAccounts,
@@ -427,7 +423,6 @@ impl Stakes<StakeAccount> {
         new_rate_activation_epoch: Option<Epoch>,
     ) -> Option<VoteAccount> {
         debug_assert_ne!(vote_account.lamports(), 0u64);
-        debug_assert!(vote_account.is_deserialized());
 
         let stake_delegations = &self.stake_delegations;
         self.vote_accounts.insert(*vote_pubkey, vote_account, || {
@@ -506,9 +501,9 @@ impl Stakes<StakeAccount> {
         &self.stake_delegations
     }
 
-    pub(crate) fn highest_staked_node(&self) -> Option<Pubkey> {
+    pub(crate) fn highest_staked_node(&self) -> Option<&Pubkey> {
         let vote_account = self.vote_accounts.find_max_by_delegated_stake()?;
-        vote_account.node_pubkey().copied()
+        Some(vote_account.node_pubkey())
     }
 }
 
@@ -566,23 +561,6 @@ impl From<Stakes<StakeAccount>> for Stakes<Stake> {
             unused: stakes.unused,
             epoch: stakes.epoch,
             stake_history: stakes.stake_history,
-        }
-    }
-}
-
-impl<'a> From<&'a Stakes<StakeAccount>> for Stakes<&'a Stake> {
-    fn from(stakes: &'a Stakes<StakeAccount>) -> Self {
-        let stake_delegations = stakes
-            .stake_delegations
-            .iter()
-            .map(|(pubkey, stake_account)| (*pubkey, stake_account.stake()))
-            .collect();
-        Self {
-            vote_accounts: stakes.vote_accounts.clone(),
-            stake_delegations,
-            unused: stakes.unused,
-            epoch: stakes.epoch,
-            stake_history: stakes.stake_history.clone(),
         }
     }
 }
@@ -851,7 +829,7 @@ pub(crate) mod tests {
 
         let vote11_node_pubkey = vote_state::from(&vote11_account).unwrap().node_pubkey;
 
-        let highest_staked_node = stakes_cache.stakes().highest_staked_node();
+        let highest_staked_node = stakes_cache.stakes().highest_staked_node().copied();
         assert_eq!(highest_staked_node, Some(vote11_node_pubkey));
     }
 

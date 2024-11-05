@@ -3,30 +3,27 @@
 
 #[cfg(all(not(target_os = "solana"), feature = "full", debug_assertions))]
 use crate::signature::Signature;
-#[cfg(not(target_os = "solana"))]
 use {
-    crate::{
-        account::WritableAccount,
-        rent::Rent,
-        system_instruction::{
-            MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION, MAX_PERMITTED_DATA_LENGTH,
-        },
-    },
-    solana_program::entrypoint::MAX_PERMITTED_DATA_INCREASE,
-    std::mem::MaybeUninit,
-};
-use {
-    crate::{
-        account::{AccountSharedData, ReadableAccount},
-        instruction::InstructionError,
-        pubkey::Pubkey,
-    },
+    crate::{instruction::InstructionError, pubkey::Pubkey},
+    solana_account::{AccountSharedData, ReadableAccount},
     std::{
         cell::{Ref, RefCell, RefMut},
         collections::HashSet,
         pin::Pin,
         rc::Rc,
     },
+};
+#[cfg(not(target_os = "solana"))]
+use {
+    crate::{
+        rent::Rent,
+        system_instruction::{
+            MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION, MAX_PERMITTED_DATA_LENGTH,
+        },
+    },
+    solana_account::WritableAccount,
+    solana_program::entrypoint::MAX_PERMITTED_DATA_INCREASE,
+    std::mem::MaybeUninit,
 };
 
 /// Index of an account inside of the TransactionContext or an InstructionContext.
@@ -143,6 +140,8 @@ pub struct TransactionContext {
     return_data: TransactionReturnData,
     accounts_resize_delta: RefCell<i64>,
     #[cfg(not(target_os = "solana"))]
+    remove_accounts_executable_flag_checks: bool,
+    #[cfg(not(target_os = "solana"))]
     rent: Rent,
     /// Useful for debugging to filter by or to look it up on the explorer
     #[cfg(all(not(target_os = "solana"), feature = "full", debug_assertions))]
@@ -171,10 +170,16 @@ impl TransactionContext {
             instruction_trace: vec![InstructionContext::default()],
             return_data: TransactionReturnData::default(),
             accounts_resize_delta: RefCell::new(0),
+            remove_accounts_executable_flag_checks: true,
             rent,
             #[cfg(all(not(target_os = "solana"), feature = "full", debug_assertions))]
             signature: Signature::default(),
         }
+    }
+
+    #[cfg(not(target_os = "solana"))]
+    pub fn set_remove_accounts_executable_flag_checks(&mut self, enabled: bool) {
+        self.remove_accounts_executable_flag_checks = enabled;
     }
 
     /// Used in mock_process_instruction
@@ -749,7 +754,7 @@ impl<'a> BorrowedAccount<'a> {
             return Err(InstructionError::ModifiedProgramId);
         }
         // and only if the account is not executable
-        if self.is_executable() {
+        if self.is_executable_internal() {
             return Err(InstructionError::ModifiedProgramId);
         }
         // and only if the data is zero-initialized or empty
@@ -783,7 +788,7 @@ impl<'a> BorrowedAccount<'a> {
             return Err(InstructionError::ReadonlyLamportChange);
         }
         // The balance of executable accounts may not change
-        if self.is_executable() {
+        if self.is_executable_internal() {
             return Err(InstructionError::ExecutableLamportChange);
         }
         // don't touch the account if the lamports do not change
@@ -995,8 +1000,19 @@ impl<'a> BorrowedAccount<'a> {
 
     /// Returns whether this account is executable (transaction wide)
     #[inline]
+    #[deprecated(since = "2.1.0", note = "Use `get_owner` instead")]
     pub fn is_executable(&self) -> bool {
         self.account.executable()
+    }
+
+    /// Feature gating to remove `is_executable` flag related checks
+    #[cfg(not(target_os = "solana"))]
+    #[inline]
+    fn is_executable_internal(&self) -> bool {
+        !self
+            .transaction_context
+            .remove_accounts_executable_flag_checks
+            && self.account.executable()
     }
 
     /// Configures whether this account is executable (transaction wide)
@@ -1019,10 +1035,11 @@ impl<'a> BorrowedAccount<'a> {
             return Err(InstructionError::ExecutableModified);
         }
         // one can not clear the executable flag
-        if self.is_executable() && !is_executable {
+        if self.is_executable_internal() && !is_executable {
             return Err(InstructionError::ExecutableModified);
         }
         // don't touch the account if the executable flag does not change
+        #[allow(deprecated)]
         if self.is_executable() == is_executable {
             return Ok(());
         }
@@ -1076,7 +1093,7 @@ impl<'a> BorrowedAccount<'a> {
     #[cfg(not(target_os = "solana"))]
     pub fn can_data_be_changed(&self) -> Result<(), InstructionError> {
         // Only non-executable accounts data can be changed
-        if self.is_executable() {
+        if self.is_executable_internal() {
             return Err(InstructionError::ExecutableDataModified);
         }
         // and only if the account is writable

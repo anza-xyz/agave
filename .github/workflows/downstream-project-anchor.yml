@@ -41,7 +41,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        version: ["v0.29.0", "v0.30.0"]
+        version: ["master"]
+    if: false # Re-enable once new major versions for spl-token-2022 and spl-pod are out
     steps:
       - uses: actions/checkout@v4
 
@@ -49,7 +50,7 @@ jobs:
         run: |
           .github/scripts/purge-ubuntu-runner.sh
 
-      - uses: mozilla-actions/sccache-action@v0.0.4
+      - uses: mozilla-actions/sccache-action@v0.0.5
         with:
           version: "v0.8.1"
 

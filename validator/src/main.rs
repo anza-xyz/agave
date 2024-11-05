@@ -21,7 +21,7 @@ use {
         accounts_file::StorageAccess,
         accounts_index::{
             AccountIndex, AccountSecondaryIndexes, AccountSecondaryIndexesIncludeExclude,
-            AccountsIndexConfig, IndexLimitMb,
+            AccountsIndexConfig, IndexLimitMb, ScanFilter,
         },
         partitioned_rewards::TestPartitionedEpochRewards,
         utils::{create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories},
@@ -34,7 +34,7 @@ use {
         tpu::DEFAULT_TPU_COALESCE,
         validator::{
             is_snapshot_config_valid, BlockProductionMethod, BlockVerificationMethod, Validator,
-            ValidatorConfig, ValidatorStartProgress,
+            ValidatorConfig, ValidatorError, ValidatorStartProgress,
         },
     },
     solana_gossip::{
@@ -44,8 +44,8 @@ use {
     solana_ledger::{
         blockstore_cleanup_service::{DEFAULT_MAX_LEDGER_SHREDS, DEFAULT_MIN_MAX_LEDGER_SHREDS},
         blockstore_options::{
-            BlockstoreCompressionType, BlockstoreRecoveryMode, LedgerColumnOptions,
-            ShredStorageType,
+            AccessType, BlockstoreCompressionType, BlockstoreOptions, BlockstoreRecoveryMode,
+            LedgerColumnOptions, ShredStorageType,
         },
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
@@ -383,13 +383,13 @@ fn set_repair_whitelist(
 
 /// Returns the default fifo shred storage size (include both data and coding
 /// shreds) based on the validator config.
-fn default_fifo_shred_storage_size(vc: &ValidatorConfig) -> Option<u64> {
+fn default_fifo_shred_storage_size(max_ledger_shreds: Option<u64>) -> Option<u64> {
     // The max shred size is around 1228 bytes.
     // Here we reserve a little bit more than that to give extra storage for FIFO
     // to prevent it from purging data that have not yet being marked as obsoleted
     // by LedgerCleanupService.
     const RESERVED_BYTES_PER_SHRED: u64 = 1500;
-    vc.max_ledger_shreds.map(|max_ledger_shreds| {
+    max_ledger_shreds.map(|max_ledger_shreds| {
         // x2 as we have data shred and coding shred.
         max_ledger_shreds * RESERVED_BYTES_PER_SHRED * 2
     })
@@ -433,7 +433,7 @@ fn get_cluster_shred_version(entrypoints: &[SocketAddr]) -> Option<u16> {
     for entrypoint in entrypoints {
         match solana_net_utils::get_cluster_shred_version(entrypoint) {
             Err(err) => eprintln!("get_cluster_shred_version failed: {entrypoint}, {err}"),
-            Ok(0) => eprintln!("zero shred-version from entrypoint: {entrypoint}"),
+            Ok(0) => eprintln!("entrypoint {entrypoint} returned shred-version zero"),
             Ok(shred_version) => {
                 info!(
                     "obtained shred-version {} from {}",
@@ -909,6 +909,19 @@ pub fn main() {
         _ => unreachable!(),
     };
 
+    let cli::thread_args::NumThreadConfig {
+        accounts_db_clean_threads,
+        accounts_db_foreground_threads,
+        accounts_db_hash_threads,
+        accounts_index_flush_threads,
+        ip_echo_server_threads,
+        rayon_global_threads,
+        replay_forks_threads,
+        replay_transactions_threads,
+        tvu_receive_threads,
+        tvu_sigverify_threads,
+    } = cli::thread_args::parse_num_threads_args(&matches);
+
     let identity_keypair = keypair_of(&matches, "identity").unwrap_or_else(|| {
         clap::Error::with_description(
             "The --identity <KEYPAIR> argument is required",
@@ -993,9 +1006,6 @@ pub fn main() {
     let tpu_coalesce = value_t!(matches, "tpu_coalesce_ms", u64)
         .map(Duration::from_millis)
         .unwrap_or(DEFAULT_TPU_COALESCE);
-    let wal_recovery_mode = matches
-        .value_of("wal_recovery_mode")
-        .map(BlockstoreRecoveryMode::from);
 
     // Canonicalize ledger path to avoid issues with symlink creation
     let ledger_path = create_and_canonicalize_directories([&ledger_path])
@@ -1008,6 +1018,82 @@ pub fn main() {
         })
         .pop()
         .unwrap();
+
+    let recovery_mode = matches
+        .value_of("wal_recovery_mode")
+        .map(BlockstoreRecoveryMode::from);
+
+    let max_ledger_shreds = if matches.is_present("limit_ledger_size") {
+        let limit_ledger_size = match matches.value_of("limit_ledger_size") {
+            Some(_) => value_t_or_exit!(matches, "limit_ledger_size", u64),
+            None => DEFAULT_MAX_LEDGER_SHREDS,
+        };
+        if limit_ledger_size < DEFAULT_MIN_MAX_LEDGER_SHREDS {
+            eprintln!(
+                "The provided --limit-ledger-size value was too small, the minimum value is \
+                 {DEFAULT_MIN_MAX_LEDGER_SHREDS}"
+            );
+            exit(1);
+        }
+        Some(limit_ledger_size)
+    } else {
+        None
+    };
+
+    let column_options = LedgerColumnOptions {
+        compression_type: match matches.value_of("rocksdb_ledger_compression") {
+            None => BlockstoreCompressionType::default(),
+            Some(ledger_compression_string) => match ledger_compression_string {
+                "none" => BlockstoreCompressionType::None,
+                "snappy" => BlockstoreCompressionType::Snappy,
+                "lz4" => BlockstoreCompressionType::Lz4,
+                "zlib" => BlockstoreCompressionType::Zlib,
+                _ => panic!("Unsupported ledger_compression: {ledger_compression_string}"),
+            },
+        },
+        shred_storage_type: match matches.value_of("rocksdb_shred_compaction") {
+            None => ShredStorageType::default(),
+            Some(shred_compaction_string) => match shred_compaction_string {
+                "level" => ShredStorageType::RocksLevel,
+                "fifo" => {
+                    warn!(
+                        "The value \"fifo\" for --rocksdb-shred-compaction has been deprecated. \
+                         Use of \"fifo\" will still work for now, but is planned for full removal \
+                         in v2.1. To update, use \"level\" for --rocksdb-shred-compaction, or \
+                         remove the --rocksdb-shred-compaction argument altogether. Note that the \
+                         entire \"rocksdb_fifo\" subdirectory within the ledger directory will \
+                         need to be manually removed once the validator is running with \"level\"."
+                    );
+                    match matches.value_of("rocksdb_fifo_shred_storage_size") {
+                        None => ShredStorageType::rocks_fifo(default_fifo_shred_storage_size(
+                            max_ledger_shreds,
+                        )),
+                        Some(_) => ShredStorageType::rocks_fifo(Some(value_t_or_exit!(
+                            matches,
+                            "rocksdb_fifo_shred_storage_size",
+                            u64
+                        ))),
+                    }
+                }
+                _ => panic!("Unrecognized rocksdb-shred-compaction: {shred_compaction_string}"),
+            },
+        },
+        rocks_perf_sample_interval: value_t_or_exit!(
+            matches,
+            "rocksdb_perf_sample_interval",
+            usize
+        ),
+    };
+
+    let blockstore_options = BlockstoreOptions {
+        recovery_mode,
+        column_options,
+        // The validator needs to open many files, check that the process has
+        // permission to do so in order to fail quickly and give a direct error
+        enforce_ulimit_nofile: true,
+        // The validator needs primary (read/write)
+        access_type: AccessType::Primary,
+    };
 
     let accounts_hash_cache_path = matches
         .value_of("accounts_hash_cache_path")
@@ -1098,7 +1184,7 @@ pub fn main() {
         exit(1);
     }
 
-    let accounts_shrink_ratio = if accounts_shrink_optimize_total_space {
+    let shrink_ratio = if accounts_shrink_optimize_total_space {
         AccountShrinkThreshold::TotalSpace { shrink_ratio }
     } else {
         AccountShrinkThreshold::IndividualStore { shrink_ratio }
@@ -1172,6 +1258,7 @@ pub fn main() {
 
     let mut accounts_index_config = AccountsIndexConfig {
         started_from_validator: true, // this is the only place this is set
+        num_flush_threads: Some(accounts_index_flush_threads),
         ..AccountsIndexConfig::default()
     };
     if let Ok(bins) = value_t!(matches, "accounts_index_bins", usize) {
@@ -1187,14 +1274,11 @@ pub fn main() {
             TestPartitionedEpochRewards::None
         };
 
-    accounts_index_config.index_limit_mb =
-        if let Ok(limit) = value_t!(matches, "accounts_index_memory_limit_mb", usize) {
-            IndexLimitMb::Limit(limit)
-        } else if matches.is_present("disable_accounts_disk_index") {
-            IndexLimitMb::InMemOnly
-        } else {
-            IndexLimitMb::Unspecified
-        };
+    accounts_index_config.index_limit_mb = if matches.is_present("disable_accounts_disk_index") {
+        IndexLimitMb::InMemOnly
+    } else {
+        IndexLimitMb::Unlimited
+    };
 
     {
         let mut accounts_index_paths: Vec<PathBuf> = if matches.is_present("accounts_index_path") {
@@ -1274,22 +1358,50 @@ pub fn main() {
         })
         .unwrap_or_default();
 
+    let scan_filter_for_shrinking = matches
+        .value_of("accounts_db_scan_filter_for_shrinking")
+        .map(|filter| match filter {
+            "all" => ScanFilter::All,
+            "only-abnormal" => ScanFilter::OnlyAbnormal,
+            "only-abnormal-with-verify" => ScanFilter::OnlyAbnormalWithVerify,
+            _ => {
+                // clap will enforce one of the above values is given
+                unreachable!("invalid value given to accounts_db_scan_filter_for_shrinking")
+            }
+        })
+        .unwrap_or_default();
+
     let accounts_db_config = AccountsDbConfig {
         index: Some(accounts_index_config),
+        account_indexes: Some(account_indexes.clone()),
         base_working_path: Some(ledger_path.clone()),
         accounts_hash_cache_path: Some(accounts_hash_cache_path),
         shrink_paths: account_shrink_run_paths,
+        shrink_ratio,
         read_cache_limit_bytes,
         write_cache_limit_bytes: value_t!(matches, "accounts_db_cache_limit_mb", u64)
             .ok()
             .map(|mb| mb * MB as u64),
         ancient_append_vec_offset: value_t!(matches, "accounts_db_ancient_append_vecs", i64).ok(),
+        ancient_storage_ideal_size: value_t!(
+            matches,
+            "accounts_db_ancient_storage_ideal_size",
+            u64
+        )
+        .ok(),
+        max_ancient_storages: value_t!(matches, "accounts_db_max_ancient_storages", usize).ok(),
         exhaustively_verify_refcounts: matches.is_present("accounts_db_verify_refcounts"),
         create_ancient_storage,
         test_partitioned_epoch_rewards,
         test_skip_rewrites_but_include_in_bank_hash: matches
             .is_present("accounts_db_test_skip_rewrites"),
         storage_access,
+        scan_filter_for_shrinking,
+        enable_experimental_accumulator_hash: matches
+            .is_present("accounts_db_experimental_accumulator_hash"),
+        num_clean_threads: Some(accounts_db_clean_threads),
+        num_foreground_threads: Some(accounts_db_foreground_threads),
+        num_hash_threads: Some(accounts_db_hash_threads),
         ..AccountsDbConfig::default()
     };
 
@@ -1374,13 +1486,6 @@ pub fn main() {
 
     let full_api = matches.is_present("full_rpc_api");
 
-    let cli::thread_args::NumThreadConfig {
-        ip_echo_server_threads,
-        replay_forks_threads,
-        replay_transactions_threads,
-        tvu_receive_threads,
-    } = cli::thread_args::parse_num_threads_args(&matches);
-
     let mut validator_config = ValidatorConfig {
         require_tower: matches.is_present("require_tower"),
         tower_storage,
@@ -1422,6 +1527,7 @@ pub fn main() {
                 "rpc_max_request_body_size",
                 usize
             )),
+            skip_preflight_health_check: matches.is_present("skip_preflight_health_check"),
         },
         on_start_geyser_plugin_config_files,
         rpc_addrs: value_t!(matches, "rpc_port", u16).ok().map(|rpc_port| {
@@ -1462,7 +1568,8 @@ pub fn main() {
         repair_validators,
         repair_whitelist,
         gossip_validators,
-        wal_recovery_mode,
+        max_ledger_shreds,
+        blockstore_options,
         run_verification: !(matches.is_present("skip_poh_verify")
             || matches.is_present("skip_startup_ledger_verification")),
         debug_keys,
@@ -1500,14 +1607,12 @@ pub fn main() {
         poh_hashes_per_batch: value_of(&matches, "poh_hashes_per_batch")
             .unwrap_or(poh_service::DEFAULT_HASHES_PER_BATCH),
         process_ledger_before_services: matches.is_present("process_ledger_before_services"),
-        account_indexes,
         accounts_db_test_hash_calculation: matches.is_present("accounts_db_test_hash_calculation"),
         accounts_db_config,
         accounts_db_skip_shrink: true,
         accounts_db_force_initial_clean: matches.is_present("no_skip_initial_accounts_db_clean"),
         tpu_coalesce,
         no_wait_for_vote_to_start_leader: matches.is_present("no_wait_for_vote_to_start_leader"),
-        accounts_shrink_ratio,
         runtime_config: RuntimeConfig {
             log_messages_bytes_limit: value_of(&matches, "log_messages_bytes_limit"),
             ..RuntimeConfig::default()
@@ -1519,10 +1624,14 @@ pub fn main() {
             UseSnapshotArchivesAtStartup
         ),
         ip_echo_server_threads,
+        rayon_global_threads,
         replay_forks_threads,
         replay_transactions_threads,
+        tvu_shred_sigverify_threads: tvu_sigverify_threads,
         delay_leader_block_for_pending_fork: matches
             .is_present("delay_leader_block_for_pending_fork"),
+        wen_restart_proto_path: value_t!(matches, "wen_restart", PathBuf).ok(),
+        wen_restart_coordinator: value_t!(matches, "wen_restart_coordinator", Pubkey).ok(),
         ..ValidatorConfig::default()
     };
 
@@ -1755,21 +1864,6 @@ pub fn main() {
         exit(1);
     }
 
-    if matches.is_present("limit_ledger_size") {
-        let limit_ledger_size = match matches.value_of("limit_ledger_size") {
-            Some(_) => value_t_or_exit!(matches, "limit_ledger_size", u64),
-            None => DEFAULT_MAX_LEDGER_SHREDS,
-        };
-        if limit_ledger_size < DEFAULT_MIN_MAX_LEDGER_SHREDS {
-            eprintln!(
-                "The provided --limit-ledger-size value was too small, the minimum value is \
-                 {DEFAULT_MIN_MAX_LEDGER_SHREDS}"
-            );
-            exit(1);
-        }
-        validator_config.max_ledger_shreds = Some(limit_ledger_size);
-    }
-
     configure_banking_trace_dir_byte_limit(&mut validator_config, &matches);
     validator_config.block_verification_method = value_t!(
         matches,
@@ -1783,57 +1877,9 @@ pub fn main() {
         BlockProductionMethod
     )
     .unwrap_or_default();
-    validator_config.enable_block_production_forwarding = staked_nodes_overrides_path
-        .as_ref()
-        .map(|_| !matches.is_present("disable_block_production_forwarding"))
-        .unwrap_or_default();
+    validator_config.enable_block_production_forwarding = staked_nodes_overrides_path.is_some();
     validator_config.unified_scheduler_handler_threads =
         value_t!(matches, "unified_scheduler_handler_threads", usize).ok();
-
-    validator_config.ledger_column_options = LedgerColumnOptions {
-        compression_type: match matches.value_of("rocksdb_ledger_compression") {
-            None => BlockstoreCompressionType::default(),
-            Some(ledger_compression_string) => match ledger_compression_string {
-                "none" => BlockstoreCompressionType::None,
-                "snappy" => BlockstoreCompressionType::Snappy,
-                "lz4" => BlockstoreCompressionType::Lz4,
-                "zlib" => BlockstoreCompressionType::Zlib,
-                _ => panic!("Unsupported ledger_compression: {ledger_compression_string}"),
-            },
-        },
-        shred_storage_type: match matches.value_of("rocksdb_shred_compaction") {
-            None => ShredStorageType::default(),
-            Some(shred_compaction_string) => match shred_compaction_string {
-                "level" => ShredStorageType::RocksLevel,
-                "fifo" => {
-                    warn!(
-                        "The value \"fifo\" for --rocksdb-shred-compaction has been deprecated. \
-                         Use of \"fifo\" will still work for now, but is planned for full removal \
-                         in v2.1. To update, use \"level\" for --rocksdb-shred-compaction, or \
-                         remove the --rocksdb-shred-compaction argument altogether. Note that the \
-                         entire \"rocksdb_fifo\" subdirectory within the ledger directory will \
-                         need to be manually removed once the validator is running with \"level\"."
-                    );
-                    match matches.value_of("rocksdb_fifo_shred_storage_size") {
-                        None => ShredStorageType::rocks_fifo(default_fifo_shred_storage_size(
-                            &validator_config,
-                        )),
-                        Some(_) => ShredStorageType::rocks_fifo(Some(value_t_or_exit!(
-                            matches,
-                            "rocksdb_fifo_shred_storage_size",
-                            u64
-                        ))),
-                    }
-                }
-                _ => panic!("Unrecognized rocksdb-shred-compaction: {shred_compaction_string}"),
-            },
-        },
-        rocks_perf_sample_interval: value_t_or_exit!(
-            matches,
-            "rocksdb_perf_sample_interval",
-            usize
-        ),
-    };
 
     let public_rpc_addr = matches.value_of("public_rpc_addr").map(|addr| {
         solana_net_utils::parse_host_port(addr).unwrap_or_else(|e| {
@@ -1965,6 +2011,11 @@ pub fn main() {
     let mut node = Node::new_with_external_ip(&identity_keypair.pubkey(), node_config);
 
     if restricted_repair_only_mode {
+        if validator_config.wen_restart_proto_path.is_some() {
+            error!("--restricted-repair-only-mode is not compatible with --wen_restart");
+            exit(1);
+        }
+
         // When in --restricted_repair_only_mode is enabled only the gossip and repair ports
         // need to be reachable by the entrypoint to respond to gossip pull requests and repair
         // requests initiated by the node.  All other ports are unused.
@@ -2038,7 +2089,14 @@ pub fn main() {
         return;
     }
 
-    let validator = Validator::new(
+    // Bootstrap code above pushes a contact-info with more recent timestamp to
+    // gossip. If the node is staked the contact-info lingers in gossip causing
+    // false duplicate nodes error.
+    // Below line refreshes the timestamp on contact-info so that it overrides
+    // the one pushed by bootstrap.
+    node.info.hot_swap_pubkey(identity_keypair.pubkey());
+
+    let validator = match Validator::new(
         node,
         identity_keypair,
         &ledger_path,
@@ -2055,11 +2113,19 @@ pub fn main() {
         tpu_enable_udp,
         tpu_max_connections_per_ipaddr_per_minute,
         admin_service_post_init,
-    )
-    .unwrap_or_else(|e| {
-        error!("Failed to start validator: {:?}", e);
-        exit(1);
-    });
+    ) {
+        Ok(validator) => validator,
+        Err(err) => match err.downcast_ref() {
+            Some(ValidatorError::WenRestartFinished) => {
+                error!("Please remove --wen_restart and use --wait_for_supermajority as instructed above");
+                exit(200);
+            }
+            _ => {
+                error!("Failed to start validator: {:?}", err);
+                exit(1);
+            }
+        },
+    };
 
     if let Some(filename) = init_complete_file {
         File::create(filename).unwrap_or_else(|_| {

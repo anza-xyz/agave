@@ -5,6 +5,7 @@ use {
     bytes::Bytes,
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     itertools::Itertools,
+    solana_feature_set::{self as feature_set, FeatureSet},
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::shred::{should_discard_shred, ShredFetchStats},
     solana_perf::packet::{PacketBatch, PacketBatchRecycler, PacketFlags, PACKETS_PER_BATCH},
@@ -12,7 +13,6 @@ use {
     solana_sdk::{
         clock::{Slot, DEFAULT_MS_PER_SLOT},
         epoch_schedule::EpochSchedule,
-        feature_set::{self, FeatureSet},
         genesis_config::ClusterType,
         packet::{Meta, PACKET_DATA_SIZE},
         pubkey::Pubkey,
@@ -30,6 +30,12 @@ use {
 };
 
 const PACKET_COALESCE_DURATION: Duration = Duration::from_millis(1);
+// When running with very short epochs (e.g. for testing), we want to avoid
+// filtering out shreds that we actually need. This value was chosen empirically
+// because it's large enough to protect against observed short epoch problems
+// while being small enough to keep the overhead small on deduper, blockstore,
+// etc.
+const MAX_SHRED_DISTANCE_MINIMUM: u64 = 500;
 
 pub(crate) struct ShredFetchStage {
     thread_hdls: Vec<JoinHandle<()>>,
@@ -107,8 +113,9 @@ impl ShredFetchStage {
                 }
             }
 
-            // Limit shreds to 2 epochs away.
-            let max_slot = last_slot + 2 * slots_per_epoch;
+            // Filter out shreds that are way too far in the future to avoid the
+            // overhead of having to hold onto them.
+            let max_slot = last_slot + MAX_SHRED_DISTANCE_MINIMUM.max(2 * slots_per_epoch);
             let enable_chained_merkle_shreds = |shred_slot| {
                 cluster_type == ClusterType::Development
                     || check_feature_activation(
@@ -201,8 +208,8 @@ impl ShredFetchStage {
     pub(crate) fn new(
         sockets: Vec<Arc<UdpSocket>>,
         turbine_quic_endpoint_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
+        repair_response_quic_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
         repair_socket: Arc<UdpSocket>,
-        repair_quic_endpoint_receiver: Receiver<(SocketAddr, Vec<u8>)>,
         sender: Sender<PacketBatch>,
         shred_version: u16,
         bank_forks: Arc<RwLock<BankForks>>,
@@ -257,8 +264,9 @@ impl ShredFetchStage {
                 Builder::new()
                     .name("solTvuRecvRpr".to_string())
                     .spawn(|| {
-                        receive_repair_quic_packets(
-                            repair_quic_endpoint_receiver,
+                        receive_quic_datagrams(
+                            repair_response_quic_receiver,
+                            PacketFlags::REPAIR,
                             packet_sender,
                             recycler,
                             exit,
@@ -290,6 +298,7 @@ impl ShredFetchStage {
                 .spawn(|| {
                     receive_quic_datagrams(
                         turbine_quic_endpoint_receiver,
+                        PacketFlags::empty(),
                         packet_sender,
                         recycler,
                         exit,
@@ -325,15 +334,16 @@ impl ShredFetchStage {
     }
 }
 
-fn receive_quic_datagrams(
-    turbine_quic_endpoint_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
+pub(crate) fn receive_quic_datagrams(
+    quic_datagrams_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
+    flags: PacketFlags,
     sender: Sender<PacketBatch>,
     recycler: PacketBatchRecycler,
     exit: Arc<AtomicBool>,
 ) {
     const RECV_TIMEOUT: Duration = Duration::from_secs(1);
     while !exit.load(Ordering::Relaxed) {
-        let entry = match turbine_quic_endpoint_receiver.recv_timeout(RECV_TIMEOUT) {
+        let entry = match quic_datagrams_receiver.recv_timeout(RECV_TIMEOUT) {
             Ok(entry) => entry,
             Err(RecvTimeoutError::Timeout) => continue,
             Err(RecvTimeoutError::Disconnected) => return,
@@ -345,7 +355,7 @@ fn receive_quic_datagrams(
         };
         let deadline = Instant::now() + PACKET_COALESCE_DURATION;
         let entries = std::iter::once(entry).chain(
-            std::iter::repeat_with(|| turbine_quic_endpoint_receiver.recv_deadline(deadline).ok())
+            std::iter::repeat_with(|| quic_datagrams_receiver.recv_deadline(deadline).ok())
                 .while_some(),
         );
         let size = entries
@@ -356,52 +366,7 @@ fn receive_quic_datagrams(
                     size: bytes.len(),
                     addr: addr.ip(),
                     port: addr.port(),
-                    flags: PacketFlags::empty(),
-                };
-                packet.buffer_mut()[..bytes.len()].copy_from_slice(&bytes);
-            })
-            .count();
-        if size > 0 {
-            packet_batch.truncate(size);
-            if sender.send(packet_batch).is_err() {
-                return;
-            }
-        }
-    }
-}
-
-pub(crate) fn receive_repair_quic_packets(
-    repair_quic_endpoint_receiver: Receiver<(SocketAddr, Vec<u8>)>,
-    sender: Sender<PacketBatch>,
-    recycler: PacketBatchRecycler,
-    exit: Arc<AtomicBool>,
-) {
-    const RECV_TIMEOUT: Duration = Duration::from_secs(1);
-    while !exit.load(Ordering::Relaxed) {
-        let entry = match repair_quic_endpoint_receiver.recv_timeout(RECV_TIMEOUT) {
-            Ok(entry) => entry,
-            Err(RecvTimeoutError::Timeout) => continue,
-            Err(RecvTimeoutError::Disconnected) => return,
-        };
-        let mut packet_batch =
-            PacketBatch::new_with_recycler(&recycler, PACKETS_PER_BATCH, "receive_quic_datagrams");
-        unsafe {
-            packet_batch.set_len(PACKETS_PER_BATCH);
-        };
-        let deadline = Instant::now() + PACKET_COALESCE_DURATION;
-        let entries = std::iter::once(entry).chain(
-            std::iter::repeat_with(|| repair_quic_endpoint_receiver.recv_deadline(deadline).ok())
-                .while_some(),
-        );
-        let size = entries
-            .filter(|(_, bytes)| bytes.len() <= PACKET_DATA_SIZE)
-            .zip(packet_batch.iter_mut())
-            .map(|((addr, bytes), packet)| {
-                *packet.meta_mut() = Meta {
-                    size: bytes.len(),
-                    addr: addr.ip(),
-                    port: addr.port(),
-                    flags: PacketFlags::REPAIR,
+                    flags,
                 };
                 packet.buffer_mut()[..bytes.len()].copy_from_slice(&bytes);
             })

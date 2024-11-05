@@ -3,12 +3,12 @@
 //!
 //! The module contains implementations of the following cryptographic objects:
 //! - Pedersen commitments that uses the prime-order Ristretto representation of Curve25519.
-//! [curve25519-dalek](https://docs.rs/curve25519-dalek/latest/curve25519_dalek/ristretto/index.html)
-//! is used for the Ristretto group implementation.
+//!   [curve25519-dalek](https://docs.rs/curve25519-dalek/latest/curve25519_dalek/ristretto/index.html)
+//!   is used for the Ristretto group implementation.
 //! - The twisted ElGamal scheme, which converts Pedersen commitments into a public-key encryption
-//! scheme.
+//!   scheme.
 //! - Basic type-wrapper around the AES-GCM-SIV symmetric authenticated encryption scheme
-//! implemented by [aes-gcm-siv](https://docs.rs/aes-gcm-siv/latest/aes_gcm_siv/) crate.
+//!   implemented by [aes-gcm-siv](https://docs.rs/aes-gcm-siv/latest/aes_gcm_siv/) crate.
 
 use crate::{RISTRETTO_POINT_LEN, SCALAR_LEN};
 
@@ -17,7 +17,7 @@ use crate::{RISTRETTO_POINT_LEN, SCALAR_LEN};
 pub(crate) mod macros;
 #[cfg(not(target_os = "solana"))]
 pub mod auth_encryption;
-#[cfg(not(target_os = "solana"))]
+#[cfg(all(not(target_os = "solana"), not(target_arch = "wasm32")))]
 pub mod discrete_log;
 #[cfg(not(target_os = "solana"))]
 pub mod elgamal;

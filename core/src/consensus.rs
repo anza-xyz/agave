@@ -1,4 +1,4 @@
-use {crate::replay_stage::DUPLICATE_THRESHOLD, solana_sdk::feature_set};
+use crate::replay_stage::DUPLICATE_THRESHOLD;
 
 pub mod fork_choice;
 pub mod heaviest_subtree_fork_choice;
@@ -230,6 +230,8 @@ pub(crate) enum BlockhashStatus {
     Uninitialized,
     /// Non voting validator
     NonVoting,
+    /// Hot spare validator
+    HotSpare,
     /// Successfully generated vote tx with blockhash
     Blockhash(Hash),
 }
@@ -237,7 +239,7 @@ pub(crate) enum BlockhashStatus {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "H6T5A66kgJYANFXVrUprxV76WD5ce7Gf62q9SiBC2uYk")
+    frozen_abi(digest = "9ziHa1vA7WG5RCvXiE3g1f2qjSTNa47FB7e2czo7en7a")
 )]
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct Tower {
@@ -379,20 +381,7 @@ impl Tower {
                 continue;
             }
             trace!("{} {} with stake {}", vote_account_pubkey, key, voted_stake);
-            let mut vote_state = match account.vote_state().cloned() {
-                Err(_) => {
-                    datapoint_warn!(
-                        "tower_warn",
-                        (
-                            "warn",
-                            format!("Unable to get vote_state from account {key}"),
-                            String
-                        ),
-                    );
-                    continue;
-                }
-                Ok(vote_state) => vote_state,
-            };
+            let mut vote_state = account.vote_state().clone();
             for vote in &vote_state.votes {
                 lockout_intervals
                     .entry(vote.lockout.last_locked_out_slot())
@@ -588,20 +577,32 @@ impl Tower {
         self.last_vote_tx_blockhash = BlockhashStatus::NonVoting;
     }
 
+    pub(crate) fn mark_last_vote_tx_blockhash_hot_spare(&mut self) {
+        self.last_vote_tx_blockhash = BlockhashStatus::HotSpare;
+    }
+
     pub fn last_voted_slot_in_bank(bank: &Bank, vote_account_pubkey: &Pubkey) -> Option<Slot> {
         let vote_account = bank.get_vote_account(vote_account_pubkey)?;
         let vote_state = vote_account.vote_state();
-        vote_state.as_ref().ok()?.last_voted_slot()
+        vote_state.last_voted_slot()
     }
 
     pub fn record_bank_vote(&mut self, bank: &Bank) -> Option<Slot> {
         // Returns the new root if one is made after applying a vote for the given bank to
         // `self.vote_state`
+        let block_id = bank.block_id().unwrap_or_else(|| {
+            // This can only happen for our leader bank
+            // Note: since the new shred format is yet to be rolled out to all clusters,
+            // this can also happen for non-leader banks. Once rolled out we can assert
+            // here that this is our leader bank.
+            Hash::default()
+        });
         self.record_bank_vote_and_update_lockouts(
             bank.slot(),
             bank.hash(),
             bank.feature_set
-                .is_active(&feature_set::enable_tower_sync_ix::id()),
+                .is_active(&solana_feature_set::enable_tower_sync_ix::id()),
+            block_id,
         )
     }
 
@@ -611,6 +612,7 @@ impl Tower {
         &mut self,
         vote_hash: Hash,
         enable_tower_sync_ix: bool,
+        block_id: Hash,
     ) {
         let mut new_vote = if enable_tower_sync_ix {
             VoteTransaction::from(TowerSync::new(
@@ -621,7 +623,7 @@ impl Tower {
                     .collect(),
                 self.vote_state.root_slot,
                 vote_hash,
-                Hash::default(), // TODO: block_id will fill in upcoming pr
+                block_id,
             ))
         } else {
             VoteTransaction::from(VoteStateUpdate::new(
@@ -644,6 +646,7 @@ impl Tower {
         vote_slot: Slot,
         vote_hash: Hash,
         enable_tower_sync_ix: bool,
+        block_id: Hash,
     ) -> Option<Slot> {
         trace!("{} record_vote for {}", self.node_pubkey, vote_slot);
         let old_root = self.root();
@@ -656,7 +659,7 @@ impl Tower {
                 vote_slot, vote_hash, result
             );
         }
-        self.update_last_vote_from_vote_state(vote_hash, enable_tower_sync_ix);
+        self.update_last_vote_from_vote_state(vote_hash, enable_tower_sync_ix, block_id);
 
         let new_root = self.root();
 
@@ -674,10 +677,10 @@ impl Tower {
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn record_vote(&mut self, slot: Slot, hash: Hash) -> Option<Slot> {
-        self.record_bank_vote_and_update_lockouts(slot, hash, true)
+        self.record_bank_vote_and_update_lockouts(slot, hash, true, Hash::default())
     }
 
-    /// Used for tests
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn increase_lockout(&mut self, confirmation_count_increase: u32) {
         for vote in self.vote_state.votes.iter_mut() {
             vote.lockout
@@ -807,7 +810,10 @@ impl Tower {
         ancestors: &HashMap<Slot, HashSet<Slot>>,
         last_vote_ancestors: &HashSet<Slot>,
     ) -> Option<bool> {
-        trace!("Checking if {candidate_slot} is a valid switching proof vote from {last_voted_slot} to {switch_slot}");
+        trace!(
+            "Checking if {candidate_slot} is a valid switching proof vote from {last_voted_slot} \
+             to {switch_slot}"
+        );
         // Ignore if the `candidate_slot` is a descendant of the `last_voted_slot`, since we do not
         // want to count votes on the same fork.
         if Self::is_descendant_slot(candidate_slot, last_voted_slot, ancestors)? {
@@ -930,9 +936,10 @@ impl Tower {
                 // `switch < last` is needed not to warn! this message just because of using
                 // newer snapshots on validator restart
                 let message = format!(
-                            "bank_forks doesn't have corresponding data for the stray restored \
-                           last vote({last_voted_slot}), meaning some inconsistency between saved tower and ledger."
-                        );
+                    "bank_forks doesn't have corresponding data for the stray restored last \
+                     vote({last_voted_slot}), meaning some inconsistency between saved tower and \
+                     ledger."
+                );
                 warn!("{}", message);
                 datapoint_warn!("tower_warn", ("warn", message, String));
             }
@@ -1037,8 +1044,9 @@ impl Tower {
                 return suspended_decision_due_to_major_unsynced_ledger();
             } else {
                 panic!(
-                            "Should never consider switching to ancestor ({switch_slot}) of last vote: {last_voted_slot}, ancestors({last_vote_ancestors:?})",
-                        );
+                    "Should never consider switching to ancestor ({switch_slot}) of last vote: \
+                     {last_voted_slot}, ancestors({last_vote_ancestors:?})",
+                );
             }
         }
 
@@ -1240,6 +1248,27 @@ impl Tower {
         self.last_switch_threshold_check.is_none()
     }
 
+    // Optimistically skip the stake check if casting a vote would not increase
+    // the lockout at this threshold. This is because if you bounce back to
+    // voting on the main fork after not voting for a while, your latest vote
+    // might pop off a lot of the votes in the tower. The stake from these votes
+    // would have rolled up to earlier votes in the tower, which presumably
+    // could have helped us pass the threshold check. Worst case, we'll just
+    // recheck later without having increased lockouts.
+    fn optimistically_bypass_vote_stake_threshold_check(
+        vote_state_before_applying_vote: &VoteState,
+        threshold_vote: &Lockout,
+    ) -> bool {
+        for old_vote in &vote_state_before_applying_vote.votes {
+            if old_vote.slot() == threshold_vote.slot()
+                && old_vote.confirmation_count() == threshold_vote.confirmation_count()
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Checks a single vote threshold for `slot`
     fn check_vote_stake_threshold(
         threshold_vote: Option<&Lockout>,
@@ -1261,26 +1290,19 @@ impl Tower {
 
         let lockout = *fork_stake as f64 / total_stake as f64;
         trace!(
-            "fork_stake slot: {}, threshold_vote slot: {}, lockout: {} fork_stake: {} total_stake: {}",
+            "fork_stake slot: {}, threshold_vote slot: {}, lockout: {} fork_stake: {} \
+             total_stake: {}",
             slot,
             threshold_vote.slot(),
             lockout,
             fork_stake,
             total_stake
         );
-        for old_vote in &vote_state_before_applying_vote.votes {
-            if old_vote.slot() == threshold_vote.slot()
-                && old_vote.confirmation_count() == threshold_vote.confirmation_count()
-            {
-                // If you bounce back to voting on the main fork after not
-                // voting for a while, your latest vote N on the main fork
-                // might pop off a lot of the stake of votes in the tower.
-                // This stake would have rolled up to earlier votes in the
-                // tower, so skip the stake check.
-                return ThresholdDecision::PassedThreshold;
-            }
-        }
-        if lockout > threshold_size {
+        if Self::optimistically_bypass_vote_stake_threshold_check(
+            vote_state_before_applying_vote,
+            threshold_vote,
+        ) || lockout > threshold_size
+        {
             return ThresholdDecision::PassedThreshold;
         }
         ThresholdDecision::FailedThreshold(threshold_depth as u64, *fork_stake)
@@ -1426,9 +1448,8 @@ impl Tower {
                 // While this validator's voting is suspended this way,
                 // suspended_decision_due_to_major_unsynced_ledger() will be also touched.
                 let message = format!(
-                    "For some reason, we're REPROCESSING slots which has already been \
-                     voted and ROOTED by us; \
-                     VOTING will be SUSPENDED UNTIL {last_voted_slot}!",
+                    "For some reason, we're REPROCESSING slots which has already been voted and \
+                     ROOTED by us; VOTING will be SUSPENDED UNTIL {last_voted_slot}!",
                 );
                 error!("{}", message);
                 datapoint_error!("tower_error", ("error", message, String));
@@ -1556,7 +1577,8 @@ impl Tower {
             self.last_vote = VoteTransaction::from(Vote::default());
         } else {
             info!(
-                "{} restored votes (out of {}) were on different fork or are upcoming votes on unrooted slots: {:?}!",
+                "{} restored votes (out of {}) were on different fork or are upcoming votes on \
+                 unrooted slots: {:?}!",
                 self.voted_slots().len(),
                 original_votes_len,
                 self.voted_slots()
@@ -1576,10 +1598,7 @@ impl Tower {
         bank: &Bank,
     ) {
         if let Some(vote_account) = bank.get_vote_account(vote_account_pubkey) {
-            self.vote_state = vote_account
-                .vote_state()
-                .cloned()
-                .expect("vote_account isn't a VoteState?");
+            self.vote_state = vote_account.vote_state().clone();
             self.initialize_root(root);
             self.initialize_lockouts(|v| v.slot() > root);
             trace!(
@@ -1633,8 +1652,8 @@ pub enum TowerError {
     WrongTower(String),
 
     #[error(
-        "The tower is too old: \
-        newest slot in tower ({0}) << oldest slot in available history ({1})"
+        "The tower is too old: newest slot in tower ({0}) << oldest slot in available history \
+         ({1})"
     )]
     TooOldTower(Slot, Slot),
 
@@ -1714,13 +1733,15 @@ pub fn reconcile_blockstore_roots_with_external_source(
                 Ordering::Equal => false,
                 Ordering::Less => panic!(
                     "last_blockstore_root({last_blockstore_root}) is skipped while traversing \
-                     blockstore (currently at {current}) from external root ({external_source:?})!?",
+                     blockstore (currently at {current}) from external root \
+                     ({external_source:?})!?",
                 ),
             })
             .collect();
         if !new_roots.is_empty() {
             info!(
-                "Reconciling slots as root based on external root: {:?} (external: {:?}, blockstore: {})",
+                "Reconciling slots as root based on external root: {:?} (external: {:?}, \
+                 blockstore: {})",
                 new_roots, external_source, last_blockstore_root
             );
 
@@ -1743,9 +1764,9 @@ pub fn reconcile_blockstore_roots_with_external_source(
             // That's because we might have a chance of recovering properly with
             // newer snapshot.
             warn!(
-                "Couldn't find any ancestor slots from external source ({:?}) \
-                 towards blockstore root ({}); blockstore pruned or only \
-                 tower moved into new ledger or just hard fork?",
+                "Couldn't find any ancestor slots from external source ({:?}) towards blockstore \
+                 root ({}); blockstore pruned or only tower moved into new ledger or just hard \
+                 fork?",
                 external_source, last_blockstore_root,
             );
         }
@@ -2428,7 +2449,7 @@ pub mod test {
             .get_vote_account(&vote_pubkey)
             .unwrap();
         let state = observed.vote_state();
-        info!("observed tower: {:#?}", state.as_ref().unwrap().votes);
+        info!("observed tower: {:#?}", state.votes);
 
         let num_slots_to_try = 200;
         cluster_votes
@@ -3261,9 +3282,10 @@ pub mod test {
     }
 
     #[test]
-    #[should_panic(expected = "last_blockstore_root(3) is skipped while \
-                               traversing blockstore (currently at 1) from \
-                               external root (Tower(4))!?")]
+    #[should_panic(
+        expected = "last_blockstore_root(3) is skipped while traversing blockstore (currently at \
+                    1) from external root (Tower(4))!?"
+    )]
     fn test_reconcile_blockstore_roots_with_tower_panic_no_common_root() {
         solana_logger::setup();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -3532,7 +3554,8 @@ pub mod test {
         let result = tower.adjust_lockouts_after_replay(MAX_ENTRIES, &slot_history);
         assert_eq!(
             format!("{}", result.unwrap_err()),
-            "The tower is too old: newest slot in tower (0) << oldest slot in available history (1)"
+            "The tower is too old: newest slot in tower (0) << oldest slot in available history \
+             (1)"
         );
     }
 
@@ -3611,7 +3634,8 @@ pub mod test {
         let result = tower.adjust_lockouts_after_replay(MAX_ENTRIES, &slot_history);
         assert_eq!(
             format!("{}", result.unwrap_err()),
-            "The tower is fatally inconsistent with blockstore: not too old once after got too old?"
+            "The tower is fatally inconsistent with blockstore: not too old once after got too \
+             old?"
         );
     }
 

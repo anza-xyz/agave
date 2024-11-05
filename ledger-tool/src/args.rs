@@ -4,14 +4,14 @@ use {
     solana_accounts_db::{
         accounts_db::{AccountsDb, AccountsDbConfig, CreateAncientStorage},
         accounts_file::StorageAccess,
-        accounts_index::{AccountsIndexConfig, IndexLimitMb},
+        accounts_index::{AccountsIndexConfig, IndexLimitMb, ScanFilter},
         partitioned_rewards::TestPartitionedEpochRewards,
         utils::create_and_canonicalize_directories,
     },
     solana_clap_utils::{
         hidden_unless_forced,
         input_parsers::pubkeys_of,
-        input_validators::{is_parsable, is_pow2},
+        input_validators::{is_parsable, is_pow2, is_within_range},
     },
     solana_ledger::{
         blockstore_processor::ProcessOptions,
@@ -21,6 +21,7 @@ use {
     solana_sdk::clock::Slot,
     std::{
         collections::HashSet,
+        num::NonZeroUsize,
         path::{Path, PathBuf},
         sync::Arc,
     },
@@ -59,22 +60,12 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .validator(is_pow2)
             .takes_value(true)
             .help("Number of bins to divide the accounts index into"),
-        Arg::with_name("accounts_index_memory_limit_mb")
-            .long("accounts-index-memory-limit-mb")
-            .value_name("MEGABYTES")
-            .validator(is_parsable::<usize>)
-            .takes_value(true)
-            .help(
-                "How much memory the accounts index can consume. If this is exceeded, some \
-                 account index entries will be stored on disk.",
-            ),
         Arg::with_name("disable_accounts_disk_index")
             .long("disable-accounts-disk-index")
             .help(
                 "Disable the disk-based accounts index. It is enabled by default. The entire \
                  accounts index will be kept in memory.",
-            )
-            .conflicts_with("accounts_index_memory_limit_mb"),
+            ),
         Arg::with_name("accounts_db_skip_shrink")
             .long("accounts-db-skip-shrink")
             .help(
@@ -86,6 +77,20 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .help(
                 "Debug option to scan all AppendVecs and verify account index refcounts prior to \
                 clean",
+            )
+            .hidden(hidden_unless_forced()),
+        Arg::with_name("accounts_db_scan_filter_for_shrinking")
+            .long("accounts-db-scan-filter-for-shrinking")
+            .takes_value(true)
+            .possible_values(&["all", "only-abnormal", "only-abnormal-with-verify"])
+            .help(
+                "Debug option to use different type of filtering for accounts index scan in \
+                shrinking. \"all\" will scan both in-memory and on-disk accounts index, which is the default. \
+                \"only-abnormal\" will scan in-memory accounts index only for abnormal entries and \
+                skip scanning on-disk accounts index by assuming that on-disk accounts index contains \
+                only normal accounts index entry. \"only-abnormal-with-verify\" is similar to \
+                \"only-abnormal\", which will scan in-memory index for abnormal entries, but will also \
+                verify that on-disk account entries are indeed normal.",
             )
             .hidden(hidden_unless_forced()),
         Arg::with_name("accounts_db_test_skip_rewrites")
@@ -122,6 +127,31 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .takes_value(true)
             .possible_values(&["mmap", "file"])
             .help("Access account storage using this method")
+            .hidden(hidden_unless_forced()),
+        Arg::with_name("accounts_db_experimental_accumulator_hash")
+            .long("accounts-db-experimental-accumulator-hash")
+            .help("Enables the experimental accumulator hash")
+            .hidden(hidden_unless_forced()),
+        Arg::with_name("accounts_db_hash_threads")
+            .long("accounts-db-hash-threads")
+            .value_name("NUM_THREADS")
+            .takes_value(true)
+            .validator(|s| is_within_range(s, 1..=num_cpus::get()))
+            .help("Number of threads to use for background accounts hashing")
+            .hidden(hidden_unless_forced()),
+        Arg::with_name("accounts_db_ancient_storage_ideal_size")
+            .long("accounts-db-ancient-storage-ideal-size")
+            .value_name("BYTES")
+            .validator(is_parsable::<u64>)
+            .takes_value(true)
+            .help("The smallest size of ideal ancient storage.")
+            .hidden(hidden_unless_forced()),
+        Arg::with_name("accounts_db_max_ancient_storages")
+            .long("accounts-db-max-ancient-storages")
+            .value_name("USIZE")
+            .validator(is_parsable::<usize>)
+            .takes_value(true)
+            .help("The number of ancient storages the ancient slot combining should converge to.")
             .hidden(hidden_unless_forced()),
     ]
     .into_boxed_slice()
@@ -210,6 +240,8 @@ pub fn parse_process_options(ledger_path: &Path, arg_matches: &ArgMatches<'_>) -
     let debug_keys = pubkeys_of(arg_matches, "debug_key")
         .map(|pubkeys| Arc::new(pubkeys.into_iter().collect::<HashSet<_>>()));
     let allow_dead_slots = arg_matches.is_present("allow_dead_slots");
+    let abort_on_invalid_block = arg_matches.is_present("abort_on_invalid_block");
+    let no_block_cost_limits = arg_matches.is_present("no_block_cost_limits");
 
     ProcessOptions {
         new_hard_forks,
@@ -226,6 +258,8 @@ pub fn parse_process_options(ledger_path: &Path, arg_matches: &ArgMatches<'_>) -
         allow_dead_slots,
         halt_at_slot,
         use_snapshot_archives_at_startup,
+        abort_on_invalid_block,
+        no_block_cost_limits,
         ..ProcessOptions::default()
     }
 }
@@ -241,14 +275,11 @@ pub fn get_accounts_db_config(
     let ledger_tool_ledger_path = ledger_path.join(LEDGER_TOOL_DIRECTORY);
 
     let accounts_index_bins = value_t!(arg_matches, "accounts_index_bins", usize).ok();
-    let accounts_index_index_limit_mb =
-        if let Ok(limit) = value_t!(arg_matches, "accounts_index_memory_limit_mb", usize) {
-            IndexLimitMb::Limit(limit)
-        } else if arg_matches.is_present("disable_accounts_disk_index") {
-            IndexLimitMb::InMemOnly
-        } else {
-            IndexLimitMb::Unspecified
-        };
+    let accounts_index_index_limit_mb = if arg_matches.is_present("disable_accounts_disk_index") {
+        IndexLimitMb::InMemOnly
+    } else {
+        IndexLimitMb::Unlimited
+    };
     let accounts_index_drives = values_t!(arg_matches, "accounts_index_path", String)
         .ok()
         .map(|drives| drives.into_iter().map(PathBuf::from).collect())
@@ -309,12 +340,36 @@ pub fn get_accounts_db_config(
         })
         .unwrap_or_default();
 
+    let scan_filter_for_shrinking = arg_matches
+        .value_of("accounts_db_scan_filter_for_shrinking")
+        .map(|filter| match filter {
+            "all" => ScanFilter::All,
+            "only-abnormal" => ScanFilter::OnlyAbnormal,
+            "only-abnormal-with-verify" => ScanFilter::OnlyAbnormalWithVerify,
+            _ => {
+                // clap will enforce one of the above values is given
+                unreachable!("invalid value given to accounts_db_scan_filter_for_shrinking")
+            }
+        })
+        .unwrap_or_default();
+
+    let num_hash_threads = arg_matches
+        .is_present("accounts_db_hash_threads")
+        .then(|| value_t_or_exit!(arg_matches, "accounts_db_hash_threads", NonZeroUsize));
+
     AccountsDbConfig {
         index: Some(accounts_index_config),
         base_working_path: Some(ledger_tool_ledger_path),
         accounts_hash_cache_path: Some(accounts_hash_cache_path),
         ancient_append_vec_offset: value_t!(arg_matches, "accounts_db_ancient_append_vecs", i64)
             .ok(),
+        ancient_storage_ideal_size: value_t!(
+            arg_matches,
+            "accounts_db_ancient_storage_ideal_size",
+            u64
+        )
+        .ok(),
+        max_ancient_storages: value_t!(arg_matches, "accounts_db_max_ancient_storages", usize).ok(),
         exhaustively_verify_refcounts: arg_matches.is_present("accounts_db_verify_refcounts"),
         skip_initial_hash_calc: arg_matches.is_present("accounts_db_skip_initial_hash_calculation"),
         test_partitioned_epoch_rewards,
@@ -322,6 +377,10 @@ pub fn get_accounts_db_config(
             .is_present("accounts_db_test_skip_rewrites"),
         create_ancient_storage,
         storage_access,
+        scan_filter_for_shrinking,
+        enable_experimental_accumulator_hash: arg_matches
+            .is_present("accounts_db_experimental_accumulator_hash"),
+        num_hash_threads,
         ..AccountsDbConfig::default()
     }
 }

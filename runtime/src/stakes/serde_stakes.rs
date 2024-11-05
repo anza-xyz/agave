@@ -2,16 +2,73 @@ use {
     super::{StakeAccount, Stakes, StakesEnum},
     crate::stake_history::StakeHistory,
     im::HashMap as ImHashMap,
-    serde::{ser::SerializeMap, Serialize, Serializer},
+    serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer},
     solana_sdk::{clock::Epoch, pubkey::Pubkey, stake::state::Delegation},
     solana_stake_program::stake_state::Stake,
     solana_vote::vote_account::VoteAccounts,
     std::sync::Arc,
 };
 
+/// Wrapper struct with custom serialization to support serializing
+/// `Stakes<StakeAccount>` as `Stakes<Stake>` without doing an intermediate
+/// clone of the stake data.
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
+#[derive(Debug, Clone)]
+pub enum SerdeStakesToStakeFormat {
+    Stake(Stakes<Stake>),
+    Account(Stakes<StakeAccount>),
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+impl PartialEq<Self> for SerdeStakesToStakeFormat {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Stake(stakes), Self::Stake(other)) => stakes == other,
+            (Self::Account(stakes), Self::Account(other)) => stakes == other,
+            (Self::Stake(stakes), Self::Account(other)) => {
+                stakes == &Stakes::<Stake>::from(other.clone())
+            }
+            (Self::Account(stakes), Self::Stake(other)) => {
+                other == &Stakes::<Stake>::from(stakes.clone())
+            }
+        }
+    }
+}
+
+impl From<SerdeStakesToStakeFormat> for StakesEnum {
+    fn from(stakes: SerdeStakesToStakeFormat) -> Self {
+        match stakes {
+            SerdeStakesToStakeFormat::Stake(stakes) => Self::Stakes(stakes),
+            SerdeStakesToStakeFormat::Account(stakes) => Self::Accounts(stakes),
+        }
+    }
+}
+
+impl Serialize for SerdeStakesToStakeFormat {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Stake(stakes) => stakes.serialize(serializer),
+            Self::Account(stakes) => serialize_stake_accounts_to_stake_format(stakes, serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for SerdeStakesToStakeFormat {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let stakes = Stakes::<Stake>::deserialize(deserializer)?;
+        Ok(Self::Stake(stakes))
+    }
+}
+
 // In order to maintain backward compatibility, the StakesEnum in EpochStakes
 // and SerializableVersionedBank should be serialized as Stakes<Delegation>.
-pub(crate) mod serde_stakes_enum_compat {
+pub(crate) mod serde_stakes_to_delegation_format {
     use {
         super::*,
         serde::{Deserialize, Deserializer, Serialize, Serializer},
@@ -23,9 +80,9 @@ pub(crate) mod serde_stakes_enum_compat {
     {
         match stakes {
             StakesEnum::Delegations(stakes) => stakes.serialize(serializer),
-            StakesEnum::Stakes(stakes) => serialize_stakes_as_delegations(stakes, serializer),
+            StakesEnum::Stakes(stakes) => serialize_stakes_to_delegation_format(stakes, serializer),
             StakesEnum::Accounts(stakes) => {
-                serialize_stake_accounts_as_delegations(stakes, serializer)
+                serialize_stake_accounts_to_delegation_format(stakes, serializer)
             }
         }
     }
@@ -39,21 +96,28 @@ pub(crate) mod serde_stakes_enum_compat {
     }
 }
 
-fn serialize_stakes_as_delegations<S: Serializer>(
+fn serialize_stakes_to_delegation_format<S: Serializer>(
     stakes: &Stakes<Stake>,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
-    SerdeStakeVariantStakes::from(stakes.clone()).serialize(serializer)
+    SerdeStakesToDelegationFormat::from(stakes.clone()).serialize(serializer)
 }
 
-fn serialize_stake_accounts_as_delegations<S: Serializer>(
+fn serialize_stake_accounts_to_delegation_format<S: Serializer>(
     stakes: &Stakes<StakeAccount>,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
-    SerdeStakeAccountVariantStakes::from(stakes.clone()).serialize(serializer)
+    SerdeStakeAccountsToDelegationFormat::from(stakes.clone()).serialize(serializer)
 }
 
-impl From<Stakes<Stake>> for SerdeStakeVariantStakes {
+fn serialize_stake_accounts_to_stake_format<S: Serializer>(
+    stakes: &Stakes<StakeAccount>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    SerdeStakeAccountsToStakeFormat::from(stakes.clone()).serialize(serializer)
+}
+
+impl From<Stakes<Stake>> for SerdeStakesToDelegationFormat {
     fn from(stakes: Stakes<Stake>) -> Self {
         let Stakes {
             vote_accounts,
@@ -65,7 +129,7 @@ impl From<Stakes<Stake>> for SerdeStakeVariantStakes {
 
         Self {
             vote_accounts,
-            stake_delegations: SerdeStakeMapWrapper(stake_delegations),
+            stake_delegations: SerdeStakeMapToDelegationFormat(stake_delegations),
             unused,
             epoch,
             stake_history,
@@ -73,7 +137,7 @@ impl From<Stakes<Stake>> for SerdeStakeVariantStakes {
     }
 }
 
-impl From<Stakes<StakeAccount>> for SerdeStakeAccountVariantStakes {
+impl From<Stakes<StakeAccount>> for SerdeStakeAccountsToDelegationFormat {
     fn from(stakes: Stakes<StakeAccount>) -> Self {
         let Stakes {
             vote_accounts,
@@ -85,7 +149,27 @@ impl From<Stakes<StakeAccount>> for SerdeStakeAccountVariantStakes {
 
         Self {
             vote_accounts,
-            stake_delegations: SerdeStakeAccountMapWrapper(stake_delegations),
+            stake_delegations: SerdeStakeAccountMapToDelegationFormat(stake_delegations),
+            unused,
+            epoch,
+            stake_history,
+        }
+    }
+}
+
+impl From<Stakes<StakeAccount>> for SerdeStakeAccountsToStakeFormat {
+    fn from(stakes: Stakes<StakeAccount>) -> Self {
+        let Stakes {
+            vote_accounts,
+            stake_delegations,
+            unused,
+            epoch,
+            stake_history,
+        } = stakes;
+
+        Self {
+            vote_accounts,
+            stake_delegations: SerdeStakeAccountMapToStakeFormat(stake_delegations),
             unused,
             epoch,
             stake_history,
@@ -95,9 +179,9 @@ impl From<Stakes<StakeAccount>> for SerdeStakeAccountVariantStakes {
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Serialize)]
-struct SerdeStakeVariantStakes {
+struct SerdeStakesToDelegationFormat {
     vote_accounts: VoteAccounts,
-    stake_delegations: SerdeStakeMapWrapper,
+    stake_delegations: SerdeStakeMapToDelegationFormat,
     unused: u64,
     epoch: Epoch,
     stake_history: StakeHistory,
@@ -105,17 +189,27 @@ struct SerdeStakeVariantStakes {
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Serialize)]
-struct SerdeStakeAccountVariantStakes {
+struct SerdeStakeAccountsToDelegationFormat {
     vote_accounts: VoteAccounts,
-    stake_delegations: SerdeStakeAccountMapWrapper,
+    stake_delegations: SerdeStakeAccountMapToDelegationFormat,
     unused: u64,
     epoch: Epoch,
     stake_history: StakeHistory,
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-struct SerdeStakeMapWrapper(ImHashMap<Pubkey, Stake>);
-impl Serialize for SerdeStakeMapWrapper {
+#[derive(Serialize)]
+struct SerdeStakeAccountsToStakeFormat {
+    vote_accounts: VoteAccounts,
+    stake_delegations: SerdeStakeAccountMapToStakeFormat,
+    unused: u64,
+    epoch: Epoch,
+    stake_history: StakeHistory,
+}
+
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+struct SerdeStakeMapToDelegationFormat(ImHashMap<Pubkey, Stake>);
+impl Serialize for SerdeStakeMapToDelegationFormat {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -129,8 +223,8 @@ impl Serialize for SerdeStakeMapWrapper {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-struct SerdeStakeAccountMapWrapper(ImHashMap<Pubkey, StakeAccount>);
-impl Serialize for SerdeStakeAccountMapWrapper {
+struct SerdeStakeAccountMapToDelegationFormat(ImHashMap<Pubkey, StakeAccount>);
+impl Serialize for SerdeStakeAccountMapToDelegationFormat {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -138,6 +232,21 @@ impl Serialize for SerdeStakeAccountMapWrapper {
         let mut s = serializer.serialize_map(Some(self.0.len()))?;
         for (pubkey, stake_account) in self.0.iter() {
             s.serialize_entry(pubkey, stake_account.delegation())?;
+        }
+        s.end()
+    }
+}
+
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+struct SerdeStakeAccountMapToStakeFormat(ImHashMap<Pubkey, StakeAccount>);
+impl Serialize for SerdeStakeAccountMapToStakeFormat {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut s = serializer.serialize_map(Some(self.0.len()))?;
+        for (pubkey, stake_account) in self.0.iter() {
+            s.serialize_entry(pubkey, stake_account.stake())?;
         }
         s.end()
     }
@@ -151,11 +260,48 @@ mod tests {
     };
 
     #[test]
-    fn test_serde_stakes_enum_compat() {
+    fn test_serde_stakes_to_stake_format() {
+        let mut stake_delegations = ImHashMap::new();
+        stake_delegations.insert(
+            Pubkey::new_unique(),
+            StakeAccount::try_from(stake_state::create_account(
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                &vote_state::create_account(
+                    &Pubkey::new_unique(),
+                    &Pubkey::new_unique(),
+                    0,
+                    1_000_000_000,
+                ),
+                &Rent::default(),
+                1_000_000_000,
+            ))
+            .unwrap(),
+        );
+
+        let stake_account_stakes = Stakes {
+            vote_accounts: VoteAccounts::default(),
+            stake_delegations,
+            unused: 0,
+            epoch: 0,
+            stake_history: StakeHistory::default(),
+        };
+
+        let wrapped_stakes = SerdeStakesToStakeFormat::Account(stake_account_stakes.clone());
+        let serialized_stakes = bincode::serialize(&wrapped_stakes).unwrap();
+        let stake_stakes = bincode::deserialize::<Stakes<Stake>>(&serialized_stakes).unwrap();
+        assert_eq!(
+            StakesEnum::Stakes(stake_stakes),
+            StakesEnum::Accounts(stake_account_stakes)
+        );
+    }
+
+    #[test]
+    fn test_serde_stakes_to_delegation_format() {
         #[derive(Debug, PartialEq, Deserialize, Serialize)]
         struct Dummy {
             head: String,
-            #[serde(with = "serde_stakes_enum_compat")]
+            #[serde(with = "serde_stakes_to_delegation_format")]
             stakes: Arc<StakesEnum>,
             tail: String,
         }

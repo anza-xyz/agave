@@ -5,7 +5,7 @@ use {
         contact_info::{
             sanitize_quic_offset, ContactInfo, Error, Protocol, SOCKET_ADDR_UNSPECIFIED,
         },
-        crds_value::MAX_WALLCLOCK,
+        crds_data::MAX_WALLCLOCK,
     },
     solana_sanitize::{Sanitize, SanitizeError},
     solana_sdk::pubkey::Pubkey,
@@ -199,7 +199,7 @@ impl TryFrom<&ContactInfo> for LegacyContactInfo {
             serve_repair_quic: unwrap_socket!(serve_repair, Protocol::QUIC),
             tpu: unwrap_socket!(tpu, Protocol::UDP),
             tpu_forwards: unwrap_socket!(tpu_forwards, Protocol::UDP),
-            tpu_vote: unwrap_socket!(tpu_vote),
+            tpu_vote: unwrap_socket!(tpu_vote, Protocol::UDP),
             rpc: unwrap_socket!(rpc),
             rpc_pubsub: unwrap_socket!(rpc_pubsub),
             serve_repair: unwrap_socket!(serve_repair, Protocol::UDP),

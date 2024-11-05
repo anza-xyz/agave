@@ -8,16 +8,18 @@ use {
         TransactionSimulationDetails, TransactionStatus,
     },
     solana_client::connection_cache::ConnectionCache,
+    solana_feature_set::{move_precompile_verification_to_svm, FeatureSet},
     solana_runtime::{
         bank::{Bank, TransactionSimulationResult},
         bank_forks::BankForks,
         commitment::BlockCommitmentCache,
+        verify_precompiles::verify_precompiles,
     },
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk::{
         account::Account,
         clock::Slot,
         commitment_config::CommitmentLevel,
-        feature_set::FeatureSet,
         hash::Hash,
         message::{Message, SanitizedMessage},
         pubkey::Pubkey,
@@ -163,7 +165,13 @@ fn verify_transaction(
     feature_set: &Arc<FeatureSet>,
 ) -> transaction::Result<()> {
     transaction.verify()?;
-    transaction.verify_precompiles(feature_set)?;
+
+    let move_precompile_verification_to_svm =
+        feature_set.is_active(&move_precompile_verification_to_svm::id());
+    if !move_precompile_verification_to_svm {
+        verify_precompiles(transaction, feature_set)?;
+    }
+
     Ok(())
 }
 
@@ -171,7 +179,7 @@ fn simulate_transaction(
     bank: &Bank,
     transaction: VersionedTransaction,
 ) -> BanksTransactionResultWithSimulation {
-    let sanitized_transaction = match SanitizedTransaction::try_create(
+    let sanitized_transaction = match RuntimeTransaction::try_create(
         transaction,
         MessageHash::Compute,
         Some(false), // is_simple_vote_tx
@@ -451,7 +459,7 @@ pub async fn start_tcp_server(
                 &bank_forks,
                 None,
                 receiver,
-                &connection_cache,
+                connection_cache.clone(),
                 5_000,
                 0,
                 exit.clone(),

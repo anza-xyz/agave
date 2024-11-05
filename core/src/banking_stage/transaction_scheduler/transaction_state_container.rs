@@ -20,9 +20,9 @@ use {
 /// 2. Inserted into `TransactionStateContainer` by `BankingStage`
 /// 3. Popped in priority-order by scheduler, and transitioned to `Pending` state
 /// 4. Processed by `ConsumeWorker`
-///   a. If consumed, remove `Pending` state from the `TransactionStateContainer`
-///   b. If retryable, transition back to `Unprocessed` state.
-///      Re-insert to the queue, and return to step 3.
+///    a. If consumed, remove `Pending` state from the `TransactionStateContainer`
+///    b. If retryable, transition back to `Unprocessed` state.
+///       Re-insert to the queue, and return to step 3.
 ///
 /// The structure is composed of two main components:
 /// 1. A priority queue of wrapped `TransactionId`s, which are used to
@@ -153,16 +153,12 @@ impl TransactionStateContainer {
 mod tests {
     use {
         super::*,
+        crate::banking_stage::scheduler_messages::MaxAge,
+        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
-            compute_budget::ComputeBudgetInstruction,
-            hash::Hash,
-            message::Message,
-            packet::Packet,
-            signature::Keypair,
-            signer::Signer,
-            slot_history::Slot,
-            system_instruction,
-            transaction::{SanitizedTransaction, Transaction},
+            compute_budget::ComputeBudgetInstruction, hash::Hash, message::Message, packet::Packet,
+            signature::Keypair, signer::Signer, slot_history::Slot, system_instruction,
+            transaction::Transaction,
         },
     };
 
@@ -185,7 +181,7 @@ mod tests {
             ComputeBudgetInstruction::set_compute_unit_price(priority),
         ];
         let message = Message::new(&ixs, Some(&from_keypair.pubkey()));
-        let tx = SanitizedTransaction::from_transaction_for_tests(Transaction::new(
+        let tx = RuntimeTransaction::from_transaction_for_tests(Transaction::new(
             &[&from_keypair],
             message,
             Hash::default(),
@@ -198,7 +194,10 @@ mod tests {
         );
         let transaction_ttl = SanitizedTransactionTTL {
             transaction: tx,
-            max_age_slot: Slot::MAX,
+            max_age: MaxAge {
+                epoch_invalidation_slot: Slot::MAX,
+                alt_invalidation_slot: Slot::MAX,
+            },
         };
         const TEST_TRANSACTION_COST: u64 = 5000;
         (transaction_ttl, packet, priority, TEST_TRANSACTION_COST)

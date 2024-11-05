@@ -5,14 +5,12 @@
 #![cfg(feature = "full")]
 
 use {
-    crate::{
-        feature_set::{ed25519_precompile_verify_strict, FeatureSet},
-        instruction::Instruction,
-        precompiles::PrecompileError,
-    },
     bytemuck::bytes_of,
     bytemuck_derive::{Pod, Zeroable},
     ed25519_dalek::{ed25519::signature::Signature, Signer, Verifier},
+    solana_feature_set::{ed25519_precompile_verify_strict, FeatureSet},
+    solana_instruction::Instruction,
+    solana_precompile_error::PrecompileError,
 };
 
 pub const PUBKEY_SERIALIZED_SIZE: usize = 32;
@@ -194,13 +192,13 @@ pub mod test {
         super::*,
         crate::{
             ed25519_instruction::new_ed25519_instruction,
-            feature_set::FeatureSet,
             hash::Hash,
             signature::{Keypair, Signer},
             transaction::Transaction,
         },
         hex,
         rand0_7::{thread_rng, Rng},
+        solana_feature_set::FeatureSet,
     };
 
     pub fn new_ed25519_instruction_raw(

@@ -37,6 +37,7 @@ env:
 
 jobs:
   check:
+    if: github.repository == 'anza-xyz/agave'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,7 +46,7 @@ jobs:
         run: |
           .github/scripts/purge-ubuntu-runner.sh
 
-      - uses: mozilla-actions/sccache-action@v0.0.4
+      - uses: mozilla-actions/sccache-action@v0.0.5
         with:
           version: "v0.8.1"
 
@@ -97,7 +98,7 @@ jobs:
         run: |
           .github/scripts/purge-ubuntu-runner.sh
 
-      - uses: mozilla-actions/sccache-action@v0.0.4
+      - uses: mozilla-actions/sccache-action@v0.0.5
         with:
           version: "v0.8.1"
 
@@ -143,7 +144,6 @@ jobs:
           - [name-service/program]
           - [stake-pool/program]
           - [single-pool/program]
-
     steps:
       - uses: actions/checkout@v4
 
@@ -151,7 +151,7 @@ jobs:
         run: |
           .github/scripts/purge-ubuntu-runner.sh
 
-      - uses: mozilla-actions/sccache-action@v0.0.4
+      - uses: mozilla-actions/sccache-action@v0.0.5
         with:
           version: "v0.8.1"
 

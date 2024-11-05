@@ -5,7 +5,7 @@ use {
     gag::BufferRedirect,
     itertools::Itertools,
     log::*,
-    rand::seq::IteratorRandom,
+    rand::seq::SliceRandom,
     serial_test::serial,
     solana_accounts_db::{
         hardened_unpack::open_genesis_config, utils::create_accounts_run_and_snapshot_dirs,
@@ -65,7 +65,9 @@ use {
         client::AsyncClient,
         clock::{self, Slot, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE},
         commitment_config::CommitmentConfig,
-        epoch_schedule::{DEFAULT_SLOTS_PER_EPOCH, MINIMUM_SLOTS_PER_EPOCH},
+        epoch_schedule::{
+            DEFAULT_SLOTS_PER_EPOCH, MAX_LEADER_SCHEDULE_EPOCH_OFFSET, MINIMUM_SLOTS_PER_EPOCH,
+        },
         genesis_config::ClusterType,
         hard_forks::HardForks,
         hash::Hash,
@@ -75,6 +77,7 @@ use {
         system_program, system_transaction,
         vote::state::TowerSync,
     },
+    solana_stake_program::stake_state::NEW_WARMUP_COOLDOWN_RATE,
     solana_streamer::socket::SocketAddrSpace,
     solana_turbine::broadcast_stage::{
         broadcast_duplicates_run::{BroadcastDuplicatesConfig, ClusterPartition},
@@ -95,9 +98,11 @@ use {
         thread::{sleep, Builder, JoinHandle},
         time::{Duration, Instant},
     },
+    strum::{EnumCount, IntoEnumIterator},
 };
 
 #[test]
+#[serial]
 fn test_local_cluster_start_and_exit() {
     solana_logger::setup();
     let num_nodes = 1;
@@ -111,6 +116,7 @@ fn test_local_cluster_start_and_exit() {
 }
 
 #[test]
+#[serial]
 fn test_local_cluster_start_and_exit_with_config() {
     solana_logger::setup();
     const NUM_NODES: usize = 1;
@@ -1531,28 +1537,57 @@ fn test_fake_shreds_broadcast_leader() {
 }
 
 #[test]
+#[serial]
 fn test_wait_for_max_stake() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
     let validator_config = ValidatorConfig::default_for_test();
     let slots_per_epoch = MINIMUM_SLOTS_PER_EPOCH;
+    // Set this large enough to allow for skipped slots but still be able to
+    // make a root and derive the new leader schedule in time.
+    let stakers_slot_offset = slots_per_epoch.saturating_mul(MAX_LEADER_SCHEDULE_EPOCH_OFFSET);
+    // Reduce this so that we can complete the test faster by advancing through
+    // slots/epochs faster. But don't make it too small because it can make us
+    // susceptible to skipped slots and the cluster getting stuck.
+    let ticks_per_slot = 16;
+    let num_validators = 4;
     let mut config = ClusterConfig {
         cluster_lamports: DEFAULT_CLUSTER_LAMPORTS,
-        node_stakes: vec![DEFAULT_NODE_STAKE; 4],
-        validator_configs: make_identical_validator_configs(&validator_config, 4),
+        node_stakes: vec![DEFAULT_NODE_STAKE; num_validators],
+        validator_configs: make_identical_validator_configs(&validator_config, num_validators),
         slots_per_epoch,
-        stakers_slot_offset: slots_per_epoch,
+        stakers_slot_offset,
+        ticks_per_slot,
         ..ClusterConfig::default()
     };
     let cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
     let client = RpcClient::new_socket(cluster.entry_point_info.rpc().unwrap());
 
-    assert!(client
-        .wait_for_max_stake(CommitmentConfig::default(), 33.0f32)
-        .is_ok());
+    let num_validators_activating_stake = num_validators - 1;
+    // Number of epochs it is expected to take to completely activate the stake
+    // for all the validators.
+    let num_expected_epochs = (num_validators_activating_stake as f64)
+        .log(1. + NEW_WARMUP_COOLDOWN_RATE)
+        .ceil() as u32
+        + 1;
+    let expected_test_duration = config.poh_config.target_tick_duration
+        * ticks_per_slot as u32
+        * slots_per_epoch as u32
+        * num_expected_epochs;
+    // Make the timeout double the expected duration to provide some margin.
+    // Especially considering tests may be running in parallel.
+    let timeout = expected_test_duration * 2;
+    if let Err(err) = client.wait_for_max_stake_below_threshold_with_timeout(
+        CommitmentConfig::default(),
+        (100 / num_validators_activating_stake) as f32,
+        timeout,
+    ) {
+        panic!("wait_for_max_stake failed: {:?}", err);
+    }
     assert!(client.get_slot().unwrap() > 10);
 }
 
 #[test]
+#[serial]
 // Test that when a leader is leader for banks B_i..B_{i+n}, and B_i is not
 // votable, then B_{i+1} still chains to B_i
 fn test_no_voting() {
@@ -2052,6 +2087,7 @@ fn restart_whole_cluster_after_hard_fork(
 }
 
 #[test]
+#[serial]
 fn test_hard_fork_invalidates_tower() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
 
@@ -2698,12 +2734,11 @@ fn test_oc_bad_signatures() {
                 // Add all recent vote slots on this fork to allow cluster to pass
                 // vote threshold checks in replay. Note this will instantly force a
                 // root by this validator.
-                let vote_slots: Vec<Slot> = vec![vote_slot];
+                let tower_sync = TowerSync::new_from_slots(vec![vote_slot], vote_hash, None);
 
                 let bad_authorized_signer_keypair = Keypair::new();
-                let mut vote_tx = vote_transaction::new_vote_transaction(
-                    vote_slots,
-                    vote_hash,
+                let mut vote_tx = vote_transaction::new_tower_sync_transaction(
+                    tower_sync,
                     leader_vote_tx.message.recent_blockhash,
                     &node_keypair,
                     &vote_keypair,
@@ -4399,6 +4434,7 @@ fn test_leader_failure_4() {
 // slot_hash expiry to 64 slots.
 
 #[test]
+#[serial]
 fn test_slot_hash_expiry() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
     solana_sdk::slot_hashes::set_entries_for_tests_only(64);
@@ -5711,20 +5747,19 @@ fn test_randomly_mixed_block_verification_methods_between_bootstrap_and_not() {
          info",
     );
 
-    let num_nodes = 2;
+    let num_nodes = BlockVerificationMethod::COUNT;
     let mut config = ClusterConfig::new_with_equal_stakes(
         num_nodes,
         DEFAULT_CLUSTER_LAMPORTS,
         DEFAULT_NODE_STAKE,
     );
 
-    // Randomly switch to use unified scheduler
-    config
-        .validator_configs
-        .iter_mut()
-        .choose(&mut rand::thread_rng())
-        .unwrap()
-        .block_verification_method = BlockVerificationMethod::UnifiedScheduler;
+    // Overwrite block_verification_method with shuffled variants
+    let mut methods = BlockVerificationMethod::iter().collect::<Vec<_>>();
+    methods.shuffle(&mut rand::thread_rng());
+    for (validator_config, method) in config.validator_configs.iter_mut().zip_eq(methods) {
+        validator_config.block_verification_method = method;
+    }
 
     let local = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
     cluster_tests::spend_and_verify_all_nodes(

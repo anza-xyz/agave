@@ -14,7 +14,9 @@
 use solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo};
 use {
     crate::{leader_bank_notifier::LeaderBankNotifier, poh_service::PohService},
-    crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, SendError, Sender, TrySendError},
+    crossbeam_channel::{
+        bounded, unbounded, Receiver, RecvTimeoutError, SendError, Sender, TrySendError,
+    },
     log::*,
     solana_entry::{
         entry::{hash_transactions, Entry},
@@ -113,7 +115,7 @@ impl Record {
 
 #[derive(Default, Debug)]
 pub struct RecordTransactionsTimings {
-    pub execution_results_to_transactions_us: u64,
+    pub processing_results_to_transactions_us: u64,
     pub hash_us: u64,
     pub poh_record_us: u64,
 }
@@ -121,8 +123,8 @@ pub struct RecordTransactionsTimings {
 impl RecordTransactionsTimings {
     pub fn accumulate(&mut self, other: &RecordTransactionsTimings) {
         saturating_add_assign!(
-            self.execution_results_to_transactions_us,
-            other.execution_results_to_transactions_us
+            self.processing_results_to_transactions_us,
+            other.processing_results_to_transactions_us
         );
         saturating_add_assign!(self.hash_us, other.hash_us);
         saturating_add_assign!(self.poh_record_us, other.poh_record_us);
@@ -207,7 +209,7 @@ impl TransactionRecorder {
         transactions: Vec<VersionedTransaction>,
     ) -> Result<Option<usize>> {
         // create a new channel so that there is only 1 sender and when it goes out of scope, the receiver fails
-        let (result_sender, result_receiver) = unbounded();
+        let (result_sender, result_receiver) = bounded(1);
         let res =
             self.record_sender
                 .send(Record::new(mixin, transactions, bank_slot, result_sender));
@@ -734,9 +736,14 @@ impl PohRecorder {
         self.set_bank(BankWithScheduler::new_without_scheduler(bank), false)
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn set_bank_with_transaction_index_for_test(&mut self, bank: Arc<Bank>) {
         self.set_bank(BankWithScheduler::new_without_scheduler(bank), true)
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn clear_bank_for_test(&mut self) {
+        self.clear_bank();
     }
 
     // Flush cache will delay flushing the cache for a bank until it past the WorkingBank::min_tick_height
@@ -992,11 +999,10 @@ impl PohRecorder {
                 self.send_entry_us += send_entry_us;
                 send_entry_res?;
                 let starting_transaction_index =
-                    working_bank.transaction_index.map(|transaction_index| {
+                    working_bank.transaction_index.inspect(|transaction_index| {
                         let next_starting_transaction_index =
                             transaction_index.saturating_add(num_transactions);
                         working_bank.transaction_index = Some(next_starting_transaction_index);
-                        transaction_index
                     });
                 return Ok(starting_transaction_index);
             }

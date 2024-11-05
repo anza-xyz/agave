@@ -5,10 +5,12 @@ use super::Bank;
 mod tests {
     use {
         super::*,
+        solana_feature_set as feature_set,
         solana_sdk::{
-            feature_set, genesis_config::create_genesis_config, pubkey::Pubkey,
+            genesis_config::create_genesis_config, pubkey::Pubkey,
             sysvar::epoch_rewards::EpochRewards,
         },
+        solana_stake_program::points::PointValue,
         std::sync::Arc,
     };
 
@@ -109,7 +111,7 @@ mod tests {
         drop(bank1_sysvar_cache);
 
         // inject a reward sysvar for test
-        bank1.activate_feature(&feature_set::enable_partitioned_epoch_reward::id());
+        bank1.activate_feature(&feature_set::partitioned_epoch_rewards_superfeature::id());
         let num_partitions = 2; // num_partitions is arbitrary and unimportant for this test
         let total_points = 42_000; // total_points is arbitrary for the purposes of this test
         let expected_epoch_rewards = EpochRewards {
@@ -126,7 +128,10 @@ mod tests {
             expected_epoch_rewards.distributed_rewards,
             expected_epoch_rewards.distribution_starting_block_height,
             num_partitions,
-            total_points,
+            PointValue {
+                rewards: 100,
+                points: total_points,
+            },
         );
 
         bank1

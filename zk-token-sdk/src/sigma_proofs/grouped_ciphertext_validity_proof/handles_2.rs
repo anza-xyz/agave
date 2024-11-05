@@ -66,7 +66,7 @@ impl GroupedCiphertext2HandlesValidityProof {
     /// handles as input; it only takes the associated Pedersen opening instead.
     ///
     /// * `(destination_pubkey, auditor_pubkey)` - The ElGamal public keys associated with the decryption
-    /// handles
+    ///   handles
     /// * `amount` - The committed message in the commitment
     /// * `opening` - The opening associated with the Pedersen commitment
     /// * `transcript` - The transcript that does the bookkeeping for the Fiat-Shamir heuristic
@@ -121,7 +121,7 @@ impl GroupedCiphertext2HandlesValidityProof {
     ///
     /// * `commitment` - The Pedersen commitment
     /// * `(destination_pubkey, auditor_pubkey)` - The ElGamal pubkeys associated with the decryption
-    /// handles
+    ///   handles
     /// * `(destination_handle, auditor_handle)` - The decryption handles
     /// * `transcript` - The transcript that does the bookkeeping for the Fiat-Shamir heuristic
     pub fn verify(
@@ -172,7 +172,7 @@ impl GroupedCiphertext2HandlesValidityProof {
                 &self.z_r,           // z_r
                 &self.z_x,           // z_x
                 &(-&c),              // -c
-                &-(&Scalar::one()),  // -identity
+                &-(&Scalar::ONE),    // -identity
                 &(&w * &self.z_r),   // w * z_r
                 &(&w_negated * &c),  // -w * c
                 &w_negated,          // -w

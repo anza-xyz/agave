@@ -37,10 +37,8 @@ use {
     bytemuck::bytes_of,
     num_derive::{FromPrimitive, ToPrimitive},
     num_traits::{FromPrimitive, ToPrimitive},
-    solana_program::{
-        instruction::{AccountMeta, Instruction},
-        pubkey::Pubkey,
-    },
+    solana_instruction::{AccountMeta, Instruction},
+    solana_pubkey::Pubkey,
 };
 
 #[derive(Clone, Copy, Debug, FromPrimitive, ToPrimitive, PartialEq, Eq)]
@@ -321,7 +319,7 @@ pub enum ProofInstruction {
     ///   2. `[]` The proof context account owner
     ///
     ///   * Otherwise
-    ///   None
+    ///     None
     ///
     /// The instruction expects either:
     ///   i. `GroupedCiphertext3HandlesValidityProofData` if proof is provided as instruction data
@@ -344,7 +342,7 @@ pub enum ProofInstruction {
     ///   2. `[]` The proof context account owner
     ///
     ///   * Otherwise
-    ///   None
+    ///     None
     ///
     /// The instruction expects either:
     ///   i. `BatchedGroupedCiphertext3HandlesValidityProofData` if proof is provided as instruction data

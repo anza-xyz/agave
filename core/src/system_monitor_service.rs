@@ -466,8 +466,13 @@ impl SystemMonitorService {
             .map(|(key, interesting_limit, current_value)| {
                 datapoint_warn!("os-config", (key, *current_value, i64));
                 match interesting_limit {
-                    InterestingLimit::Recommend(recommended_value) if current_value < recommended_value => {
-                        warn!("  {key}: recommended={recommended_value} current={current_value}, too small");
+                    InterestingLimit::Recommend(recommended_value)
+                        if current_value < recommended_value =>
+                    {
+                        warn!(
+                            "  {key}: recommended={recommended_value}, current={current_value} \
+                             too small"
+                        );
                         false
                     }
                     InterestingLimit::Recommend(recommended_value) => {
@@ -674,6 +679,8 @@ impl SystemMonitorService {
                 "memory-stats",
                 ("total", info.total * KB, i64),
                 ("swap_total", info.swap_total * KB, i64),
+                ("buffers_bytes", info.buffers * KB, i64),
+                ("cached_bytes", info.cached * KB, i64),
                 (
                     "free_percent",
                     Self::calc_percent(info.free, info.total),

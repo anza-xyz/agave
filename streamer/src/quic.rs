@@ -1,14 +1,26 @@
 use {
     crate::{
-        nonblocking::quic::ALPN_TPU_PROTOCOL_ID, streamer::StakedNodes,
+        nonblocking::quic::{
+            ALPN_TPU_PROTOCOL_ID, DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
+            DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
+        },
+        streamer::StakedNodes,
         tls_certificates::new_dummy_x509_certificate,
     },
     crossbeam_channel::Sender,
     pem::Pem,
-    quinn::{Endpoint, IdleTimeout, ServerConfig},
-    rustls::{server::ClientCertVerified, Certificate, DistinguishedName},
+    quinn::{
+        crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
+        Endpoint, IdleTimeout, ServerConfig,
+    },
+    rustls::{
+        pki_types::{CertificateDer, UnixTime},
+        server::danger::ClientCertVerified,
+        DistinguishedName, KeyLogFile,
+    },
     solana_perf::packet::PacketBatch,
     solana_sdk::{
+        net::DEFAULT_TPU_COALESCE,
         packet::PACKET_DATA_SIZE,
         quic::{NotifyKeyUpdate, QUIC_MAX_TIMEOUT, QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS},
         signature::Keypair,
@@ -20,7 +32,7 @@ use {
             Arc, Mutex, RwLock,
         },
         thread,
-        time::{Duration, SystemTime},
+        time::Duration,
     },
     tokio::runtime::Runtime,
 };
@@ -31,11 +43,12 @@ pub const MAX_UNSTAKED_CONNECTIONS: usize = 500;
 // This will be adjusted and parameterized in follow-on PRs.
 pub const DEFAULT_QUIC_ENDPOINTS: usize = 1;
 
-pub struct SkipClientVerification;
+#[derive(Debug)]
+pub struct SkipClientVerification(Arc<rustls::crypto::CryptoProvider>);
 
 impl SkipClientVerification {
     pub fn new() -> Arc<Self> {
-        Arc::new(Self)
+        Arc::new(Self(Arc::new(rustls::crypto::ring::default_provider())))
     }
 }
 
@@ -45,18 +58,58 @@ pub struct SpawnServerResult {
     pub key_updater: Arc<EndpointKeyUpdater>,
 }
 
-impl rustls::server::ClientCertVerifier for SkipClientVerification {
-    fn client_auth_root_subjects(&self) -> &[DistinguishedName] {
+impl rustls::server::danger::ClientCertVerifier for SkipClientVerification {
+    fn verify_client_cert(
+        &self,
+        _end_entity: &CertificateDer,
+        _intermediates: &[CertificateDer],
+        _now: UnixTime,
+    ) -> Result<ClientCertVerified, rustls::Error> {
+        Ok(rustls::server::danger::ClientCertVerified::assertion())
+    }
+
+    fn root_hint_subjects(&self) -> &[DistinguishedName] {
         &[]
     }
 
-    fn verify_client_cert(
+    fn verify_tls12_signature(
         &self,
-        _end_entity: &Certificate,
-        _intermediates: &[Certificate],
-        _now: SystemTime,
-    ) -> Result<ClientCertVerified, rustls::Error> {
-        Ok(rustls::server::ClientCertVerified::assertion())
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.0.signature_verification_algorithms.supported_schemes()
+    }
+
+    fn offer_client_auth(&self) -> bool {
+        true
+    }
+
+    fn client_auth_mandatory(&self) -> bool {
+        self.offer_client_auth()
     }
 }
 
@@ -64,24 +117,22 @@ impl rustls::server::ClientCertVerifier for SkipClientVerification {
 #[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
 pub(crate) fn configure_server(
     identity_keypair: &Keypair,
-    max_concurrent_connections: usize,
 ) -> Result<(ServerConfig, String), QuicServerError> {
     let (cert, priv_key) = new_dummy_x509_certificate(identity_keypair);
     let cert_chain_pem_parts = vec![Pem {
         tag: "CERTIFICATE".to_string(),
-        contents: cert.0.clone(),
+        contents: cert.as_ref().to_vec(),
     }];
     let cert_chain_pem = pem::encode_many(&cert_chain_pem_parts);
 
     let mut server_tls_config = rustls::ServerConfig::builder()
-        .with_safe_defaults()
         .with_client_cert_verifier(SkipClientVerification::new())
         .with_single_cert(vec![cert], priv_key)?;
     server_tls_config.alpn_protocols = vec![ALPN_TPU_PROTOCOL_ID.to_vec()];
+    server_tls_config.key_log = Arc::new(KeyLogFile::new());
+    let quic_server_config = QuicServerConfig::try_from(server_tls_config)?;
 
-    let mut server_config = ServerConfig::with_crypto(Arc::new(server_tls_config));
-    server_config.concurrent_connections(max_concurrent_connections as u32);
-    server_config.use_retry(true);
+    let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
     let config = Arc::get_mut(&mut server_config.transport).unwrap();
 
     // QUIC_MAX_CONCURRENT_STREAMS doubled, which was found to improve reliability
@@ -107,7 +158,7 @@ pub(crate) fn configure_server(
     Ok((server_config, cert_chain_pem))
 }
 
-fn rt(name: String) -> Runtime {
+pub fn rt(name: String) -> Runtime {
     tokio::runtime::Builder::new_multi_thread()
         .thread_name(name)
         .enable_all()
@@ -121,16 +172,17 @@ pub enum QuicServerError {
     EndpointFailed(std::io::Error),
     #[error("TLS error: {0}")]
     TlsError(#[from] rustls::Error),
+    #[error("No initial cipher suite")]
+    NoInitialCipherSuite(#[from] NoInitialCipherSuite),
 }
 
 pub struct EndpointKeyUpdater {
     endpoints: Vec<Endpoint>,
-    max_concurrent_connections: usize,
 }
 
 impl NotifyKeyUpdate for EndpointKeyUpdater {
     fn update_key(&self, key: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
-        let (config, _) = configure_server(key, self.max_concurrent_connections)?;
+        let (config, _) = configure_server(key)?;
         for endpoint in &self.endpoints {
             endpoint.set_server_config(Some(config.clone()));
         }
@@ -144,8 +196,7 @@ pub struct StreamerStats {
     pub(crate) total_new_connections: AtomicUsize,
     pub(crate) total_streams: AtomicUsize,
     pub(crate) total_new_streams: AtomicUsize,
-    pub(crate) total_invalid_chunks: AtomicUsize,
-    pub(crate) total_invalid_chunk_size: AtomicUsize,
+    pub(crate) invalid_stream_size: AtomicUsize,
     pub(crate) total_packets_allocated: AtomicUsize,
     pub(crate) total_packet_batches_allocated: AtomicUsize,
     pub(crate) total_chunks_received: AtomicUsize,
@@ -198,6 +249,9 @@ pub struct StreamerStats {
     pub(crate) throttled_staked_streams: AtomicUsize,
     pub(crate) throttled_unstaked_streams: AtomicUsize,
     pub(crate) connection_rate_limiter_length: AtomicUsize,
+    // All connections in various states such as Incoming, Connecting, Connection
+    pub(crate) open_connections: AtomicUsize,
+    pub(crate) refused_connections_too_many_open_connections: AtomicUsize,
     pub(crate) outstanding_incoming_connection_attempts: AtomicUsize,
     pub(crate) total_incoming_connection_attempts: AtomicUsize,
     pub(crate) quic_endpoints_count: AtomicUsize,
@@ -348,13 +402,8 @@ impl StreamerStats {
                 i64
             ),
             (
-                "invalid_chunk",
-                self.total_invalid_chunks.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "invalid_chunk_size",
-                self.total_invalid_chunk_size.swap(0, Ordering::Relaxed),
+                "invalid_stream_size",
+                self.invalid_stream_size.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
@@ -546,11 +595,21 @@ impl StreamerStats {
                 self.quic_endpoints_count.load(Ordering::Relaxed),
                 i64
             ),
+            (
+                "open_connections",
+                self.open_connections.load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "refused_connections_too_many_open_connections",
+                self.refused_connections_too_many_open_connections
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
         );
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn spawn_server(
     thread_name: &'static str,
     metrics_name: &'static str,
@@ -558,14 +617,8 @@ pub fn spawn_server(
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     exit: Arc<AtomicBool>,
-    max_connections_per_peer: usize,
     staked_nodes: Arc<RwLock<StakedNodes>>,
-    max_staked_connections: usize,
-    max_unstaked_connections: usize,
-    max_streams_per_ms: u64,
-    max_connections_per_ipaddr_per_min: u64,
-    wait_for_chunk_timeout: Duration,
-    coalesce: Duration,
+    quic_server_params: QuicServerParams,
 ) -> Result<SpawnServerResult, QuicServerError> {
     spawn_server_multi(
         thread_name,
@@ -574,18 +627,35 @@ pub fn spawn_server(
         keypair,
         packet_sender,
         exit,
-        max_connections_per_peer,
         staked_nodes,
-        max_staked_connections,
-        max_unstaked_connections,
-        max_streams_per_ms,
-        max_connections_per_ipaddr_per_min,
-        wait_for_chunk_timeout,
-        coalesce,
+        quic_server_params,
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+pub struct QuicServerParams {
+    pub max_connections_per_peer: usize,
+    pub max_staked_connections: usize,
+    pub max_unstaked_connections: usize,
+    pub max_streams_per_ms: u64,
+    pub max_connections_per_ipaddr_per_min: u64,
+    pub wait_for_chunk_timeout: Duration,
+    pub coalesce: Duration,
+}
+
+impl Default for QuicServerParams {
+    fn default() -> Self {
+        QuicServerParams {
+            max_connections_per_peer: 1,
+            max_staked_connections: MAX_STAKED_CONNECTIONS,
+            max_unstaked_connections: MAX_UNSTAKED_CONNECTIONS,
+            max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS,
+            max_connections_per_ipaddr_per_min: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
+            wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
+            coalesce: DEFAULT_TPU_COALESCE,
+        }
+    }
+}
+
 pub fn spawn_server_multi(
     thread_name: &'static str,
     metrics_name: &'static str,
@@ -593,14 +663,8 @@ pub fn spawn_server_multi(
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
     exit: Arc<AtomicBool>,
-    max_connections_per_peer: usize,
     staked_nodes: Arc<RwLock<StakedNodes>>,
-    max_staked_connections: usize,
-    max_unstaked_connections: usize,
-    max_streams_per_ms: u64,
-    max_connections_per_ipaddr_per_min: u64,
-    wait_for_chunk_timeout: Duration,
-    coalesce: Duration,
+    quic_server_params: QuicServerParams,
 ) -> Result<SpawnServerResult, QuicServerError> {
     let runtime = rt(format!("{thread_name}Rt"));
     let result = {
@@ -611,14 +675,8 @@ pub fn spawn_server_multi(
             keypair,
             packet_sender,
             exit,
-            max_connections_per_peer,
             staked_nodes,
-            max_staked_connections,
-            max_unstaked_connections,
-            max_streams_per_ms,
-            max_connections_per_ipaddr_per_min,
-            wait_for_chunk_timeout,
-            coalesce,
+            quic_server_params,
         )
     }?;
     let handle = thread::Builder::new()
@@ -631,7 +689,6 @@ pub fn spawn_server_multi(
         .unwrap();
     let updater = EndpointKeyUpdater {
         endpoints: result.endpoints.clone(),
-        max_concurrent_connections: result.max_concurrent_connections,
     };
     Ok(SpawnServerResult {
         endpoints: result.endpoints,
@@ -643,13 +700,7 @@ pub fn spawn_server_multi(
 #[cfg(test)]
 mod test {
     use {
-        super::*,
-        crate::nonblocking::quic::{
-            test::*, DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_STREAMS_PER_MS,
-            DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
-        },
-        crossbeam_channel::unbounded,
-        solana_sdk::net::DEFAULT_TPU_COALESCE,
+        super::*, crate::nonblocking::quic::test::*, crossbeam_channel::unbounded,
         std::net::SocketAddr,
     };
 
@@ -676,14 +727,8 @@ mod test {
             &keypair,
             sender,
             exit.clone(),
-            1,
             staked_nodes,
-            MAX_STAKED_CONNECTIONS,
-            MAX_UNSTAKED_CONNECTIONS,
-            DEFAULT_MAX_STREAMS_PER_MS,
-            DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
-            DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
-            DEFAULT_TPU_COALESCE,
+            QuicServerParams::default(),
         )
         .unwrap();
         (t, exit, receiver, server_address)
@@ -737,14 +782,11 @@ mod test {
             &keypair,
             sender,
             exit.clone(),
-            2,
             staked_nodes,
-            MAX_STAKED_CONNECTIONS,
-            MAX_UNSTAKED_CONNECTIONS,
-            DEFAULT_MAX_STREAMS_PER_MS,
-            DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
-            DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
-            DEFAULT_TPU_COALESCE,
+            QuicServerParams {
+                max_connections_per_peer: 2,
+                ..QuicServerParams::default()
+            },
         )
         .unwrap();
 
@@ -785,14 +827,11 @@ mod test {
             &keypair,
             sender,
             exit.clone(),
-            1,
             staked_nodes,
-            MAX_STAKED_CONNECTIONS,
-            0, // Do not allow any connection from unstaked clients/nodes
-            DEFAULT_MAX_STREAMS_PER_MS,
-            DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
-            DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
-            DEFAULT_TPU_COALESCE,
+            QuicServerParams {
+                max_unstaked_connections: 0,
+                ..QuicServerParams::default()
+            },
         )
         .unwrap();
 

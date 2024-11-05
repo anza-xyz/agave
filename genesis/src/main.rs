@@ -11,17 +11,23 @@ use {
             cluster_type_of, pubkey_of, pubkeys_of, unix_timestamp_from_rfc3339_datetime,
         },
         input_validators::{
-            is_pubkey, is_pubkey_or_keypair, is_rfc3339_datetime, is_slot, is_valid_percentage,
+            is_pubkey, is_pubkey_or_keypair, is_rfc3339_datetime, is_slot, is_url_or_moniker,
+            is_valid_percentage, normalize_to_url_if_moniker,
         },
     },
     solana_entry::poh::compute_hashes_per_tick,
     solana_genesis::{genesis_accounts::add_genesis_accounts, Base64Account},
     solana_ledger::{blockstore::create_new_ledger, blockstore_options::LedgerColumnOptions},
+    solana_rpc_client::rpc_client::RpcClient,
+    solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS,
     solana_sdk::{
         account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
         bpf_loader_upgradeable::UpgradeableLoaderState,
         clock,
+        commitment_config::CommitmentConfig,
         epoch_schedule::EpochSchedule,
+        feature,
+        feature_set::FEATURE_NAMES,
         fee_calculator::FeeRateGovernor,
         genesis_config::{ClusterType, GenesisConfig},
         inflation::Inflation,
@@ -32,7 +38,7 @@ use {
         signature::{Keypair, Signer},
         signer::keypair::read_keypair_file,
         stake::state::StakeStateV2,
-        system_program, timing,
+        system_program,
     },
     solana_stake_program::stake_state,
     solana_vote_program::vote_state::{self, VoteState},
@@ -106,6 +112,70 @@ pub fn load_genesis_accounts(file: &str, genesis_config: &mut GenesisConfig) -> 
     Ok(lamports)
 }
 
+fn check_rpc_genesis_hash(
+    cluster_type: &ClusterType,
+    rpc_client: &RpcClient,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(genesis_hash) = cluster_type.get_genesis_hash() {
+        let rpc_genesis_hash = rpc_client.get_genesis_hash()?;
+        if rpc_genesis_hash != genesis_hash {
+            return Err(format!(
+                "The genesis hash for the specified cluster {cluster_type:?} does not match the \
+                 genesis hash reported by the specified RPC. Cluster genesis hash: \
+                 {genesis_hash}, RPC reported genesis hash: {rpc_genesis_hash}"
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn features_to_deactivate_for_cluster(
+    cluster_type: &ClusterType,
+    matches: &ArgMatches<'_>,
+) -> Result<Vec<Pubkey>, Box<dyn error::Error>> {
+    let mut features_to_deactivate = pubkeys_of(matches, "deactivate_feature").unwrap_or_default();
+    if cluster_type == &ClusterType::Development {
+        return Ok(features_to_deactivate);
+    }
+
+    // if we're here, the cluster type must be one of "mainnet-beta", "testnet", or "devnet"
+    assert!(matches!(
+        cluster_type,
+        ClusterType::MainnetBeta | ClusterType::Testnet | ClusterType::Devnet
+    ));
+    let json_rpc_url = normalize_to_url_if_moniker(
+        matches
+            .value_of("json_rpc_url")
+            .unwrap_or(matches.value_of("cluster_type").unwrap()),
+    );
+    let rpc_client = RpcClient::new_with_commitment(json_rpc_url, CommitmentConfig::confirmed());
+    check_rpc_genesis_hash(cluster_type, &rpc_client)?;
+    for feature_ids in FEATURE_NAMES
+        .keys()
+        .cloned()
+        .collect::<Vec<Pubkey>>()
+        .chunks(MAX_MULTIPLE_ACCOUNTS)
+    {
+        rpc_client
+            .get_multiple_accounts(feature_ids)
+            .map_err(|err| format!("Failed to fetch: {err}"))?
+            .into_iter()
+            .zip(feature_ids)
+            .for_each(|(maybe_account, feature_id)| {
+                if maybe_account
+                    .as_ref()
+                    .and_then(feature::from_account)
+                    .and_then(|feature| feature.activated_at)
+                    .is_none()
+                {
+                    features_to_deactivate.push(*feature_id);
+                }
+            });
+    }
+    Ok(features_to_deactivate)
+}
+
 #[allow(clippy::cognitive_complexity)]
 fn main() -> Result<(), Box<dyn error::Error>> {
     let default_faucet_pubkey = solana_cli_config::Config::default().keypair_path;
@@ -144,8 +214,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         .max(rent.minimum_balance(StakeStateV2::size_of()))
         .to_string();
 
-    let default_target_tick_duration =
-        timing::duration_as_us(&PohConfig::default().target_tick_duration);
+    let default_target_tick_duration = PohConfig::default().target_tick_duration;
     let default_ticks_per_slot = &clock::DEFAULT_TICKS_PER_SLOT.to_string();
     let default_cluster_type = "mainnet-beta";
     let default_genesis_archive_unpacked_size = MAX_GENESIS_ARCHIVE_UNPACKED_SIZE.to_string();
@@ -408,6 +477,20 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .possible_values(&["pico", "full", "none"])
                 .help("Selects inflation"),
         )
+        .arg(
+            Arg::with_name("json_rpc_url")
+                .short("u")
+                .long("url")
+                .value_name("URL_OR_MONIKER")
+                .takes_value(true)
+                .global(true)
+                .validator(is_url_or_moniker)
+                .help(
+                    "URL for Solana's JSON RPC or moniker (or their first letter): \
+                    [mainnet-beta, testnet, devnet, localhost]. Used for cloning \
+                    feature sets",
+                ),
+        )
         .get_matches();
 
     let ledger_path = PathBuf::from(matches.value_of("ledger_path").unwrap());
@@ -473,7 +556,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         target_tick_duration: if matches.is_present("target_tick_duration") {
             Duration::from_micros(value_t_or_exit!(matches, "target_tick_duration", u64))
         } else {
-            Duration::from_micros(default_target_tick_duration)
+            default_target_tick_duration
         },
         ..PohConfig::default()
     };
@@ -481,12 +564,11 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     let cluster_type = cluster_type_of(&matches, "cluster_type").unwrap();
 
     // Get the features to deactivate if provided
-    let features_to_deactivate = pubkeys_of(&matches, "deactivate_feature").unwrap_or_default();
-
-    if cluster_type != ClusterType::Development && !features_to_deactivate.is_empty() {
-        eprintln!("Error: The --deativate-feature argument cannot be used with --cluster-type={cluster_type:?}");
-        std::process::exit(1);
-    }
+    let features_to_deactivate = features_to_deactivate_for_cluster(&cluster_type, &matches)
+        .unwrap_or_else(|e| {
+            eprintln!("{e}");
+            std::process::exit(1);
+        });
 
     match matches.value_of("hashes_per_tick").unwrap() {
         "auto" => match cluster_type {
@@ -595,14 +677,12 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     }
 
     solana_stake_program::add_genesis_accounts(&mut genesis_config);
-    if genesis_config.cluster_type == ClusterType::Development {
-        solana_runtime::genesis_utils::activate_all_features(&mut genesis_config);
-        if !features_to_deactivate.is_empty() {
-            solana_runtime::genesis_utils::deactivate_features(
-                &mut genesis_config,
-                &features_to_deactivate,
-            );
-        }
+    solana_runtime::genesis_utils::activate_all_features(&mut genesis_config);
+    if !features_to_deactivate.is_empty() {
+        solana_runtime::genesis_utils::deactivate_features(
+            &mut genesis_config,
+            &features_to_deactivate,
+        );
     }
 
     if let Some(files) = matches.values_of("primordial_accounts_file") {

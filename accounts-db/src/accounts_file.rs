@@ -98,6 +98,15 @@ impl AccountsFile {
         }
     }
 
+    /// Return the total number of bytes of the zero lamport single ref accounts in the storage.
+    /// Those bytes are "dead" and can be shrunk away.
+    pub(crate) fn dead_bytes_due_to_zero_lamport_single_ref(&self, count: usize) -> usize {
+        match self {
+            Self::AppendVec(av) => av.dead_bytes_due_to_zero_lamport_single_ref(count),
+            Self::TieredStorage(ts) => ts.dead_bytes_due_to_zero_lamport_single_ref(count),
+        }
+    }
+
     pub fn flush(&self) -> Result<()> {
         match self {
             Self::AppendVec(av) => av.flush(),
@@ -210,10 +219,7 @@ impl AccountsFile {
     }
 
     /// Iterate over all accounts and call `callback` with each account.
-    pub(crate) fn scan_accounts(
-        &self,
-        callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
-    ) {
+    pub fn scan_accounts(&self, callback: impl for<'local> FnMut(StoredAccountMeta<'local>)) {
         match self {
             Self::AppendVec(av) => av.scan_accounts(callback),
             Self::TieredStorage(ts) => {

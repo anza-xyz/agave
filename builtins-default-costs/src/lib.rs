@@ -1,4 +1,4 @@
-#![cfg_attr(RUSTC_WITH_SPECIALIZATION, feature(min_specialization))]
+#![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
 use {
     ahash::AHashMap,
@@ -39,4 +39,18 @@ lazy_static! {
     .iter()
     .cloned()
     .collect();
+}
+
+lazy_static! {
+    /// A table of 256 booleans indicates whether the first `u8` of a Pubkey exists in
+    /// BUILTIN_INSTRUCTION_COSTS. If the value is true, the Pubkey might be a builtin key;
+    /// if false, it cannot be a builtin key. This table allows for quick filtering of
+    /// builtin program IDs without the need for hashing.
+    pub static ref MAYBE_BUILTIN_KEY: [bool; 256] = {
+        let mut temp_table: [bool; 256] = [false; 256];
+        BUILTIN_INSTRUCTION_COSTS
+            .keys()
+            .for_each(|key| temp_table[key.as_ref()[0] as usize] = true);
+        temp_table
+    };
 }

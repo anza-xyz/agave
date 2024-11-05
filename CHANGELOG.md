@@ -8,21 +8,58 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 and follows a [Backwards Compatibility Policy](https://docs.solanalabs.com/backwards-compatibility)
 
 Release channels have their own copy of this changelog:
-* [edge - v2.1](#edge-channel)
-* [beta - v2.0](https://github.com/solana-labs/solana/blob/v2.0/CHANGELOG.md)
-* [stable - v1.18](https://github.com/solana-labs/solana/blob/v1.18/CHANGELOG.md)
+* [edge - v2.2](#edge-channel)
+* [beta - v2.1](https://github.com/solana-labs/solana/blob/v2.1/CHANGELOG.md)
+* [stable - v2.0](https://github.com/solana-labs/solana/blob/v2.0/CHANGELOG.md)
 
 <a name="edge-channel"></a>
-## [2.1.0] - Unreleased
+## [2.2.0] - Unreleased
+
+## [2.1.0]
 * Breaking:
   * SDK:
-    * `cargo-build-sbf` and `cargo-build-bpf` have been deprecated for two years and have now been definitely removed.
+    * `cargo-build-bpf` and `cargo-test-bpf` have been deprecated for two years and have now been definitely removed.
        Use `cargo-build-sbf` and `cargo-test-sbf` instead.
+    * dependency: `curve25519-dalek` upgraded to new major version 4 (#1693). This causes breakage when mixing v2.0 and v2.1 Solana crates, so be sure to use all of one or the other. Please use only crates compatible with v2.1.
   * Stake:
     * removed the unreleased `redelegate` instruction processor and CLI commands (#2213)
+  * Banks-client:
+    * relax functions to use `&self` instead of `&mut self` (#2591)
+  * `agave-validator`:
+    * Remove the deprecated value of `fifo` for `--rocksdb-shred-compaction` (#3451)
 * Changes
-  * SDK: removed the `respan` macro. This was marked as "internal use only" and was no longer used internally.
+  * SDK:
+    * removed the `respan` macro. This was marked as "internal use only" and was no longer used internally.
+    * add `entrypoint_no_alloc!`, a more performant program entrypoint that avoids allocations, saving 20-30 CUs per unique account
+    * `cargo-build-sbf`: a workspace or package-level Cargo.toml may specify `tools-version` for overriding the default platform tools version when building on-chain programs. For example:
+```toml
+[package.metadata.solana]
+tools-version = "1.43"
+```
+or
+```toml
+[workspace.metadata.solana]
+tools-version = "1.43"
+```
+The order of precedence for the chosen tools version goes: `--tools-version` argument, package version, workspace version, and finally default version.
+  * `package-metadata`: specify a program's id in Cargo.toml for easy consumption by downstream users and tools using `solana-package-metadata` (#1806). For example:
+```toml
+[package.metadata.solana]
+program-id = "MyProgram1111111111111111111111111111111111"
+```
+Can be consumed in the program crate:
+```rust
+solana_package_metadata::declare_id_with_package_metadata!("solana.program-id");
+```
+This is equivalent to writing:
+```rust
+solana_pubkey::declare_id!("MyProgram1111111111111111111111111111111111");
+```
   * `agave-validator`: Update PoH speed check to compare against current hash rate from a Bank (#2447)
+  * `solana-test-validator`: Add `--clone-feature-set` flag to mimic features from a target cluster (#2480)
+  * `solana-genesis`: the `--cluster-type` parameter now clones the feature set from the target cluster (#2587)
+  * `unified-scheduler` as default option for `--block-verification-method` (#2653)
+  * warn that `thread-local-multi-iterator` option for `--block-production-method` is deprecated (#3113)
 
 ## [2.0.0]
 * Breaking

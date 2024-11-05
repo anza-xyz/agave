@@ -10,7 +10,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
-async-mutex = { workspace = true }
+async-lock = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
 itertools = { workspace = true }
@@ -18,7 +18,7 @@ lazy_static = { workspace = true }
 log = { workspace = true }
 quinn = { workspace = true }
 quinn-proto = { workspace = true }
-rustls = { workspace = true, features = ["dangerous_configuration"] }
+rustls = { workspace = true }
 solana-connection-cache = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
