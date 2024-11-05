@@ -16,8 +16,9 @@ use {
         streamer::StakedNodes,
     },
     solana_tpu_client_next::{
-        connection_workers_scheduler::ConnectionWorkersSchedulerConfig,
-        leader_updater::create_leader_updater, transaction_batch::TransactionBatch,
+        connection_workers_scheduler::{ConnectionWorkersSchedulerConfig, LeadersFanout::Selected},
+        leader_updater::create_leader_updater,
+        transaction_batch::TransactionBatch,
         ConnectionWorkersScheduler, ConnectionWorkersSchedulerError, SendTransactionStats,
         SendTransactionStatsPerAddr,
     },
@@ -49,6 +50,7 @@ fn test_config(validator_identity: Option<Keypair>) -> ConnectionWorkersSchedule
         worker_channel_size: 2,
         max_reconnect_attempts: 4,
         lookahead_slots: 1,
+        leaders_fanout: Selected(1),
     }
 }
 
