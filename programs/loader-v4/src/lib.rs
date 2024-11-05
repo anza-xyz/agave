@@ -447,11 +447,6 @@ pub fn process_instruction_inner(
         .map_err(|err| Box::new(err) as Box<dyn std::error::Error>)
     } else {
         let program = instruction_context.try_borrow_last_program_account(transaction_context)?;
-        let state = get_state(program.get_data())?;
-        if matches!(state.status, LoaderV4Status::Retracted) {
-            ic_logger_msg!(log_collector, "Program is retracted");
-            return Err(Box::new(InstructionError::UnsupportedProgramId));
-        }
         let mut get_or_create_executor_time = Measure::start("get_or_create_executor_time");
         let loaded_program = invoke_context
             .program_cache_for_tx_batch
@@ -1549,16 +1544,17 @@ mod tests {
             &[0, 1, 2, 3],
             transaction_accounts.clone(),
             &[(1, false, true)],
-            Err(InstructionError::AccountDataTooSmall),
+            Err(InstructionError::UnsupportedProgramId),
         );
 
         // Error: Program is not deployed
+        // This is only checked in integration with load_program_accounts() in the SVM
         process_instruction(
             vec![3],
             &[0, 1, 2, 3],
             transaction_accounts.clone(),
             &[(1, false, true)],
-            Err(InstructionError::UnsupportedProgramId),
+            Ok(()),
         );
 
         // Error: Program fails verification
