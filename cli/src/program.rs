@@ -35,7 +35,8 @@ use {
     solana_client::{
         connection_cache::ConnectionCache,
         send_and_confirm_transactions_in_parallel::{
-            send_and_confirm_transactions_in_parallel_blocking, SendAndConfirmConfig,
+            send_and_confirm_transactions_in_parallel_blocking_v2,
+            SendAndConfirmConfigV2,
         },
         tpu_client::{TpuClient, TpuClientConfig},
     },
@@ -1575,7 +1576,10 @@ fn process_program_upgrade(
         let signers = &[fee_payer_signer, upgrade_authority_signer];
         tx.try_sign(signers, blockhash)?;
         let final_tx_sig = rpc_client
-            .send_and_confirm_transaction_with_spinner(&tx)
+            .send_and_confirm_transaction_with_spinner_and_config(&tx, 
+                config.commitment, 
+                config.send_transaction_config
+            )
             .map_err(|e| format!("Upgrading program failed: {e}"))?;
         let program_id = CliProgramId {
             program_id: program_id.to_string(),
@@ -2995,15 +2999,15 @@ fn send_deploy_messages(
                         .expect("Should return a valid tpu client")
                     );
 
-                    send_and_confirm_transactions_in_parallel_blocking(
+                    send_and_confirm_transactions_in_parallel_blocking_v2(
                         rpc_client.clone(),
                         tpu_client,
                         &write_messages,
                         &[fee_payer_signer, write_signer],
-                        SendAndConfirmConfig {
+                        SendAndConfirmConfigV2 {
                             resign_txs_count: Some(max_sign_attempts),
                             with_spinner: true,
-                            skip_preflight: config.send_transaction_config.skip_preflight,
+                            rpc_send_transaction_config: config.send_transaction_config,
                         },
                     )
                 },

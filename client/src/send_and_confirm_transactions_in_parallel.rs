@@ -55,14 +55,45 @@ struct BlockHashData {
     pub last_valid_block_height: u64,
 }
 
+// Deprecated struct to maintain backward compatibility
+#[deprecated(note = "Use SendAndConfirmConfigV2 with send_and_confirm_transactions_in_parallel_v2")]
 #[derive(Clone, Debug, Copy)]
 pub struct SendAndConfirmConfig {
     pub with_spinner: bool,
     pub resign_txs_count: Option<usize>,
-    pub skip_preflight: bool,
 }
 
-/// Sends and confirms transactions concurrently in a sync context
+// New struct with RpcSendTransactionConfig for non-breaking change
+#[derive(Clone, Debug, Copy)]
+pub struct SendAndConfirmConfigV2 {
+    pub with_spinner: bool,
+    pub resign_txs_count: Option<usize>,
+    pub rpc_send_transaction_config: RpcSendTransactionConfig,
+}
+
+#[deprecated(note = "Use send_and_confirm_transactions_in_parallel_v2")]
+pub async fn send_and_confirm_transactions_in_parallel<T: Signers + ?Sized>(
+    rpc_client: Arc<RpcClient>,
+    tpu_client: Option<QuicTpuClient>,
+    messages: &[Message],
+    signers: &T,
+    config: SendAndConfirmConfig,
+) -> Result<Vec<Option<TransactionError>>> {
+    let config_v2 = SendAndConfirmConfigV2 {
+        with_spinner: config.with_spinner,
+        resign_txs_count: config.resign_txs_count,
+        rpc_send_transaction_config: RpcSendTransactionConfig {
+            skip_preflight: false,
+            ..RpcSendTransactionConfig::default()
+        },
+    };
+    send_and_confirm_transactions_in_parallel_v2(
+        rpc_client, tpu_client, messages, signers, config_v2,
+    )
+    .await
+}
+
+#[deprecated(note = "Use send_and_confirm_transactions_in_parallel_blocking_v2")]
 pub fn send_and_confirm_transactions_in_parallel_blocking<T: Signers + ?Sized>(
     rpc_client: Arc<BlockingRpcClient>,
     tpu_client: Option<QuicTpuClient>,
@@ -70,7 +101,28 @@ pub fn send_and_confirm_transactions_in_parallel_blocking<T: Signers + ?Sized>(
     signers: &T,
     config: SendAndConfirmConfig,
 ) -> Result<Vec<Option<TransactionError>>> {
-    let fut = send_and_confirm_transactions_in_parallel(
+    let config_v2 = SendAndConfirmConfigV2 {
+        with_spinner: config.with_spinner,
+        resign_txs_count: config.resign_txs_count,
+        rpc_send_transaction_config: RpcSendTransactionConfig {
+            skip_preflight: false,
+            ..RpcSendTransactionConfig::default()
+        },
+    };
+    send_and_confirm_transactions_in_parallel_blocking_v2(
+        rpc_client, tpu_client, messages, signers, config_v2,
+    )
+}
+
+/// Sends and confirms transactions concurrently in a sync context
+pub fn send_and_confirm_transactions_in_parallel_blocking_v2<T: Signers + ?Sized>(
+    rpc_client: Arc<BlockingRpcClient>,
+    tpu_client: Option<QuicTpuClient>,
+    messages: &[Message],
+    signers: &T,
+    config: SendAndConfirmConfigV2,
+) -> Result<Vec<Option<TransactionError>>> {
+    let fut = send_and_confirm_transactions_in_parallel_v2(
         rpc_client.get_inner_client().clone(),
         tpu_client,
         messages,
@@ -197,7 +249,7 @@ async fn send_transaction_with_rpc_fallback(
     serialized_transaction: Vec<u8>,
     context: &SendingContext,
     index: usize,
-    skip_preflight: bool,
+    rpc_send_transaction_config: RpcSendTransactionConfig,
 ) -> Result<()> {
     let send_over_rpc = if let Some(tpu_client) = tpu_client {
         !tokio::time::timeout(
@@ -214,9 +266,8 @@ async fn send_transaction_with_rpc_fallback(
             .send_transaction_with_config(
                 &transaction,
                 RpcSendTransactionConfig {
-                    skip_preflight,
                     preflight_commitment: Some(rpc_client.commitment().commitment),
-                    ..RpcSendTransactionConfig::default()
+                    ..rpc_send_transaction_config
                 },
             )
             .await
@@ -268,7 +319,7 @@ async fn sign_all_messages_and_send<T: Signers + ?Sized>(
     messages_with_index: Vec<(usize, Message)>,
     signers: &T,
     context: &SendingContext,
-    skip_preflight: bool,
+    rpc_send_transaction_config: RpcSendTransactionConfig,
 ) -> Result<()> {
     let current_transaction_count = messages_with_index.len();
     let mut futures = vec![];
@@ -318,7 +369,7 @@ async fn sign_all_messages_and_send<T: Signers + ?Sized>(
                 serialized_transaction,
                 context,
                 *index,
-                skip_preflight,
+                rpc_send_transaction_config,
             )
             .await
         });
@@ -433,12 +484,12 @@ async fn send_staggered_transactions(
 /// The sending and confirmation of transactions is done in parallel tasks
 /// The method signs transactions just before sending so that blockhash does not
 /// expire.
-pub async fn send_and_confirm_transactions_in_parallel<T: Signers + ?Sized>(
+pub async fn send_and_confirm_transactions_in_parallel_v2<T: Signers + ?Sized>(
     rpc_client: Arc<RpcClient>,
     tpu_client: Option<QuicTpuClient>,
     messages: &[Message],
     signers: &T,
-    config: SendAndConfirmConfig,
+    config: SendAndConfirmConfigV2,
 ) -> Result<Vec<Option<TransactionError>>> {
     // get current blockhash and corresponding last valid block height
     let (blockhash, last_valid_block_height) = rpc_client
@@ -527,7 +578,7 @@ pub async fn send_and_confirm_transactions_in_parallel<T: Signers + ?Sized>(
             messages_with_index,
             signers,
             &context,
-            config.skip_preflight,
+            config.rpc_send_transaction_config,
         )
         .await?;
         confirm_transactions_till_block_height_and_resend_unexpired_transaction_over_tpu(

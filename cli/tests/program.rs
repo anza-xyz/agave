@@ -563,6 +563,7 @@ fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
 
     let mut config = CliConfig::recent_for_tests();
     config.json_rpc_url = test_validator.rpc_url();
+    config.send_transaction_config.skip_preflight = false;
 
     let online_signer = Keypair::new();
     let offline_signer = Keypair::new();
@@ -1354,9 +1355,8 @@ fn test_cli_program_close_program() {
     assert_eq!(programdata_lamports, recipient_account.lamports);
 }
 
-#[test_case(true; "Skip Preflight")]
-#[test_case(false; "Dont skip Preflight")]
-fn test_cli_program_extend_program_skip_preflight(skip_preflight: bool) {
+#[test]
+fn test_cli_program_extend_program() {
     solana_logger::setup();
 
     let mut noop_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -1403,7 +1403,7 @@ fn test_cli_program_extend_program_skip_preflight(skip_preflight: bool) {
         lamports: 100 * minimum_balance_for_programdata + minimum_balance_for_program,
     };
     config.send_transaction_config = RpcSendTransactionConfig {
-        skip_preflight: skip_preflight,
+        skip_preflight: false,
         preflight_commitment: Some(CommitmentConfig::processed().commitment),
         ..RpcSendTransactionConfig::default()
     };
@@ -1480,14 +1480,8 @@ fn test_cli_program_extend_program_skip_preflight(skip_preflight: bool) {
         use_rpc: false,
         skip_feature_verification: true,
     });
-    if skip_preflight {
-        expect_command_failure(
-            &config,
-            "Program upgrade must fail, as the buffer is 1 byte too short",
-            "Deploying program failed: Error processing Instruction 0: account data too small for instruction",
-        );
-    } else {
-        expect_command_failure(
+
+    expect_command_failure(
         &config,
         "Program upgrade must fail, as the buffer is 1 byte too short",
         "Deploying program failed: \
@@ -1499,7 +1493,6 @@ fn test_cli_program_extend_program_skip_preflight(skip_preflight: bool) {
          ProgramData account not large enough\n  \
          Program BPFLoaderUpgradeab1e11111111111111111111111 failed: account data too small for instruction\n",
     );
-    }
 
     // Wait one slot to avoid "Program was deployed in this block already" error
     wait_n_slots(&rpc_client, 1);

@@ -20,7 +20,8 @@ use {
     solana_client::{
         connection_cache::ConnectionCache,
         send_and_confirm_transactions_in_parallel::{
-            send_and_confirm_transactions_in_parallel_blocking, SendAndConfirmConfig,
+            send_and_confirm_transactions_in_parallel_blocking_v2,
+            SendAndConfirmConfigV2,
         },
         tpu_client::{TpuClient, TpuClientConfig},
     },
@@ -1083,15 +1084,15 @@ fn send_messages(
                     .block_on(tpu_client_fut)
                     .expect("Should return a valid tpu client");
 
-                send_and_confirm_transactions_in_parallel_blocking(
+                send_and_confirm_transactions_in_parallel_blocking_v2(
                     rpc_client.clone(),
                     Some(tpu_client),
                     write_messages,
                     &[config.payer, config.authority],
-                    SendAndConfirmConfig {
+                    SendAndConfirmConfigV2 {
                         resign_txs_count: Some(5),
                         with_spinner: true,
-                        skip_preflight: config.rpc_send_transaction_config.skip_preflight,
+                        rpc_send_transaction_config: config.rpc_send_transaction_config,
                     },
                 )
             }

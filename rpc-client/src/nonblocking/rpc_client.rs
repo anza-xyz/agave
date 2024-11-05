@@ -868,7 +868,6 @@ impl RpcClient {
         };
         let config = RpcSendTransactionConfig {
             encoding: Some(encoding),
-            skip_preflight: config.skip_preflight,
             preflight_commitment: Some(preflight_commitment.commitment),
             ..config
         };

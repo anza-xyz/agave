@@ -19,7 +19,7 @@ pub fn get_clap_app<'ab, 'v>(name: &str, about: &'ab str, version: &'v str) -> A
                 .long("skip-preflight")
                 .global(true)
                 .takes_value(false)
-                .help("Skip the preflight check when sending transactions (default: false)"),
+                .help("Skip the preflight check when sending transactions"),
         )
         .arg({
             let arg = Arg::with_name("config_file")

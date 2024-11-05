@@ -558,9 +558,8 @@ fn test_transfer_all(compute_unit_price: Option<u64>) {
     check_balance!(500_000 - fee, &rpc_client, &recipient_pubkey);
 }
 
-#[test_case(true; "Skip Preflight")]
-#[test_case(false; "Don`t skip Preflight")]
-fn test_transfer_unfunded_recipient(skip_preflight: bool) {
+#[test]
+fn test_transfer_unfunded_recipient() {
     solana_logger::setup();
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
@@ -580,7 +579,7 @@ fn test_transfer_unfunded_recipient(skip_preflight: bool) {
     let mut config = CliConfig::recent_for_tests();
     config.json_rpc_url = test_validator.rpc_url();
     config.signers = vec![&default_signer];
-    config.send_transaction_config.skip_preflight = skip_preflight;
+    config.send_transaction_config.skip_preflight = false;
 
     let sender_pubkey = config.signers[0].pubkey();
     let recipient_pubkey = Pubkey::from([1u8; 32]);

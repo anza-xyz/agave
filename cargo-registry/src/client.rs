@@ -68,6 +68,13 @@ impl Client {
             .about(about)
             .version(version)
             .arg(
+                Arg::with_name("skip_preflight")
+                    .long("skip-preflight")
+                    .global(true)
+                    .takes_value(false)
+                    .help("Skip the preflight check when sending transactions"),
+            )
+            .arg(
                 Arg::with_name("config_file")
                     .short("C")
                     .long("config")
