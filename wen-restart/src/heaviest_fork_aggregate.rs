@@ -163,7 +163,10 @@ impl HeaviestForkAggregate {
 
     pub(crate) fn print_block_stake_map(&self) {
         for ((slot, hash), stake) in self.block_stake_map.iter() {
-            info!("Heaviest Fork Aggregated Slot: {}, Hash: {}, Stake: {}", slot, hash, stake,);
+            info!(
+                "Heaviest Fork Aggregated Slot: {}, Hash: {}, Stake: {}",
+                slot, hash, stake,
+            );
         }
     }
 }
