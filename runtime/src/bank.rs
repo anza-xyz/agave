@@ -3112,6 +3112,9 @@ impl Bank {
         &self,
         txs: Vec<VersionedTransaction>,
     ) -> Result<TransactionBatch<RuntimeTransaction<SanitizedTransaction>>> {
+        let enable_loader_v4 = self
+            .feature_set
+            .is_active(&feature_set::enable_loader_v4::id());
         let sanitized_txs = txs
             .into_iter()
             .map(|tx| {
@@ -3121,6 +3124,7 @@ impl Bank {
                     None,
                     self,
                     self.get_reserved_account_keys(),
+                    enable_loader_v4,
                 )
             })
             .collect::<Result<Vec<_>>>()?;
@@ -5638,6 +5642,9 @@ impl Bank {
         tx: VersionedTransaction,
         verification_mode: TransactionVerificationMode,
     ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
+        let enable_loader_v4 = self
+            .feature_set
+            .is_active(&feature_set::enable_loader_v4::id());
         let sanitized_tx = {
             let size =
                 bincode::serialized_size(&tx).map_err(|_| TransactionError::SanitizeFailure)?;
@@ -5657,6 +5664,7 @@ impl Bank {
                 None,
                 self,
                 self.get_reserved_account_keys(),
+                enable_loader_v4,
             )
         }?;
 

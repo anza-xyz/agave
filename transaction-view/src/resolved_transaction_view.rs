@@ -12,7 +12,7 @@ use {
     solana_hash::Hash,
     solana_message::{v0::LoadedAddresses, AccountKeys},
     solana_pubkey::Pubkey,
-    solana_sdk_ids::bpf_loader_upgradeable,
+    solana_sdk_ids::{bpf_loader_upgradeable, loader_v4},
     solana_signature::Signature,
     solana_svm_transaction::{
         instruction::SVMInstruction, message_address_table_lookup::SVMMessageAddressTableLookup,
@@ -49,6 +49,7 @@ impl<D: TransactionData> ResolvedTransactionView<D> {
         view: TransactionView<true, D>,
         resolved_addresses: Option<LoadedAddresses>,
         reserved_account_keys: &HashSet<Pubkey>,
+        enable_loader_v4: bool,
     ) -> Result<Self> {
         let resolved_addresses_ref = resolved_addresses.as_ref();
 
@@ -73,8 +74,12 @@ impl<D: TransactionData> ResolvedTransactionView<D> {
             return Err(TransactionViewError::AddressLookupMismatch);
         }
 
-        let writable_cache =
-            Self::cache_is_writable(&view, resolved_addresses_ref, reserved_account_keys);
+        let writable_cache = Self::cache_is_writable(
+            &view,
+            resolved_addresses_ref,
+            reserved_account_keys,
+            enable_loader_v4,
+        );
         Ok(Self {
             view,
             resolved_addresses,
@@ -90,6 +95,7 @@ impl<D: TransactionData> ResolvedTransactionView<D> {
         view: &TransactionView<true, D>,
         resolved_addresses: Option<&LoadedAddresses>,
         reserved_account_keys: &HashSet<Pubkey>,
+        enable_loader_v4: bool,
     ) -> [bool; 256] {
         // Build account keys so that we can iterate over and check if
         // an address is writable.
@@ -132,7 +138,9 @@ impl<D: TransactionData> ResolvedTransactionView<D> {
             if is_writable_cache[program_id_index]
                 && !*is_upgradable_loader_present.get_or_insert_with(|| {
                     for key in account_keys.iter() {
-                        if key == &bpf_loader_upgradeable::ID {
+                        if bpf_loader_upgradeable::check_id(key)
+                            || (enable_loader_v4 && loader_v4::check_id(key))
+                        {
                             return true;
                         }
                     }
@@ -277,7 +285,7 @@ mod tests {
         };
         let bytes = bincode::serialize(&transaction).unwrap();
         let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref()).unwrap();
-        let result = ResolvedTransactionView::try_new(view, None, &HashSet::default());
+        let result = ResolvedTransactionView::try_new(view, None, &HashSet::default(), true);
         assert!(matches!(
             result,
             Err(TransactionViewError::AddressLookupMismatch)
@@ -308,8 +316,12 @@ mod tests {
         };
         let bytes = bincode::serialize(&transaction).unwrap();
         let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref()).unwrap();
-        let result =
-            ResolvedTransactionView::try_new(view, Some(loaded_addresses), &HashSet::default());
+        let result = ResolvedTransactionView::try_new(
+            view,
+            Some(loaded_addresses),
+            &HashSet::default(),
+            true,
+        );
         assert!(matches!(
             result,
             Err(TransactionViewError::AddressLookupMismatch)
@@ -345,8 +357,12 @@ mod tests {
         };
         let bytes = bincode::serialize(&transaction).unwrap();
         let view = SanitizedTransactionView::try_new_sanitized(bytes.as_ref()).unwrap();
-        let result =
-            ResolvedTransactionView::try_new(view, Some(loaded_addresses), &HashSet::default());
+        let result = ResolvedTransactionView::try_new(
+            view,
+            Some(loaded_addresses),
+            &HashSet::default(),
+            true,
+        );
         assert!(matches!(
             result,
             Err(TransactionViewError::AddressLookupMismatch)
@@ -399,6 +415,7 @@ mod tests {
                 view,
                 Some(loaded_addresses),
                 &reserved_account_keys,
+                true,
             )
             .unwrap();
 
@@ -422,6 +439,7 @@ mod tests {
                 view,
                 Some(loaded_addresses),
                 &reserved_account_keys,
+                true,
             )
             .unwrap();
 
@@ -445,6 +463,7 @@ mod tests {
                 view,
                 Some(loaded_addresses),
                 &reserved_account_keys,
+                true,
             )
             .unwrap();
 
@@ -506,6 +525,7 @@ mod tests {
                 view,
                 Some(loaded_addresses.clone()),
                 &reserved_account_keys,
+                true,
             )
             .unwrap();
 
@@ -525,6 +545,7 @@ mod tests {
                 view,
                 Some(loaded_addresses.clone()),
                 &reserved_account_keys,
+                true,
             )
             .unwrap();
 
@@ -549,6 +570,7 @@ mod tests {
                 view,
                 Some(loaded_addresses.clone()),
                 &reserved_account_keys,
+                true,
             )
             .unwrap();
 

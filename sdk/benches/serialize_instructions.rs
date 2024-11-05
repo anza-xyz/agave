@@ -33,6 +33,7 @@ fn bench_construct_instructions_data(b: &mut Bencher) {
     let message = SanitizedMessage::try_from_legacy_message(
         Message::new(&instructions, Some(&Pubkey::new_unique())),
         &ReservedAccountKeys::empty_key_set(),
+        true,
     )
     .unwrap();
     b.iter(|| {
@@ -56,6 +57,7 @@ fn bench_manual_instruction_deserialize(b: &mut Bencher) {
     let message = SanitizedMessage::try_from_legacy_message(
         Message::new(&instructions, Some(&Pubkey::new_unique())),
         &ReservedAccountKeys::empty_key_set(),
+        true,
     )
     .unwrap();
     let serialized = construct_instructions_data(&message.decompile_instructions());
@@ -73,6 +75,7 @@ fn bench_manual_instruction_deserialize_single(b: &mut Bencher) {
     let message = SanitizedMessage::try_from_legacy_message(
         Message::new(&instructions, Some(&Pubkey::new_unique())),
         &ReservedAccountKeys::empty_key_set(),
+        true,
     )
     .unwrap();
     let serialized = construct_instructions_data(&message.decompile_instructions());

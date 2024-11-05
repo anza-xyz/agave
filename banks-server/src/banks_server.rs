@@ -8,7 +8,7 @@ use {
         TransactionSimulationDetails, TransactionStatus,
     },
     solana_client::connection_cache::ConnectionCache,
-    solana_feature_set::{move_precompile_verification_to_svm, FeatureSet},
+    solana_feature_set::{enable_loader_v4, move_precompile_verification_to_svm, FeatureSet},
     solana_runtime::{
         bank::{Bank, TransactionSimulationResult},
         bank_forks::BankForks,
@@ -185,6 +185,7 @@ fn simulate_transaction(
         Some(false), // is_simple_vote_tx
         bank,
         bank.get_reserved_account_keys(),
+        bank.feature_set.is_active(&enable_loader_v4::id()),
     ) {
         Err(err) => {
             return BanksTransactionResultWithSimulation {
@@ -322,6 +323,7 @@ impl Banks for BanksServer {
             Some(false), // is_simple_vote_tx
             bank.as_ref(),
             bank.get_reserved_account_keys(),
+            bank.feature_set.is_active(&enable_loader_v4::id()),
         ) {
             Ok(tx) => tx,
             Err(err) => return Some(Err(err)),
@@ -405,9 +407,12 @@ impl Banks for BanksServer {
         commitment: CommitmentLevel,
     ) -> Option<u64> {
         let bank = self.bank(commitment);
-        let sanitized_message =
-            SanitizedMessage::try_from_legacy_message(message, bank.get_reserved_account_keys())
-                .ok()?;
+        let sanitized_message = SanitizedMessage::try_from_legacy_message(
+            message,
+            bank.get_reserved_account_keys(),
+            bank.feature_set.is_active(&enable_loader_v4::id()),
+        )
+        .ok()?;
         bank.get_fee_for_message(&sanitized_message)
     }
 }

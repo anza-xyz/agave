@@ -66,6 +66,7 @@ impl From<&PayTubeTransaction> for SolanaSanitizedTransaction {
         SolanaSanitizedTransaction::try_from_legacy_transaction(
             SolanaTransaction::from(value),
             &HashSet::new(),
+            true,
         )
         .unwrap()
     }

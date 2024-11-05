@@ -220,7 +220,11 @@ fn write_transaction<W: io::Write>(
     for (account_index, account) in account_keys.iter().enumerate() {
         let account_meta = CliAccountMeta {
             is_signer: message.is_signer(account_index),
-            is_writable: message.is_maybe_writable(account_index, Some(&reserved_account_keys)),
+            is_writable: message.is_maybe_writable(
+                account_index,
+                Some(&reserved_account_keys),
+                true,
+            ),
             is_invoked: message.is_invoked(account_index),
         };
 

@@ -28,7 +28,8 @@ use {
     solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
     solana_sdk_ids::{
-        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, system_program, sysvar,
+        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, system_program,
+        sysvar,
     },
     std::{collections::HashSet, convert::TryFrom, str::FromStr},
 };
@@ -639,8 +640,8 @@ impl Message {
         self.program_position(i).is_some()
     }
 
-    pub fn demote_program_id(&self, i: usize) -> bool {
-        self.is_key_called_as_program(i) && !self.is_upgradeable_loader_present()
+    pub fn demote_program_id(&self, i: usize, enable_loader_v4: bool) -> bool {
+        self.is_key_called_as_program(i) && !self.is_upgradeable_loader_present(enable_loader_v4)
     }
 
     /// Returns true if the account at the specified index was requested to be
@@ -659,10 +660,10 @@ impl Message {
     /// runtime.
     #[deprecated(since = "2.0.0", note = "Please use `is_maybe_writable` instead")]
     #[allow(deprecated)]
-    pub fn is_writable(&self, i: usize) -> bool {
+    pub fn is_writable(&self, i: usize, enable_loader_v4: bool) -> bool {
         (self.is_writable_index(i))
             && !is_builtin_key_or_sysvar(&self.account_keys[i])
-            && !self.demote_program_id(i)
+            && !self.demote_program_id(i, enable_loader_v4)
     }
 
     /// Returns true if the account at the specified index is writable by the
@@ -675,10 +676,11 @@ impl Message {
         &self,
         i: usize,
         reserved_account_keys: Option<&HashSet<Pubkey>>,
+        enable_loader_v4: bool,
     ) -> bool {
         (self.is_writable_index(i))
             && !self.is_account_maybe_reserved(i, reserved_account_keys)
-            && !self.demote_program_id(i)
+            && !self.demote_program_id(i, enable_loader_v4)
     }
 
     /// Returns true if the account at the specified index is in the optional
@@ -724,11 +726,11 @@ impl Message {
         false
     }
 
-    /// Returns `true` if any account is the BPF upgradeable loader.
-    pub fn is_upgradeable_loader_present(&self) -> bool {
-        self.account_keys
-            .iter()
-            .any(|&key| key == bpf_loader_upgradeable::id())
+    /// Inspect all message keys for loader v3 or v4
+    pub fn is_upgradeable_loader_present(&self, enable_loader_v4: bool) -> bool {
+        self.account_keys.iter().any(|key| {
+            bpf_loader_upgradeable::check_id(key) || (enable_loader_v4 && loader_v4::check_id(key))
+        })
     }
 }
 
@@ -862,12 +864,12 @@ mod tests {
             recent_blockhash: Hash::default(),
             instructions: vec![],
         };
-        assert!(message.is_writable(0));
-        assert!(!message.is_writable(1));
-        assert!(!message.is_writable(2));
-        assert!(message.is_writable(3));
-        assert!(message.is_writable(4));
-        assert!(!message.is_writable(5));
+        assert!(message.is_writable(0, true));
+        assert!(!message.is_writable(1, true));
+        assert!(!message.is_writable(2, true));
+        assert!(message.is_writable(3, true));
+        assert!(message.is_writable(4, true));
+        assert!(!message.is_writable(5, true));
     }
 
     #[test]
@@ -892,14 +894,14 @@ mod tests {
 
         let reserved_account_keys = HashSet::from([key3]);
 
-        assert!(message.is_maybe_writable(0, Some(&reserved_account_keys)));
-        assert!(!message.is_maybe_writable(1, Some(&reserved_account_keys)));
-        assert!(!message.is_maybe_writable(2, Some(&reserved_account_keys)));
-        assert!(!message.is_maybe_writable(3, Some(&reserved_account_keys)));
-        assert!(message.is_maybe_writable(3, None));
-        assert!(message.is_maybe_writable(4, Some(&reserved_account_keys)));
-        assert!(!message.is_maybe_writable(5, Some(&reserved_account_keys)));
-        assert!(!message.is_maybe_writable(6, Some(&reserved_account_keys)));
+        assert!(message.is_maybe_writable(0, Some(&reserved_account_keys), true));
+        assert!(!message.is_maybe_writable(1, Some(&reserved_account_keys), true));
+        assert!(!message.is_maybe_writable(2, Some(&reserved_account_keys), true));
+        assert!(!message.is_maybe_writable(3, Some(&reserved_account_keys), true));
+        assert!(message.is_maybe_writable(3, None, true));
+        assert!(message.is_maybe_writable(4, Some(&reserved_account_keys), true));
+        assert!(!message.is_maybe_writable(5, Some(&reserved_account_keys), true));
+        assert!(!message.is_maybe_writable(6, Some(&reserved_account_keys), true));
     }
 
     #[test]

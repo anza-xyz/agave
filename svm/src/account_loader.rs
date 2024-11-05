@@ -768,6 +768,7 @@ mod tests {
         SanitizedMessage::Legacy(LegacyMessage::new(
             message,
             &ReservedAccountKeys::empty_key_set(),
+            true,
         ))
     }
 

@@ -900,6 +900,7 @@ fn sanitize_transaction(
         None,
         address_loader,
         reserved_account_keys,
+        true,
     )
     .map_err(|err| Error::invalid_params(format!("invalid transaction: {err}")))
 }

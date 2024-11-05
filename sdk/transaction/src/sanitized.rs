@@ -64,13 +64,16 @@ impl SanitizedTransaction {
         is_simple_vote_tx: bool,
         address_loader: impl AddressLoader,
         reserved_account_keys: &HashSet<Pubkey>,
+        enable_loader_v4: bool,
     ) -> Result<Self> {
         let signatures = tx.signatures;
         let SanitizedVersionedMessage { message } = tx.message;
         let message = match message {
-            VersionedMessage::Legacy(message) => {
-                SanitizedMessage::Legacy(LegacyMessage::new(message, reserved_account_keys))
-            }
+            VersionedMessage::Legacy(message) => SanitizedMessage::Legacy(LegacyMessage::new(
+                message,
+                reserved_account_keys,
+                enable_loader_v4,
+            )),
             VersionedMessage::V0(message) => {
                 let loaded_addresses =
                     address_loader.load_addresses(&message.address_table_lookups)?;
@@ -78,6 +81,7 @@ impl SanitizedTransaction {
                     message,
                     loaded_addresses,
                     reserved_account_keys,
+                    enable_loader_v4,
                 ))
             }
         };
@@ -100,6 +104,7 @@ impl SanitizedTransaction {
         is_simple_vote_tx: Option<bool>,
         address_loader: impl AddressLoader,
         reserved_account_keys: &HashSet<Pubkey>,
+        enable_loader_v4: bool,
     ) -> Result<Self> {
         let sanitized_versioned_tx = SanitizedVersionedTransaction::try_from(tx)?;
         let is_simple_vote_tx = is_simple_vote_tx.unwrap_or_else(|| {
@@ -117,6 +122,7 @@ impl SanitizedTransaction {
             is_simple_vote_tx,
             address_loader,
             reserved_account_keys,
+            enable_loader_v4,
         )
     }
 
@@ -125,6 +131,7 @@ impl SanitizedTransaction {
     pub fn try_from_legacy_transaction(
         tx: Transaction,
         reserved_account_keys: &HashSet<Pubkey>,
+        enable_loader_v4: bool,
     ) -> Result<Self> {
         tx.sanitize()?;
 
@@ -133,6 +140,7 @@ impl SanitizedTransaction {
             message: SanitizedMessage::Legacy(LegacyMessage::new(
                 tx.message,
                 reserved_account_keys,
+                enable_loader_v4,
             )),
             is_simple_vote_tx: false,
             signatures: tx.signatures,
@@ -142,7 +150,7 @@ impl SanitizedTransaction {
     /// Create a sanitized transaction from a legacy transaction. Used for tests only.
     #[cfg(feature = "blake3")]
     pub fn from_transaction_for_tests(tx: Transaction) -> Self {
-        Self::try_from_legacy_transaction(tx, &ReservedAccountKeys::empty_key_set()).unwrap()
+        Self::try_from_legacy_transaction(tx, &ReservedAccountKeys::empty_key_set(), true).unwrap()
     }
 
     /// Create a sanitized transaction from fields.
@@ -371,6 +379,7 @@ mod tests {
                 None,
                 SimpleAddressLoader::Disabled,
                 &ReservedAccountKeys::empty_key_set(),
+                true,
             )
             .unwrap();
             assert!(vote_transaction.is_simple_vote_transaction());
@@ -384,6 +393,7 @@ mod tests {
                 Some(false),
                 SimpleAddressLoader::Disabled,
                 &ReservedAccountKeys::empty_key_set(),
+                true,
             )
             .unwrap();
             assert!(!vote_transaction.is_simple_vote_transaction());
@@ -399,6 +409,7 @@ mod tests {
                 None,
                 SimpleAddressLoader::Disabled,
                 &ReservedAccountKeys::empty_key_set(),
+                true,
             )
             .unwrap();
             assert!(!vote_transaction.is_simple_vote_transaction());
@@ -412,6 +423,7 @@ mod tests {
                 Some(true),
                 SimpleAddressLoader::Disabled,
                 &ReservedAccountKeys::empty_key_set(),
+                true,
             )
             .unwrap();
             assert!(vote_transaction.is_simple_vote_transaction());
@@ -435,6 +447,7 @@ mod tests {
                 ..legacy::Message::default()
             },
             &HashSet::default(),
+            true,
         )
         .unwrap();
 

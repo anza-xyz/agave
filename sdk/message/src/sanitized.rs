@@ -37,7 +37,11 @@ pub struct LegacyMessage<'a> {
 }
 
 impl LegacyMessage<'_> {
-    pub fn new(message: legacy::Message, reserved_account_keys: &HashSet<Pubkey>) -> Self {
+    pub fn new(
+        message: legacy::Message,
+        reserved_account_keys: &HashSet<Pubkey>,
+        enable_loader_v4: bool,
+    ) -> Self {
         let is_writable_account_cache = message
             .account_keys
             .iter()
@@ -45,7 +49,7 @@ impl LegacyMessage<'_> {
             .map(|(i, _key)| {
                 message.is_writable_index(i)
                     && !reserved_account_keys.contains(&message.account_keys[i])
-                    && !message.demote_program_id(i)
+                    && !message.demote_program_id(i, enable_loader_v4)
             })
             .collect::<Vec<_>>();
         Self {
@@ -62,9 +66,9 @@ impl LegacyMessage<'_> {
         self.message.is_key_called_as_program(key_index)
     }
 
-    /// Inspect all message keys for the bpf upgradeable loader
-    pub fn is_upgradeable_loader_present(&self) -> bool {
-        self.message.is_upgradeable_loader_present()
+    /// Inspect all message keys for loader v3 or v4
+    pub fn is_upgradeable_loader_present(&self, enable_loader_v4: bool) -> bool {
+        self.message.is_upgradeable_loader_present(enable_loader_v4)
     }
 
     /// Returns the full list of account keys.
@@ -94,11 +98,14 @@ impl SanitizedMessage {
         sanitized_msg: SanitizedVersionedMessage,
         address_loader: impl AddressLoader,
         reserved_account_keys: &HashSet<Pubkey>,
+        enable_loader_v4: bool,
     ) -> Result<Self, SanitizeMessageError> {
         Ok(match sanitized_msg.message {
-            VersionedMessage::Legacy(message) => {
-                SanitizedMessage::Legacy(LegacyMessage::new(message, reserved_account_keys))
-            }
+            VersionedMessage::Legacy(message) => SanitizedMessage::Legacy(LegacyMessage::new(
+                message,
+                reserved_account_keys,
+                enable_loader_v4,
+            )),
             VersionedMessage::V0(message) => {
                 let loaded_addresses =
                     address_loader.load_addresses(&message.address_table_lookups)?;
@@ -106,6 +113,7 @@ impl SanitizedMessage {
                     message,
                     loaded_addresses,
                     reserved_account_keys,
+                    enable_loader_v4,
                 ))
             }
         })
@@ -115,11 +123,13 @@ impl SanitizedMessage {
     pub fn try_from_legacy_message(
         message: legacy::Message,
         reserved_account_keys: &HashSet<Pubkey>,
+        enable_loader_v4: bool,
     ) -> Result<Self, SanitizeMessageError> {
         message.sanitize()?;
         Ok(Self::Legacy(LegacyMessage::new(
             message,
             reserved_account_keys,
+            enable_loader_v4,
         )))
     }
 
@@ -312,10 +322,10 @@ impl SanitizedMessage {
     }
 
     /// Inspect all message keys for the bpf upgradeable loader
-    pub fn is_upgradeable_loader_present(&self) -> bool {
+    pub fn is_upgradeable_loader_present(&self, enable_loader_v4: bool) -> bool {
         match self {
-            Self::Legacy(message) => message.is_upgradeable_loader_present(),
-            Self::V0(message) => message.is_upgradeable_loader_present(),
+            Self::Legacy(message) => message.is_upgradeable_loader_present(enable_loader_v4),
+            Self::V0(message) => message.is_upgradeable_loader_present(enable_loader_v4),
         }
     }
 
@@ -494,6 +504,7 @@ mod tests {
             SanitizedMessage::try_from_legacy_message(
                 legacy_message_with_no_signers,
                 &HashSet::default(),
+                true,
             )
             .err(),
             Some(SanitizeMessageError::IndexOutOfBounds),
@@ -521,6 +532,7 @@ mod tests {
                 instructions,
             ),
             &HashSet::default(),
+            true,
         )
         .unwrap();
 
@@ -549,6 +561,7 @@ mod tests {
                 ..legacy::Message::default()
             },
             &HashSet::default(),
+            true,
         )
         .unwrap();
 
@@ -569,6 +582,7 @@ mod tests {
                 readonly: vec![key5],
             },
             &HashSet::default(),
+            true,
         ));
 
         assert_eq!(v0_message.num_readonly_accounts(), 3);
@@ -596,6 +610,7 @@ mod tests {
                 instructions,
             ),
             &HashSet::default(),
+            true,
         )
         .unwrap();
 
@@ -638,6 +653,7 @@ mod tests {
                 ..legacy::Message::default()
             },
             &HashSet::default(),
+            true,
         )
         .unwrap();
         match legacy_message {
@@ -671,6 +687,7 @@ mod tests {
                 readonly: vec![key5],
             },
             &HashSet::default(),
+            true,
         ));
         match v0_message {
             SanitizedMessage::V0(message) => {
@@ -722,6 +739,7 @@ mod tests {
                 ],
             ),
             &HashSet::new(),
+            true,
         )
         .unwrap();
 
@@ -755,6 +773,7 @@ mod tests {
                 ..legacy::Message::default()
             },
             &HashSet::default(),
+            true,
         )
         .unwrap();
         assert_eq!(legacy_message.static_account_keys(), &keys);
@@ -770,6 +789,7 @@ mod tests {
                 readonly: vec![],
             },
             &HashSet::default(),
+            true,
         ));
         assert_eq!(v0_message.static_account_keys(), &keys);
 
@@ -784,6 +804,7 @@ mod tests {
                 readonly: vec![Pubkey::new_unique()],
             },
             &HashSet::default(),
+            true,
         ));
         assert_eq!(v0_message.static_account_keys(), &keys);
     }

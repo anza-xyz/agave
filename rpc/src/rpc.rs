@@ -3870,6 +3870,9 @@ pub mod rpc_full {
                 unsanitized_tx,
                 preflight_bank,
                 preflight_bank.get_reserved_account_keys(),
+                preflight_bank
+                    .feature_set
+                    .is_active(&feature_set::enable_loader_v4::id()),
             )?;
             let signature = *transaction.signature();
 
@@ -4003,8 +4006,13 @@ pub mod rpc_full {
                 });
             }
 
-            let transaction =
-                sanitize_transaction(unsanitized_tx, bank, bank.get_reserved_account_keys())?;
+            let transaction = sanitize_transaction(
+                unsanitized_tx,
+                bank,
+                bank.get_reserved_account_keys(),
+                bank.feature_set
+                    .is_active(&feature_set::enable_loader_v4::id()),
+            )?;
             if sig_verify {
                 verify_transaction(&transaction, &bank.feature_set)?;
             }
@@ -4260,6 +4268,8 @@ pub mod rpc_full {
                 sanitized_versioned_message,
                 bank,
                 bank.get_reserved_account_keys(),
+                bank.feature_set
+                    .is_active(&feature_set::enable_loader_v4::id()),
             )
             .map_err(|err| Error::invalid_params(format!("invalid transaction message: {err}")))?;
             let fee = bank.get_fee_for_message(&sanitized_message);
@@ -4395,6 +4405,7 @@ fn sanitize_transaction(
     transaction: VersionedTransaction,
     address_loader: impl AddressLoader,
     reserved_account_keys: &HashSet<Pubkey>,
+    enable_loader_v4: bool,
 ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
     RuntimeTransaction::try_create(
         transaction,
@@ -4402,6 +4413,7 @@ fn sanitize_transaction(
         None,
         address_loader,
         reserved_account_keys,
+        enable_loader_v4,
     )
     .map_err(|err| Error::invalid_params(format!("invalid transaction: {err}")))
 }
@@ -8838,7 +8850,8 @@ pub mod tests {
             sanitize_transaction(
                 unsanitary_versioned_tx,
                 SimpleAddressLoader::Disabled,
-                &ReservedAccountKeys::empty_key_set()
+                &ReservedAccountKeys::empty_key_set(),
+                true,
             )
             .unwrap_err(),
             expect58
@@ -8863,7 +8876,8 @@ pub mod tests {
             sanitize_transaction(
                 versioned_tx,
                 SimpleAddressLoader::Disabled,
-                &ReservedAccountKeys::empty_key_set()
+                &ReservedAccountKeys::empty_key_set(),
+                true,
             )
             .unwrap_err(),
             Error::invalid_params(
