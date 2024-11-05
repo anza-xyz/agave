@@ -9284,6 +9284,7 @@ dependencies = [
  "sha3",
  "solana-derivation-path",
  "solana-instruction",
+ "solana-keypair",
  "solana-pubkey",
  "solana-sdk-ids",
  "solana-seed-derivable",

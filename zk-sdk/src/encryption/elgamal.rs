@@ -835,8 +835,9 @@ mod tests {
         super::*,
         crate::encryption::pedersen::Pedersen,
         bip39::{Language, Mnemonic, MnemonicType, Seed},
+        solana_keypair::Keypair,
         solana_pubkey::Pubkey,
-        solana_signer::{keypair::Keypair, null_signer::NullSigner},
+        solana_signer::null_signer::NullSigner,
         std::fs::{self, File},
     };
 

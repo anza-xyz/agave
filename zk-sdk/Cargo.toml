@@ -22,6 +22,7 @@ solana-sdk-ids = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+solana-keypair = { workspace = true }
 tiny-bip39 = { workspace = true }
 
 [target.'cfg(not(target_os = "solana"))'.dependencies]

@@ -278,9 +278,8 @@ impl fmt::Display for AeCiphertext {
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
-        solana_pubkey::Pubkey,
-        solana_signer::{keypair::Keypair, null_signer::NullSigner},
+        super::*, solana_keypair::Keypair, solana_pubkey::Pubkey,
+        solana_signer::null_signer::NullSigner,
     };
 
     #[test]
