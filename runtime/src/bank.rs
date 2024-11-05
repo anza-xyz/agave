@@ -140,6 +140,7 @@ use {
         packet::PACKET_DATA_SIZE,
         precompiles::get_precompiles,
         pubkey::Pubkey,
+        rent_collector::RENT_EXEMPT_RENT_EPOCH,
         rent_collector::{CollectedInfo, RentCollector},
         rent_debits::RentDebits,
         reserved_account_keys::ReservedAccountKeys,
@@ -1948,7 +1949,7 @@ impl Bank {
         // RENT_EXEMPT_EPOCH. In the future, we will remove rent collection
         // code. Therefore, we should set rent_epoch here, and don't depend on
         // rent collection code to update rent_epoch..
-        self.adjust_sysvar_rent_epoch(&mut new_account);
+        new_account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
         self.store_account_and_update_capitalization(pubkey, &new_account);
     }
 
@@ -6695,10 +6696,6 @@ impl Bank {
             self.get_minimum_balance_for_rent_exemption(account.data().len())
                 .max(account.lamports()),
         );
-    }
-
-    fn adjust_sysvar_rent_epoch(&self, account: &mut AccountSharedData) {
-        account.set_rent_epoch(solana_sdk::rent_collector::RENT_EXEMPT_RENT_EPOCH);
     }
 
     /// Compute the active feature set based on the current bank state,
