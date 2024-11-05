@@ -1,4 +1,3 @@
-#![allow(clippy::arithmetic_side_effects)]
 pub use solana_file_downloader::DownloadProgressRecord;
 use {
     log::*,
