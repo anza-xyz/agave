@@ -28,7 +28,8 @@ use {
     solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
     solana_sdk_ids::{
-        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, system_program, sysvar,
+        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, system_program,
+        sysvar,
     },
     std::{collections::HashSet, convert::TryFrom, str::FromStr},
 };
@@ -728,7 +729,7 @@ impl Message {
     pub fn is_upgradeable_loader_present(&self) -> bool {
         self.account_keys
             .iter()
-            .any(|&key| key == bpf_loader_upgradeable::id())
+            .any(|key| bpf_loader_upgradeable::check_id(key) || loader_v4::check_id(key))
     }
 }
 
