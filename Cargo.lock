@@ -9346,6 +9346,7 @@ dependencies = [
  "solana-curve25519",
  "solana-derivation-path",
  "solana-instruction",
+ "solana-keypair",
  "solana-pubkey",
  "solana-sdk-ids",
  "solana-seed-derivable",
