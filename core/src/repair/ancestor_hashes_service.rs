@@ -747,7 +747,6 @@ impl AncestorHashesService {
                 ancestor_hashes_request_statuses,
                 ancestor_hashes_request_socket,
                 ancestor_hashes_request_quic_sender,
-                &repair_info.cluster_slots,
                 serve_repair,
                 &repair_info.repair_validators,
                 slot,
@@ -825,7 +824,6 @@ impl AncestorHashesService {
         ancestor_hashes_request_statuses: &DashMap<Slot, AncestorRequestStatus>,
         ancestor_hashes_request_socket: &UdpSocket,
         ancestor_hashes_request_quic_sender: &AsyncSender<(SocketAddr, Bytes)>,
-        cluster_slots: &ClusterSlots,
         serve_repair: &ServeRepair,
         repair_validators: &Option<HashSet<Pubkey>>,
         duplicate_slot: Slot,
@@ -838,7 +836,6 @@ impl AncestorHashesService {
         let repair_protocol = serve_repair::get_repair_protocol(cluster_type);
         let Ok(sampled_validators) = serve_repair.repair_request_ancestor_hashes_sample_peers(
             duplicate_slot,
-            cluster_slots,
             repair_validators,
             repair_protocol,
         ) else {
@@ -1507,7 +1504,6 @@ mod test {
             &ancestor_hashes_request_statuses,
             &ancestor_hashes_request_socket,
             &ancestor_hashes_request_quic_sender,
-            &cluster_slots,
             &requester_serve_repair,
             &repair_validators,
             dead_slot,
@@ -1557,7 +1553,6 @@ mod test {
             &ancestor_hashes_request_statuses,
             &ancestor_hashes_request_socket,
             &ancestor_hashes_request_quic_sender,
-            &cluster_slots,
             &requester_serve_repair,
             &repair_validators,
             dead_slot,
@@ -1619,7 +1614,6 @@ mod test {
             &ancestor_hashes_request_statuses,
             &ancestor_hashes_request_socket,
             &ancestor_hashes_request_quic_sender,
-            &cluster_slots,
             &requester_serve_repair,
             &repair_validators,
             dead_slot,
