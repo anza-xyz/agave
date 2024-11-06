@@ -113,8 +113,14 @@ mod target_arch {
         let r = ecdsa_sig.r().to_vec();
         let s = ecdsa_sig.s().to_vec();
         let mut signature = vec![0u8; SIGNATURE_SERIALIZED_SIZE];
-        signature[..FIELD_SIZE].copy_from_slice(&r);
-        signature[FIELD_SIZE..].copy_from_slice(&s);
+
+        let mut padded_r = vec![0u8; FIELD_SIZE];
+        let mut padded_s = vec![0u8; FIELD_SIZE];
+        padded_r[FIELD_SIZE - r.len()..].copy_from_slice(&r);
+        padded_s[FIELD_SIZE - s.len()..].copy_from_slice(&s);
+
+        signature[..FIELD_SIZE].copy_from_slice(&padded_r);
+        signature[FIELD_SIZE..].copy_from_slice(&padded_s);
 
         // Check if s > half_order, if so, compute s = order - s
         let s_bignum = BigNum::from_slice(&s)?;
@@ -562,7 +568,46 @@ mod target_arch {
             );
             assert!(tx_fail.unwrap_err() == PrecompileError::InvalidSignature);
         }
+        #[test]
+        fn test_secp256r1_31byte_components() {
+            solana_logger::setup();
+            let message_arr = b"hello";
+            let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+            let signing_key = EcKey::generate(&group).unwrap();
 
+            // Keep generating signatures until we get one with a 31-byte component
+            loop {
+                let instruction =
+                    new_secp256r1_instruction(message_arr, signing_key.clone()).unwrap();
+
+                // Extract r and s from the signature
+                let signature_offset = DATA_START + COMPRESSED_PUBKEY_SERIALIZED_SIZE;
+                let r = &instruction.data[signature_offset..signature_offset + FIELD_SIZE];
+                let s = &instruction.data
+                    [signature_offset + FIELD_SIZE..signature_offset + 2 * FIELD_SIZE];
+
+                // Convert to BigNum and back to get byte representation
+                let r_bn = BigNum::from_slice(r).unwrap();
+                let s_bn = BigNum::from_slice(s).unwrap();
+                let r_bytes = r_bn.to_vec();
+                let s_bytes = s_bn.to_vec();
+
+                if r_bytes.len() == 31 || s_bytes.len() == 31 {
+                    // Once found, verify the signature and break out of the loop
+                    let mint_keypair = Keypair::new();
+                    let tx = Transaction::new_signed_with_payer(
+                        &[instruction],
+                        Some(&mint_keypair.pubkey()),
+                        &[&mint_keypair],
+                        Hash::default(),
+                    );
+
+                    let feature_set = FeatureSet::all_enabled();
+                    assert!(tx.verify_precompiles(&feature_set).is_ok());
+                    break;
+                }
+            }
+        }
         #[test]
         fn test_secp256r1_order() {
             let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
