@@ -802,7 +802,7 @@ impl PohRecorder {
             info!(
                 "poh_record: max_tick_height {} reached, clearing working_bank {}",
                 working_bank.max_tick_height,
-                working_bank.bank.slot()
+                working_bank.bank.id_and_slot_with_scheduler_status(),
             );
             self.start_bank = working_bank.bank.clone();
             let working_slot = self.start_slot();
