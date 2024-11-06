@@ -336,7 +336,7 @@ impl SchedulerStatus {
         }
     }
 
-    fn status(&self) {
+    fn status(&self) -> String {
         match self {
             SchedulerStatus::Unavailable => "Unavailable".to_owned(),
             SchedulerStatus::Active(sch) => format!("Active({})", sch.id()),
