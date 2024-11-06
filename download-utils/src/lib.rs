@@ -1,7 +1,7 @@
-pub use solana_file_downloader::DownloadProgressRecord;
+pub use solana_file_download::DownloadProgressRecord;
 use {
     log::*,
-    solana_file_downloader::{download_file, DownloadProgressCallbackOption},
+    solana_file_download::{download_file, DownloadProgressCallbackOption},
     solana_runtime::{
         snapshot_hash::SnapshotHash,
         snapshot_package::SnapshotKind,

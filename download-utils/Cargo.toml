@@ -11,7 +11,7 @@ edition = { workspace = true }
 
 [dependencies]
 log = { workspace = true }
-solana-file-downloader = { workspace = true }
+solana-file-download = { workspace = true }
 solana-runtime = { workspace = true }
 solana-sdk = { workspace = true }
 

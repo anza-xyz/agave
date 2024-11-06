@@ -5,7 +5,7 @@ use {
     itertools::Itertools,
     log::*,
     regex::Regex,
-    solana_file_downloader::download_file,
+    solana_file_download::download_file,
     solana_sdk::signature::{write_keypair_file, Keypair},
     std::{
         borrow::Cow,
