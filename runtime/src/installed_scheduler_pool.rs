@@ -537,8 +537,8 @@ impl BankWithScheduler {
         RwLock::new(SchedulerStatus::Unavailable)
     }
 
-    pub fn id_and_slot_with_scheduler_status(&self) -> (SchedulerId, Slot, &str) {
-        (self.inner.bank.slot(), self.inner.scheduler.read().unwrap().id, "aaa")
+    pub fn id_and_slot_with_scheduler_status(&self) -> (SchedulerId, String) {
+        (self.inner.bank.slot(), self.inner.scheduler.read().unwrap().status())
     }
 }
 
