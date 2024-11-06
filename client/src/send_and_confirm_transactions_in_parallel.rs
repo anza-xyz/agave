@@ -56,7 +56,6 @@ struct BlockHashData {
 }
 
 // Deprecated struct to maintain backward compatibility
-#[allow(deprecated)]
 #[deprecated(
     since = "2.2.0",
     note = "Use SendAndConfirmConfigV2 with send_and_confirm_transactions_in_parallel_v2"
