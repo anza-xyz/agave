@@ -21,13 +21,15 @@ use {
         sigverify,
     },
     solana_rayon_threadlimit::get_max_thread_count,
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_runtime_transaction::{
+        runtime_transaction::RuntimeTransaction, svm_transaction_adapter::SVMTransactionAdapter,
+    },
     solana_sdk::{
         hash::Hash,
         packet::Meta,
         transaction::{
-            Result, SanitizedTransaction, Transaction, TransactionError,
-            TransactionVerificationMode, VersionedTransaction,
+            Result, Transaction, TransactionError, TransactionVerificationMode,
+            VersionedTransaction,
         },
     },
     std::{
@@ -151,8 +153,8 @@ impl From<&Entry> for EntrySummary {
 }
 
 /// Typed entry to distinguish between transaction and tick entries
-pub enum EntryType {
-    Transactions(Vec<RuntimeTransaction<SanitizedTransaction>>),
+pub enum EntryType<Tx: SVMTransactionAdapter> {
+    Transactions(Vec<RuntimeTransaction<Tx>>),
     Tick(Hash),
 }
 
@@ -286,15 +288,15 @@ pub enum DeviceSigVerificationData {
     Gpu(GpuSigVerificationData),
 }
 
-pub struct EntrySigVerificationState {
+pub struct EntrySigVerificationState<Tx: SVMTransactionAdapter> {
     verification_status: EntryVerificationStatus,
-    entries: Option<Vec<EntryType>>,
+    entries: Option<Vec<EntryType<Tx>>>,
     device_verification_data: DeviceSigVerificationData,
     gpu_verify_duration_us: u64,
 }
 
-impl EntrySigVerificationState {
-    pub fn entries(&mut self) -> Option<Vec<EntryType>> {
+impl<Tx: SVMTransactionAdapter> EntrySigVerificationState<Tx> {
+    pub fn entries(&mut self) -> Option<Vec<EntryType<Tx>>> {
         self.entries.take()
     }
     pub fn finish_verify(&mut self) -> bool {
@@ -392,15 +394,11 @@ impl EntryVerificationState {
     }
 }
 
-pub fn verify_transactions(
+pub fn verify_transactions<Tx: SVMTransactionAdapter + Send + Sync>(
     entries: Vec<Entry>,
     thread_pool: &ThreadPool,
-    verify: Arc<
-        dyn Fn(VersionedTransaction) -> Result<RuntimeTransaction<SanitizedTransaction>>
-            + Send
-            + Sync,
-    >,
-) -> Result<Vec<EntryType>> {
+    verify: Arc<dyn Fn(VersionedTransaction) -> Result<RuntimeTransaction<Tx>> + Send + Sync>,
+) -> Result<Vec<EntryType<Tx>>> {
     thread_pool.install(|| {
         entries
             .into_par_iter()
@@ -421,20 +419,17 @@ pub fn verify_transactions(
     })
 }
 
-pub fn start_verify_transactions(
+pub fn start_verify_transactions<Tx: SVMTransactionAdapter + Send + Sync + 'static>(
     entries: Vec<Entry>,
     skip_verification: bool,
     thread_pool: &ThreadPool,
     verify_recyclers: VerifyRecyclers,
     verify: Arc<
-        dyn Fn(
-                VersionedTransaction,
-                TransactionVerificationMode,
-            ) -> Result<RuntimeTransaction<SanitizedTransaction>>
+        dyn Fn(VersionedTransaction, TransactionVerificationMode) -> Result<RuntimeTransaction<Tx>>
             + Send
             + Sync,
     >,
-) -> Result<EntrySigVerificationState> {
+) -> Result<EntrySigVerificationState<Tx>> {
     let api = perf_libs::api();
 
     // Use the CPU if we have too few transactions for GPU signature verification to be worth it.
@@ -463,19 +458,16 @@ pub fn start_verify_transactions(
     }
 }
 
-fn start_verify_transactions_cpu(
+fn start_verify_transactions_cpu<Tx: SVMTransactionAdapter + Send + Sync + 'static>(
     entries: Vec<Entry>,
     skip_verification: bool,
     thread_pool: &ThreadPool,
     verify: Arc<
-        dyn Fn(
-                VersionedTransaction,
-                TransactionVerificationMode,
-            ) -> Result<RuntimeTransaction<SanitizedTransaction>>
+        dyn Fn(VersionedTransaction, TransactionVerificationMode) -> Result<RuntimeTransaction<Tx>>
             + Send
             + Sync,
     >,
-) -> Result<EntrySigVerificationState> {
+) -> Result<EntrySigVerificationState<Tx>> {
     let verify_func = {
         let mode = if skip_verification {
             TransactionVerificationMode::HashOnly
@@ -496,21 +488,18 @@ fn start_verify_transactions_cpu(
     })
 }
 
-fn start_verify_transactions_gpu(
+fn start_verify_transactions_gpu<Tx: SVMTransactionAdapter + Send + Sync + 'static>(
     entries: Vec<Entry>,
     verify_recyclers: VerifyRecyclers,
     thread_pool: &ThreadPool,
     verify: Arc<
-        dyn Fn(
-                VersionedTransaction,
-                TransactionVerificationMode,
-            ) -> Result<RuntimeTransaction<SanitizedTransaction>>
+        dyn Fn(VersionedTransaction, TransactionVerificationMode) -> Result<RuntimeTransaction<Tx>>
             + Send
             + Sync,
     >,
-) -> Result<EntrySigVerificationState> {
+) -> Result<EntrySigVerificationState<Tx>> {
     let verify_func = {
-        move |versioned_tx: VersionedTransaction| -> Result<RuntimeTransaction<SanitizedTransaction>> {
+        move |versioned_tx: VersionedTransaction| -> Result<RuntimeTransaction<Tx>> {
             verify(
                 versioned_tx,
                 TransactionVerificationMode::HashAndVerifyPrecompiles,
@@ -1017,7 +1006,7 @@ mod tests {
         assert!(!next_entry(&zero, 1, vec![]).verify(&one)); // inductive step, bad
     }
 
-    fn test_verify_transactions(
+    fn test_verify_transactions<Tx: SVMTransactionAdapter + Send + Sync + 'static>(
         entries: Vec<Entry>,
         skip_verification: bool,
         verify_recyclers: VerifyRecyclers,
@@ -1026,7 +1015,7 @@ mod tests {
             dyn Fn(
                     VersionedTransaction,
                     TransactionVerificationMode,
-                ) -> Result<RuntimeTransaction<SanitizedTransaction>>
+                ) -> Result<RuntimeTransaction<Tx>>
                 + Send
                 + Sync,
         >,
@@ -1038,14 +1027,14 @@ mod tests {
             } else {
                 TransactionVerificationMode::FullVerification
             };
-            move |versioned_tx: VersionedTransaction| -> Result<RuntimeTransaction<SanitizedTransaction>> {
+            move |versioned_tx: VersionedTransaction| -> Result<RuntimeTransaction<Tx>> {
                 verify(versioned_tx, verification_mode)
             }
         };
 
         let cpu_verify_result =
             verify_transactions(entries.clone(), thread_pool, Arc::new(verify_func));
-        let mut gpu_verify_result: EntrySigVerificationState = {
+        let mut gpu_verify_result: EntrySigVerificationState<Tx> = {
             let verify_result = start_verify_transactions(
                 entries,
                 skip_verification,

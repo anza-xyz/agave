@@ -94,7 +94,7 @@ pub struct LockedTransactionsWithIndexes<Tx: SVMMessage> {
 }
 
 struct ReplayEntry {
-    entry: EntryType,
+    entry: EntryType<SanitizedTransaction>,
     starting_index: usize,
 }
 
