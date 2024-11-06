@@ -18,6 +18,7 @@ use {
     solana_tpu_client_next::{
         connection_workers_scheduler::{ConnectionWorkersSchedulerConfig, LeadersFanout::Selected},
         leader_updater::create_leader_updater,
+        send_transaction_stats::SendTransactionStatsNonAtomic,
         transaction_batch::TransactionBatch,
         ConnectionWorkersScheduler, ConnectionWorkersSchedulerError, SendTransactionStats,
         SendTransactionStatsPerAddr,
@@ -91,7 +92,7 @@ async fn join_scheduler(
     scheduler_handle: JoinHandle<
         Result<SendTransactionStatsPerAddr, ConnectionWorkersSchedulerError>,
     >,
-) -> SendTransactionStats {
+) -> Arc<SendTransactionStats> {
     let stats_per_ip = scheduler_handle
         .await
         .unwrap()
@@ -238,10 +239,10 @@ async fn test_basic_transactions_sending() {
 
     // Stop sending
     tx_sender_shutdown.await;
-    let localhost_stats = join_scheduler(scheduler_handle).await;
+    let localhost_stats = join_scheduler(scheduler_handle).await.to_non_atomic();
     assert_eq!(
         localhost_stats,
-        SendTransactionStats {
+        SendTransactionStatsNonAtomic {
             successfully_sent: expected_num_txs as u64,
             ..Default::default()
         }
@@ -315,7 +316,7 @@ async fn test_connection_denied_until_allowed() {
 
     // Wait for the exchange to finish.
     tx_sender_shutdown.await;
-    let localhost_stats = join_scheduler(scheduler_handle).await;
+    let localhost_stats = join_scheduler(scheduler_handle).await.to_non_atomic();
     // in case of pruning, server closes the connection with code 1 and error
     // message b"dropped". This might lead to connection error
     // (ApplicationClosed::ApplicationClose) or to stream error
@@ -374,7 +375,7 @@ async fn test_connection_pruned_and_reopened() {
 
     // Wait for the exchange to finish.
     tx_sender_shutdown.await;
-    let localhost_stats = join_scheduler(scheduler_handle).await;
+    let localhost_stats = join_scheduler(scheduler_handle).await.to_non_atomic();
     // in case of pruning, server closes the connection with code 1 and error
     // message b"dropped". This might lead to connection error
     // (ApplicationClosed::ApplicationClose) or to stream error
@@ -435,10 +436,10 @@ async fn test_staked_connection() {
 
     // Wait for the exchange to finish.
     tx_sender_shutdown.await;
-    let localhost_stats = join_scheduler(scheduler_handle).await;
+    let localhost_stats = join_scheduler(scheduler_handle).await.to_non_atomic();
     assert_eq!(
         localhost_stats,
-        SendTransactionStats {
+        SendTransactionStatsNonAtomic {
             successfully_sent: expected_num_txs as u64,
             ..Default::default()
         }
@@ -482,10 +483,10 @@ async fn test_connection_throttling() {
 
     // Stop sending
     tx_sender_shutdown.await;
-    let localhost_stats = join_scheduler(scheduler_handle).await;
+    let localhost_stats = join_scheduler(scheduler_handle).await.to_non_atomic();
     assert_eq!(
         localhost_stats,
-        SendTransactionStats {
+        SendTransactionStatsNonAtomic {
             successfully_sent: expected_num_txs as u64,
             ..Default::default()
         }
@@ -526,13 +527,14 @@ async fn test_no_host() {
     tx_sender_shutdown.await;
 
     // While attempting to establish a connection with a nonexistent host, we fill the worker's
-    // channel. Transactions from this channel will never be sent and will eventually be dropped
-    // without increasing the `SendTransactionStats` counters.
+    // channel.
     let stats = scheduler_handle
         .await
         .expect("Scheduler should stop successfully")
         .expect("Scheduler execution was successful");
-    assert_eq!(stats, HashMap::new());
+    let stats = stats.get(&server_ip).unwrap().to_non_atomic();
+    // `5` because `config.max_reconnect_attempts` is 4
+    assert_eq!(stats.connect_error_invalid_remote_address, 5);
 }
 
 // Check that when the client is rate-limited by server, we update counters
@@ -582,13 +584,13 @@ async fn test_rate_limiting() {
 
     // And the scheduler.
     scheduler_cancel.cancel();
-    let localhost_stats = join_scheduler(scheduler_handle).await;
+    let localhost_stats = join_scheduler(scheduler_handle).await.to_non_atomic();
 
     // We do not expect to see any errors, as the connection is in the pending state still, when we
     // do the shutdown.  If we increase the time we wait in `count_received_packets_for`, we would
     // start seeing a `connection_error_timed_out` incremented to 1.  Potentially, we may want to
     // accept both 0 and 1 as valid values for it.
-    assert_eq!(localhost_stats, SendTransactionStats::default());
+    assert_eq!(localhost_stats, SendTransactionStatsNonAtomic::default());
 
     // Stop the server.
     exit.store(true, Ordering::Relaxed);
@@ -646,7 +648,7 @@ async fn test_rate_limiting_establish_connection() {
 
     // And the scheduler.
     scheduler_cancel.cancel();
-    let mut localhost_stats = join_scheduler(scheduler_handle).await;
+    let mut localhost_stats = join_scheduler(scheduler_handle).await.to_non_atomic();
     assert!(
         localhost_stats.connection_error_timed_out > 0,
         "As the quinn timeout is below 1 minute, a few connections will fail to connect during \
@@ -665,7 +667,7 @@ async fn test_rate_limiting_establish_connection() {
     // All the rest of the error counters should be 0.
     localhost_stats.connection_error_timed_out = 0;
     localhost_stats.successfully_sent = 0;
-    assert_eq!(localhost_stats, SendTransactionStats::default());
+    assert_eq!(localhost_stats, SendTransactionStatsNonAtomic::default());
 
     // Stop the server.
     exit.store(true, Ordering::Relaxed);

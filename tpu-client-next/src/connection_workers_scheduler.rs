@@ -10,6 +10,7 @@ use {
         },
         transaction_batch::TransactionBatch,
         workers_cache::{WorkerInfo, WorkersCache, WorkersCacheError},
+        SendTransactionStats,
     },
     log::*,
     quinn::Endpoint,
@@ -112,6 +113,7 @@ impl ConnectionWorkersScheduler {
         let endpoint = Self::setup_endpoint(bind, validator_identity)?;
         debug!("Client endpoint bind address: {:?}", endpoint.local_addr());
         let mut workers = WorkersCache::new(num_connections, cancel.clone());
+        let mut send_stats_per_addr = SendTransactionStatsPerAddr::new();
 
         loop {
             let transaction_batch = tokio::select! {
@@ -133,14 +135,25 @@ impl ConnectionWorkersScheduler {
             for new_leader in new_leaders {
                 if !workers.contains(new_leader) {
                     debug!("No existing workers for {new_leader:?}, starting a new one.");
+                    let stats = send_stats_per_addr.entry(new_leader.ip()).or_default();
                     let worker = Self::spawn_worker(
                         &endpoint,
                         new_leader,
                         worker_channel_size,
                         skip_check_transaction_age,
                         max_reconnect_attempts,
+                        stats.clone(),
                     );
-                    workers.push(*new_leader, worker).await;
+                    let shutdown_worker = workers.push(*new_leader, worker).await;
+                    if let Some(shutdown_worker) = shutdown_worker {
+                        tokio::spawn(async move {
+                            let leader = shutdown_worker.leader();
+                            let res = shutdown_worker.shutdown().await;
+                            if let Err(err) = res {
+                                debug!("Error while shutting down worker for {leader}: {err}");
+                            }
+                        });
+                    }
                 }
 
                 tokio::select! {
@@ -165,12 +178,14 @@ impl ConnectionWorkersScheduler {
             // connection.
             for peer in future_leaders {
                 if !workers.contains(peer) {
+                    let stats = send_stats_per_addr.entry(peer.ip()).or_default();
                     let worker = Self::spawn_worker(
                         &endpoint,
                         peer,
                         worker_channel_size,
                         skip_check_transaction_age,
                         max_reconnect_attempts,
+                        stats.clone(),
                     );
                     workers.push(*peer, worker).await;
                 }
@@ -181,7 +196,7 @@ impl ConnectionWorkersScheduler {
 
         endpoint.close(0u32.into(), b"Closing connection");
         leader_updater.stop().await;
-        Ok(workers.transaction_stats().clone())
+        Ok(send_stats_per_addr)
     }
 
     /// Sets up the QUIC endpoint for the scheduler to handle connections.
@@ -206,6 +221,7 @@ impl ConnectionWorkersScheduler {
         worker_channel_size: usize,
         skip_check_transaction_age: bool,
         max_reconnect_attempts: usize,
+        stats: Arc<SendTransactionStats>,
     ) -> WorkerInfo {
         let (txs_sender, txs_receiver) = mpsc::channel(worker_channel_size);
         let endpoint = endpoint.clone();
@@ -217,10 +233,10 @@ impl ConnectionWorkersScheduler {
             txs_receiver,
             skip_check_transaction_age,
             max_reconnect_attempts,
+            stats,
         );
         let handle = tokio::spawn(async move {
             worker.run().await;
-            worker.transaction_stats().clone()
         });
 
         WorkerInfo::new(txs_sender, handle, cancel)

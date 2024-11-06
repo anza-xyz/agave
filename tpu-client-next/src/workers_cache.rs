@@ -3,14 +3,10 @@
 //! batches, and gathering send transaction statistics.
 
 use {
-    super::SendTransactionStats,
     crate::transaction_batch::TransactionBatch,
     log::*,
     lru::LruCache,
-    std::{
-        collections::HashMap,
-        net::{IpAddr, SocketAddr},
-    },
+    std::net::SocketAddr,
     thiserror::Error,
     tokio::{sync::mpsc, task::JoinHandle},
     tokio_util::sync::CancellationToken,
@@ -20,14 +16,14 @@ use {
 /// transaction batches.
 pub(crate) struct WorkerInfo {
     pub sender: mpsc::Sender<TransactionBatch>,
-    pub handle: JoinHandle<SendTransactionStats>,
+    pub handle: JoinHandle<()>,
     pub cancel: CancellationToken,
 }
 
 impl WorkerInfo {
     pub fn new(
         sender: mpsc::Sender<TransactionBatch>,
-        handle: JoinHandle<SendTransactionStats>,
+        handle: JoinHandle<()>,
         cancel: CancellationToken,
     ) -> Self {
         Self {
@@ -50,14 +46,13 @@ impl WorkerInfo {
 
     /// Closes the worker by dropping the sender and awaiting the worker's
     /// statistics.
-    async fn shutdown(self) -> Result<SendTransactionStats, WorkersCacheError> {
+    async fn shutdown(self) -> Result<(), WorkersCacheError> {
         self.cancel.cancel();
         drop(self.sender);
-        let stats = self
-            .handle
+        self.handle
             .await
             .map_err(|_| WorkersCacheError::TaskJoinFailure)?;
-        Ok(stats)
+        Ok(())
     }
 }
 
@@ -65,7 +60,6 @@ impl WorkerInfo {
 /// manage workers. It also tracks transaction statistics for each peer.
 pub(crate) struct WorkersCache {
     workers: LruCache<SocketAddr, WorkerInfo>,
-    send_stats_per_addr: HashMap<IpAddr, SendTransactionStats>,
 
     /// Indicates that the `WorkersCache` is been `shutdown()`, interrupting any outstanding
     /// `send_txs()` invocations.
@@ -86,32 +80,35 @@ pub enum WorkersCacheError {
 }
 
 impl WorkersCache {
-    pub fn new(capacity: usize, cancel: CancellationToken) -> Self {
+    pub(crate) fn new(capacity: usize, cancel: CancellationToken) -> Self {
         Self {
             workers: LruCache::new(capacity),
-            send_stats_per_addr: HashMap::new(),
             cancel,
         }
     }
 
-    pub fn contains(&self, peer: &SocketAddr) -> bool {
+    pub(crate) fn contains(&self, peer: &SocketAddr) -> bool {
         self.workers.contains(peer)
     }
 
-    pub async fn push(&mut self, peer: SocketAddr, peer_worker: WorkerInfo) {
-        // Although there might be concerns about the performance implications
-        // of waiting for the worker to be closed when trying to add a new
-        // worker, the idea is that these workers are almost always created in
-        // advance so the latency is hidden.
+    pub(crate) async fn push(
+        &mut self,
+        peer: SocketAddr,
+        peer_worker: WorkerInfo,
+    ) -> Option<ShutdownWorker> {
         if let Some((leader, popped_worker)) = self.workers.push(peer, peer_worker) {
-            self.shutdown_worker(leader, popped_worker).await;
+            return Some(ShutdownWorker {
+                leader,
+                worker: popped_worker,
+            });
         }
+        None
     }
 
     /// Sends a batch of transactions to the worker for a given peer. If the
     /// worker for the peer is disconnected or fails, it is removed from the
     /// cache.
-    pub async fn send_transactions_to_address(
+    pub(crate) async fn send_transactions_to_address(
         &mut self,
         peer: &SocketAddr,
         txs_batch: TransactionBatch,
@@ -148,37 +145,35 @@ impl WorkersCache {
         }
     }
 
-    pub fn transaction_stats(&self) -> &HashMap<IpAddr, SendTransactionStats> {
-        &self.send_stats_per_addr
-    }
-
     /// Closes and removes all workers in the cache. This is typically done when
     /// shutting down the system.
-    pub async fn shutdown(&mut self) {
-        // Interrupt any outstanding `send_txs()` calls.
+    pub(crate) async fn shutdown(&mut self) {
+        // Interrupt any outstanding `send_transactions()` calls.
         self.cancel.cancel();
 
         while let Some((leader, worker)) = self.workers.pop_lru() {
-            self.shutdown_worker(leader, worker).await;
+            let res = worker.shutdown().await;
+            if let Err(err) = res {
+                debug!("Error while shutting down worker for {leader}: {err}");
+            }
         }
     }
+}
 
-    /// Shuts down a worker for a given peer by closing the worker and gathering
-    /// its transaction statistics.
-    async fn shutdown_worker(&mut self, leader: SocketAddr, worker: WorkerInfo) {
-        let res = worker.shutdown().await;
+/// [`ShutdownWorker`] takes care of stopping the worker. It's method
+/// `shutdown()` should be executed in a separate task to hide the latency of
+/// finishing worker gracefully.
+pub(crate) struct ShutdownWorker {
+    leader: SocketAddr,
+    worker: WorkerInfo,
+}
 
-        let stats = match res {
-            Ok(stats) => stats,
-            Err(err) => {
-                debug!("Error while shutting down worker for {leader}: {err}");
-                return;
-            }
-        };
+impl ShutdownWorker {
+    pub(crate) fn leader(&self) -> SocketAddr {
+        self.leader
+    }
 
-        self.send_stats_per_addr
-            .entry(leader.ip())
-            .and_modify(|e| e.add(&stats))
-            .or_insert(stats);
+    pub(crate) async fn shutdown(self) -> Result<(), WorkersCacheError> {
+        self.worker.shutdown().await
     }
 }
