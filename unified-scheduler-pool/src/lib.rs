@@ -1620,6 +1620,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                                     "pausing"
                                                 } else {
                                                     info!("ignoring duplicate close subch");
+                                                    continue;
                                                 }
                                             },
                                         }
