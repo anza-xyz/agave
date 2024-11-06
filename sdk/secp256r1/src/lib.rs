@@ -258,7 +258,7 @@ mod target_arch {
                 && s_bignum <= half_order;
 
             if !within_range {
-                return Err(PrecompileError::InvalidSignatureRange);
+                return Err(PrecompileError::InvalidSignature);
             }
 
             // Create an ECDSA signature object from the ASN.1 integers
@@ -406,10 +406,7 @@ mod target_arch {
             };
             assert_eq!(
                 test_case(1, &offsets),
-                // Since r and s parsing happens before the verification we hit
-                // a range value error since the zero-signature gets interpreted
-                // as out of range
-                Err(PrecompileError::InvalidSignatureRange)
+                Err(PrecompileError::InvalidSignature)
             );
 
             let offsets = Secp256r1SignatureOffsets {
@@ -563,7 +560,7 @@ mod target_arch {
                 &[instruction.data.as_slice()],
                 &feature_set,
             );
-            assert!(tx_fail.unwrap_err() == PrecompileError::InvalidSignatureRange);
+            assert!(tx_fail.unwrap_err() == PrecompileError::InvalidSignature);
         }
 
         #[test]

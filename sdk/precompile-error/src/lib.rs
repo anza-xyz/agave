@@ -7,7 +7,6 @@ pub enum PrecompileError {
     InvalidPublicKey,
     InvalidRecoveryId,
     InvalidSignature,
-    InvalidSignatureRange,
     InvalidDataOffsets,
     InvalidInstructionDataSize,
 }
@@ -21,8 +20,6 @@ impl num_traits::FromPrimitive for PrecompileError {
             Some(PrecompileError::InvalidRecoveryId)
         } else if n == PrecompileError::InvalidSignature as i64 {
             Some(PrecompileError::InvalidSignature)
-        } else if n == PrecompileError::InvalidSignatureRange as i64 {
-            Some(PrecompileError::InvalidSignatureRange)
         } else if n == PrecompileError::InvalidDataOffsets as i64 {
             Some(PrecompileError::InvalidDataOffsets)
         } else if n == PrecompileError::InvalidInstructionDataSize as i64 {
@@ -44,7 +41,6 @@ impl num_traits::ToPrimitive for PrecompileError {
             PrecompileError::InvalidPublicKey => PrecompileError::InvalidPublicKey as i64,
             PrecompileError::InvalidRecoveryId => PrecompileError::InvalidRecoveryId as i64,
             PrecompileError::InvalidSignature => PrecompileError::InvalidSignature as i64,
-            PrecompileError::InvalidSignatureRange => PrecompileError::InvalidSignatureRange as i64,
             PrecompileError::InvalidDataOffsets => PrecompileError::InvalidDataOffsets as i64,
             PrecompileError::InvalidInstructionDataSize => {
                 PrecompileError::InvalidInstructionDataSize as i64
@@ -65,9 +61,6 @@ impl fmt::Display for PrecompileError {
             PrecompileError::InvalidPublicKey => f.write_str("public key is not valid"),
             PrecompileError::InvalidRecoveryId => f.write_str("id is not valid"),
             PrecompileError::InvalidSignature => f.write_str("signature is not valid"),
-            PrecompileError::InvalidSignatureRange => {
-                f.write_str("one or both of the signature components are not in the allowed range")
-            }
             PrecompileError::InvalidDataOffsets => f.write_str("offset not valid"),
             PrecompileError::InvalidInstructionDataSize => {
                 f.write_str("instruction is incorrect size")
