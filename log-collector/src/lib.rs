@@ -25,7 +25,7 @@ impl Default for LogCollector {
 impl LogCollector {
     pub fn log(&mut self, message: &str) {
         let Some(limit) = self.bytes_limit else {
-            self.messages.push(message.to_string());
+            self.messages.push(String::from(message));
             return;
         };
 
@@ -38,7 +38,7 @@ impl LogCollector {
             }
         } else {
             self.bytes_written = bytes_written;
-            self.messages.push(message.to_string());
+            self.messages.push(String::from(message));
         }
     }
 

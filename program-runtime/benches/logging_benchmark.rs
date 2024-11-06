@@ -1,106 +1,311 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use solana_log_collector::LogCollector;
-use solana_program_runtime::{stable_log, stable_log_old,};
+use solana_program_runtime::{stable_log, stable_log_old};
 use solana_sdk::pubkey::Pubkey;
-use std::cell::RefCell;
-use std::rc::Rc;
 
-const PROGRAM_ID: &str = "11111111111111111111111111111111";
-const TEST_DATA: &[u8] = "This is some test data".as_bytes();
+fn bench_program_logging(c: &mut Criterion) {
+    let mut group = c.benchmark_group("program_return");
 
-const NESTED_TEST_DATA: &[&[u8]] = &["This is some test data".as_bytes(), "This is more data".as_bytes()];
+    // Benchmark small data
+    {
+        let log_collector = Some(LogCollector::new_ref());
+        let program_id = Pubkey::new_unique();
+        let small_data = vec![1, 2, 3, 4];
 
-fn criterion_benchmark(c: &mut Criterion) {
+        group.bench_function("small_data", |b| {
+            b.iter(|| {
+                stable_log::program_return(
+                    black_box(&log_collector),
+                    black_box(&program_id),
+                    black_box(&small_data),
+                )
+            })
+        });
+    }
 
-    c.bench_function("program_invoke new", |b| {
-        let lc: Option<Rc<RefCell<LogCollector>>> = Some(LogCollector::new_ref());
-        let program_id: Pubkey = Pubkey::new_unique();
-        b.iter(|| {
-            stable_log::program_invoke(&lc, &program_id, 1);
-        })
-    });
+    {
+        let log_collector = Some(LogCollector::new_ref());
+        let program_id = Pubkey::new_unique();
+        let small_data = vec![1, 2, 3, 4];
 
-    c.bench_function("program_invoke old", |b| {
-        let lc: Option<Rc<RefCell<LogCollector>>> = Some(LogCollector::new_ref());
-        let program_id: Pubkey = Pubkey::new_unique();
-        b.iter(|| {
-            stable_log_old::program_invoke(&lc, &program_id, 1);
-        })
-    });
+        group.bench_function("small_data2", |b| {
+            b.iter(|| {
+                stable_log::program_return(
+                    black_box(&log_collector),
+                    black_box(&program_id),
+                    black_box(&small_data),
+                )
+            })
+        });
+    }
 
-    c.bench_function("program_success new", |b| {
-        let lc: Option<Rc<RefCell<LogCollector>>> = Some(LogCollector::new_ref());
-        let program_id: Pubkey = Pubkey::new_unique();
-        b.iter(|| {
-            stable_log::program_success(&lc, &program_id);
-        })
-    });
+    // Benchmark large data
+    {
+        let log_collector = Some(LogCollector::new_ref());
+        let program_id = Pubkey::new_unique();
+        let large_data = vec![42; 1000];
 
-    c.bench_function("program_success old", |b| {
-        let lc: Option<Rc<RefCell<LogCollector>>> = Some(LogCollector::new_ref());
-        let program_id: Pubkey = Pubkey::new_unique();
-        b.iter(|| {
-            stable_log_old::program_success(&lc, &program_id);
-        })
-    });
+        group.bench_function("large_data", |b| {
+            b.iter(|| {
+                stable_log::program_return(
+                    black_box(&log_collector),
+                    black_box(&program_id),
+                    black_box(&large_data),
+                )
+            })
+        });
+    }
 
-    c.bench_function("program_return new", |b| {
-        let lc: Option<Rc<RefCell<LogCollector>>> = Some(LogCollector::new_ref());
-        let program_id: Pubkey = Pubkey::new_unique();
-        b.iter(|| {
-            stable_log::program_return(&lc, &program_id, TEST_DATA);
-        })
-    });
+    {
+        let log_collector = Some(LogCollector::new_ref());
+        let program_id = Pubkey::new_unique();
+        let large_data = vec![42; 1000];
 
-    c.bench_function("program_return old", |b| {
-        let lc: Option<Rc<RefCell<LogCollector>>> = Some(LogCollector::new_ref());
-        let program_id: Pubkey = Pubkey::new_unique();
-        b.iter(|| {
-            stable_log_old::program_return(&lc, &program_id, TEST_DATA);
-        })
-    });
+        group.bench_function("large_data2", |b| {
+            b.iter(|| {
+                stable_log_old::program_return(
+                    black_box(&log_collector),
+                    black_box(&program_id),
+                    black_box(&large_data),
+                )
+            })
+        });
+    }
 
-    c.bench_function("program_data new", |b| {
-        let lc: Option<Rc<RefCell<LogCollector>>> = Some(LogCollector::new_ref());
-        b.iter(|| {
-            stable_log::program_data(&lc, NESTED_TEST_DATA);
-        })
-    });
+    // Benchmark with no collector
+    {
+        let program_id = Pubkey::new_unique();
+        let data = vec![1, 2, 3, 4];
 
-    c.bench_function("program_data old", |b| {
-        let lc: Option<Rc<RefCell<LogCollector>>> = Some(LogCollector::new_ref());
-        b.iter(|| {
-            stable_log_old::program_data(&lc, NESTED_TEST_DATA);
-        })
-    });
+        group.bench_function("no_collector", |b| {
+            b.iter(|| {
+                stable_log::program_return(
+                    black_box(&None),
+                    black_box(&program_id),
+                    black_box(&data),
+                )
+            })
+        });
+    }
 
-    c.bench_function("complete program logs new", |b| {
-        let lc: Option<Rc<RefCell<LogCollector>>> = Some(LogCollector::new_ref());
-        let program_id: Pubkey = Pubkey::new_unique();
-        b.iter(|| {
-            stable_log::program_invoke(&lc, &program_id, 1);
-            stable_log::program_data(&lc, NESTED_TEST_DATA);
-            stable_log::program_data(&lc, NESTED_TEST_DATA);
-            stable_log::program_data(&lc, NESTED_TEST_DATA);
-            stable_log::program_success(&lc, &program_id);
-            stable_log::program_return(&lc, &program_id, TEST_DATA);
-        })
-    });
+    {
+        let program_id = Pubkey::new_unique();
+        let data = vec![1, 2, 3, 4];
 
-    c.bench_function("complete program logs old", |b| {
-        let lc: Option<Rc<RefCell<LogCollector>>> = Some(LogCollector::new_ref());
-        let program_id: Pubkey = Pubkey::new_unique();
-        b.iter(|| {
-            stable_log_old::program_invoke(&lc, &program_id, 1);
-            stable_log_old::program_data(&lc, NESTED_TEST_DATA);
-            stable_log_old::program_data(&lc, NESTED_TEST_DATA);
-            stable_log_old::program_data(&lc, NESTED_TEST_DATA);
-            stable_log_old::program_success(&lc, &program_id);
-            stable_log_old::program_return(&lc, &program_id, TEST_DATA);
-        })
-    });
+        group.bench_function("no_collector2", |b| {
+            b.iter(|| {
+                stable_log_old::program_return(
+                    black_box(&None),
+                    black_box(&program_id),
+                    black_box(&data),
+                )
+            })
+        });
+    }
 
+    group.finish();
+
+    // Benchmark program_data
+    let mut group = c.benchmark_group("program_data");
+
+    // Single item
+    {
+        let log_collector = Some(LogCollector::new_ref());
+        let data = [b"Hello World" as &[u8]];
+
+        group.bench_function("single_item", |b| {
+            b.iter(|| {
+                stable_log::program_data(black_box(&log_collector), black_box(&data))
+            })
+        });
+    }
+
+    {
+        let log_collector = Some(LogCollector::new_ref());
+        let data = [b"Hello World" as &[u8]];
+
+        group.bench_function("single_item2", |b| {
+            b.iter(|| {
+                stable_log_old::program_data(black_box(&log_collector), black_box(&data))
+            })
+        });
+    }
+
+    // Multiple items
+    {
+        let log_collector = Some(LogCollector::new_ref());
+        let data = [b"Hello" as &[u8], b"World" as &[u8], b"Test" as &[u8]];
+
+        group.bench_function("multiple_items", |b| {
+            b.iter(|| {
+                stable_log::program_data(black_box(&log_collector), black_box(&data))
+            })
+        });
+    }
+
+    {
+        let log_collector = Some(LogCollector::new_ref());
+        let data = [b"Hello" as &[u8], b"World" as &[u8], b"Test" as &[u8]];
+
+        group.bench_function("multiple_items2", |b| {
+            b.iter(|| {
+                stable_log_old::program_data(black_box(&log_collector), black_box(&data))
+            })
+        });
+    }
+
+    group.finish();
+
+    // Benchmark program_invoke
+    let mut group = c.benchmark_group("program_invoke");
+
+    {
+        let log_collector = Some(LogCollector::new_ref());
+        let program_id = Pubkey::new_unique();
+        let depth = 5;
+
+        group.bench_function("typical", |b| {
+            b.iter(|| {
+                stable_log::program_invoke(
+                    black_box(&log_collector),
+                    black_box(&program_id),
+                    black_box(depth),
+                )
+            })
+        });
+    }
+
+    {
+        let log_collector = Some(LogCollector::new_ref());
+        let program_id = Pubkey::new_unique();
+        let depth = 5;
+
+        group.bench_function("typical2", |b| {
+            b.iter(|| {
+                stable_log_old::program_invoke(
+                    black_box(&log_collector),
+                    black_box(&program_id),
+                    black_box(depth),
+                )
+            })
+        });
+    }
+
+    group.finish();
+
+    // Benchmark program_log
+    let mut group = c.benchmark_group("program_log");
+
+    {
+        let log_collector = Some(LogCollector::new_ref());
+        let message = "Test log message";
+
+        group.bench_function("typical", |b| {
+            b.iter(|| {
+                stable_log::program_log(black_box(&log_collector), black_box(message))
+            })
+        });
+    }
+
+    {
+        let log_collector = Some(LogCollector::new_ref());
+        let message = "Test log message";
+
+        group.bench_function("typical2", |b| {
+            b.iter(|| {
+                stable_log_old::program_log(black_box(&log_collector), black_box(message))
+            })
+        });
+    }
+
+    group.finish();
+
+    // Benchmark program_success and failure
+    let mut group = c.benchmark_group("program_status");
+
+    {
+        let log_collector = Some(LogCollector::new_ref());
+        let program_id = Pubkey::new_unique();
+        let error = "Test error message";
+
+        group.bench_function("success", |b| {
+            b.iter(|| {
+                stable_log::program_success(black_box(&log_collector), black_box(&program_id))
+            })
+        });
+
+        group.bench_function("failure", |b| {
+            b.iter(|| {
+                stable_log::program_failure(
+                    black_box(&log_collector),
+                    black_box(&program_id),
+                    black_box(&error),
+                )
+            })
+        });
+    }
+
+    {
+        let log_collector = Some(LogCollector::new_ref());
+        let program_id = Pubkey::new_unique();
+        let error = "Test error message";
+
+        group.bench_function("success2", |b| {
+            b.iter(|| {
+                stable_log_old::program_success(black_box(&log_collector), black_box(&program_id))
+            })
+        });
+
+        group.bench_function("failure2", |b| {
+            b.iter(|| {
+                stable_log_old::program_failure(
+                    black_box(&log_collector),
+                    black_box(&program_id),
+                    black_box(&error),
+                )
+            })
+        });
+    }
+
+    group.finish();
+
+    // Benchmark with size limits
+    let mut group = c.benchmark_group("size_limited");
+
+    {
+        let log_collector = Some(LogCollector::new_ref_with_limit(Some(100)));
+        let program_id = Pubkey::new_unique();
+        let data = vec![42; 200]; // Data that will exceed the limit
+
+        group.bench_function("exceeding_limit", |b| {
+            b.iter(|| {
+                stable_log::program_return(
+                    black_box(&log_collector),
+                    black_box(&program_id),
+                    black_box(&data),
+                )
+            })
+        });
+    }
+
+    {
+        let log_collector = Some(LogCollector::new_ref_with_limit(Some(100)));
+        let program_id = Pubkey::new_unique();
+        let data = vec![42; 200]; // Data that will exceed the limit
+
+        group.bench_function("exceeding_limit2", |b| {
+            b.iter(|| {
+                stable_log_old::program_return(
+                    black_box(&log_collector),
+                    black_box(&program_id),
+                    black_box(&data),
+                )
+            })
+        });
+    }
+
+    group.finish();
 }
 
-criterion_group!(benches, criterion_benchmark);
+criterion_group!(benches, bench_program_logging);
 criterion_main!(benches);
