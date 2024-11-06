@@ -249,14 +249,14 @@ impl BankForks {
                 bank.slot()
             );
         } else {
-            trace!(
+            info!(
                 "Inserting bank (slot: {}) with scheduler into bank_forks...",
                 bank.slot()
             );
         }
         let context = SchedulingContext::new(mode, bank.clone());
         let Some(scheduler) = scheduler_pool.take_scheduler(context) else {
-            trace!("disabled for {:?}", mode);
+            info!("disabled for {:?}", mode);
             return BankWithScheduler::new_without_scheduler(bank);
         };
         let bank_with_scheduler = BankWithScheduler::new(bank, Some(scheduler));
@@ -273,6 +273,7 @@ impl BankForks {
         let bank = if let Some(scheduler_pool) = &self.scheduler_pool {
             Self::install_scheduler_into_bank(scheduler_pool, mode, bank, false)
         } else {
+            info!("no scheduler!!!?");
             BankWithScheduler::new_without_scheduler(bank)
         };
         let prev = self.banks.insert(bank.slot(), bank.clone_with_scheduler());
