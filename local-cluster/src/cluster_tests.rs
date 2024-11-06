@@ -237,7 +237,7 @@ pub fn kill_entry_and_spend_and_verify_rest(
     socket_addr_space: SocketAddrSpace,
 ) {
     info!("kill_entry_and_spend_and_verify_rest...");
-    
+
     // Ensure all nodes have spun up and are funded.
     let cluster_nodes = discover_cluster(
         &entry_point_info.gossip().unwrap(),
@@ -247,10 +247,6 @@ pub fn kill_entry_and_spend_and_verify_rest(
     .unwrap();
     assert!(cluster_nodes.len() >= nodes);
     let client = new_tpu_quic_client(entry_point_info, connection_cache.clone()).unwrap();
-    
-    // sleep long enough to make sure we are in epoch 3
-    let first_two_epoch_slots = MINIMUM_SLOTS_PER_EPOCH * (3 + 1);
-    
     for ingress_node in &cluster_nodes {
         client
             .rpc_client()
@@ -262,9 +258,7 @@ pub fn kill_entry_and_spend_and_verify_rest(
     info!("killing entry point: {}", entry_point_info.pubkey());
     entry_point_validator_exit.write().unwrap().exit();
     info!("sleeping for some time to let entry point exit and partitions to resolve...");
-    sleep(Duration::from_millis(
-        slot_millis * MINIMUM_SLOTS_PER_EPOCH,
-    ));
+    sleep(Duration::from_millis(slot_millis * MINIMUM_SLOTS_PER_EPOCH));
     info!("done sleeping");
 
     // Ensure all other nodes are still alive and able to ingest and confirm
