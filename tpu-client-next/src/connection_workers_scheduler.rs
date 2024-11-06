@@ -9,7 +9,7 @@ use {
             create_client_config, create_client_endpoint, QuicClientCertificate, QuicError,
         },
         transaction_batch::TransactionBatch,
-        workers_cache::{WorkerInfo, WorkersCache, WorkersCacheError},
+        workers_cache::{maybe_shutdown_worker, WorkerInfo, WorkersCache, WorkersCacheError},
         SendTransactionStats,
     },
     log::*,
@@ -45,8 +45,9 @@ pub enum LeadersFanout {
     /// Send transactions to all the leaders discovered by the `next_leaders`
     /// call.
     All,
-    /// Send transactions to the first selected number of leaders.
-    Selected(usize),
+    /// Send transactions to the first selected number of leaders discovered by
+    /// the `next_leaders` call.
+    Next(usize),
 }
 
 /// Configuration for the [`ConnectionWorkersScheduler`].
@@ -144,34 +145,25 @@ impl ConnectionWorkersScheduler {
                         max_reconnect_attempts,
                         stats.clone(),
                     );
-                    let shutdown_worker = workers.push(*new_leader, worker).await;
-                    if let Some(shutdown_worker) = shutdown_worker {
-                        tokio::spawn(async move {
-                            let leader = shutdown_worker.leader();
-                            let res = shutdown_worker.shutdown().await;
-                            if let Err(err) = res {
-                                debug!("Error while shutting down worker for {leader}: {err}");
-                            }
-                        });
-                    }
+                    maybe_shutdown_worker(workers.push(*new_leader, worker));
                 }
 
-                tokio::select! {
-                    send_res = workers.send_transactions_to_address(new_leader, transaction_batch.clone()) => match send_res {
-                        Ok(()) => (),
-                        Err(WorkersCacheError::ShutdownError) => {
-                            debug!("Connection to {new_leader} was closed, worker cache shutdown");
-                        }
-                        Err(err) => {
-                            warn!("Connection to {new_leader} was closed, worker error: {err}");
-                           // If we has failed to send batch, it will be dropped.
-                        }
-                    },
-                    () = cancel.cancelled() => {
-                        debug!("Cancelled: Shutting down");
-                        break;
+                let send_res =
+                    workers.try_send_transactions_to_address(new_leader, transaction_batch.clone());
+                match send_res {
+                    Ok(()) => (),
+                    Err(WorkersCacheError::ShutdownError) => {
+                        debug!("Connection to {new_leader} was closed, worker cache shutdown");
                     }
-                };
+                    Err(WorkersCacheError::ReceiverDropped) => {
+                        // Remove the worker from the cache, if the peer has disconnected.
+                        maybe_shutdown_worker(workers.pop(*new_leader));
+                    }
+                    Err(err) => {
+                        warn!("Connection to {new_leader} was closed, worker error: {err}");
+                        // If we has failed to send batch, it will be dropped.
+                    }
+                }
             }
 
             // add future leaders to the cache to hide the latency of opening the
@@ -187,7 +179,7 @@ impl ConnectionWorkersScheduler {
                         max_reconnect_attempts,
                         stats.clone(),
                     );
-                    workers.push(*peer, worker).await;
+                    maybe_shutdown_worker(workers.push(*peer, worker));
                 }
             }
         }
@@ -249,12 +241,10 @@ impl ConnectionWorkersScheduler {
 fn split_leaders<'a>(
     leaders: &'a [SocketAddr],
     fanout: &'a LeadersFanout,
-) -> (Vec<&'a SocketAddr>, Vec<&'a SocketAddr>) {
-    match fanout {
-        LeadersFanout::All => (leaders.iter().collect(), Vec::new()), // All elements go to the first vector
-        LeadersFanout::Selected(count) => {
-            let (selected, remaining) = leaders.split_at((*count).min(leaders.len())); // Split at the specified count or max length
-            (selected.iter().collect(), remaining.iter().collect())
-        }
-    }
+) -> (&'a [SocketAddr], &'a [SocketAddr]) {
+    let count = match fanout {
+        LeadersFanout::All => leaders.len(),
+        LeadersFanout::Next(count) => (*count).min(leaders.len()),
+    };
+    leaders.split_at(count)
 }

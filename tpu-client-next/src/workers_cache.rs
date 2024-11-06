@@ -15,9 +15,9 @@ use {
 /// [`WorkerInfo`] holds information about a worker responsible for sending
 /// transaction batches.
 pub(crate) struct WorkerInfo {
-    pub sender: mpsc::Sender<TransactionBatch>,
-    pub handle: JoinHandle<()>,
-    pub cancel: CancellationToken,
+    sender: mpsc::Sender<TransactionBatch>,
+    handle: JoinHandle<()>,
+    cancel: CancellationToken,
 }
 
 impl WorkerInfo {
@@ -33,14 +33,11 @@ impl WorkerInfo {
         }
     }
 
-    async fn send_transactions(
-        &self,
-        txs_batch: TransactionBatch,
-    ) -> Result<(), WorkersCacheError> {
-        self.sender
-            .send(txs_batch)
-            .await
-            .map_err(|_| WorkersCacheError::ReceiverDropped)?;
+    fn try_send_transactions(&self, txs_batch: TransactionBatch) -> Result<(), WorkersCacheError> {
+        self.sender.try_send(txs_batch).map_err(|err| match err {
+            mpsc::error::TrySendError::Full(_) => WorkersCacheError::FullChannel,
+            mpsc::error::TrySendError::Closed(_) => WorkersCacheError::ReceiverDropped,
+        })?;
         Ok(())
     }
 
@@ -72,6 +69,9 @@ pub enum WorkersCacheError {
     #[error("Work receiver has been dropped unexpectedly.")]
     ReceiverDropped,
 
+    #[error("Worker's channel is full.")]
+    FullChannel,
+
     #[error("Task failed to join.")]
     TaskJoinFailure,
 
@@ -91,12 +91,22 @@ impl WorkersCache {
         self.workers.contains(peer)
     }
 
-    pub(crate) async fn push(
+    pub(crate) fn push(
         &mut self,
-        peer: SocketAddr,
+        leader: SocketAddr,
         peer_worker: WorkerInfo,
     ) -> Option<ShutdownWorker> {
-        if let Some((leader, popped_worker)) = self.workers.push(peer, peer_worker) {
+        if let Some((leader, popped_worker)) = self.workers.push(leader, peer_worker) {
+            return Some(ShutdownWorker {
+                leader,
+                worker: popped_worker,
+            });
+        }
+        None
+    }
+
+    pub(crate) fn pop(&mut self, leader: SocketAddr) -> Option<ShutdownWorker> {
+        if let Some(popped_worker) = self.workers.pop(&leader) {
             return Some(ShutdownWorker {
                 leader,
                 worker: popped_worker,
@@ -108,7 +118,7 @@ impl WorkersCache {
     /// Sends a batch of transactions to the worker for a given peer. If the
     /// worker for the peer is disconnected or fails, it is removed from the
     /// cache.
-    pub(crate) async fn send_transactions_to_address(
+    pub(crate) fn try_send_transactions_to_address(
         &mut self,
         peer: &SocketAddr,
         txs_batch: TransactionBatch,
@@ -116,33 +126,24 @@ impl WorkersCache {
         let Self {
             workers, cancel, ..
         } = self;
-
-        let body = async move {
-            let current_worker = workers.get(peer).expect(
-                "Failed to fetch worker for peer {peer}.\n\
-             Peer existence must be checked before this call using `contains` method.",
-            );
-            let send_res = current_worker.send_transactions(txs_batch).await;
-
-            if let Err(WorkersCacheError::ReceiverDropped) = send_res {
-                // Remove the worker from the cache, if the peer has disconnected.
-                if let Some(current_worker) = workers.pop(peer) {
-                    // To avoid obscuring the error from send, ignore a possible
-                    // `TaskJoinFailure`.
-                    let close_result = current_worker.shutdown().await;
-                    if let Err(error) = close_result {
-                        error!("Error while closing worker: {error}.");
-                    }
-                }
-            }
-
-            send_res
-        };
-
-        tokio::select! {
-            send_res = body => send_res,
-            () = cancel.cancelled() => Err(WorkersCacheError::ShutdownError),
+        if cancel.is_cancelled() {
+            return Err(WorkersCacheError::ShutdownError);
         }
+
+        let current_worker = workers.get(peer).expect(
+            "Failed to fetch worker for peer {peer}.\n\
+             Peer existence must be checked before this call using `contains` method.",
+        );
+        let send_res = current_worker.try_send_transactions(txs_batch);
+
+        if let Err(WorkersCacheError::ReceiverDropped) = send_res {
+            warn!(
+                "Failed to deliver transaction batch for leader {}, drop batch.",
+                peer.ip()
+            );
+        }
+
+        send_res
     }
 
     /// Closes and removes all workers in the cache. This is typically done when
@@ -175,5 +176,17 @@ impl ShutdownWorker {
 
     pub(crate) async fn shutdown(self) -> Result<(), WorkersCacheError> {
         self.worker.shutdown().await
+    }
+}
+
+pub(crate) fn maybe_shutdown_worker(worker: Option<ShutdownWorker>) {
+    if let Some(worker) = worker {
+        tokio::spawn(async move {
+            let leader = worker.leader();
+            let res = worker.shutdown().await;
+            if let Err(err) = res {
+                debug!("Error while shutting down worker for {leader}: {err}");
+            }
+        });
     }
 }
