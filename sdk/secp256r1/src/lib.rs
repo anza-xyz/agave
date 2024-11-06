@@ -116,8 +116,8 @@ mod target_arch {
 
         let mut padded_r = vec![0u8; FIELD_SIZE];
         let mut padded_s = vec![0u8; FIELD_SIZE];
-        padded_r[FIELD_SIZE - r.len()..].copy_from_slice(&r);
-        padded_s[FIELD_SIZE - s.len()..].copy_from_slice(&s);
+        padded_r[FIELD_SIZE.saturating_sub(r.len())..].copy_from_slice(&r);
+        padded_s[FIELD_SIZE.saturating_sub(s.len())..].copy_from_slice(&s);
 
         signature[..FIELD_SIZE].copy_from_slice(&padded_r);
         signature[FIELD_SIZE..].copy_from_slice(&padded_s);
