@@ -12372,14 +12372,19 @@ where
     let bank = new_from_parent_next_epoch(bank, &bank_forks, 2);
     bank.freeze(); // trigger rent collection
 
-    // advance to the next slot to create a new bank, which is cleanable. The
-    // previous bank is at epoch boundary. An epoch boundary bank is not
-    // cleanable because epoch rewards sysvar is written in this slot. Before
-    // #3398, it was cleanable because rent collection will rewrite the epoch
-    // rewards sysvar due to rent_epoch not setting to u64::MAX. With #3398,
-    // rent_epoch is set to u64::MAX at creating time, so epoch rewards sysvar
-    // is not rewritten. Therefore, the slot at epoch boundary is now
-    // uncleanable. This is why we need to advance to the next slot.
+    // Move to the next slot to create a new bank, bypassing the bank at the
+    // epoch boundary. An epoch boundary bank *might* not be completely dead
+    // even if all user accounts are overwritten in later slots. This is because
+    // an epoch rewards sysvar is written in the first slot of the epoch.
+    // Before, we used to have sysvar's rent epoch initialized to zero and set
+    // to u64:max later at rent collection time. This way, the epoch rewards
+    // sysvar was rewritten and became dead in the first slot of the epoch. And the
+    // first bank at the epoch boundary was cleanable. However, now we have
+    // sysvar's rent epoch initialized to u64:max at creation time, so the epoch
+    // rewards sysvar is *not* rewritten later in rent collection and is alive.
+    // Therefore, the first slot at the epoch boundary is not completely dead
+    // and uncleanable. To avoid interaction with the epoch rewards sysvar in
+    // clean, we need to advance to the next slot.
     let slot = bank.slot() + 1;
     let bank = new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &collector, slot);
 
