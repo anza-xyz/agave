@@ -1691,6 +1691,9 @@ mod tests {
             expected_result,
             Entrypoint::vm,
             |invoke_context| {
+                let mut feature_set = invoke_context.get_feature_set().clone();
+                feature_set.deactivate(&enable_loader_v4::id());
+                invoke_context.mock_set_feature_set(Arc::new(feature_set));
                 test_utils::load_all_invoked_programs(invoke_context);
             },
             |_invoke_context| {},
