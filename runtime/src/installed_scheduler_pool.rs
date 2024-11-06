@@ -536,6 +536,9 @@ impl BankWithScheduler {
     pub const fn no_scheduler_available() -> InstalledSchedulerRwLock {
         RwLock::new(SchedulerStatus::Unavailable)
     }
+
+    pub fn id_and_slot_with_scheduler_status() {
+    }
 }
 
 impl BankWithSchedulerInner {
