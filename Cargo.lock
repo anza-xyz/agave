@@ -6290,7 +6290,7 @@ dependencies = [
  "reqwest",
  "semver 1.0.23",
  "serial_test",
- "solana-file-downloader",
+ "solana-file-download",
  "solana-logger",
  "solana-sdk",
  "tar",
@@ -6792,7 +6792,7 @@ name = "solana-download-utils"
 version = "2.2.0"
 dependencies = [
  "log",
- "solana-file-downloader",
+ "solana-file-download",
  "solana-runtime",
  "solana-sdk",
 ]
@@ -6930,7 +6930,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-file-downloader"
+name = "solana-file-download"
 version = "2.2.0"
 dependencies = [
  "console",
