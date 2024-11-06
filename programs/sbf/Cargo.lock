@@ -6975,7 +6975,7 @@ dependencies = [
  "chrono",
  "digest 0.10.7",
  "ed25519-dalek",
- "getrandom 0.1.14",
+ "getrandom 0.1.16",
  "itertools 0.12.1",
  "js-sys",
  "lazy_static",
