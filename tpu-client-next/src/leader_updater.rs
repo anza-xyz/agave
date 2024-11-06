@@ -22,6 +22,7 @@ use {
             Arc,
         },
     },
+    thiserror::Error,
 };
 
 /// [`LeaderUpdater`] trait abstracts out functionality required for the
@@ -42,6 +43,7 @@ pub trait LeaderUpdater: Send {
 }
 
 /// Error type for [`LeaderUpdater`].
+#[derive(Error, PartialEq)]
 pub struct LeaderUpdaterError;
 
 impl fmt::Display for LeaderUpdaterError {
