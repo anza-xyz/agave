@@ -35,8 +35,7 @@ use {
     solana_client::{
         connection_cache::ConnectionCache,
         send_and_confirm_transactions_in_parallel::{
-            send_and_confirm_transactions_in_parallel_blocking_v2,
-            SendAndConfirmConfigV2,
+            send_and_confirm_transactions_in_parallel_blocking_v2, SendAndConfirmConfigV2,
         },
         tpu_client::{TpuClient, TpuClientConfig},
     },
@@ -1576,9 +1575,10 @@ fn process_program_upgrade(
         let signers = &[fee_payer_signer, upgrade_authority_signer];
         tx.try_sign(signers, blockhash)?;
         let final_tx_sig = rpc_client
-            .send_and_confirm_transaction_with_spinner_and_config(&tx, 
-                config.commitment, 
-                config.send_transaction_config
+            .send_and_confirm_transaction_with_spinner_and_config(
+                &tx,
+                config.commitment,
+                config.send_transaction_config,
             )
             .map_err(|e| format!("Upgrading program failed: {e}"))?;
         let program_id = CliProgramId {

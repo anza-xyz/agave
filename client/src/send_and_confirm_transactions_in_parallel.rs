@@ -56,7 +56,11 @@ struct BlockHashData {
 }
 
 // Deprecated struct to maintain backward compatibility
-#[deprecated(note = "Use SendAndConfirmConfigV2 with send_and_confirm_transactions_in_parallel_v2")]
+#[allow(deprecated)]
+#[deprecated(
+    since = "2.2.0",
+    note = "Use SendAndConfirmConfigV2 with send_and_confirm_transactions_in_parallel_v2"
+)]
 #[derive(Clone, Debug, Copy)]
 pub struct SendAndConfirmConfig {
     pub with_spinner: bool,
@@ -71,7 +75,11 @@ pub struct SendAndConfirmConfigV2 {
     pub rpc_send_transaction_config: RpcSendTransactionConfig,
 }
 
-#[deprecated(note = "Use send_and_confirm_transactions_in_parallel_v2")]
+#[allow(deprecated)]
+#[deprecated(
+    since = "2.2.0",
+    note = "Use send_and_confirm_transactions_in_parallel_v2"
+)]
 pub async fn send_and_confirm_transactions_in_parallel<T: Signers + ?Sized>(
     rpc_client: Arc<RpcClient>,
     tpu_client: Option<QuicTpuClient>,
@@ -83,7 +91,6 @@ pub async fn send_and_confirm_transactions_in_parallel<T: Signers + ?Sized>(
         with_spinner: config.with_spinner,
         resign_txs_count: config.resign_txs_count,
         rpc_send_transaction_config: RpcSendTransactionConfig {
-            skip_preflight: false,
             ..RpcSendTransactionConfig::default()
         },
     };
@@ -93,7 +100,11 @@ pub async fn send_and_confirm_transactions_in_parallel<T: Signers + ?Sized>(
     .await
 }
 
-#[deprecated(note = "Use send_and_confirm_transactions_in_parallel_blocking_v2")]
+#[allow(deprecated)]
+#[deprecated(
+    since = "2.2.0",
+    note = "Use send_and_confirm_transactions_in_parallel_blocking_v2"
+)]
 pub fn send_and_confirm_transactions_in_parallel_blocking<T: Signers + ?Sized>(
     rpc_client: Arc<BlockingRpcClient>,
     tpu_client: Option<QuicTpuClient>,
@@ -105,7 +116,6 @@ pub fn send_and_confirm_transactions_in_parallel_blocking<T: Signers + ?Sized>(
         with_spinner: config.with_spinner,
         resign_txs_count: config.resign_txs_count,
         rpc_send_transaction_config: RpcSendTransactionConfig {
-            skip_preflight: false,
             ..RpcSendTransactionConfig::default()
         },
     };
