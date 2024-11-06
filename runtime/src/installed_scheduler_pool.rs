@@ -336,6 +336,14 @@ impl SchedulerStatus {
         }
     }
 
+    fn status(&self) {
+        match self {
+            SchedulerStatus::Unavailable => "Unavailable".to_owned(),
+            SchedulerStatus::Active(sch) => format!("Active({})", sch.id()),
+            SchedulerStatus::Stale(_, _, _) => "Stale".to_owned(),
+        }
+    }
+
     fn transition_from_stale_to_active(
         &mut self,
         f: impl FnOnce(InstalledSchedulerPoolArc, ResultWithTimings) -> InstalledSchedulerBox,
