@@ -1,7 +1,7 @@
 [package]
-name = "solana-file-downloader"
+name = "solana-file-download"
 description = "Solana File Download Utility"
-documentation = "https://docs.rs/solana-file-downloader"
+documentation = "https://docs.rs/solana-file-download"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
