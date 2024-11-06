@@ -538,6 +538,7 @@ impl BankWithScheduler {
     }
 
     pub fn id_and_slot_with_scheduler_status(&self) -> (SchedulerId, Slot, &str) {
+        (self.inner.bank.slot(), self.inner.scheduler.read().unwrap().id, "aaa")
     }
 }
 
