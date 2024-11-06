@@ -537,7 +537,7 @@ impl BankWithScheduler {
         RwLock::new(SchedulerStatus::Unavailable)
     }
 
-    pub fn id_and_slot_with_scheduler_status() {
+    pub fn id_and_slot_with_scheduler_status(&self) {
     }
 }
 
