@@ -18,11 +18,27 @@ use {
     },
     crossbeam_channel::{Receiver, Sender, TryRecvError},
     itertools::izip,
-    prio_graph::{AccessKind, PrioGraph},
+    prio_graph::{AccessKind, GraphNode, PrioGraph},
     solana_cost_model::block_cost_limits::MAX_BLOCK_UNITS,
     solana_measure::measure_us,
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk::{pubkey::Pubkey, saturating_add_assign, transaction::SanitizedTransaction},
 };
+
+#[inline(always)]
+fn passthrough_priority(
+    id: &TransactionPriorityId,
+    _graph_node: &GraphNode<TransactionPriorityId>,
+) -> TransactionPriorityId {
+    *id
+}
+
+type SchedulerPrioGraph = PrioGraph<
+    TransactionPriorityId,
+    Pubkey,
+    TransactionPriorityId,
+    fn(&TransactionPriorityId, &GraphNode<TransactionPriorityId>) -> TransactionPriorityId,
+>;
 
 pub(crate) struct PrioGraphScheduler {
     in_flight_tracker: InFlightTracker,
@@ -30,6 +46,7 @@ pub(crate) struct PrioGraphScheduler {
     consume_work_senders: Vec<Sender<ConsumeWork>>,
     finished_consume_work_receiver: Receiver<FinishedConsumeWork>,
     look_ahead_window_size: usize,
+    prio_graph: SchedulerPrioGraph,
 }
 
 impl PrioGraphScheduler {
@@ -44,6 +61,7 @@ impl PrioGraphScheduler {
             consume_work_senders,
             finished_consume_work_receiver,
             look_ahead_window_size: 2048,
+            prio_graph: PrioGraph::new(passthrough_priority),
         }
     }
 
@@ -66,8 +84,8 @@ impl PrioGraphScheduler {
     pub(crate) fn schedule(
         &mut self,
         container: &mut TransactionStateContainer,
-        pre_graph_filter: impl Fn(&[&SanitizedTransaction], &mut [bool]),
-        pre_lock_filter: impl Fn(&SanitizedTransaction) -> bool,
+        pre_graph_filter: impl Fn(&[&RuntimeTransaction<SanitizedTransaction>], &mut [bool]),
+        pre_lock_filter: impl Fn(&RuntimeTransaction<SanitizedTransaction>) -> bool,
     ) -> Result<SchedulingSummary, SchedulerError> {
         let num_threads = self.consume_work_senders.len();
         let max_cu_per_thread = MAX_BLOCK_UNITS / num_threads as u64;
@@ -94,7 +112,6 @@ impl PrioGraphScheduler {
         // these transactions to be scheduled before them.
         let mut unschedulable_ids = Vec::new();
         let mut blocking_locks = ReadWriteAccountSet::default();
-        let mut prio_graph = PrioGraph::new(|id: &TransactionPriorityId, _graph_node| *id);
 
         // Track metrics on filter.
         let mut num_filtered_out: usize = 0;
@@ -150,7 +167,7 @@ impl PrioGraphScheduler {
 
         // Create the initial look-ahead window.
         // Check transactions against filter, remove from container if it fails.
-        chunked_pops(container, &mut prio_graph, &mut window_budget);
+        chunked_pops(container, &mut self.prio_graph, &mut window_budget);
 
         let mut unblock_this_batch =
             Vec::with_capacity(self.consume_work_senders.len() * TARGET_NUM_TRANSACTIONS_PER_BATCH);
@@ -160,11 +177,11 @@ impl PrioGraphScheduler {
         let mut num_unschedulable: usize = 0;
         while num_scheduled < MAX_TRANSACTIONS_PER_SCHEDULING_PASS {
             // If nothing is in the main-queue of the `PrioGraph` then there's nothing left to schedule.
-            if prio_graph.is_empty() {
+            if self.prio_graph.is_empty() {
                 break;
             }
 
-            while let Some(id) = prio_graph.pop() {
+            while let Some(id) = self.prio_graph.pop() {
                 unblock_this_batch.push(id);
 
                 // Should always be in the container, during initial testing phase panic.
@@ -242,11 +259,11 @@ impl PrioGraphScheduler {
 
             // Refresh window budget and do chunked pops
             saturating_add_assign!(window_budget, unblock_this_batch.len());
-            chunked_pops(container, &mut prio_graph, &mut window_budget);
+            chunked_pops(container, &mut self.prio_graph, &mut window_budget);
 
             // Unblock all transactions that were blocked by the transactions that were just sent.
             for id in unblock_this_batch.drain(..) {
-                prio_graph.unblock(&id);
+                self.prio_graph.unblock(&id);
             }
         }
 
@@ -259,9 +276,13 @@ impl PrioGraphScheduler {
         }
 
         // Push remaining transactions back into the container
-        while let Some((id, _)) = prio_graph.pop_and_unblock() {
+        while let Some((id, _)) = self.prio_graph.pop_and_unblock() {
             container.push_id_into_queue(id);
         }
+        // No more remaining items in the queue.
+        // Clear here to make sure the next scheduling pass starts fresh
+        // without detecting any conflicts.
+        self.prio_graph.clear();
 
         assert_eq!(
             num_scheduled, num_sent,
@@ -353,7 +374,7 @@ impl PrioGraphScheduler {
     fn complete_batch(
         &mut self,
         batch_id: TransactionBatchId,
-        transactions: &[SanitizedTransaction],
+        transactions: &[RuntimeTransaction<SanitizedTransaction>],
     ) {
         let thread_id = self.in_flight_tracker.complete_batch(batch_id);
         for transaction in transactions {
@@ -424,7 +445,7 @@ impl PrioGraphScheduler {
         thread_set: ThreadSet,
         batch_cus_per_thread: &[u64],
         in_flight_cus_per_thread: &[u64],
-        batches_per_thread: &[Vec<SanitizedTransaction>],
+        batches_per_thread: &[Vec<RuntimeTransaction<SanitizedTransaction>>],
         in_flight_per_thread: &[usize],
     ) -> ThreadId {
         thread_set
@@ -475,7 +496,7 @@ pub(crate) struct SchedulingSummary {
 
 struct Batches {
     ids: Vec<Vec<TransactionId>>,
-    transactions: Vec<Vec<SanitizedTransaction>>,
+    transactions: Vec<Vec<RuntimeTransaction<SanitizedTransaction>>>,
     max_ages: Vec<Vec<MaxAge>>,
     total_cus: Vec<u64>,
 }
@@ -484,7 +505,10 @@ impl Batches {
     fn new(num_threads: usize) -> Self {
         Self {
             ids: vec![Vec::with_capacity(TARGET_NUM_TRANSACTIONS_PER_BATCH); num_threads],
-            transactions: vec![Vec::with_capacity(TARGET_NUM_TRANSACTIONS_PER_BATCH); num_threads],
+
+            transactions: (0..num_threads)
+                .map(|_| Vec::with_capacity(TARGET_NUM_TRANSACTIONS_PER_BATCH))
+                .collect(),
             max_ages: vec![Vec::with_capacity(TARGET_NUM_TRANSACTIONS_PER_BATCH); num_threads],
             total_cus: vec![0; num_threads],
         }
@@ -495,7 +519,7 @@ impl Batches {
         thread_id: ThreadId,
     ) -> (
         Vec<TransactionId>,
-        Vec<SanitizedTransaction>,
+        Vec<RuntimeTransaction<SanitizedTransaction>>,
         Vec<MaxAge>,
         u64,
     ) {
@@ -520,7 +544,7 @@ impl Batches {
 /// A transaction has been scheduled to a thread.
 struct TransactionSchedulingInfo {
     thread_id: ThreadId,
-    transaction: SanitizedTransaction,
+    transaction: RuntimeTransaction<SanitizedTransaction>,
     max_age: MaxAge,
     cost: u64,
 }
@@ -536,7 +560,7 @@ enum TransactionSchedulingError {
 
 fn try_schedule_transaction(
     transaction_state: &mut TransactionState,
-    pre_lock_filter: impl Fn(&SanitizedTransaction) -> bool,
+    pre_lock_filter: impl Fn(&RuntimeTransaction<SanitizedTransaction>) -> bool,
     blocking_locks: &mut ReadWriteAccountSet,
     account_locks: &mut ThreadAwareAccountLocks,
     num_threads: usize,
@@ -641,7 +665,7 @@ mod tests {
         to_pubkeys: impl IntoIterator<Item = impl Borrow<Pubkey>>,
         lamports: u64,
         priority: u64,
-    ) -> SanitizedTransaction {
+    ) -> RuntimeTransaction<SanitizedTransaction> {
         let to_pubkeys_lamports = to_pubkeys
             .into_iter()
             .map(|pubkey| *pubkey.borrow())
@@ -653,7 +677,7 @@ mod tests {
         ixs.push(prioritization);
         let message = Message::new(&ixs, Some(&from_keypair.pubkey()));
         let tx = Transaction::new(&[from_keypair], message, Hash::default());
-        SanitizedTransaction::from_transaction_for_tests(tx)
+        RuntimeTransaction::from_transaction_for_tests(tx)
     }
 
     fn create_container(
@@ -715,11 +739,14 @@ mod tests {
             .unzip()
     }
 
-    fn test_pre_graph_filter(_txs: &[&SanitizedTransaction], results: &mut [bool]) {
+    fn test_pre_graph_filter(
+        _txs: &[&RuntimeTransaction<SanitizedTransaction>],
+        results: &mut [bool],
+    ) {
         results.fill(true);
     }
 
-    fn test_pre_lock_filter(_tx: &SanitizedTransaction) -> bool {
+    fn test_pre_lock_filter(_tx: &RuntimeTransaction<SanitizedTransaction>) -> bool {
         true
     }
 
@@ -894,8 +921,9 @@ mod tests {
         ]);
 
         // 2nd transaction should be filtered out and dropped before locking.
-        let pre_lock_filter =
-            |tx: &SanitizedTransaction| tx.message().fee_payer() != &keypair.pubkey();
+        let pre_lock_filter = |tx: &RuntimeTransaction<SanitizedTransaction>| {
+            tx.message().fee_payer() != &keypair.pubkey()
+        };
         let scheduling_summary = scheduler
             .schedule(&mut container, test_pre_graph_filter, pre_lock_filter)
             .unwrap();

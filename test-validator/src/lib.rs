@@ -975,6 +975,7 @@ impl TestValidator {
                 started_from_validator: true,
                 ..AccountsIndexConfig::default()
             }),
+            account_indexes: Some(config.rpc_config.account_indexes.clone()),
             ..AccountsDbConfig::default()
         });
 
@@ -1018,7 +1019,6 @@ impl TestValidator {
                 incremental_snapshot_archives_dir: ledger_path.to_path_buf(),
                 ..SnapshotConfig::default()
             },
-            enforce_ulimit_nofile: false,
             warp_slot: config.warp_slot,
             validator_exit: config.validator_exit.clone(),
             max_ledger_shreds: config.max_ledger_shreds,
@@ -1026,7 +1026,6 @@ impl TestValidator {
             staked_nodes_overrides: config.staked_nodes_overrides.clone(),
             accounts_db_config,
             runtime_config,
-            account_indexes: config.rpc_config.account_indexes.clone(),
             ..ValidatorConfig::default_for_test()
         };
         if let Some(ref tower_storage) = config.tower_storage {

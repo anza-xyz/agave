@@ -32,6 +32,7 @@ full = [
     "ed25519-dalek-bip32",
     "libsecp256k1",
     "sha3",
+    "solana-commitment-config",
     "digest",
     "solana-pubkey/rand",
     "dep:solana-precompile-error",
@@ -43,8 +44,11 @@ frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-feature-set/frozen-abi",
+    "solana-fee-structure/frozen-abi",
     "solana-account/frozen-abi",
+    "solana-inflation/frozen-abi",
     "solana-program/frozen-abi",
+    "solana-reward-info/frozen-abi",
     "solana-short-vec/frozen-abi",
     "solana-signature/frozen-abi",
     "solana-transaction-error/frozen-abi"
@@ -91,21 +95,26 @@ sha3 = { workspace = true, optional = true }
 siphasher = { workspace = true }
 solana-account = { workspace = true, features = ["bincode"] }
 solana-bn254 = { workspace = true }
+solana-commitment-config = { workspace = true, optional = true, features = ["serde"] }
 solana-decode-error = { workspace = true }
 solana-derivation-path = { workspace = true }
 solana-feature-set = { workspace = true }
+solana-fee-structure = { workspace = true, features = ["serde"] }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
 solana-frozen-abi-macro = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
+solana-inflation = { workspace = true, features = ["serde"] }
 solana-instruction = { workspace = true }
 solana-native-token = { workspace = true }
+solana-packet = { workspace = true, features = ["bincode", "serde"] }
 solana-precompile-error = { workspace = true, optional = true }
 solana-program = { workspace = true }
 solana-program-memory = { workspace = true }
 solana-pubkey = { workspace = true, default-features = false, features = ["std"] }
+solana-reward-info = { workspace = true, features = ["serde"] }
 solana-sanitize = { workspace = true }
 solana-sdk-macro = { workspace = true }
 solana-secp256k1-recover = { workspace = true }
@@ -118,6 +127,7 @@ solana-signature = { workspace = true, features = [
     "std",
     "verify",
 ], optional = true }
+solana-time-utils = { workspace = true }
 solana-transaction-error = { workspace = true, features = ["serde"], optional = true }
 thiserror = { workspace = true }
 

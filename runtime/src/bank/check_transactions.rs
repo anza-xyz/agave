@@ -1,8 +1,8 @@
 use {
     super::{Bank, BankStatusCache},
-    crate::nonce_extraction::{get_durable_nonce, get_ix_signers},
     solana_accounts_db::blockhash_queue::BlockhashQueue,
     solana_perf::perf_libs,
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk::{
         account::AccountSharedData,
         account_utils::StateMut,
@@ -32,7 +32,7 @@ impl Bank {
     /// Checks a batch of sanitized transactions again bank for age and status
     pub fn check_transactions_with_forwarding_delay(
         &self,
-        transactions: &[SanitizedTransaction],
+        transactions: &[RuntimeTransaction<SanitizedTransaction>],
         filter: &[TransactionResult<()>],
         forward_transactions_to_leader_at_slot_offset: u64,
     ) -> Vec<TransactionCheckResult> {
@@ -61,7 +61,7 @@ impl Bank {
 
     pub fn check_transactions(
         &self,
-        sanitized_txs: &[impl core::borrow::Borrow<SanitizedTransaction>],
+        sanitized_txs: &[impl core::borrow::Borrow<RuntimeTransaction<SanitizedTransaction>>],
         lock_results: &[TransactionResult<()>],
         max_age: usize,
         error_counters: &mut TransactionErrorMetrics,
@@ -72,7 +72,7 @@ impl Bank {
 
     fn check_age(
         &self,
-        sanitized_txs: &[impl core::borrow::Borrow<SanitizedTransaction>],
+        sanitized_txs: &[impl core::borrow::Borrow<RuntimeTransaction<SanitizedTransaction>>],
         lock_results: &[TransactionResult<()>],
         max_age: usize,
         error_counters: &mut TransactionErrorMetrics,
@@ -168,12 +168,13 @@ impl Bank {
         &self,
         message: &impl SVMMessage,
     ) -> Option<(Pubkey, AccountSharedData, NonceData)> {
-        let nonce_address = get_durable_nonce(message)?;
+        let nonce_address = message.get_durable_nonce()?;
         let nonce_account = self.get_account_with_fixed_root(nonce_address)?;
         let nonce_data =
             nonce_account::verify_nonce_account(&nonce_account, message.recent_blockhash())?;
 
-        let nonce_is_authorized = get_ix_signers(message, NONCED_TX_MARKER_IX_INDEX as usize)
+        let nonce_is_authorized = message
+            .get_ix_signers(NONCED_TX_MARKER_IX_INDEX as usize)
             .any(|signer| signer == &nonce_data.authority);
         if !nonce_is_authorized {
             return None;
@@ -184,15 +185,16 @@ impl Bank {
 
     fn check_status_cache(
         &self,
-        sanitized_txs: &[impl core::borrow::Borrow<SanitizedTransaction>],
+        sanitized_txs: &[impl core::borrow::Borrow<RuntimeTransaction<SanitizedTransaction>>],
         lock_results: Vec<TransactionCheckResult>,
         error_counters: &mut TransactionErrorMetrics,
     ) -> Vec<TransactionCheckResult> {
+        // Do allocation before acquiring the lock on the status cache.
+        let mut check_results = Vec::with_capacity(sanitized_txs.len());
         let rcache = self.status_cache.read().unwrap();
-        sanitized_txs
-            .iter()
-            .zip(lock_results)
-            .map(|(sanitized_tx, lock_result)| {
+
+        check_results.extend(sanitized_txs.iter().zip(lock_results).map(
+            |(sanitized_tx, lock_result)| {
                 let sanitized_tx = sanitized_tx.borrow();
                 if lock_result.is_ok()
                     && self.is_transaction_already_processed(sanitized_tx, &rcache)
@@ -202,8 +204,9 @@ impl Bank {
                 }
 
                 lock_result
-            })
-            .collect()
+            },
+        ));
+        check_results
     }
 
     fn is_transaction_already_processed(

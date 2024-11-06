@@ -8,7 +8,7 @@ use {
     solana_measure::measure_us,
     solana_poh::leader_bank_notifier::LeaderBankNotifier,
     solana_runtime::bank::Bank,
-    solana_sdk::timing::AtomicInterval,
+    solana_sdk::clock::Slot,
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     std::{
         sync::{
@@ -170,8 +170,8 @@ fn try_drain_iter<T>(work: T, receiver: &Receiver<T>) -> impl Iterator<Item = T>
 /// done.
 pub(crate) struct ConsumeWorkerMetrics {
     id: String,
-    interval: AtomicInterval,
     has_data: AtomicBool,
+    slot: AtomicU64,
 
     count_metrics: ConsumeWorkerCountMetrics,
     error_metrics: ConsumeWorkerTransactionErrorMetrics,
@@ -179,23 +179,34 @@ pub(crate) struct ConsumeWorkerMetrics {
 }
 
 impl ConsumeWorkerMetrics {
-    /// Report and reset metrics iff the interval has elapsed and the worker did some work.
-    pub fn maybe_report_and_reset(&self) {
-        const REPORT_INTERVAL_MS: u64 = 1000;
-        if self.interval.should_update(REPORT_INTERVAL_MS)
-            && self.has_data.swap(false, Ordering::Relaxed)
-        {
-            self.count_metrics.report_and_reset(&self.id);
-            self.timing_metrics.report_and_reset(&self.id);
-            self.error_metrics.report_and_reset(&self.id);
+    /// Report and reset metrics when the worker did some work and:
+    /// a) (when a leader) Previous slot is not the same as current.
+    /// b) (when not a leader) report the metrics accumulated so far.
+    pub fn maybe_report_and_reset(&self, slot: Option<Slot>) {
+        let prev_slot_id: u64 = self.slot.load(Ordering::Relaxed);
+        if let Some(slot) = slot {
+            if slot != prev_slot_id {
+                if !self.has_data.swap(false, Ordering::Relaxed) {
+                    return;
+                }
+                self.count_metrics.report_and_reset(&self.id, slot);
+                self.timing_metrics.report_and_reset(&self.id, slot);
+                self.error_metrics.report_and_reset(&self.id, slot);
+                self.slot.swap(slot, Ordering::Relaxed);
+            }
+        } else if prev_slot_id != 0 {
+            self.count_metrics.report_and_reset(&self.id, prev_slot_id);
+            self.timing_metrics.report_and_reset(&self.id, prev_slot_id);
+            self.error_metrics.report_and_reset(&self.id, prev_slot_id);
+            self.slot.swap(0, Ordering::Relaxed);
         }
     }
 
     fn new(id: u32) -> Self {
         Self {
             id: id.to_string(),
-            interval: AtomicInterval::default(),
             has_data: AtomicBool::new(false),
+            slot: AtomicU64::new(0),
             count_metrics: ConsumeWorkerCountMetrics::default(),
             error_metrics: ConsumeWorkerTransactionErrorMetrics::default(),
             timing_metrics: ConsumeWorkerTimingMetrics::default(),
@@ -285,6 +296,12 @@ impl ConsumeWorkerMetrics {
             .collect_balances_us
             .fetch_add(*collect_balances_us, Ordering::Relaxed);
         self.timing_metrics
+            .load_execute_us_min
+            .fetch_min(*load_execute_us, Ordering::Relaxed);
+        self.timing_metrics
+            .load_execute_us_max
+            .fetch_max(*load_execute_us, Ordering::Relaxed);
+        self.timing_metrics
             .load_execute_us
             .fetch_add(*load_execute_us, Ordering::Relaxed);
         self.timing_metrics
@@ -299,6 +316,9 @@ impl ConsumeWorkerMetrics {
         self.timing_metrics
             .find_and_send_votes_us
             .fetch_add(*find_and_send_votes_us, Ordering::Relaxed);
+        self.timing_metrics
+            .num_batches_processed
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     fn update_on_error_counters(
@@ -432,7 +452,7 @@ impl Default for ConsumeWorkerCountMetrics {
 }
 
 impl ConsumeWorkerCountMetrics {
-    fn report_and_reset(&self, id: &str) {
+    fn report_and_reset(&self, id: &str, slot: u64) {
         datapoint_info!(
             "banking_stage_worker_counts",
             "id" => id,
@@ -480,6 +500,11 @@ impl ConsumeWorkerCountMetrics {
                 self.max_prioritization_fees.swap(0, Ordering::Relaxed),
                 i64
             ),
+            (
+                "slot",
+                slot,
+                i64
+            ),
         );
     }
 }
@@ -489,16 +514,19 @@ struct ConsumeWorkerTimingMetrics {
     cost_model_us: AtomicU64,
     collect_balances_us: AtomicU64,
     load_execute_us: AtomicU64,
+    load_execute_us_min: AtomicU64,
+    load_execute_us_max: AtomicU64,
     freeze_lock_us: AtomicU64,
     record_us: AtomicU64,
     commit_us: AtomicU64,
     find_and_send_votes_us: AtomicU64,
     wait_for_bank_success_us: AtomicU64,
     wait_for_bank_failure_us: AtomicU64,
+    num_batches_processed: AtomicU64,
 }
 
 impl ConsumeWorkerTimingMetrics {
-    fn report_and_reset(&self, id: &str) {
+    fn report_and_reset(&self, id: &str, slot: u64) {
         datapoint_info!(
             "banking_stage_worker_timing",
             "id" => id,
@@ -515,6 +543,21 @@ impl ConsumeWorkerTimingMetrics {
             (
                 "load_execute_us",
                 self.load_execute_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "load_execute_us_min",
+                self.load_execute_us_min.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "load_execute_us_max",
+                self.load_execute_us_max.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_batches_processed",
+                self.num_batches_processed.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
@@ -537,6 +580,11 @@ impl ConsumeWorkerTimingMetrics {
             (
                 "wait_for_bank_failure_us",
                 self.wait_for_bank_failure_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "slot",
+                slot,
                 i64
             ),
         );
@@ -572,7 +620,7 @@ struct ConsumeWorkerTransactionErrorMetrics {
 }
 
 impl ConsumeWorkerTransactionErrorMetrics {
-    fn report_and_reset(&self, id: &str) {
+    fn report_and_reset(&self, id: &str, slot: u64) {
         datapoint_info!(
             "banking_stage_worker_error_metrics",
             "id" => id,
@@ -683,6 +731,11 @@ impl ConsumeWorkerTransactionErrorMetrics {
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
+            (
+                "slot",
+                slot,
+                i64
+            ),
         );
     }
 }
@@ -707,6 +760,7 @@ mod tests {
             bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
             vote_sender_types::ReplayVoteReceiver,
         },
+        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
             address_lookup_table::AddressLookupTableAccount,
             clock::{Slot, MAX_PROCESSING_AGE},
@@ -720,9 +774,7 @@ mod tests {
             signature::Keypair,
             signer::Signer,
             system_instruction, system_transaction,
-            transaction::{
-                MessageHash, SanitizedTransaction, TransactionError, VersionedTransaction,
-            },
+            transaction::{MessageHash, TransactionError, VersionedTransaction},
         },
         solana_svm_transaction::svm_message::SVMMessage,
         std::{
@@ -1075,7 +1127,7 @@ mod tests {
                 readonly: vec![],
             };
             let loader = SimpleAddressLoader::Enabled(loaded_addresses);
-            SanitizedTransaction::try_create(
+            RuntimeTransaction::try_create(
                 VersionedTransaction::try_new(
                     VersionedMessage::V0(
                         v0::Message::try_compile(

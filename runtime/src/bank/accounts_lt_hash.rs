@@ -302,12 +302,8 @@ mod tests {
             runtime_config::RuntimeConfig, snapshot_bank_utils, snapshot_config::SnapshotConfig,
             snapshot_utils,
         },
-        solana_accounts_db::{
-            accounts_db::{
-                AccountShrinkThreshold, AccountsDbConfig, DuplicatesLtHash,
-                ACCOUNTS_DB_CONFIG_FOR_TESTING,
-            },
-            accounts_index::AccountSecondaryIndexes,
+        solana_accounts_db::accounts_db::{
+            AccountsDbConfig, DuplicatesLtHash, ACCOUNTS_DB_CONFIG_FOR_TESTING,
         },
         solana_sdk::{
             account::{ReadableAccount as _, WritableAccount as _},
@@ -885,9 +881,7 @@ mod tests {
             &RuntimeConfig::default(),
             None,
             None,
-            AccountSecondaryIndexes::default(),
             None,
-            AccountShrinkThreshold::default(),
             false,
             false,
             false,
@@ -897,6 +891,11 @@ mod tests {
             Arc::default(),
         )
         .unwrap();
+
+        // Correctly calculating the accounts lt hash in Bank::new_from_fields() depends on the
+        // bank being frozen.  This is so we don't call `update_accounts_lt_hash()` twice on the
+        // same bank!
+        assert!(roundtrip_bank.is_frozen());
 
         // Wait for the startup verification to complete.  If we don't panic, then we're good!
         roundtrip_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();

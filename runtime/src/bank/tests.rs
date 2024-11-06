@@ -25,7 +25,7 @@ use {
     serde::{Deserialize, Serialize},
     solana_accounts_db::{
         accounts::AccountAddressFilter,
-        accounts_db::{AccountShrinkThreshold, DEFAULT_ACCOUNTS_SHRINK_RATIO},
+        accounts_db::DEFAULT_ACCOUNTS_SHRINK_RATIO,
         accounts_hash::{AccountsDeltaHash, AccountsHasher},
         accounts_index::{
             AccountIndex, AccountSecondaryIndexes, IndexKey, ScanConfig, ScanError, ITER_BATCH_SIZE,
@@ -35,8 +35,7 @@ use {
     },
     solana_compute_budget::{
         compute_budget::ComputeBudget,
-        compute_budget_limits::{self, MAX_COMPUTE_UNIT_LIMIT},
-        prioritization_fee::{PrioritizationFeeDetails, PrioritizationFeeType},
+        compute_budget_limits::{self, ComputeBudgetLimits, MAX_COMPUTE_UNIT_LIMIT},
     },
     solana_feature_set::{self as feature_set, FeatureSet},
     solana_inline_spl::token,
@@ -4598,10 +4597,15 @@ fn test_get_filtered_indexed_accounts_limit_exceeded() {
     let (genesis_config, _mint_keypair) = create_genesis_config(500);
     let mut account_indexes = AccountSecondaryIndexes::default();
     account_indexes.indexes.insert(AccountIndex::ProgramId);
+    let bank_config = BankTestConfig {
+        accounts_db_config: AccountsDbConfig {
+            account_indexes: Some(account_indexes),
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        },
+    };
     let bank = Arc::new(Bank::new_with_config_for_tests(
         &genesis_config,
-        account_indexes,
-        AccountShrinkThreshold::default(),
+        bank_config,
     ));
 
     let address = Pubkey::new_unique();
@@ -4625,10 +4629,15 @@ fn test_get_filtered_indexed_accounts() {
     let (genesis_config, _mint_keypair) = create_genesis_config(500);
     let mut account_indexes = AccountSecondaryIndexes::default();
     account_indexes.indexes.insert(AccountIndex::ProgramId);
+    let bank_config = BankTestConfig {
+        accounts_db_config: AccountsDbConfig {
+            account_indexes: Some(account_indexes),
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        },
+    };
     let bank = Arc::new(Bank::new_with_config_for_tests(
         &genesis_config,
-        account_indexes,
-        AccountShrinkThreshold::default(),
+        bank_config,
     ));
 
     let address = Pubkey::new_unique();
@@ -6535,8 +6544,7 @@ fn get_shrink_account_size() -> usize {
     // of the storage for this slot
     let bank0 = Arc::new(Bank::new_with_config_for_tests(
         &genesis_config,
-        AccountSecondaryIndexes::default(),
-        AccountShrinkThreshold::default(),
+        BankTestConfig::default(),
     ));
     bank0.restore_old_behavior_for_fragile_tests();
     goto_end_of_slot(bank0.clone());
@@ -6574,8 +6582,7 @@ fn test_clean_nonrooted() {
     // Set root for bank 0, with caching enabled
     let bank0 = Arc::new(Bank::new_with_config_for_tests(
         &genesis_config,
-        AccountSecondaryIndexes::default(),
-        AccountShrinkThreshold::default(),
+        BankTestConfig::default(),
     ));
 
     let account_zero = AccountSharedData::new(0, 0, &Pubkey::new_unique());
@@ -6649,8 +6656,7 @@ fn test_shrink_candidate_slots_cached() {
     // Set root for bank 0, with caching enabled
     let bank0 = Arc::new(Bank::new_with_config_for_tests(
         &genesis_config,
-        AccountSecondaryIndexes::default(),
-        AccountShrinkThreshold::default(),
+        BankTestConfig::default(),
     ));
     bank0.restore_old_behavior_for_fragile_tests();
 
@@ -7224,7 +7230,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         bank.process_transaction(&transaction),
         Err(TransactionError::InstructionError(
             0,
-            InstructionError::InvalidAccountData
+            InstructionError::UnsupportedProgramId
         )),
     );
     {
@@ -7248,7 +7254,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         bank.process_transaction(&transaction),
         Err(TransactionError::InstructionError(
             0,
-            InstructionError::InvalidAccountData,
+            InstructionError::UnsupportedProgramId,
         )),
     );
     {
@@ -7740,16 +7746,12 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         .get_mut(6)
         .unwrap() = AccountMeta::new_readonly(Pubkey::new_unique(), false);
     let message = Message::new(&instructions, Some(&mint_keypair.pubkey()));
-    assert_eq!(
-        TransactionError::InstructionError(1, InstructionError::MissingAccount),
-        bank_client
-            .send_and_confirm_message(
-                &[&mint_keypair, &program_keypair, &upgrade_authority_keypair],
-                message
-            )
-            .unwrap_err()
-            .unwrap()
-    );
+    assert!(bank_client
+        .send_and_confirm_message(
+            &[&mint_keypair, &program_keypair, &upgrade_authority_keypair],
+            message
+        )
+        .is_ok());
 
     fn truncate_data(account: &mut AccountSharedData, len: usize) {
         let mut data = account.data().to_vec();
@@ -8316,8 +8318,7 @@ fn test_store_scan_consistency<F>(
     genesis_config.rent = Rent::free();
     let bank0 = Arc::new(Bank::new_with_config_for_tests(
         &genesis_config,
-        AccountSecondaryIndexes::default(),
-        AccountShrinkThreshold::default(),
+        BankTestConfig::default(),
     ));
     bank0.set_callback(drop_callback);
 
@@ -9115,8 +9116,6 @@ fn test_epoch_schedule_from_genesis_config() {
         Vec::new(),
         None,
         None,
-        AccountSecondaryIndexes::default(),
-        AccountShrinkThreshold::default(),
         false,
         Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
         None,
@@ -9147,8 +9146,6 @@ where
         Vec::new(),
         None,
         None,
-        AccountSecondaryIndexes::default(),
-        AccountShrinkThreshold::default(),
         false,
         Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
         None,
@@ -10038,17 +10035,17 @@ fn test_verify_and_hash_transaction_sig_len() {
     // Too few signatures: Sanitization failure
     {
         let tx = make_transaction(TestCase::RemoveSignature);
-        assert_eq!(
+        assert_matches!(
             bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification),
-            Err(TransactionError::SanitizeFailure),
+            Err(TransactionError::SanitizeFailure)
         );
     }
     // Too many signatures: Sanitization failure
     {
         let tx = make_transaction(TestCase::AddSignature);
-        assert_eq!(
+        assert_matches!(
             bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification),
-            Err(TransactionError::SanitizeFailure),
+            Err(TransactionError::SanitizeFailure)
         );
     }
 }
@@ -10083,9 +10080,9 @@ fn test_verify_transactions_packet_data_size() {
     {
         let tx = make_transaction(25);
         assert!(bincode::serialized_size(&tx).unwrap() > PACKET_DATA_SIZE as u64);
-        assert_eq!(
+        assert_matches!(
             bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification),
-            Err(TransactionError::SanitizeFailure),
+            Err(TransactionError::SanitizeFailure)
         );
     }
     // Assert that verify fails as soon as serialized
@@ -10301,10 +10298,6 @@ fn test_calculate_fee_compute_units() {
         MAX_COMPUTE_UNIT_LIMIT,
     ] {
         const PRIORITIZATION_FEE_RATE: u64 = 42;
-        let prioritization_fee_details = PrioritizationFeeDetails::new(
-            PrioritizationFeeType::ComputeUnitPrice(PRIORITIZATION_FEE_RATE),
-            requested_compute_units as u64,
-        );
         let message = new_sanitized_message(Message::new(
             &[
                 ComputeBudgetInstruction::set_compute_unit_limit(requested_compute_units),
@@ -10314,9 +10307,14 @@ fn test_calculate_fee_compute_units() {
             Some(&Pubkey::new_unique()),
         ));
         let fee = calculate_test_fee(&message, 1, &fee_structure);
+        let fee_budget_limits = FeeBudgetLimits::from(ComputeBudgetLimits {
+            compute_unit_price: PRIORITIZATION_FEE_RATE,
+            compute_unit_limit: requested_compute_units,
+            ..ComputeBudgetLimits::default()
+        });
         assert_eq!(
             fee,
-            lamports_per_signature + prioritization_fee_details.get_fee()
+            lamports_per_signature + fee_budget_limits.prioritization_fee
         );
     }
 }
@@ -10330,11 +10328,11 @@ fn test_calculate_prioritization_fee() {
 
     let request_units = 1_000_000_u32;
     let request_unit_price = 2_000_000_000_u64;
-    let prioritization_fee_details = PrioritizationFeeDetails::new(
-        PrioritizationFeeType::ComputeUnitPrice(request_unit_price),
-        request_units as u64,
-    );
-    let prioritization_fee = prioritization_fee_details.get_fee();
+    let fee_budget_limits = FeeBudgetLimits::from(ComputeBudgetLimits {
+        compute_unit_price: request_unit_price,
+        compute_unit_limit: request_units,
+        ..ComputeBudgetLimits::default()
+    });
 
     let message = new_sanitized_message(Message::new(
         &[
@@ -10351,7 +10349,7 @@ fn test_calculate_prioritization_fee() {
     );
     assert_eq!(
         fee,
-        fee_structure.lamports_per_signature + prioritization_fee
+        fee_structure.lamports_per_signature + fee_budget_limits.prioritization_fee
     );
 }
 
@@ -12749,8 +12747,6 @@ fn test_rehash_with_skipped_rewrites() {
         Vec::default(),
         None,
         None,
-        AccountSecondaryIndexes::default(),
-        AccountShrinkThreshold::default(),
         false,
         Some(accounts_db_config),
         None,
@@ -12812,8 +12808,6 @@ fn test_rebuild_skipped_rewrites() {
         Vec::default(),
         None,
         None,
-        AccountSecondaryIndexes::default(),
-        AccountShrinkThreshold::default(),
         false,
         Some(accounts_db_config.clone()),
         None,
@@ -12889,9 +12883,7 @@ fn test_rebuild_skipped_rewrites() {
         &RuntimeConfig::default(),
         None,
         None,
-        AccountSecondaryIndexes::default(),
         None,
-        AccountShrinkThreshold::default(),
         false,
         false,
         false,
@@ -12924,8 +12916,6 @@ fn test_get_accounts_for_bank_hash_details(skip_rewrites: bool) {
         Vec::default(),
         None,
         None,
-        AccountSecondaryIndexes::default(),
-        AccountShrinkThreshold::default(),
         false,
         Some(accounts_db_config.clone()),
         None,
@@ -13003,7 +12993,7 @@ fn test_failed_simulation_compute_units() {
     let transaction = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
 
     bank.freeze();
-    let sanitized = SanitizedTransaction::from_transaction_for_tests(transaction);
+    let sanitized = RuntimeTransaction::from_transaction_for_tests(transaction);
     let simulation = bank.simulate_transaction(&sanitized, false);
     assert_eq!(expected_consumed_units, simulation.units_consumed);
 }
@@ -13026,7 +13016,7 @@ fn test_failed_simulation_load_error() {
     let transaction = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
 
     bank.freeze();
-    let sanitized = SanitizedTransaction::from_transaction_for_tests(transaction);
+    let sanitized = RuntimeTransaction::from_transaction_for_tests(transaction);
     let simulation = bank.simulate_transaction(&sanitized, false);
     assert_eq!(
         simulation,
@@ -13283,6 +13273,11 @@ fn test_bank_epoch_stakes() {
     let initial_epochs = bank0.epoch_stake_keys();
     assert_eq!(initial_epochs, vec![0, 1]);
 
+    // Bank 0:
+
+    // First query with bank's epoch. As noted by the above check, the epoch
+    // stakes cache actually contains values for the _leader schedule_ epoch
+    // (N + 1). Therefore, we should be able to query both.
     assert_eq!(bank0.epoch(), 0);
     assert_eq!(bank0.epoch_total_stake(0), Some(total_stake));
     assert_eq!(bank0.epoch_node_id_to_stake(0, &Pubkey::new_unique()), None);
@@ -13292,6 +13287,37 @@ fn test_bank_epoch_stakes() {
             Some(stakes[i])
         );
     }
+
+    // Now query for epoch 1 on bank 0.
+    assert_eq!(bank0.epoch().saturating_add(1), 1);
+    assert_eq!(bank0.epoch_total_stake(1), Some(total_stake));
+    assert_eq!(bank0.epoch_node_id_to_stake(1, &Pubkey::new_unique()), None);
+    for (i, keypair) in voting_keypairs.iter().enumerate() {
+        assert_eq!(
+            bank0.epoch_node_id_to_stake(1, &keypair.node_keypair.pubkey()),
+            Some(stakes[i])
+        );
+    }
+
+    // Note using bank's `current_epoch_stake_*` methods should return the
+    // same values.
+    assert_eq!(bank0.get_current_epoch_total_stake(), total_stake);
+    assert_eq!(
+        bank0.get_current_epoch_total_stake(),
+        bank0.epoch_total_stake(1).unwrap(),
+    );
+    assert_eq!(
+        bank0.get_current_epoch_vote_accounts().len(),
+        voting_keypairs.len()
+    );
+    assert_eq!(
+        bank0.epoch_vote_accounts(1).unwrap(),
+        bank0.get_current_epoch_vote_accounts(),
+    );
+
+    // Bank 1:
+
+    // Run the same exercise. First query the bank's epoch.
     assert_eq!(bank1.epoch(), 1);
     assert_eq!(bank1.epoch_total_stake(1), Some(total_stake));
     assert_eq!(bank1.epoch_node_id_to_stake(1, &Pubkey::new_unique()), None);
@@ -13302,32 +13328,85 @@ fn test_bank_epoch_stakes() {
         );
     }
 
-    let new_epoch_stakes = EpochStakes::new_for_tests(
-        voting_keypairs
-            .iter()
-            .map(|keypair| {
-                let node_id = keypair.node_keypair.pubkey();
-                let authorized_voter = keypair.vote_keypair.pubkey();
-                let vote_account = VoteAccount::try_from(create_account_with_authorized(
-                    &node_id,
-                    &authorized_voter,
-                    &node_id,
-                    0,
-                    100,
-                ))
-                .unwrap();
-                (authorized_voter, (100_u64, vote_account))
-            })
-            .collect::<HashMap<_, _>>(),
-        1,
+    // Now query for epoch 2 on bank 1.
+    assert_eq!(bank1.epoch().saturating_add(1), 2);
+    assert_eq!(bank1.epoch_total_stake(2), Some(total_stake));
+    assert_eq!(bank1.epoch_node_id_to_stake(2, &Pubkey::new_unique()), None);
+    for (i, keypair) in voting_keypairs.iter().enumerate() {
+        assert_eq!(
+            bank1.epoch_node_id_to_stake(2, &keypair.node_keypair.pubkey()),
+            Some(stakes[i])
+        );
+    }
+
+    // Again, using bank's `current_epoch_stake_*` methods should return the
+    // same values.
+    assert_eq!(bank1.get_current_epoch_total_stake(), total_stake);
+    assert_eq!(
+        bank1.get_current_epoch_total_stake(),
+        bank1.epoch_total_stake(2).unwrap(),
     );
-    bank1.set_epoch_stakes_for_test(1, new_epoch_stakes);
-    assert_eq!(bank1.epoch_total_stake(1), Some(100 * num_of_nodes));
+    assert_eq!(
+        bank1.get_current_epoch_vote_accounts().len(),
+        voting_keypairs.len()
+    );
+    assert_eq!(
+        bank1.epoch_vote_accounts(2).unwrap(),
+        bank1.get_current_epoch_vote_accounts(),
+    );
+
+    // Setup new epoch stakes on Bank 1 for both leader schedule epochs.
+    let make_new_epoch_stakes = |stake_coefficient: u64| {
+        EpochStakes::new_for_tests(
+            voting_keypairs
+                .iter()
+                .map(|keypair| {
+                    let node_id = keypair.node_keypair.pubkey();
+                    let authorized_voter = keypair.vote_keypair.pubkey();
+                    let vote_account = VoteAccount::try_from(create_account_with_authorized(
+                        &node_id,
+                        &authorized_voter,
+                        &node_id,
+                        0,
+                        100,
+                    ))
+                    .unwrap();
+                    (authorized_voter, (stake_coefficient, vote_account))
+                })
+                .collect::<HashMap<_, _>>(),
+            1,
+        )
+    };
+    let stake_coefficient_epoch_1 = 100;
+    let stake_coefficient_epoch_2 = 500;
+    bank1.set_epoch_stakes_for_test(1, make_new_epoch_stakes(stake_coefficient_epoch_1));
+    bank1.set_epoch_stakes_for_test(2, make_new_epoch_stakes(stake_coefficient_epoch_2));
+
+    // Run the exercise again with the new stake. Now epoch 1 should have the
+    // stake added for epoch 1 (`stake_coefficient_epoch_1`).
+    assert_eq!(
+        bank1.epoch_total_stake(1),
+        Some(stake_coefficient_epoch_1 * num_of_nodes)
+    );
     assert_eq!(bank1.epoch_node_id_to_stake(1, &Pubkey::new_unique()), None);
     for keypair in voting_keypairs.iter() {
         assert_eq!(
             bank1.epoch_node_id_to_stake(1, &keypair.node_keypair.pubkey()),
-            Some(100)
+            Some(stake_coefficient_epoch_1)
+        );
+    }
+
+    // Now query for epoch 2 on bank 1. Epoch 2 should have the stake added for
+    // epoch 2 (`stake_coefficient_epoch_2`).
+    assert_eq!(
+        bank1.epoch_total_stake(2),
+        Some(stake_coefficient_epoch_2 * num_of_nodes)
+    );
+    assert_eq!(bank1.epoch_node_id_to_stake(2, &Pubkey::new_unique()), None);
+    for keypair in voting_keypairs.iter() {
+        assert_eq!(
+            bank1.epoch_node_id_to_stake(2, &keypair.node_keypair.pubkey()),
+            Some(stake_coefficient_epoch_2)
         );
     }
 }

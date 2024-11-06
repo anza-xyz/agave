@@ -144,7 +144,6 @@ jobs:
           - [name-service/program]
           - [stake-pool/program]
           - [single-pool/program]
-
     steps:
       - uses: actions/checkout@v4
 

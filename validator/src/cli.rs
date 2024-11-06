@@ -666,14 +666,12 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .long("rocksdb-shred-compaction")
                 .value_name("ROCKSDB_COMPACTION_STYLE")
                 .takes_value(true)
-                .possible_values(&["level", "fifo"])
+                .possible_values(&["level"])
                 .default_value(&default_args.rocksdb_shred_compaction)
                 .help(
                     "Controls how RocksDB compacts shreds. *WARNING*: You will lose your \
                      Blockstore data when you switch between options. Possible values are: \
-                     'level': stores shreds using RocksDB's default (level) compaction. \
-                     'fifo': stores shreds under RocksDB's FIFO compaction. This option is more \
-                     efficient on disk-write-bytes of the Blockstore.",
+                     'level': stores shreds using RocksDB's default (level) compaction.",
                 ),
         )
         .arg(
@@ -1373,6 +1371,24 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                     "AppendVecs that are older than (slots_per_epoch - SLOT-OFFSET) are squashed \
                      together.",
                 )
+                .hidden(hidden_unless_forced()),
+        )
+        .arg(
+            Arg::with_name("accounts_db_ancient_storage_ideal_size")
+                .long("accounts-db-ancient-storage-ideal-size")
+                .value_name("BYTES")
+                .validator(is_parsable::<u64>)
+                .takes_value(true)
+                .help("The smallest size of ideal ancient storage.")
+                .hidden(hidden_unless_forced()),
+        )
+        .arg(
+            Arg::with_name("accounts_db_max_ancient_storages")
+                .long("accounts-db-max-ancient-storages")
+                .value_name("USIZE")
+                .validator(is_parsable::<usize>)
+                .takes_value(true)
+                .help("The number of ancient storages the ancient slot combining should converge to.")
                 .hidden(hidden_unless_forced()),
         )
         .arg(
