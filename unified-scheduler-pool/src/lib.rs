@@ -1618,6 +1618,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                                     session_pausing = true;
                                                     info!("can_commit: {}", context.can_commit());
                                                     "pausing"
+                                                } else {
+                                                    info!("ignoring duplicate close subch");
                                                 }
                                             },
                                         }
