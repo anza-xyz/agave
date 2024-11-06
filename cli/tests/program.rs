@@ -13,7 +13,7 @@ use {
     solana_cli_output::{parse_sign_only_reply_string, OutputFormat},
     solana_client::rpc_config::RpcSendTransactionConfig,
     solana_faucet::faucet::run_local_faucet,
-    solana_feature_set::enable_alt_bn128_syscall,
+    solana_feature_set::{enable_alt_bn128_syscall, enable_loader_v4},
     solana_rpc::rpc::JsonRpcConfig,
     solana_rpc_client::rpc_client::{GetConfirmedSignaturesForAddress2Config, RpcClient},
     solana_rpc_client_api::config::RpcTransactionConfig,
@@ -33,7 +33,7 @@ use {
         transaction::Transaction,
     },
     solana_streamer::socket::SocketAddrSpace,
-    solana_test_validator::{TestValidator, TestValidatorGenesis},
+    solana_test_validator::TestValidatorGenesis,
     solana_transaction_status::UiTransactionEncoding,
     std::{
         env,
@@ -82,8 +82,17 @@ fn test_cli_program_deploy_non_upgradeable() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
-    let test_validator =
-        TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr), SocketAddrSpace::Unspecified);
+    let test_validator = TestValidatorGenesis::default()
+        .fee_rate_governor(FeeRateGovernor::new(0, 0))
+        .rent(Rent {
+            lamports_per_byte_year: 1,
+            exemption_threshold: 1.0,
+            ..Rent::default()
+        })
+        .faucet_addr(Some(faucet_addr))
+        .deactivate_features(&[enable_loader_v4::id()])
+        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .expect("validator start failed");
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -287,8 +296,17 @@ fn test_cli_program_deploy_no_authority() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
-    let test_validator =
-        TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr), SocketAddrSpace::Unspecified);
+    let test_validator = TestValidatorGenesis::default()
+        .fee_rate_governor(FeeRateGovernor::new(0, 0))
+        .rent(Rent {
+            lamports_per_byte_year: 1,
+            exemption_threshold: 1.0,
+            ..Rent::default()
+        })
+        .faucet_addr(Some(faucet_addr))
+        .deactivate_features(&[enable_loader_v4::id()])
+        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .expect("validator start failed");
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -406,6 +424,7 @@ fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: bool) {
             test_validator_builder.deactivate_features(&[enable_alt_bn128_syscall::id()]);
     }
 
+    test_validator_builder = test_validator_builder.deactivate_features(&[enable_loader_v4::id()]);
     let test_validator = test_validator_builder
         .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
         .expect("validator start failed");
@@ -542,6 +561,7 @@ fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
             test_validator_builder.deactivate_features(&[enable_alt_bn128_syscall::id()]);
     }
 
+    test_validator_builder = test_validator_builder.deactivate_features(&[enable_loader_v4::id()]);
     let test_validator = test_validator_builder
         .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
         .expect("validator start failed");
@@ -691,8 +711,17 @@ fn test_cli_program_deploy_with_authority() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
-    let test_validator =
-        TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr), SocketAddrSpace::Unspecified);
+    let test_validator = TestValidatorGenesis::default()
+        .fee_rate_governor(FeeRateGovernor::new(0, 0))
+        .rent(Rent {
+            lamports_per_byte_year: 1,
+            exemption_threshold: 1.0,
+            ..Rent::default()
+        })
+        .faucet_addr(Some(faucet_addr))
+        .deactivate_features(&[enable_loader_v4::id()])
+        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .expect("validator start failed");
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -1093,8 +1122,17 @@ fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
-    let test_validator =
-        TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr), SocketAddrSpace::Unspecified);
+    let test_validator = TestValidatorGenesis::default()
+        .fee_rate_governor(FeeRateGovernor::new(0, 0))
+        .rent(Rent {
+            lamports_per_byte_year: 1,
+            exemption_threshold: 1.0,
+            ..Rent::default()
+        })
+        .faucet_addr(Some(faucet_addr))
+        .deactivate_features(&[enable_loader_v4::id()])
+        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .expect("validator start failed");
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -1255,8 +1293,17 @@ fn test_cli_program_close_program() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
-    let test_validator =
-        TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr), SocketAddrSpace::Unspecified);
+    let test_validator = TestValidatorGenesis::default()
+        .fee_rate_governor(FeeRateGovernor::new(0, 0))
+        .rent(Rent {
+            lamports_per_byte_year: 1,
+            exemption_threshold: 1.0,
+            ..Rent::default()
+        })
+        .faucet_addr(Some(faucet_addr))
+        .deactivate_features(&[enable_loader_v4::id()])
+        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .expect("validator start failed");
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -1374,8 +1421,17 @@ fn test_cli_program_extend_program() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
-    let test_validator =
-        TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr), SocketAddrSpace::Unspecified);
+    let test_validator = TestValidatorGenesis::default()
+        .fee_rate_governor(FeeRateGovernor::new(0, 0))
+        .rent(Rent {
+            lamports_per_byte_year: 1,
+            exemption_threshold: 1.0,
+            ..Rent::default()
+        })
+        .faucet_addr(Some(faucet_addr))
+        .deactivate_features(&[enable_loader_v4::id()])
+        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .expect("validator start failed");
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -1550,8 +1606,17 @@ fn test_cli_program_write_buffer() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
-    let test_validator =
-        TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr), SocketAddrSpace::Unspecified);
+    let test_validator = TestValidatorGenesis::default()
+        .fee_rate_governor(FeeRateGovernor::new(0, 0))
+        .rent(Rent {
+            lamports_per_byte_year: 1,
+            exemption_threshold: 1.0,
+            ..Rent::default()
+        })
+        .faucet_addr(Some(faucet_addr))
+        .deactivate_features(&[enable_loader_v4::id()])
+        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .expect("validator start failed");
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -2037,8 +2102,17 @@ fn test_cli_program_set_buffer_authority() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
-    let test_validator =
-        TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr), SocketAddrSpace::Unspecified);
+    let test_validator = TestValidatorGenesis::default()
+        .fee_rate_governor(FeeRateGovernor::new(0, 0))
+        .rent(Rent {
+            lamports_per_byte_year: 1,
+            exemption_threshold: 1.0,
+            ..Rent::default()
+        })
+        .faucet_addr(Some(faucet_addr))
+        .deactivate_features(&[enable_loader_v4::id()])
+        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .expect("validator start failed");
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -2209,8 +2283,17 @@ fn test_cli_program_mismatch_buffer_authority() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
-    let test_validator =
-        TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr), SocketAddrSpace::Unspecified);
+    let test_validator = TestValidatorGenesis::default()
+        .fee_rate_governor(FeeRateGovernor::new(0, 0))
+        .rent(Rent {
+            lamports_per_byte_year: 1,
+            exemption_threshold: 1.0,
+            ..Rent::default()
+        })
+        .faucet_addr(Some(faucet_addr))
+        .deactivate_features(&[enable_loader_v4::id()])
+        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .expect("validator start failed");
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -2335,8 +2418,17 @@ fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_payer:
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
-    let test_validator =
-        TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr), SocketAddrSpace::Unspecified);
+    let test_validator = TestValidatorGenesis::default()
+        .fee_rate_governor(FeeRateGovernor::new(0, 0))
+        .rent(Rent {
+            lamports_per_byte_year: 1,
+            exemption_threshold: 1.0,
+            ..Rent::default()
+        })
+        .faucet_addr(Some(faucet_addr))
+        .deactivate_features(&[enable_loader_v4::id()])
+        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .expect("validator start failed");
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -2528,8 +2620,17 @@ fn test_cli_program_show() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
-    let test_validator =
-        TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr), SocketAddrSpace::Unspecified);
+    let test_validator = TestValidatorGenesis::default()
+        .fee_rate_governor(FeeRateGovernor::new(0, 0))
+        .rent(Rent {
+            lamports_per_byte_year: 1,
+            exemption_threshold: 1.0,
+            ..Rent::default()
+        })
+        .faucet_addr(Some(faucet_addr))
+        .deactivate_features(&[enable_loader_v4::id()])
+        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .expect("validator start failed");
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -2725,8 +2826,17 @@ fn test_cli_program_dump() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
-    let test_validator =
-        TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr), SocketAddrSpace::Unspecified);
+    let test_validator = TestValidatorGenesis::default()
+        .fee_rate_governor(FeeRateGovernor::new(0, 0))
+        .rent(Rent {
+            lamports_per_byte_year: 1,
+            exemption_threshold: 1.0,
+            ..Rent::default()
+        })
+        .faucet_addr(Some(faucet_addr))
+        .deactivate_features(&[enable_loader_v4::id()])
+        .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
+        .expect("validator start failed");
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -2864,6 +2974,7 @@ fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_rpc: b
             exemption_threshold: 1.0,
             ..Rent::default()
         })
+        .deactivate_features(&[enable_loader_v4::id()])
         .rpc_config(JsonRpcConfig {
             enable_rpc_transaction_history: true,
             faucet_addr: Some(faucet_addr),

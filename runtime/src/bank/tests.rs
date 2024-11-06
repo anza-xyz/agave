@@ -7129,6 +7129,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     let (genesis_config, mint_keypair) = create_genesis_config_no_tx_fee(1_000_000_000);
     let mut bank = Bank::new_for_tests(&genesis_config);
     bank.feature_set = Arc::new(FeatureSet::all_enabled());
+    bank.deactivate_feature(&solana_feature_set::enable_loader_v4::id());
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
     let mut bank_client = BankClient::new_shared(bank.clone());
 
@@ -13092,12 +13093,10 @@ fn test_deploy_last_epoch_slot() {
     solana_logger::setup();
 
     // Bank Setup
-    let (mut genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
-    genesis_config
-        .accounts
-        .remove(&feature_set::disable_fees_sysvar::id());
+    let (genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
     let mut bank = Bank::new_for_tests(&genesis_config);
-    bank.activate_feature(&feature_set::disable_fees_sysvar::id());
+    bank.feature_set = Arc::new(FeatureSet::all_enabled());
+    bank.deactivate_feature(&solana_feature_set::enable_loader_v4::id());
 
     // go to the last slot in the epoch
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();

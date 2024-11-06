@@ -273,7 +273,9 @@ pub fn instructions_to_load_program_of_loader_v4<T: Client>(
             &payer_keypair.pubkey(),
             &program_keypair.pubkey(),
             bank_client
-                .get_minimum_balance_for_rent_exemption(program.len())
+                .get_minimum_balance_for_rent_exemption(
+                    loader_v4::LoaderV4State::program_data_offset().saturating_add(program.len()),
+                )
                 .unwrap(),
             0,
             loader_id,
