@@ -800,7 +800,7 @@ impl PohRecorder {
         }
         if self.tick_height >= working_bank.max_tick_height {
             info!(
-                "poh_record: max_tick_height {} reached, clearing working_bank {}",
+                "poh_record: max_tick_height {} reached, clearing working_bank {:?}",
                 working_bank.max_tick_height,
                 working_bank.bank.id_and_slot_with_scheduler_status(),
             );
