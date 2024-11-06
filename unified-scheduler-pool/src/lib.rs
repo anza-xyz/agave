@@ -1614,12 +1614,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                                     // can't assert pause signal may have been emitted..
                                                     session_ending = true;
                                                     "ending"
-                                                } else if !session_pausing && !context.can_commit() {
+                                                } else if !session_pausing {
                                                     session_pausing = true;
+                                                    info!("can_commit: {}", context.can_commit());
                                                     "pausing"
-                                                } else {
-                                                    trace!("ignoring too early close subch");
-                                                    continue
                                                 }
                                             },
                                         }
