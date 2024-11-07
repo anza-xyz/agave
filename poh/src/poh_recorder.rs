@@ -1200,7 +1200,7 @@ mod tests {
         },
         solana_perf::test_tx::test_tx,
         solana_sdk::{clock::DEFAULT_TICKS_PER_SLOT, hash::hash},
-        stfu::with_capacity,
+        mpsc,
     };
 
     #[test]
@@ -2336,10 +2336,10 @@ mod tests {
         );
     }
     #[test]
-    fn test_stfu_ring_buffer_multi_producer() {
+    fn test_mpsc_ring_buffer_multi_producer() {
         const COUNT: u32 = 100;
         const THREADS: u32 = 4;
-        let (tx, rx): (stfu::Producer<u64>, stfu::Consumer<u64>)  = with_capacity(COUNT);
+        let (tx, rx): (mpsc::Producer<u64>, mpsc::Consumer<u64>)  = mpsc::with_capacity(COUNT);
 
         std::thread::scope(|scope| {
             for _ in 0..THREADS {
@@ -2354,13 +2354,12 @@ mod tests {
     }
 
     #[test]
-    fn test_stfu_mpsc_ring_buffer() { // Spins forever.
-        use stfu::with_capacity;
+    fn test_mpsc_ring_buffer() {
         const COUNT: usize = 50;
         const THREADS: usize = 4;
 
         let t = std::sync::atomic::AtomicUsize::new(THREADS);
-        let (tx, rx): (stfu::Producer<usize>, stfu::Consumer<usize>)  = with_capacity(COUNT as u32);
+        let (tx, rx): (mpsc::Producer<usize>, mpsc::Consumer<usize>)  = mpsc::with_capacity(COUNT as u32);
         let v = (0..COUNT).map(|_| std::sync::atomic::AtomicUsize::new(0)).collect::<Vec<_>>();
 
         std::thread::scope(|scope| {
