@@ -95,7 +95,8 @@ impl CrdsValueLabel {
 }
 
 impl CrdsValue {
-    pub fn new_unsigned(data: CrdsData) -> Self {
+    #[cfg(test)]
+    pub(crate) fn new_unsigned(data: CrdsData) -> Self {
         Self {
             signature: Signature::default(),
             data,
@@ -103,9 +104,9 @@ impl CrdsValue {
     }
 
     pub fn new(data: CrdsData, keypair: &Keypair) -> Self {
-        let mut value = Self::new_unsigned(data);
-        value.sign(keypair);
-        value
+        let bincode_serialized_data = bincode::serialize(&data).unwrap();
+        let signature = keypair.sign_message(&bincode_serialized_data);
+        Self { signature, data }
     }
 
     /// New random CrdsValue for tests and benchmarks.
