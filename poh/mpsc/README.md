@@ -1,4 +1,4 @@
-# stfu ![example workflow](https://github.com/apfitzge/stfu/actions/workflows/rust.yml/badge.svg)
+# mpsc ![example workflow](https://github.com/apfitzge/stfu/actions/workflows/rust.yml/badge.svg)
 
 A dead simple MPSC fixed-size channel for Rust with the ability for the consumer to shut off producers.
 
@@ -6,7 +6,7 @@ A dead simple MPSC fixed-size channel for Rust with the ability for the consumer
 
 ```rust
 // Create channel ends with a fixed capacity of 4.
-let (tx, rx) = stfu::with_capacity(4);
+let (tx, rx) = mpsc::with_capacity(4);
 
 let _tx2 = tx.clone(); // producer may be cloned
 
@@ -27,7 +27,7 @@ assert_eq!(rx.pop(), Some(2));
 // At this point the producer could push more items in.
 // But the consumer can prevent the producers from pushing
 // more items by shutting them off.
-rx.shut_off_producers(); // stfu!
+rx.shut_off_producers(); // mpsc!
 
 // The producer can no longer push to the channel.
 assert_eq!(tx.try_push(6), Err(6));
