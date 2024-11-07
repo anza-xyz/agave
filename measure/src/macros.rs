@@ -116,7 +116,10 @@ macro_rules! meas_dur {
 
 #[cfg(test)]
 mod tests {
-    use std::{thread::sleep, time::Duration};
+    use {
+        serial_test::serial,
+        std::{thread::sleep, time::Duration},
+    };
 
     fn my_multiply(x: i32, y: i32) -> i32 {
         x * y
@@ -136,13 +139,26 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_measure_macro() {
         // Ensure that the measurement side actually works
         {
             let (_result, measure) = measure_time!(sleep(Duration::from_secs(1)), "test");
-            assert!(measure.as_s() >= 0.99f32 && measure.as_s() <= 1.01f32);
-            assert!(measure.as_ms() >= 990 && measure.as_ms() <= 1_010);
-            assert!(measure.as_us() >= 999_000 && measure.as_us() <= 1_010_000);
+            assert!(
+                measure.as_s() >= 0.99f32 && measure.as_s() <= 1.01f32,
+                "{} not between 0.99..=1.01",
+                measure.as_s()
+            );
+            assert!(
+                measure.as_ms() >= 990 && measure.as_ms() <= 1_010,
+                "{} not between 990..=1_010",
+                measure.as_ms()
+            );
+            assert!(
+                measure.as_us() >= 999_000 && measure.as_us() <= 1_010_000,
+                "{} not between 999_000..=1_010_000",
+                measure.as_us()
+            );
         }
 
         // Ensure that the macro can be called with functions
@@ -181,11 +197,16 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_measure_us_macro() {
         // Ensure that the measurement side actually works
         {
             let (_result, measure) = measure_us!(sleep(Duration::from_secs(1)));
-            assert!((999_000..=1_010_000).contains(&measure));
+            assert!(
+                (999_000..=1_010_000).contains(&measure),
+                "{} not between 999_000..=1_010_000",
+                measure
+            );
         }
 
         // Ensure that the macro can be called with functions
