@@ -50,7 +50,7 @@ impl VerifyAccountsHashInBackground {
         self.verified.store(true, Ordering::Release);
     }
 
-    /// block until bg process is complete
+    /// join background thread. `panic` if verification failed. Otherwise, mark verification complete.
     pub fn join_background_thread(&self) {
         // just now completing
         let mut lock = self.thread.lock().unwrap();
