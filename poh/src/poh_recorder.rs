@@ -1195,12 +1195,12 @@ mod tests {
         super::*,
         bincode::serialize,
         crossbeam_channel::bounded,
+        mpsc,
         solana_ledger::{
             blockstore::Blockstore, blockstore_meta::SlotMeta, get_tmp_ledger_path_auto_delete,
         },
         solana_perf::test_tx::test_tx,
         solana_sdk::{clock::DEFAULT_TICKS_PER_SLOT, hash::hash},
-        mpsc,
     };
 
     #[test]
@@ -2339,12 +2339,12 @@ mod tests {
     fn test_mpsc_ring_buffer_multi_producer() {
         const COUNT: u32 = 100;
         const THREADS: u32 = 4;
-        let (tx, rx): (mpsc::Producer<u64>, mpsc::Consumer<u64>)  = mpsc::with_capacity(COUNT);
+        let (tx, rx): (mpsc::Producer<u64>, mpsc::Consumer<u64>) = mpsc::with_capacity(COUNT);
 
         std::thread::scope(|scope| {
             for _ in 0..THREADS {
                 scope.spawn(|| {
-                    for _ in 0..COUNT/10 {
+                    for _ in 0..COUNT / 10 {
                         assert!(tx.try_push(1).is_ok());
                     }
                 });
@@ -2359,8 +2359,11 @@ mod tests {
         const THREADS: usize = 4;
 
         let t = std::sync::atomic::AtomicUsize::new(THREADS);
-        let (tx, rx): (mpsc::Producer<usize>, mpsc::Consumer<usize>)  = mpsc::with_capacity(COUNT as u32);
-        let v = (0..COUNT).map(|_| std::sync::atomic::AtomicUsize::new(0)).collect::<Vec<_>>();
+        let (tx, rx): (mpsc::Producer<usize>, mpsc::Consumer<usize>) =
+            mpsc::with_capacity(COUNT as u32);
+        let v = (0..COUNT)
+            .map(|_| std::sync::atomic::AtomicUsize::new(0))
+            .collect::<Vec<_>>();
 
         std::thread::scope(|scope| {
             scope.spawn(|| loop {
