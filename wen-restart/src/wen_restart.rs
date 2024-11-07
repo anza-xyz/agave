@@ -1814,6 +1814,7 @@ mod tests {
                 .unwrap()
                 .get(my_heaviest_fork_slot)
             {
+                // When deciding the local heaviest fork, we will freeze the bank.
                 if bank.is_frozen() {
                     my_heaviest_fork_bankhash = bank.hash();
                     break;
