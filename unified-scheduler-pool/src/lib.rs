@@ -2192,7 +2192,9 @@ impl BankingStageAdapter {
     }
 
     fn reset(&self)  {
+        info!("resetting transaction_deduper... {}", self.transaction_deduper.len());
         self.transaction_deduper.clear();
+        info!("resetting transaction_deduper... done: {}", self.transaction_deduper.len());
     }
 }
 
