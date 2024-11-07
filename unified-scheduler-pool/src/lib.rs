@@ -1451,7 +1451,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 macro_rules! log_scheduler {
                     ($level:ident, $prefix:tt) => {
                         $level! {
-                            "sch: {}: slot: {}({})[{:12}]({}{}): state_machine(({}({}b{}B{}F)=>{}({}E))/{}|{}TB|{}Lr) channels(<{} >{}+{} <{}+{} <B{}) {}",
+                            "sch: {}: slot: {}({})[{:12}]({}{}): state_machine(({}({}b{}B{}F)=>{}({}+{}))/{}|{}TB|{}Lr) channels(<{} >{}+{} <{}+{} <B{}) {}",
                             scheduler_id, slot,
                             match state_machine.mode() {
                                 SchedulingMode::BlockVerification => "v",
@@ -1462,7 +1462,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             (if session_pausing {"P"} else {"-"}),
                             state_machine.alive_task_count(),
                             state_machine.blocked_task_count(), state_machine.buffered_task_queue_count(), state_machine.eager_lock_total(),
-                            state_machine.executed_task_total(), error_count,
+                            state_machine.executed_task_total(), state_machine.executed_task_total() - error_count, error_count,
                             state_machine.task_total(),
                             state_machine.buffered_task_total(),
                             state_machine.reblocked_lock_total(),
