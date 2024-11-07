@@ -139,7 +139,7 @@ mod tests {
     fn test_measure_macro() {
         // Ensure that the measurement side actually works
         {
-            let (_result, measure) = measure_time!(sleep(Duration::from_secs(1)), "test");
+            let (_result, measure) = measure_time!(sleep(Duration::from_millis(1)), "test");
             assert!(measure.as_s() > 0.0);
             assert!(measure.as_ms() > 0);
             assert!(measure.as_us() > 0);
@@ -184,7 +184,7 @@ mod tests {
     fn test_measure_us_macro() {
         // Ensure that the measurement side actually works
         {
-            let (_result, measure) = measure_us!(sleep(Duration::from_secs(1)));
+            let (_result, measure) = measure_us!(sleep(Duration::from_millis(1)));
             assert!(measure > 0);
         }
 
