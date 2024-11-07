@@ -7137,10 +7137,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     );
     assert_eq!(
         bank.process_transaction(&transaction),
-        Err(TransactionError::InstructionError(
-            0,
-            InstructionError::InvalidAccountData
-        )),
+        Err(TransactionError::InvalidProgramForExecution),
     );
     {
         let program_cache = bank.transaction_processor.program_cache.read().unwrap();
@@ -7161,10 +7158,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     let transaction = Transaction::new(&[&binding], message, bank.last_blockhash());
     assert_eq!(
         bank.process_transaction(&transaction),
-        Err(TransactionError::InstructionError(
-            0,
-            InstructionError::InvalidAccountData,
-        )),
+        Err(TransactionError::InvalidProgramForExecution),
     );
     {
         let program_cache = bank.transaction_processor.program_cache.read().unwrap();

@@ -209,6 +209,8 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
         get_requested_loaded_accounts_data_size_limit(message)?;
     let mut accumulated_accounts_data_size: usize = 0;
 
+    let disable_account_loader_special_case =
+        feature_set.is_active(&feature_set::disable_account_loader_special_case::id());
     let instruction_accounts = message
         .instructions()
         .iter()
@@ -239,9 +241,11 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                     account_overrides.and_then(|overrides| overrides.get(key))
                 {
                     (account_override.data().len(), account_override.clone(), 0)
-                } else if let Some(program) = (!instruction_account && !message.is_writable(i))
-                    .then_some(())
-                    .and_then(|_| loaded_programs.find(key))
+                } else if let Some(program) = (!disable_account_loader_special_case
+                    && !instruction_account
+                    && !message.is_writable(i))
+                .then_some(())
+                .and_then(|_| loaded_programs.find(key))
                 {
                     // Optimization to skip loading of accounts which are only used as
                     // programs in top-level instructions and not passed as instruction accounts.

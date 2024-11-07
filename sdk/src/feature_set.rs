@@ -857,6 +857,10 @@ pub mod deprecate_legacy_vote_ixs {
     solana_program::declare_id!("mustrekeyysGrhwdiwU42tCadZL8GcBb1i2GYhMopQv");
 }
 
+pub mod disable_account_loader_special_case {
+    solana_program::declare_id!("EQUMpNFr7Nacb1sva56xn1aLfBxppEoSBH8RRVdkcD1x");
+}
+
 lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
@@ -1066,6 +1070,7 @@ lazy_static! {
         (partitioned_epoch_rewards_superfeature::id(), "replaces enable_partitioned_epoch_reward to enable partitioned rewards at epoch boundary SIMD-0118"),
         (enable_turbine_extended_fanout_experiments::id(), "enable turbine extended fanout experiments #2373"),
         (deprecate_legacy_vote_ixs::id(), "Deprecate legacy vote instructions"),
+        (disable_account_loader_special_case::id(), "Disable account loader special case"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
