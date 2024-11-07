@@ -42,5 +42,3 @@ all_features = true
 
 [lints]
 workspace = true
-
-
