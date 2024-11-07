@@ -40,6 +40,19 @@ pub enum ConnectionWorkersSchedulerError {
     LeaderReceiverDropped,
 }
 
+/// [`Fanout`] is a configuration struct that specifies how many leaders should
+/// be targeted when sending transactions and connecting.
+///
+/// Assumption is that `send_next` <= `connect_next`. The idea is to hide latency
+/// of creating connections by doing this in advance.
+pub struct Fanout {
+    /// The number of leaders to target for sending transactions.
+    pub send_next: usize,
+
+    /// The number of leaders to target for establishing connections.
+    pub connect_next: usize,
+}
+
 /// This enum defines to how many discovered leaders we will send transactions.
 pub enum LeadersFanout {
     /// Send transactions to all the leaders discovered by the `next_leaders`
@@ -47,7 +60,7 @@ pub enum LeadersFanout {
     All,
     /// Send transactions to the first selected number of leaders discovered by
     /// the `next_leaders` call.
-    Next(usize),
+    Next(Fanout),
 }
 
 /// Configuration for the [`ConnectionWorkersScheduler`].
@@ -132,20 +145,29 @@ impl ConnectionWorkersScheduler {
             };
             let updated_leaders = leader_updater.next_leaders(lookahead_slots);
 
-            let (new_leaders, future_leaders) = split_leaders(&updated_leaders, &leaders_fanout);
-            for new_leader in new_leaders {
-                if !workers.contains(new_leader) {
-                    debug!("No existing workers for {new_leader:?}, starting a new one.");
-                    let stats = send_stats_per_addr.entry(new_leader.ip()).or_default();
+            let (fanout_leaders, connect_leaders) =
+                split_leaders(&updated_leaders, &leaders_fanout);
+            // add future leaders to the cache to hide the latency of opening
+            // the connection.
+            for peer in connect_leaders {
+                if !workers.contains(peer) {
+                    let stats = send_stats_per_addr.entry(peer.ip()).or_default();
                     let worker = Self::spawn_worker(
                         &endpoint,
-                        new_leader,
+                        peer,
                         worker_channel_size,
                         skip_check_transaction_age,
                         max_reconnect_attempts,
                         stats.clone(),
                     );
-                    maybe_shutdown_worker(workers.push(*new_leader, worker));
+                    maybe_shutdown_worker(workers.push(*peer, worker));
+                }
+            }
+
+            for new_leader in fanout_leaders {
+                if !workers.contains(new_leader) {
+                    warn!("No existing worker for {new_leader:?}, skip sending to this leader.");
+                    continue;
                 }
 
                 let send_res =
@@ -163,23 +185,6 @@ impl ConnectionWorkersScheduler {
                         warn!("Connection to {new_leader} was closed, worker error: {err}");
                         // If we has failed to send batch, it will be dropped.
                     }
-                }
-            }
-
-            // add future leaders to the cache to hide the latency of opening the
-            // connection.
-            for peer in future_leaders {
-                if !workers.contains(peer) {
-                    let stats = send_stats_per_addr.entry(peer.ip()).or_default();
-                    let worker = Self::spawn_worker(
-                        &endpoint,
-                        peer,
-                        worker_channel_size,
-                        skip_check_transaction_age,
-                        max_reconnect_attempts,
-                        stats.clone(),
-                    );
-                    maybe_shutdown_worker(workers.push(*peer, worker));
                 }
             }
         }
@@ -235,16 +240,28 @@ impl ConnectionWorkersScheduler {
     }
 }
 
-/// Splits the input vector of leaders into two parts based on the `fanout` configuration:
-/// * the first vector contains the leaders to which transactions will be sent.
-/// * the second vector contains the remaining leaders, used to warm up connections.
+/// Splits `leaders` into two slices based on the `fanout` configuration:
+/// * the first slice contains the leaders to which transactions will be sent,
+/// * the second vector contains the leaders, used to warm up connections. This
+///   slice includes the the first set.
 fn split_leaders<'leaders>(
     leaders: &'leaders [SocketAddr],
     fanout: &LeadersFanout,
 ) -> (&'leaders [SocketAddr], &'leaders [SocketAddr]) {
-    let count = match fanout {
-        LeadersFanout::All => leaders.len(),
-        LeadersFanout::Next(count) => (*count).min(leaders.len()),
-    };
-    leaders.split_at(count)
+    match fanout {
+        LeadersFanout::All => (leaders, leaders),
+        LeadersFanout::Next(Fanout {
+            send_next,
+            connect_next,
+        }) => {
+            assert!(send_next <= connect_next);
+            let send_count = (*send_next).min(leaders.len());
+            let connect_count = (*connect_next).min(leaders.len());
+
+            let send_slice = &leaders[..send_count];
+            let connect_slice = &leaders[..connect_count];
+
+            (send_slice, connect_slice)
+        }
+    }
 }
