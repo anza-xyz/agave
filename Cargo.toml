@@ -64,6 +64,7 @@ members = [
     "notifier",
     "perf",
     "poh",
+    "poh/stfu",
     "poh-bench",
     "poseidon",
     "program-runtime",
@@ -565,6 +566,7 @@ spl-token-2022 = "=4.0.0"
 spl-token-group-interface = "=0.3.0"
 spl-token-metadata-interface = "=0.4.0"
 static_assertions = "1.1.0"
+stfu = { path = "poh/stfu" }
 stream-cancel = "0.8.2"
 strum = "0.24"
 strum_macros = "0.24"

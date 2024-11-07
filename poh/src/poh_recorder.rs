@@ -1200,6 +1200,7 @@ mod tests {
         },
         solana_perf::test_tx::test_tx,
         solana_sdk::{clock::DEFAULT_TICKS_PER_SLOT, hash::hash},
+        stfu::with_capacity,
     };
 
     #[test]
@@ -2333,5 +2334,63 @@ mod tests {
             PohRecorder::compute_leader_slot_tick_heights(Some((6, 7)), 4),
             (Some(29), 32, 4)
         );
+    }
+    #[test]
+    fn test_stfu_ring_buffer_multi_producer() {
+        const COUNT: u32 = 100;
+        const THREADS: u32 = 4;
+        let (tx, rx): (stfu::Producer<u64>, stfu::Consumer<u64>)  = with_capacity(COUNT);
+
+        std::thread::scope(|scope| {
+            for _ in 0..THREADS {
+                scope.spawn(|| {
+                    for _ in 0..COUNT/10 {
+                        assert!(tx.try_push(1).is_ok());
+                    }
+                });
+            }
+        });
+        assert!(rx.pop().is_some());
+    }
+
+    #[test]
+    fn test_stfu_mpsc_ring_buffer() { // Spins forever.
+        use stfu::with_capacity;
+        const COUNT: usize = 50;
+        const THREADS: usize = 4;
+
+        let t = std::sync::atomic::AtomicUsize::new(THREADS);
+        let (tx, rx): (stfu::Producer<usize>, stfu::Consumer<usize>)  = with_capacity(COUNT as u32);
+        let v = (0..COUNT).map(|_| std::sync::atomic::AtomicUsize::new(0)).collect::<Vec<_>>();
+
+        std::thread::scope(|scope| {
+            scope.spawn(|| loop {
+                match t.load(Ordering::SeqCst) {
+                    0 => break,
+
+                    _ => {
+                        if let Some(n) = rx.pop() {
+                            v[n as usize].fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+                }
+            });
+
+            for _ in 0..THREADS {
+                scope.spawn(|| {
+                    for i in 0..COUNT {
+                        if let Ok(_) = tx.try_push(i) {
+                            v[i].fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+
+                    t.fetch_sub(1, Ordering::SeqCst);
+                });
+            }
+        });
+
+        for c in v {
+            assert_ne!(c.load(Ordering::SeqCst), 0);
+        }
     }
 }

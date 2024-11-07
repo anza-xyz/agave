@@ -19,6 +19,7 @@ solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-runtime = { workspace = true }
 solana-sdk = { workspace = true }
+stfu = {workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
