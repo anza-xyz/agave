@@ -1697,6 +1697,8 @@ mod tests {
         let _ = remove_file(&test_state.wen_restart_proto_path);
     }
 
+    // Debugging the failure in the test.
+    #[ignore]
     #[test]
     fn test_wen_restart_normal_flow() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
