@@ -42,7 +42,7 @@ solana-feature-set = { path = "../../sdk/feature-set", version = "=2.2.0" }
 solana-fee = { path = "../../fee", version = "=2.2.0" }
 solana-ledger = { path = "../../ledger", version = "=2.2.0" }
 solana-log-collector = { path = "../../log-collector", version = "=2.2.0" }
-solana-logger = { path = "../../logger", version = "=2.2.0" }
+solana-logger = { path = "../../sdk/logger", version = "=2.2.0" }
 solana-measure = { path = "../../measure", version = "=2.2.0" }
 solana-poseidon = { path = "../../poseidon/", version = "=2.2.0" }
 solana-program = { path = "../../sdk/program", version = "=2.2.0" }
@@ -120,7 +120,9 @@ solana-measure = { workspace = true }
 solana-program = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
-solana-runtime-transaction = { workspace = true }
+solana-runtime-transaction = { workspace = true, features = [
+    "dev-context-only-utils",
+] }
 solana-sbf-rust-invoke-dep = { workspace = true }
 solana-sbf-rust-realloc-dep = { workspace = true }
 solana-sbf-rust-realloc-invoke-dep = { workspace = true }

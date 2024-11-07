@@ -105,7 +105,11 @@ use {
     solana_program_runtime::{
         invoke_context::BuiltinFunctionWithContext, loaded_programs::ProgramCacheEntry,
     },
-    solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
+    solana_runtime_transaction::{
+        instructions_processor::process_compute_budget_instructions,
+        runtime_transaction::RuntimeTransaction, svm_transaction_adapter::SVMTransactionAdapter,
+        transaction_meta::StaticMeta,
+    },
     solana_sdk::{
         account::{
             create_account_shared_data_with_fields as create_account, from_account, Account,
@@ -175,7 +179,7 @@ use {
             TransactionProcessingConfig, TransactionProcessingEnvironment,
         },
     },
-    solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
     solana_timings::{ExecuteTimingType, ExecuteTimings},
     solana_vote::vote_account::{VoteAccount, VoteAccountsHashMap},
     solana_vote_program::vote_state::VoteState,
@@ -1732,15 +1736,30 @@ impl Bank {
             // then it will be *required* that the snapshot contains an accounts lt hash.
             let accounts_lt_hash = fields.accounts_lt_hash.unwrap_or_else(|| {
                 info!("Calculating the accounts lt hash...");
+                let (ancestors, slot) = if bank.is_frozen() {
+                    // Loading from a snapshot necessarily means this slot was rooted, and thus
+                    // the bank has been frozen.  So when calculating the accounts lt hash,
+                    // do it based on *this slot*, not our parent, since
+                    // update_accounts_lt_hash() will not be called on us again.
+                    (bank.ancestors.clone(), bank.slot())
+                } else {
+                    // If the bank is not frozen (e.g. if called from tests), then when this bank
+                    // is frozen later it will call `update_accounts_lt_hash()`.  Therefore, we
+                    // must calculate the accounts lt hash *here* based on *our parent*, so that
+                    // the accounts lt hash is correct after freezing.
+                    let parent_ancestors = {
+                        let mut ancestors = bank.ancestors.clone();
+                        ancestors.remove(&bank.slot());
+                        ancestors
+                    };
+                    (parent_ancestors, bank.parent_slot)
+                };
                 let (accounts_lt_hash, duration) = meas_dur!({
                     thread_pool.install(|| {
                         bank.rc
                             .accounts
                             .accounts_db
-                            .calculate_accounts_lt_hash_at_startup_from_index(
-                                &bank.ancestors,
-                                bank.slot(),
-                            )
+                            .calculate_accounts_lt_hash_at_startup_from_index(&ancestors, slot)
                     })
                 });
                 info!("Calculating the accounts lt hash... Done in {duration:?}");
@@ -3275,7 +3294,7 @@ impl Bank {
 
     fn update_transaction_statuses(
         &self,
-        sanitized_txs: &[SanitizedTransaction],
+        sanitized_txs: &[RuntimeTransaction<SanitizedTransaction>],
         processing_results: &[TransactionProcessingResult],
     ) {
         let mut status_cache = self.status_cache.write().unwrap();
@@ -3285,7 +3304,7 @@ impl Bank {
                 // Add the message hash to the status cache to ensure that this message
                 // won't be processed again with a different signature.
                 status_cache.insert(
-                    tx.message().recent_blockhash(),
+                    tx.recent_blockhash(),
                     tx.message_hash(),
                     self.slot(),
                     processed_tx.status(),
@@ -3294,7 +3313,7 @@ impl Bank {
                 // can be queried by transaction signature over RPC. In the future, this should
                 // only be added for API nodes because voting validators don't need to do this.
                 status_cache.insert(
-                    tx.message().recent_blockhash(),
+                    tx.recent_blockhash(),
                     tx.signature(),
                     self.slot(),
                     processed_tx.status(),
@@ -3437,7 +3456,7 @@ impl Bank {
         let sanitized_txs = txs
             .into_iter()
             .map(|tx| {
-                SanitizedTransaction::try_create(
+                RuntimeTransaction::try_create(
                     tx,
                     MessageHash::Compute,
                     None,
@@ -3459,7 +3478,7 @@ impl Bank {
     }
 
     /// Attempt to take locks on the accounts in a transaction batch
-    pub fn try_lock_accounts(&self, txs: &[SanitizedTransaction]) -> Vec<Result<()>> {
+    pub fn try_lock_accounts(&self, txs: &[impl SVMMessage]) -> Vec<Result<()>> {
         let tx_account_lock_limit = self.get_transaction_account_lock_limit();
         self.rc
             .accounts
@@ -3467,10 +3486,10 @@ impl Bank {
     }
 
     /// Prepare a locked transaction batch from a list of sanitized transactions.
-    pub fn prepare_sanitized_batch<'a, 'b>(
+    pub fn prepare_sanitized_batch<'a, 'b, Tx: SVMMessage>(
         &'a self,
-        txs: &'b [SanitizedTransaction],
-    ) -> TransactionBatch<'a, 'b, SanitizedTransaction> {
+        txs: &'b [RuntimeTransaction<Tx>],
+    ) -> TransactionBatch<'a, 'b, Tx> {
         TransactionBatch::new(
             self.try_lock_accounts(txs),
             self,
@@ -3480,11 +3499,11 @@ impl Bank {
 
     /// Prepare a locked transaction batch from a list of sanitized transactions, and their cost
     /// limited packing status
-    pub fn prepare_sanitized_batch_with_results<'a, 'b>(
+    pub fn prepare_sanitized_batch_with_results<'a, 'b, Tx: SVMMessage>(
         &'a self,
-        transactions: &'b [SanitizedTransaction],
+        transactions: &'b [RuntimeTransaction<Tx>],
         transaction_results: impl Iterator<Item = Result<()>>,
-    ) -> TransactionBatch<'a, 'b, SanitizedTransaction> {
+    ) -> TransactionBatch<'a, 'b, Tx> {
         // this lock_results could be: Ok, AccountInUse, WouldExceedBlockMaxLimit or WouldExceedAccountMaxLimit
         let tx_account_lock_limit = self.get_transaction_account_lock_limit();
         let lock_results = self.rc.accounts.lock_accounts_with_results(
@@ -3496,13 +3515,12 @@ impl Bank {
     }
 
     /// Prepare a transaction batch from a single transaction without locking accounts
-    pub fn prepare_unlocked_batch_from_single_tx<'a>(
+    pub fn prepare_unlocked_batch_from_single_tx<'a, Tx: SVMMessage>(
         &'a self,
-        transaction: &'a SanitizedTransaction,
-    ) -> TransactionBatch<'_, '_, SanitizedTransaction> {
+        transaction: &'a RuntimeTransaction<Tx>,
+    ) -> TransactionBatch<'a, 'a, Tx> {
         let tx_account_lock_limit = self.get_transaction_account_lock_limit();
-        let lock_result =
-            validate_account_locks(transaction.message().account_keys(), tx_account_lock_limit);
+        let lock_result = validate_account_locks(transaction.account_keys(), tx_account_lock_limit);
         let mut batch = TransactionBatch::new(
             vec![lock_result],
             self,
@@ -3515,7 +3533,7 @@ impl Bank {
     /// Run transactions against a frozen bank without committing the results
     pub fn simulate_transaction(
         &self,
-        transaction: &SanitizedTransaction,
+        transaction: &RuntimeTransaction<SanitizedTransaction>,
         enable_cpi_recording: bool,
     ) -> TransactionSimulationResult {
         assert!(self.is_frozen(), "simulation bank must be frozen");
@@ -3527,7 +3545,7 @@ impl Bank {
     /// is frozen, enabling use in single-Bank test frameworks
     pub fn simulate_transaction_unchecked(
         &self,
-        transaction: &SanitizedTransaction,
+        transaction: &RuntimeTransaction<SanitizedTransaction>,
         enable_cpi_recording: bool,
     ) -> TransactionSimulationResult {
         let account_keys = transaction.message().account_keys();
@@ -3775,7 +3793,7 @@ impl Bank {
 
     fn collect_logs(
         &self,
-        transactions: &[SanitizedTransaction],
+        transactions: &[RuntimeTransaction<SanitizedTransaction>],
         processing_results: &[TransactionProcessingResult],
     ) {
         let transaction_log_collector_config =
@@ -3967,7 +3985,7 @@ impl Bank {
 
     pub fn commit_transactions(
         &self,
-        sanitized_txs: &[SanitizedTransaction],
+        sanitized_txs: &[RuntimeTransaction<SanitizedTransaction>],
         processing_results: Vec<TransactionProcessingResult>,
         processed_counts: &ProcessedTransactionCounts,
         timings: &mut ExecuteTimings,
@@ -4010,7 +4028,12 @@ impl Bank {
                 .accounts()
                 .accounts_db
                 .has_accounts_update_notifier()
-                .then(|| sanitized_txs.iter().collect::<Vec<_>>());
+                .then(|| {
+                    sanitized_txs
+                        .iter()
+                        .map(|tx| tx.as_sanitized_transaction())
+                        .collect::<Vec<_>>()
+                });
 
             let (accounts_to_store, transactions) = collect_accounts_to_store(
                 sanitized_txs,
@@ -5698,7 +5721,7 @@ impl Bank {
                         let start = Instant::now();
                         let mut lattice_verify_time = None;
                         let mut merkle_verify_time = None;
-                        match verify_kind {
+                        let is_ok = match verify_kind {
                             VerifyKind::Lattice => {
                                 // accounts lt hash is *enabled* so use lattice-based verification
                                 let accounts_db = &accounts_.accounts_db;
@@ -5710,16 +5733,18 @@ impl Bank {
                                                 &duplicates_lt_hash.unwrap(),
                                             )
                                     }));
-                                if calculated_accounts_lt_hash != expected_accounts_lt_hash {
+                                let is_ok =
+                                    calculated_accounts_lt_hash == expected_accounts_lt_hash;
+                                if !is_ok {
                                     let expected = expected_accounts_lt_hash.0.checksum();
                                     let calculated = calculated_accounts_lt_hash.0.checksum();
                                     error!(
                                         "Verifying accounts failed: accounts lattice hashes do not \
                                          match, expected: {expected}, calculated: {calculated}",
                                     );
-                                    return false;
                                 }
                                 lattice_verify_time = Some(duration);
+                                is_ok
                             }
                             VerifyKind::Merkle => {
                                 // accounts lt hash is *disabled* so use merkle-based verification
@@ -5727,7 +5752,7 @@ impl Bank {
                                     snapshot_storages.0.as_slice(),
                                     snapshot_storages.1.as_slice(),
                                 );
-                                let (result, duration) = meas_dur!(accounts_
+                                let (is_ok, duration) = meas_dur!(accounts_
                                     .verify_accounts_hash_and_lamports(
                                         snapshot_storages_and_slots,
                                         slot,
@@ -5740,12 +5765,10 @@ impl Bank {
                                             ..verify_config
                                         },
                                     ));
-                                if !result {
-                                    return false;
-                                }
                                 merkle_verify_time = Some(duration);
+                                is_ok
                             }
-                        }
+                        };
                         accounts_
                             .accounts_db
                             .verify_accounts_hash_in_bg
@@ -5765,7 +5788,7 @@ impl Bank {
                             ),
                         );
                         info!("Initial background accounts hash verification has stopped");
-                        true
+                        is_ok
                     })
                     .unwrap()
             });
@@ -5804,7 +5827,7 @@ impl Bank {
                         snapshot_storages.0.as_slice(),
                         snapshot_storages.1.as_slice(),
                     );
-                    let result = accounts.verify_accounts_hash_and_lamports(
+                    let is_ok = accounts.verify_accounts_hash_and_lamports(
                         snapshot_storages_and_slots,
                         slot,
                         capitalization,
@@ -5812,7 +5835,7 @@ impl Bank {
                         verify_config,
                     );
                     self.set_initial_accounts_hash_verification_completed();
-                    result
+                    is_ok
                 }
             }
         }
@@ -5879,7 +5902,7 @@ impl Bank {
         &self,
         tx: VersionedTransaction,
         verification_mode: TransactionVerificationMode,
-    ) -> Result<SanitizedTransaction> {
+    ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
         let sanitized_tx = {
             let size =
                 bincode::serialized_size(&tx).map_err(|_| TransactionError::SanitizeFailure)?;
@@ -5893,9 +5916,9 @@ impl Bank {
                 tx.message.hash()
             };
 
-            SanitizedTransaction::try_create(
+            RuntimeTransaction::try_create(
                 tx,
-                message_hash,
+                MessageHash::Precomputed(message_hash),
                 None,
                 self,
                 self.get_reserved_account_keys(),
@@ -5918,7 +5941,7 @@ impl Bank {
     pub fn fully_verify_transaction(
         &self,
         tx: VersionedTransaction,
-    ) -> Result<SanitizedTransaction> {
+    ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
         self.verify_transaction(tx, TransactionVerificationMode::FullVerification)
     }
 
@@ -6272,7 +6295,7 @@ impl Bank {
     /// a bank-level cache of vote accounts and stake delegation info
     fn update_stakes_cache(
         &self,
-        txs: &[SanitizedTransaction],
+        txs: &[RuntimeTransaction<SanitizedTransaction>],
         processing_results: &[TransactionProcessingResult],
     ) {
         debug_assert_eq!(txs.len(), processing_results.len());
@@ -6291,7 +6314,7 @@ impl Bank {
             })
             .filter(|(_, executed_tx)| executed_tx.was_successful())
             .flat_map(|(tx, executed_tx)| {
-                let num_account_keys = tx.message().account_keys().len();
+                let num_account_keys = tx.account_keys().len();
                 let loaded_tx = &executed_tx.loaded_transaction;
                 loaded_tx.accounts.iter().take(num_account_keys)
             })
@@ -7104,6 +7127,7 @@ impl Bank {
     }
 
     /// Prepare a transaction batch from a list of legacy transactions. Used for tests only.
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn prepare_batch_for_tests(
         &self,
         txs: Vec<Transaction>,
@@ -7111,7 +7135,7 @@ impl Bank {
         let transaction_account_lock_limit = self.get_transaction_account_lock_limit();
         let sanitized_txs = txs
             .into_iter()
-            .map(SanitizedTransaction::from_transaction_for_tests)
+            .map(RuntimeTransaction::from_transaction_for_tests)
             .collect::<Vec<_>>();
         let lock_results = self
             .rc

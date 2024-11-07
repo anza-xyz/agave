@@ -36,8 +36,6 @@
 extern crate self as solana_sdk;
 
 #[cfg(feature = "full")]
-pub use signer::signers;
-#[cfg(feature = "full")]
 pub use solana_commitment_config as commitment_config;
 #[cfg(not(target_os = "solana"))]
 pub use solana_program::program_stubs;
@@ -60,6 +58,9 @@ pub use solana_program::{
 };
 #[cfg(feature = "borsh")]
 pub use solana_program::{borsh, borsh0_10, borsh1};
+#[cfg(feature = "full")]
+#[deprecated(since = "2.2.0", note = "Use `solana-signer` crate instead")]
+pub use solana_signer::signers;
 pub mod client;
 pub mod compute_budget;
 pub mod deserialize_utils;
@@ -87,9 +88,14 @@ pub mod pubkey;
 pub mod quic;
 pub mod rent_collector;
 pub mod rent_debits;
-pub mod reserved_account_keys;
-pub mod reward_info;
-pub mod reward_type;
+#[deprecated(since = "2.2.0", note = "Use `solana-reward-info` crate instead")]
+pub mod reward_info {
+    pub use solana_reward_info::RewardInfo;
+}
+#[deprecated(since = "2.2.0", note = "Use `solana-reward-info` crate instead")]
+pub mod reward_type {
+    pub use solana_reward_info::RewardType;
+}
 pub mod rpc_port;
 pub mod secp256k1_instruction;
 pub mod shred_version;
@@ -142,6 +148,12 @@ pub use solana_program_memory as program_memory;
 /// assert_eq!(ID, my_id);
 /// ```
 pub use solana_pubkey::pubkey;
+#[cfg(feature = "full")]
+#[deprecated(
+    since = "2.2.0",
+    note = "Use `solana-reserved-account-keys` crate instead"
+)]
+pub use solana_reserved_account_keys as reserved_account_keys;
 #[deprecated(since = "2.1.0", note = "Use `solana-sanitize` crate instead")]
 pub use solana_sanitize as sanitize;
 /// Same as `declare_id` except report that this id has been deprecated.

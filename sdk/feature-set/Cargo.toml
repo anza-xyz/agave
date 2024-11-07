@@ -11,7 +11,6 @@ edition = { workspace = true }
 
 [dependencies]
 lazy_static = { workspace = true }
-solana-clock = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",

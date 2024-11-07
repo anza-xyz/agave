@@ -1,5 +1,5 @@
 //! The `packet` module defines data structures and methods to pull data from the network.
-pub use solana_sdk::packet::{Meta, Packet, PacketFlags, PACKET_DATA_SIZE};
+pub use solana_packet::{Meta, Packet, PacketFlags, PACKET_DATA_SIZE};
 use {
     crate::{cuda_runtime::PinnedVec, recycler::Recycler},
     bincode::config::Options,
@@ -90,9 +90,11 @@ impl PacketBatch {
                     // break the payload into smaller messages, and here any errors
                     // should be propagated.
                     error!("Couldn't write to packet {:?}. Data skipped.", e);
+                    packet.meta_mut().set_discard(true);
                 }
             } else {
                 trace!("Dropping packet, as destination is unknown");
+                packet.meta_mut().set_discard(true);
             }
         }
         batch
@@ -247,8 +249,8 @@ where
 mod tests {
     use {
         super::*,
+        solana_hash::Hash,
         solana_sdk::{
-            hash::Hash,
             signature::{Keypair, Signer},
             system_transaction,
         },
