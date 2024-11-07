@@ -15,7 +15,6 @@ use {
         parse_token::{get_token_account_mint, is_known_spl_token_id},
         UiAccount, UiAccountEncoding, UiDataSliceConfig, MAX_BASE58_BYTES,
     },
-    solana_accounts_db::blockhash_queue::BlockhashQueue,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_perf::packet::PACKET_DATA_SIZE,
     solana_program_runtime::loaded_programs::ProgramCacheEntry,
@@ -380,7 +379,7 @@ impl JsonRpcRequestProcessor {
     fn prepare_unlocked_batch_from_single_tx<'a>(
         &'a self,
         transaction: &'a SanitizedTransaction,
-    ) -> TransactionBatch<'_> {
+    ) -> TransactionBatch<'a> {
         let tx_account_lock_limit = solana_sdk::transaction::MAX_TX_ACCOUNT_LOCKS;
         let lock_result = transaction
             .get_account_locks(tx_account_lock_limit)
@@ -400,7 +399,6 @@ impl JsonRpcRequestProcessor {
         error_counters: &mut TransactionErrorMetrics,
     ) -> Vec<TransactionCheckResult> {
         let last_blockhash = Hash::default();
-        let blockhash_queue = BlockhashQueue::default();
         let next_durable_nonce = DurableNonce::from_blockhash(&last_blockhash);
 
         sanitized_txs
@@ -411,7 +409,6 @@ impl JsonRpcRequestProcessor {
                     tx.borrow(),
                     max_age,
                     &next_durable_nonce,
-                    &blockhash_queue,
                     error_counters,
                 ),
                 Err(e) => Err(e.clone()),
@@ -424,7 +421,6 @@ impl JsonRpcRequestProcessor {
         _tx: &SanitizedTransaction,
         _max_age: usize,
         _next_durable_nonce: &DurableNonce,
-        _hash_queue: &BlockhashQueue,
         _error_counters: &mut TransactionErrorMetrics,
     ) -> TransactionCheckResult {
         /* for now just return defaults */

@@ -35,14 +35,11 @@ members = [
     "core",
     "cost-model",
     "curves/*",
-    "define-syscall",
     "dos",
     "download-utils",
     "entry",
     "faucet",
     "fee",
-    "frozen-abi",
-    "frozen-abi/macro",
     "genesis",
     "genesis-utils",
     "geyser-plugin-interface",
@@ -57,7 +54,6 @@ members = [
     "local-cluster",
     "log-analyzer",
     "log-collector",
-    "logger",
     "measure",
     "memory-management",
     "merkle-root-bench",
@@ -112,16 +108,22 @@ members = [
     "sdk/commitment-config",
     "sdk/cpi",
     "sdk/decode-error",
+    "sdk/define-syscall",
     "sdk/derivation-path",
     "sdk/epoch-rewards",
     "sdk/epoch-schedule",
     "sdk/feature-set",
     "sdk/fee-calculator",
     "sdk/fee-structure",
+    "sdk/file-download",
+    "sdk/frozen-abi",
+    "sdk/frozen-abi/macro",
     "sdk/gen-headers",
     "sdk/hash",
     "sdk/inflation",
     "sdk/instruction",
+    "sdk/keypair",
+    "sdk/logger",
     "sdk/macro",
     "sdk/msg",
     "sdk/native-token",
@@ -130,6 +132,7 @@ members = [
     "sdk/package-metadata-macro",
     "sdk/packet",
     "sdk/precompile-error",
+    "sdk/presigner",
     "sdk/program",
     "sdk/program-entrypoint",
     "sdk/program-error",
@@ -138,11 +141,17 @@ members = [
     "sdk/program-pack",
     "sdk/pubkey",
     "sdk/rent",
+    "sdk/reserved-account-keys",
     "sdk/sanitize",
+    "sdk/sdk-ids",
+    "sdk/seed-derivable",
+    "sdk/seed-phrase",
     "sdk/serde-varint",
     "sdk/serialize-utils",
     "sdk/sha256-hasher",
+    "sdk/short-vec",
     "sdk/signature",
+    "sdk/signer",
     "sdk/slot-hashes",
     "sdk/slot-history",
     "sdk/stable-layout",
@@ -150,7 +159,6 @@ members = [
     "sdk/time-utils",
     "sdk/transaction-error",
     "send-transaction-service",
-    "short-vec",
     "stake-accounts",
     "storage-bigtable",
     "storage-bigtable/build-proto",
@@ -214,8 +222,8 @@ agave-transaction-view = { path = "transaction-view", version = "=2.2.0" }
 aquamarine = "0.3.3"
 aes-gcm-siv = "0.11.1"
 ahash = "0.8.11"
-anyhow = "1.0.92"
-arbitrary = "1.3.2"
+anyhow = "1.0.93"
+arbitrary = "1.4.1"
 ark-bn254 = "0.4.0"
 ark-ec = "0.4.0"
 ark-ff = "0.4.0"
@@ -264,7 +272,7 @@ ctrlc = "3.4.5"
 curve25519-dalek = { version = "4.1.3", features = ["digest", "rand_core"] }
 dashmap = "5.5.3"
 derivation-path = { version = "0.2.0", default-features = false }
-derivative = "2.2.0"
+derive-where = "1.2.7"
 dialoguer = "0.10.4"
 digest = "0.10.7"
 dir-diff = "0.3.3"
@@ -359,6 +367,7 @@ quinn = "0.11.4"
 quinn-proto = "0.11.7"
 quote = "1.0"
 rand = "0.8.5"
+rand0-7 = { package = "rand", version = "0.7" }
 rand_chacha = "0.3.1"
 rayon = "1.10.0"
 reed-solomon-erasure = "6.0.0"
@@ -423,7 +432,7 @@ solana-cost-model = { path = "cost-model", version = "=2.2.0" }
 solana-cpi = { path = "sdk/cpi", version = "=2.2.0" }
 solana-curve25519 = { path = "curves/curve25519", version = "=2.2.0" }
 solana-decode-error = { path = "sdk/decode-error", version = "=2.2.0" }
-solana-define-syscall = { path = "define-syscall", version = "=2.2.0" }
+solana-define-syscall = { path = "sdk/define-syscall", version = "=2.2.0" }
 solana-derivation-path = { path = "sdk/derivation-path", version = "=2.2.0" }
 solana-download-utils = { path = "download-utils", version = "=2.2.0" }
 solana-entry = { path = "entry", version = "=2.2.0" }
@@ -435,9 +444,10 @@ solana-feature-set = { path = "sdk/feature-set", version = "=2.2.0" }
 solana-fee-calculator = { path = "sdk/fee-calculator", version = "=2.2.0" }
 solana-fee = { path = "fee", version = "=2.2.0" }
 solana-fee-structure = { path = "sdk/fee-structure", version = "=2.2.0" }
-solana-frozen-abi = { path = "frozen-abi", version = "=2.2.0" }
-solana-frozen-abi-macro = { path = "frozen-abi/macro", version = "=2.2.0" }
+solana-frozen-abi = { path = "sdk/frozen-abi", version = "=2.2.0" }
+solana-frozen-abi-macro = { path = "sdk/frozen-abi/macro", version = "=2.2.0" }
 solana-tps-client = { path = "tps-client", version = "=2.2.0" }
+solana-file-download = { path = "sdk/file-download", version = "=2.2.0" }
 solana-genesis = { path = "genesis", version = "=2.2.0" }
 solana-genesis-utils = { path = "genesis-utils", version = "=2.2.0" }
 agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=2.2.0" }
@@ -447,13 +457,14 @@ solana-hash = { path = "sdk/hash", version = "=2.2.0", default-features = false 
 solana-inflation = { path = "sdk/inflation", version = "=2.2.0" }
 solana-inline-spl = { path = "inline-spl", version = "=2.2.0" }
 solana-instruction = { path = "sdk/instruction", version = "=2.2.0", default-features = false }
+solana-keypair = { path = "sdk/keypair", version = "=2.2.0" }
 solana-last-restart-slot = { path = "sdk/last-restart-slot", version = "=2.2.0" }
 solana-lattice-hash = { path = "lattice-hash", version = "=2.2.0" }
 solana-ledger = { path = "ledger", version = "=2.2.0" }
 solana-loader-v4-program = { path = "programs/loader-v4", version = "=2.2.0" }
 solana-local-cluster = { path = "local-cluster", version = "=2.2.0" }
 solana-log-collector = { path = "log-collector", version = "=2.2.0" }
-solana-logger = { path = "logger", version = "=2.2.0" }
+solana-logger = { path = "sdk/logger", version = "=2.2.0" }
 solana-measure = { path = "measure", version = "=2.2.0" }
 solana-merkle-tree = { path = "merkle-tree", version = "=2.2.0" }
 solana-metrics = { path = "metrics", version = "=2.2.0" }
@@ -470,6 +481,7 @@ solana-perf = { path = "perf", version = "=2.2.0" }
 solana-poh = { path = "poh", version = "=2.2.0" }
 solana-poseidon = { path = "poseidon", version = "=2.2.0" }
 solana-precompile-error = { path = "sdk/precompile-error", version = "=2.2.0" }
+solana-presigner = { path = "sdk/presigner", version = "=2.2.0" }
 solana-program = { path = "sdk/program", version = "=2.2.0", default-features = false }
 solana-program-error = { path = "sdk/program-error", version = "=2.2.0" }
 solana-program-memory = { path = "sdk/program-memory", version = "=2.2.0" }
@@ -483,12 +495,16 @@ solana-quic-client = { path = "quic-client", version = "=2.2.0" }
 solana-rayon-threadlimit = { path = "rayon-threadlimit", version = "=2.2.0" }
 solana-remote-wallet = { path = "remote-wallet", version = "=2.2.0", default-features = false }
 solana-rent = { path = "sdk/rent", version = "=2.2.0", default-features = false }
+solana-reserved-account-keys = { path = "sdk/reserved-account-keys", version = "=2.2.0", default-features = false }
 solana-reward-info = { path = "sdk/reward-info", version = "=2.2.0" }
 solana-sanitize = { path = "sdk/sanitize", version = "=2.2.0" }
+solana-seed-derivable = { path = "sdk/seed-derivable", version = "=2.2.0" }
+solana-seed-phrase = { path = "sdk/seed-phrase", version = "=2.2.0" }
 solana-serde-varint = { path = "sdk/serde-varint", version = "=2.2.0" }
 solana-serialize-utils = { path = "sdk/serialize-utils", version = "=2.2.0" }
 solana-sha256-hasher = { path = "sdk/sha256-hasher", version = "=2.2.0" }
 solana-signature = { path = "sdk/signature", version = "=2.2.0", default-features = false }
+solana-signer = { path = "sdk/signer", version = "=2.2.0" }
 solana-slot-hashes = { path = "sdk/slot-hashes", version = "=2.2.0" }
 solana-slot-history = { path = "sdk/slot-history", version = "=2.2.0" }
 solana-time-utils = { path = "sdk/time-utils", version = "=2.2.0" }
@@ -502,10 +518,11 @@ solana-rpc-client-nonce-utils = { path = "rpc-client-nonce-utils", version = "=2
 solana-runtime = { path = "runtime", version = "=2.2.0" }
 solana-runtime-transaction = { path = "runtime-transaction", version = "=2.2.0" }
 solana-sdk = { path = "sdk", version = "=2.2.0" }
+solana-sdk-ids = { path = "sdk/sdk-ids", version = "=2.2.0" }
 solana-sdk-macro = { path = "sdk/macro", version = "=2.2.0" }
 solana-secp256k1-recover = { path = "curves/secp256k1-recover", version = "=2.2.0", default-features = false }
 solana-send-transaction-service = { path = "send-transaction-service", version = "=2.2.0" }
-solana-short-vec = { path = "short-vec", version = "=2.2.0" }
+solana-short-vec = { path = "sdk/short-vec", version = "=2.2.0" }
 solana-stable-layout = { path = "sdk/stable-layout", version = "=2.2.0" }
 solana-stake-program = { path = "programs/stake", version = "=2.2.0" }
 solana-storage-bigtable = { path = "storage-bigtable", version = "=2.2.0" }
@@ -560,7 +577,7 @@ tar = "0.4.43"
 tarpc = "0.29.0"
 tempfile = "3.13.0"
 test-case = "3.3.1"
-thiserror = "1.0.67"
+thiserror = "1.0.68"
 tiny-bip39 = "0.8.2"
 # Update solana-tokio patch below when updating this version
 tokio = "1.29.1"
@@ -574,7 +591,7 @@ tonic-build = "0.9.2"
 trees = "0.4.2"
 tungstenite = "0.20.1"
 uriparse = "0.6.4"
-url = "2.5.2"
+url = "2.5.3"
 vec_extract_if_polyfill = "0.1.0"
 wasm-bindgen = "0.2"
 winapi = "0.3.8"
