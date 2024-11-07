@@ -1781,7 +1781,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             }
                             Ok(NewTaskPayload::Reset(_)) if matches!(state_machine.mode(), SchedulingMode::BlockProduction) => {
                                 session_resetting = true;
-                                log_scheduler!(info, "drain_rebuf");
+                                log_scheduler!(info, "draining");
                             }
                             Ok(NewTaskPayload::Payload(task)) if matches!(state_machine.mode(), SchedulingMode::BlockProduction) => {
                                 assert!(state_machine.do_schedule_task(task, true).is_none());
