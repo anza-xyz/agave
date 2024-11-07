@@ -280,20 +280,21 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             &mut error_metrics
         ));
 
-        let (mut program_accounts_map, filter_executable_us) =
-            measure_us!(Self::filter_executable_program_accounts(
+        let native_loader = native_loader::id();
+        let (program_accounts_map, filter_executable_us) = measure_us!({
+            let mut program_accounts_map = Self::filter_executable_program_accounts(
                 callbacks,
                 sanitized_txs,
                 &validation_results,
-                PROGRAM_OWNERS
-            ));
-
-        let (mut program_cache_for_tx_batch, program_cache_us) = measure_us!({
-            let native_loader = native_loader::id();
+                PROGRAM_OWNERS,
+            );
             for builtin_program in self.builtin_program_ids.read().unwrap().iter() {
                 program_accounts_map.insert(*builtin_program, (&native_loader, 0));
             }
+            program_accounts_map
+        });
 
+        let (mut program_cache_for_tx_batch, program_cache_us) = measure_us!({
             let program_cache_for_tx_batch = self.replenish_program_cache(
                 callbacks,
                 &program_accounts_map,
@@ -324,6 +325,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             environment
                 .rent_collector
                 .unwrap_or(&RentCollector::default()),
+            &program_accounts_map,
             &program_cache_for_tx_batch,
         ));
 
