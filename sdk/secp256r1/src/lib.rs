@@ -90,11 +90,9 @@ mod target_arch {
         signing_key: EcKey<Private>,
     ) -> Result<Instruction, Box<dyn std::error::Error>> {
         let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
-        assert_eq!(
-            signing_key.group().curve_name(),
-            Some(Nid::X9_62_PRIME256V1),
-            "Signing key must be on the secp256r1 curve"
-        );
+        if signing_key.group().curve_name() != Some(Nid::X9_62_PRIME256V1) {
+            return Err(("Signing key must be on the secp256r1 curve".to_string()).into());
+        }
 
         let mut ctx = BigNumContext::new()?;
         let pubkey = signing_key.public_key().to_bytes(
@@ -114,6 +112,7 @@ mod target_arch {
         let s = ecdsa_sig.s().to_vec();
         let mut signature = vec![0u8; SIGNATURE_SERIALIZED_SIZE];
 
+        // Incase of an r or s value of 31 bytes we need to pad it to 32 bytes
         let mut padded_r = vec![0u8; FIELD_SIZE];
         let mut padded_s = vec![0u8; FIELD_SIZE];
         padded_r[FIELD_SIZE.saturating_sub(r.len())..].copy_from_slice(&r);
@@ -129,7 +128,14 @@ mod target_arch {
         if s_bignum > half_order {
             let mut new_s = BigNum::new()?;
             new_s.checked_sub(&order, &s_bignum)?;
-            signature[FIELD_SIZE..].copy_from_slice(&new_s.to_vec());
+            let new_s_bytes = new_s.to_vec();
+
+            // Incase the new s value is 31 bytes we need to pad it to 32 bytes
+            let mut new_padded_s = vec![0u8; FIELD_SIZE];
+            new_padded_s[FIELD_SIZE.saturating_sub(new_s_bytes.len())..]
+                .copy_from_slice(&new_s_bytes);
+
+            signature[FIELD_SIZE..].copy_from_slice(&new_padded_s);
         }
 
         assert_eq!(pubkey.len(), COMPRESSED_PUBKEY_SERIALIZED_SIZE);
@@ -186,9 +192,7 @@ mod target_arch {
         if num_signatures > 8 {
             return Err(PrecompileError::InvalidInstructionDataSize);
         }
-        if num_signatures == 0 && data.len() > SIGNATURE_OFFSETS_START {
-            return Err(PrecompileError::InvalidInstructionDataSize);
-        }
+
         let expected_data_size = num_signatures
             .saturating_mul(SIGNATURE_OFFSETS_SERIALIZED_SIZE)
             .saturating_add(SIGNATURE_OFFSETS_START);
@@ -326,7 +330,6 @@ mod target_arch {
     mod test {
         use {
             super::*,
-            rand0_7::{thread_rng, Rng},
             solana_feature_set::FeatureSet,
             solana_sdk::{
                 hash::Hash,
@@ -403,6 +406,33 @@ mod target_arch {
             );
         }
 
+        #[test]
+        fn test_invalid_signature_data_size() {
+            solana_logger::setup();
+
+            // Test data.len() < SIGNATURE_OFFSETS_START
+            let small_data = vec![0u8; SIGNATURE_OFFSETS_START - 1];
+            assert_eq!(
+                verify(&small_data, &[&[]], &FeatureSet::all_enabled()),
+                Err(PrecompileError::InvalidInstructionDataSize)
+            );
+
+            // Test num_signatures == 0
+            let mut zero_sigs_data = vec![0u8; DATA_START];
+            zero_sigs_data[0] = 0; // Set num_signatures to 0
+            assert_eq!(
+                verify(&zero_sigs_data, &[&[]], &FeatureSet::all_enabled()),
+                Err(PrecompileError::InvalidInstructionDataSize)
+            );
+
+            // Test num_signatures > 8
+            let mut too_many_sigs = vec![0u8; DATA_START];
+            too_many_sigs[0] = 9; // Set num_signatures to 9
+            assert_eq!(
+                verify(&too_many_sigs, &[&[]], &FeatureSet::all_enabled()),
+                Err(PrecompileError::InvalidInstructionDataSize)
+            );
+        }
         #[test]
         fn test_message_data_offsets() {
             let offsets = Secp256r1SignatureOffsets {
@@ -494,7 +524,7 @@ mod target_arch {
             let message_arr = b"hello";
             let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
             let signing_key = EcKey::generate(&group).unwrap();
-            let instruction = new_secp256r1_instruction(message_arr, signing_key).unwrap();
+            let mut instruction = new_secp256r1_instruction(message_arr, signing_key).unwrap();
             let mint_keypair = Keypair::new();
             let feature_set = FeatureSet::all_enabled();
 
@@ -507,21 +537,18 @@ mod target_arch {
 
             assert!(tx.verify_precompiles(&feature_set).is_ok());
 
-            let mut instruction = instruction;
-            let index = loop {
-                let index = thread_rng().gen_range(0, instruction.data.len());
-                if index != 1 {
-                    break index;
-                }
-            };
-
-            instruction.data[index] = instruction.data[index].wrapping_add(12);
+            // The message is the last field in the instruction data so
+            // changing its last byte will also change the signature validity
+            let message_byte_index = instruction.data.len() - 1;
+            instruction.data[message_byte_index] =
+                instruction.data[message_byte_index].wrapping_add(12);
             let tx = Transaction::new_signed_with_payer(
-                &[instruction],
+                &[instruction.clone()],
                 Some(&mint_keypair.pubkey()),
                 &[&mint_keypair],
                 Hash::default(),
             );
+
             assert!(tx.verify_precompiles(&feature_set).is_err());
         }
 
@@ -569,7 +596,7 @@ mod target_arch {
             assert!(tx_fail.unwrap_err() == PrecompileError::InvalidSignature);
         }
         #[test]
-        fn test_secp256r1_31byte_components() {
+        fn test_new_secp256r1_instruction_31byte_components() {
             solana_logger::setup();
             let message_arr = b"hello";
             let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
@@ -607,6 +634,19 @@ mod target_arch {
                     break;
                 }
             }
+        }
+
+        #[test]
+        fn test_new_secp256r1_instruction_signing_key() {
+            solana_logger::setup();
+            let message_arr = b"hello";
+            let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+            let signing_key = EcKey::generate(&group).unwrap();
+            assert!(new_secp256r1_instruction(message_arr, signing_key).is_ok());
+
+            let incorrect_group = EcGroup::from_curve_name(Nid::X9_62_PRIME192V1).unwrap();
+            let incorrect_key = EcKey::generate(&incorrect_group).unwrap();
+            assert!(new_secp256r1_instruction(message_arr, incorrect_key).is_err());
         }
         #[test]
         fn test_secp256r1_order() {
@@ -656,10 +696,7 @@ mod target_arch {
             let our_half_order = BigNum::from_slice(&SECP256R1_HALF_ORDER).unwrap();
 
             // Compare the calculated half order with our constant
-            assert_eq!(
-                calculated_half_order, our_half_order,
-                "Calculated half order does not match our SECP256R1_HALF_ORDER constant"
-            );
+            assert_eq!(calculated_half_order, our_half_order);
         }
 
         #[test]

@@ -5133,9 +5133,9 @@ dependencies = [
 
 [[package]]
 name = "rustc-demangle"
-version = "0.1.21"
+version = "0.1.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ef03e0a2b150c7a90d01faf6254c9c48a41e95fb2a8c2ac1c6f0d2b9aefc342"
+checksum = "719b953e2095829ee67db738b3bfa9fa368c94900df327b3f07fe6e794d2fe1f"
 
 [[package]]
 name = "rustc-hash"
@@ -8348,8 +8348,6 @@ version = "2.2.0"
 dependencies = [
  "bytemuck",
  "openssl",
- "rand 0.7.3",
- "rand 0.8.5",
  "solana-feature-set",
  "solana-instruction",
  "solana-logger",

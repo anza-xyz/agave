@@ -20,8 +20,6 @@ solana-pubkey = { workspace = true }
 openssl = { workspace = true }
 
 [dev-dependencies]
-rand = { workspace = true }
-rand0-7 = { package = "rand", version = "0.7" }
 solana-logger = { workspace = true }
 solana-sdk = { path = "../" }
 solana-transaction-error = { workspace = true }
@@ -44,3 +42,5 @@ all_features = true
 
 [lints]
 workspace = true
+
+
