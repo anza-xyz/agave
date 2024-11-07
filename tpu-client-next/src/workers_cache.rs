@@ -8,7 +8,10 @@ use {
     lru::LruCache,
     std::net::SocketAddr,
     thiserror::Error,
-    tokio::{sync::mpsc, task::JoinHandle},
+    tokio::{
+        sync::mpsc::{self, error::TrySendError},
+        task::JoinHandle,
+    },
     tokio_util::sync::CancellationToken,
 };
 
@@ -35,8 +38,8 @@ impl WorkerInfo {
 
     fn try_send_transactions(&self, txs_batch: TransactionBatch) -> Result<(), WorkersCacheError> {
         self.sender.try_send(txs_batch).map_err(|err| match err {
-            mpsc::error::TrySendError::Full(_) => WorkersCacheError::FullChannel,
-            mpsc::error::TrySendError::Closed(_) => WorkersCacheError::ReceiverDropped,
+            TrySendError::Full(_) => WorkersCacheError::FullChannel,
+            TrySendError::Closed(_) => WorkersCacheError::ReceiverDropped,
         })?;
         Ok(())
     }
@@ -180,13 +183,14 @@ impl ShutdownWorker {
 }
 
 pub(crate) fn maybe_shutdown_worker(worker: Option<ShutdownWorker>) {
-    if let Some(worker) = worker {
-        tokio::spawn(async move {
-            let leader = worker.leader();
-            let res = worker.shutdown().await;
-            if let Err(err) = res {
-                debug!("Error while shutting down worker for {leader}: {err}");
-            }
-        });
-    }
+    let Some(worker) = worker else {
+        return;
+    };
+    tokio::spawn(async move {
+        let leader = worker.leader();
+        let res = worker.shutdown().await;
+        if let Err(err) = res {
+            debug!("Error while shutting down worker for {leader}: {err}");
+        }
+    });
 }

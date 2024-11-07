@@ -168,7 +168,7 @@ impl fmt::Display for SendTransactionStats {
 /// For tests it is useful to be have PartialEq but we cannot have it on top of
 /// atomics. This macro creates a structure with the same attributes but of type
 /// u64.
-macro_rules! define_non_atomic_struct {
+macro_rules! define_non_atomic_struct_for {
     ($name:ident, $atomic_name:ident, {$($field:ident),* $(,)?}) => {
         #[derive(Debug, Default, PartialEq)]
         pub struct $name {
@@ -186,7 +186,7 @@ macro_rules! define_non_atomic_struct {
 }
 
 // Define the non-atomic struct and the `to_non_atomic` conversion method
-define_non_atomic_struct!(
+define_non_atomic_struct_for!(
     SendTransactionStatsNonAtomic,
     SendTransactionStats,
     {

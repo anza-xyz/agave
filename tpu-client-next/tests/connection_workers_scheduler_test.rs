@@ -20,8 +20,7 @@ use {
         leader_updater::create_leader_updater,
         send_transaction_stats::SendTransactionStatsNonAtomic,
         transaction_batch::TransactionBatch,
-        ConnectionWorkersScheduler, ConnectionWorkersSchedulerError, SendTransactionStats,
-        SendTransactionStatsPerAddr,
+        ConnectionWorkersScheduler, ConnectionWorkersSchedulerError, SendTransactionStatsPerAddr,
     },
     std::{
         collections::HashMap,
@@ -48,6 +47,11 @@ fn test_config(validator_identity: Option<Keypair>) -> ConnectionWorkersSchedule
         stake_identity: validator_identity,
         num_connections: 1,
         skip_check_transaction_age: false,
+        // At the moment we have only one strategy to send transactions: we try
+        // to put to worker channel transaction batch and in case of failure
+        // just drop it. This requires to use large channels here. In the
+        // future, we are planning to add an option to send with backpressure at
+        // the speed of fastest leader.
         worker_channel_size: 100,
         max_reconnect_attempts: 4,
         lookahead_slots: 1,
@@ -92,7 +96,7 @@ async fn join_scheduler(
     scheduler_handle: JoinHandle<
         Result<SendTransactionStatsPerAddr, ConnectionWorkersSchedulerError>,
     >,
-) -> Arc<SendTransactionStats> {
+) -> SendTransactionStatsNonAtomic {
     let stats_per_ip = scheduler_handle
         .await
         .unwrap()
@@ -100,7 +104,7 @@ async fn join_scheduler(
     stats_per_ip
         .get(&IpAddr::from_str("127.0.0.1").unwrap())
         .expect("setup_connection_worker_scheduler() connected to a leader at 127.0.0.1")
-        .clone()
+        .to_non_atomic()
 }
 
 // Specify the pessimistic time to finish generation and result checks.
@@ -239,7 +243,7 @@ async fn test_basic_transactions_sending() {
 
     // Stop sending
     tx_sender_shutdown.await;
-    let localhost_stats = join_scheduler(scheduler_handle).await.to_non_atomic();
+    let localhost_stats = join_scheduler(scheduler_handle).await;
     assert_eq!(
         localhost_stats,
         SendTransactionStatsNonAtomic {
@@ -316,7 +320,7 @@ async fn test_connection_denied_until_allowed() {
 
     // Wait for the exchange to finish.
     tx_sender_shutdown.await;
-    let localhost_stats = join_scheduler(scheduler_handle).await.to_non_atomic();
+    let localhost_stats = join_scheduler(scheduler_handle).await;
     // in case of pruning, server closes the connection with code 1 and error
     // message b"dropped". This might lead to connection error
     // (ApplicationClosed::ApplicationClose) or to stream error
@@ -375,7 +379,7 @@ async fn test_connection_pruned_and_reopened() {
 
     // Wait for the exchange to finish.
     tx_sender_shutdown.await;
-    let localhost_stats = join_scheduler(scheduler_handle).await.to_non_atomic();
+    let localhost_stats = join_scheduler(scheduler_handle).await;
     // in case of pruning, server closes the connection with code 1 and error
     // message b"dropped". This might lead to connection error
     // (ApplicationClosed::ApplicationClose) or to stream error
@@ -436,7 +440,7 @@ async fn test_staked_connection() {
 
     // Wait for the exchange to finish.
     tx_sender_shutdown.await;
-    let localhost_stats = join_scheduler(scheduler_handle).await.to_non_atomic();
+    let localhost_stats = join_scheduler(scheduler_handle).await;
     assert_eq!(
         localhost_stats,
         SendTransactionStatsNonAtomic {
@@ -483,7 +487,7 @@ async fn test_connection_throttling() {
 
     // Stop sending
     tx_sender_shutdown.await;
-    let localhost_stats = join_scheduler(scheduler_handle).await.to_non_atomic();
+    let localhost_stats = join_scheduler(scheduler_handle).await;
     assert_eq!(
         localhost_stats,
         SendTransactionStatsNonAtomic {
@@ -584,7 +588,7 @@ async fn test_rate_limiting() {
 
     // And the scheduler.
     scheduler_cancel.cancel();
-    let localhost_stats = join_scheduler(scheduler_handle).await.to_non_atomic();
+    let localhost_stats = join_scheduler(scheduler_handle).await;
 
     // We do not expect to see any errors, as the connection is in the pending state still, when we
     // do the shutdown.  If we increase the time we wait in `count_received_packets_for`, we would
@@ -648,7 +652,7 @@ async fn test_rate_limiting_establish_connection() {
 
     // And the scheduler.
     scheduler_cancel.cancel();
-    let mut localhost_stats = join_scheduler(scheduler_handle).await.to_non_atomic();
+    let mut localhost_stats = join_scheduler(scheduler_handle).await;
     assert!(
         localhost_stats.connection_error_timed_out > 0,
         "As the quinn timeout is below 1 minute, a few connections will fail to connect during \
