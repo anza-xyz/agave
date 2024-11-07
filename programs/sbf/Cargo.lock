@@ -7333,6 +7333,7 @@ dependencies = [
 name = "solana-send-transaction-service"
 version = "2.2.0"
 dependencies = [
+ "async-trait",
  "crossbeam-channel",
  "itertools 0.12.1",
  "log",
@@ -7340,9 +7341,12 @@ dependencies = [
  "solana-connection-cache",
  "solana-measure",
  "solana-metrics",
+ "solana-quic-client",
  "solana-runtime",
  "solana-sdk",
- "solana-tpu-client",
+ "solana-tpu-client-next",
+ "tokio",
+ "tokio-util 0.7.1",
 ]
 
 [[package]]
@@ -7735,6 +7739,27 @@ dependencies = [
  "solana-sdk",
  "thiserror 2.0.3",
  "tokio",
+]
+
+[[package]]
+name = "solana-tpu-client-next"
+version = "2.2.0"
+dependencies = [
+ "async-trait",
+ "log",
+ "lru",
+ "quinn",
+ "rustls 0.23.19",
+ "solana-connection-cache",
+ "solana-logger",
+ "solana-measure",
+ "solana-rpc-client",
+ "solana-sdk",
+ "solana-streamer",
+ "solana-tpu-client",
+ "thiserror 2.0.3",
+ "tokio",
+ "tokio-util 0.7.1",
 ]
 
 [[package]]
