@@ -238,10 +238,10 @@ impl ConnectionWorkersScheduler {
 /// Splits the input vector of leaders into two parts based on the `fanout` configuration:
 /// * the first vector contains the leaders to which transactions will be sent.
 /// * the second vector contains the remaining leaders, used to warm up connections.
-fn split_leaders<'a>(
-    leaders: &'a [SocketAddr],
-    fanout: &'a LeadersFanout,
-) -> (&'a [SocketAddr], &'a [SocketAddr]) {
+fn split_leaders<'leaders>(
+    leaders: &'leaders [SocketAddr],
+    fanout: &LeadersFanout,
+) -> (&'leaders [SocketAddr], &'leaders [SocketAddr]) {
     let count = match fanout {
         LeadersFanout::All => leaders.len(),
         LeadersFanout::Next(count) => (*count).min(leaders.len()),
