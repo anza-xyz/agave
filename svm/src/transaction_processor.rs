@@ -293,6 +293,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             environment
                 .rent_collector
                 .unwrap_or(&RentCollector::default()),
+            &program_accounts_map,
             &program_cache_for_tx_batch.borrow(),
         );
         load_time.stop();

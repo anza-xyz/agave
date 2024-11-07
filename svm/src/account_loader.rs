@@ -9,7 +9,7 @@ use {
     solana_compute_budget::compute_budget_processor::{
         process_compute_budget_instructions, ComputeBudgetLimits,
     },
-    solana_program_runtime::loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
+    solana_program_runtime::loaded_programs::ProgramCacheForTxBatch,
     solana_sdk::{
         account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
         feature_set::{self, FeatureSet},
@@ -27,7 +27,7 @@ use {
         transaction_context::{IndexOfAccount, TransactionAccount},
     },
     solana_system_program::{get_system_account_kind, SystemAccountKind},
-    std::num::NonZeroUsize,
+    std::{collections::HashMap, num::NonZeroUsize},
 };
 
 // for the load instructions
@@ -162,6 +162,7 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
     account_overrides: Option<&AccountOverrides>,
     feature_set: &FeatureSet,
     rent_collector: &RentCollector,
+    program_accounts: &HashMap<Pubkey, (&Pubkey, u64)>,
     loaded_programs: &ProgramCacheForTxBatch,
 ) -> Vec<TransactionLoadResult> {
     txs.iter()
@@ -179,6 +180,7 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
                     account_overrides,
                     feature_set,
                     rent_collector,
+                    program_accounts,
                     loaded_programs,
                 )
             }
@@ -195,6 +197,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     account_overrides: Option<&AccountOverrides>,
     feature_set: &FeatureSet,
     rent_collector: &RentCollector,
+    program_accounts: &HashMap<Pubkey, (&Pubkey, u64)>,
     loaded_programs: &ProgramCacheForTxBatch,
 ) -> Result<LoadedTransaction> {
     let mut tx_rent: TransactionRent = 0;
@@ -240,13 +243,10 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                     .then_some(())
                     .and_then(|_| loaded_programs.find(key))
                 {
-                    callbacks
-                        .get_account_shared_data(key)
-                        .ok_or(TransactionError::AccountNotFound)?;
                     // Optimization to skip loading of accounts which are only used as
                     // programs in top-level instructions and not passed as instruction accounts.
-                    let program_account = account_shared_data_from_program(&program);
-                    (program.account_size, program_account, 0)
+                    account_shared_data_from_program(key, program_accounts)
+                        .map(|program_account| (program.account_size, program_account, 0))?
                 } else {
                     callbacks
                         .get_account_shared_data(key)
@@ -391,14 +391,20 @@ fn get_requested_loaded_accounts_data_size_limit(
     )
 }
 
-fn account_shared_data_from_program(loaded_program: &ProgramCacheEntry) -> AccountSharedData {
+fn account_shared_data_from_program(
+    key: &Pubkey,
+    program_accounts: &HashMap<Pubkey, (&Pubkey, u64)>,
+) -> Result<AccountSharedData> {
     // It's an executable program account. The program is already loaded in the cache.
     // So the account data is not needed. Return a dummy AccountSharedData with meta
     // information.
     let mut program_account = AccountSharedData::default();
-    program_account.set_owner(loaded_program.account_owner());
+    let (program_owner, _count) = program_accounts
+        .get(key)
+        .ok_or(TransactionError::AccountNotFound)?;
+    program_account.set_owner(**program_owner);
     program_account.set_executable(true);
-    program_account
+    Ok(program_account)
 }
 
 /// Accumulate loaded account data size into `accumulated_accounts_data_size`.
@@ -511,6 +517,7 @@ mod tests {
             None,
             feature_set,
             rent_collector,
+            &HashMap::new(),
             &ProgramCacheForTxBatch::default(),
         )
     }
@@ -796,6 +803,7 @@ mod tests {
             account_overrides,
             &FeatureSet::all_enabled(),
             &RentCollector::default(),
+            &HashMap::new(),
             &ProgramCacheForTxBatch::default(),
         )
     }
@@ -1153,6 +1161,7 @@ mod tests {
             None,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &HashMap::new(),
             &loaded_programs,
         );
 
@@ -1220,6 +1229,7 @@ mod tests {
             None,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &HashMap::new(),
             &loaded_programs,
         );
 
@@ -1283,6 +1293,7 @@ mod tests {
             None,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &HashMap::new(),
             &loaded_programs,
         );
 
@@ -1327,6 +1338,7 @@ mod tests {
             None,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &HashMap::new(),
             &loaded_programs,
         );
 
@@ -1371,6 +1383,7 @@ mod tests {
             None,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &HashMap::new(),
             &loaded_programs,
         );
 
@@ -1427,6 +1440,7 @@ mod tests {
             None,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &HashMap::new(),
             &loaded_programs,
         );
 
@@ -1492,6 +1506,7 @@ mod tests {
             None,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &HashMap::new(),
             &loaded_programs,
         );
 
@@ -1545,6 +1560,7 @@ mod tests {
             None,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &HashMap::new(),
             &loaded_programs,
         );
 
@@ -1608,6 +1624,7 @@ mod tests {
             None,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &HashMap::new(),
             &loaded_programs,
         );
 
@@ -1698,6 +1715,7 @@ mod tests {
             None,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &HashMap::new(),
             &loaded_programs,
         );
 
@@ -1766,6 +1784,7 @@ mod tests {
             None,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &HashMap::new(),
             &ProgramCacheForTxBatch::default(),
         );
 
@@ -1854,6 +1873,7 @@ mod tests {
             None,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &HashMap::new(),
             &loaded_programs,
         );
 
@@ -1924,6 +1944,7 @@ mod tests {
             None,
             &feature_set,
             &rent_collector,
+            &HashMap::new(),
             &ProgramCacheForTxBatch::default(),
         );
 
@@ -1942,6 +1963,7 @@ mod tests {
             None,
             &feature_set,
             &rent_collector,
+            &HashMap::new(),
             &ProgramCacheForTxBatch::default(),
         );
 
