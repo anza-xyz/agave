@@ -52,7 +52,11 @@ pub fn program_log(log_collector: &Option<Rc<RefCell<LogCollector>>>, message: &
 pub fn program_data(log_collector: &Option<Rc<RefCell<LogCollector>>>, data: &[&[u8]]) {
     // Pre-allocate the result string with an estimated capacity.
     // The estimation assumes base64 encoding increases the size by about 4/3, plus some extra for spaces (padding = true).
-    let estimated_capacity = data.iter().map(|v| encoded_len(v.len(), true).unwrap()).sum::<usize>();
+    let estimated_capacity = data.iter()
+        .map(|v| encoded_len(v.len(), true).unwrap())
+        .sum::<usize>()
+        + 13; // "Program data: " length
+
     let mut result = String::with_capacity(estimated_capacity);
 
     // Build the string manually to avoid intermediate allocations.
@@ -96,23 +100,6 @@ pub fn program_return(
 pub fn program_success(log_collector: &Option<Rc<RefCell<LogCollector>>>, program_id: &Pubkey) {
     ic_logger_msg!(log_collector, &["Program ",  &program_id.to_string(), " success"].join(""));
 }
-
-// pub fn program_success(log_collector: &Option<Rc<RefCell<LogCollector>>>, program_id: &Pubkey) {
-//     // Early return if no collector to avoid unnecessary string creation
-//     if log_collector.is_none() {
-//         return;
-//     }
-//
-//     // Pre-calculate total capacity needed
-//     // "Program " (8) + program_id (32) + " success" (8)
-//     let mut message = String::with_capacity(48);
-//
-//     // Write directly into the string without creating intermediates
-//     let _ = write!(message, "Program {} success", program_id);
-//
-//     // Log the message
-//     ic_logger_msg!(log_collector, &message);
-// }
 
 /// Log program execution failure
 ///
