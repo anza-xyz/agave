@@ -29,6 +29,7 @@ use {
     solana_send_transaction_service::{
         send_transaction_service::{SendTransactionService, TransactionInfo},
         tpu_info::NullTpuInfo,
+        transaction_client::ConnectionCacheClient,
     },
     std::{
         io,
@@ -454,16 +455,15 @@ pub async fn start_tcp_server(
         .map(move |chan| {
             let (sender, receiver) = unbounded();
 
-            SendTransactionService::new::<NullTpuInfo>(
-                tpu_addr,
-                &bank_forks,
-                None,
-                receiver,
+            let client = ConnectionCacheClient::<NullTpuInfo>::new(
                 connection_cache.clone(),
-                5_000,
+                tpu_addr,
+                None,
+                None,
                 0,
-                exit.clone(),
             );
+
+            SendTransactionService::new(&bank_forks, receiver, client, 5_000, exit.clone());
 
             let server = BanksServer::new(
                 bank_forks.clone(),
