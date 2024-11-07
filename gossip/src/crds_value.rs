@@ -102,7 +102,7 @@ impl CrdsValue {
         }
     }
 
-    pub fn new_signed(data: CrdsData, keypair: &Keypair) -> Self {
+    pub fn new(data: CrdsData, keypair: &Keypair) -> Self {
         let mut value = Self::new_unsigned(data);
         value.sign(keypair);
         value
@@ -114,11 +114,11 @@ impl CrdsValue {
             None => {
                 let keypair = Keypair::new();
                 let data = CrdsData::new_rand(rng, Some(keypair.pubkey()));
-                Self::new_signed(data, &keypair)
+                Self::new(data, &keypair)
             }
             Some(keypair) => {
                 let data = CrdsData::new_rand(rng, Some(keypair.pubkey()));
-                Self::new_signed(data, keypair)
+                Self::new(data, keypair)
             }
         }
     }
