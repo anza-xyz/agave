@@ -1183,7 +1183,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         context: &SchedulingContext,
         (result, timings): &mut ResultWithTimings,
         executed_task: HandlerResult,
-        error_count: &mut usize,
+        error_count: &mut u32,
         already_finishing: bool,
     ) -> Option<(Box<ExecutedTask>, bool)> {
         let Ok(executed_task) = executed_task else {
