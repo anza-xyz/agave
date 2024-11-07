@@ -1005,6 +1005,15 @@ impl TaskCreator {
         }
     }
 
+    fn reset(&self) {
+        use TaskCreator::*;
+
+        match self {
+            BlockVerification { usage_queue_loader } => todo!(),
+            BlockProduction { banking_stage_adapter } => banking_stage_adapter.reset(),
+        }
+    }
+
     fn is_overgrown(&self, max_usage_queue_count: usize, on_hot_path: bool) -> bool {
         use TaskCreator::*;
 
@@ -2181,6 +2190,10 @@ impl BankingStageAdapter {
     fn banking_stage_status(&self) -> BankingStageStatus {
         self.idling_detector.lock().unwrap().as_ref().unwrap().banking_stage_status()
     }
+
+    fn reset(&self)  {
+        self.transaction_deduper.clear();
+    }
 }
 
 impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
@@ -2273,6 +2286,7 @@ where
         if let Err(a) = self.thread_manager.new_task_sender.send(NewTaskPayload::Reset(Unit::new()).into()) {
             warn!("failed to send a reset due to error: {a:?}");
         }
+        self.task_creator.reset()
     }
 }
 
