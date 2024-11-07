@@ -10,8 +10,5 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
-[dev-dependencies]
-serial_test = { workspace = true }
-
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
