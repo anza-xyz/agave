@@ -13,6 +13,7 @@ use {
     log::*,
     solana_connection_cache::connection_cache::Protocol,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
+    solana_sdk::clock::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_tpu_client::nonblocking::tpu_client::LeaderTpuService,
     std::{
         fmt,
@@ -30,13 +31,15 @@ use {
 /// identify next leaders to send transactions to.
 #[async_trait]
 pub trait LeaderUpdater: Send {
-    /// Returns next unique leaders for the next `lookahead_slots` starting from
+    /// Returns next leaders for the next `lookahead_leaders` starting from
     /// current estimated slot.
+    ///
+    /// Leaders are returned per [`NUM_CONSECUTIVE_LEADER_SLOTS`] to avoid unnecessary repetition.
     ///
     /// If the current leader estimation is incorrect and transactions are sent to
     /// only one estimated leader, there is a risk of losing all the transactions,
     /// depending on the forwarding policy.
-    fn next_leaders(&mut self, lookahead_slots: u64) -> Vec<SocketAddr>;
+    fn next_leaders(&mut self, lookahead_leaders: usize) -> Vec<SocketAddr>;
 
     /// Stop [`LeaderUpdater`] and releases all associated resources.
     async fn stop(&mut self);
@@ -100,7 +103,9 @@ struct LeaderUpdaterService {
 
 #[async_trait]
 impl LeaderUpdater for LeaderUpdaterService {
-    fn next_leaders(&mut self, lookahead_slots: u64) -> Vec<SocketAddr> {
+    fn next_leaders(&mut self, lookahead_leaders: usize) -> Vec<SocketAddr> {
+        let lookahead_slots =
+            (lookahead_leaders as u64).saturating_mul(NUM_CONSECUTIVE_LEADER_SLOTS);
         self.leader_tpu_service.leader_tpu_sockets(lookahead_slots)
     }
 
@@ -118,7 +123,7 @@ struct PinnedLeaderUpdater {
 
 #[async_trait]
 impl LeaderUpdater for PinnedLeaderUpdater {
-    fn next_leaders(&mut self, _lookahead_slots: u64) -> Vec<SocketAddr> {
+    fn next_leaders(&mut self, _lookahead_leaders: usize) -> Vec<SocketAddr> {
         self.address.clone()
     }
 

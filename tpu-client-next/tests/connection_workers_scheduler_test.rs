@@ -16,7 +16,7 @@ use {
         streamer::StakedNodes,
     },
     solana_tpu_client_next::{
-        connection_workers_scheduler::{ConnectionWorkersSchedulerConfig, Fanout, LeadersFanout},
+        connection_workers_scheduler::{ConnectionWorkersSchedulerConfig, Fanout},
         leader_updater::create_leader_updater,
         send_transaction_stats::SendTransactionStatsNonAtomic,
         transaction_batch::TransactionBatch,
@@ -54,11 +54,10 @@ fn test_config(validator_identity: Option<Keypair>) -> ConnectionWorkersSchedule
         // the speed of fastest leader.
         worker_channel_size: 100,
         max_reconnect_attempts: 4,
-        lookahead_slots: 1,
-        leaders_fanout: LeadersFanout::Next(Fanout {
-            send_next: 1,
-            connect_next: 1,
-        }),
+        leaders_fanout: Fanout {
+            send: 1,
+            connect: 1,
+        },
     }
 }
 

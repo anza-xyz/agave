@@ -43,24 +43,20 @@ pub enum ConnectionWorkersSchedulerError {
 /// [`Fanout`] is a configuration struct that specifies how many leaders should
 /// be targeted when sending transactions and connecting.
 ///
-/// Assumption is that `send_next` <= `connect_next`. The idea is to hide latency
-/// of creating connections by doing this in advance.
+/// Note, that the unit is number of leaders per
+/// [`NUM_CONSECUTIVE_LEADER_SLOTS`]. It means that if the leader schedule is
+/// [L1, L1, L1, L1, L1, L1, L1, L1, L2, L2, L2, L2], the leaders per
+/// consecutive leader slots are [L1, L1, L2], so there are 3 of them.
+///
+/// The idea of having a separate `connect` parameter is to create a set of
+/// nodes to connect to in advance in order to hide the latency of opening new
+/// connection. Hence, `connect` must be greater or equal to `send`
 pub struct Fanout {
     /// The number of leaders to target for sending transactions.
-    pub send_next: usize,
+    pub send: usize,
 
     /// The number of leaders to target for establishing connections.
-    pub connect_next: usize,
-}
-
-/// This enum defines to how many discovered leaders we will send transactions.
-pub enum LeadersFanout {
-    /// Send transactions to all the leaders discovered by the `next_leaders`
-    /// call.
-    All,
-    /// Send transactions to the first selected number of leaders discovered by
-    /// the `next_leaders` call.
-    Next(Fanout),
+    pub connect: usize,
 }
 
 /// Configuration for the [`ConnectionWorkersScheduler`].
@@ -90,13 +86,8 @@ pub struct ConnectionWorkersSchedulerConfig {
     /// connection failure.
     pub max_reconnect_attempts: usize,
 
-    /// The number of slots to look ahead during the leader estimation
-    /// procedure. Determines how far into the future leaders are estimated,
-    /// allowing connections to be established with those leaders in advance.
-    pub lookahead_slots: u64,
-
-    /// The number of leaders to send transactions to.
-    pub leaders_fanout: LeadersFanout,
+    /// Configures the number of leaders to connect to and send transactions to.
+    pub leaders_fanout: Fanout,
 }
 
 impl ConnectionWorkersScheduler {
@@ -117,7 +108,6 @@ impl ConnectionWorkersScheduler {
             skip_check_transaction_age,
             worker_channel_size,
             max_reconnect_attempts,
-            lookahead_slots,
             leaders_fanout,
         }: ConnectionWorkersSchedulerConfig,
         mut leader_updater: Box<dyn LeaderUpdater>,
@@ -143,7 +133,8 @@ impl ConnectionWorkersScheduler {
                     break;
                 }
             };
-            let updated_leaders = leader_updater.next_leaders(lookahead_slots);
+
+            let updated_leaders = leader_updater.next_leaders(leaders_fanout.connect);
 
             let (fanout_leaders, connect_leaders) =
                 split_leaders(&updated_leaders, &leaders_fanout);
@@ -246,22 +237,15 @@ impl ConnectionWorkersScheduler {
 ///   slice includes the the first set.
 fn split_leaders<'leaders>(
     leaders: &'leaders [SocketAddr],
-    fanout: &LeadersFanout,
+    fanout: &Fanout,
 ) -> (&'leaders [SocketAddr], &'leaders [SocketAddr]) {
-    match fanout {
-        LeadersFanout::All => (leaders, leaders),
-        LeadersFanout::Next(Fanout {
-            send_next,
-            connect_next,
-        }) => {
-            assert!(send_next <= connect_next);
-            let send_count = (*send_next).min(leaders.len());
-            let connect_count = (*connect_next).min(leaders.len());
+    let Fanout { send, connect } = fanout;
+    assert!(send <= connect);
+    let send_count = (*send).min(leaders.len());
+    let connect_count = (*connect).min(leaders.len());
 
-            let send_slice = &leaders[..send_count];
-            let connect_slice = &leaders[..connect_count];
+    let send_slice = &leaders[..send_count];
+    let connect_slice = &leaders[..connect_count];
 
-            (send_slice, connect_slice)
-        }
-    }
+    (send_slice, connect_slice)
 }
