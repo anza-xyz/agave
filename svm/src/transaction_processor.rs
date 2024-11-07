@@ -46,6 +46,7 @@ use {
         hash::Hash,
         inner_instruction::{InnerInstruction, InnerInstructionsList},
         instruction::{CompiledInstruction, TRANSACTION_LEVEL_STACK_HEIGHT},
+        native_loader,
         pubkey::Pubkey,
         rent_collector::RentCollector,
         saturating_add_assign,
@@ -288,8 +289,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             ));
 
         let (mut program_cache_for_tx_batch, program_cache_us) = measure_us!({
+            let native_loader = native_loader::id();
             for builtin_program in self.builtin_program_ids.read().unwrap().iter() {
-                program_accounts_map.insert(*builtin_program, 0);
+                program_accounts_map.insert(*builtin_program, (&native_loader, 0));
             }
 
             let program_cache_for_tx_batch = self.replenish_program_cache(
@@ -530,28 +532,29 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
     /// Returns a map from executable program accounts (all accounts owned by any loader)
     /// to their usage counters, for the transactions with a valid blockhash or nonce.
-    fn filter_executable_program_accounts<CB: TransactionProcessingCallback>(
+    fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>(
         callbacks: &CB,
         txs: &[impl SVMMessage],
         validation_results: &[TransactionValidationResult],
-        program_owners: &[Pubkey],
-    ) -> HashMap<Pubkey, u64> {
-        let mut result: HashMap<Pubkey, u64> = HashMap::new();
+        program_owners: &'a [Pubkey],
+    ) -> HashMap<Pubkey, (&'a Pubkey, u64)> {
+        let mut result: HashMap<Pubkey, (&'a Pubkey, u64)> = HashMap::new();
         validation_results.iter().zip(txs).for_each(|etx| {
             if let (Ok(_), tx) = etx {
                 tx.account_keys()
                     .iter()
                     .for_each(|key| match result.entry(*key) {
                         Entry::Occupied(mut entry) => {
-                            let count = entry.get_mut();
+                            let (_, count) = entry.get_mut();
                             saturating_add_assign!(*count, 1);
                         }
                         Entry::Vacant(entry) => {
-                            if callbacks
-                                .account_matches_owners(key, program_owners)
-                                .is_some()
+                            if let Some(index) =
+                                callbacks.account_matches_owners(key, program_owners)
                             {
-                                entry.insert(1);
+                                if let Some(owner) = program_owners.get(index) {
+                                    entry.insert((owner, 1));
+                                }
                             }
                         }
                     });
@@ -564,14 +567,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     fn replenish_program_cache<CB: TransactionProcessingCallback>(
         &self,
         callback: &CB,
-        program_accounts_map: &HashMap<Pubkey, u64>,
+        program_accounts_map: &HashMap<Pubkey, (&Pubkey, u64)>,
         check_program_modification_slot: bool,
         limit_to_load_programs: bool,
     ) -> ProgramCacheForTxBatch {
         let mut missing_programs: Vec<(Pubkey, (ProgramCacheMatchCriteria, u64))> =
             program_accounts_map
                 .iter()
-                .map(|(pubkey, count)| {
+                .map(|(pubkey, (_, count))| {
                     let match_criteria = if check_program_modification_slot {
                         get_program_modification_slot(callback, pubkey)
                             .map_or(ProgramCacheMatchCriteria::Tombstone, |slot| {
@@ -1383,9 +1386,10 @@ mod tests {
         batch_processor.program_cache.write().unwrap().fork_graph =
             Some(Arc::downgrade(&fork_graph));
         let key = Pubkey::new_unique();
+        let owner = Pubkey::new_unique();
 
-        let mut account_maps: HashMap<Pubkey, u64> = HashMap::new();
-        account_maps.insert(key, 4);
+        let mut account_maps: HashMap<Pubkey, (&Pubkey, u64)> = HashMap::new();
+        account_maps.insert(key, (&owner, 4));
 
         batch_processor.replenish_program_cache(&mock_bank, &account_maps, false, true);
     }
@@ -1398,6 +1402,7 @@ mod tests {
         batch_processor.program_cache.write().unwrap().fork_graph =
             Some(Arc::downgrade(&fork_graph));
         let key = Pubkey::new_unique();
+        let owner = Pubkey::new_unique();
 
         let mut account_data = AccountSharedData::default();
         account_data.set_owner(bpf_loader::id());
@@ -1407,8 +1412,8 @@ mod tests {
             .unwrap()
             .insert(key, account_data);
 
-        let mut account_maps: HashMap<Pubkey, u64> = HashMap::new();
-        account_maps.insert(key, 4);
+        let mut account_maps: HashMap<Pubkey, (&Pubkey, u64)> = HashMap::new();
+        account_maps.insert(key, (&owner, 4));
         let mut loaded_missing = 0;
 
         for limit_to_load_programs in [false, true] {
@@ -1517,8 +1522,8 @@ mod tests {
         );
 
         assert_eq!(result.len(), 2);
-        assert_eq!(result[&key1], 2);
-        assert_eq!(result[&key2], 1);
+        assert_eq!(result[&key1], (&owner1, 2));
+        assert_eq!(result[&key2], (&owner2, 1));
     }
 
     #[test]
@@ -1607,13 +1612,13 @@ mod tests {
             programs
                 .get(&account3_pubkey)
                 .expect("failed to find the program account"),
-            &2
+            &(&program1_pubkey, 2)
         );
         assert_eq!(
             programs
                 .get(&account4_pubkey)
                 .expect("failed to find the program account"),
-            &1
+            &(&program2_pubkey, 1)
         );
     }
 
@@ -1705,7 +1710,7 @@ mod tests {
             programs
                 .get(&account3_pubkey)
                 .expect("failed to find the program account"),
-            &1
+            &(&program1_pubkey, 1)
         );
     }
 
