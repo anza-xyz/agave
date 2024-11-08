@@ -211,7 +211,7 @@ pub fn create_executable_environment(
     program_cache: &mut ProgramCache<MockForkGraph>,
 ) {
     program_cache.environments = ProgramRuntimeEnvironments {
-        program_runtime_v1: Arc::new(create_custom_environment()),
+        program_runtime_v1: Arc::new(create_custom_loader()),
         // We are not using program runtime v2
         program_runtime_v2: Arc::new(BuiltinProgram::new_loader(
             Config::default(),
@@ -315,7 +315,7 @@ pub fn register_builtins(
 }
 
 #[allow(unused)]
-fn create_custom_environment<'a>() -> BuiltinProgram<InvokeContext<'a>> {
+pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a>> {
     let compute_budget = ComputeBudget::default();
     let vm_config = Config {
         max_call_depth: compute_budget.max_call_depth,
