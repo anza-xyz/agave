@@ -2,9 +2,7 @@ use {
     super::{Bank, BankStatusCache},
     solana_accounts_db::blockhash_queue::BlockhashQueue,
     solana_perf::perf_libs,
-    solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
-    },
+    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_sdk::{
         account::AccountSharedData,
         account_utils::StateMut,
@@ -32,9 +30,9 @@ use {
 
 impl Bank {
     /// Checks a batch of sanitized transactions again bank for age and status
-    pub fn check_transactions_with_forwarding_delay<Tx: SVMMessage>(
+    pub fn check_transactions_with_forwarding_delay(
         &self,
-        transactions: &[RuntimeTransaction<Tx>],
+        transactions: &[impl TransactionWithMeta],
         filter: &[TransactionResult<()>],
         forward_transactions_to_leader_at_slot_offset: u64,
     ) -> Vec<TransactionCheckResult> {
@@ -61,9 +59,9 @@ impl Bank {
         )
     }
 
-    pub fn check_transactions<Tx: SVMMessage>(
+    pub fn check_transactions<Tx: TransactionWithMeta>(
         &self,
-        sanitized_txs: &[impl core::borrow::Borrow<RuntimeTransaction<Tx>>],
+        sanitized_txs: &[impl core::borrow::Borrow<Tx>],
         lock_results: &[TransactionResult<()>],
         max_age: usize,
         error_counters: &mut TransactionErrorMetrics,
@@ -72,9 +70,9 @@ impl Bank {
         self.check_status_cache(sanitized_txs, lock_results, error_counters)
     }
 
-    fn check_age<Tx: SVMMessage>(
+    fn check_age<Tx: TransactionWithMeta>(
         &self,
-        sanitized_txs: &[impl core::borrow::Borrow<RuntimeTransaction<Tx>>],
+        sanitized_txs: &[impl core::borrow::Borrow<Tx>],
         lock_results: &[TransactionResult<()>],
         max_age: usize,
         error_counters: &mut TransactionErrorMetrics,
@@ -185,9 +183,9 @@ impl Bank {
         Some((*nonce_address, nonce_account, nonce_data))
     }
 
-    fn check_status_cache<Tx: SVMMessage>(
+    fn check_status_cache<Tx: TransactionWithMeta>(
         &self,
-        sanitized_txs: &[impl core::borrow::Borrow<RuntimeTransaction<Tx>>],
+        sanitized_txs: &[impl core::borrow::Borrow<Tx>],
         lock_results: Vec<TransactionCheckResult>,
         error_counters: &mut TransactionErrorMetrics,
     ) -> Vec<TransactionCheckResult> {
@@ -213,7 +211,7 @@ impl Bank {
 
     fn is_transaction_already_processed(
         &self,
-        sanitized_tx: &RuntimeTransaction<impl SVMMessage>,
+        sanitized_tx: &impl TransactionWithMeta,
         status_cache: &BankStatusCache,
     ) -> bool {
         let key = sanitized_tx.message_hash();

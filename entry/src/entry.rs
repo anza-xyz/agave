@@ -21,9 +21,7 @@ use {
         sigverify,
     },
     solana_rayon_threadlimit::get_max_thread_count,
-    solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, svm_transaction_adapter::SVMTransactionAdapter,
-    },
+    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_sdk::{
         hash::Hash,
         packet::Meta,
@@ -153,8 +151,8 @@ impl From<&Entry> for EntrySummary {
 }
 
 /// Typed entry to distinguish between transaction and tick entries
-pub enum EntryType<Tx: SVMTransactionAdapter> {
-    Transactions(Vec<RuntimeTransaction<Tx>>),
+pub enum EntryType<Tx: TransactionWithMeta> {
+    Transactions(Vec<Tx>),
     Tick(Hash),
 }
 
@@ -288,14 +286,14 @@ pub enum DeviceSigVerificationData {
     Gpu(GpuSigVerificationData),
 }
 
-pub struct EntrySigVerificationState<Tx: SVMTransactionAdapter> {
+pub struct EntrySigVerificationState<Tx: TransactionWithMeta> {
     verification_status: EntryVerificationStatus,
     entries: Option<Vec<EntryType<Tx>>>,
     device_verification_data: DeviceSigVerificationData,
     gpu_verify_duration_us: u64,
 }
 
-impl<Tx: SVMTransactionAdapter> EntrySigVerificationState<Tx> {
+impl<Tx: TransactionWithMeta> EntrySigVerificationState<Tx> {
     pub fn entries(&mut self) -> Option<Vec<EntryType<Tx>>> {
         self.entries.take()
     }
@@ -394,10 +392,10 @@ impl EntryVerificationState {
     }
 }
 
-pub fn verify_transactions<Tx: SVMTransactionAdapter + Send + Sync>(
+pub fn verify_transactions<Tx: TransactionWithMeta + Send + Sync>(
     entries: Vec<Entry>,
     thread_pool: &ThreadPool,
-    verify: Arc<dyn Fn(VersionedTransaction) -> Result<RuntimeTransaction<Tx>> + Send + Sync>,
+    verify: Arc<dyn Fn(VersionedTransaction) -> Result<Tx> + Send + Sync>,
 ) -> Result<Vec<EntryType<Tx>>> {
     thread_pool.install(|| {
         entries
@@ -419,15 +417,13 @@ pub fn verify_transactions<Tx: SVMTransactionAdapter + Send + Sync>(
     })
 }
 
-pub fn start_verify_transactions<Tx: SVMTransactionAdapter + Send + Sync + 'static>(
+pub fn start_verify_transactions<Tx: TransactionWithMeta + Send + Sync + 'static>(
     entries: Vec<Entry>,
     skip_verification: bool,
     thread_pool: &ThreadPool,
     verify_recyclers: VerifyRecyclers,
     verify: Arc<
-        dyn Fn(VersionedTransaction, TransactionVerificationMode) -> Result<RuntimeTransaction<Tx>>
-            + Send
-            + Sync,
+        dyn Fn(VersionedTransaction, TransactionVerificationMode) -> Result<Tx> + Send + Sync,
     >,
 ) -> Result<EntrySigVerificationState<Tx>> {
     let api = perf_libs::api();
@@ -458,14 +454,12 @@ pub fn start_verify_transactions<Tx: SVMTransactionAdapter + Send + Sync + 'stat
     }
 }
 
-fn start_verify_transactions_cpu<Tx: SVMTransactionAdapter + Send + Sync + 'static>(
+fn start_verify_transactions_cpu<Tx: TransactionWithMeta + Send + Sync + 'static>(
     entries: Vec<Entry>,
     skip_verification: bool,
     thread_pool: &ThreadPool,
     verify: Arc<
-        dyn Fn(VersionedTransaction, TransactionVerificationMode) -> Result<RuntimeTransaction<Tx>>
-            + Send
-            + Sync,
+        dyn Fn(VersionedTransaction, TransactionVerificationMode) -> Result<Tx> + Send + Sync,
     >,
 ) -> Result<EntrySigVerificationState<Tx>> {
     let verify_func = {
@@ -488,18 +482,16 @@ fn start_verify_transactions_cpu<Tx: SVMTransactionAdapter + Send + Sync + 'stat
     })
 }
 
-fn start_verify_transactions_gpu<Tx: SVMTransactionAdapter + Send + Sync + 'static>(
+fn start_verify_transactions_gpu<Tx: TransactionWithMeta + Send + Sync + 'static>(
     entries: Vec<Entry>,
     verify_recyclers: VerifyRecyclers,
     thread_pool: &ThreadPool,
     verify: Arc<
-        dyn Fn(VersionedTransaction, TransactionVerificationMode) -> Result<RuntimeTransaction<Tx>>
-            + Send
-            + Sync,
+        dyn Fn(VersionedTransaction, TransactionVerificationMode) -> Result<Tx> + Send + Sync,
     >,
 ) -> Result<EntrySigVerificationState<Tx>> {
     let verify_func = {
-        move |versioned_tx: VersionedTransaction| -> Result<RuntimeTransaction<Tx>> {
+        move |versioned_tx: VersionedTransaction| -> Result<Tx> {
             verify(
                 versioned_tx,
                 TransactionVerificationMode::HashAndVerifyPrecompiles,
@@ -983,6 +975,7 @@ mod tests {
     use {
         super::*,
         solana_perf::test_tx::{test_invalid_tx, test_tx},
+        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
             hash::{hash, Hash},
             pubkey::Pubkey,
@@ -1006,18 +999,13 @@ mod tests {
         assert!(!next_entry(&zero, 1, vec![]).verify(&one)); // inductive step, bad
     }
 
-    fn test_verify_transactions<Tx: SVMTransactionAdapter + Send + Sync + 'static>(
+    fn test_verify_transactions<Tx: TransactionWithMeta + Send + Sync + 'static>(
         entries: Vec<Entry>,
         skip_verification: bool,
         verify_recyclers: VerifyRecyclers,
         thread_pool: &ThreadPool,
         verify: Arc<
-            dyn Fn(
-                    VersionedTransaction,
-                    TransactionVerificationMode,
-                ) -> Result<RuntimeTransaction<Tx>>
-                + Send
-                + Sync,
+            dyn Fn(VersionedTransaction, TransactionVerificationMode) -> Result<Tx> + Send + Sync,
         >,
     ) -> bool {
         let verify_func = {
@@ -1027,7 +1015,7 @@ mod tests {
             } else {
                 TransactionVerificationMode::FullVerification
             };
-            move |versioned_tx: VersionedTransaction| -> Result<RuntimeTransaction<Tx>> {
+            move |versioned_tx: VersionedTransaction| -> Result<Tx> {
                 verify(versioned_tx, verification_mode)
             }
         };

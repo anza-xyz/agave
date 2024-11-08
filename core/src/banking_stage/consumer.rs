@@ -26,12 +26,11 @@ use {
     },
     solana_runtime_transaction::{
         instructions_processor::process_compute_budget_instructions,
-        runtime_transaction::RuntimeTransaction, svm_transaction_adapter::SVMTransactionAdapter,
+        transaction_with_meta::TransactionWithMeta,
     },
     solana_sdk::{
         clock::{FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, MAX_PROCESSING_AGE},
         fee::FeeBudgetLimits,
-        message::SanitizedMessage,
         saturating_add_assign,
         timing::timestamp,
         transaction::{self, TransactionError},
@@ -231,7 +230,7 @@ impl Consumer {
         &self,
         bank: &Arc<Bank>,
         bank_creation_time: &Instant,
-        sanitized_transactions: &[RuntimeTransaction<impl SVMTransactionAdapter>],
+        sanitized_transactions: &[impl TransactionWithMeta],
         banking_stage_stats: &BankingStageStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) -> ProcessTransactionsSummary {
@@ -287,7 +286,7 @@ impl Consumer {
         &self,
         bank: &Arc<Bank>,
         bank_creation_time: &Instant,
-        transactions: &[RuntimeTransaction<impl SVMTransactionAdapter>],
+        transactions: &[impl TransactionWithMeta],
     ) -> ProcessTransactionsSummary {
         let mut chunk_start = 0;
         let mut all_retryable_tx_indexes = vec![];
@@ -389,7 +388,7 @@ impl Consumer {
     pub fn process_and_record_transactions(
         &self,
         bank: &Arc<Bank>,
-        txs: &[RuntimeTransaction<impl SVMTransactionAdapter>],
+        txs: &[impl TransactionWithMeta],
         chunk_offset: usize,
     ) -> ProcessTransactionBatchOutput {
         let mut error_counters = TransactionErrorMetrics::default();
@@ -432,7 +431,7 @@ impl Consumer {
     pub fn process_and_record_aged_transactions(
         &self,
         bank: &Arc<Bank>,
-        txs: &[RuntimeTransaction<impl SVMTransactionAdapter>],
+        txs: &[impl TransactionWithMeta],
         max_ages: &[MaxAge],
     ) -> ProcessTransactionBatchOutput {
         let move_precompile_verification_to_svm = bank
@@ -476,7 +475,7 @@ impl Consumer {
     fn process_and_record_transactions_with_pre_results(
         &self,
         bank: &Arc<Bank>,
-        txs: &[RuntimeTransaction<impl SVMTransactionAdapter>],
+        txs: &[impl TransactionWithMeta],
         chunk_offset: usize,
         pre_results: impl Iterator<Item = Result<(), TransactionError>>,
     ) -> ProcessTransactionBatchOutput {
@@ -556,7 +555,7 @@ impl Consumer {
     fn execute_and_commit_transactions_locked(
         &self,
         bank: &Arc<Bank>,
-        batch: &TransactionBatch<impl SVMTransactionAdapter>,
+        batch: &TransactionBatch<impl TransactionWithMeta>,
     ) -> ExecuteAndCommitTransactionsOutput {
         let transaction_status_sender_enabled = self.committer.transaction_status_sender_enabled();
         let mut execute_and_commit_timings = LeaderExecuteAndCommitTimings::default();
@@ -755,12 +754,12 @@ impl Consumer {
 
     pub fn check_fee_payer_unlocked(
         bank: &Bank,
-        message: &SanitizedMessage,
+        message: &impl SVMMessage,
         error_counters: &mut TransactionErrorMetrics,
     ) -> Result<(), TransactionError> {
         let fee_payer = message.fee_payer();
         let fee_budget_limits = FeeBudgetLimits::from(process_compute_budget_instructions(
-            SVMMessage::program_instructions_iter(message),
+            message.program_instructions_iter(),
         )?);
         let fee = solana_fee::calculate_fee(
             message,
@@ -807,7 +806,7 @@ impl Consumer {
     /// * `pending_indexes` - identifies which indexes in the `transactions` list are still pending
     fn filter_pending_packets_from_pending_txs(
         bank: &Bank,
-        transactions: &[RuntimeTransaction<impl SVMMessage>],
+        transactions: &[impl TransactionWithMeta],
         pending_indexes: &[usize],
     ) -> Vec<usize> {
         let filter =
@@ -868,6 +867,7 @@ mod tests {
         solana_poh::poh_recorder::{PohRecorder, Record, WorkingBankEntry},
         solana_rpc::transaction_status_service::TransactionStatusService,
         solana_runtime::{bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache},
+        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
             account::AccountSharedData,
             account_utils::StateMut,

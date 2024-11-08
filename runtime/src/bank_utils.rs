@@ -1,12 +1,9 @@
 use {
     crate::vote_sender_types::ReplayVoteSender,
-    solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
-    },
+    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_svm::transaction_commit_result::{
         TransactionCommitResult, TransactionCommitResultExtensions,
     },
-    solana_svm_transaction::svm_transaction::SVMTransaction,
     solana_vote::vote_parser,
 };
 #[cfg(feature = "dev-context-only-utils")]
@@ -43,7 +40,7 @@ pub fn setup_bank_and_vote_pubkeys_for_tests(
 }
 
 pub fn find_and_send_votes(
-    sanitized_txs: &[RuntimeTransaction<impl SVMTransaction>],
+    sanitized_txs: &[impl TransactionWithMeta],
     commit_results: &[TransactionCommitResult],
     vote_sender: Option<&ReplayVoteSender>,
 ) {
