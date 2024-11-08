@@ -292,7 +292,7 @@ impl ClusterInfo {
             CrdsData::ContactInfo(node),
         ]
         .into_iter()
-        .map(|entry| CrdsValue::new_signed(entry, &self.keypair()))
+        .map(|entry| CrdsValue::new(entry, &self.keypair()))
         .collect();
         let mut gossip_crds = self.gossip.crds.write().unwrap();
         for entry in entries {
@@ -439,7 +439,7 @@ impl ClusterInfo {
         self.my_contact_info.write().unwrap().hot_swap_pubkey(id);
 
         self.refresh_my_gossip_contact_info();
-        self.push_message(CrdsValue::new_signed(
+        self.push_message(CrdsValue::new(
             CrdsData::Version(Version::new(self.id())),
             &self.keypair(),
         ));
@@ -653,7 +653,7 @@ impl ClusterInfo {
         };
         if min > last {
             let now = timestamp();
-            let entry = CrdsValue::new_signed(
+            let entry = CrdsValue::new(
                 CrdsData::LowestSlot(0, LowestSlot::new(self_pubkey, min, now)),
                 &self.keypair(),
             );
@@ -715,7 +715,7 @@ impl ClusterInfo {
             update = &update[n..];
             if n > 0 {
                 let epoch_slots = CrdsData::EpochSlots(ix, slots);
-                let entry = CrdsValue::new_signed(epoch_slots, &keypair);
+                let entry = CrdsValue::new(epoch_slots, &keypair);
                 entries.push(entry);
             }
             epoch_slot_index += 1;
@@ -743,7 +743,7 @@ impl ClusterInfo {
             last_vote_bankhash,
             self.my_shred_version(),
         )?;
-        self.push_message(CrdsValue::new_signed(
+        self.push_message(CrdsValue::new(
             CrdsData::RestartLastVotedForkSlots(last_voted_fork_slots),
             &self.keypair(),
         ));
@@ -764,7 +764,7 @@ impl ClusterInfo {
             observed_stake,
             shred_version: self.my_shred_version(),
         };
-        self.push_message(CrdsValue::new_signed(
+        self.push_message(CrdsValue::new(
             CrdsData::RestartHeaviestFork(restart_heaviest_fork),
             &self.keypair(),
         ));
@@ -800,7 +800,7 @@ impl ClusterInfo {
             incremental,
             wallclock: timestamp(),
         });
-        self.push_message(CrdsValue::new_signed(message, &self.keypair()));
+        self.push_message(CrdsValue::new(message, &self.keypair()));
 
         Ok(())
     }
@@ -811,7 +811,7 @@ impl ClusterInfo {
         let now = timestamp();
         let vote = Vote::new(self_pubkey, vote, now).unwrap();
         let vote = CrdsData::Vote(vote_index, vote);
-        let vote = CrdsValue::new_signed(vote, &self.keypair());
+        let vote = CrdsValue::new(vote, &self.keypair());
         let mut gossip_crds = self.gossip.crds.write().unwrap();
         if let Err(err) = gossip_crds.insert(vote, now, GossipRoute::LocalMessage) {
             error!("push_vote failed: {:?}", err);
@@ -1214,7 +1214,7 @@ impl ClusterInfo {
             CrdsData::NodeInstance(instance),
         ]
         .into_iter()
-        .map(|entry| CrdsValue::new_signed(entry, &keypair))
+        .map(|entry| CrdsValue::new(entry, &keypair))
         .collect();
         let mut gossip_crds = self.gossip.crds.write().unwrap();
         for entry in entries {
@@ -1284,7 +1284,7 @@ impl ClusterInfo {
         Vec<(SocketAddr, Protocol)>, // Pull requests
     ) {
         let now = timestamp();
-        let self_info = CrdsValue::new_signed(
+        let self_info = CrdsValue::new(
             CrdsData::ContactInfo(self.my_contact_info()),
             &self.keypair(),
         );
@@ -1568,7 +1568,7 @@ impl ClusterInfo {
                     ),
                 ];
                 for value in crds_data {
-                    let value = CrdsValue::new_signed(value, &self.keypair());
+                    let value = CrdsValue::new(value, &self.keypair());
                     self.push_message(value);
                 }
                 let mut generate_pull_requests = true;
@@ -2585,6 +2585,7 @@ pub struct Sockets {
     pub ancestor_hashes_requests_quic: UdpSocket,
     pub tpu_quic: Vec<UdpSocket>,
     pub tpu_forwards_quic: Vec<UdpSocket>,
+    pub tpu_vote_quic: Vec<UdpSocket>,
 }
 
 pub struct NodeConfig {
@@ -2647,13 +2648,19 @@ impl Node {
                 localhost_ip_addr,
                 port_range,
                 QUIC_PORT_OFFSET,
-                udp_config,
+                udp_config.clone(),
                 quic_config.clone(),
             )
             .unwrap();
         let tpu_forwards_quic =
-            bind_more_with_config(tpu_forwards_quic, num_quic_endpoints, quic_config).unwrap();
+            bind_more_with_config(tpu_forwards_quic, num_quic_endpoints, quic_config.clone())
+                .unwrap();
         let tpu_vote = UdpSocket::bind(&localhost_bind_addr).unwrap();
+        let tpu_vote_quic = UdpSocket::bind(&localhost_bind_addr).unwrap();
+
+        let tpu_vote_quic =
+            bind_more_with_config(tpu_vote_quic, num_quic_endpoints, quic_config).unwrap();
+
         let repair = UdpSocket::bind(&localhost_bind_addr).unwrap();
         let repair_quic = UdpSocket::bind(&localhost_bind_addr).unwrap();
         let rpc_port = find_available_port_in_range(localhost_ip_addr, port_range).unwrap();
@@ -2690,6 +2697,11 @@ impl Node {
             "TPU-forwards"
         );
         set_socket!(set_tpu_vote, tpu_vote.local_addr().unwrap(), "TPU-vote");
+        set_socket!(
+            set_tpu_vote_quic,
+            tpu_vote_quic[0].local_addr().unwrap(),
+            "TPU-vote QUIC"
+        );
         set_socket!(set_rpc, rpc_addr, "RPC");
         set_socket!(set_rpc_pubsub, rpc_pubsub_addr, "RPC-pubsub");
         set_socket!(
@@ -2722,6 +2734,7 @@ impl Node {
                 ancestor_hashes_requests_quic,
                 tpu_quic,
                 tpu_forwards_quic,
+                tpu_vote_quic,
             },
         }
     }
@@ -2776,7 +2789,7 @@ impl Node {
                 quic_config.clone(),
             )
             .unwrap();
-        let tpu_quic =
+        let tpu_quic: Vec<UdpSocket> =
             bind_more_with_config(tpu_quic, DEFAULT_QUIC_ENDPOINTS, quic_config.clone()).unwrap();
         let ((tpu_forwards_port, tpu_forwards), (_tpu_forwards_quic_port, tpu_forwards_quic)) =
             bind_two_in_range_with_offset_and_config(
@@ -2787,9 +2800,17 @@ impl Node {
                 quic_config.clone(),
             )
             .unwrap();
-        let tpu_forwards_quic =
-            bind_more_with_config(tpu_forwards_quic, DEFAULT_QUIC_ENDPOINTS, quic_config).unwrap();
+        let tpu_forwards_quic = bind_more_with_config(
+            tpu_forwards_quic,
+            DEFAULT_QUIC_ENDPOINTS,
+            quic_config.clone(),
+        )
+        .unwrap();
         let (tpu_vote_port, tpu_vote) = Self::bind(bind_ip_addr, port_range);
+        let (tpu_vote_quic_port, tpu_vote_quic) = Self::bind(bind_ip_addr, port_range);
+        let tpu_vote_quic: Vec<UdpSocket> =
+            bind_more_with_config(tpu_vote_quic, DEFAULT_QUIC_ENDPOINTS, quic_config).unwrap();
+
         let (_, retransmit_socket) = Self::bind(bind_ip_addr, port_range);
         let (_, repair) = Self::bind(bind_ip_addr, port_range);
         let (_, repair_quic) = Self::bind(bind_ip_addr, port_range);
@@ -2830,6 +2851,8 @@ impl Node {
             serve_repair_quic_port,
             "serve-repair QUIC"
         );
+        set_socket!(set_tpu_vote_quic, tpu_vote_quic_port, "TPU-vote QUIC");
+
         trace!("new ContactInfo: {:?}", info);
 
         Node {
@@ -2852,6 +2875,7 @@ impl Node {
                 ancestor_hashes_requests_quic,
                 tpu_quic,
                 tpu_forwards_quic,
+                tpu_vote_quic,
             },
         }
     }
@@ -2907,6 +2931,12 @@ impl Node {
         let (tpu_vote_port, tpu_vote_sockets) =
             multi_bind_in_range(bind_ip_addr, port_range, 1).expect("tpu_vote multi_bind");
 
+        let (tpu_vote_quic_port, tpu_vote_quic) = Self::bind(bind_ip_addr, port_range);
+
+        let tpu_vote_quic =
+            bind_more_with_config(tpu_vote_quic, num_quic_endpoints.get(), quic_config.clone())
+                .unwrap();
+
         let (_, retransmit_sockets) =
             multi_bind_in_range(bind_ip_addr, port_range, 8).expect("retransmit multi_bind");
 
@@ -2940,6 +2970,8 @@ impl Node {
         info.set_serve_repair((addr, serve_repair_port)).unwrap();
         info.set_serve_repair_quic((addr, serve_repair_quic_port))
             .unwrap();
+        info.set_tpu_vote_quic((addr, tpu_vote_quic_port)).unwrap();
+
         trace!("new ContactInfo: {:?}", info);
 
         Node {
@@ -2962,6 +2994,7 @@ impl Node {
                 ancestor_hashes_requests_quic,
                 tpu_quic,
                 tpu_forwards_quic,
+                tpu_vote_quic,
             },
         }
     }
@@ -4113,7 +4146,7 @@ mod tests {
             let mut rand_ci = ContactInfo::new_rand(&mut rng, Some(keypair.pubkey()));
             rand_ci.set_shred_version(shred_version);
             rand_ci.set_wallclock(timestamp());
-            CrdsValue::new_signed(CrdsData::ContactInfo(rand_ci), &keypair)
+            CrdsValue::new(CrdsData::ContactInfo(rand_ci), &keypair)
         })
         .take(NO_ENTRIES)
         .collect();
