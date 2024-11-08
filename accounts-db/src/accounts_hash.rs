@@ -336,7 +336,8 @@ impl CumulativeHashesFromFiles {
     }
 
     // return the biggest hash data possible that starts at the overall index 'start'
-    fn get_data(&self, start: usize) -> Arc<Vec<Hash>> {
+    // start is the index of hashes
+    fn get_data(&self, start: usize) -> Arc<Vec<u8>> {
         let (start, offset) = self.cumulative.find(start);
         let data_source_index = offset.index[0];
         let mut data = self.readers[data_source_index].lock().unwrap();
@@ -348,8 +349,7 @@ impl CumulativeHashesFromFiles {
 
         let mut result_bytes: Vec<u8> = vec![];
         data.read_to_end(&mut result_bytes).unwrap();
-        let result: Vec<Hash> = bytemuck::cast_slice(&result_bytes).to_vec();
-        Arc::new(result)
+        Arc::new(result_bytes)
     }
 }
 
@@ -550,8 +550,8 @@ impl AccountsHasher<'_> {
         specific_level_count: Option<usize>,
     ) -> (Hash, Vec<Hash>)
     where
-        // returns a vec hashes starting at the given overall index
-        F: Fn(usize) -> Arc<Vec<T>> + std::marker::Sync,
+        // returns a vec hash bytes starting at the given overall index
+        F: Fn(usize) -> Arc<Vec<u8>> + std::marker::Sync,
         T: AsRef<[u8]> + std::marker::Send + std::marker::Sync + bytemuck::Pod,
     {
         if total_hashes == 0 {
@@ -570,7 +570,8 @@ impl AccountsHasher<'_> {
         let chunks = Self::div_ceil(total_hashes, num_hashes_per_chunk);
 
         // initial fetch - could return entire slice
-        let data = get_hash_slice_starting_at_index(0);
+        let data_bytes = get_hash_slice_starting_at_index(0);
+        let data: &[T] = bytemuck::cast_slice(&data_bytes);
 
         let data_len = data.len();
 
@@ -593,7 +594,8 @@ impl AccountsHasher<'_> {
                 // if we exhaust our data, then we will request a new slice, and data_index resets to 0, the beginning of the new slice
                 let mut data_index = start_index;
                 // source data, which we may refresh when we exhaust
-                let mut data = data.clone();
+                let mut data_bytes = data_bytes.clone();
+                let mut data: &[T] = bytemuck::cast_slice(&data_bytes);
                 // len of the source data
                 let mut data_len = data_len;
 
@@ -603,7 +605,8 @@ impl AccountsHasher<'_> {
                     for i in start_index..end_index {
                         if data_index >= data_len {
                             // we exhausted our data, fetch next slice starting at i
-                            data = get_hash_slice_starting_at_index(i);
+                            data_bytes = get_hash_slice_starting_at_index(i);
+                            data = bytemuck::cast_slice(&data_bytes);
                             data_len = data.len();
                             data_index = 0;
                         }
@@ -658,7 +661,8 @@ impl AccountsHasher<'_> {
                             for _k in 0..end {
                                 if data_index >= data_len {
                                     // we exhausted our data, fetch next slice starting at i
-                                    data = get_hash_slice_starting_at_index(i);
+                                    data_bytes = get_hash_slice_starting_at_index(i);
+                                    data = bytemuck::cast_slice(&data_bytes);
                                     data_len = data.len();
                                     data_index = 0;
                                 }
@@ -1318,7 +1322,7 @@ impl AccountsHasher<'_> {
 
         let _guard = self.active_stats.activate(ActiveStatItem::HashMerkleTree);
         let mut hash_time = Measure::start("hash");
-        let (hash, _) = Self::compute_merkle_root_from_start(
+        let (hash, _) = Self::compute_merkle_root_from_start::<_, Hash>(
             cumulative.total_count(),
             MERKLE_FANOUT,
             None,
@@ -1645,7 +1649,8 @@ mod tests {
                 let mut cumulative_start = start;
                 // read all data
                 while retrieved.len() < (len - start) {
-                    let this_one = cumulative.get_data(cumulative_start);
+                    let this_one_bytes = cumulative.get_data(cumulative_start);
+                    let this_one = bytemuck::cast_slice(&this_one_bytes);
                     retrieved.extend(this_one.iter());
                     cumulative_start += this_one.len();
                     assert_ne!(0, this_one.len());
