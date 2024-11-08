@@ -123,7 +123,7 @@ impl LeaderTpuCache {
     }
 
     // Get the TPU sockets for the current leader and upcoming leaders according to fanout size
-    fn get_leader_sockets(
+    fn get_unique_leader_sockets(
         &self,
         estimated_current_slot: Slot,
         fanout_slots: u64,
@@ -808,7 +808,7 @@ impl LeaderTpuService {
         self.leader_tpu_cache
             .read()
             .unwrap()
-            .get_leader_sockets(current_slot, fanout_slots)
+            .get_unique_leader_sockets(current_slot, fanout_slots)
     }
 
     async fn run(
