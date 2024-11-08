@@ -540,8 +540,12 @@ impl AccountsHasher<'_> {
         (num_hashes_per_chunk, levels_hashed, three_level)
     }
 
-    // This function is designed to allow hashes to be located in multiple, perhaps multiply deep vecs.
-    // The caller provides a function to return a vec of hash from the source data.
+    // This function is called at the top lover level to compute the merkle. It
+    // takes a closure that returns an owned vec of hash data at the leaf level
+    // of the merkle tree. The input data for this bottom level are read from a
+    // file. For non-leaves nodes, where the input data is already in memory, we
+    // will use `compute_merkle_root_from_slices`, which is a version that takes
+    // a borrowed slice of hash data instead.
     fn compute_merkle_root_from_start<F, T>(
         total_hashes: usize,
         fanout: usize,
@@ -572,7 +576,6 @@ impl AccountsHasher<'_> {
         // initial fetch - could return entire slice
         let data_bytes = get_hash_slice_starting_at_index(0);
         let data: &[T] = bytemuck::cast_slice(&data_bytes);
-
         let data_len = data.len();
 
         let result: Vec<_> = (0..chunks)
