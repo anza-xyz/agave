@@ -230,21 +230,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     ) -> Self {
         let processor = Self::new_uninitialized(slot, epoch);
         {
-            let empty_loader = || {
-                Arc::new(BuiltinProgram::new_loader(
-                    VmConfig::default(),
-                    FunctionRegistry::default(),
-                ))
-            };
-
             let mut program_cache = processor.program_cache.write().unwrap();
             program_cache.set_fork_graph(fork_graph);
-            program_cache.latest_root_slot = slot;
-            program_cache.latest_root_epoch = epoch;
-            program_cache.environments.program_runtime_v1 =
-                program_runtime_environment_v1.unwrap_or(empty_loader());
-            program_cache.environments.program_runtime_v2 =
-                program_runtime_environment_v2.unwrap_or(empty_loader());
+            processor.configure_program_runtime_environments_inner(
+                &mut program_cache,
+                program_runtime_environment_v1,
+                program_runtime_environment_v2,
+            );
         }
         processor
     }
@@ -263,6 +255,41 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             program_cache: self.program_cache.clone(),
             builtin_program_ids: RwLock::new(self.builtin_program_ids.read().unwrap().clone()),
         }
+    }
+
+    fn configure_program_runtime_environments_inner(
+        &self,
+        program_cache: &mut ProgramCache<FG>,
+        program_runtime_environment_v1: Option<ProgramRuntimeEnvironment>,
+        program_runtime_environment_v2: Option<ProgramRuntimeEnvironment>,
+    ) {
+        let empty_loader = || {
+            Arc::new(BuiltinProgram::new_loader(
+                VmConfig::default(),
+                FunctionRegistry::default(),
+            ))
+        };
+
+        program_cache.latest_root_slot = self.slot;
+        program_cache.latest_root_epoch = self.epoch;
+        program_cache.environments.program_runtime_v1 =
+            program_runtime_environment_v1.unwrap_or(empty_loader());
+        program_cache.environments.program_runtime_v2 =
+            program_runtime_environment_v2.unwrap_or(empty_loader());
+    }
+
+    /// Configures the program runtime environments (loaders) in the
+    /// transaction processor's program cache.
+    pub fn configure_program_runtime_environments(
+        &self,
+        program_runtime_environment_v1: Option<ProgramRuntimeEnvironment>,
+        program_runtime_environment_v2: Option<ProgramRuntimeEnvironment>,
+    ) {
+        self.configure_program_runtime_environments_inner(
+            &mut self.program_cache.write().unwrap(),
+            program_runtime_environment_v1,
+            program_runtime_environment_v2,
+        );
     }
 
     /// Returns the current environments depending on the given epoch
