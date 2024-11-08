@@ -9,7 +9,7 @@ use {
     itertools::Itertools,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_feature_set::{self as feature_set, FeatureSet},
-    solana_program_runtime::loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
+    solana_program_runtime::loaded_programs::ProgramCacheForTxBatch,
     solana_sdk::{
         account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
         fee::FeeDetails,
@@ -30,7 +30,7 @@ use {
     solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_system_program::{get_system_account_kind, SystemAccountKind},
-    std::num::NonZeroU32,
+    std::{collections::HashMap, num::NonZeroU32},
 };
 
 // for the load instructions
@@ -194,6 +194,7 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
     account_overrides: Option<&AccountOverrides>,
     feature_set: &FeatureSet,
     rent_collector: &dyn SVMRentCollector,
+    program_accounts: &HashMap<Pubkey, (&Pubkey, u64)>,
     loaded_programs: &ProgramCacheForTxBatch,
 ) -> Vec<TransactionLoadResult> {
     txs.iter()
@@ -207,6 +208,7 @@ pub(crate) fn load_accounts<CB: TransactionProcessingCallback>(
                 account_overrides,
                 feature_set,
                 rent_collector,
+                program_accounts,
                 loaded_programs,
             )
         })
@@ -221,6 +223,7 @@ fn load_transaction<CB: TransactionProcessingCallback>(
     account_overrides: Option<&AccountOverrides>,
     feature_set: &FeatureSet,
     rent_collector: &dyn SVMRentCollector,
+    program_accounts: &HashMap<Pubkey, (&Pubkey, u64)>,
     loaded_programs: &ProgramCacheForTxBatch,
 ) -> TransactionLoadResult {
     match validation_result {
@@ -235,6 +238,7 @@ fn load_transaction<CB: TransactionProcessingCallback>(
                 account_overrides,
                 feature_set,
                 rent_collector,
+                program_accounts,
                 loaded_programs,
             );
 
@@ -268,6 +272,7 @@ struct LoadedTransactionAccounts {
     pub loaded_accounts_data_size: u32,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     message: &impl SVMMessage,
@@ -277,6 +282,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     account_overrides: Option<&AccountOverrides>,
     feature_set: &FeatureSet,
     rent_collector: &dyn SVMRentCollector,
+    program_accounts: &HashMap<Pubkey, (&Pubkey, u64)>,
     loaded_programs: &ProgramCacheForTxBatch,
 ) -> Result<LoadedTransactionAccounts> {
     let mut tx_rent: TransactionRent = 0;
@@ -331,6 +337,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
             account_overrides,
             feature_set,
             rent_collector,
+            program_accounts,
             loaded_programs,
         )?;
         collect_loaded_account(account_key, (loaded_account, account_found))?;
@@ -403,6 +410,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn load_transaction_account<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     message: &impl SVMMessage,
@@ -412,6 +420,7 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
     account_overrides: Option<&AccountOverrides>,
     feature_set: &FeatureSet,
     rent_collector: &dyn SVMRentCollector,
+    program_accounts: &HashMap<Pubkey, (&Pubkey, u64)>,
     loaded_programs: &ProgramCacheForTxBatch,
 ) -> Result<(LoadedTransactionAccount, bool)> {
     let mut account_found = true;
@@ -439,14 +448,11 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
         .then_some(())
         .and_then(|_| loaded_programs.find(account_key))
     {
-        callbacks
-            .get_account_shared_data(account_key)
-            .ok_or(TransactionError::AccountNotFound)?;
         // Optimization to skip loading of accounts which are only used as
         // programs in top-level instructions and not passed as instruction accounts.
         LoadedTransactionAccount {
             loaded_size: program.account_size,
-            account: account_shared_data_from_program(&program),
+            account: account_shared_data_from_program(account_key, program_accounts)?,
             rent_collected: 0,
         }
     } else {
@@ -496,14 +502,20 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
     Ok((loaded_account, account_found))
 }
 
-fn account_shared_data_from_program(loaded_program: &ProgramCacheEntry) -> AccountSharedData {
+fn account_shared_data_from_program(
+    key: &Pubkey,
+    program_accounts: &HashMap<Pubkey, (&Pubkey, u64)>,
+) -> Result<AccountSharedData> {
     // It's an executable program account. The program is already loaded in the cache.
     // So the account data is not needed. Return a dummy AccountSharedData with meta
     // information.
     let mut program_account = AccountSharedData::default();
-    program_account.set_owner(loaded_program.account_owner());
+    let (program_owner, _count) = program_accounts
+        .get(key)
+        .ok_or(TransactionError::AccountNotFound)?;
+    program_account.set_owner(**program_owner);
     program_account.set_executable(true);
-    program_account
+    Ok(program_account)
 }
 
 /// Accumulate loaded account data size into `accumulated_accounts_data_size`.
@@ -670,6 +682,7 @@ mod tests {
             None,
             feature_set,
             rent_collector,
+            &HashMap::new(),
             &ProgramCacheForTxBatch::default(),
         )
     }
@@ -978,6 +991,7 @@ mod tests {
             account_overrides,
             &FeatureSet::all_enabled(),
             &RentCollector::default(),
+            &HashMap::new(),
             &ProgramCacheForTxBatch::default(),
         )
     }
@@ -1273,6 +1287,7 @@ mod tests {
             None,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &HashMap::new(),
             &loaded_programs,
         );
 
@@ -1338,6 +1353,7 @@ mod tests {
             None,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &HashMap::new(),
             &loaded_programs,
         );
 
@@ -1371,6 +1387,7 @@ mod tests {
         let mut mock_bank = TestCallbacks::default();
         let account_keypair = Keypair::new();
         let program_keypair = Keypair::new();
+        let loader_v2 = bpf_loader::id();
 
         let mut account_data = AccountSharedData::default();
         account_data.set_lamports(200);
@@ -1380,7 +1397,7 @@ mod tests {
 
         let mut program_data = AccountSharedData::default();
         program_data.set_lamports(200);
-        program_data.set_owner(bpf_loader::id());
+        program_data.set_owner(loader_v2);
         mock_bank
             .accounts_map
             .insert(program_keypair.pubkey(), program_data);
@@ -1391,7 +1408,7 @@ mod tests {
         loader_data.set_owner(native_loader::id());
         mock_bank
             .accounts_map
-            .insert(bpf_loader::id(), loader_data.clone());
+            .insert(loader_v2, loader_data.clone());
         mock_bank
             .accounts_map
             .insert(native_loader::id(), loader_data.clone());
@@ -1408,6 +1425,8 @@ mod tests {
                 Hash::default(),
             ));
 
+        let mut program_accounts = HashMap::new();
+        program_accounts.insert(program_keypair.pubkey(), (&loader_v2, 0));
         let mut loaded_programs = ProgramCacheForTxBatch::default();
         loaded_programs.replenish(
             program_keypair.pubkey(),
@@ -1431,12 +1450,13 @@ mod tests {
             None,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &program_accounts,
             &loaded_programs,
         );
 
         // Executable flag is bypassed
         let mut cached_program = AccountSharedData::default();
-        cached_program.set_owner(bpf_loader::id());
+        cached_program.set_owner(loader_v2);
         cached_program.set_executable(true);
 
         assert_eq!(
@@ -1445,7 +1465,7 @@ mod tests {
                 accounts: vec![
                     (account_keypair.pubkey(), account_data.clone()),
                     (program_keypair.pubkey(), cached_program),
-                    (bpf_loader::id(), loader_data),
+                    (loader_v2, loader_data),
                 ],
                 program_indices: vec![vec![1]],
                 rent: 0,
@@ -1478,6 +1498,7 @@ mod tests {
             None,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &program_accounts,
             &loaded_programs,
         );
 
@@ -1504,6 +1525,7 @@ mod tests {
             None,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &program_accounts,
             &loaded_programs,
         );
 
@@ -1553,6 +1575,7 @@ mod tests {
             None,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &HashMap::new(),
             &loaded_programs,
         );
 
@@ -1598,6 +1621,7 @@ mod tests {
             None,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &HashMap::new(),
             &loaded_programs,
         );
 
@@ -1655,6 +1679,7 @@ mod tests {
             None,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &HashMap::new(),
             &loaded_programs,
         );
 
@@ -1718,6 +1743,7 @@ mod tests {
             None,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &HashMap::new(),
             &loaded_programs,
         );
 
@@ -1772,6 +1798,7 @@ mod tests {
             None,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &HashMap::new(),
             &loaded_programs,
         );
 
@@ -1836,6 +1863,7 @@ mod tests {
             None,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &HashMap::new(),
             &loaded_programs,
         );
 
@@ -1924,6 +1952,7 @@ mod tests {
             None,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &HashMap::new(),
             &loaded_programs,
         );
 
@@ -1989,6 +2018,7 @@ mod tests {
             None,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &HashMap::new(),
             &ProgramCacheForTxBatch::default(),
         );
 
@@ -2085,6 +2115,7 @@ mod tests {
             None,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &HashMap::new(),
             &loaded_programs,
         );
 
@@ -2157,6 +2188,7 @@ mod tests {
             None,
             &feature_set,
             &rent_collector,
+            &HashMap::new(),
             &ProgramCacheForTxBatch::default(),
         );
 
@@ -2178,6 +2210,7 @@ mod tests {
             None,
             &feature_set,
             &rent_collector,
+            &HashMap::new(),
             &ProgramCacheForTxBatch::default(),
         );
 
@@ -2328,6 +2361,7 @@ mod tests {
             None,
             &FeatureSet::default(),
             &RentCollector::default(),
+            &HashMap::new(),
             &ProgramCacheForTxBatch::default(),
         );
 
@@ -2355,6 +2389,8 @@ mod tests {
     fn test_load_transaction_accounts_data_sizes() {
         let mut mock_bank = TestCallbacks::default();
 
+        let loader_v2 = bpf_loader::id();
+        let loader_v3 = bpf_loader_upgradeable::id();
         let program1_keypair = Keypair::new();
         let program1 = program1_keypair.pubkey();
         let program2 = Pubkey::new_unique();
@@ -2363,7 +2399,7 @@ mod tests {
 
         let program2_size = std::mem::size_of::<UpgradeableLoaderState>() as u32;
         let mut program2_account = AccountSharedData::default();
-        program2_account.set_owner(bpf_loader_upgradeable::id());
+        program2_account.set_owner(loader_v3);
         program2_account.set_executable(true);
         program2_account.set_data(vec![0; program2_size as usize]);
         program2_account
@@ -2373,7 +2409,7 @@ mod tests {
             .unwrap();
         mock_bank.accounts_map.insert(program2, program2_account);
         let mut programdata2_account = AccountSharedData::default();
-        programdata2_account.set_owner(bpf_loader_upgradeable::id());
+        programdata2_account.set_owner(loader_v3);
         programdata2_account.set_data(vec![0; program2_size as usize]);
         programdata2_account
             .set_state(&UpgradeableLoaderState::ProgramData {
@@ -2423,12 +2459,14 @@ mod tests {
         let (account2_size, _) = make_account(account2, program2, false);
 
         let (native_loader_size, _) = make_account(native_loader::id(), native_loader::id(), true);
-        let (bpf_loader_size, _) = make_account(bpf_loader::id(), native_loader::id(), true);
-        let (upgradeable_loader_size, _) =
-            make_account(bpf_loader_upgradeable::id(), native_loader::id(), true);
+        let (bpf_loader_size, _) = make_account(loader_v2, native_loader::id(), true);
+        let (upgradeable_loader_size, _) = make_account(loader_v3, native_loader::id(), true);
 
-        let (_program1_size, _) = make_account(program1, bpf_loader::id(), true);
+        let (_program1_size, _) = make_account(program1, loader_v2, true);
 
+        let mut program_accounts = HashMap::new();
+        program_accounts.insert(program1, (&loader_v2, 0));
+        program_accounts.insert(program2, (&loader_v3, 0));
         let mut program_cache = ProgramCacheForTxBatch::default();
         let program1_entry = ProgramCacheEntry {
             account_size: 0,
@@ -2459,6 +2497,7 @@ mod tests {
                 None,
                 &FeatureSet::default(),
                 &RentCollector::default(),
+                &program_accounts,
                 &program_cache,
             )
             .unwrap();
