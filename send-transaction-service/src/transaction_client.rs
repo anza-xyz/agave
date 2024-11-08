@@ -93,8 +93,10 @@ where
     ) -> Vec<&'a SocketAddr> {
         leader_info
             .map(|leader_info| {
-                leader_info
-                    .get_leader_tpus(self.leader_forward_count, self.connection_cache.protocol())
+                leader_info.get_unique_leader_tpus(
+                    self.leader_forward_count,
+                    self.connection_cache.protocol(),
+                )
             })
             .filter(|addresses| !addresses.is_empty())
             .unwrap_or_else(|| vec![&self.tpu_address])
@@ -173,12 +175,12 @@ where
     T: TpuInfoWithSendStatic,
 {
     fn next_leaders(&mut self, lookahead_slots: usize) -> Vec<SocketAddr> {
-        // it is &mut because it is not a service! so it needs to update the state
-        // so i had to change the interface
         let discovered_peers = self
             .leader_info_provider
             .get_leader_info()
-            .map(|leader_info| leader_info.get_leader_tpus(lookahead_slots as u64, Protocol::QUIC))
+            .map(|leader_info| {
+                leader_info.get_unique_leader_tpus(lookahead_slots as u64, Protocol::QUIC)
+            })
             .filter(|addresses| !addresses.is_empty())
             .unwrap_or_else(|| vec![&self.my_tpu_address]);
         let mut all_peers = self.tpu_peers.clone().unwrap_or_default();

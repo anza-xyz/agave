@@ -50,7 +50,7 @@ impl TpuInfo for ClusterTpuInfo {
             .collect();
     }
 
-    fn get_leader_tpus(&self, max_count: u64, protocol: Protocol) -> Vec<&SocketAddr> {
+    fn get_unique_leader_tpus(&self, max_count: u64, protocol: Protocol) -> Vec<&SocketAddr> {
         let recorder = self.poh_recorder.read().unwrap();
         let leaders: Vec<_> = (0..max_count)
             .filter_map(|i| recorder.leader_after_n_slots(i * NUM_CONSECUTIVE_LEADER_SLOTS))
@@ -275,7 +275,7 @@ mod test {
         let first_leader =
             solana_ledger::leader_schedule_utils::slot_leader_at(slot, &bank).unwrap();
         assert_eq!(
-            leader_info.get_leader_tpus(1, Protocol::UDP),
+            leader_info.get_unique_leader_tpus(1, Protocol::UDP),
             vec![&recent_peers.get(&first_leader).unwrap().0]
         );
         assert_eq!(
@@ -294,7 +294,7 @@ mod test {
         ];
         expected_leader_sockets.dedup();
         assert_eq!(
-            leader_info.get_leader_tpus(2, Protocol::UDP),
+            leader_info.get_unique_leader_tpus(2, Protocol::UDP),
             expected_leader_sockets
         );
         assert_eq!(
@@ -317,7 +317,7 @@ mod test {
         ];
         expected_leader_sockets.dedup();
         assert_eq!(
-            leader_info.get_leader_tpus(3, Protocol::UDP),
+            leader_info.get_unique_leader_tpus(3, Protocol::UDP),
             expected_leader_sockets
         );
         // Only 2 leader tpus are returned always... so [0, 4, 8] isn't right here.
@@ -331,7 +331,9 @@ mod test {
         );
 
         for x in 4..8 {
-            assert!(leader_info.get_leader_tpus(x, Protocol::UDP).len() <= recent_peers.len());
+            assert!(
+                leader_info.get_unique_leader_tpus(x, Protocol::UDP).len() <= recent_peers.len()
+            );
             assert!(
                 leader_info
                     .get_leader_tpus_with_slots(x, Protocol::UDP)
