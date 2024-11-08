@@ -115,6 +115,49 @@ impl MockBankCallback {
     pub fn override_feature_set(&mut self, new_set: FeatureSet) {
         self.feature_set = Arc::new(new_set)
     }
+
+    pub fn configure_sysvars(&self) {
+        // We must fill in the sysvar cache entries
+
+        // clock contents are important because we use them for a sysvar loading test
+        let clock = Clock {
+            slot: EXECUTION_SLOT,
+            epoch_start_timestamp: WALLCLOCK_TIME.saturating_sub(10) as UnixTimestamp,
+            epoch: EXECUTION_EPOCH,
+            leader_schedule_epoch: EXECUTION_EPOCH,
+            unix_timestamp: WALLCLOCK_TIME as UnixTimestamp,
+        };
+
+        let mut account_data = AccountSharedData::default();
+        account_data.set_data(bincode::serialize(&clock).unwrap());
+        self.account_shared_data
+            .write()
+            .unwrap()
+            .insert(Clock::id(), account_data);
+
+        // default rent is fine
+        let rent = Rent::default();
+
+        let mut account_data = AccountSharedData::default();
+        account_data.set_data(bincode::serialize(&rent).unwrap());
+        self.account_shared_data
+            .write()
+            .unwrap()
+            .insert(Rent::id(), account_data);
+
+        // SystemInstruction::AdvanceNonceAccount asserts RecentBlockhashes is non-empty
+        // but then just gets the blockhash from InvokeContext. so the sysvar doesnt need real entries
+        #[allow(deprecated)]
+        let recent_blockhashes = vec![BlockhashesEntry::default()];
+
+        let mut account_data = AccountSharedData::default();
+        account_data.set_data(bincode::serialize(&recent_blockhashes).unwrap());
+        #[allow(deprecated)]
+        self.account_shared_data
+            .write()
+            .unwrap()
+            .insert(RecentBlockhashes::id(), account_data);
+    }
 }
 
 #[allow(unused)]
@@ -221,49 +264,7 @@ pub fn create_executable_environment(
 
     program_cache.fork_graph = Some(Arc::downgrade(&fork_graph));
 
-    // We must fill in the sysvar cache entries
-
-    // clock contents are important because we use them for a sysvar loading test
-    let clock = Clock {
-        slot: EXECUTION_SLOT,
-        epoch_start_timestamp: WALLCLOCK_TIME.saturating_sub(10) as UnixTimestamp,
-        epoch: EXECUTION_EPOCH,
-        leader_schedule_epoch: EXECUTION_EPOCH,
-        unix_timestamp: WALLCLOCK_TIME as UnixTimestamp,
-    };
-
-    let mut account_data = AccountSharedData::default();
-    account_data.set_data(bincode::serialize(&clock).unwrap());
-    mock_bank
-        .account_shared_data
-        .write()
-        .unwrap()
-        .insert(Clock::id(), account_data);
-
-    // default rent is fine
-    let rent = Rent::default();
-
-    let mut account_data = AccountSharedData::default();
-    account_data.set_data(bincode::serialize(&rent).unwrap());
-    mock_bank
-        .account_shared_data
-        .write()
-        .unwrap()
-        .insert(Rent::id(), account_data);
-
-    // SystemInstruction::AdvanceNonceAccount asserts RecentBlockhashes is non-empty
-    // but then just gets the blockhash from InvokeContext. so the sysvar doesnt need real entries
-    #[allow(deprecated)]
-    let recent_blockhashes = vec![BlockhashesEntry::default()];
-
-    let mut account_data = AccountSharedData::default();
-    account_data.set_data(bincode::serialize(&recent_blockhashes).unwrap());
-    #[allow(deprecated)]
-    mock_bank
-        .account_shared_data
-        .write()
-        .unwrap()
-        .insert(RecentBlockhashes::id(), account_data);
+    mock_bank.configure_sysvars();
 }
 
 #[allow(unused)]
