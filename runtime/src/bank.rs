@@ -1382,12 +1382,61 @@ impl Bank {
         let (_, fill_sysvar_cache_time_us) = measure_us!(new
             .transaction_processor
             .fill_missing_sysvar_cache_entries(&new));
-        time.stop();
 
+        let (num_accounts_modified_this_slot, populate_cache_for_accounts_lt_hash_us) = new
+            .is_accounts_lt_hash_enabled()
+            .then(|| {
+                measure_us!({
+                    // For any account that is modified before transaction processing begins, we need to
+                    // proactively add the initial state of those accounts to the cache for accounts lt
+                    // hash.  Otherwise during transaction processing, accounts that are written this slot
+                    // will see the wrong initial state of the account: the state written at *this* slot
+                    // before transaction processing, instead of the previous slot! If the lt hash cache
+                    // has the wrong initial account state, we'll mix out the wrong lt hash value, and thus
+                    // have the wrong overall accounts lt hash, and diverge.
+                    //
+                    // Note: This must be done *last* in new_from_parent()
+
+                    // We need to load the version of the account *before* it was written in this slot.
+                    // Bank::ancestors *includes* this slot, so we need to remove it before loading.
+                    let strictly_ancestors = {
+                        let mut ancestors = new.ancestors.clone();
+                        ancestors.remove(&slot);
+                        ancestors
+                    };
+                    let accounts_modified_this_slot =
+                        new.rc.accounts.accounts_db.get_pubkeys_for_slot(slot);
+                    let num_accounts_modified_this_slot = accounts_modified_this_slot.len();
+                    let cache_for_accounts_lt_hash =
+                        new.cache_for_accounts_lt_hash.get_mut().unwrap();
+                    for pubkey in accounts_modified_this_slot {
+                        cache_for_accounts_lt_hash
+                            .entry(pubkey)
+                            .or_insert_with_key(|pubkey| {
+                                let loaded_account = new
+                                    .rc
+                                    .accounts
+                                    .load_with_fixed_root_do_not_populate_read_cache(
+                                        &strictly_ancestors,
+                                        pubkey,
+                                    );
+                                match loaded_account {
+                                    Some((account, _)) => InitialStateOfAccount::Alive(account),
+                                    None => InitialStateOfAccount::Dead,
+                                }
+                            });
+                    }
+                    num_accounts_modified_this_slot
+                })
+            })
+            .unzip();
+
+        time.stop();
         report_new_bank_metrics(
             slot,
             parent.slot(),
             new.block_height,
+            num_accounts_modified_this_slot,
             NewBankTimings {
                 bank_rc_creation_time_us,
                 total_elapsed_time_us: time.as_us(),
@@ -1407,6 +1456,7 @@ impl Bank {
                 cache_preparation_time_us,
                 update_sysvars_time_us,
                 fill_sysvar_cache_time_us,
+                populate_cache_for_accounts_lt_hash_us,
             },
         );
 
