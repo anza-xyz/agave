@@ -5,9 +5,9 @@ use {
     solana_client::connection_cache::{ConnectionCache, Protocol},
     solana_connection_cache::client_connection::ClientConnection as TpuConnection,
     solana_measure::measure::Measure,
-    solana_sdk::{clock::NUM_CONSECUTIVE_LEADER_SLOTS, signature::Keypair},
+    solana_sdk::signature::Keypair,
     solana_tpu_client_next::{
-        connection_workers_scheduler::{ConnectionWorkersSchedulerConfig, LeadersFanout},
+        connection_workers_scheduler::{ConnectionWorkersSchedulerConfig, Fanout},
         leader_updater::LeaderUpdater,
         transaction_batch::TransactionBatch,
         ConnectionWorkersScheduler,
@@ -172,18 +172,13 @@ impl<T> LeaderUpdater for SendTransactionServiceLeaderUpdater<T>
 where
     T: TpuInfoWithSendStatic,
 {
-    fn next_leaders(&mut self, lookahead_slots: u64) -> Vec<SocketAddr> {
+    fn next_leaders(&mut self, lookahead_slots: usize) -> Vec<SocketAddr> {
         // it is &mut because it is not a service! so it needs to update the state
         // so i had to change the interface
         let discovered_peers = self
             .leader_info_provider
             .get_leader_info()
-            .map(|leader_info| {
-                leader_info.get_leader_tpus(
-                    lookahead_slots / NUM_CONSECUTIVE_LEADER_SLOTS,
-                    Protocol::QUIC,
-                )
-            })
+            .map(|leader_info| leader_info.get_leader_tpus(lookahead_slots as u64, Protocol::QUIC))
             .filter(|addresses| !addresses.is_empty())
             .unwrap_or_else(|| vec![&self.my_tpu_address]);
         let mut all_peers = self.tpu_peers.clone().unwrap_or_default();
@@ -262,8 +257,10 @@ where
                 skip_check_transaction_age: true,
                 worker_channel_size: 64,
                 max_reconnect_attempts: 4,
-                lookahead_slots: leader_forward_count * NUM_CONSECUTIVE_LEADER_SLOTS,
-                leaders_fanout: LeadersFanout::All,
+                leaders_fanout: Fanout {
+                    connect: leader_forward_count as usize,
+                    send: leader_forward_count as usize,
+                },
             };
             let _scheduler = tokio::spawn(ConnectionWorkersScheduler::run(
                 config,

@@ -121,6 +121,7 @@ use {
     solana_runtime::commitment::CommitmentSlots,
     solana_send_transaction_service::{
         send_transaction_service::SendTransactionService, tpu_info::NullTpuInfo,
+        transaction_client::ConnectionCacheClient,
     },
     solana_streamer::socket::SocketAddrSpace,
 };
@@ -361,8 +362,6 @@ impl JsonRpcRequestProcessor {
         socket_addr_space: SocketAddrSpace,
         connection_cache: Arc<ConnectionCache>,
     ) -> Self {
-        use solana_send_transaction_service::transaction_client::ConnectionCacheClient;
-
         let genesis_hash = bank.hash();
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank = bank_forks.read().unwrap().root_bank();
