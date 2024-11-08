@@ -38,7 +38,7 @@ use {
     },
     solana_send_transaction_service::{
         send_transaction_service::{self, SendTransactionService},
-        transaction_client::ConnectionCacheClient,
+        transaction_client::spawn_tpu_client_send_txs,
     },
     solana_storage_bigtable::CredentialType,
     std::{
@@ -46,16 +46,29 @@ use {
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
-            Arc, RwLock,
+            Arc, LazyLock, RwLock,
         },
         thread::{self, Builder, JoinHandle},
     },
+    tokio::runtime::{self, Runtime},
     tokio_util::codec::{BytesCodec, FramedRead},
 };
 
 const FULL_SNAPSHOT_REQUEST_PATH: &str = "/snapshot.tar.bz2";
 const INCREMENTAL_SNAPSHOT_REQUEST_PATH: &str = "/incremental-snapshot.tar.bz2";
 const LARGEST_ACCOUNTS_CACHE_DURATION: u64 = 60 * 60 * 2;
+
+static GLOBAL_RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
+    runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("Failed to create Tokio runtime")
+});
+
+// Function to get a handle to the runtime
+pub(crate) fn get_runtime_handle() -> tokio::runtime::Handle {
+    GLOBAL_RUNTIME.handle().clone()
+}
 
 pub struct JsonRpcService {
     thread_hdl: JoinHandle<()>,
@@ -477,12 +490,13 @@ impl JsonRpcService {
 
         let leader_info =
             poh_recorder.map(|recorder| ClusterTpuInfo::new(cluster_info.clone(), recorder));
-        let client = ConnectionCacheClient::new(
-            connection_cache,
+        let client = spawn_tpu_client_send_txs(
+            get_runtime_handle(),
             tpu_address,
             send_transaction_service_config.tpu_peers.clone(),
             leader_info,
             send_transaction_service_config.leader_forward_count,
+            None,
         );
         let _send_transaction_service = SendTransactionService::new_with_config(
             &bank_forks,

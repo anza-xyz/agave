@@ -78,9 +78,9 @@ impl TpuInfo for ClusterTpuInfo {
             .filter_map(|leader_pubkey| {
                 self.recent_peers
                     .get(leader_pubkey)
-                    .and_then(|addr| match protocol {
-                        Protocol::UDP => Some(&addr.0),
-                        Protocol::QUIC => Some(&addr.1),
+                    .map(|addr| match protocol {
+                        Protocol::UDP => &addr.0,
+                        Protocol::QUIC => &addr.1,
                     })
             })
             .collect()
