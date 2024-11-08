@@ -1,3 +1,4 @@
+#![allow(unused)]
 #[allow(deprecated)]
 use solana_sdk::sysvar::recent_blockhashes::{Entry as BlockhashesEntry, RecentBlockhashes};
 use {
@@ -9,9 +10,7 @@ use {
     solana_feature_set::FeatureSet,
     solana_program_runtime::{
         invoke_context::InvokeContext,
-        loaded_programs::{
-            BlockRelation, ForkGraph, ProgramCache, ProgramCacheEntry, ProgramRuntimeEnvironments,
-        },
+        loaded_programs::{BlockRelation, ForkGraph, ProgramCacheEntry},
         solana_rbpf::{
             program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
             vm::Config,
@@ -160,7 +159,6 @@ impl MockBankCallback {
     }
 }
 
-#[allow(unused)]
 fn load_program(name: String) -> Vec<u8> {
     // Loading the program file
     let mut dir = env::current_dir().unwrap();
@@ -176,22 +174,18 @@ fn load_program(name: String) -> Vec<u8> {
     buffer
 }
 
-#[allow(unused)]
 pub fn program_address(program_name: &str) -> Pubkey {
     Pubkey::create_with_seed(&Pubkey::default(), program_name, &Pubkey::default()).unwrap()
 }
 
-#[allow(unused)]
 pub fn program_data_size(program_name: &str) -> usize {
     load_program(program_name.to_string()).len()
 }
 
-#[allow(unused)]
 pub fn deploy_program(name: String, deployment_slot: Slot, mock_bank: &MockBankCallback) -> Pubkey {
     deploy_program_with_upgrade_authority(name, deployment_slot, mock_bank, None)
 }
 
-#[allow(unused)]
 pub fn deploy_program_with_upgrade_authority(
     name: String,
     deployment_slot: Slot,
@@ -247,27 +241,6 @@ pub fn deploy_program_with_upgrade_authority(
     program_account
 }
 
-#[allow(unused)]
-pub fn create_executable_environment(
-    fork_graph: Arc<RwLock<MockForkGraph>>,
-    mock_bank: &MockBankCallback,
-    program_cache: &mut ProgramCache<MockForkGraph>,
-) {
-    program_cache.environments = ProgramRuntimeEnvironments {
-        program_runtime_v1: Arc::new(create_custom_loader()),
-        // We are not using program runtime v2
-        program_runtime_v2: Arc::new(BuiltinProgram::new_loader(
-            Config::default(),
-            FunctionRegistry::default(),
-        )),
-    };
-
-    program_cache.fork_graph = Some(Arc::downgrade(&fork_graph));
-
-    mock_bank.configure_sysvars();
-}
-
-#[allow(unused)]
 pub fn register_builtins(
     mock_bank: &MockBankCallback,
     batch_processor: &TransactionBatchProcessor<MockForkGraph>,
@@ -315,7 +288,6 @@ pub fn register_builtins(
     );
 }
 
-#[allow(unused)]
 pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a>> {
     let compute_budget = ComputeBudget::default();
     let vm_config = Config {
