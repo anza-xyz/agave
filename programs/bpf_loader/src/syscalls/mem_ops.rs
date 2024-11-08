@@ -79,31 +79,37 @@ declare_builtin_function!(
             )?;
             *cmp_result = memcmp_non_contiguous(s1_addr, s2_addr, n, memory_mapping)?;
         } else {
-            let s1 = translate_slice::<u8>(
-                memory_mapping,
-                s1_addr,
-                n,
-                invoke_context.get_check_aligned(),
-            )?;
-            let s2 = translate_slice::<u8>(
-                memory_mapping,
-                s2_addr,
-                n,
-                invoke_context.get_check_aligned(),
-            )?;
-            let cmp_result = translate_type_mut::<i32>(
+            let cmp_result = {
+                let s1 = translate_slice::<u8>(
+                    memory_mapping,
+                    s1_addr,
+                    n,
+                    invoke_context.get_check_aligned(),
+                )?;
+                let s2 = translate_slice::<u8>(
+                    memory_mapping,
+                    s2_addr,
+                    n,
+                    invoke_context.get_check_aligned(),
+                )?;
+
+                debug_assert_eq!(s1.len(), n as usize);
+                debug_assert_eq!(s2.len(), n as usize);
+
+                // Safety:
+                // memcmp is marked unsafe since it assumes that the inputs are at least
+                // `n` bytes long. `s1` and `s2` are guaranteed to be exactly `n` bytes
+                // long because `translate_slice` would have failed otherwise.
+                unsafe { memcmp(s1, s2, n as usize) }
+            };
+
+            let cmp_result_dst = translate_type_mut::<i32>(
                 memory_mapping,
                 cmp_result_addr,
                 invoke_context.get_check_aligned(),
             )?;
 
-            debug_assert_eq!(s1.len(), n as usize);
-            debug_assert_eq!(s2.len(), n as usize);
-            // Safety:
-            // memcmp is marked unsafe since it assumes that the inputs are at least
-            // `n` bytes long. `s1` and `s2` are guaranteed to be exactly `n` bytes
-            // long because `translate_slice` would have failed otherwise.
-            *cmp_result = unsafe { memcmp(s1, s2, n as usize) };
+            *cmp_result_dst = cmp_result;
         }
 
         Ok(0)
