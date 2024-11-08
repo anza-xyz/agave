@@ -87,10 +87,7 @@ where
         }
     }
 
-    fn get_tpu_addresses_with_slots<'a>(
-        &'a self,
-        leader_info: Option<&'a T>,
-    ) -> Vec<&'a SocketAddr> {
+    fn get_unique_tpu_addresses<'a>(&'a self, leader_info: Option<&'a T>) -> Vec<&'a SocketAddr> {
         leader_info
             .map(|leader_info| {
                 leader_info.get_unique_leader_tpus(
@@ -143,7 +140,7 @@ where
             .unwrap_or_default();
         let mut leader_info_provider = self.leader_info_provider.lock().unwrap();
         let leader_info = leader_info_provider.get_leader_info();
-        let leader_addresses = self.get_tpu_addresses_with_slots(leader_info);
+        let leader_addresses = self.get_unique_tpu_addresses(leader_info);
         addresses.extend(leader_addresses);
 
         for address in &addresses {
@@ -174,12 +171,12 @@ impl<T> LeaderUpdater for SendTransactionServiceLeaderUpdater<T>
 where
     T: TpuInfoWithSendStatic,
 {
-    fn next_leaders(&mut self, lookahead_slots: usize) -> Vec<SocketAddr> {
+    fn next_leaders(&mut self, lookahead_leaders: usize) -> Vec<SocketAddr> {
         let discovered_peers = self
             .leader_info_provider
             .get_leader_info()
             .map(|leader_info| {
-                leader_info.get_unique_leader_tpus(lookahead_slots as u64, Protocol::QUIC)
+                leader_info.get_leader_tpus(lookahead_leaders as u64, Protocol::QUIC)
             })
             .filter(|addresses| !addresses.is_empty())
             .unwrap_or_else(|| vec![&self.my_tpu_address]);
