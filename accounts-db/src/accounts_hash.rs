@@ -7,7 +7,6 @@ use {
     },
     bytemuck_derive::{Pod, Zeroable},
     log::*,
-    memmap2::MmapMut,
     rayon::prelude::*,
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{measure::Measure, measure_us},
@@ -21,157 +20,71 @@ use {
     std::{
         borrow::Borrow,
         convert::TryInto,
-        io::{Seek, SeekFrom, Write},
+        fs::File,
+        io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicU64, AtomicUsize, Ordering},
-            Arc,
+            Arc, Mutex,
         },
-        thread, time,
     },
     tempfile::tempfile_in,
 };
 pub const MERKLE_FANOUT: usize = 16;
 
-/// 1 file containing account hashes sorted by pubkey, mapped into memory
-struct MmapAccountHashesFile {
-    /// raw slice of `Hash` values. Can be a larger slice than `count`
-    mmap: MmapMut,
-    /// # of valid Hash entries in `mmap`
+/// 1 file containing account hashes sorted by pubkey
+struct AccountHashesFile {
+    /// Writer for hash files created in the temp directory, which will be deleted on drop.
+    writer: Option<BufWriter<File>>,
+
+    /// Number of hashes in this file
     count: usize,
 }
 
-impl MmapAccountHashesFile {
-    /// return a slice of account hashes starting at 'index'
-    fn read(&self, index: usize) -> &[Hash] {
-        let start = std::mem::size_of::<Hash>() * index;
-        let end = std::mem::size_of::<Hash>() * self.count;
-        let bytes = &self.mmap[start..end];
-        bytemuck::cast_slice(bytes)
-    }
-
-    /// write a hash to the end of mmap file.
-    fn write(&mut self, hash: &Hash) {
-        let start = self.count * std::mem::size_of::<Hash>();
-        let end = start + std::mem::size_of::<Hash>();
-        self.mmap[start..end].copy_from_slice(hash.as_ref());
-        self.count += 1;
-    }
-}
-
-/// 1 file containing account hashes sorted by pubkey
-struct AccountHashesFile {
-    /// The mmap hash file created in the temp directory, which will be deleted on drop.
-    writer: Option<MmapAccountHashesFile>,
-}
-
 impl AccountHashesFile {
-    /// create a new AccountHashesFile
-    fn new(num_hashes: usize, dir_for_temp_cache_files: impl AsRef<Path>) -> Self {
-        if num_hashes == 0 {
-            return Self { writer: None };
-        }
-
-        let capacity = num_hashes * std::mem::size_of::<Hash>();
-        let get_file = || -> Result<_, std::io::Error> {
-            let mut data = tempfile_in(&dir_for_temp_cache_files).unwrap_or_else(|err| {
-                panic!(
-                    "Unable to create file within {}: {err}",
-                    dir_for_temp_cache_files.as_ref().display(),
-                )
-            });
-
-            // Theoretical performance optimization: write a zero to the end of
-            // the file so that we won't have to resize it later, which may be
-            // expensive.
-            assert!(capacity > 0);
-            data.seek(SeekFrom::Start((capacity - 1) as u64))?;
-            data.write_all(&[0])?;
-            data.rewind()?;
-            data.flush()?;
-            Ok(data)
-        };
-
-        // Retry 5 times to allocate the AccountHashesFile. The memory might be fragmented and
-        // causes memory allocation failure. Therefore, let's retry after failure. Hoping that the
-        // kernel has the chance to defrag the memory between the retries, and retries succeed.
-        let mut num_retries = 0;
-        let data = loop {
-            num_retries += 1;
-
-            match get_file() {
-                Ok(data) => {
-                    break data;
-                }
-                Err(err) => {
-                    info!(
-                        "Unable to create account hashes file within {}: {}, retry counter {}",
-                        dir_for_temp_cache_files.as_ref().display(),
-                        err,
-                        num_retries
-                    );
-
-                    if num_retries > 5 {
-                        panic!(
-                            "Unable to create account hashes file within {}: after {} retries",
-                            dir_for_temp_cache_files.as_ref().display(),
-                            num_retries
-                        );
-                    }
-                    datapoint_info!(
-                        "retry_account_hashes_file_allocation",
-                        ("retry", num_retries, i64)
-                    );
-                    thread::sleep(time::Duration::from_millis(num_retries * 100));
-                }
-            }
-        };
-
-        //UNSAFE: Required to create a Mmap
-        let map = unsafe { MmapMut::map_mut(&data) };
-        let map = map.unwrap_or_else(|e| {
-            error!(
-                "Failed to map the data file (size: {}): {}.\n
-                    Please increase sysctl vm.max_map_count or equivalent for your platform.",
-                capacity, e
-            );
-            std::process::exit(1);
+    /// Create a new AccountHashesFile with a writer to it.
+    fn new(dir_for_temp_cache_files: impl AsRef<Path>) -> Self {
+        let file = tempfile_in(dir_for_temp_cache_files.as_ref()).unwrap_or_else(|err| {
+            panic!(
+                "Unable to create file within {}: {err}",
+                dir_for_temp_cache_files.as_ref().display()
+            )
         });
-
-        let writer = MmapAccountHashesFile {
-            mmap: map,
-            count: 0,
-        };
-
-        AccountHashesFile {
-            writer: Some(writer),
-        }
+        // Now that we have a file, create a writer.
+        let writer = Some(BufWriter::new(file));
+        Self { writer, count: 0 }
     }
 
-    /// return a mmap reader that can be accessed  by slice
-    /// The reader will be None if there are no hashes in the file. And this function should only be called once after all writes are done.
+    /// Return a file reader for the underlying file.
+    /// This function should only be called once after all writes are done.
     /// After calling this function, the writer will be None. No more writes are allowed.
-    fn get_reader(&mut self) -> Option<MmapAccountHashesFile> {
-        let mmap = self.writer.take();
-        if mmap.is_some() && mmap.as_ref().unwrap().count > 0 {
-            mmap
-        } else {
-            None
+    fn get_reader(&mut self) -> Option<Mutex<BufReader<File>>> {
+        let writer = self.writer.take();
+        if self.count == 0 {
+            // If there are no hashes, then the file is empty and we should not return a reader.
+            return None;
         }
+
+        writer.map(|writer| {
+            let reader = BufReader::new(writer.into_inner().unwrap());
+            Mutex::new(reader)
+        })
     }
 
     /// # hashes stored in this file
     fn count(&self) -> usize {
-        self.writer
-            .as_ref()
-            .map(|writer| writer.count)
-            .unwrap_or_default()
+        self.count
     }
 
     /// write 'hash' to the file
     fn write(&mut self, hash: &Hash) {
         debug_assert!(self.writer.is_some());
-        self.writer.as_mut().unwrap().write(hash);
+        self.writer
+            .as_mut()
+            .unwrap()
+            .write_all(hash.as_ref())
+            .expect("write hash success");
+        self.count += 1;
     }
 }
 
@@ -393,7 +306,7 @@ struct CumulativeOffsets {
 #[derive(Default)]
 struct CumulativeHashesFromFiles {
     /// source of hashes in order
-    readers: Vec<MmapAccountHashesFile>,
+    readers: Vec<Mutex<BufReader<File>>>,
     /// look up reader index and offset by overall index
     cumulative: CumulativeOffsets,
 }
@@ -405,8 +318,8 @@ impl CumulativeHashesFromFiles {
         let mut readers = Vec::with_capacity(hashes.len());
         let cumulative = CumulativeOffsets::new(hashes.into_iter().filter_map(|mut hash_file| {
             // ignores all hashfiles that have zero entries
+            let count = hash_file.count();
             hash_file.get_reader().map(|reader| {
-                let count = reader.count;
                 readers.push(reader);
                 count
             })
@@ -422,13 +335,21 @@ impl CumulativeHashesFromFiles {
         self.cumulative.total_count
     }
 
-    // return the biggest slice possible that starts at the overall index 'start'
-    fn get_slice(&self, start: usize) -> &[Hash] {
+    // return the biggest hash data possible that starts at the overall index 'start'
+    fn get_data(&self, start: usize) -> Arc<Vec<Hash>> {
         let (start, offset) = self.cumulative.find(start);
         let data_source_index = offset.index[0];
-        let data = &self.readers[data_source_index];
+        let mut data = self.readers[data_source_index].lock().unwrap();
+
         // unwrap here because we should never ask for data that doesn't exist. If we do, then cumulative calculated incorrectly.
-        data.read(start)
+        let file_offset_in_bytes = std::mem::size_of::<Hash>() * start;
+        data.seek(SeekFrom::Start(file_offset_in_bytes.try_into().unwrap()))
+            .unwrap();
+
+        let mut result_bytes: Vec<u8> = vec![];
+        data.read_to_end(&mut result_bytes).unwrap();
+        let result: Vec<Hash> = bytemuck::cast_slice(&result_bytes).to_vec();
+        Arc::new(result)
     }
 }
 
@@ -617,6 +538,173 @@ impl AccountsHasher<'_> {
             (fanout, 1)
         };
         (num_hashes_per_chunk, levels_hashed, three_level)
+    }
+
+    // This function is designed to allow hashes to be located in multiple, perhaps multiply deep vecs.
+    // The caller provides a function to return a vec of hash from the source data.
+    fn compute_merkle_root_from_start<F, T>(
+        total_hashes: usize,
+        fanout: usize,
+        max_levels_per_pass: Option<usize>,
+        get_hash_slice_starting_at_index: F,
+        specific_level_count: Option<usize>,
+    ) -> (Hash, Vec<Hash>)
+    where
+        // returns a vec hashes starting at the given overall index
+        F: Fn(usize) -> Arc<Vec<T>> + std::marker::Sync,
+        T: AsRef<[u8]> + std::marker::Send + std::marker::Sync + bytemuck::Pod,
+    {
+        if total_hashes == 0 {
+            return (Hasher::default().result(), vec![]);
+        }
+
+        let mut time = Measure::start("time");
+
+        let (num_hashes_per_chunk, levels_hashed, three_level) = Self::calculate_three_level_chunks(
+            total_hashes,
+            fanout,
+            max_levels_per_pass,
+            specific_level_count,
+        );
+
+        let chunks = Self::div_ceil(total_hashes, num_hashes_per_chunk);
+
+        // initial fetch - could return entire slice
+        let data = get_hash_slice_starting_at_index(0);
+
+        let data_len = data.len();
+
+        let result: Vec<_> = (0..chunks)
+            .into_par_iter()
+            .map(|i| {
+                // summary:
+                // this closure computes 1 or 3 levels of merkle tree (all chunks will be 1 or all will be 3)
+                // for a subset (our chunk) of the input data [start_index..end_index]
+
+                // index into get_hash_slice_starting_at_index where this chunk's range begins
+                let start_index = i * num_hashes_per_chunk;
+                // index into get_hash_slice_starting_at_index where this chunk's range ends
+                let end_index = std::cmp::min(start_index + num_hashes_per_chunk, total_hashes);
+
+                // will compute the final result for this closure
+                let mut hasher = Hasher::default();
+
+                // index into 'data' where we are currently pulling data
+                // if we exhaust our data, then we will request a new slice, and data_index resets to 0, the beginning of the new slice
+                let mut data_index = start_index;
+                // source data, which we may refresh when we exhaust
+                let mut data = data.clone();
+                // len of the source data
+                let mut data_len = data_len;
+
+                if !three_level {
+                    // 1 group of fanout
+                    // The result of this loop is a single hash value from fanout input hashes.
+                    for i in start_index..end_index {
+                        if data_index >= data_len {
+                            // we exhausted our data, fetch next slice starting at i
+                            data = get_hash_slice_starting_at_index(i);
+                            data_len = data.len();
+                            data_index = 0;
+                        }
+                        hasher.hash(data[data_index].as_ref());
+                        data_index += 1;
+                    }
+                } else {
+                    // hash 3 levels of fanout simultaneously.
+                    // This codepath produces 1 hash value for between 1..=fanout^3 input hashes.
+                    // It is equivalent to running the normal merkle tree calculation 3 iterations on the input.
+                    //
+                    // big idea:
+                    //  merkle trees usually reduce the input vector by a factor of fanout with each iteration
+                    //  example with fanout 2:
+                    //   start:     [0,1,2,3,4,5,6,7]      in our case: [...16M...] or really, 1B
+                    //   iteration0 [.5, 2.5, 4.5, 6.5]                 [... 1M...]
+                    //   iteration1 [1.5, 5.5]                          [...65k...]
+                    //   iteration2 3.5                                 [...4k... ]
+                    //  So iteration 0 consumes N elements, hashes them in groups of 'fanout' and produces a vector of N/fanout elements
+                    //   and the process repeats until there is only 1 hash left.
+                    //
+                    //  With the three_level code path, we make each chunk we iterate of size fanout^3 (4096)
+                    //  So, the input could be 16M hashes and the output will be 4k hashes, or N/fanout^3
+                    //  The goal is to reduce the amount of data that has to be constructed and held in memory.
+                    //  When we know we have enough hashes, then, in 1 pass, we hash 3 levels simultaneously, storing far fewer intermediate hashes.
+                    //
+                    // Now, some details:
+                    // The result of this loop is a single hash value from fanout^3 input hashes.
+                    // concepts:
+                    //  what we're conceptually hashing: "raw_hashes"[start_index..end_index]
+                    //   example: [a,b,c,d,e,f]
+                    //   but... hashes[] may really be multiple vectors that are pieced together.
+                    //   example: [[a,b],[c],[d,e,f]]
+                    //   get_hash_slice_starting_at_index(any_index) abstracts that and returns a slice starting at raw_hashes[any_index..]
+                    //   such that the end of get_hash_slice_starting_at_index may be <, >, or = end_index
+                    //   example: get_hash_slice_starting_at_index(1) returns [b]
+                    //            get_hash_slice_starting_at_index(3) returns [d,e,f]
+                    // This code is basically 3 iterations of merkle tree hashing occurring simultaneously.
+                    // The first fanout raw hashes are hashed in hasher_k. This is iteration0
+                    // Once hasher_k has hashed fanout hashes, hasher_k's result hash is hashed in hasher_j and then discarded
+                    // hasher_k then starts over fresh and hashes the next fanout raw hashes. This is iteration0 again for a new set of data.
+                    // Once hasher_j has hashed fanout hashes (from k), hasher_j's result hash is hashed in hasher and then discarded
+                    // Once hasher has hashed fanout hashes (from j), then the result of hasher is the hash for fanout^3 raw hashes.
+                    // If there are < fanout^3 hashes, then this code stops when it runs out of raw hashes and returns whatever it hashed.
+                    // This is always how the very last elements work in a merkle tree.
+                    let mut i = start_index;
+                    while i < end_index {
+                        let mut hasher_j = Hasher::default();
+                        for _j in 0..fanout {
+                            let mut hasher_k = Hasher::default();
+                            let end = std::cmp::min(end_index - i, fanout);
+                            for _k in 0..end {
+                                if data_index >= data_len {
+                                    // we exhausted our data, fetch next slice starting at i
+                                    data = get_hash_slice_starting_at_index(i);
+                                    data_len = data.len();
+                                    data_index = 0;
+                                }
+                                hasher_k.hash(data[data_index].borrow().as_ref());
+                                data_index += 1;
+                                i += 1;
+                            }
+                            hasher_j.hash(hasher_k.result().as_ref());
+                            if i >= end_index {
+                                break;
+                            }
+                        }
+                        hasher.hash(hasher_j.result().as_ref());
+                    }
+                }
+
+                hasher.result()
+            })
+            .collect();
+        time.stop();
+        debug!("hashing {} {}", total_hashes, time);
+
+        if let Some(mut specific_level_count_value) = specific_level_count {
+            specific_level_count_value -= levels_hashed;
+            if specific_level_count_value == 0 {
+                (Hash::default(), result)
+            } else {
+                assert!(specific_level_count_value > 0);
+                // We did not hash the number of levels required by 'specific_level_count', so repeat
+                Self::compute_merkle_root_from_slices_recurse(
+                    result,
+                    fanout,
+                    max_levels_per_pass,
+                    Some(specific_level_count_value),
+                )
+            }
+        } else {
+            (
+                if result.len() == 1 {
+                    result[0]
+                } else {
+                    Self::compute_merkle_root_recurse(result, fanout)
+                },
+                vec![], // no intermediate results needed by caller
+            )
+        }
     }
 
     // This function is designed to allow hashes to be located in multiple, perhaps multiply deep vecs.
@@ -1160,7 +1248,7 @@ impl AccountsHasher<'_> {
         let binner = PubkeyBinCalculator24::new(bins);
 
         // working_set hold the lowest items for each slot_group sorted by pubkey descending (min_key is the last)
-        let (mut working_set, max_inclusive_num_pubkeys) = Self::initialize_dedup_working_set(
+        let (mut working_set, _max_inclusive_num_pubkeys) = Self::initialize_dedup_working_set(
             sorted_data_by_pubkey,
             pubkey_bin,
             bins,
@@ -1168,8 +1256,7 @@ impl AccountsHasher<'_> {
             stats,
         );
 
-        let mut hashes =
-            AccountHashesFile::new(max_inclusive_num_pubkeys, &self.dir_for_temp_cache_files);
+        let mut hashes = AccountHashesFile::new(&self.dir_for_temp_cache_files);
 
         let mut overall_sum: u64 = 0;
 
@@ -1231,11 +1318,11 @@ impl AccountsHasher<'_> {
 
         let _guard = self.active_stats.activate(ActiveStatItem::HashMerkleTree);
         let mut hash_time = Measure::start("hash");
-        let (hash, _) = Self::compute_merkle_root_from_slices(
+        let (hash, _) = Self::compute_merkle_root_from_start(
             cumulative.total_count(),
             MERKLE_FANOUT,
             None,
-            |start| cumulative.get_slice(start),
+            |start| cumulative.get_data(start),
             None,
         );
         hash_time.stop();
@@ -1479,25 +1566,25 @@ mod tests {
     fn test_account_hashes_file() {
         let dir_for_temp_cache_files = tempdir().unwrap();
         // 0 hashes
-        let mut file = AccountHashesFile::new(0, dir_for_temp_cache_files.path());
+        let mut file = AccountHashesFile::new(dir_for_temp_cache_files.path());
         assert!(file.get_reader().is_none());
         let hashes = (0..2)
             .map(|i| Hash::new_from_array([i; 32]))
             .collect::<Vec<_>>();
 
         // 1 hash
-        let mut file = AccountHashesFile::new(1, dir_for_temp_cache_files.path());
+        let mut file = AccountHashesFile::new(dir_for_temp_cache_files.path());
         file.write(&hashes[0]);
-        let reader = file.get_reader().unwrap();
-        assert_eq!(&[hashes[0]][..], reader.read(0));
-        assert!(reader.read(1).is_empty());
+        let reader = file.get_reader();
+        assert_eq!(&[hashes[0]][..], read(&reader, 0).unwrap());
+        assert!(read(&reader, 1).unwrap().is_empty());
 
         // multiple hashes
-        let mut file = AccountHashesFile::new(hashes.len(), dir_for_temp_cache_files.path());
+        let mut file = AccountHashesFile::new(dir_for_temp_cache_files.path());
         hashes.iter().for_each(|hash| file.write(hash));
-        let reader = file.get_reader().unwrap();
-        (0..2).for_each(|i| assert_eq!(&hashes[i..], reader.read(i)));
-        assert!(reader.read(2).is_empty());
+        let reader = file.get_reader();
+        (0..2).for_each(|i| assert_eq!(&hashes[i..], read(&reader, i).unwrap()));
+        assert!(read(&reader, 2).unwrap().is_empty());
     }
 
     #[test]
@@ -1511,15 +1598,15 @@ mod tests {
             let mut combined = Vec::default();
 
             // 0 hashes
-            let file0 = AccountHashesFile::new(0, dir_for_temp_cache_files.path());
+            let file0 = AccountHashesFile::new(dir_for_temp_cache_files.path());
 
             // 1 hash
-            let mut file1 = AccountHashesFile::new(1, dir_for_temp_cache_files.path());
+            let mut file1 = AccountHashesFile::new(dir_for_temp_cache_files.path());
             file1.write(&hashes[0]);
             combined.push(hashes[0]);
 
             // multiple hashes
-            let mut file2 = AccountHashesFile::new(hashes.len(), dir_for_temp_cache_files.path());
+            let mut file2 = AccountHashesFile::new(dir_for_temp_cache_files.path());
             hashes.iter().for_each(|hash| {
                 file2.write(hash);
                 combined.push(*hash);
@@ -1532,9 +1619,9 @@ mod tests {
                 vec![
                     file0,
                     file1,
-                    AccountHashesFile::new(0, dir_for_temp_cache_files.path()),
+                    AccountHashesFile::new(dir_for_temp_cache_files.path()),
                     file2,
-                    AccountHashesFile::new(0, dir_for_temp_cache_files.path()),
+                    AccountHashesFile::new(dir_for_temp_cache_files.path()),
                 ]
             } else if permutation == 2 {
                 vec![file1, file2]
@@ -1544,8 +1631,8 @@ mod tests {
                 combined.push(one);
                 vec![
                     file2,
-                    AccountHashesFile::new(0, dir_for_temp_cache_files.path()),
-                    AccountHashesFile::new(0, dir_for_temp_cache_files.path()),
+                    AccountHashesFile::new(dir_for_temp_cache_files.path()),
+                    AccountHashesFile::new(dir_for_temp_cache_files.path()),
                     file1,
                 ]
             };
@@ -1558,7 +1645,7 @@ mod tests {
                 let mut cumulative_start = start;
                 // read all data
                 while retrieved.len() < (len - start) {
-                    let this_one = cumulative.get_slice(cumulative_start);
+                    let this_one = cumulative.get_data(cumulative_start);
                     retrieved.extend(this_one.iter());
                     cumulative_start += this_one.len();
                     assert_ne!(0, this_one.len());
@@ -1684,7 +1771,8 @@ mod tests {
         let accounts_hasher = AccountsHasher::new(dir_for_temp_cache_files.path().to_path_buf());
         let (mut hashes, lamports) =
             accounts_hasher.de_dup_accounts_in_parallel(&slice, 0, 1, &HashStats::default());
-        assert_eq!(&[Hash::default()], hashes.get_reader().unwrap().read(0));
+        let reader = hashes.get_reader();
+        assert_eq!(&[Hash::default()], &read(&reader, 0).unwrap()[..]);
         assert_eq!(lamports, 1);
     }
 
@@ -1692,10 +1780,20 @@ mod tests {
         hashes.into_iter().map(get_vec).collect()
     }
     fn get_vec(mut hashes: AccountHashesFile) -> Vec<Hash> {
-        hashes
-            .get_reader()
-            .map(|r| r.read(0).to_vec())
-            .unwrap_or_default()
+        let reader = hashes.get_reader();
+        read(&reader, 0).unwrap_or_default()
+    }
+    fn read(reader: &Option<Mutex<BufReader<File>>>, index: usize) -> std::io::Result<Vec<Hash>> {
+        let file_offset_in_bytes = std::mem::size_of::<Hash>() * index;
+        if reader.is_none() {
+            return Ok(vec![]);
+        }
+        let mut reader = reader.as_ref().unwrap().lock().unwrap();
+        reader.seek(SeekFrom::Start(file_offset_in_bytes.try_into().unwrap()))?;
+        let mut result_bytes: Vec<u8> = vec![];
+        reader.read_to_end(&mut result_bytes)?;
+        let result: Vec<Hash> = bytemuck::cast_slice(&result_bytes).to_vec();
+        Ok(result)
     }
 
     #[test]
