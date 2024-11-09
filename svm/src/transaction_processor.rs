@@ -415,7 +415,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         tx,
                         tx_details,
                         &environment.blockhash,
-                        &environment.feature_set,
                         environment.fee_lamports_per_signature,
                         environment
                             .rent_collector
@@ -517,7 +516,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         message: &impl SVMMessage,
         checked_details: CheckedTransactionDetails,
         environment_blockhash: &Hash,
-        feature_set: &FeatureSet,
         fee_lamports_per_signature: u64,
         rent_collector: &dyn SVMRentCollector,
         error_counters: &mut TransactionErrorMetrics,
@@ -546,7 +544,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             account_loader,
             message,
             checked_details,
-            feature_set,
             fee_lamports_per_signature,
             rent_collector,
             error_counters,
@@ -560,7 +557,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         account_loader: &mut AccountLoader<CB>,
         message: &impl SVMMessage,
         checked_details: CheckedTransactionDetails,
-        feature_set: &FeatureSet,
         fee_lamports_per_signature: u64,
         rent_collector: &dyn SVMRentCollector,
         error_counters: &mut TransactionErrorMetrics,
@@ -583,7 +579,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         let fee_payer_loaded_rent_epoch = loaded_fee_payer.account.rent_epoch();
         loaded_fee_payer.rent_collected = collect_rent_from_account(
-            feature_set,
+            &account_loader.feature_set,
             rent_collector,
             fee_payer_address,
             &mut loaded_fee_payer.account,
@@ -601,7 +597,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             lamports_per_signature == 0,
             fee_lamports_per_signature,
             fee_budget_limits.prioritization_fee,
-            feature_set.is_active(&remove_rounding_in_fee_calculation::id()),
+            account_loader
+                .feature_set
+                .is_active(&remove_rounding_in_fee_calculation::id()),
         );
 
         let fee_payer_index = 0;
@@ -2151,7 +2149,6 @@ mod tests {
                     lamports_per_signature,
                 },
                 &Hash::default(),
-                &FeatureSet::default(),
                 FeeStructure::default().lamports_per_signature,
                 &rent_collector,
                 &mut error_counters,
@@ -2230,7 +2227,6 @@ mod tests {
                     lamports_per_signature,
                 },
                 &Hash::default(),
-                &FeatureSet::default(),
                 FeeStructure::default().lamports_per_signature,
                 &rent_collector,
                 &mut error_counters,
@@ -2282,7 +2278,6 @@ mod tests {
                     lamports_per_signature,
                 },
                 &Hash::default(),
-                &FeatureSet::default(),
                 FeeStructure::default().lamports_per_signature,
                 &RentCollector::default(),
                 &mut error_counters,
@@ -2317,7 +2312,6 @@ mod tests {
                     lamports_per_signature,
                 },
                 &Hash::default(),
-                &FeatureSet::default(),
                 FeeStructure::default().lamports_per_signature,
                 &RentCollector::default(),
                 &mut error_counters,
@@ -2356,7 +2350,6 @@ mod tests {
                     lamports_per_signature,
                 },
                 &Hash::default(),
-                &FeatureSet::default(),
                 FeeStructure::default().lamports_per_signature,
                 &rent_collector,
                 &mut error_counters,
@@ -2393,7 +2386,6 @@ mod tests {
                     lamports_per_signature,
                 },
                 &Hash::default(),
-                &FeatureSet::default(),
                 FeeStructure::default().lamports_per_signature,
                 &RentCollector::default(),
                 &mut error_counters,
@@ -2426,7 +2418,6 @@ mod tests {
                     lamports_per_signature,
                 },
                 &Hash::default(),
-                &FeatureSet::default(),
                 FeeStructure::default().lamports_per_signature,
                 &RentCollector::default(),
                 &mut error_counters,
@@ -2438,7 +2429,6 @@ mod tests {
 
     #[test]
     fn test_validate_transaction_fee_payer_is_nonce() {
-        let feature_set = FeatureSet::default();
         let lamports_per_signature = 5000;
         let rent_collector = RentCollector::default();
         let compute_unit_limit = 2 * solana_compute_budget_program::DEFAULT_COMPUTE_UNITS;
@@ -2499,7 +2489,6 @@ mod tests {
                 &message,
                 tx_details,
                 &environment_blockhash,
-                &feature_set,
                 FeeStructure::default().lamports_per_signature,
                 &rent_collector,
                 &mut error_counters,
@@ -2561,7 +2550,6 @@ mod tests {
                     lamports_per_signature,
                 },
                 &Hash::default(),
-                &feature_set,
                 FeeStructure::default().lamports_per_signature,
                 &rent_collector,
                 &mut error_counters,
@@ -2622,7 +2610,6 @@ mod tests {
                     lamports_per_signature,
                 },
                 &Hash::default(),
-                &FeatureSet::default(),
                 FeeStructure::default().lamports_per_signature,
                 &rent_collector,
                 &mut error_counters,
@@ -2669,7 +2656,6 @@ mod tests {
                 lamports_per_signature: 5000,
             },
             &Hash::default(),
-            &FeatureSet::default(),
             FeeStructure::default().lamports_per_signature,
             &RentCollector::default(),
             &mut TransactionErrorMetrics::default(),
