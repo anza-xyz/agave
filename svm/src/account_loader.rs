@@ -127,7 +127,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
     ) -> Option<LoadedTransactionAccount> {
         let is_writable = usage_pattern == AccountUsagePattern::Writable;
         let is_invisible_read = usage_pattern == AccountUsagePattern::ReadOnlyInvisible;
-        let disable_account_loader_special_case = self
+        let use_program_cache = !self
             .feature_set
             .is_active(&feature_set::disable_account_loader_special_case::id());
 
@@ -140,7 +140,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
                 account: account_override.clone(),
                 rent_collected: 0,
             })
-        } else if let Some(program) = (!disable_account_loader_special_case && is_invisible_read)
+        } else if let Some(program) = (use_program_cache && is_invisible_read)
             .then_some(())
             .and_then(|_| self.program_cache.find(account_key))
         {
@@ -623,7 +623,6 @@ mod tests {
             transaction_context::{TransactionAccount, TransactionContext},
         },
         std::{borrow::Cow, cell::RefCell, collections::HashMap, fs::File, io::Read, sync::Arc},
-        test_case::test_case,
     };
 
     #[derive(Clone, Default)]
