@@ -2782,7 +2782,15 @@ impl ReplayStage {
             GRACE_TICKS_FACTOR * MAX_GRACE_SLOTS,
         );
 
-        poh_recorder.write().unwrap().reset(bank, next_leader_slot);
+        let cleared_bank = poh_recorder.write().unwrap().reset(bank, next_leader_slot);
+        if let Some(bank) = cleared_bank {
+            if bank.collector_id() == my_pubkey {
+                info!("Reaping tpu bank: {}...", bank.slot());
+                if let Some((result, completed_execute_timings)) = bank.wait_for_completed_scheduler() {
+                    info!("Reaped aborted unified scheduler tpu bank: {} {:?}", bank.slot(), result);
+                }
+            }
+        }
 
         let next_leader_msg = if let Some(next_leader_slot) = next_leader_slot {
             format!("My next leader slot is {}", next_leader_slot.0)
