@@ -326,7 +326,6 @@ struct LoadedTransactionAccounts {
     pub loaded_accounts_data_size: u32,
 }
 
-#[allow(clippy::too_many_arguments)]
 fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     account_loader: &mut AccountLoader<CB>,
     message: &impl SVMMessage,
@@ -461,7 +460,6 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn load_transaction_account<CB: TransactionProcessingCallback>(
     account_loader: &mut AccountLoader<CB>,
     message: &impl SVMMessage,
