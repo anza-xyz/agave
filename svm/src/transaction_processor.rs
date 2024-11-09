@@ -430,7 +430,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 tx,
                 validate_result,
                 &mut error_metrics,
-                &environment.feature_set,
                 environment
                     .rent_collector
                     .unwrap_or(&RentCollector::default()),

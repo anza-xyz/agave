@@ -101,7 +101,7 @@ pub(crate) struct AccountLoader<'a, CB: TransactionProcessingCallback> {
     pub(crate) program_cache: ProgramCacheForTxBatch,
     program_accounts: HashMap<Pubkey, (&'a Pubkey, u64)>,
     callbacks: &'a CB,
-    feature_set: Arc<FeatureSet>,
+    pub(crate) feature_set: Arc<FeatureSet>,
 }
 impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
     pub fn new(
@@ -282,7 +282,6 @@ pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
     message: &impl SVMMessage,
     validation_result: TransactionValidationResult,
     error_metrics: &mut TransactionErrorMetrics,
-    feature_set: &FeatureSet,
     rent_collector: &dyn SVMRentCollector,
 ) -> TransactionLoadResult {
     match validation_result {
@@ -294,7 +293,6 @@ pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
                 tx_details.loaded_fee_payer_account,
                 &tx_details.compute_budget_limits,
                 error_metrics,
-                feature_set,
                 rent_collector,
             );
 
@@ -335,7 +333,6 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     loaded_fee_payer_account: LoadedTransactionAccount,
     compute_budget_limits: &ComputeBudgetLimits,
     error_metrics: &mut TransactionErrorMetrics,
-    feature_set: &FeatureSet,
     rent_collector: &dyn SVMRentCollector,
 ) -> Result<LoadedTransactionAccounts> {
     let mut tx_rent: TransactionRent = 0;
@@ -380,7 +377,6 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
             message,
             account_key,
             account_index,
-            feature_set,
             rent_collector,
         )?;
         collect_loaded_account(account_key, (loaded_account, account_found))?;
@@ -406,7 +402,9 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                 return Err(TransactionError::ProgramAccountNotFound);
             }
 
-            if !feature_set.is_active(&feature_set::remove_accounts_executable_flag_checks::id())
+            if !account_loader
+                .feature_set
+                .is_active(&feature_set::remove_accounts_executable_flag_checks::id())
                 && !program_account.executable()
             {
                 error_metrics.invalid_program_for_execution += 1;
@@ -430,7 +428,8 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                     account_loader.callbacks.get_account_shared_data(owner_id)
                 {
                     if !native_loader::check_id(owner_account.owner())
-                        || (!feature_set
+                        || (!account_loader
+                            .feature_set
                             .is_active(&feature_set::remove_accounts_executable_flag_checks::id())
                             && !owner_account.executable())
                     {
@@ -468,7 +467,6 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
     message: &impl SVMMessage,
     account_key: &Pubkey,
     account_index: usize,
-    feature_set: &FeatureSet,
     rent_collector: &dyn SVMRentCollector,
 ) -> Result<(LoadedTransactionAccount, bool)> {
     let mut account_found = true;
@@ -486,7 +484,7 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
     {
         loaded_account.rent_collected = if usage_pattern == AccountUsagePattern::Writable {
             collect_rent_from_account(
-                feature_set,
+                &account_loader.feature_set,
                 rent_collector,
                 account_key,
                 &mut loaded_account.account,
@@ -693,7 +691,8 @@ mod tests {
             accounts_map,
             ..Default::default()
         };
-        let mut account_loader = (&callbacks).into();
+        let mut account_loader: AccountLoader<TestCallbacks> = (&callbacks).into();
+        account_loader.feature_set = Arc::new(feature_set.clone());
         load_transaction(
             &mut account_loader,
             &sanitized_tx,
@@ -705,7 +704,6 @@ mod tests {
                 ..ValidatedTransactionDetails::default()
             }),
             error_metrics,
-            feature_set,
             rent_collector,
         )
     }
@@ -1014,14 +1012,13 @@ mod tests {
             ProgramCacheForTxBatch::default(),
             HashMap::default(),
             &callbacks,
-            Arc::<FeatureSet>::default(),
+            Arc::new(FeatureSet::all_enabled()),
         );
         load_transaction(
             &mut account_loader,
             &tx,
             Ok(ValidatedTransactionDetails::default()),
             &mut error_metrics,
-            &FeatureSet::all_enabled(),
             &RentCollector::default(),
         )
     }
@@ -1312,7 +1309,6 @@ mod tests {
             },
             &ComputeBudgetLimits::default(),
             &mut error_metrics,
-            &FeatureSet::default(),
             &RentCollector::default(),
         );
 
@@ -1375,7 +1371,6 @@ mod tests {
             },
             &ComputeBudgetLimits::default(),
             &mut error_metrics,
-            &FeatureSet::default(),
             &RentCollector::default(),
         );
 
@@ -1477,7 +1472,6 @@ mod tests {
             },
             &ComputeBudgetLimits::default(),
             &mut error_metrics,
-            &FeatureSet::default(),
             &RentCollector::default(),
         );
 
@@ -1522,7 +1516,6 @@ mod tests {
             },
             &ComputeBudgetLimits::default(),
             &mut error_metrics,
-            &FeatureSet::default(),
             &RentCollector::default(),
         );
 
@@ -1546,7 +1539,6 @@ mod tests {
             },
             &ComputeBudgetLimits::default(),
             &mut error_metrics,
-            &FeatureSet::default(),
             &RentCollector::default(),
         );
 
@@ -1593,7 +1585,6 @@ mod tests {
             LoadedTransactionAccount::default(),
             &ComputeBudgetLimits::default(),
             &mut error_metrics,
-            &FeatureSet::default(),
             &RentCollector::default(),
         );
 
@@ -1636,7 +1627,6 @@ mod tests {
             LoadedTransactionAccount::default(),
             &ComputeBudgetLimits::default(),
             &mut error_metrics,
-            &FeatureSet::default(),
             &RentCollector::default(),
         );
 
@@ -1692,7 +1682,6 @@ mod tests {
             },
             &ComputeBudgetLimits::default(),
             &mut error_metrics,
-            &FeatureSet::default(),
             &RentCollector::default(),
         );
 
@@ -1754,7 +1743,6 @@ mod tests {
             LoadedTransactionAccount::default(),
             &ComputeBudgetLimits::default(),
             &mut error_metrics,
-            &FeatureSet::default(),
             &RentCollector::default(),
         );
 
@@ -1806,7 +1794,6 @@ mod tests {
             LoadedTransactionAccount::default(),
             &ComputeBudgetLimits::default(),
             &mut error_metrics,
-            &FeatureSet::default(),
             &RentCollector::default(),
         );
 
@@ -1868,7 +1855,6 @@ mod tests {
             },
             &ComputeBudgetLimits::default(),
             &mut error_metrics,
-            &FeatureSet::default(),
             &RentCollector::default(),
         );
 
@@ -1954,7 +1940,6 @@ mod tests {
             },
             &ComputeBudgetLimits::default(),
             &mut error_metrics,
-            &FeatureSet::default(),
             &RentCollector::default(),
         );
 
@@ -2017,7 +2002,6 @@ mod tests {
             &sanitized_tx.clone(),
             Ok(ValidatedTransactionDetails::default()),
             &mut error_metrics,
-            &FeatureSet::default(),
             &RentCollector::default(),
         );
 
@@ -2111,7 +2095,6 @@ mod tests {
             &sanitized_transaction,
             validation_result,
             &mut error_metrics,
-            &FeatureSet::default(),
             &RentCollector::default(),
         );
 
@@ -2154,7 +2137,6 @@ mod tests {
     fn test_load_accounts_error() {
         let mock_bank = TestCallbacks::default();
         let mut account_loader = (&mock_bank).into();
-        let feature_set = FeatureSet::default();
         let rent_collector = RentCollector::default();
 
         let message = Message {
@@ -2181,7 +2163,6 @@ mod tests {
             &sanitized_transaction,
             validation_result.clone(),
             &mut TransactionErrorMetrics::default(),
-            &feature_set,
             &rent_collector,
         );
 
@@ -2200,7 +2181,6 @@ mod tests {
             &sanitized_transaction,
             validation_result,
             &mut TransactionErrorMetrics::default(),
-            &feature_set,
             &rent_collector,
         );
 
@@ -2349,7 +2329,6 @@ mod tests {
             &sanitized_transaction,
             validation_result,
             &mut TransactionErrorMetrics::default(),
-            &FeatureSet::default(),
             &RentCollector::default(),
         );
 
@@ -2492,7 +2471,6 @@ mod tests {
                 },
                 &ComputeBudgetLimits::default(),
                 &mut TransactionErrorMetrics::default(),
-                &FeatureSet::default(),
                 &RentCollector::default(),
             )
             .unwrap();
