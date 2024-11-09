@@ -1195,11 +1195,11 @@ mod tests {
         super::*,
         bincode::serialize,
         crossbeam_channel::bounded,
-        mpsc,
         solana_ledger::{
             blockstore::Blockstore, blockstore_meta::SlotMeta, get_tmp_ledger_path_auto_delete,
         },
         solana_perf::test_tx::test_tx,
+        solana_poh::mpsc,
         solana_sdk::{clock::DEFAULT_TICKS_PER_SLOT, hash::hash},
     };
 
@@ -2372,7 +2372,7 @@ mod tests {
 
                     _ => {
                         if let Some(n) = rx.pop() {
-                            v[n as usize].fetch_add(1, Ordering::SeqCst);
+                            v[n].fetch_add(1, Ordering::SeqCst);
                         }
                     }
                 }
@@ -2380,8 +2380,9 @@ mod tests {
 
             for _ in 0..THREADS {
                 scope.spawn(|| {
+                    #[allow(clippy::needless_range_loop)]
                     for i in 0..COUNT {
-                        if let Ok(_) = tx.try_push(i) {
+                        if tx.try_push(i).is_ok() {
                             v[i].fetch_add(1, Ordering::SeqCst);
                         }
                     }

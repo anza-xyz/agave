@@ -3830,10 +3830,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mpsc"
-version = "0.1.0"
-
-[[package]]
 name = "multimap"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7579,7 +7575,6 @@ dependencies = [
  "core_affinity",
  "crossbeam-channel",
  "log",
- "mpsc",
  "rand 0.8.5",
  "solana-entry",
  "solana-ledger",
