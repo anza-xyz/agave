@@ -64,7 +64,6 @@ members = [
     "notifier",
     "perf",
     "poh",
-    "poh/mpsc",
     "poh-bench",
     "poseidon",
     "program-runtime",
@@ -341,7 +340,6 @@ merlin = "3"
 min-max-heap = "1.3.0"
 mockall = "0.11.4"
 modular-bitfield = "0.11.2"
-mpsc = { path = "poh/mpsc" }
 nix = "0.29.0"
 num-bigint = "0.4.6"
 num-derive = "0.4"

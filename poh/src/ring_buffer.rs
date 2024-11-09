@@ -358,10 +358,10 @@ mod tests {
 
         // The first 4 producers write to the buffer.
         for (index, producer_check_result) in producer_check_results[..4].iter().enumerate() {
-            let cell = match producer_check_result {
-                ProducerCheckResult::CanWrite(cell) => cell,
-                _ => panic!("expected CanWrite"),
+            let ProducerCheckResult::CanWrite(cell) = producer_check_result else {
+                panic!("expected CanWrite")
             };
+
             cell.set(index as i32);
         }
 
