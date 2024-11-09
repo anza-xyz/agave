@@ -1,4 +1,5 @@
 //! The `rpc` module implements the Solana RPC interface.
+
 use {
     crate::{
         filter::filter_allows, max_slots::MaxSlots,
@@ -115,15 +116,15 @@ use {
 };
 #[cfg(test)]
 use {
-    solana_client::connection_cache::ConnectionCache,
     solana_gossip::contact_info::ContactInfo,
     solana_ledger::get_tmp_ledger_path,
     solana_runtime::commitment::CommitmentSlots,
     solana_send_transaction_service::{
-        send_transaction_service::SendTransactionService, tpu_info::NullTpuInfo,
-        transaction_client::ConnectionCacheClient,
+        create_client_for_tests::ClientWithCreator,
+        send_transaction_service::SendTransactionService,
     },
     solana_streamer::socket::SocketAddrSpace,
+    tokio::runtime::Handle,
 };
 
 pub mod account_resolver;
@@ -357,10 +358,10 @@ impl JsonRpcRequestProcessor {
     }
 
     #[cfg(test)]
-    pub fn new_from_bank(
+    pub fn new_from_bank<Client: ClientWithCreator>(
+        maybe_runtime: Option<Handle>,
         bank: Bank,
         socket_addr_space: SocketAddrSpace,
-        connection_cache: Arc<ConnectionCache>,
     ) -> Self {
         let genesis_hash = bank.hash();
         let bank_forks = BankForks::new_rw_arc(bank);
@@ -375,19 +376,10 @@ impl JsonRpcRequestProcessor {
             );
             ClusterInfo::new(contact_info, keypair, socket_addr_space)
         });
-        let tpu_address = cluster_info
-            .my_contact_info()
-            .tpu(connection_cache.protocol())
-            .unwrap();
+        let my_tpu_address = cluster_info.my_contact_info().tpu(Protocol::QUIC).unwrap();
         let (sender, receiver) = unbounded();
 
-        let client = ConnectionCacheClient::<NullTpuInfo>::new(
-            connection_cache.clone(),
-            tpu_address,
-            None,
-            None,
-            1,
-        );
+        let client = Client::create_client(maybe_runtime, my_tpu_address, None, 1);
         SendTransactionService::new(&bank_forks, receiver, client, 1000, exit.clone());
 
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
@@ -4387,7 +4379,8 @@ pub mod tests {
             vote::state::VoteState,
         },
         solana_send_transaction_service::{
-            tpu_info::NullTpuInfo, transaction_client::ConnectionCacheClient,
+            tpu_info::NullTpuInfo,
+            transaction_client::{ConnectionCacheClient, TpuClientNextClient},
         },
         solana_transaction_status::{
             EncodedConfirmedBlock, EncodedTransaction, EncodedTransactionWithStatusMeta,
@@ -4408,6 +4401,7 @@ pub mod tests {
             state::{AccountState as TokenAccountState, Mint},
         },
         std::{borrow::Cow, collections::HashMap, net::Ipv4Addr},
+        tokio::runtime::Handle,
     };
 
     const TEST_MINT_LAMPORTS: u64 = 1_000_000_000;
@@ -4768,16 +4762,14 @@ pub mod tests {
         }
     }
 
-    #[test]
-    fn test_rpc_request_processor_new() {
+    fn rpc_request_processor_new<C: ClientWithCreator>(maybe_runtime: Option<Handle>) {
         let bob_pubkey = solana_sdk::pubkey::new_rand();
         let genesis = create_genesis_config(100);
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let connection_cache = Arc::new(ConnectionCache::new("connection_cache_test"));
-        let meta = JsonRpcRequestProcessor::new_from_bank(
+        let meta = JsonRpcRequestProcessor::new_from_bank::<C>(
+            maybe_runtime,
             bank,
             SocketAddrSpace::Unspecified,
-            connection_cache,
         );
 
         let bank = meta.bank_forks.read().unwrap().root_bank();
@@ -4792,15 +4784,23 @@ pub mod tests {
     }
 
     #[test]
-    fn test_rpc_get_balance() {
+    fn test_rpc_request_processor_new_connection_cache() {
+        rpc_request_processor_new::<ConnectionCacheClient<NullTpuInfo>>(None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_rpc_request_processor_new_tpu_client_next() {
+        rpc_request_processor_new::<TpuClientNextClient>(Some(Handle::current()));
+    }
+
+    fn rpc_get_balance<C: ClientWithCreator>(maybe_runtime: Option<Handle>) {
         let genesis = create_genesis_config(20);
         let mint_pubkey = genesis.mint_keypair.pubkey();
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let connection_cache = Arc::new(ConnectionCache::new("connection_cache_test"));
-        let meta = JsonRpcRequestProcessor::new_from_bank(
+        let meta = JsonRpcRequestProcessor::new_from_bank::<C>(
+            maybe_runtime,
             bank,
             SocketAddrSpace::Unspecified,
-            connection_cache,
         );
 
         let mut io = MetaIoHandler::default();
@@ -4824,15 +4824,23 @@ pub mod tests {
     }
 
     #[test]
-    fn test_rpc_get_balance_via_client() {
+    fn test_rpc_get_balance_new_connection_cache() {
+        rpc_get_balance::<ConnectionCacheClient<NullTpuInfo>>(None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_rpc_get_balance_new_tpu_client_next() {
+        rpc_get_balance::<TpuClientNextClient>(Some(Handle::current()));
+    }
+
+    fn rpc_get_balance_via_client<C: ClientWithCreator>(maybe_runtime: Option<Handle>) {
         let genesis = create_genesis_config(20);
         let mint_pubkey = genesis.mint_keypair.pubkey();
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let connection_cache = Arc::new(ConnectionCache::new("connection_cache_test"));
-        let meta = JsonRpcRequestProcessor::new_from_bank(
+        let meta = JsonRpcRequestProcessor::new_from_bank::<C>(
+            maybe_runtime,
             bank,
             SocketAddrSpace::Unspecified,
-            connection_cache,
         );
 
         let mut io = MetaIoHandler::default();
@@ -4855,6 +4863,16 @@ pub mod tests {
         };
         let (response, _) = futures::executor::block_on(fut);
         assert_eq!(response, 20);
+    }
+
+    #[test]
+    fn test_rpc_get_balance_via_client_connection_cache() {
+        rpc_get_balance_via_client::<ConnectionCacheClient<NullTpuInfo>>(None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_rpc_get_balance_via_client_tpu_client_next() {
+        rpc_get_balance_via_client::<TpuClientNextClient>(Some(Handle::current()));
     }
 
     #[test]
@@ -4951,16 +4969,14 @@ pub mod tests {
         assert_eq!(result, expected);
     }
 
-    #[test]
-    fn test_rpc_get_tx_count() {
+    fn rpc_get_tx_count<C: ClientWithCreator>(maybe_runtime: Option<Handle>) {
         let bob_pubkey = solana_sdk::pubkey::new_rand();
         let genesis = create_genesis_config(10);
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let connection_cache = Arc::new(ConnectionCache::new("connection_cache_test"));
-        let meta = JsonRpcRequestProcessor::new_from_bank(
+        let meta = JsonRpcRequestProcessor::new_from_bank::<C>(
+            maybe_runtime,
             bank,
             SocketAddrSpace::Unspecified,
-            connection_cache,
         );
 
         let mut io = MetaIoHandler::default();
@@ -4985,6 +5001,17 @@ pub mod tests {
         let result: Response = serde_json::from_str(&res.expect("actual response"))
             .expect("actual response deserialization");
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_rpc_get_tx_count_connection_cache() {
+        rpc_get_tx_count::<ConnectionCacheClient<NullTpuInfo>>(None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+
+    async fn test_rpc_get_tx_count_tpu_client_next() {
+        rpc_get_tx_count::<TpuClientNextClient>(Some(Handle::current()));
     }
 
     #[test]
@@ -6422,15 +6449,13 @@ pub mod tests {
         assert_eq!(result, expected);
     }
 
-    #[test]
-    fn test_rpc_send_bad_tx() {
+    fn rpc_send_bad_tx<C: ClientWithCreator>(maybe_runtime: Option<Handle>) {
         let genesis = create_genesis_config(100);
         let bank = Bank::new_for_tests(&genesis.genesis_config);
-        let connection_cache = Arc::new(ConnectionCache::new("connection_cache_test"));
-        let meta = JsonRpcRequestProcessor::new_from_bank(
+        let meta = JsonRpcRequestProcessor::new_from_bank::<C>(
+            maybe_runtime,
             bank,
             SocketAddrSpace::Unspecified,
-            connection_cache,
         );
 
         let mut io = MetaIoHandler::default();
@@ -6444,7 +6469,16 @@ pub mod tests {
     }
 
     #[test]
-    fn test_rpc_send_transaction_preflight() {
+    fn test_rpc_send_bad_tx_connection_cache() {
+        rpc_send_bad_tx::<ConnectionCacheClient<NullTpuInfo>>(None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_rpc_send_bad_tx_tpu_client_next() {
+        rpc_send_bad_tx::<TpuClientNextClient>(Some(Handle::current()));
+    }
+
+    fn rpc_send_transaction_preflight<C: ClientWithCreator>(maybe_runtime: Option<Handle>) {
         let exit = Arc::new(AtomicBool::new(false));
         let validator_exit = create_validator_exit(exit.clone());
         let ledger_path = get_tmp_ledger_path!();
@@ -6470,11 +6504,7 @@ pub mod tests {
             );
             ClusterInfo::new(contact_info, keypair, SocketAddrSpace::Unspecified)
         });
-        let connection_cache = Arc::new(ConnectionCache::new("connection_cache_test"));
-        let tpu_address = cluster_info
-            .my_contact_info()
-            .tpu(connection_cache.protocol())
-            .unwrap();
+        let my_tpu_address = cluster_info.my_contact_info().tpu(Protocol::QUIC).unwrap();
         let (meta, receiver) = JsonRpcRequestProcessor::new(
             JsonRpcConfig::default(),
             None,
@@ -6494,13 +6524,7 @@ pub mod tests {
             Arc::new(AtomicU64::default()),
             Arc::new(PrioritizationFeeCache::default()),
         );
-        let client = ConnectionCacheClient::<NullTpuInfo>::new(
-            connection_cache.clone(),
-            tpu_address,
-            None,
-            None,
-            1,
-        );
+        let client = C::create_client(maybe_runtime, my_tpu_address, None, 1);
         SendTransactionService::new(&bank_forks, receiver, client, 1000, exit.clone());
 
         let mut bad_transaction = system_transaction::transfer(
@@ -6602,6 +6626,16 @@ pub mod tests {
                 r#"{"jsonrpc":"2.0","error":{"code":-32602,"message":"invalid transaction: Transaction failed to sanitize accounts offsets correctly"},"id":1}"#.to_string(),
             )
         );
+    }
+
+    #[test]
+    fn test_rpc_send_transaction_preflight_with_connection_cache() {
+        rpc_send_transaction_preflight::<ConnectionCacheClient<NullTpuInfo>>(None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_rpc_send_transaction_preflight_with_tpu_client_next() {
+        rpc_send_transaction_preflight::<TpuClientNextClient>(Some(Handle::current()));
     }
 
     #[test]
@@ -6716,8 +6750,7 @@ pub mod tests {
         assert_eq!(result, expected);
     }
 
-    #[test]
-    fn test_rpc_processor_get_block_commitment() {
+    fn rpc_processor_get_block_commitment<C: ClientWithCreator>(maybe_runtime: Option<Handle>) {
         let exit = Arc::new(AtomicBool::new(false));
         let validator_exit = create_validator_exit(exit.clone());
         let bank_forks = new_bank_forks().0;
@@ -6740,11 +6773,7 @@ pub mod tests {
         )));
 
         let cluster_info = Arc::new(new_test_cluster_info());
-        let connection_cache = Arc::new(ConnectionCache::new("connection_cache_test"));
-        let tpu_address = cluster_info
-            .my_contact_info()
-            .tpu(connection_cache.protocol())
-            .unwrap();
+        let my_tpu_address = cluster_info.my_contact_info().tpu(Protocol::QUIC).unwrap();
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
         let (request_processor, receiver) = JsonRpcRequestProcessor::new(
@@ -6766,14 +6795,8 @@ pub mod tests {
             Arc::new(AtomicU64::default()),
             Arc::new(PrioritizationFeeCache::default()),
         );
-        let client = ConnectionCacheClient::<NullTpuInfo>::new(
-            connection_cache.clone(),
-            tpu_address,
-            None,
-            None,
-            1,
-        );
-        SendTransactionService::new(&bank_forks, receiver, client, 1000, exit.clone());
+        let client = C::create_client(maybe_runtime, my_tpu_address, None, 1);
+        SendTransactionService::new(&bank_forks, receiver, client, 1000, exit);
 
         assert_eq!(
             request_processor.get_block_commitment(0),
@@ -6796,6 +6819,16 @@ pub mod tests {
                 total_stake: 42,
             }
         );
+    }
+
+    #[test]
+    fn test_rpc_processor_get_block_commitment_with_connection_cache() {
+        rpc_processor_get_block_commitment::<ConnectionCacheClient<NullTpuInfo>>(None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_rpc_processor_get_block_commitment_with_tpu_client_next() {
+        rpc_processor_get_block_commitment::<TpuClientNextClient>(Some(Handle::current()));
     }
 
     #[test]
