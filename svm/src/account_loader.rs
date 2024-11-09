@@ -754,12 +754,13 @@ mod tests {
 
     impl<'a> From<&'a TestCallbacks> for AccountLoader<'a, TestCallbacks> {
         fn from(callbacks: &'a TestCallbacks) -> AccountLoader<'a, TestCallbacks> {
-            AccountLoader::new(
+            AccountLoader::new_with_account_cache_capacity(
                 None,
                 ProgramCacheForTxBatch::default(),
                 HashMap::default(),
                 callbacks,
                 Arc::<FeatureSet>::default(),
+                0,
             )
         }
     }
@@ -1098,12 +1099,13 @@ mod tests {
             accounts_map,
             ..Default::default()
         };
-        let mut account_loader = AccountLoader::new(
+        let mut account_loader = AccountLoader::new_with_account_cache_capacity(
             account_overrides,
             ProgramCacheForTxBatch::default(),
             HashMap::default(),
             &callbacks,
             Arc::new(FeatureSet::all_enabled()),
+            0,
         );
         load_transaction(
             &mut account_loader,
@@ -1545,12 +1547,13 @@ mod tests {
             )),
         );
 
-        let mut account_loader = AccountLoader::new(
+        let mut account_loader = AccountLoader::new_with_account_cache_capacity(
             None,
             loaded_programs,
             program_accounts,
             &mock_bank,
             Arc::<FeatureSet>::default(),
+            0,
         );
 
         let mut error_metrics = TransactionErrorMetrics::default();
@@ -2544,12 +2547,13 @@ mod tests {
         program_cache.replenish(program2, Arc::new(program2_entry));
 
         let test_transaction_data_size = |transaction, expected_size| {
-            let mut account_loader = AccountLoader::new(
+            let mut account_loader = AccountLoader::new_with_account_cache_capacity(
                 None,
                 program_cache.clone(),
                 program_accounts.clone(),
                 &mock_bank,
                 Arc::<FeatureSet>::default(),
+                0,
             );
 
             let loaded_transaction_accounts = load_transaction_accounts(
