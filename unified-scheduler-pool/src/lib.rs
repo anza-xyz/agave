@@ -1671,7 +1671,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             },
                             */
                             default => {
-                                if let Some(task) = state_machine.scan_and_schedule_next_task() {
+                                if let Some(task) = (!session_pausing).then(|| state_machine.scan_and_schedule_next_task()).flatten() {
                                     runnable_task_sender.send_payload(task).unwrap();
                                     "scan"
                                 } else {
