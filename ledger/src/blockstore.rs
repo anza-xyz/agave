@@ -233,29 +233,30 @@ pub struct BlockstoreSignals {
 pub struct Blockstore {
     ledger_path: PathBuf,
     db: Arc<Database>,
-    meta_cf: LedgerColumn<cf::SlotMeta>,
-    dead_slots_cf: LedgerColumn<cf::DeadSlots>,
-    duplicate_slots_cf: LedgerColumn<cf::DuplicateSlots>,
-    roots_cf: LedgerColumn<cf::Root>,
-    erasure_meta_cf: LedgerColumn<cf::ErasureMeta>,
-    orphans_cf: LedgerColumn<cf::Orphans>,
-    index_cf: LedgerColumn<cf::Index>,
-    data_shred_cf: LedgerColumn<cf::ShredData>,
-    code_shred_cf: LedgerColumn<cf::ShredCode>,
-    transaction_status_cf: LedgerColumn<cf::TransactionStatus>,
-    address_signatures_cf: LedgerColumn<cf::AddressSignatures>,
-    transaction_memos_cf: LedgerColumn<cf::TransactionMemos>,
-    transaction_status_index_cf: LedgerColumn<cf::TransactionStatusIndex>,
+    meta_cf: LedgerColumn<cf::SlotMeta, { cf::SlotMeta::KEY_LEN }>,
+    dead_slots_cf: LedgerColumn<cf::DeadSlots, { cf::DeadSlots::KEY_LEN }>,
+    duplicate_slots_cf: LedgerColumn<cf::DuplicateSlots, { cf::DuplicateSlots::KEY_LEN }>,
+    roots_cf: LedgerColumn<cf::Root, { cf::Root::KEY_LEN }>,
+    erasure_meta_cf: LedgerColumn<cf::ErasureMeta, { cf::ErasureMeta::KEY_LEN }>,
+    orphans_cf: LedgerColumn<cf::Orphans, { cf::Orphans::KEY_LEN }>,
+    index_cf: LedgerColumn<cf::Index, { cf::Index::KEY_LEN }>,
+    data_shred_cf: LedgerColumn<cf::ShredData, { cf::ShredData::KEY_LEN }>,
+    code_shred_cf: LedgerColumn<cf::ShredCode, { cf::ShredCode::KEY_LEN }>,
+    transaction_status_cf: LedgerColumn<cf::TransactionStatus, { cf::TransactionStatus::KEY_LEN }>,
+    address_signatures_cf: LedgerColumn<cf::AddressSignatures, { cf::AddressSignatures::KEY_LEN }>,
+    transaction_memos_cf: LedgerColumn<cf::TransactionMemos, { cf::TransactionMemos::KEY_LEN }>,
+    transaction_status_index_cf:
+        LedgerColumn<cf::TransactionStatusIndex, { cf::TransactionStatusIndex::KEY_LEN }>,
     highest_primary_index_slot: RwLock<Option<Slot>>,
-    rewards_cf: LedgerColumn<cf::Rewards>,
-    blocktime_cf: LedgerColumn<cf::Blocktime>,
-    perf_samples_cf: LedgerColumn<cf::PerfSamples>,
-    block_height_cf: LedgerColumn<cf::BlockHeight>,
-    program_costs_cf: LedgerColumn<cf::ProgramCosts>,
-    bank_hash_cf: LedgerColumn<cf::BankHash>,
-    optimistic_slots_cf: LedgerColumn<cf::OptimisticSlots>,
+    rewards_cf: LedgerColumn<cf::Rewards, { cf::Rewards::KEY_LEN }>,
+    blocktime_cf: LedgerColumn<cf::Blocktime, { cf::Blocktime::KEY_LEN }>,
+    perf_samples_cf: LedgerColumn<cf::PerfSamples, { cf::PerfSamples::KEY_LEN }>,
+    block_height_cf: LedgerColumn<cf::BlockHeight, { cf::BlockHeight::KEY_LEN }>,
+    program_costs_cf: LedgerColumn<cf::ProgramCosts, { cf::ProgramCosts::KEY_LEN }>,
+    bank_hash_cf: LedgerColumn<cf::BankHash, { cf::BankHash::KEY_LEN }>,
+    optimistic_slots_cf: LedgerColumn<cf::OptimisticSlots, { cf::OptimisticSlots::KEY_LEN }>,
     max_root: AtomicU64,
-    merkle_root_meta_cf: LedgerColumn<cf::MerkleRootMeta>,
+    merkle_root_meta_cf: LedgerColumn<cf::MerkleRootMeta, { cf::MerkleRootMeta::KEY_LEN }>,
     insert_shreds_lock: Mutex<()>,
     new_shreds_signals: Mutex<Vec<Sender<bool>>>,
     completed_slots_senders: Mutex<Vec<CompletedSlotsSender>>,
@@ -718,7 +719,7 @@ impl Blockstore {
         slot: Slot,
         erasure_meta: &'a ErasureMeta,
         prev_inserted_shreds: &'a HashMap<ShredId, Shred>,
-        data_cf: &'a LedgerColumn<cf::ShredData>,
+        data_cf: &'a LedgerColumn<cf::ShredData, { cf::ShredData::KEY_LEN }>,
     ) -> impl Iterator<Item = Shred> + 'a {
         erasure_meta.data_shreds_indices().filter_map(move |i| {
             let key = ShredId::new(slot, u32::try_from(i).unwrap(), ShredType::Data);
@@ -747,7 +748,7 @@ impl Blockstore {
         slot: Slot,
         erasure_meta: &'a ErasureMeta,
         prev_inserted_shreds: &'a HashMap<ShredId, Shred>,
-        code_cf: &'a LedgerColumn<cf::ShredCode>,
+        code_cf: &'a LedgerColumn<cf::ShredCode, { cf::ShredCode::KEY_LEN }>,
     ) -> impl Iterator<Item = Shred> + 'a {
         erasure_meta.coding_shreds_indices().filter_map(move |i| {
             let key = ShredId::new(slot, u32::try_from(i).unwrap(), ShredType::Code);
@@ -776,8 +777,8 @@ impl Blockstore {
         erasure_meta: &ErasureMeta,
         prev_inserted_shreds: &HashMap<ShredId, Shred>,
         recovered_shreds: &mut Vec<Shred>,
-        data_cf: &LedgerColumn<cf::ShredData>,
-        code_cf: &LedgerColumn<cf::ShredCode>,
+        data_cf: &LedgerColumn<cf::ShredData, { cf::ShredData::KEY_LEN }>,
+        code_cf: &LedgerColumn<cf::ShredCode, { cf::ShredCode::KEY_LEN }>,
         reed_solomon_cache: &ReedSolomonCache,
     ) {
         // Find shreds for this erasure set and try recovery
@@ -3692,6 +3693,8 @@ impl Blockstore {
         };
         let keys =
             (all_ranges_start_index..=all_ranges_end_index).map(|index| (slot, u64::from(index)));
+
+        //let test = self.data_shred_cf.get_bytes2((0, 0));
 
         let data_shreds: Result<Vec<Option<Vec<u8>>>> = self
             .data_shred_cf
