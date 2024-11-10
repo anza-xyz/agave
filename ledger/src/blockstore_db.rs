@@ -1778,7 +1778,10 @@ where
     }
 
     pub fn get(&self, key: C::Index) -> Result<Option<C::Type>> {
-        self.get_raw(&C::key(key))
+        let mut key_buffer = [0u8; K];
+        C::serialize_key(&mut key_buffer, key);
+
+        self.get_raw(&key_buffer)
     }
 
     pub fn get_raw(&self, key: &[u8]) -> Result<Option<C::Type>> {
