@@ -243,7 +243,9 @@ impl solana_runtime_transaction::transaction_meta::StaticMeta for WritableKeysTr
     }
 
     fn signature_details(&self) -> &solana_sdk::message::TransactionSignatureDetails {
-        unimplemented!("WritableKeysTransaction::signature_details")
+        const DUMMY: solana_sdk::message::TransactionSignatureDetails =
+            solana_sdk::message::TransactionSignatureDetails::new(0, 0, 0);
+        &DUMMY
     }
 
     fn compute_budget_limits(
