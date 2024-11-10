@@ -51,7 +51,7 @@ mod tests {
     #[test]
     fn example() {
         // Create channel ends with a fixed capacity of 4.
-        let (tx, rx) = solana_poh::mpsc::with_capacity(4);
+        let (tx, rx) = crate::mpsc::with_capacity(4);
 
         let _tx2 = tx.clone(); // producer may be cloned
 
