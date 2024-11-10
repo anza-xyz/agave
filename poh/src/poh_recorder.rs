@@ -2396,4 +2396,19 @@ mod tests {
             assert_ne!(c.load(Ordering::SeqCst), 0);
         }
     }
+
+    #[test]
+    fn test_mpsc_ring_buffer_clone_producer() {
+        struct Record {
+            m: u32,
+        }
+        let (tx, rx) = mpsc::with_capacity::<Record>(4);
+        let r = Record { m: 10 };
+        let r1 = Record { m: 100 };
+        let tx1 = tx.clone();
+        assert!(tx.try_push(r).is_ok());
+        assert!(tx1.try_push(r1).is_ok());
+        assert_eq!(rx.pop().unwrap().m, 10);
+        assert_eq!(rx.pop().unwrap().m, 100);
+    }
 }
