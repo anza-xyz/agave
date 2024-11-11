@@ -670,9 +670,6 @@ impl TaskHandler for DefaultTaskHandler {
                 let pre_commit_callback = match scheduling_context.mode() {
                     SchedulingMode::BlockVerification => None,
                     SchedulingMode::BlockProduction => Some(|| {
-                        if !scheduling_context.can_commit() {
-                            return false;
-                        }
                         let summary = handler_context.transaction_recorder
                             .as_ref()
                             .unwrap()
@@ -1625,7 +1622,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                                     "ending"
                                                 } else if !session_pausing {
                                                     session_pausing = true;
-                                                    info!("can_commit: {}", context.can_commit());
                                                     "pausing"
                                                 } else {
                                                     info!("ignoring duplicate close subch");

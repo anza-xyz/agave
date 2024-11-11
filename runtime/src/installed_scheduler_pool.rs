@@ -238,12 +238,11 @@ pub type SchedulerId = u64;
 pub struct SchedulingContext {
     mode: SchedulingMode,
     bank: Arc<Bank>,
-    started_at: Arc<Mutex<(Instant, bool)>>,
 }
 
 impl SchedulingContext {
     pub fn new(mode: SchedulingMode, bank: Arc<Bank>) -> Self {
-        Self { mode, bank, started_at: Arc::new(Mutex::new((Instant::now(), false))) }
+        Self { mode, bank }
     }
 
     pub fn mode(&self) -> SchedulingMode {
@@ -252,16 +251,6 @@ impl SchedulingContext {
 
     pub fn bank(&self) -> &Arc<Bank> {
         &self.bank
-    }
-
-    pub fn can_commit(&self) -> bool {
-        let (started_at, reached_max_height) = &mut *self.started_at.lock().unwrap();
-        if !*reached_max_height && started_at.elapsed().as_millis() < 350 {
-            return true;
-        } else {
-            *reached_max_height = true;
-            return false;
-        }
     }
 
     pub fn slot(&self) -> Slot {
