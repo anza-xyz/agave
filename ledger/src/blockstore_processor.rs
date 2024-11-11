@@ -74,6 +74,7 @@ use {
     thiserror::Error,
     ExecuteTimingType::{NumExecuteBatches, TotalBatchesLen},
 };
+use solana_sdk::scheduling::TaskKey;
 #[cfg(feature = "dev-context-only-utils")]
 use {qualifier_attr::qualifiers, solana_runtime::bank::HashOverrides};
 
