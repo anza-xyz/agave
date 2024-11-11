@@ -8293,7 +8293,7 @@ pub(crate) mod tests {
             .expect("Just inserted");
 
         progress.get_retransmit_info_mut(0).unwrap().retry_time = Instant::now();
-        poh_recorder
+        let _ = poh_recorder
             .write()
             .unwrap()
             .reset(bank_to_dump, Some((slot_to_dump + 1, slot_to_dump + 1)));
