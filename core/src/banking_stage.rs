@@ -44,7 +44,7 @@ use {
     solana_sdk::{
         pubkey::Pubkey,
         timing::AtomicInterval,
-        transaction::{SanitizedTransaction, TransactionError},
+        transaction::SanitizedTransaction,
     },
     std::{
         cmp, env,
