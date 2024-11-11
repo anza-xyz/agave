@@ -286,7 +286,9 @@ where
 /// implements the same interface as TpuClientNext plus [`NotifyKeyUpdate`]
 #[derive(Clone)]
 pub struct TpuClientNextClientUpdater {
-    key_update_sender: mpsc::Sender<QuicClientCertificate>,
+    // Arc<Mutex> is needed to make TpuClientNextClientUpdater to be Sync, which
+    // required by in many different places in the code.
+    key_update_sender: Arc<Mutex<mpsc::Sender<QuicClientCertificate>>>,
     client: Arc<TpuClientNextClient>,
 }
 
@@ -342,7 +344,7 @@ impl TpuClientNextClientUpdater {
         });
 
         Self {
-            key_update_sender,
+            key_update_sender: Arc::new(Mutex::new(key_update_sender)),
             client,
         }
     }
@@ -358,7 +360,8 @@ impl Cancelable for TpuClientNextClientUpdater {
 impl NotifyKeyUpdate for TpuClientNextClientUpdater {
     fn update_key(&self, validator_identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
         let client_certificate = QuicClientCertificate::with_option(Some(validator_identity));
-        self.key_update_sender.try_send(client_certificate)?;
+        let lock = self.key_update_sender.lock().unwrap();
+        lock.try_send(client_certificate)?;
         Ok(())
     }
 }

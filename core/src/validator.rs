@@ -1106,7 +1106,7 @@ impl Validator {
                 .map_err(ValidatorError::Other)?;
                 (
                     json_rpc_service,
-                    Arc::new(client) as Arc<dyn NotifyKeyUpdate + Send>,
+                    Arc::new(client) as Arc<dyn NotifyKeyUpdate + Send + Sync>,
                 )
             } else {
                 let my_tpu_address = cluster_info
@@ -1146,7 +1146,7 @@ impl Validator {
                 .map_err(ValidatorError::Other)?;
                 (
                     json_rpc_service,
-                    Arc::new(client) as Arc<dyn NotifyKeyUpdate + Send>,
+                    Arc::new(client) as Arc<dyn NotifyKeyUpdate + Send + Sync>,
                 )
             };
 
