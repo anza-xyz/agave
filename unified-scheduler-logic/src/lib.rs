@@ -1,4 +1,5 @@
 #![allow(rustdoc::private_intra_doc_links)]
+#![allow(clippy::mutable_key_type)]
 //! The task (transaction) scheduling code for the unified scheduler
 //!
 //! ### High-level API and design
@@ -428,7 +429,7 @@ impl Task {
             .blocked_usage_count
             .with_borrow_mut(token, |counter_with_status| {
                 let c = counter_with_status.count();
-                counter_with_status.set_count(c - 1);
+                counter_with_status.set_count(c.checked_sub(1).unwrap());
                 c == 1
             });
         did_unblock.then_some(self)
@@ -588,7 +589,7 @@ impl TaskInner {
         self.blocked_usage_count
             .with_borrow_mut(token, |counter_with_status| {
                 let c = counter_with_status.count();
-                counter_with_status.set_count(c + 1);
+                counter_with_status.set_count(c.checked_add(1).unwrap());
                 c == 0
             })
     }
@@ -689,7 +690,7 @@ impl LockContext {
 
     fn usage_queue(&self) -> &UsageQueue {
         match self {
-            Self::Readonly(u) | Self::Writable(u) => &u,
+            Self::Readonly(u) | Self::Writable(u) => u,
         }
     }
 
@@ -1139,9 +1140,7 @@ impl SchedulingStateMachine {
                 }
 
                 let last_scan_task = self.last_scan_task.take();
-                let Some(highest_task) = self.alive_tasks.last() else {
-                    return None;
-                };
+                let highest_task = self.alive_tasks.last()?;
 
                 let mut task_iter = if let Some(last_scan_task) = last_scan_task {
                     self.alive_tasks.range(..last_scan_task).rev()
@@ -1498,7 +1497,7 @@ impl SchedulingStateMachine {
                 if let Err(()) = lock_result {
                     blocked_usage_count.increment_self();
                     let usage_from_task = context.usage_from_task(new_task.clone());
-                    usage_queue.insert_blocked_usage_from_task(usage_from_task.into());
+                    usage_queue.insert_blocked_usage_from_task(usage_from_task);
                 } else {
                     new_task.with_pending_mut(&mut self.count_token, |c| {
                         c.pending_lock_contexts.remove(ByAddress::from_ref(context)).then_some(()).or_else(|| panic!());
