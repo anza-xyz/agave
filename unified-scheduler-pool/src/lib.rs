@@ -175,7 +175,7 @@ struct BlockProductionSchedulerRespawner {
 }
 
 impl std::fmt::Debug for BlockProductionSchedulerRespawner {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         todo!();
     }
 }
@@ -1839,7 +1839,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             }
                             break;
                         };
-                        let tasks = on_recv.as_mut().unwrap()((banking_packet));
+                        let tasks = on_recv.as_mut().unwrap()(banking_packet);
                         for task in tasks {
                             new_task_sender
                                 .send(NewTaskPayload::Payload(task).into())
