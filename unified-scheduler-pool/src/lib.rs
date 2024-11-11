@@ -2556,7 +2556,7 @@ mod tests {
             fn handle(
                 _result: &mut Result<()>,
                 timings: &mut ExecuteTimings,
-                _bank: &Arc<Bank>,
+                _bank: &SchedulingContext,
                 _transaction: &SanitizedTransaction,
                 _index: TaskKey,
                 _handler_context: &HandlerContext,
@@ -2739,7 +2739,7 @@ mod tests {
         fn handle(
             result: &mut Result<()>,
             _timings: &mut ExecuteTimings,
-            _bank: &Arc<Bank>,
+            _bank: &SchedulingContext,
             _transaction: &SanitizedTransaction,
             _index: TaskKey,
             _handler_context: &HandlerContext,
@@ -2850,7 +2850,7 @@ mod tests {
             fn handle(
                 _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
-                _bank: &Arc<Bank>,
+                _bank: &SchedulingContext,
                 _transaction: &SanitizedTransaction,
                 _index: TaskKey,
                 _handler_context: &HandlerContext,
@@ -3189,7 +3189,7 @@ mod tests {
             fn handle(
                 _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
-                _bank: &Arc<Bank>,
+                _bank: &SchedulingContext,
                 _transaction: &SanitizedTransaction,
                 index: TaskKey,
                 _handler_context: &HandlerContext,
@@ -3270,7 +3270,7 @@ mod tests {
             fn handle(
                 result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
-                _bank: &Arc<Bank>,
+                _bank: &SchedulingContext,
                 _transaction: &SanitizedTransaction,
                 index: TaskKey,
                 _handler_context: &HandlerContext,
@@ -3340,7 +3340,7 @@ mod tests {
             fn handle(
                 result: &mut Result<()>,
                 timings: &mut ExecuteTimings,
-                bank: &Arc<Bank>,
+                bank: &SchedulingContext,
                 transaction: &SanitizedTransaction,
                 index: TaskKey,
                 handler_context: &HandlerContext,
@@ -3425,7 +3425,7 @@ mod tests {
             fn handle(
                 _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
-                bank: &Arc<Bank>,
+                bank: &SchedulingContext,
                 _transaction: &SanitizedTransaction,
                 index: TaskKey,
                 _handler_context: &HandlerContext,
@@ -3519,7 +3519,7 @@ mod tests {
 
         fn schedule_execution(
             &self,
-            &(transaction, index): &(&SanitizedTransaction, usize),
+            &(transaction, index): &(&SanitizedTransaction, TaskKey),
         ) -> ScheduleResult {
             let transaction_and_index = (transaction.clone(), index);
             let context = self.context().clone();
