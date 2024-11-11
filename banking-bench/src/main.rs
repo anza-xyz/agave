@@ -612,7 +612,7 @@ fn main() {
             bank_forks
                 .write()
                 .unwrap()
-                .insert(SchedulingMode::BlockProduction, new_bank);
+                .insert_with_scheduling_mode(SchedulingMode::BlockProduction, new_bank);
             bank = bank_forks.read().unwrap().working_bank_with_scheduler().clone_with_scheduler();
             insert_time.stop();
 
