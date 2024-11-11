@@ -1414,7 +1414,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
                 macro_rules! log_scheduler {
                     ($level:ident, $prefix:tt) => {
-                        #[allow(unused_assignments)]
                         $level! {
                             "sch: {}: slot: {}({})[{:12}]({}{}): state_machine(({}({}b{}B{}F)=>{}({}+{}))/{}|{}TB|{}Lr) channels(<{} >{}+{} <{}+{} <B{}) {}",
                             scheduler_id, slot,
@@ -1781,6 +1780,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     .send(result_with_timings)
                     .expect("always outlived receiver");
                 log_scheduler!(info, "aborted");
+                drop(cpu_log_reported_at);
 
                 // Next, drop `new_task_receiver`. After that, the paired singleton
                 // `new_task_sender` will start to error when called by external threads, resulting
