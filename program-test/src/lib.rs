@@ -1198,7 +1198,6 @@ impl ProgramTestContext {
         // warp_bank is frozen so go forward to get unfrozen bank at warp_slot
         bank_forks.insert(
             Bank::new_from_parent(warp_bank, &Pubkey::default(), warp_slot),
-            aanic!(),
         );
 
         // Update block commitment cache, otherwise banks server will poll at
