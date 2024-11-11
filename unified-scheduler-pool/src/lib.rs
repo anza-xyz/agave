@@ -1,4 +1,5 @@
 #![allow(clippy::arithmetic_side_effects)]
+#![allow(clippy::type_complexity)]
 //! Transaction scheduling code.
 //!
 //! This crate implements 3 solana-runtime traits (`InstalledScheduler`, `UninstalledScheduler` and
@@ -170,10 +171,10 @@ where
 
 clone_trait_object!(AAA);
 
-type BBB = Box<dyn (FnMut(Arc<BankingStageAdapter>) -> Box<dyn AAA>) + Send>;
+type Bbb = Box<dyn (FnMut(Arc<BankingStageAdapter>) -> Box<dyn AAA>) + Send>;
 
 struct BlockProductionSchedulerRespawner {
-    on_spawn_block_production_scheduler: BBB,
+    on_spawn_block_production_scheduler: Bbb,
     bank_forks: Arc<RwLock<BankForks>>,
     banking_packet_receiver: BankingPacketReceiver,
 }
@@ -557,7 +558,7 @@ where
         }
     }
 
-    pub fn prepare_to_spawn_block_production_scheduler(&self, bank_forks: Arc<RwLock<BankForks>>, banking_packet_receiver: BankingPacketReceiver, on_spawn_block_production_scheduler: BBB) {
+    pub fn prepare_to_spawn_block_production_scheduler(&self, bank_forks: Arc<RwLock<BankForks>>, banking_packet_receiver: BankingPacketReceiver, on_spawn_block_production_scheduler: Bbb) {
         *self.block_production_scheduler_respawner.lock().unwrap() = Some(BlockProductionSchedulerRespawner {
             bank_forks,
             banking_packet_receiver,

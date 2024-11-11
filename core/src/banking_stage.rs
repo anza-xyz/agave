@@ -695,13 +695,13 @@ impl BankingStage {
 
         // todo: forwarding, vote only blocks...
         struct MonotonicIdGenerator {
-            next_task_id: std::sync::atomic::AtomicU64,
+            next_task_id: AtomicU64,
         }
 
         impl MonotonicIdGenerator {
             fn new() -> Arc<Self> {
                 Arc::new(Self {
-                    next_task_id: Default::default(),
+                    next_task_id: AtomicU64::default(),
                 })
             }
 
