@@ -1803,7 +1803,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             let pool = self.pool.clone();
             let mut runnable_task_receiver = runnable_task_receiver.clone();
             let finished_blocked_task_sender = finished_blocked_task_sender.clone();
-            let finished_idle_task_sender = finished_idle_task_sender.clone();
+            //let finished_idle_task_sender = finished_idle_task_sender.clone();
 
             // The following loop maintains and updates SchedulingContext as its
             // externally-provided state for each session in this way:
