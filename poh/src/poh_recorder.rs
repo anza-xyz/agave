@@ -155,6 +155,13 @@ impl TransactionRecorder {
         }
     }
 
+    pub fn new_dummy() -> Self {
+        Self {
+            record_sender: crossbeam_channel::unbounded().0,
+            is_exited: Arc::new(AtomicBool:default())
+        }
+    }
+
     /// Hashes `transactions` and sends to PoH service for recording. Waits for response up to 1s.
     /// Panics on unexpected (non-`MaxHeightReached`) errors.
     pub fn record_transactions(
