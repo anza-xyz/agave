@@ -868,7 +868,7 @@ impl Validator {
         };
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
-        let mut unified_scheduler_pool = match (
+        let unified_scheduler_pool = match (
             &config.block_verification_method,
             &config.block_production_method,
         ) {
