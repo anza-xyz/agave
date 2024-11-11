@@ -47,7 +47,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
         fn handle(
             result: &mut Result<()>,
             timings: &mut ExecuteTimings,
-            bank: &Arc<Bank>,
+            scheduling_context: &SchedulingContext,
             transaction: &SanitizedTransaction,
             index: usize,
             handler_context: &HandlerContext,
@@ -58,7 +58,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
             std::thread::sleep(std::time::Duration::from_secs(3));
             info!("Now entering into DefaultTaskHandler::handle()...");
 
-            DefaultTaskHandler::handle(result, timings, bank, transaction, index, handler_context);
+            DefaultTaskHandler::handle(result, timings, scheduling_context, transaction, index, handler_context);
         }
     }
 
