@@ -1,6 +1,4 @@
 #![allow(clippy::arithmetic_side_effects)]
-#[cfg(not(target_env = "msvc"))]
-use jemallocator::Jemalloc;
 use {
     agave_validator::{
         admin_rpc_service,
