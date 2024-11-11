@@ -508,7 +508,7 @@ impl SimulatorLoop {
                     logger.log_frozen_bank_cost(&bank, bank_created.elapsed());
                 }
                 self.retransmit_slots_sender.send(bank.slot()).unwrap();
-                self.bank_forks.write().unwrap().insert(solana_sdk::scheduling::SchedulingMode::BlockProduction, new_bank);
+                self.bank_forks.write().unwrap().insert_with_scheduling_mode(solana_sdk::scheduling::SchedulingMode::BlockProduction, new_bank);
                 (
                     bank,
                     bank_created,
