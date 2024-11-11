@@ -622,9 +622,6 @@ impl TaskHandler for DefaultTaskHandler {
         index: Index,
         handler_context: &HandlerContext,
     ) {
-        let wall_time = Instant::now();
-        let cpu_time = cpu_time::ThreadTime::now();
-
         let (cost, added_cost) = if matches!(scheduling_context.mode(), SchedulingMode::BlockProduction) {
             use solana_cost_model::cost_model::CostModel;
             let c = CostModel::calculate_cost(transaction, &scheduling_context.bank().feature_set);
