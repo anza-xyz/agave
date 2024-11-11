@@ -35,6 +35,7 @@ use {
     },
 };
 use solana_runtime::installed_scheduler_pool::SchedulingContext;
+use solana_sdk::scheduling::TaskKey;
 
 #[test]
 fn test_scheduler_waited_by_drop_bank_service() {
