@@ -1,9 +1,8 @@
 use {
+    solana_perf::packet::SigverifyTracerPacketStats,
     solana_sdk::{pubkey::Pubkey, saturating_add_assign, timing::timestamp},
     std::collections::HashSet,
 };
-
-use solana_perf::packet::SigverifyTracerPacketStats;
 
 #[derive(Debug, Default)]
 pub struct BankingStageTracerPacketStats {

@@ -224,10 +224,14 @@ pub fn to_packet_batches<T: Serialize>(items: &[T], chunk_size: usize) -> Vec<Pa
         .collect()
 }
 
-use std::sync::Arc;
-use solana_sdk::saturating_add_assign;
+use {solana_sdk::saturating_add_assign, std::sync::Arc};
 pub type BankingPacketBatch = Arc<(Vec<PacketBatch>, Option<SigverifyTracerPacketStats>)>;
-pub type BankingPacketReceiver = crossbeam_channel::Receiver<std::sync::Arc<(Vec<PacketBatch>, std::option::Option<SigverifyTracerPacketStats>)>>;
+pub type BankingPacketReceiver = crossbeam_channel::Receiver<
+    std::sync::Arc<(
+        Vec<PacketBatch>,
+        std::option::Option<SigverifyTracerPacketStats>,
+    )>,
+>;
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SigverifyTracerPacketStats {
@@ -266,7 +270,6 @@ impl SigverifyTracerPacketStats {
         );
     }
 }
-
 
 #[cfg(test)]
 fn to_packet_batches_for_tests<T: Serialize>(items: &[T]) -> Vec<PacketBatch> {

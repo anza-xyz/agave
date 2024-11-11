@@ -26,7 +26,7 @@ use {
     solana_sdk::{
         clock::Slot,
         hash::Hash,
-        scheduling::SchedulingMode,
+        scheduling::{SchedulingMode, TaskKey},
         transaction::{Result, SanitizedTransaction, TransactionError},
     },
     solana_timings::ExecuteTimings,
@@ -38,14 +38,12 @@ use {
         thread,
     },
 };
-use solana_sdk::scheduling::TaskKey;
 #[cfg(feature = "dev-context-only-utils")]
 use {mockall::automock, qualifier_attr::qualifiers};
 
 pub fn initialized_result_with_timings() -> ResultWithTimings {
     (Ok(()), ExecuteTimings::default())
 }
-
 
 pub trait InstalledSchedulerPool: Send + Sync + Debug {
     fn take_scheduler(&self, context: SchedulingContext) -> Option<InstalledSchedulerBox> {
@@ -477,7 +475,9 @@ impl BankWithScheduler {
     // 'a is needed; anonymous_lifetime_in_impl_trait isn't stabilized yet...
     pub fn schedule_transaction_executions<'a>(
         &self,
-        transactions_with_indexes: impl ExactSizeIterator<Item = (&'a SanitizedTransaction, &'a TaskKey)>,
+        transactions_with_indexes: impl ExactSizeIterator<
+            Item = (&'a SanitizedTransaction, &'a TaskKey),
+        >,
     ) -> Result<()> {
         trace!(
             "schedule_transaction_executions(): {} txs",
@@ -547,7 +547,10 @@ impl BankWithScheduler {
     }
 
     pub fn id_and_slot_with_scheduler_status(&self) -> (SchedulerId, String) {
-        (self.inner.bank.slot(), self.inner.scheduler.read().unwrap().status())
+        (
+            self.inner.bank.slot(),
+            self.inner.scheduler.read().unwrap().status(),
+        )
     }
 }
 
@@ -768,7 +771,10 @@ mod tests {
         mock.expect_context()
             .times(1)
             .in_sequence(&mut seq.lock().unwrap())
-            .return_const(SchedulingContext::new(SchedulingMode::BlockVerification, bank));
+            .return_const(SchedulingContext::new(
+                SchedulingMode::BlockVerification,
+                bank,
+            ));
 
         for wait_reason in is_dropped_flags {
             let seq_cloned = seq.clone();

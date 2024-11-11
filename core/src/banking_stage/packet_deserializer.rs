@@ -5,11 +5,9 @@ use {
         immutable_deserialized_packet::{DeserializedPacketError, ImmutableDeserializedPacket},
         packet_filter::PacketFilterFailure,
     },
-    crate::{
-        banking_trace::{BankingPacketBatch, BankingPacketReceiver},
-    },
+    crate::banking_trace::{BankingPacketBatch, BankingPacketReceiver},
     crossbeam_channel::RecvTimeoutError,
-    solana_perf::packet::PacketBatch,
+    solana_perf::packet::{PacketBatch, SigverifyTracerPacketStats},
     solana_runtime::bank_forks::BankForks,
     solana_sdk::saturating_add_assign,
     std::{
@@ -17,8 +15,6 @@ use {
         time::{Duration, Instant},
     },
 };
-
-use solana_perf::packet::SigverifyTracerPacketStats;
 
 /// Results from deserializing packet batches.
 pub struct ReceivePacketResults {

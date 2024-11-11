@@ -46,6 +46,7 @@ use {
         hash::Hash,
         pubkey::Pubkey,
         saturating_add_assign,
+        scheduling::TaskKey,
         signature::{Keypair, Signature},
         transaction::{
             Result, SanitizedTransaction, TransactionError, TransactionVerificationMode,
@@ -74,7 +75,6 @@ use {
     thiserror::Error,
     ExecuteTimingType::{NumExecuteBatches, TotalBatchesLen},
 };
-use solana_sdk::scheduling::TaskKey;
 #[cfg(feature = "dev-context-only-utils")]
 use {qualifier_attr::qualifiers, solana_runtime::bank::HashOverrides};
 
@@ -1872,10 +1872,7 @@ fn load_frozen_forks(
 
             let mut progress = ConfirmationProgress::new(last_entry_hash);
             let mut m = Measure::start("process_single_slot");
-            let bank = bank_forks
-                .write()
-                .unwrap()
-                .insert_from_ledger(bank);
+            let bank = bank_forks.write().unwrap().insert_from_ledger(bank);
             if let Err(error) = process_single_slot(
                 blockstore,
                 &bank,
@@ -2270,6 +2267,7 @@ pub mod tests {
             native_token::LAMPORTS_PER_SOL,
             pubkey::Pubkey,
             rent_debits::RentDebits,
+            scheduling::SchedulingMode,
             signature::{Keypair, Signer},
             system_instruction::SystemError,
             system_transaction,
@@ -2289,7 +2287,6 @@ pub mod tests {
         std::{collections::BTreeSet, sync::RwLock},
         trees::tr,
     };
-    use solana_sdk::scheduling::SchedulingMode;
 
     // Convenience wrapper to optionally process blockstore with Secondary access.
     //

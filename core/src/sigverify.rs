@@ -12,11 +12,14 @@ use {
         banking_trace::{BankingPacketBatch, BankingPacketSender},
         sigverify_stage::{SigVerifier, SigVerifyServiceError},
     },
-    solana_perf::{cuda_runtime::PinnedVec, packet::PacketBatch, recycler::Recycler, sigverify},
+    solana_perf::{
+        cuda_runtime::PinnedVec,
+        packet::{PacketBatch, SigverifyTracerPacketStats},
+        recycler::Recycler,
+        sigverify,
+    },
     solana_sdk::packet::Packet,
 };
-
-use solana_perf::packet::SigverifyTracerPacketStats;
 
 pub struct TransactionSigVerifier {
     packet_sender: BankingPacketSender,

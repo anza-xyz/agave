@@ -13,11 +13,7 @@ use {
     log::*,
     solana_measure::measure::Measure,
     solana_program_runtime::loaded_programs::{BlockRelation, ForkGraph},
-    solana_sdk::{
-        clock::Slot,
-        hash::Hash,
-        scheduling::SchedulingMode,
-    },
+    solana_sdk::{clock::Slot, hash::Hash, scheduling::SchedulingMode},
     std::{
         collections::{hash_map::Entry, HashMap, HashSet},
         ops::Index,
@@ -270,7 +266,11 @@ impl BankForks {
         self.insert_with_scheduling_mode(SchedulingMode::BlockVerification, bank)
     }
 
-    pub fn insert_with_scheduling_mode(&mut self, mode: SchedulingMode, mut bank: Bank) -> BankWithScheduler {
+    pub fn insert_with_scheduling_mode(
+        &mut self,
+        mode: SchedulingMode,
+        mut bank: Bank,
+    ) -> BankWithScheduler {
         if self.root.load(Ordering::Relaxed) < self.highest_slot_at_startup {
             bank.set_check_program_modification_slot(true);
         }

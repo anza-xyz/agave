@@ -31,38 +31,35 @@ use {
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     histogram::Histogram,
     solana_client::connection_cache::ConnectionCache,
-    solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     solana_ledger::blockstore_processor::TransactionStatusSender,
     solana_measure::measure_us,
-    solana_perf::{data_budget::DataBudget, packet::PACKETS_PER_BATCH},
+    solana_perf::{
+        data_budget::DataBudget,
+        packet::{BankingPacketBatch, PACKETS_PER_BATCH},
+    },
     solana_poh::poh_recorder::{PohRecorder, TransactionRecorder},
     solana_runtime::{
         bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
         vote_sender_types::ReplayVoteSender,
     },
+    solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
     solana_sdk::{
-        pubkey::Pubkey,
-        timing::AtomicInterval,
+        pubkey::Pubkey, scheduling::TaskKey, timing::AtomicInterval,
         transaction::SanitizedTransaction,
     },
+    solana_unified_scheduler_pool::{BankingStageAdapter, BankingStageMonitor, BankingStageStatus},
     std::{
         cmp, env,
         ops::Deref,
         sync::{
-            atomic::{AtomicU64, AtomicUsize, Ordering},
+            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
             Arc, RwLock,
         },
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
     },
 };
-use solana_sdk::scheduling::TaskKey;
-use solana_perf::packet::BankingPacketBatch;
-use solana_unified_scheduler_pool::BankingStageAdapter;
-use solana_unified_scheduler_pool::BankingStageStatus;
-use solana_unified_scheduler_pool::BankingStageMonitor;
-use std::sync::atomic::AtomicBool;
 
 // Below modules are pub to allow use by banking_stage bench
 pub mod committer;
@@ -723,7 +720,10 @@ impl BankingStage {
             fn banking_stage_status(&self) -> BankingStageStatus {
                 let r = if self.1.load(Ordering::Relaxed) {
                     BankingStageStatus::Exited
-                } else if matches!(self.0.make_consume_or_forward_decision(), BufferedPacketsDecision::Forward) {
+                } else if matches!(
+                    self.0.make_consume_or_forward_decision(),
+                    BufferedPacketsDecision::Forward
+                ) {
                     BankingStageStatus::Inactive
                 } else {
                     BankingStageStatus::Active
@@ -742,7 +742,10 @@ impl BankingStage {
                 let decision_maker = decision_maker.clone();
                 let bank_forks = bank_forks.clone();
                 let id_generator = MonotonicIdGenerator::new();
-                *adapter.idling_detector.lock().unwrap() = Some(Box::new(S(decision_maker.clone(), poh_recorder.read().unwrap().is_exited.clone())));
+                *adapter.idling_detector.lock().unwrap() = Some(Box::new(S(
+                    decision_maker.clone(),
+                    poh_recorder.read().unwrap().is_exited.clone(),
+                )));
 
                 let b = Box::new(move |aaa: BankingPacketBatch| {
                     let decision = decision_maker.make_consume_or_forward_decision();
@@ -750,56 +753,50 @@ impl BankingStage {
                         return vec![];
                     }
                     let bank = bank_forks.read().unwrap().working_bank();
-                    let transaction_account_lock_limit =
-                        bank.get_transaction_account_lock_limit();
+                    let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
                     let mut tasks = vec![];
                     for pp in &aaa.0 {
                         // over-provision
-                        let task_id =
-                            id_generator.bulk_assign_task_ids(pp.len() as u64);
-                        let task_ids =
-                            (task_id..(task_id + pp.len() as u64)).collect::<Vec<_>>();
+                        let task_id = id_generator.bulk_assign_task_ids(pp.len() as u64);
+                        let task_ids = (task_id..(task_id + pp.len() as u64)).collect::<Vec<_>>();
 
-                        let indexes =
-                            PacketDeserializer::generate_packet_indexes(pp);
-                        let ppp = PacketDeserializer::deserialize_packets2(
-                            pp, &indexes,
-                        )
-                        .filter_map(|(i, p)| {
-                            if p.original_packet().meta().is_tracer_packet() {
-                                //warn!("pipeline_tracer: unified_scheduler submit receiver_len: {} {:?} {:?}", packet_deserializer.packet_batch_receiver.len(), std::thread::current(), std::backtrace::Backtrace::force_capture());
-                            }
-                            let tx = p.build_sanitized_transaction(
-                                bank.vote_only_bank(),
-                                &*bank,
-                                bank.get_reserved_account_keys(),
-                            )?;
+                        let indexes = PacketDeserializer::generate_packet_indexes(pp);
+                        let ppp = PacketDeserializer::deserialize_packets2(pp, &indexes)
+                            .filter_map(|(i, p)| {
+                                if p.original_packet().meta().is_tracer_packet() {
+                                    //warn!("pipeline_tracer: unified_scheduler submit receiver_len: {} {:?} {:?}", packet_deserializer.packet_batch_receiver.len(), std::thread::current(), std::backtrace::Backtrace::force_capture());
+                                }
+                                let tx = p.build_sanitized_transaction(
+                                    bank.vote_only_bank(),
+                                    &*bank,
+                                    bank.get_reserved_account_keys(),
+                                )?;
 
-                            SanitizedTransaction::validate_account_locks(
-                                tx.message(),
-                                transaction_account_lock_limit,
-                            ).ok()?;
+                                SanitizedTransaction::validate_account_locks(
+                                    tx.message(),
+                                    transaction_account_lock_limit,
+                                )
+                                .ok()?;
 
-                            use solana_svm_transaction::svm_message::SVMMessage;
-                            let Ok(fb) = process_compute_budget_instructions(
-                                SVMMessage::program_instructions_iter(tx.message()),
-                            ) else {
-                                return None;
-                            };
+                                use solana_svm_transaction::svm_message::SVMMessage;
+                                let Ok(fb) = process_compute_budget_instructions(
+                                    SVMMessage::program_instructions_iter(tx.message()),
+                                ) else {
+                                    return None;
+                                };
 
-                            let (priority, _cost) =
-                            SchedulerController::<std::sync::Arc<solana_gossip::cluster_info::ClusterInfo>>::calculate_priority_and_cost(
-                                &tx,
-                                &fb.into(),
-                                &bank,
-                            );
-                            //let i = ((u32::MAX - TryInto::<u32>::try_into(priority).unwrap()) as u64) << 32
-                            let i = ((u64::MAX - priority) as u128) << 64
-                                | task_ids[*i] as TaskKey;
+                                let (priority, _cost) = SchedulerController::<
+                                    std::sync::Arc<solana_gossip::cluster_info::ClusterInfo>,
+                                >::calculate_priority_and_cost(
+                                    &tx, &fb.into(), &bank
+                                );
+                                //let i = ((u32::MAX - TryInto::<u32>::try_into(priority).unwrap()) as u64) << 32
+                                let i =
+                                    ((u64::MAX - priority) as u128) << 64 | task_ids[*i] as TaskKey;
 
-                            Some((tx, i))
-                        })
-                        .collect::<Vec<_>>();
+                                Some((tx, i))
+                            })
+                            .collect::<Vec<_>>();
 
                         for (a, b) in ppp {
                             if let Some(task) = adapter.create_task(&(&a, b)) {
@@ -811,11 +808,13 @@ impl BankingStage {
                 });
                 info!("on_block_production_scheduler_spawn: end!");
                 b
-            })
+            }),
         );
         unified_scheduler_pool.spawn_block_production_scheduler();
 
-        Self { bank_thread_hdls: vec![] }
+        Self {
+            bank_thread_hdls: vec![],
+        }
     }
 
     fn spawn_thread_local_multi_iterator_thread<T: LikeClusterInfo>(

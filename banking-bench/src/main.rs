@@ -37,14 +37,13 @@ use {
     },
     solana_streamer::socket::SocketAddrSpace,
     solana_tpu_client::tpu_client::DEFAULT_TPU_CONNECTION_POOL_SIZE,
-    solana_unified_scheduler_pool::DefaultSchedulerPool,
+    solana_unified_scheduler_pool::{DefaultSchedulerPool, SupportedSchedulingMode},
     std::{
         sync::{atomic::Ordering, Arc, RwLock},
         thread::sleep,
         time::{Duration, Instant},
     },
 };
-use solana_unified_scheduler_pool::SupportedSchedulingMode;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -64,7 +63,8 @@ fn check_txs(
     let now = Instant::now();
     let mut no_bank = false;
     loop {
-        if let Ok((_bank, (entry, _tick_height))) = receiver.recv_timeout(Duration::from_millis(10)) {
+        if let Ok((_bank, (entry, _tick_height))) = receiver.recv_timeout(Duration::from_millis(10))
+        {
             total += entry.transactions.len();
         }
         if total >= ref_tx_count {
@@ -352,7 +352,11 @@ fn main() {
     let (replay_vote_sender, _replay_vote_receiver) = unbounded();
     let bank0 = Bank::new_for_benches(&genesis_config);
     let bank_forks = BankForks::new_rw_arc(bank0);
-    let mut bank = bank_forks.read().unwrap().working_bank_with_scheduler().clone_with_scheduler();
+    let mut bank = bank_forks
+        .read()
+        .unwrap()
+        .working_bank_with_scheduler()
+        .clone_with_scheduler();
 
     // set cost tracker limits to MAX so it will not filter out TXs
     bank.write_cost_tracker()
@@ -446,16 +450,18 @@ fn main() {
         )))
         .unwrap();
     let (non_vote_sender, non_vote_receiver) = banking_tracer.create_channel_non_vote();
-    let (tpu_vote_sender, tpu_vote_receiver) = if let BlockProductionMethod::UnifiedScheduler = block_production_method {
-        banking_tracer.create_unified_channel_tpu_vote(&non_vote_sender, &non_vote_receiver)
-    } else {
-        banking_tracer.create_channel_tpu_vote()
-    };
-    let (gossip_vote_sender, gossip_vote_receiver) = if let BlockProductionMethod::UnifiedScheduler = block_production_method {
-        banking_tracer.create_unified_channel_gossip_vote(&non_vote_sender, &non_vote_receiver)
-    } else {
-        banking_tracer.create_channel_gossip_vote()
-    };
+    let (tpu_vote_sender, tpu_vote_receiver) =
+        if let BlockProductionMethod::UnifiedScheduler = block_production_method {
+            banking_tracer.create_unified_channel_tpu_vote(&non_vote_sender, &non_vote_receiver)
+        } else {
+            banking_tracer.create_channel_tpu_vote()
+        };
+    let (gossip_vote_sender, gossip_vote_receiver) =
+        if let BlockProductionMethod::UnifiedScheduler = block_production_method {
+            banking_tracer.create_unified_channel_gossip_vote(&non_vote_sender, &non_vote_receiver)
+        } else {
+            banking_tracer.create_channel_gossip_vote()
+        };
     let cluster_info = {
         let keypair = Arc::new(Keypair::new());
         let node = Node::new_localhost_with_pubkey(&keypair.pubkey());
@@ -475,7 +481,10 @@ fn main() {
     };
     let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
     let collector = solana_sdk::pubkey::new_rand();
-    let scheduler_pool = if matches!(block_production_method, BlockProductionMethod::UnifiedScheduler) {
+    let scheduler_pool = if matches!(
+        block_production_method,
+        BlockProductionMethod::UnifiedScheduler
+    ) {
         let scheduler_pool = DefaultSchedulerPool::new(
             SupportedSchedulingMode::Either(SchedulingMode::BlockProduction),
             Some((num_banking_threads - 2) as usize),
@@ -512,7 +521,10 @@ fn main() {
         scheduler_pool,
     );
 
-    if matches!(block_production_method, BlockProductionMethod::UnifiedScheduler) {
+    if matches!(
+        block_production_method,
+        BlockProductionMethod::UnifiedScheduler
+    ) {
         sleep(Duration::from_millis(111));
         bank_forks
             .write()
@@ -600,7 +612,7 @@ fn main() {
             let new_slot = bank.slot() + 1;
             let new_bank = Bank::new_from_parent(bank.clone(), &collector, new_slot);
             if let Some((result, _timings)) = bank.wait_for_completed_scheduler() {
-               result.unwrap();
+                result.unwrap();
             }
             new_bank_time.stop();
 
@@ -610,7 +622,11 @@ fn main() {
                 .write()
                 .unwrap()
                 .insert_with_scheduling_mode(SchedulingMode::BlockProduction, new_bank);
-            bank = bank_forks.read().unwrap().working_bank_with_scheduler().clone_with_scheduler();
+            bank = bank_forks
+                .read()
+                .unwrap()
+                .working_bank_with_scheduler()
+                .clone_with_scheduler();
             insert_time.stop();
 
             // set cost tracker limits to MAX so it will not filter out TXs

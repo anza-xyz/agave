@@ -17,11 +17,13 @@ use {
     solana_ledger::genesis_utils::create_genesis_config,
     solana_runtime::{
         accounts_background_service::AbsRequestSender, bank::Bank, bank_forks::BankForks,
-        genesis_utils::GenesisConfigInfo, prioritization_fee_cache::PrioritizationFeeCache,
+        genesis_utils::GenesisConfigInfo, installed_scheduler_pool::SchedulingContext,
+        prioritization_fee_cache::PrioritizationFeeCache,
     },
     solana_sdk::{
         hash::Hash,
         pubkey::Pubkey,
+        scheduling::TaskKey,
         system_transaction,
         transaction::{Result, SanitizedTransaction},
     },
@@ -34,8 +36,6 @@ use {
         sync::{Arc, Mutex},
     },
 };
-use solana_runtime::installed_scheduler_pool::SchedulingContext;
-use solana_sdk::scheduling::TaskKey;
 
 #[test]
 fn test_scheduler_waited_by_drop_bank_service() {
@@ -60,7 +60,14 @@ fn test_scheduler_waited_by_drop_bank_service() {
             std::thread::sleep(std::time::Duration::from_secs(3));
             info!("Now entering into DefaultTaskHandler::handle()...");
 
-            DefaultTaskHandler::handle(result, timings, scheduling_context, transaction, index, handler_context);
+            DefaultTaskHandler::handle(
+                result,
+                timings,
+                scheduling_context,
+                transaction,
+                index,
+                handler_context,
+            );
         }
     }
 

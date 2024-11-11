@@ -99,18 +99,20 @@
 use {
     crate::utils::{ShortCounter, Token, TokenCell},
     assert_matches::assert_matches,
+    by_address::ByAddress,
     more_asserts::assert_gt,
-    solana_sdk::{pubkey::Pubkey, scheduling::SchedulingMode, transaction::SanitizedTransaction},
+    solana_sdk::{
+        pubkey::Pubkey,
+        scheduling::{SchedulingMode, TaskKey},
+        transaction::SanitizedTransaction,
+    },
     static_assertions::const_assert_eq,
     std::{
+        collections::{BTreeSet, HashSet},
         mem,
         sync::Arc,
     },
 };
-use std::collections::BTreeSet;
-use std::collections::HashSet;
-use by_address::ByAddress;
-use solana_sdk::scheduling::TaskKey;
 
 /// Internal utilities. Namely this contains [`ShortCounter`] and [`TokenCell`].
 mod utils {
@@ -437,8 +439,7 @@ impl Task {
     }
 
     fn force_unblock(&self, blocked_count: u32, token: &mut BlockedUsageCountToken) {
-        self
-            .blocked_usage_count
+        self.blocked_usage_count
             .with_borrow_mut(token, |counter_with_status| {
                 let c = counter_with_status.count();
                 assert_eq!(c, blocked_count);
@@ -449,7 +450,9 @@ impl Task {
 
 impl std::ops::Deref for Task {
     type Target = TaskInner;
-    fn deref(&self) -> &<Self as std::ops::Deref>::Target { &self.0 }
+    fn deref(&self) -> &<Self as std::ops::Deref>::Target {
+        &self.0
+    }
 }
 
 const_assert_eq!(mem::size_of::<Task>(), 8);
@@ -502,7 +505,7 @@ impl CounterWithStatus {
         Self {
             status: TaskStatus::default(),
             count: u32::default(),
-            pending_lock_contexts
+            pending_lock_contexts,
         }
     }
 
@@ -593,7 +596,11 @@ impl TaskInner {
             })
     }
 
-    fn with_pending_mut<R>(&self, token: &mut BlockedUsageCountToken, f: impl FnOnce(&mut CounterWithStatus) -> R) -> R {
+    fn with_pending_mut<R>(
+        &self,
+        token: &mut BlockedUsageCountToken,
+        f: impl FnOnce(&mut CounterWithStatus) -> R,
+    ) -> R {
         self.blocked_usage_count.with_borrow_mut(token, f)
     }
 
@@ -643,9 +650,7 @@ impl TaskInner {
 
     fn status(&self, token: &mut BlockedUsageCountToken) -> TaskStatus {
         self.blocked_usage_count
-            .with_borrow_mut(token, |counter_with_status| {
-                counter_with_status.status()
-            })
+            .with_borrow_mut(token, |counter_with_status| counter_with_status.status())
     }
 }
 
@@ -662,7 +667,9 @@ const_assert_eq!(mem::size_of::<Compact<LockContext>>(), 8);
 
 impl std::ops::Deref for LockContext {
     type Target = TokenCell<UsageQueueInner>;
-    fn deref(&self) -> &<Self as std::ops::Deref>::Target { &self.usage_queue().0 }
+    fn deref(&self) -> &<Self as std::ops::Deref>::Target {
+        &self.usage_queue().0
+    }
 }
 
 impl LockContext {
@@ -693,11 +700,10 @@ impl LockContext {
         }
     }
 
-    fn is_force_lockable(
-        &self,
-        usage_queue_token: &mut UsageQueueToken,
-    ) -> bool {
-        self.with_usage_queue_mut(usage_queue_token, |u| { u.is_force_lockable(self.requested_usage2()) })
+    fn is_force_lockable(&self, usage_queue_token: &mut UsageQueueToken) -> bool {
+        self.with_usage_queue_mut(usage_queue_token, |u| {
+            u.is_force_lockable(self.requested_usage2())
+        })
     }
 
     fn force_lock(
@@ -707,14 +713,19 @@ impl LockContext {
         count_token: &mut BlockedUsageCountToken,
         blocked_task_count: &mut ShortCounter,
     ) {
-        self.with_usage_queue_mut(usage_queue_token, |u| { u.force_lock(self.usage_queue(), self.requested_usage2(), new_task, count_token, blocked_task_count) })
+        self.with_usage_queue_mut(usage_queue_token, |u| {
+            u.force_lock(
+                self.usage_queue(),
+                self.requested_usage2(),
+                new_task,
+                count_token,
+                blocked_task_count,
+            )
+        })
     }
 
-    fn increment_executing_count(
-        &self,
-        usage_queue_token: &mut UsageQueueToken,
-    ) {
-        self.with_usage_queue_mut(usage_queue_token, |u| { u.increment_executing_count() })
+    fn increment_executing_count(&self, usage_queue_token: &mut UsageQueueToken) {
+        self.with_usage_queue_mut(usage_queue_token, |u| u.increment_executing_count())
     }
 
     fn with_usage_queue_mut<R>(
@@ -754,12 +765,11 @@ use dary_heap::PeekMut;
 pub struct UsageQueueInner {
     current_usage: Option<Usage>,
     executing_count: ShortCounter,
-    current_readonly_tasks:  dary_heap::OctonaryHeap<Reverse<Task>>,
-    blocked_usages_from_tasks:  dary_heap::OctonaryHeap<Compact<UsageFromTask>>,
+    current_readonly_tasks: dary_heap::OctonaryHeap<Reverse<Task>>,
+    blocked_usages_from_tasks: dary_heap::OctonaryHeap<Compact<UsageFromTask>>,
 }
 
-use enum_ptr::EnumPtr;
-use enum_ptr::Compact;
+use enum_ptr::{Compact, EnumPtr};
 
 #[repr(C, usize)]
 #[derive(Debug, EnumPtr)]
@@ -855,8 +865,8 @@ impl Default for UsageQueueInner {
             //
             // Note that large cap should be accompanied with proper scheduler cleaning after use,
             // which should be handled by higher layers (i.e. scheduler pool).
-            current_readonly_tasks:  dary_heap::OctonaryHeap::with_capacity(128),
-            blocked_usages_from_tasks:  dary_heap::OctonaryHeap::with_capacity(128),
+            current_readonly_tasks: dary_heap::OctonaryHeap::with_capacity(128),
+            blocked_usages_from_tasks: dary_heap::OctonaryHeap::with_capacity(128),
         }
     }
 }
@@ -869,10 +879,10 @@ impl UsageQueueInner {
                     RequestedUsage::Readonly => {
                         self.current_usage = Some(Usage::Readonly(ShortCounter::one()));
                         self.current_readonly_tasks.push(Reverse(task.clone()));
-                    },
+                    }
                     RequestedUsage::Writable => {
                         self.current_usage = Some(Usage::Writable(task.clone()));
-                    },
+                    }
                 }
                 Ok(())
             }
@@ -902,7 +912,14 @@ impl UsageQueueInner {
         }
     }
 
-    fn force_lock(&mut self, u: &UsageQueue, requested_usage: RequestedUsage, new_task: Task, count_token: &mut BlockedUsageCountToken, blocked_task_count: &mut ShortCounter) {
+    fn force_lock(
+        &mut self,
+        u: &UsageQueue,
+        requested_usage: RequestedUsage,
+        new_task: Task,
+        count_token: &mut BlockedUsageCountToken,
+        blocked_task_count: &mut ShortCounter,
+    ) {
         match &mut self.current_usage {
             None => {
                 unreachable!();
@@ -911,7 +928,7 @@ impl UsageQueueInner {
                 RequestedUsage::Readonly => {
                     self.current_readonly_tasks.push(Reverse(new_task));
                     count.increment_self();
-                },
+                }
                 RequestedUsage::Writable => {
                     let cc = count.current();
                     let mut c = ShortCounter::zero();
@@ -925,34 +942,49 @@ impl UsageQueueInner {
                             blocked_task_count.increment_self();
                         }
                         reblocked_task.with_pending_mut(count_token, |c| {
-                            c.pending_lock_contexts.insert(ByAddress(LockContext::new(u.clone(), RequestedUsage::Readonly))).then_some(()).or_else(|| panic!());
+                            c.pending_lock_contexts
+                                .insert(ByAddress(LockContext::new(
+                                    u.clone(),
+                                    RequestedUsage::Readonly,
+                                )))
+                                .then_some(())
+                                .or_else(|| panic!());
                         });
-                        self.insert_blocked_usage_from_task(
-                            UsageFromTask::Readonly(reblocked_task),
-                        );
+                        self.insert_blocked_usage_from_task(UsageFromTask::Readonly(
+                            reblocked_task,
+                        ));
                         c.increment_self();
                         //self.reblocked_lock_total.increment_self();
                     }
                     assert_eq!(c.current(), cc);
                     self.current_usage = Some(Usage::Writable(new_task));
-                },
+                }
             },
             Some(Usage::Writable(current_task)) => match requested_usage {
                 RequestedUsage::Readonly => {
-                    let old_usage = std::mem::replace(self.current_usage.as_mut().unwrap(), Usage::Readonly(ShortCounter::one()));
-                    let Usage::Writable(reblocked_task) = old_usage else { panic!() };
+                    let old_usage = std::mem::replace(
+                        self.current_usage.as_mut().unwrap(),
+                        Usage::Readonly(ShortCounter::one()),
+                    );
+                    let Usage::Writable(reblocked_task) = old_usage else {
+                        panic!()
+                    };
                     if reblocked_task.increment_blocked_usage_count(count_token) {
                         blocked_task_count.increment_self();
                     }
                     reblocked_task.with_pending_mut(count_token, |c| {
-                        c.pending_lock_contexts.insert(ByAddress(LockContext::new(u.clone(), RequestedUsage::Writable))).then_some(()).or_else(|| panic!());
+                        c.pending_lock_contexts
+                            .insert(ByAddress(LockContext::new(
+                                u.clone(),
+                                RequestedUsage::Writable,
+                            )))
+                            .then_some(())
+                            .or_else(|| panic!());
                     });
                     assert!(self.current_readonly_tasks.is_empty());
                     self.current_readonly_tasks.push(Reverse(new_task.clone()));
-                    self.insert_blocked_usage_from_task(
-                        UsageFromTask::Writable(reblocked_task),
-                    );
-                },
+                    self.insert_blocked_usage_from_task(UsageFromTask::Writable(reblocked_task));
+                }
                 RequestedUsage::Writable => {
                     assert_ne!(new_task.index(), current_task.index());
                     let reblocked_task = std::mem::replace(current_task, new_task);
@@ -960,13 +992,17 @@ impl UsageQueueInner {
                         blocked_task_count.increment_self();
                     }
                     reblocked_task.with_pending_mut(count_token, |c| {
-                        c.pending_lock_contexts.insert(ByAddress(LockContext::new(u.clone(), RequestedUsage::Writable))).then_some(()).or_else(|| panic!());
+                        c.pending_lock_contexts
+                            .insert(ByAddress(LockContext::new(
+                                u.clone(),
+                                RequestedUsage::Writable,
+                            )))
+                            .then_some(())
+                            .or_else(|| panic!());
                     });
-                    self.insert_blocked_usage_from_task(
-                        UsageFromTask::Writable(reblocked_task),
-                    );
+                    self.insert_blocked_usage_from_task(UsageFromTask::Writable(reblocked_task));
                     //self.reblocked_lock_total.increment_self();
-                },
+                }
             },
         }
     }
@@ -998,7 +1034,13 @@ impl UsageQueueInner {
                         }
                     }
                     if count.is_zero() {
-                        assert_eq!((self.current_readonly_tasks.is_empty(), self.executing_count.current()), (true, 0));
+                        assert_eq!(
+                            (
+                                self.current_readonly_tasks.is_empty(),
+                                self.executing_count.current()
+                            ),
+                            (true, 0)
+                        );
                         is_unused_now = true;
                     }
                     //dbg!(is_unused_now);
@@ -1006,9 +1048,16 @@ impl UsageQueueInner {
                 LockContext::Writable(_) => unreachable!(),
             },
             Some(Usage::Writable(blocking_task)) => {
-                assert_eq!((unlocked_task_index, unlocked_task_context.requested_usage2(), self.executing_count.current()), (blocking_task.index(), RequestedUsage::Writable, 0));
+                assert_eq!(
+                    (
+                        unlocked_task_index,
+                        unlocked_task_context.requested_usage2(),
+                        self.executing_count.current()
+                    ),
+                    (blocking_task.index(), RequestedUsage::Writable, 0)
+                );
                 is_unused_now = true;
-            },
+            }
             None => unreachable!(),
         }
 
@@ -1027,17 +1076,20 @@ impl UsageQueueInner {
     }
 
     fn insert_blocked_usage_from_task(&mut self, uft: UsageFromTask) {
-        self
-            .blocked_usages_from_tasks
-            .push(uft.into());
+        self.blocked_usages_from_tasks.push(uft.into());
     }
 
     fn first_blocked_task_index(&self) -> Option<TaskKey> {
-        self.blocked_usages_from_tasks.peek().map(|uft| uft.map_ref(|u| u.index()))
+        self.blocked_usages_from_tasks
+            .peek()
+            .map(|uft| uft.map_ref(|u| u.index()))
     }
 
     #[must_use]
-    fn pop_buffered_readonly_usage_from_task(&mut self, token: &mut BlockedUsageCountToken) -> Option<UsageFromTask> {
+    fn pop_buffered_readonly_usage_from_task(
+        &mut self,
+        token: &mut BlockedUsageCountToken,
+    ) -> Option<UsageFromTask> {
         while let Some(peeked_task) = self.blocked_usages_from_tasks.peek_mut() {
             if !peeked_task.map_ref(|uft| uft.task().is_buffered(token)) {
                 PeekMut::pop(peeked_task);
@@ -1077,7 +1129,7 @@ unsafe impl enum_ptr::Aligned for UsageQueue {
 /// `solana-unified-scheduler-pool`.
 #[derive(Debug)]
 pub struct SchedulingStateMachine {
-    buffered_task_queue:  dary_heap::OctonaryHeap<Task>,
+    buffered_task_queue: dary_heap::OctonaryHeap<Task>,
     alive_tasks: BTreeSet<Task>,
     alive_task_count: ShortCounter,
     executing_task_count: ShortCounter,
@@ -1116,9 +1168,10 @@ impl SchedulingStateMachine {
     pub fn has_buffered_task(&mut self) -> bool {
         while let Some(task) = self.buffered_task_queue.peek_mut() {
             let status = task.status(&mut self.count_token);
-            if task.has_blocked_usage(&mut self.count_token) ||
-               status == TaskStatus::Executed ||
-               status == TaskStatus::Unlocked {
+            if task.has_blocked_usage(&mut self.count_token)
+                || status == TaskStatus::Executed
+                || status == TaskStatus::Unlocked
+            {
                 PeekMut::pop(task);
                 continue;
             } else {
@@ -1130,8 +1183,7 @@ impl SchedulingStateMachine {
 
     pub fn tick_eager_scan(&mut self) -> Option<Task> {
         match self.mode() {
-            SchedulingMode::BlockVerification => {
-            },
+            SchedulingMode::BlockVerification => {}
             SchedulingMode::BlockProduction => {
                 if !self.is_task_runnable() {
                     return None;
@@ -1174,7 +1226,9 @@ impl SchedulingStateMachine {
                         if c.pending_lock_contexts.is_empty() {
                             false
                         } else {
-                            c.pending_lock_contexts.iter().all(|pending_lock_context| pending_lock_context.is_force_lockable(&mut self.usage_queue_token))
+                            c.pending_lock_contexts.iter().all(|pending_lock_context| {
+                                pending_lock_context.is_force_lockable(&mut self.usage_queue_token)
+                            })
                         }
                     });
                     if force_lockable {
@@ -1182,7 +1236,14 @@ impl SchedulingStateMachine {
                             std::mem::take(&mut c.pending_lock_contexts)
                         });
                         let blocked_count = p.len();
-                        p.into_iter().for_each(|pending_lock_context| pending_lock_context.force_lock(&mut self.usage_queue_token, task.clone(), &mut self.count_token, &mut self.blocked_task_count));
+                        p.into_iter().for_each(|pending_lock_context| {
+                            pending_lock_context.force_lock(
+                                &mut self.usage_queue_token,
+                                task.clone(),
+                                &mut self.count_token,
+                                &mut self.blocked_task_count,
+                            )
+                        });
                         task.force_unblock(blocked_count as u32, &mut self.count_token);
                         self.blocked_task_count.decrement_self();
                         self.eager_lock_total.increment_self();
@@ -1192,7 +1253,7 @@ impl SchedulingStateMachine {
                     //panic!("aaa");
                 }
                 self.last_scan_task = Some(task.clone());
-            },
+            }
         }
 
         None
@@ -1256,7 +1317,10 @@ impl SchedulingStateMachine {
     pub fn do_schedule_task(&mut self, task: Task, force_buffer_mode: bool) -> Option<Task> {
         self.task_total.increment_self();
         self.alive_task_count.increment_self();
-        self.alive_tasks.insert(task.clone()).then_some(()).or_else(|| panic!());
+        self.alive_tasks
+            .insert(task.clone())
+            .then_some(())
+            .or_else(|| panic!());
         task.with_pending_mut(&mut self.count_token, |c| {
             assert_eq!(task.lock_contexts().len(), c.pending_lock_contexts.len());
         });
@@ -1270,7 +1334,7 @@ impl SchedulingStateMachine {
                 task.mark_as_executed(&mut self.count_token);
                 for context in task.lock_contexts() {
                     context.map_ref(|context| {
-                    context.increment_executing_count(&mut self.usage_queue_token)
+                        context.increment_executing_count(&mut self.usage_queue_token)
                     })
                 }
 
@@ -1295,7 +1359,9 @@ impl SchedulingStateMachine {
     #[must_use]
     pub fn schedule_next_buffered_task(&mut self) -> Option<Task> {
         while let Some(task) = self.buffered_task_queue.pop() {
-            if task.has_blocked_usage(&mut self.count_token) || !task.is_buffered(&mut self.count_token) {
+            if task.has_blocked_usage(&mut self.count_token)
+                || !task.is_buffered(&mut self.count_token)
+            {
                 continue;
             } else {
                 self.executing_task_count.increment_self();
@@ -1306,7 +1372,7 @@ impl SchedulingStateMachine {
                 task.mark_as_executed(&mut self.count_token);
                 for context in task.lock_contexts() {
                     context.map_ref(|context| {
-                    context.increment_executing_count(&mut self.usage_queue_token)
+                        context.increment_executing_count(&mut self.usage_queue_token)
                     })
                 }
                 return Some(task);
@@ -1317,20 +1383,19 @@ impl SchedulingStateMachine {
 
     #[must_use]
     pub fn scan_and_schedule_next_task(&mut self) -> Option<Task> {
-        self.tick_eager_scan()
-            .inspect(|task| {
-                self.executing_task_count.increment_self();
-                task.with_pending_mut(&mut self.count_token, |c| {
-                    assert_eq!(c.count as usize, c.pending_lock_contexts.len());
-                    assert!(c.pending_lock_contexts.is_empty());
-                });
-                task.mark_as_executed(&mut self.count_token);
-                for context in task.lock_contexts() {
-                    context.map_ref(|context| {
+        self.tick_eager_scan().inspect(|task| {
+            self.executing_task_count.increment_self();
+            task.with_pending_mut(&mut self.count_token, |c| {
+                assert_eq!(c.count as usize, c.pending_lock_contexts.len());
+                assert!(c.pending_lock_contexts.is_empty());
+            });
+            task.mark_as_executed(&mut self.count_token);
+            for context in task.lock_contexts() {
+                context.map_ref(|context| {
                     context.increment_executing_count(&mut self.usage_queue_token)
-                    })
-                }
-            })
+                })
+            }
+        })
     }
 
     /// Deschedules given scheduled `task`.
@@ -1347,7 +1412,10 @@ impl SchedulingStateMachine {
         task.mark_as_unlocked(&mut self.count_token);
         self.executing_task_count.decrement_self();
         self.alive_task_count.decrement_self();
-        self.alive_tasks.remove(task).then_some(()).or_else(|| panic!());
+        self.alive_tasks
+            .remove(task)
+            .then_some(())
+            .or_else(|| panic!());
         self.executed_task_total.increment_self();
         self.unlock_usage_queues(task);
         if self.blocked_task_count() > 0 {
@@ -1359,8 +1427,13 @@ impl SchedulingStateMachine {
         }
     }
 
-    fn try_reblock_task(blocking_task: &Task, blocked_task_count: &mut ShortCounter, token: &mut BlockedUsageCountToken) -> bool {
-        if blocking_task.has_blocked_usage(token) { // <= this is merged into is_buffered()?
+    fn try_reblock_task(
+        blocking_task: &Task,
+        blocked_task_count: &mut ShortCounter,
+        token: &mut BlockedUsageCountToken,
+    ) -> bool {
+        if blocking_task.has_blocked_usage(token) {
+            // <= this is merged into is_buffered()?
             // and how about doing incrementing this???: blocked_task_count.increment_self();
             true
         } else if blocking_task.is_buffered(token) {
@@ -1378,130 +1451,197 @@ impl SchedulingStateMachine {
 
         for context in new_task.lock_contexts() {
             context.map_ref(|context| {
-            let u = context.usage_queue();
-            context.with_usage_queue_mut(&mut self.usage_queue_token, |usage_queue| {
-                let lock_result = (match usage_queue.current_usage.as_mut() {
-                    Some(mut current_usage) => {
-                        match (&mut current_usage, context.requested_usage2()) {
-                            (Usage::Writable(blocking_task), RequestedUsage::Writable) => {
-                                if new_task.index() < blocking_task.index() && Self::try_reblock_task(blocking_task, &mut self.blocked_task_count, &mut self.count_token) {
-                                    let old_usage = std::mem::replace(current_usage, Usage::Writable(new_task.clone()));
-                                    let Usage::Writable(reblocked_task) = old_usage else { panic!() };
-                                    reblocked_task.increment_blocked_usage_count(&mut self.count_token);
-                                    reblocked_task.with_pending_mut(&mut self.count_token, |c| {
-                                        c.pending_lock_contexts.insert(ByAddress(LockContext::new(u.clone(), RequestedUsage::Writable))).then_some(()).or_else(|| panic!());
-                                    });
-                                    usage_queue.insert_blocked_usage_from_task(
-                                        UsageFromTask::Writable(reblocked_task),
-                                    );
-                                    self.reblocked_lock_total.increment_self();
-                                    Some(Ok(()))
-                                } else {
-                                    None
-                                }
-                            }
-                            (Usage::Writable(blocking_task), RequestedUsage::Readonly) => {
-                                if new_task.index() < blocking_task.index() && Self::try_reblock_task(blocking_task, &mut self.blocked_task_count, &mut self.count_token) {
-                                    let old_usage = std::mem::replace(current_usage, Usage::Readonly(ShortCounter::one()));
-                                    let Usage::Writable(reblocked_task) = old_usage else { panic!() };
-                                    reblocked_task.increment_blocked_usage_count(&mut self.count_token);
-                                    reblocked_task.with_pending_mut(&mut self.count_token, |c| {
-                                        c.pending_lock_contexts.insert(ByAddress(LockContext::new(u.clone(), RequestedUsage::Writable))).then_some(()).or_else(|| panic!());
-                                    });
-                                    assert!(usage_queue.current_readonly_tasks.is_empty());
-                                    usage_queue.current_readonly_tasks.push(Reverse(new_task.clone()));
-                                    usage_queue.insert_blocked_usage_from_task(
-                                        UsageFromTask::Writable(reblocked_task),
-                                    );
-                                    self.reblocked_lock_total.increment_self();
-                                    Some(Ok(()))
-                                } else {
-                                    None
-                                }
-                            }
-                            (Usage::Readonly(_count), RequestedUsage::Readonly) => {
-                                let first_blocked_task_index = usage_queue.first_blocked_task_index();
-                                if let Some(first_blocked_task_index) = first_blocked_task_index {
-                                    if new_task.index() < first_blocked_task_index {
-                                        usage_queue
-                                            .try_lock(context.requested_usage2(), &new_task)
-                                            .unwrap();
+                let u = context.usage_queue();
+                context.with_usage_queue_mut(&mut self.usage_queue_token, |usage_queue| {
+                    let lock_result = (match usage_queue.current_usage.as_mut() {
+                        Some(mut current_usage) => {
+                            match (&mut current_usage, context.requested_usage2()) {
+                                (Usage::Writable(blocking_task), RequestedUsage::Writable) => {
+                                    if new_task.index() < blocking_task.index()
+                                        && Self::try_reblock_task(
+                                            blocking_task,
+                                            &mut self.blocked_task_count,
+                                            &mut self.count_token,
+                                        )
+                                    {
+                                        let old_usage = std::mem::replace(
+                                            current_usage,
+                                            Usage::Writable(new_task.clone()),
+                                        );
+                                        let Usage::Writable(reblocked_task) = old_usage else {
+                                            panic!()
+                                        };
+                                        reblocked_task
+                                            .increment_blocked_usage_count(&mut self.count_token);
+                                        reblocked_task.with_pending_mut(
+                                            &mut self.count_token,
+                                            |c| {
+                                                c.pending_lock_contexts
+                                                    .insert(ByAddress(LockContext::new(
+                                                        u.clone(),
+                                                        RequestedUsage::Writable,
+                                                    )))
+                                                    .then_some(())
+                                                    .or_else(|| panic!());
+                                            },
+                                        );
+                                        usage_queue.insert_blocked_usage_from_task(
+                                            UsageFromTask::Writable(reblocked_task),
+                                        );
+                                        self.reblocked_lock_total.increment_self();
                                         Some(Ok(()))
-                                        // even the following passes the unit tests... think about this
-                                        /*
-                                        if usage_queue.has_no_blocked_usage() {
-                                            usage_queue.try_lock(context.requested_usage, &new_task)
-                                        } else {
-                                            Err(())
-                                        }
-                                        */
                                     } else {
                                         None
                                     }
-                                } else {
-                                    None
                                 }
-                            }
-                            (Usage::Readonly(count), RequestedUsage::Writable) => {
-                                let mut reblocked_tasks = vec![];
-                                while let Some(blocking_task) = usage_queue.current_readonly_tasks.peek_mut() {
-                                    let index = blocking_task.0.0.index();
-                                    if new_task.index() < index || blocking_task.0.is_unlocked(&mut self.count_token) {
-                                        let blocking_task = PeekMut::pop(blocking_task).0;
-
-                                        if Self::try_reblock_task(&blocking_task, &mut self.blocked_task_count, &mut self.count_token) {
-                                            count.decrement_self();
-                                            reblocked_tasks.push(blocking_task);
-                                        }
-                                    } else {
-                                        break;
-                                    }
-                                }
-                                if !reblocked_tasks.is_empty() {
-                                    let lock_result = if count.is_zero() {
-                                        *current_usage = Usage::Writable(new_task.clone());
-                                        Ok(())
-                                    } else {
-                                        Err(())
-                                    };
-                                    for reblocked_task in reblocked_tasks {
-                                        reblocked_task.increment_blocked_usage_count(&mut self.count_token);
-                                        reblocked_task.with_pending_mut(&mut self.count_token, |c| {
-                                            c.pending_lock_contexts.insert(ByAddress(LockContext::new(u.clone(), RequestedUsage::Readonly))).then_some(()).or_else(|| panic!());
-                                        });
+                                (Usage::Writable(blocking_task), RequestedUsage::Readonly) => {
+                                    if new_task.index() < blocking_task.index()
+                                        && Self::try_reblock_task(
+                                            blocking_task,
+                                            &mut self.blocked_task_count,
+                                            &mut self.count_token,
+                                        )
+                                    {
+                                        let old_usage = std::mem::replace(
+                                            current_usage,
+                                            Usage::Readonly(ShortCounter::one()),
+                                        );
+                                        let Usage::Writable(reblocked_task) = old_usage else {
+                                            panic!()
+                                        };
+                                        reblocked_task
+                                            .increment_blocked_usage_count(&mut self.count_token);
+                                        reblocked_task.with_pending_mut(
+                                            &mut self.count_token,
+                                            |c| {
+                                                c.pending_lock_contexts
+                                                    .insert(ByAddress(LockContext::new(
+                                                        u.clone(),
+                                                        RequestedUsage::Writable,
+                                                    )))
+                                                    .then_some(())
+                                                    .or_else(|| panic!());
+                                            },
+                                        );
+                                        assert!(usage_queue.current_readonly_tasks.is_empty());
+                                        usage_queue
+                                            .current_readonly_tasks
+                                            .push(Reverse(new_task.clone()));
                                         usage_queue.insert_blocked_usage_from_task(
-                                            UsageFromTask::Readonly(reblocked_task),
+                                            UsageFromTask::Writable(reblocked_task),
                                         );
                                         self.reblocked_lock_total.increment_self();
+                                        Some(Ok(()))
+                                    } else {
+                                        None
                                     }
-                                    Some(lock_result)
-                                } else {
-                                    None
+                                }
+                                (Usage::Readonly(_count), RequestedUsage::Readonly) => {
+                                    let first_blocked_task_index =
+                                        usage_queue.first_blocked_task_index();
+                                    if let Some(first_blocked_task_index) = first_blocked_task_index
+                                    {
+                                        if new_task.index() < first_blocked_task_index {
+                                            usage_queue
+                                                .try_lock(context.requested_usage2(), &new_task)
+                                                .unwrap();
+                                            Some(Ok(()))
+                                            // even the following passes the unit tests... think about this
+                                            /*
+                                            if usage_queue.has_no_blocked_usage() {
+                                                usage_queue.try_lock(context.requested_usage, &new_task)
+                                            } else {
+                                                Err(())
+                                            }
+                                            */
+                                        } else {
+                                            None
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                }
+                                (Usage::Readonly(count), RequestedUsage::Writable) => {
+                                    let mut reblocked_tasks = vec![];
+                                    while let Some(blocking_task) =
+                                        usage_queue.current_readonly_tasks.peek_mut()
+                                    {
+                                        let index = blocking_task.0 .0.index();
+                                        if new_task.index() < index
+                                            || blocking_task.0.is_unlocked(&mut self.count_token)
+                                        {
+                                            let blocking_task = PeekMut::pop(blocking_task).0;
+
+                                            if Self::try_reblock_task(
+                                                &blocking_task,
+                                                &mut self.blocked_task_count,
+                                                &mut self.count_token,
+                                            ) {
+                                                count.decrement_self();
+                                                reblocked_tasks.push(blocking_task);
+                                            }
+                                        } else {
+                                            break;
+                                        }
+                                    }
+                                    if !reblocked_tasks.is_empty() {
+                                        let lock_result = if count.is_zero() {
+                                            *current_usage = Usage::Writable(new_task.clone());
+                                            Ok(())
+                                        } else {
+                                            Err(())
+                                        };
+                                        for reblocked_task in reblocked_tasks {
+                                            reblocked_task.increment_blocked_usage_count(
+                                                &mut self.count_token,
+                                            );
+                                            reblocked_task.with_pending_mut(
+                                                &mut self.count_token,
+                                                |c| {
+                                                    c.pending_lock_contexts
+                                                        .insert(ByAddress(LockContext::new(
+                                                            u.clone(),
+                                                            RequestedUsage::Readonly,
+                                                        )))
+                                                        .then_some(())
+                                                        .or_else(|| panic!());
+                                                },
+                                            );
+                                            usage_queue.insert_blocked_usage_from_task(
+                                                UsageFromTask::Readonly(reblocked_task),
+                                            );
+                                            self.reblocked_lock_total.increment_self();
+                                        }
+                                        Some(lock_result)
+                                    } else {
+                                        None
+                                    }
                                 }
                             }
                         }
-                    }
-                    _ => {
-                        None
-                    }
-                }).unwrap_or_else(|| {
-                    if usage_queue.has_no_blocked_usage() {
-                        usage_queue.try_lock(context.requested_usage2(), &new_task)
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| {
+                        if usage_queue.has_no_blocked_usage() {
+                            usage_queue.try_lock(context.requested_usage2(), &new_task)
+                        } else {
+                            Err(())
+                        }
+                    });
+
+                    if let Err(()) = lock_result {
+                        blocked_usage_count.increment_self();
+                        let usage_from_task = context.usage_from_task(new_task.clone());
+                        usage_queue.insert_blocked_usage_from_task(usage_from_task);
                     } else {
-                        Err(())
+                        new_task.with_pending_mut(&mut self.count_token, |c| {
+                            c.pending_lock_contexts
+                                .remove(ByAddress::from_ref(context))
+                                .then_some(())
+                                .or_else(|| panic!());
+                        });
                     }
                 });
-
-                if let Err(()) = lock_result {
-                    blocked_usage_count.increment_self();
-                    let usage_from_task = context.usage_from_task(new_task.clone());
-                    usage_queue.insert_blocked_usage_from_task(usage_from_task);
-                } else {
-                    new_task.with_pending_mut(&mut self.count_token, |c| {
-                        c.pending_lock_contexts.remove(ByAddress::from_ref(context)).then_some(()).or_else(|| panic!());
-                    });
-                }
-            });
             });
         }
 
@@ -1635,7 +1775,10 @@ impl SchedulingStateMachine {
             .collect();
 
         Task::new(TaskInner {
-            packed_task_inner: PackedTaskInner { lock_context_and_transaction: Box::new((lock_contexts, Box::new(transaction))), index},
+            packed_task_inner: PackedTaskInner {
+                lock_context_and_transaction: Box::new((lock_contexts, Box::new(transaction))),
+                index,
+            },
             blocked_usage_count: TokenCell::new(CounterWithStatus::new(pending_lock_contexts)),
         })
     }
@@ -1647,7 +1790,8 @@ impl SchedulingStateMachine {
             assert_matches!(c.status, TaskStatus::Unlocked);
             c.status = TaskStatus::default();
             for context in task.lock_contexts() {
-                c.pending_lock_contexts.insert(ByAddress(context.clone().into()));
+                c.pending_lock_contexts
+                    .insert(ByAddress(context.clone().into()));
             }
         });
     }
@@ -1723,7 +1867,7 @@ impl SchedulingStateMachine {
         Self {
             // It's very unlikely this is desired to be configurable, like
             // `UsageQueueInner::blocked_usages_from_tasks`'s cap.
-            buffered_task_queue:  dary_heap::OctonaryHeap::with_capacity(1024), // BTreeMap::new(), //VecDeque::with_capacity(1024),
+            buffered_task_queue: dary_heap::OctonaryHeap::with_capacity(1024), // BTreeMap::new(), //VecDeque::with_capacity(1024),
             alive_tasks: BTreeSet::default(),
             alive_task_count: ShortCounter::zero(),
             executing_task_count: ShortCounter::zero(),
@@ -1744,7 +1888,9 @@ impl SchedulingStateMachine {
     /// # Safety
     /// Call this exactly once for each thread. See [`TokenCell`] for details.
     pub unsafe fn exclusively_initialize_current_thread_for_scheduling_for_test() -> Self {
-        Self::exclusively_initialize_current_thread_for_scheduling(SchedulingMode::BlockVerification)
+        Self::exclusively_initialize_current_thread_for_scheduling(
+            SchedulingMode::BlockVerification,
+        )
     }
 
     /// # Safety
@@ -2774,13 +2920,19 @@ mod tests {
             .0
             .with_borrow_mut(&mut state_machine.usage_queue_token, |usage_queue| {
                 usage_queue.executing_count.increment_self();
-                let _ = usage_queue.unlock(&LockContext::new(UsageQueue::default(), RequestedUsage::Writable), 0, &mut state_machine.count_token);
+                let _ = usage_queue.unlock(
+                    &LockContext::new(UsageQueue::default(), RequestedUsage::Writable),
+                    0,
+                    &mut state_machine.count_token,
+                );
             });
     }
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    #[should_panic(expected = "assertion `left == right` failed\n  left: (3, Readonly, 0)\n right: (3, Writable, 0)")]
+    #[should_panic(
+        expected = "assertion `left == right` failed\n  left: (3, Readonly, 0)\n right: (3, Writable, 0)"
+    )]
     fn test_unreachable_unlock_conditions2() {
         let mut state_machine = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
@@ -2797,7 +2949,8 @@ mod tests {
                 usage_queue.executing_count.increment_self();
                 let task_index = task.index();
                 usage_queue.current_usage = Some(Usage::Writable(task));
-                let _ = usage_queue.unlock(&lock_context, task_index, &mut state_machine.count_token);
+                let _ =
+                    usage_queue.unlock(&lock_context, task_index, &mut state_machine.count_token);
             });
     }
 
@@ -2819,7 +2972,11 @@ mod tests {
                 usage_queue.executing_count.increment_self();
                 let task_index = task.index();
                 usage_queue.current_usage = Some(Usage::Readonly(ShortCounter::one()));
-                let _ = usage_queue.unlock(&LockContext::new(UsageQueue::default(), RequestedUsage::Writable), task_index, &mut state_machine.count_token);
+                let _ = usage_queue.unlock(
+                    &LockContext::new(UsageQueue::default(), RequestedUsage::Writable),
+                    task_index,
+                    &mut state_machine.count_token,
+                );
             });
     }
 }

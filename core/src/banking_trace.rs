@@ -3,7 +3,7 @@ use {
     chrono::{DateTime, Local},
     crossbeam_channel::{unbounded, Receiver, SendError, Sender, TryRecvError},
     rolling_file::{RollingCondition, RollingConditionBasic, RollingFileAppender},
-    solana_perf::packet::PacketBatch,
+    solana_perf::packet::{PacketBatch, SigverifyTracerPacketStats},
     solana_sdk::{hash::Hash, slot_history::Slot},
     std::{
         fs::{create_dir_all, remove_dir_all},
@@ -18,8 +18,6 @@ use {
     },
     thiserror::Error,
 };
-
-use solana_perf::packet::SigverifyTracerPacketStats;
 
 pub type BankingPacketBatch = Arc<(Vec<PacketBatch>, Option<SigverifyTracerPacketStats>)>;
 pub type BankingPacketSender = TracedSender;
@@ -244,7 +242,12 @@ impl BankingTracer {
         receiver: &BankingPacketReceiver,
     ) -> (BankingPacketSender, BankingPacketReceiver) {
         let label = ChannelLabel::TpuVote;
-        Self::channel_inner(label, self.active_tracer.as_ref().cloned(), sender.sender.clone(), receiver.clone())
+        Self::channel_inner(
+            label,
+            self.active_tracer.as_ref().cloned(),
+            sender.sender.clone(),
+            receiver.clone(),
+        )
     }
 
     pub fn create_unified_channel_gossip_vote(
@@ -253,9 +256,13 @@ impl BankingTracer {
         receiver: &BankingPacketReceiver,
     ) -> (BankingPacketSender, BankingPacketReceiver) {
         let label = ChannelLabel::GossipVote;
-        Self::channel_inner(label, self.active_tracer.as_ref().cloned(), sender.sender.clone(), receiver.clone())
+        Self::channel_inner(
+            label,
+            self.active_tracer.as_ref().cloned(),
+            sender.sender.clone(),
+            receiver.clone(),
+        )
     }
-
 
     pub fn hash_event(&self, slot: Slot, blockhash: &Hash, bank_hash: &Hash) {
         self.trace_event(|| {

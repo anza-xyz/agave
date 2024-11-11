@@ -9,7 +9,8 @@ use {
     },
     solana_core::{
         accounts_hash_verifier::AccountsHashVerifier,
-        snapshot_packager_service::PendingSnapshotPackages, validator::{BlockProductionMethod, BlockVerificationMethod},
+        snapshot_packager_service::PendingSnapshotPackages,
+        validator::{supported_scheduling_mode, BlockProductionMethod, BlockVerificationMethod},
     },
     solana_geyser_plugin_manager::geyser_plugin_service::{
         GeyserPluginService, GeyserPluginServiceError,
@@ -27,6 +28,7 @@ use {
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     solana_measure::measure_time,
+    solana_poh::poh_recorder::{NewPohRecorder, PohRecorder},
     solana_rpc::transaction_status_service::TransactionStatusService,
     solana_runtime::{
         accounts_background_service::{
@@ -54,8 +56,6 @@ use {
     },
     thiserror::Error,
 };
-use solana_poh::poh_recorder::{NewPohRecorder, PohRecorder};
-use solana_core::validator::supported_scheduling_mode;
 
 pub struct LoadAndProcessLedgerOutput {
     pub bank_forks: Arc<RwLock<BankForks>>,
@@ -324,57 +324,58 @@ pub fn load_and_process_ledger(
     );
     let unified_scheduler_handler_threads =
         value_t!(arg_matches, "unified_scheduler_handler_threads", usize).ok();
-    let (unified_scheduler_pool, new_poh_recorder) = match (&block_verification_method, &block_production_method) {
-        methods @ (BlockVerificationMethod::UnifiedScheduler, _)
-        | methods @ (_, BlockProductionMethod::UnifiedScheduler) => {
-            let no_transaction_status_sender = None;
-            let no_replay_vote_sender = None;
-            let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
+    let (unified_scheduler_pool, new_poh_recorder) =
+        match (&block_verification_method, &block_production_method) {
+            methods @ (BlockVerificationMethod::UnifiedScheduler, _)
+            | methods @ (_, BlockProductionMethod::UnifiedScheduler) => {
+                let no_transaction_status_sender = None;
+                let no_replay_vote_sender = None;
+                let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
 
-            let exit = Arc::new(AtomicBool::new(false));
-            let poh_bank = bank_forks.read().unwrap().working_bank();
-            let new_poh_recorder = PohRecorder::new_with_clear_signal(
-                poh_bank.tick_height(),
-                poh_bank.last_blockhash(),
-                poh_bank.clone(),
-                None,
-                poh_bank.ticks_per_slot(),
-                false,
-                blockstore.clone(),
-                blockstore.get_new_shred_signal(0),
-                &leader_schedule_cache,
-                &genesis_config.poh_config,
-                None,
-                exit.clone(),
-            );
-            drop(poh_bank);
-
-            let pool = DefaultSchedulerPool::new(
-                supported_scheduling_mode(methods),
-                unified_scheduler_handler_threads,
-                process_options.runtime_config.log_messages_bytes_limit,
-                no_transaction_status_sender,
-                no_replay_vote_sender,
-                ignored_prioritization_fee_cache,
-                new_poh_recorder.0.new_recorder(),
-            );
-            bank_forks
-                .write()
-                .unwrap()
-                .install_scheduler_pool(pool.clone());
-            (Some(pool), Some(new_poh_recorder))
-        }
-        _ => {
-            info!("no scheduler pool is installed for block verification/production...");
-            if let Some(count) = unified_scheduler_handler_threads {
-                warn!(
-                    "--unified-scheduler-handler-threads={count} is ignored because unified \
-                     scheduler isn't enabled"
+                let exit = Arc::new(AtomicBool::new(false));
+                let poh_bank = bank_forks.read().unwrap().working_bank();
+                let new_poh_recorder = PohRecorder::new_with_clear_signal(
+                    poh_bank.tick_height(),
+                    poh_bank.last_blockhash(),
+                    poh_bank.clone(),
+                    None,
+                    poh_bank.ticks_per_slot(),
+                    false,
+                    blockstore.clone(),
+                    blockstore.get_new_shred_signal(0),
+                    &leader_schedule_cache,
+                    &genesis_config.poh_config,
+                    None,
+                    exit.clone(),
                 );
+                drop(poh_bank);
+
+                let pool = DefaultSchedulerPool::new(
+                    supported_scheduling_mode(methods),
+                    unified_scheduler_handler_threads,
+                    process_options.runtime_config.log_messages_bytes_limit,
+                    no_transaction_status_sender,
+                    no_replay_vote_sender,
+                    ignored_prioritization_fee_cache,
+                    new_poh_recorder.0.new_recorder(),
+                );
+                bank_forks
+                    .write()
+                    .unwrap()
+                    .install_scheduler_pool(pool.clone());
+                (Some(pool), Some(new_poh_recorder))
             }
-            (None, None)
-        }
-    };
+            _ => {
+                info!("no scheduler pool is installed for block verification/production...");
+                if let Some(count) = unified_scheduler_handler_threads {
+                    warn!(
+                        "--unified-scheduler-handler-threads={count} is ignored because unified \
+                     scheduler isn't enabled"
+                    );
+                }
+                (None, None)
+            }
+        };
 
     let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
     let (accounts_package_sender, accounts_package_receiver) = crossbeam_channel::unbounded();

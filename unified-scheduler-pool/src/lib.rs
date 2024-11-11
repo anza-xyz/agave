@@ -14,21 +14,25 @@
 use qualifier_attr::qualifiers;
 use {
     assert_matches::assert_matches,
-    crossbeam_channel::{self, never, select, select_biased, Receiver, RecvError, SendError, Sender},
+    crossbeam_channel::{
+        self, never, select, select_biased, Receiver, RecvError, SendError, Sender,
+    },
     dashmap::{DashMap, DashSet},
     derivative::Derivative,
+    dyn_clone::{clone_trait_object, DynClone},
     log::*,
     scopeguard::defer,
     solana_ledger::blockstore_processor::{
         execute_batch, TransactionBatchWithIndexes, TransactionStatusSender,
     },
+    solana_perf::packet::{BankingPacketBatch, BankingPacketReceiver},
     solana_poh::poh_recorder::TransactionRecorder,
     solana_runtime::{
         installed_scheduler_pool::{
             initialized_result_with_timings, InstalledScheduler, InstalledSchedulerBox,
             InstalledSchedulerPool, InstalledSchedulerPoolArc, ResultWithTimings, ScheduleResult,
-            SchedulerAborted, SchedulerId, SchedulingContext, TimeoutListener, UninstalledScheduler,
-            UninstalledSchedulerBox,
+            SchedulerAborted, SchedulerId, SchedulingContext, TimeoutListener,
+            UninstalledScheduler, UninstalledSchedulerBox,
         },
         prioritization_fee_cache::PrioritizationFeeCache,
         vote_sender_types::ReplayVoteSender,
@@ -36,7 +40,7 @@ use {
     solana_sdk::{
         hash::Hash,
         pubkey::Pubkey,
-        scheduling::SchedulingMode,
+        scheduling::{SchedulingMode, TaskKey},
         transaction::{Result, SanitizedTransaction, TransactionError},
     },
     solana_timings::ExecuteTimings,
@@ -48,20 +52,13 @@ use {
         mem,
         sync::{
             atomic::{AtomicU64, Ordering::Relaxed},
-            Arc, Mutex, OnceLock, Weak,
+            Arc, Condvar, Mutex, OnceLock, RwLock, Weak,
         },
         thread::{self, sleep, JoinHandle},
         time::{Duration, Instant},
     },
     vec_extract_if_polyfill::MakeExtractIf,
 };
-use solana_sdk::scheduling::TaskKey;
-use solana_perf::packet::BankingPacketBatch;
-use solana_perf::packet::BankingPacketReceiver;
-use std::sync::Condvar;
-use std::sync::RwLock;
-use dyn_clone::DynClone;
-use dyn_clone::clone_trait_object;
 
 mod sleepless_testing;
 use crate::sleepless_testing::BuilderTracked;
@@ -107,7 +104,11 @@ impl SupportedSchedulingMode {
 pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     supported_scheduling_mode: SupportedSchedulingMode,
     scheduler_inners: Mutex<Vec<(S::Inner, Instant)>>,
-    block_production_scheduler_inner: Mutex<(Option<SchedulerId>, Option<S::Inner>, Option<SchedulingContext>)>,
+    block_production_scheduler_inner: Mutex<(
+        Option<SchedulerId>,
+        Option<S::Inner>,
+        Option<SchedulingContext>,
+    )>,
     block_production_scheduler_condvar: Condvar,
     block_production_scheduler_respawner: Mutex<Option<BlockProductionSchedulerRespawner>>,
     trashed_scheduler_inners: Mutex<Vec<S::Inner>>,
@@ -161,13 +162,9 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(12);
 // because UsageQueueLoader won't grow that much to begin with.
 const DEFAULT_MAX_USAGE_QUEUE_COUNT: usize = 262_144;
 
-pub trait AAA: DynClone + (FnMut(BankingPacketBatch) -> Vec<Task>) + Send {
-}
+pub trait AAA: DynClone + (FnMut(BankingPacketBatch) -> Vec<Task>) + Send {}
 
-impl<T> AAA for T
-where
-    T: DynClone + (FnMut(BankingPacketBatch) -> Vec<Task>) + Send {
-}
+impl<T> AAA for T where T: DynClone + (FnMut(BankingPacketBatch) -> Vec<Task>) + Send {}
 
 clone_trait_object!(AAA);
 
@@ -184,7 +181,6 @@ impl std::fmt::Debug for BlockProductionSchedulerRespawner {
         todo!();
     }
 }
-
 
 impl<S, TH> SchedulerPool<S, TH>
 where
@@ -374,7 +370,10 @@ where
                     count
                 };
 
-                let mut g = scheduler_pool.block_production_scheduler_inner.lock().unwrap();
+                let mut g = scheduler_pool
+                    .block_production_scheduler_inner
+                    .lock()
+                    .unwrap();
                 if let Some(pooled) = &g.1 {
                     match pooled.banking_stage_status() {
                         BankingStageStatus::Active => (),
@@ -514,7 +513,13 @@ where
                     .expect("not poisoned")
                     .push((scheduler, Instant::now()));
             } else {
-                assert!(self.block_production_scheduler_inner.lock().unwrap().1.replace(scheduler).is_none());
+                assert!(self
+                    .block_production_scheduler_inner
+                    .lock()
+                    .unwrap()
+                    .1
+                    .replace(scheduler)
+                    .is_none());
             }
         }
     }
@@ -534,24 +539,36 @@ where
         if matches!(context.mode(), SchedulingMode::BlockVerification) {
             // pop is intentional for filo, expecting relatively warmed-up scheduler due to having been
             // returned recently
-            if let Some((inner, _pooled_at)) = self.scheduler_inners.lock().expect("not poisoned").pop()
+            if let Some((inner, _pooled_at)) =
+                self.scheduler_inners.lock().expect("not poisoned").pop()
             {
                 S::from_inner(inner, context, result_with_timings)
             } else {
-                S::spawn(self.self_arc(), context, result_with_timings, None::<(_, fn(BankingPacketBatch) -> Vec<Task>)>, None)
+                S::spawn(
+                    self.self_arc(),
+                    context,
+                    result_with_timings,
+                    None::<(_, fn(BankingPacketBatch) -> Vec<Task>)>,
+                    None,
+                )
             }
         } else {
-            let mut g = self.block_production_scheduler_inner.lock().expect("not poisoned");
-            g = self.block_production_scheduler_condvar.wait_while(g, |g| {
-                let not_yet = g.0.is_none();
-                if not_yet {
-                    info!("will wait for bps...");
-                    g.2 = Some(context.clone());
-                }
-                not_yet
-            }).unwrap();
-            if let Some(inner) = g.1.take()
-            {
+            let mut g = self
+                .block_production_scheduler_inner
+                .lock()
+                .expect("not poisoned");
+            g = self
+                .block_production_scheduler_condvar
+                .wait_while(g, |g| {
+                    let not_yet = g.0.is_none();
+                    if not_yet {
+                        info!("will wait for bps...");
+                        g.2 = Some(context.clone());
+                    }
+                    not_yet
+                })
+                .unwrap();
+            if let Some(inner) = g.1.take() {
                 S::from_inner(inner, context, result_with_timings)
             } else {
                 panic!();
@@ -559,12 +576,18 @@ where
         }
     }
 
-    pub fn prepare_to_spawn_block_production_scheduler(&self, bank_forks: Arc<RwLock<BankForks>>, banking_packet_receiver: BankingPacketReceiver, on_spawn_block_production_scheduler: Bbb) {
-        *self.block_production_scheduler_respawner.lock().unwrap() = Some(BlockProductionSchedulerRespawner {
-            bank_forks,
-            banking_packet_receiver,
-            on_spawn_block_production_scheduler,
-        });
+    pub fn prepare_to_spawn_block_production_scheduler(
+        &self,
+        bank_forks: Arc<RwLock<BankForks>>,
+        banking_packet_receiver: BankingPacketReceiver,
+        on_spawn_block_production_scheduler: Bbb,
+    ) {
+        *self.block_production_scheduler_respawner.lock().unwrap() =
+            Some(BlockProductionSchedulerRespawner {
+                bank_forks,
+                banking_packet_receiver,
+                on_spawn_block_production_scheduler,
+            });
     }
 
     pub fn reset_respawner(&self) {
@@ -589,13 +612,28 @@ where
         let on_banking_packet_receive = on_spawn_block_production_scheduler(adapter.clone());
         let banking_stage_context = (banking_packet_receiver.clone(), on_banking_packet_receive);
         let scheduler = {
-            let mut g = self.block_production_scheduler_inner.lock().expect("not poisoned");
-            let context = g.2.take().inspect(|context| {
-                assert_matches!(context.mode(), SchedulingMode::BlockProduction);
-            }).unwrap_or_else(|| {
-                SchedulingContext::new(SchedulingMode::BlockProduction, bank_forks.read().unwrap().root_bank())
-            });
-            let s = S::spawn(self.self_arc(), context, initialized_result_with_timings(), Some(banking_stage_context), Some(adapter));
+            let mut g = self
+                .block_production_scheduler_inner
+                .lock()
+                .expect("not poisoned");
+            let context =
+                g.2.take()
+                    .inspect(|context| {
+                        assert_matches!(context.mode(), SchedulingMode::BlockProduction);
+                    })
+                    .unwrap_or_else(|| {
+                        SchedulingContext::new(
+                            SchedulingMode::BlockProduction,
+                            bank_forks.read().unwrap().root_bank(),
+                        )
+                    });
+            let s = S::spawn(
+                self.self_arc(),
+                context,
+                initialized_result_with_timings(),
+                Some(banking_stage_context),
+                Some(adapter),
+            );
             assert!(g.0.replace(s.id()).is_none());
             s
         };
@@ -657,7 +695,9 @@ where
             return None;
         }
 
-        Some(Box::new(self.do_take_resumed_scheduler(context, result_with_timings)))
+        Some(Box::new(
+            self.do_take_resumed_scheduler(context, result_with_timings),
+        ))
     }
 
     fn register_timeout_listener(&self, timeout_listener: TimeoutListener) {
@@ -691,27 +731,33 @@ impl TaskHandler for DefaultTaskHandler {
         index: TaskKey,
         handler_context: &HandlerContext,
     ) {
-        let (cost, added_cost) = if matches!(scheduling_context.mode(), SchedulingMode::BlockProduction) {
-            use solana_cost_model::cost_model::CostModel;
-            let c = CostModel::calculate_cost(transaction, &scheduling_context.bank().feature_set);
-            loop {
-                let r = scheduling_context.bank().write_cost_tracker().unwrap().try_add(&c);
-                if let Err(e) = r {
-                    use solana_cost_model::cost_tracker::CostTrackerError;
-                    if matches!(e, CostTrackerError::WouldExceedAccountDataBlockLimit) {
-                        sleep(Duration::from_millis(10));
-                        continue;
+        let (cost, added_cost) =
+            if matches!(scheduling_context.mode(), SchedulingMode::BlockProduction) {
+                use solana_cost_model::cost_model::CostModel;
+                let c =
+                    CostModel::calculate_cost(transaction, &scheduling_context.bank().feature_set);
+                loop {
+                    let r = scheduling_context
+                        .bank()
+                        .write_cost_tracker()
+                        .unwrap()
+                        .try_add(&c);
+                    if let Err(e) = r {
+                        use solana_cost_model::cost_tracker::CostTrackerError;
+                        if matches!(e, CostTrackerError::WouldExceedAccountDataBlockLimit) {
+                            sleep(Duration::from_millis(10));
+                            continue;
+                        } else {
+                            *result = Err(e.into());
+                            break (Some(c), false);
+                        }
                     } else {
-                        *result = Err(e.into());
-                        break (Some(c), false)
+                        break (Some(c), true);
                     }
-                } else {
-                    break (Some(c), true)
                 }
-            }
-        } else {
-            (None, false)
-        };
+            } else {
+                (None, false)
+            };
 
         if result.is_ok() {
             // scheduler must properly prevent conflicting tx executions. thus, task handler isn't
@@ -727,11 +773,10 @@ impl TaskHandler for DefaultTaskHandler {
             let pre_commit_callback = match scheduling_context.mode() {
                 SchedulingMode::BlockVerification => None,
                 SchedulingMode::BlockProduction => Some(|| {
-                    let summary = handler_context.transaction_recorder
-                        .record_transactions(
-                            scheduling_context.bank().slot(),
-                            vec![transaction.to_versioned_transaction()],
-                        );
+                    let summary = handler_context.transaction_recorder.record_transactions(
+                        scheduling_context.bank().slot(),
+                        vec![transaction.to_versioned_transaction()],
+                    );
                     summary.result.is_ok()
                 }),
             };
@@ -751,7 +796,11 @@ impl TaskHandler for DefaultTaskHandler {
         if result.is_err() {
             if let Some(cost2) = cost {
                 if added_cost {
-                    scheduling_context.bank().write_cost_tracker().unwrap().remove(&cost2);
+                    scheduling_context
+                        .bank()
+                        .write_cost_tracker()
+                        .unwrap()
+                        .remove(&cost2);
                 }
             }
         }
@@ -796,7 +845,6 @@ type NewTaskPayload = SubchanneledPayload<Task, Box<(SchedulingContext, ResultWi
 type CompactNewTaskPayload = Compact<NewTaskPayload>;
 const_assert_eq!(mem::size_of::<NewTaskPayload>(), 16);
 const_assert_eq!(mem::size_of::<CompactNewTaskPayload>(), 8);
-
 
 // A tiny generic message type to synchronize multiple threads everytime some contextual data needs
 // to be switched (ie. SchedulingContext), just using a single communication channel.
@@ -1025,7 +1073,9 @@ impl TaskCreator {
 
         match self {
             BlockVerification { usage_queue_loader } => usage_queue_loader,
-            BlockProduction { banking_stage_adapter } => &banking_stage_adapter.usage_queue_loader,
+            BlockProduction {
+                banking_stage_adapter,
+            } => &banking_stage_adapter.usage_queue_loader,
         }
     }
 
@@ -1033,8 +1083,12 @@ impl TaskCreator {
         use TaskCreator::*;
 
         match self {
-            BlockVerification { usage_queue_loader: _ } => todo!(),
-            BlockProduction { banking_stage_adapter } => banking_stage_adapter.banking_stage_status(),
+            BlockVerification {
+                usage_queue_loader: _,
+            } => todo!(),
+            BlockProduction {
+                banking_stage_adapter,
+            } => banking_stage_adapter.banking_stage_status(),
         }
     }
 
@@ -1042,8 +1096,12 @@ impl TaskCreator {
         use TaskCreator::*;
 
         match self {
-            BlockVerification { usage_queue_loader: _ } => todo!(),
-            BlockProduction { banking_stage_adapter } => banking_stage_adapter.reset(),
+            BlockVerification {
+                usage_queue_loader: _,
+            } => todo!(),
+            BlockProduction {
+                banking_stage_adapter,
+            } => banking_stage_adapter.reset(),
         }
     }
 
@@ -1057,16 +1115,20 @@ impl TaskCreator {
                 // detect too large loaders...
                 usage_queue_loader.count() > max_usage_queue_count
             }
-            BlockProduction { banking_stage_adapter } => {
+            BlockProduction {
+                banking_stage_adapter,
+            } => {
                 if on_hot_path {
                     // the slow path can be ensured to be called periodically.
                     false
                 } else {
-                    let current_usage_queue_count = banking_stage_adapter.usage_queue_loader.count();
+                    let current_usage_queue_count =
+                        banking_stage_adapter.usage_queue_loader.count();
                     let current_transaction_count = banking_stage_adapter.transaction_deduper.len();
                     info!("bsa: {current_usage_queue_count} {current_transaction_count}");
 
-                    current_usage_queue_count > max_usage_queue_count || current_transaction_count > 1_000_000
+                    current_usage_queue_count > max_usage_queue_count
+                        || current_transaction_count > 1_000_000
                 }
             }
         }
@@ -1232,8 +1294,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     None
                 }
             },
-            SchedulingMode::BlockProduction => {
-                match executed_task.result_with_timings.0 {
+            SchedulingMode::BlockProduction => match executed_task.result_with_timings.0 {
                 Ok(()) => Some((executed_task, false)),
                 Err(TransactionError::CommitFailed) => {
                     if !already_finishing {
@@ -1242,10 +1303,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     *error_count += 1;
                     Some((executed_task, true))
                 }
-                Err(ref e @ TransactionError::WouldExceedMaxBlockCostLimit) |
-                Err(ref e @ TransactionError::WouldExceedMaxVoteCostLimit) |
-                Err(ref e @ TransactionError::WouldExceedMaxAccountCostLimit) |
-                Err(ref e @ TransactionError::WouldExceedAccountDataBlockLimit) => {
+                Err(ref e @ TransactionError::WouldExceedMaxBlockCostLimit)
+                | Err(ref e @ TransactionError::WouldExceedMaxVoteCostLimit)
+                | Err(ref e @ TransactionError::WouldExceedMaxAccountCostLimit)
+                | Err(ref e @ TransactionError::WouldExceedAccountDataBlockLimit) => {
                     if !already_finishing {
                         info!("hit block cost: {e:?}");
                     }
@@ -1257,7 +1318,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     *error_count += 1;
                     Some((executed_task, false))
                 }
-            }},
+            },
         }
     }
 
@@ -1281,7 +1342,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         &mut self,
         mut context: SchedulingContext,
         mut result_with_timings: ResultWithTimings,
-        banking_stage_context: Option<(BankingPacketReceiver, impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static)>,
+        banking_stage_context: Option<(
+            BankingPacketReceiver,
+            impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static,
+        )>,
     ) {
         let scheduler_id = self.scheduler_id;
         let mut slot = context.bank().slot();
@@ -1411,11 +1475,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 .expect("no 2nd start_threads()");
 
             let mut session_ending = false;
-            let (mut session_pausing, mut is_finished) = if context.mode() == SchedulingMode::BlockProduction {
-                (true, true)
-            } else {
-                (false, false)
-            };
+            let (mut session_pausing, mut is_finished) =
+                if context.mode() == SchedulingMode::BlockProduction {
+                    (true, true)
+                } else {
+                    (false, false)
+                };
             let mut session_resetting = false;
 
             // Now, this is the main loop for the scheduler thread, which is a special beast.
@@ -1474,7 +1539,11 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 let mut log_interval = LogInterval::default();
                 let mut session_started_at = Instant::now();
                 let mut cpu_session_started_at = cpu_time::ThreadTime::now();
-                let (mut log_reported_at, mut reported_task_total, mut reported_executed_task_total) = (session_started_at, 0, 0);
+                let (
+                    mut log_reported_at,
+                    mut reported_task_total,
+                    mut reported_executed_task_total,
+                ) = (session_started_at, 0, 0);
                 let mut cpu_log_reported_at = cpu_session_started_at;
                 let mut error_count: u32 = 0;
 
@@ -1711,14 +1780,17 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 }
                             }
                         };
-                        let force_log = step_type == "ending" || step_type == "pausing" || step_type == "draining";
+                        let force_log = step_type == "ending"
+                            || step_type == "pausing"
+                            || step_type == "draining";
                         if log_interval.increment() || force_log {
                             log_scheduler!(info, step_type);
                         } else {
                             log_scheduler!(trace, step_type);
                         }
 
-                        is_finished = session_ending && state_machine.has_no_alive_task() || session_pausing && state_machine.has_no_executing_task();
+                        is_finished = session_ending && state_machine.has_no_alive_task()
+                            || session_pausing && state_machine.has_no_executing_task();
                     }
                     assert!(mem::replace(&mut is_finished, false));
 
@@ -1738,7 +1810,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             reported_task_total = 0;
                             reported_executed_task_total = 0;
                             assert_eq!(error_count, 0);
-                        },
+                        }
                         SchedulingMode::BlockProduction => {
                             session_started_at = Instant::now();
                             cpu_session_started_at = cpu_time::ThreadTime::now();
@@ -1747,7 +1819,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             reported_task_total = 0;
                             reported_executed_task_total = 0;
                             error_count = 0;
-                        },
+                        }
                     }
 
                     // Prepare for the new session.
@@ -1804,14 +1876,29 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 result_with_timings = new_result_with_timings;
                                 break;
                             }
-                            Ok(NewTaskPayload::CloseSubchannel(_)) if matches!(state_machine.mode(), SchedulingMode::BlockProduction) => {
+                            Ok(NewTaskPayload::CloseSubchannel(_))
+                                if matches!(
+                                    state_machine.mode(),
+                                    SchedulingMode::BlockProduction
+                                ) =>
+                            {
                                 info!("ignoring duplicate CloseSubchannel...");
                             }
-                            Ok(NewTaskPayload::Reset(_)) if matches!(state_machine.mode(), SchedulingMode::BlockProduction) => {
+                            Ok(NewTaskPayload::Reset(_))
+                                if matches!(
+                                    state_machine.mode(),
+                                    SchedulingMode::BlockProduction
+                                ) =>
+                            {
                                 session_resetting = true;
                                 log_scheduler!(info, "draining");
                             }
-                            Ok(NewTaskPayload::Payload(task)) if matches!(state_machine.mode(), SchedulingMode::BlockProduction) => {
+                            Ok(NewTaskPayload::Payload(task))
+                                if matches!(
+                                    state_machine.mode(),
+                                    SchedulingMode::BlockProduction
+                                ) =>
+                            {
                                 assert!(state_machine.do_schedule_task(task, true).is_none());
                                 if log_interval.increment() {
                                     log_scheduler!(info, "rebuffer");
@@ -2016,10 +2103,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         };
     }
 
-    fn ensure_join_threads_after_abort(
-        &mut self,
-        should_receive_aborted_session_result: bool,
-    ) {
+    fn ensure_join_threads_after_abort(&mut self, should_receive_aborted_session_result: bool) {
         self.ensure_join_threads(should_receive_aborted_session_result);
     }
 
@@ -2085,10 +2169,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         assert!(!self.are_threads_joined());
         assert_matches!(self.session_result_with_timings, None);
         self.new_task_sender
-            .send(NewTaskPayload::OpenSubchannel(Box::new((
-                context,
-                result_with_timings,
-            ))).into())
+            .send(NewTaskPayload::OpenSubchannel(Box::new((context, result_with_timings))).into())
             .expect("no new session after aborted");
     }
 }
@@ -2115,7 +2196,10 @@ pub trait SpawnableScheduler<TH: TaskHandler>: InstalledScheduler {
         pool: Arc<SchedulerPool<Self, TH>>,
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
-        banking_stage_context: Option<(BankingPacketReceiver, impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static)>,
+        banking_stage_context: Option<(
+            BankingPacketReceiver,
+            impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static,
+        )>,
         banking_stage_adapter: Option<Arc<BankingStageAdapter>>,
     ) -> Self
     where
@@ -2149,28 +2233,30 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
         pool: Arc<SchedulerPool<Self, TH>>,
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
-        banking_stage_context: Option<(BankingPacketReceiver, impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static)>,
+        banking_stage_context: Option<(
+            BankingPacketReceiver,
+            impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static,
+        )>,
         banking_stage_adapter: Option<Arc<BankingStageAdapter>>,
     ) -> Self {
-        info!(
-            "spawning new scheduler for slot: {}",
-            context.bank().slot()
-        );
+        info!("spawning new scheduler for slot: {}", context.bank().slot());
         let task_creator = match context.mode() {
-            SchedulingMode::BlockVerification => {
-                TaskCreator::BlockVerification { usage_queue_loader: UsageQueueLoader::default() }
+            SchedulingMode::BlockVerification => TaskCreator::BlockVerification {
+                usage_queue_loader: UsageQueueLoader::default(),
             },
-            SchedulingMode::BlockProduction => {
-                TaskCreator::BlockProduction { banking_stage_adapter: banking_stage_adapter.unwrap() }
+            SchedulingMode::BlockProduction => TaskCreator::BlockProduction {
+                banking_stage_adapter: banking_stage_adapter.unwrap(),
             },
         };
         let mut inner = Self::Inner {
             thread_manager: ThreadManager::new(pool),
             task_creator,
         };
-        inner
-            .thread_manager
-            .start_threads(context.clone(), result_with_timings, banking_stage_context);
+        inner.thread_manager.start_threads(
+            context.clone(),
+            result_with_timings,
+            banking_stage_context,
+        );
         Self { inner, context }
     }
 }
@@ -2205,25 +2291,41 @@ impl BankingStageAdapter {
         &self,
         &(transaction, index): &(&SanitizedTransaction, TaskKey),
     ) -> Option<Task> {
-        if self.transaction_deduper.contains(transaction.message_hash()) {
+        if self
+            .transaction_deduper
+            .contains(transaction.message_hash())
+        {
             return None;
         } else {
             self.transaction_deduper.insert(*transaction.message_hash());
         }
 
-        Some(SchedulingStateMachine::create_task(transaction.clone(), index, &mut |pubkey| {
-            self.usage_queue_loader.load(pubkey)
-        }))
+        Some(SchedulingStateMachine::create_task(
+            transaction.clone(),
+            index,
+            &mut |pubkey| self.usage_queue_loader.load(pubkey),
+        ))
     }
 
     fn banking_stage_status(&self) -> BankingStageStatus {
-        self.idling_detector.lock().unwrap().as_ref().unwrap().banking_stage_status()
+        self.idling_detector
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .banking_stage_status()
     }
 
-    fn reset(&self)  {
-        info!("resetting transaction_deduper... {}", self.transaction_deduper.len());
+    fn reset(&self) {
+        info!(
+            "resetting transaction_deduper... {}",
+            self.transaction_deduper.len()
+        );
         self.transaction_deduper.clear();
-        info!("resetting transaction_deduper... done: {}", self.transaction_deduper.len());
+        info!(
+            "resetting transaction_deduper... done: {}",
+            self.transaction_deduper.len()
+        );
     }
 }
 
@@ -2306,7 +2408,8 @@ where
     }
 
     fn is_overgrown(&self, on_hot_path: bool) -> bool {
-        self.task_creator.is_overgrown(self.thread_manager.pool.max_usage_queue_count, on_hot_path)
+        self.task_creator
+            .is_overgrown(self.thread_manager.pool.max_usage_queue_count, on_hot_path)
     }
 
     fn banking_stage_status(&self) -> BankingStageStatus {
@@ -2314,7 +2417,11 @@ where
     }
 
     fn reset(&self) {
-        if let Err(a) = self.thread_manager.new_task_sender.send(NewTaskPayload::Reset(Unit::new()).into()) {
+        if let Err(a) = self
+            .thread_manager
+            .new_task_sender
+            .send(NewTaskPayload::Reset(Unit::new()).into())
+        {
             warn!("failed to send a reset due to error: {a:?}");
         }
         self.task_creator.reset()
@@ -2368,8 +2475,13 @@ mod tests {
         solana_logger::setup();
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool =
-            DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None, ignored_prioritization_fee_cache);
+        let pool = DefaultSchedulerPool::new_dyn_for_verification(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
 
         // this indirectly proves that there should be circular link because there's only one Arc
         // at this moment now
@@ -2384,8 +2496,13 @@ mod tests {
         solana_logger::setup();
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool =
-            DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None, ignored_prioritization_fee_cache);
+        let pool = DefaultSchedulerPool::new_dyn_for_verification(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
         let bank = Arc::new(Bank::default_for_tests());
         let context = SchedulingContext::for_verification(bank);
         let scheduler = pool.take_scheduler(context).unwrap();
@@ -2599,17 +2716,18 @@ mod tests {
         ]);
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool_raw = SchedulerPool::<PooledScheduler<ExecuteTimingCounter>, _>::do_new_for_verification(
-            None,
-            None,
-            None,
-            None,
-            ignored_prioritization_fee_cache,
-            SHORTENED_POOL_CLEANER_INTERVAL,
-            DEFAULT_MAX_POOLING_DURATION,
-            DEFAULT_MAX_USAGE_QUEUE_COUNT,
-            SHORTENED_TIMEOUT_DURATION,
-        );
+        let pool_raw =
+            SchedulerPool::<PooledScheduler<ExecuteTimingCounter>, _>::do_new_for_verification(
+                None,
+                None,
+                None,
+                None,
+                ignored_prioritization_fee_cache,
+                SHORTENED_POOL_CLEANER_INTERVAL,
+                DEFAULT_MAX_POOLING_DURATION,
+                DEFAULT_MAX_USAGE_QUEUE_COUNT,
+                SHORTENED_TIMEOUT_DURATION,
+            );
 
         #[derive(Debug)]
         struct ExecuteTimingCounter;
@@ -2970,8 +3088,13 @@ mod tests {
         solana_logger::setup();
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool =
-            DefaultSchedulerPool::new_for_verification(None, None, None, None, ignored_prioritization_fee_cache);
+        let pool = DefaultSchedulerPool::new_for_verification(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
         let bank = Arc::new(Bank::default_for_tests());
         let context = &SchedulingContext::for_verification(bank);
 
@@ -2999,8 +3122,13 @@ mod tests {
         solana_logger::setup();
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool =
-            DefaultSchedulerPool::new_for_verification(None, None, None, None, ignored_prioritization_fee_cache);
+        let pool = DefaultSchedulerPool::new_for_verification(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
         let bank = Arc::new(Bank::default_for_tests());
         let context = &SchedulingContext::for_verification(bank);
         let mut scheduler = pool.do_take_scheduler(context.clone());
@@ -3018,8 +3146,13 @@ mod tests {
         solana_logger::setup();
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool =
-            DefaultSchedulerPool::new_for_verification(None, None, None, None, ignored_prioritization_fee_cache);
+        let pool = DefaultSchedulerPool::new_for_verification(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
         let old_bank = &Arc::new(Bank::default_for_tests());
         let new_bank = &Arc::new(Bank::default_for_tests());
         assert!(!Arc::ptr_eq(old_bank, new_bank));
@@ -3044,8 +3177,13 @@ mod tests {
         let bank_forks = BankForks::new_rw_arc(bank);
         let mut bank_forks = bank_forks.write().unwrap();
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool =
-            DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None, ignored_prioritization_fee_cache);
+        let pool = DefaultSchedulerPool::new_dyn_for_verification(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
         bank_forks.install_scheduler_pool(pool);
     }
 
@@ -3058,8 +3196,13 @@ mod tests {
         let child_bank = Bank::new_from_parent(bank, &Pubkey::default(), 1);
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool =
-            DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None, ignored_prioritization_fee_cache);
+        let pool = DefaultSchedulerPool::new_dyn_for_verification(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
 
         let bank = Bank::default_for_tests();
         let bank_forks = BankForks::new_rw_arc(bank);
@@ -3108,8 +3251,13 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool =
-            DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None, ignored_prioritization_fee_cache);
+        let pool = DefaultSchedulerPool::new_dyn_for_verification(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
         let context = SchedulingContext::for_verification(bank.clone());
 
         assert_eq!(bank.transaction_count(), 0);
@@ -3642,9 +3790,7 @@ mod tests {
         }
     }
 
-    impl<const TRIGGER_RACE_CONDITION: bool> SchedulerInner
-        for AsyncScheduler<TRIGGER_RACE_CONDITION>
-    {
+    impl<const TRIGGER_RACE_CONDITION: bool> SchedulerInner for AsyncScheduler<TRIGGER_RACE_CONDITION> {
         fn id(&self) -> SchedulerId {
             todo!()
         }
@@ -3684,7 +3830,10 @@ mod tests {
             pool: Arc<SchedulerPool<Self, DefaultTaskHandler>>,
             context: SchedulingContext,
             _result_with_timings: ResultWithTimings,
-            _banking_stage_context: Option<(BankingPacketReceiver, impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static)>,
+            _banking_stage_context: Option<(
+                BankingPacketReceiver,
+                impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static,
+            )>,
             _banking_stage_adapter: Option<Arc<BankingStageAdapter>>,
         ) -> Self {
             AsyncScheduler::<TRIGGER_RACE_CONDITION>(
@@ -3817,7 +3966,7 @@ mod tests {
             transaction_status_sender: None,
             replay_vote_sender: None,
             prioritization_fee_cache,
-            transaction_recorder: TransactionRecorder::new_dummy(), 
+            transaction_recorder: TransactionRecorder::new_dummy(),
         };
 
         DefaultTaskHandler::handle(result, timings, scheduling_context, tx, 0, handler_context);

@@ -4698,7 +4698,8 @@ impl Bank {
             timings,
             log_messages_bytes_limit,
             None::<fn() -> bool>,
-        ).unwrap()
+        )
+        .unwrap()
     }
 
     #[must_use]
@@ -4781,10 +4782,7 @@ impl Bank {
         let txs = vec![tx.into()];
         let batch = self.prepare_entry_batch(txs)?;
 
-        let (
-            mut commit_results,
-            ..,
-        ) = self.load_execute_and_commit_transactions(
+        let (mut commit_results, ..) = self.load_execute_and_commit_transactions(
             &batch,
             MAX_PROCESSING_AGE,
             false, // collect_balances

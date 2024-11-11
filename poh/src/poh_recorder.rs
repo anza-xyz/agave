@@ -158,7 +158,7 @@ impl TransactionRecorder {
     pub fn new_dummy() -> Self {
         Self {
             record_sender: crossbeam_channel::unbounded().0,
-            is_exited: Arc::new(AtomicBool::default())
+            is_exited: Arc::new(AtomicBool::default()),
         }
     }
 
@@ -683,7 +683,11 @@ impl PohRecorder {
 
     // synchronize PoH with a bank
     #[must_use]
-    pub fn reset(&mut self, reset_bank: Arc<Bank>, next_leader_slot: Option<(Slot, Slot)>) -> Option<BankWithScheduler> {
+    pub fn reset(
+        &mut self,
+        reset_bank: Arc<Bank>,
+        next_leader_slot: Option<(Slot, Slot)>,
+    ) -> Option<BankWithScheduler> {
         let cleared_bank = self.clear_bank();
         self.reset_poh(reset_bank, true);
 

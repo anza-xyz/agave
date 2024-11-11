@@ -2767,10 +2767,19 @@ impl ReplayStage {
     fn wait_for_cleared_bank(cleared_bank: BankWithScheduler) {
         if cleared_bank.scheduling_mode() == Some(SchedulingMode::BlockProduction) {
             info!("Reaping cleared tpu_bank: {}...", cleared_bank.slot());
-            if let Some((result, _completed_execute_timings)) = cleared_bank.wait_for_completed_scheduler() {
-                info!("Reaped aborted tpu_bank with unified scheduler: {} {:?}", cleared_bank.slot(), result);
+            if let Some((result, _completed_execute_timings)) =
+                cleared_bank.wait_for_completed_scheduler()
+            {
+                info!(
+                    "Reaped aborted tpu_bank with unified scheduler: {} {:?}",
+                    cleared_bank.slot(),
+                    result
+                );
             } else {
-                info!("Skipped to reap a tpu_bank (seems unified scheduler is disabled): {}", cleared_bank.slot());
+                info!(
+                    "Skipped to reap a tpu_bank (seems unified scheduler is disabled): {}",
+                    cleared_bank.slot()
+                );
             }
         }
     }

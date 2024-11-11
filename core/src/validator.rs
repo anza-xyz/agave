@@ -115,6 +115,7 @@ use {
         genesis_config::{ClusterType, GenesisConfig},
         hash::Hash,
         pubkey::Pubkey,
+        scheduling::SchedulingMode,
         shred_version::compute_shred_version,
         signature::{Keypair, Signer},
         timing::timestamp,
@@ -122,7 +123,7 @@ use {
     solana_send_transaction_service::send_transaction_service,
     solana_streamer::{socket::SocketAddrSpace, streamer::StakedNodes},
     solana_turbine::{self, broadcast_stage::BroadcastStageType},
-    solana_unified_scheduler_pool::DefaultSchedulerPool,
+    solana_unified_scheduler_pool::{DefaultSchedulerPool, SupportedSchedulingMode},
     solana_vote_program::vote_state,
     solana_wen_restart::wen_restart::{wait_for_wen_restart, WenRestartConfig},
     std::{
@@ -142,8 +143,6 @@ use {
     thiserror::Error,
     tokio::runtime::Runtime as TokioRuntime,
 };
-use solana_unified_scheduler_pool::SupportedSchedulingMode;
-use solana_sdk::scheduling::SchedulingMode;
 
 const MAX_COMPLETED_DATA_SETS_IN_CHANNEL: usize = 100_000;
 const WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT: u64 = 80;
@@ -206,11 +205,19 @@ impl BlockProductionMethod {
     }
 }
 
-pub fn supported_scheduling_mode((verification, production): (&BlockVerificationMethod, &BlockProductionMethod)) -> SupportedSchedulingMode {
+pub fn supported_scheduling_mode(
+    (verification, production): (&BlockVerificationMethod, &BlockProductionMethod),
+) -> SupportedSchedulingMode {
     match (verification, production) {
-        (BlockVerificationMethod::UnifiedScheduler, BlockProductionMethod::UnifiedScheduler) => SupportedSchedulingMode::Both,
-        (BlockVerificationMethod::UnifiedScheduler, _) => SupportedSchedulingMode::Either(SchedulingMode::BlockVerification),
-        (_, BlockProductionMethod::UnifiedScheduler) => SupportedSchedulingMode::Either(SchedulingMode::BlockProduction),
+        (BlockVerificationMethod::UnifiedScheduler, BlockProductionMethod::UnifiedScheduler) => {
+            SupportedSchedulingMode::Both
+        }
+        (BlockVerificationMethod::UnifiedScheduler, _) => {
+            SupportedSchedulingMode::Either(SchedulingMode::BlockVerification)
+        }
+        (_, BlockProductionMethod::UnifiedScheduler) => {
+            SupportedSchedulingMode::Either(SchedulingMode::BlockProduction)
+        }
         _ => unreachable!("seems unified scheduler is disabled"),
     }
 }
@@ -2163,14 +2170,12 @@ fn maybe_warp_slot(
         root_bank.squash();
         root_bank.force_flush_accounts_cache();
 
-        bank_forks.insert(
-            Bank::warp_from_parent(
-                root_bank,
-                &Pubkey::default(),
-                warp_slot,
-                solana_accounts_db::accounts_db::CalcAccountsHashDataSource::Storages,
-            ),
-        );
+        bank_forks.insert(Bank::warp_from_parent(
+            root_bank,
+            &Pubkey::default(),
+            warp_slot,
+            solana_accounts_db::accounts_db::CalcAccountsHashDataSource::Storages,
+        ));
         bank_forks
             .set_root(
                 warp_slot,
