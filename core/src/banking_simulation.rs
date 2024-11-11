@@ -461,7 +461,8 @@ impl SimulatorLoop {
                     GRACE_TICKS_FACTOR * MAX_GRACE_SLOTS,
                 );
                 debug!("{next_leader_slot:?}");
-                self.poh_recorder
+                // todo: proper assert
+                let _ = self.poh_recorder
                     .write()
                     .unwrap()
                     .reset(bank.clone_without_scheduler(), next_leader_slot);
