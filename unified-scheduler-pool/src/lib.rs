@@ -3686,6 +3686,8 @@ mod tests {
             pool: Arc<SchedulerPool<Self, DefaultTaskHandler>>,
             context: SchedulingContext,
             _result_with_timings: ResultWithTimings,
+            _banking_stage_context: Option<(BankingPacketReceiver, impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static)>,
+            _banking_stage_adapter: Option<Arc<BankingStageAdapter>>,
         ) -> Self {
             AsyncScheduler::<TRIGGER_RACE_CONDITION>(
                 Mutex::new(initialized_result_with_timings()),
