@@ -220,7 +220,7 @@ pub fn execute_batch(
         transaction_status_sender.send_transaction_status_batch(
             bank.slot(),
             transactions,
-            commit_results,
+            commit_results.to_vec(),
             balances,
             token_balances,
             transaction_indexes.to_vec(),
