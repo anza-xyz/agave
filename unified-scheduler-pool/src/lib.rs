@@ -3732,7 +3732,7 @@ mod tests {
             transaction_status_sender: None,
             replay_vote_sender: None,
             prioritization_fee_cache,
-            transaction_recorder: 
+            transaction_recorder: TransactionRecorder::new_dummy(), 
         };
 
         DefaultTaskHandler::handle(result, timings, scheduling_context, tx, 0, handler_context);
