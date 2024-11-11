@@ -1414,6 +1414,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
                 macro_rules! log_scheduler {
                     ($level:ident, $prefix:tt) => {
+                        #[allow(unused_assignments)]
                         $level! {
                             "sch: {}: slot: {}({})[{:12}]({}{}): state_machine(({}({}b{}B{}F)=>{}({}+{}))/{}|{}TB|{}Lr) channels(<{} >{}+{} <{}+{} <B{}) {}",
                             scheduler_id, slot,
@@ -1434,7 +1435,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             runnable_task_sender.len(), runnable_task_sender.aux_len(),
                             finished_blocked_task_receiver.len(), 0 /*finished_idle_task_receiver.len()*/,
                             banking_packet_receiver.len(),
-                            #[allow(unused_assignments)]
                             {
                                 let now = Instant::now();
                                 let cpu_now = cpu_time::ThreadTime::now();
