@@ -3730,7 +3730,7 @@ mod tests {
         let result = &mut Ok(());
         let timings = &mut ExecuteTimings::default();
         let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let scheduling_context = &SchedulingContext::new(SchedulingMode::BlockVerification, bank.clone());
+        let scheduling_context = &SchedulingContext::for_verification(bank.clone());
         let handler_context = &HandlerContext {
             log_messages_bytes_limit: None,
             transaction_status_sender: None,
