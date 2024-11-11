@@ -235,6 +235,32 @@ where
         )
     }
 
+    fn do_new_for_verification(
+        handler_count: Option<usize>,
+        log_messages_bytes_limit: Option<usize>,
+        transaction_status_sender: Option<TransactionStatusSender>,
+        replay_vote_sender: Option<ReplayVoteSender>,
+        prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+        pool_cleaner_interval: Duration,
+        max_pooling_duration: Duration,
+        max_usage_queue_count: usize,
+        timeout_duration: Duration,
+    ) -> Arc<Self> {
+        Self::do_new(
+            SupportedSchedulingMode::block_verification_only(),
+            handler_count,
+            log_messages_bytes_limit,
+            transaction_status_sender,
+            replay_vote_sender,
+            prioritization_fee_cache,
+            pool_cleaner_interval,
+            max_pooling_duration,
+            max_usage_queue_count,
+            timeout_duration,
+            TransactionRecorder::new_dummy(),
+        )
+    }
+
     fn do_new(
         supported_scheduling_mode: SupportedSchedulingMode,
         handler_count: Option<usize>,
