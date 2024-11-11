@@ -2031,7 +2031,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
     }
 }
 
-trait SchedulerInner {
+pub trait SchedulerInner {
     fn id(&self) -> SchedulerId;
     fn banking_stage_status(&self) -> BankingStageStatus;
     fn is_overgrown(&self, on_hot_path: bool) -> bool;
