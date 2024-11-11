@@ -448,7 +448,7 @@ impl Task {
 
 impl std::ops::Deref for Task {
     type Target = TaskInner;
-    fn deref(&self) -> &<Self as std::ops::Deref>::Target { &*self.0 }
+    fn deref(&self) -> &<Self as std::ops::Deref>::Target { &self.0 }
 }
 
 const_assert_eq!(mem::size_of::<Task>(), 8);
@@ -914,7 +914,7 @@ impl UsageQueueInner {
                     count.increment_self();
                 },
                 RequestedUsage::Writable => {
-                    let mut cc = count.current();
+                    let cc = count.current();
                     let mut c = ShortCounter::zero();
                     while let Some(Reverse(reblocked_task)) = self.current_readonly_tasks.pop() {
                         assert!(!reblocked_task.is_executed(count_token));
@@ -1117,10 +1117,9 @@ impl SchedulingStateMachine {
     pub fn has_buffered_task(&mut self) -> bool {
         while let Some(task) = self.buffered_task_queue.peek_mut() {
             let status = task.status(&mut self.count_token);
-            if task.has_blocked_usage(&mut self.count_token) {
-                PeekMut::pop(task);
-                continue;
-            } else if status == TaskStatus::Executed || status == TaskStatus::Unlocked {
+            if task.has_blocked_usage(&mut self.count_token) ||
+               status == TaskStatus::Executed ||
+               status == TaskStatus::Unlocked {
                 PeekMut::pop(task);
                 continue;
             } else {
@@ -1541,7 +1540,7 @@ impl SchedulingStateMachine {
 
                     match usage_queue.try_lock(
                         buffered_task_from_queue2.usage(),
-                        &buffered_task_from_queue2.task(), /* was `task` and had bug.. write test...*/
+                        buffered_task_from_queue2.task(), /* was `task` and had bug.. write test...*/
                     ) {
                         LockResult::Ok(()) => {
                             assert_ne!(task.index(), buffered_task_from_queue2.task().index());
