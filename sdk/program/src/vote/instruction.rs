@@ -218,7 +218,9 @@ impl VoteInstruction {
             | Self::UpdateVoteStateSwitch(vote_state_update, _)
             | Self::CompactUpdateVoteState(vote_state_update)
             | Self::CompactUpdateVoteStateSwitch(vote_state_update, _) => vote_state_update.hash,
-            Self::TowerSync(tower_sync) | Self::TowerSyncSwitch(tower_sync, _) => tower_sync.replay_tip_hash,
+            Self::TowerSync(tower_sync) | Self::TowerSyncSwitch(tower_sync, _) => {
+                tower_sync.replay_tip_hash
+            }
             _ => panic!("Tried to get hash on non simple vote instruction"),
         }
     }

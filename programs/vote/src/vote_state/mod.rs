@@ -814,7 +814,10 @@ pub fn process_slot_votes_unchecked(vote_state: &mut VoteState, slots: &[Slot]) 
 }
 
 pub fn process_slot_vote_unchecked(vote_state: &mut VoteState, slot: Slot) {
-    let _ = process_vote_unchecked(vote_state, Vote::new(vec![slot], Hash::default(), slot, Hash::default()));
+    let _ = process_vote_unchecked(
+        vote_state,
+        Vote::new(vec![slot], Hash::default(), slot, Hash::default()),
+    );
 }
 
 /// Authorize the given pubkey to withdraw or sign votes. This may be called multiple times,
@@ -1164,7 +1167,7 @@ pub fn process_tower_sync<S: std::hash::BuildHasher>(
     set_vote_account_state(vote_account, vote_state)
 }
 
-fn do_process_tower_sync(
+pub fn do_process_tower_sync(
     vote_state: &mut VoteState,
     slot_hashes: &[SlotHash],
     epoch: u64,

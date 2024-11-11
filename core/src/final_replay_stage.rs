@@ -1,25 +1,31 @@
 use {
     crate::{
         cost_update_service::CostUpdate,
-        rewards_recorder_service::{
-            RewardsMessage, RewardsRecorderSender
-        },
-    }, crossbeam_channel::{Receiver, RecvTimeoutError, Sender}, rayon::{iter::{IntoParallelIterator, ParallelIterator}, ThreadPool}, solana_entry::entry::VerifyRecyclers,
+        rewards_recorder_service::{RewardsMessage, RewardsRecorderSender},
+    },
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
+    rayon::{
+        iter::{IntoParallelIterator, ParallelIterator},
+        ThreadPool,
+    },
+    solana_entry::entry::VerifyRecyclers,
     solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierArc,
-    solana_ledger::{blockstore::Blockstore, blockstore_processor::{
-        self, BlockstoreProcessorError, ConfirmationProgress, ExecuteBatchesInternalMetrics, ReplaySlotStats, TransactionStatusSender},
+    solana_ledger::{
+        blockstore::Blockstore,
+        blockstore_processor::{
+            self, BlockstoreProcessorError, ConfirmationProgress, ExecuteBatchesInternalMetrics,
+            ReplaySlotStats, TransactionStatusSender,
+        },
         entry_notifier_service::EntryNotifierSender,
-    }, solana_measure::measure::Measure,
+    },
+    solana_measure::measure::Measure,
     solana_rpc::optimistically_confirmed_bank_tracker::{
         BankNotification, BankNotificationSenderConfig,
     },
     solana_runtime::{
-        bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache
-    }, solana_sdk::{
-        clock::Slot,
-        hash::Hash,
-        pubkey::Pubkey,
+        bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
     },
+    solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey},
     solana_timings::ExecuteTimings,
     std::{
         collections::HashMap,
@@ -30,7 +36,7 @@ use {
         },
         thread::{self, Builder, JoinHandle},
         time::Duration,
-    }
+    },
 };
 
 /// Timing information for the ReplayStage main processing loop
@@ -223,7 +229,6 @@ impl FinalReplayStage {
                             warn!("All errors should have been handled during replay stage {bank_slot}: {error:?}");
                             replay_result.replay_error = Some(error);
                         }
-                
                         replay_blockstore_time.stop();
                         longest_replay_time_us
                             .fetch_max(replay_blockstore_time.as_us(), Ordering::Relaxed);
@@ -382,9 +387,7 @@ impl FinalReplayStage {
         }
     }
 
-    pub fn new(
-        config: FinalReplayConfig,
-    ) -> Self {
+    pub fn new(config: FinalReplayConfig) -> Self {
         let fork_thread_pool = rayon::ThreadPoolBuilder::new()
             .num_threads(config.replay_forks_threads.get())
             .thread_name(|i| format!("solReplayFork{i:02}"))
@@ -430,7 +433,7 @@ impl FinalReplayStage {
                     let mut wait_receive_time = Measure::start("wait_receive_time");
                     if !did_complete_bank {
                         // only wait for the signal if we did not just process a bank; maybe there are more slots available
-    
+
                         let timer = Duration::from_millis(100);
                         let result = config.replay_signal_receiver.recv_timeout(timer);
                         match result {
@@ -441,14 +444,14 @@ impl FinalReplayStage {
                     }
                     wait_receive_time.stop();
 
-                    replay_timing.update(
-                        replay_active_banks_time.as_us(),
-                        wait_receive_time.as_us(),
-                    );
+                    replay_timing
+                        .update(replay_active_banks_time.as_us(), wait_receive_time.as_us());
                 }
             })
             .unwrap();
-        Self { thread_hdl: t_replay }
+        Self {
+            thread_hdl: t_replay,
+        }
     }
 
     pub fn join(self) -> thread::Result<()> {

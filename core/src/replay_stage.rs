@@ -1386,7 +1386,11 @@ impl ReplayStage {
             });
             (
                 root_bank,
-                bank_forks.vote_only_frozen_banks().values().cloned().collect(),
+                bank_forks
+                    .vote_only_frozen_banks()
+                    .values()
+                    .cloned()
+                    .collect(),
                 duplicate_slot_hashes.collect::<Vec<(Slot, Hash)>>(),
             )
         };
@@ -2364,7 +2368,13 @@ impl ReplayStage {
         trace!("handle votable bank {}", bank.slot());
         // set replay_tip_bank to the first bank in ancestor iterator of bank which is frozen.
         let replay_tip_bank = AncestorIterator::new_inclusive(bank.slot(), blockstore)
-            .map(|b| bank_forks.read().unwrap().get(b).expect("Ancestor should be in bank_forks"))
+            .map(|b| {
+                bank_forks
+                    .read()
+                    .unwrap()
+                    .get(b)
+                    .expect("Ancestor should be in bank_forks")
+            })
             .find(|b| b.is_frozen());
         if replay_tip_bank.is_none() {
             return Err(SetRootError::NoAncestorFrozen(bank.slot()));
@@ -3530,8 +3540,8 @@ impl ReplayStage {
             progress
                 .get_hash(last_voted_slot)
                 .expect("Must exist for us to have frozen descendant"),
-                // TODO(wen): this should be updated to the correct hash.
-                Hash::default(),
+            // TODO(wen): this should be updated to the correct hash.
+            Hash::default(),
             bank.feature_set
                 .is_active(&solana_feature_set::enable_tower_sync_ix::id()),
         );
@@ -3891,7 +3901,8 @@ impl ReplayStage {
             }
         }
         progress.handle_new_root(&r_bank_forks);
-        heaviest_subtree_fork_choice.set_tree_root((new_root, r_bank_forks.root_bank().vote_only_hash()));
+        heaviest_subtree_fork_choice
+            .set_tree_root((new_root, r_bank_forks.root_bank().vote_only_hash()));
         *duplicate_slots_tracker = duplicate_slots_tracker.split_off(&new_root);
         // duplicate_slots_tracker now only contains entries >= `new_root`
 

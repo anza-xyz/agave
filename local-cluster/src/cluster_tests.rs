@@ -677,8 +677,8 @@ pub fn submit_vote_to_cluster_gossip(
     gossip_addr: SocketAddr,
     socket_addr_space: &SocketAddrSpace,
 ) -> Result<(), GossipError> {
-    let tower_sync = TowerSync::new_from_slots(
-        vec![vote_slot], vote_hash, vote_slot, vote_hash, None);
+    let tower_sync =
+        TowerSync::new_from_slots(vec![vote_slot], vote_hash, vote_slot, vote_hash, None);
     let vote_tx = vote_transaction::new_tower_sync_transaction(
         tower_sync,
         blockhash,

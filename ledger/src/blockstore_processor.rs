@@ -41,10 +41,16 @@ use {
         vote_sender_types::ReplayVoteSender,
     },
     solana_sdk::{
-        clock::{Slot, MAX_PROCESSING_AGE}, genesis_config::GenesisConfig, hash::Hash, pubkey::Pubkey, saturating_add_assign, signature::{Keypair, Signature}, transaction::{
+        clock::{Slot, MAX_PROCESSING_AGE},
+        genesis_config::GenesisConfig,
+        hash::Hash,
+        pubkey::Pubkey,
+        saturating_add_assign,
+        signature::{Keypair, Signature},
+        transaction::{
             Result, SanitizedTransaction, TransactionError, TransactionVerificationMode,
             VersionedTransaction,
-        }
+        },
     },
     solana_svm::{
         transaction_commit_result::{TransactionCommitResult, TransactionCommitResultExtensions},
@@ -134,7 +140,7 @@ pub fn execute_batch(
     timings: &mut ExecuteTimings,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
-    skip_commit: bool,
+    vote_only_execution: bool,
 ) -> Result<()> {
     let TransactionBatchWithIndexes {
         batch,
@@ -157,7 +163,7 @@ pub fn execute_batch(
         ExecutionRecordingConfig::new_single_setting(transaction_status_sender.is_some()),
         timings,
         log_messages_bytes_limit,
-        skip_commit,
+        vote_only_execution,
     );
 
     bank_utils::find_and_send_votes(
@@ -283,7 +289,7 @@ fn execute_batches_internal(
     replay_vote_sender: Option<&ReplayVoteSender>,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
-    skip_commit: bool,
+    vote_only_execution: bool,
 ) -> Result<ExecuteBatchesInternalMetrics> {
     assert!(!batches.is_empty());
     let execution_timings_per_thread: Mutex<HashMap<usize, ThreadExecuteTimings>> =
@@ -305,7 +311,7 @@ fn execute_batches_internal(
                     &mut timings,
                     log_messages_bytes_limit,
                     prioritization_fee_cache,
-                    skip_commit,
+                    vote_only_execution,
                 ));
 
                 let thread_index = replay_tx_thread_pool.current_thread_index().unwrap();
@@ -364,9 +370,9 @@ fn process_batches(
     batch_execution_timing: &mut BatchExecutionTiming,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
-    skip_commit: bool,
+    vote_only_execution: bool,
 ) -> Result<()> {
-    if skip_commit || bank.has_installed_scheduler() {
+    if !vote_only_execution && bank.has_installed_scheduler() {
         debug!(
             "process_batches()/schedule_batches_for_execution({} batches)",
             batches.len()
@@ -408,7 +414,7 @@ fn process_batches(
             batch_execution_timing,
             log_messages_bytes_limit,
             prioritization_fee_cache,
-            skip_commit,
+            vote_only_execution,
         )
     }
 }
@@ -462,7 +468,7 @@ fn rebatch_and_execute_batches(
     timing: &mut BatchExecutionTiming,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
-    skip_commit: bool,
+    vote_only_execution: bool,
 ) -> Result<()> {
     if batches.is_empty() {
         return Ok(());
@@ -531,7 +537,7 @@ fn rebatch_and_execute_batches(
         replay_vote_sender,
         log_messages_bytes_limit,
         prioritization_fee_cache,
-        skip_commit,
+        vote_only_execution,
     )?;
 
     // Pass false because this code-path is never touched by unified scheduler.
@@ -591,8 +597,7 @@ pub fn process_entries_for_tests(
         &mut batch_timing,
         None,
         &ignored_prioritization_fee_cache,
-        true,  // do_register_tick
-        false,  // skip_commit
+        true, // vote_only_execution
     );
 
     debug!("process_entries: {:?}", batch_timing);
@@ -608,11 +613,8 @@ fn process_entries(
     batch_timing: &mut BatchExecutionTiming,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
-    do_register_tick: bool,
-    execute_votes_only: bool,
+    vote_only_execution: bool,
 ) -> Result<()> {
-    let skip_commit = execute_votes_only;
-    let do_register_tick = execute_votes_only;
     // accumulator for entries that can be processed in parallel
     let mut batches = vec![];
     let mut tick_hashes = vec![];
@@ -638,15 +640,13 @@ fn process_entries(
                         batch_timing,
                         log_messages_bytes_limit,
                         prioritization_fee_cache,
-                        skip_commit,
+                        vote_only_execution,
                     )?;
                     batches.clear();
-                    if do_register_tick {
-                        for hash in &tick_hashes {
-                            bank.register_tick(hash);
-                        }
-                        tick_hashes.clear();
+                    for hash in &tick_hashes {
+                        bank.register_tick(hash);
                     }
+                    tick_hashes.clear();
                 }
             }
             EntryType::Transactions(transactions) => {
@@ -696,7 +696,7 @@ fn process_entries(
                             batch_timing,
                             log_messages_bytes_limit,
                             prioritization_fee_cache,
-                            skip_commit,
+                            vote_only_execution,
                         )?;
                         batches.clear();
                     }
@@ -713,12 +713,10 @@ fn process_entries(
         batch_timing,
         log_messages_bytes_limit,
         prioritization_fee_cache,
-        skip_commit,
+        vote_only_execution,
     )?;
-    if do_register_tick {
-        for hash in tick_hashes {
-            bank.register_tick(hash);
-        }
+    for hash in tick_hashes {
+        bank.register_tick(hash);
     }
     Ok(())
 }
@@ -1113,7 +1111,7 @@ fn confirm_full_slot(
         opts.allow_dead_slots,
         opts.runtime_config.log_messages_bytes_limit,
         &ignored_prioritization_fee_cache,
-        false,  // execute_votes_only
+        false, // vote_only_execution
     )?;
 
     timing.accumulate(&confirmation_timing.batch_execute.totals);
@@ -1452,7 +1450,7 @@ pub fn confirm_slot(
     allow_dead_slots: bool,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
-    execute_votes_only: bool,
+    vote_only_execution: bool,
 ) -> result::Result<(), BlockstoreProcessorError> {
     let slot = bank.slot();
 
@@ -1483,7 +1481,7 @@ pub fn confirm_slot(
         recyclers,
         log_messages_bytes_limit,
         prioritization_fee_cache,
-        execute_votes_only,
+        vote_only_execution,
     )
 }
 
@@ -1501,7 +1499,7 @@ fn confirm_slot_entries(
     recyclers: &VerifyRecyclers,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
-    execute_votes_only: bool,
+    vote_only_execution: bool,
 ) -> result::Result<(), BlockstoreProcessorError> {
     let ConfirmationTiming {
         confirmation_elapsed,
@@ -1626,23 +1624,21 @@ fn confirm_slot_entries(
         .entries()
         .expect("Transaction verification generates entries");
 
-    let entry_filter_map = |entry: EntryType| {
-        match entry {
-            EntryType::Transactions(transactions) => {
-                let filtered_transactions = transactions
-                    .into_iter()
-                    .filter_map(|tx| {
-                        if !execute_votes_only || tx.is_simple_vote_transaction() {
-                            Some(tx)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                EntryType::Transactions(filtered_transactions)
-            },
-            EntryType::Tick(_) => entry,
+    let entry_filter_map = |entry: EntryType| match entry {
+        EntryType::Transactions(transactions) => {
+            let filtered_transactions = transactions
+                .into_iter()
+                .filter_map(|tx| {
+                    if !vote_only_execution || tx.is_simple_vote_transaction() {
+                        Some(tx)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            EntryType::Transactions(filtered_transactions)
         }
+        EntryType::Tick(_) => entry,
     };
     let mut replay_timer = Measure::start("replay_elapsed");
     let mut replay_entries: Vec<_> = entries
@@ -1663,7 +1659,7 @@ fn confirm_slot_entries(
         batch_execute_timing,
         log_messages_bytes_limit,
         prioritization_fee_cache,
-        execute_votes_only,
+        vote_only_execution,
     )
     .map_err(BlockstoreProcessorError::from);
     replay_timer.stop();

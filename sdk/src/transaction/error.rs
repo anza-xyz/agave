@@ -172,6 +172,12 @@ pub enum TransactionError {
     /// Program cache hit max limit.
     #[error("Program cache hit max limit")]
     ProgramCacheHitMaxLimit,
+
+    /// This account has no stake on current Epoch, so not considered for vote only execution.
+    #[error(
+        "This account has no stake on current Epoch, so not considered for vote only execution."
+    )]
+    InvalidAccountForVoteOnly,
 }
 
 impl From<SanitizeError> for TransactionError {

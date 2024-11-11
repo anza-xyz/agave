@@ -119,7 +119,11 @@ impl QuietDisplay for SlotBankHash {}
 
 impl Display for SlotBankHash {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        writeln!(f, "Bank hash for slot {}: {} {}", self.slot, self.hash, self.vote_only_hash)
+        writeln!(
+            f,
+            "Bank hash for slot {}: {} {}",
+            self.slot, self.hash, self.vote_only_hash
+        )
     }
 }
 

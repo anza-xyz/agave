@@ -261,7 +261,10 @@ impl HeaviestSubtreeForkChoice {
 
         frozen_banks.sort_by_key(|bank| bank.slot());
         let root_bank = bank_forks.root_bank();
-        Self::new_from_frozen_banks((root_bank.slot(), root_bank.vote_only_hash()), &frozen_banks)
+        Self::new_from_frozen_banks(
+            (root_bank.slot(), root_bank.vote_only_hash()),
+            &frozen_banks,
+        )
     }
 
     #[cfg(test)]

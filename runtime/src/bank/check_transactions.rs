@@ -70,7 +70,7 @@ impl Bank {
         self.check_status_cache(sanitized_txs, lock_results, error_counters)
     }
 
-    fn check_age(
+    pub fn check_age(
         &self,
         sanitized_txs: &[impl core::borrow::Borrow<SanitizedTransaction>],
         lock_results: &[TransactionResult<()>],

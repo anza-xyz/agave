@@ -61,7 +61,13 @@ where
     slots.dedup();
     let switch_proof_hash = rng.gen_bool(0.5).then(Hash::new_unique);
     let last_voted_slot = *slots.last().unwrap();
-    let tower_sync = TowerSync::new_from_slots(slots, Hash::default(), last_voted_slot, Hash::default(), None);
+    let tower_sync = TowerSync::new_from_slots(
+        slots,
+        Hash::default(),
+        last_voted_slot,
+        Hash::default(),
+        None,
+    );
     vote_transaction::new_tower_sync_transaction(
         tower_sync,
         Hash::new_unique(), // blockhash
