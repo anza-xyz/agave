@@ -489,7 +489,7 @@ where
         }
     }
 
-    pub fn prepare_to_spawn_block_production_scheduler(&self, bank_forks: Arc<RwLock<BankForks>>, banking_packet_receiver: BankingPacketReceiver, mut on_spawn_block_production_scheduler: BBB) {
+    pub fn prepare_to_spawn_block_production_scheduler(&self, bank_forks: Arc<RwLock<BankForks>>, banking_packet_receiver: BankingPacketReceiver, on_spawn_block_production_scheduler: BBB) {
         *self.block_production_scheduler_respawner.lock().unwrap() = Some(BlockProductionSchedulerRespawner {
             bank_forks,
             banking_packet_receiver,
