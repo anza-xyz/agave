@@ -3002,7 +3002,7 @@ mod tests {
         let mut bank_forks = bank_forks.write().unwrap();
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool =
-            DefaultSchedulerPool::new_dyn(None, None, None, None, ignored_prioritization_fee_cache);
+            DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None, ignored_prioritization_fee_cache);
         bank_forks.install_scheduler_pool(pool);
     }
 
