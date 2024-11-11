@@ -499,7 +499,6 @@ impl WindowService {
                 let mut metrics = BlockstoreInsertionMetrics::default();
                 let mut ws_metrics = WindowServiceMetrics::default();
                 let mut last_print = Instant::now();
-
                 while !exit.load(Ordering::Relaxed) {
                     if let Err(e) = run_insert(
                         &thread_pool,

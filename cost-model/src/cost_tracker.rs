@@ -75,16 +75,15 @@ pub struct CostTracker {
     /// the tracker, but are still waiting for an update with actual usage or
     /// removal if the transaction does not end up getting committed.
     in_flight_transaction_count: usize,
-    started_at: std::time::Instant,
 }
 
 impl Default for CostTracker {
     fn default() -> Self {
         // Clippy doesn't like asserts in const contexts, so need to explicitly allow them.  For
         // more info, see this issue: https://github.com/rust-lang/rust-clippy/issues/8159
-        //#![allow(clippy::assertions_on_constants)]
-        //const _: () = assert!(MAX_WRITABLE_ACCOUNT_UNITS <= MAX_BLOCK_UNITS);
-        //const _: () = assert!(MAX_VOTE_UNITS <= MAX_BLOCK_UNITS);
+        #![allow(clippy::assertions_on_constants)]
+        const _: () = assert!(MAX_WRITABLE_ACCOUNT_UNITS <= MAX_BLOCK_UNITS);
+        const _: () = assert!(MAX_VOTE_UNITS <= MAX_BLOCK_UNITS);
 
         Self {
             account_cost_limit: MAX_WRITABLE_ACCOUNT_UNITS,
@@ -102,7 +101,6 @@ impl Default for CostTracker {
             secp256k1_instruction_signature_count: 0,
             ed25519_instruction_signature_count: 0,
             in_flight_transaction_count: 0,
-            started_at: std::time::Instant::now(),
         }
     }
 }
@@ -266,15 +264,6 @@ impl CostTracker {
     }
 
     fn would_fit(&self, tx_cost: &TransactionCost) -> Result<(), CostTrackerError> {
-        let watermark_rate = self.started_at.elapsed().as_secs_f64() / 0.350;
-        if watermark_rate > 1.0 {
-            return Err(CostTrackerError::WouldExceedBlockMaxLimit);
-        }
-        let watermark_cost = (self.block_cost_limit as f64 * watermark_rate) as u64;
-        if self.block_cost > watermark_cost {
-            return Err(CostTrackerError::WouldExceedAccountDataBlockLimit);
-        }
-
         let cost: u64 = tx_cost.sum();
 
         if tx_cost.is_simple_vote() {
