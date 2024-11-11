@@ -263,6 +263,7 @@ where
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn do_new(
         supported_scheduling_mode: SupportedSchedulingMode,
         handler_count: Option<usize>,
@@ -1478,7 +1479,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 let mut error_count: u32 = 0;
 
                 let (banking_packet_receiver, _on_recv) = banking_stage_context.unzip();
-                let banking_packet_receiver = banking_packet_receiver.unwrap_or_else(|| never());
+                let banking_packet_receiver = banking_packet_receiver.unwrap_or_else(never);
 
                 macro_rules! log_scheduler {
                     ($level:ident, $prefix:tt) => {
@@ -1710,11 +1711,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 }
                             }
                         };
-                        let force_log = if step_type == "ending" || step_type == "pausing" || step_type == "draining" {
-                            true
-                        } else {
-                            false
-                        };
+                        let force_log = step_type == "ending" || step_type == "pausing" || step_type == "draining";
                         if log_interval.increment() || force_log {
                             log_scheduler!(info, step_type);
                         } else {
