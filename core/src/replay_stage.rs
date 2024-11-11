@@ -2783,12 +2783,12 @@ impl ReplayStage {
         );
 
         let cleared_bank = poh_recorder.write().unwrap().reset(bank, next_leader_slot);
-        if let Some(bank) = cleared_bank {
-            if bank.collector_id() == my_pubkey {
-                info!("Reaping tpu bank: {}...", bank.slot());
-                if let Some((result, completed_execute_timings)) = bank.wait_for_completed_scheduler() {
-                    info!("Reaped aborted unified scheduler tpu bank: {} {:?}", bank.slot(), result);
-                }
+        if cleared_bank.map(|bank| bank.scheduling_mode()) == Some(SchedulingMode::BlockProduction) {
+            info!("Reaping tpu bank: {}...", bank.slot());
+            if let Some((result, completed_execute_timings)) = bank.wait_for_completed_scheduler() {
+                info!("Reaped aborted a unified scheduler tpu bank: {} {:?}", bank.slot(), result);
+            } else {
+                info!("Skipped to reap a tpu bank (seems unified scheduler is disabled): {}", bank.slot());
             }
         }
 
