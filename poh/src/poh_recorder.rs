@@ -1298,7 +1298,7 @@ mod tests {
         );
         poh_recorder.tick();
         assert_eq!(poh_recorder.tick_cache.len(), 1);
-        poh_recorder.reset(bank0, Some((4, 4)));
+        let _ = poh_recorder.reset(bank0, Some((4, 4)));
         assert_eq!(poh_recorder.tick_cache.len(), 0);
     }
 
@@ -1324,7 +1324,7 @@ mod tests {
 
         poh_recorder.set_bank_for_test(bank);
         assert!(poh_recorder.working_bank.is_some());
-        poh_recorder.clear_bank();
+        let _ = poh_recorder.clear_bank();
         assert!(poh_recorder.working_bank.is_none());
     }
 
@@ -1738,7 +1738,7 @@ mod tests {
         poh_recorder.tick();
         poh_recorder.tick();
         assert_eq!(poh_recorder.tick_cache.len(), 2);
-        poh_recorder.reset(bank, Some((4, 4)));
+        let _ = poh_recorder.reset(bank, Some((4, 4)));
         assert_eq!(poh_recorder.tick_cache.len(), 0);
     }
 
@@ -1763,7 +1763,7 @@ mod tests {
         poh_recorder.tick();
         poh_recorder.tick();
         assert_eq!(poh_recorder.tick_cache.len(), 2);
-        poh_recorder.reset(bank, Some((4, 4)));
+        let _ = poh_recorder.reset(bank, Some((4, 4)));
         assert_eq!(poh_recorder.tick_cache.len(), 0);
     }
 
@@ -1793,7 +1793,7 @@ mod tests {
         poh_recorder.tick();
         assert_eq!(poh_recorder.tick_cache.len(), 4);
         assert_eq!(poh_recorder.tick_height, 4);
-        poh_recorder.reset(bank, Some((4, 4))); // parent slot 0 implies tick_height of 3
+        let _ = poh_recorder.reset(bank, Some((4, 4))); // parent slot 0 implies tick_height of 3
         assert_eq!(poh_recorder.tick_cache.len(), 0);
         poh_recorder.tick();
         assert_eq!(poh_recorder.tick_height, DEFAULT_TICKS_PER_SLOT + 1);
@@ -1820,7 +1820,7 @@ mod tests {
 
         poh_recorder.set_bank_for_test(bank.clone());
         assert_eq!(bank.slot(), 0);
-        poh_recorder.reset(bank, Some((4, 4)));
+        let _ = poh_recorder.reset(bank, Some((4, 4)));
         assert!(poh_recorder.working_bank.is_none());
     }
 
@@ -1848,7 +1848,7 @@ mod tests {
                 Arc::new(AtomicBool::default()),
             );
         poh_recorder.set_bank_for_test(bank);
-        poh_recorder.clear_bank();
+        let _ = poh_recorder.clear_bank();
         assert!(receiver.try_recv().is_ok());
     }
 
@@ -2055,14 +2055,14 @@ mod tests {
 
         // Test that with no next leader slot in reset(), we don't reach the leader slot
         assert_eq!(bank0.slot(), 0);
-        poh_recorder.reset(bank0.clone(), None);
+        let _ = poh_recorder.reset(bank0.clone(), None);
         assert_eq!(
             poh_recorder.reached_leader_slot(&validator_pubkey),
             PohLeaderStatus::NotReached
         );
 
         // Provide a leader slot one slot down
-        poh_recorder.reset(bank0.clone(), Some((2, 2)));
+        let _ = poh_recorder.reset(bank0.clone(), Some((2, 2)));
 
         let init_ticks = poh_recorder.tick_height();
 
@@ -2099,7 +2099,7 @@ mod tests {
         // reset poh now. we should immediately be leader
         let bank1 = Arc::new(Bank::new_from_parent(bank0, &Pubkey::default(), 1));
         assert_eq!(bank1.slot(), 1);
-        poh_recorder.reset(bank1.clone(), Some((2, 2)));
+        let _ = poh_recorder.reset(bank1.clone(), Some((2, 2)));
         assert_eq!(
             poh_recorder.reached_leader_slot(&validator_pubkey),
             PohLeaderStatus::Reached {
@@ -2110,7 +2110,7 @@ mod tests {
 
         // Now test that with grace ticks we can reach leader slot
         // Set the leader slot one slot down
-        poh_recorder.reset(bank1.clone(), Some((3, 3)));
+        let _ = poh_recorder.reset(bank1.clone(), Some((3, 3)));
 
         // Send one slot worth of ticks ("skips" slot 2)
         for _ in 0..bank1.ticks_per_slot() {
@@ -2149,7 +2149,7 @@ mod tests {
         // Let's test that correct grace ticks are reported
         // Set the leader slot one slot down
         let bank2 = Arc::new(Bank::new_from_parent(bank1.clone(), &Pubkey::default(), 2));
-        poh_recorder.reset(bank2.clone(), Some((4, 4)));
+        let _ = poh_recorder.reset(bank2.clone(), Some((4, 4)));
 
         // send ticks for a slot
         for _ in 0..bank1.ticks_per_slot() {
@@ -2178,7 +2178,7 @@ mod tests {
         // leader slot, reached_leader_slot() will return true, because it's overdue
         // Set the leader slot one slot down
         let bank4 = Arc::new(Bank::new_from_parent(bank3, &Pubkey::default(), 4));
-        poh_recorder.reset(bank4.clone(), Some((5, 5)));
+        let _ = poh_recorder.reset(bank4.clone(), Some((5, 5)));
 
         // Overshoot ticks for the slot
         let overshoot_factor = 4;
@@ -2198,7 +2198,7 @@ mod tests {
         // Test that grace ticks are not required if the previous leader's 4
         // slots got skipped.
         {
-            poh_recorder.reset(bank4.clone(), Some((9, 9)));
+            let _ = poh_recorder.reset(bank4.clone(), Some((9, 9)));
 
             // Tick until leader slot
             for _ in 0..4 * bank4.ticks_per_slot() {
@@ -2281,7 +2281,7 @@ mod tests {
 
         // We reset with leader slot after 3 slots
         let bank_slot = bank.slot() + 3;
-        poh_recorder.reset(bank.clone(), Some((bank_slot, bank_slot)));
+        let _ = poh_recorder.reset(bank.clone(), Some((bank_slot, bank_slot)));
 
         // Test that the node won't be leader in next 2 slots
         assert!(!poh_recorder.would_be_leader(2 * bank.ticks_per_slot()));
