@@ -2811,7 +2811,7 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool = SchedulerPool::<PooledScheduler<FaultyHandler>, _>::new(
+        let pool = SchedulerPool::<PooledScheduler<FaultyHandler>, _>::new_for_verification(
             None,
             None,
             None,
@@ -2904,7 +2904,7 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool = SchedulerPool::<PooledScheduler<CountingHandler>, _>::new(
+        let pool = SchedulerPool::<PooledScheduler<CountingHandler>, _>::new_for_verification(
             None,
             None,
             None,
@@ -2946,7 +2946,7 @@ mod tests {
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool =
-            DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
+            DefaultSchedulerPool::new_for_verification(None, None, None, None, ignored_prioritization_fee_cache);
         let bank = Arc::new(Bank::default_for_tests());
         let context = &SchedulingContext::for_verification(bank);
 
