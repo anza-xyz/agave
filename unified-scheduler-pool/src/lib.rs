@@ -518,7 +518,7 @@ where
 
     #[cfg(test)]
     fn do_take_scheduler(&self, context: SchedulingContext) -> S {
-        self.do_take_resumed_scheduler(context, initialized_result_with_timings(), None)
+        self.do_take_resumed_scheduler(context, initialized_result_with_timings())
     }
 
     fn do_take_resumed_scheduler(
