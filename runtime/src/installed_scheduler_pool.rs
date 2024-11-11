@@ -241,6 +241,10 @@ impl SchedulingContext {
         Self { mode, bank }
     }
 
+    pub fn for_verification(bank: Arc<Bank>) -> Self {
+        Self::new(SchedulingMode::BlockVerification, bank)
+    }
+
     pub fn mode(&self) -> SchedulingMode {
         self.mode
     }

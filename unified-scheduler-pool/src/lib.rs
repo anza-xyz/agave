@@ -3049,7 +3049,7 @@ mod tests {
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool =
             DefaultSchedulerPool::new_dyn(None, None, None, None, ignored_prioritization_fee_cache);
-        let context = SchedulingContext::new(bank.clone());
+        let context = SchedulingContext::for_verification(bank.clone());
 
         assert_eq!(bank.transaction_count(), 0);
         let scheduler = pool.take_scheduler(context);
