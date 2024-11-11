@@ -68,8 +68,8 @@ use crate::sleepless_testing::BuilderTracked;
 #[allow(dead_code)]
 #[derive(Debug)]
 enum CheckPoint {
-    NewTask(Index),
-    TaskHandled(Index),
+    NewTask(TaskKey),
+    TaskHandled(TaskKey),
     SchedulerThreadAborted,
     IdleSchedulerCleaned(usize),
     TrashedSchedulerCleaned(usize),
@@ -604,7 +604,7 @@ pub trait TaskHandler: Send + Sync + Debug + Sized + 'static {
         timings: &mut ExecuteTimings,
         scheduling_context: &SchedulingContext,
         transaction: &SanitizedTransaction,
-        index: Index,
+        index: TaskKey,
         handler_context: &HandlerContext,
     );
 }
@@ -618,7 +618,7 @@ impl TaskHandler for DefaultTaskHandler {
         timings: &mut ExecuteTimings,
         scheduling_context: &SchedulingContext,
         transaction: &SanitizedTransaction,
-        index: Index,
+        index: TaskKey,
         handler_context: &HandlerContext,
     ) {
         let (cost, added_cost) = if matches!(scheduling_context.mode(), SchedulingMode::BlockProduction) {
@@ -2139,7 +2139,7 @@ impl BankingStageAdapter {
 impl BankingStageAdapter {
     pub fn create_task(
         &self,
-        &(transaction, index): &(&SanitizedTransaction, Index),
+        &(transaction, index): &(&SanitizedTransaction, TaskKey),
     ) -> Option<Task> {
         if self.transaction_deduper.contains(transaction.message_hash()) {
             return None;
@@ -2174,7 +2174,7 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
 
     fn schedule_execution(
         &self,
-        &(transaction, index): &(&SanitizedTransaction, Index),
+        &(transaction, index): &(&SanitizedTransaction, TaskKey),
     ) -> ScheduleResult {
         assert_matches!(self.context().mode(), SchedulingMode::BlockVerification);
         let task = SchedulingStateMachine::create_task(transaction.clone(), index, &mut |pubkey| {
