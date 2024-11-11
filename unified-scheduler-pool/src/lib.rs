@@ -2326,7 +2326,7 @@ mod tests {
         let pool =
             DefaultSchedulerPool::new_dyn(None, None, None, None, ignored_prioritization_fee_cache);
         let bank = Arc::new(Bank::default_for_tests());
-        let context = SchedulingContext::new(bank);
+        let context = SchedulingContext::for_verification(bank);
         let scheduler = pool.take_scheduler(context);
 
         let debug = format!("{scheduler:#?}");
@@ -2361,7 +2361,7 @@ mod tests {
         );
         let pool = pool_raw.clone();
         let bank = Arc::new(Bank::default_for_tests());
-        let context1 = SchedulingContext::new(bank);
+        let context1 = SchedulingContext::for_verification(bank);
         let context2 = context1.clone();
 
         let old_scheduler = pool.do_take_scheduler(context1);
@@ -2426,7 +2426,7 @@ mod tests {
         );
         let pool = pool_raw.clone();
         let bank = Arc::new(Bank::default_for_tests());
-        let context1 = SchedulingContext::new(bank);
+        let context1 = SchedulingContext::for_verification(bank);
         let context2 = context1.clone();
 
         let small_scheduler = pool.do_take_scheduler(context1);
@@ -2503,7 +2503,7 @@ mod tests {
         );
         let pool = pool_raw.clone();
         let bank = Arc::new(Bank::default_for_tests());
-        let context = SchedulingContext::new(bank.clone());
+        let context = SchedulingContext::for_verification(bank.clone());
         let scheduler = pool.take_scheduler(context);
         let bank = BankWithScheduler::new(bank, Some(scheduler));
         pool.register_timeout_listener(bank.create_timeout_listener());
@@ -2574,7 +2574,7 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
-        let context = SchedulingContext::new(bank.clone());
+        let context = SchedulingContext::for_verification(bank.clone());
 
         let scheduler = pool.take_scheduler(context);
         let bank = BankWithScheduler::new(bank, Some(scheduler));
@@ -2642,7 +2642,7 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
-        let context = SchedulingContext::new(bank.clone());
+        let context = SchedulingContext::for_verification(bank.clone());
 
         let scheduler = pool.take_scheduler(context);
         let bank = BankWithScheduler::new(bank, Some(scheduler));
@@ -2694,7 +2694,7 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
-        let context = SchedulingContext::new(bank.clone());
+        let context = SchedulingContext::for_verification(bank.clone());
 
         let scheduler = pool.take_scheduler(context);
         let bank = BankWithScheduler::new(bank, Some(scheduler));
@@ -2782,7 +2782,7 @@ mod tests {
             None,
             ignored_prioritization_fee_cache,
         );
-        let context = SchedulingContext::new(bank.clone());
+        let context = SchedulingContext::for_verification(bank.clone());
         let scheduler = pool.do_take_scheduler(context);
         scheduler.schedule_execution(&(tx, 0)).unwrap();
 
@@ -2875,7 +2875,7 @@ mod tests {
             None,
             ignored_prioritization_fee_cache,
         );
-        let context = SchedulingContext::new(bank.clone());
+        let context = SchedulingContext::for_verification(bank.clone());
         let scheduler = pool.do_take_scheduler(context);
 
         // This test is racy.
@@ -2912,7 +2912,7 @@ mod tests {
         let pool =
             DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
         let bank = Arc::new(Bank::default_for_tests());
-        let context = &SchedulingContext::new(bank);
+        let context = &SchedulingContext::for_verification(bank);
 
         let scheduler1 = pool.do_take_scheduler(context.clone());
         let scheduler_id1 = scheduler1.id();
@@ -2941,7 +2941,7 @@ mod tests {
         let pool =
             DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
         let bank = Arc::new(Bank::default_for_tests());
-        let context = &SchedulingContext::new(bank);
+        let context = &SchedulingContext::for_verification(bank);
         let mut scheduler = pool.do_take_scheduler(context.clone());
 
         // should never panic.
@@ -2963,8 +2963,8 @@ mod tests {
         let new_bank = &Arc::new(Bank::default_for_tests());
         assert!(!Arc::ptr_eq(old_bank, new_bank));
 
-        let old_context = &SchedulingContext::new(old_bank.clone());
-        let new_context = &SchedulingContext::new(new_bank.clone());
+        let old_context = &SchedulingContext::for_verification(old_bank.clone());
+        let new_context = &SchedulingContext::for_verification(new_bank.clone());
 
         let scheduler = pool.do_take_scheduler(old_context.clone());
         let scheduler_id = scheduler.id();
@@ -3094,7 +3094,7 @@ mod tests {
             DEFAULT_TIMEOUT_DURATION,
         );
         let pool = pool_raw.clone();
-        let context = SchedulingContext::new(bank.clone());
+        let context = SchedulingContext::for_verification(bank.clone());
         let scheduler = pool.take_scheduler(context);
 
         let unfunded_keypair = Keypair::new();
@@ -3223,7 +3223,7 @@ mod tests {
             None,
             ignored_prioritization_fee_cache,
         );
-        let context = SchedulingContext::new(bank.clone());
+        let context = SchedulingContext::for_verification(bank.clone());
 
         let scheduler = pool.take_scheduler(context);
 
@@ -3299,7 +3299,7 @@ mod tests {
             None,
             ignored_prioritization_fee_cache,
         );
-        let context = SchedulingContext::new(bank.clone());
+        let context = SchedulingContext::for_verification(bank.clone());
         let scheduler = pool.do_take_scheduler(context);
 
         for i in 0..10 {
@@ -3391,7 +3391,7 @@ mod tests {
             None,
             ignored_prioritization_fee_cache,
         );
-        let context = SchedulingContext::new(bank.clone());
+        let context = SchedulingContext::for_verification(bank.clone());
 
         assert_eq!(bank.transaction_count(), 0);
         let scheduler = pool.take_scheduler(context);
@@ -3467,8 +3467,8 @@ mod tests {
                 2,
                 genesis_config.hash(),
             ));
-        let context0 = &SchedulingContext::new(bank0.clone());
-        let context1 = &SchedulingContext::new(bank1.clone());
+        let context0 = &SchedulingContext::for_verification(bank0.clone());
+        let context1 = &SchedulingContext::for_verification(bank1.clone());
 
         // Exercise the scheduler by busy-looping to expose the race condition
         for (context, index) in [(context0, 0), (context1, 1)]
@@ -3642,7 +3642,7 @@ mod tests {
             );
         }
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
-        let context = SchedulingContext::new(bank.clone());
+        let context = SchedulingContext::for_verification(bank.clone());
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool =
