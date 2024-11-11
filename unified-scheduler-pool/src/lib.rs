@@ -3144,7 +3144,7 @@ mod tests {
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool_raw = DefaultSchedulerPool::do_new(
+        let pool_raw = DefaultSchedulerPool::do_new_for_verification(
             None,
             None,
             None,
