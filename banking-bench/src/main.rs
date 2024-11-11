@@ -527,7 +527,8 @@ fn main() {
             .working_bank_with_scheduler()
             .clone_with_scheduler()
     }
-    poh_recorder
+    // todo: proper assert!
+    let _ = poh_recorder
         .write()
         .unwrap()
         .reset(bank.clone(), Some((bank.slot(), bank.slot() + 1)));
