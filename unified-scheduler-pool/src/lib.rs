@@ -1435,6 +1435,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             runnable_task_sender.len(), runnable_task_sender.aux_len(),
                             finished_blocked_task_receiver.len(), 0 /*finished_idle_task_receiver.len()*/,
                             banking_packet_receiver.len(),
+                            #[allow(unused_assignments)]
                             {
                                 let now = Instant::now();
                                 let cpu_now = cpu_time::ThreadTime::now();
@@ -1482,7 +1483,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 {
                                     (log_reported_at, reported_task_total, reported_executed_task_total) = (now, state_machine.task_total(), state_machine.executed_task_total());
                                 }
-                                #[allow(unused_assignments)]
                                 cpu_log_reported_at = cpu_now;
                                 l
                             },
