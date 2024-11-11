@@ -6,7 +6,8 @@ pub use crate::{
     connection_workers_scheduler::{ConnectionWorkersScheduler, ConnectionWorkersSchedulerError},
     send_transaction_stats::{SendTransactionStats, SendTransactionStatsPerAddr},
 };
-pub(crate) mod quic_networking;
+pub mod quic_networking;
+pub use crate::quic_networking::quic_client_certificate::QuicClientCertificate;
 pub(crate) use crate::quic_networking::QuicError;
 pub mod leader_updater;
 pub mod transaction_batch;

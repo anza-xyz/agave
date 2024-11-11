@@ -10,6 +10,14 @@ pub struct QuicClientCertificate {
 }
 
 impl QuicClientCertificate {
+    pub fn with_option(keypair: Option<&Keypair>) -> Self {
+        if let Some(keypair) = keypair {
+            QuicClientCertificate::new(keypair)
+        } else {
+            QuicClientCertificate::new(&Keypair::new())
+        }
+    }
+
     pub fn new(keypair: &Keypair) -> Self {
         let (certificate, key) = new_dummy_x509_certificate(keypair);
         Self { certificate, key }

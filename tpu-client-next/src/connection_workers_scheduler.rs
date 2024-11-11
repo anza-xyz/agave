@@ -14,7 +14,6 @@ use {
     },
     log::*,
     quinn::Endpoint,
-    solana_sdk::signature::Keypair,
     std::{net::SocketAddr, sync::Arc},
     thiserror::Error,
     tokio::sync::mpsc,
@@ -68,9 +67,9 @@ pub struct ConnectionWorkersSchedulerConfig {
     /// The local address to bind the scheduler to.
     pub bind: SocketAddr,
 
-    /// Optional stake identity keypair used in the endpoint certificate for
-    /// identifying the sender.
-    pub stake_identity: Option<Keypair>,
+    /// Quic client certificate which is derived from the stake identity keypair to identifying
+    /// the sender.
+    pub client_certificate: QuicClientCertificate,
 
     /// The number of connections to be maintained by the scheduler.
     pub num_connections: usize,
@@ -103,7 +102,7 @@ impl ConnectionWorkersScheduler {
     pub async fn run(
         ConnectionWorkersSchedulerConfig {
             bind,
-            stake_identity: validator_identity,
+            client_certificate,
             num_connections,
             skip_check_transaction_age,
             worker_channel_size,
@@ -114,7 +113,7 @@ impl ConnectionWorkersScheduler {
         mut transaction_receiver: mpsc::Receiver<TransactionBatch>,
         cancel: CancellationToken,
     ) -> Result<SendTransactionStatsPerAddr, ConnectionWorkersSchedulerError> {
-        let endpoint = Self::setup_endpoint(bind, validator_identity)?;
+        let endpoint = Self::setup_endpoint(bind, client_certificate)?;
         debug!("Client endpoint bind address: {:?}", endpoint.local_addr());
         let mut workers = WorkersCache::new(num_connections, cancel.clone());
         let mut send_stats_per_addr = SendTransactionStatsPerAddr::new();
@@ -190,13 +189,8 @@ impl ConnectionWorkersScheduler {
     /// Sets up the QUIC endpoint for the scheduler to handle connections.
     fn setup_endpoint(
         bind: SocketAddr,
-        validator_identity: Option<Keypair>,
+        client_certificate: QuicClientCertificate,
     ) -> Result<Endpoint, ConnectionWorkersSchedulerError> {
-        let client_certificate = if let Some(validator_identity) = validator_identity {
-            Arc::new(QuicClientCertificate::new(&validator_identity))
-        } else {
-            Arc::new(QuicClientCertificate::new(&Keypair::new()))
-        };
         let client_config = create_client_config(client_certificate);
         let endpoint = create_client_endpoint(bind, client_config)?;
         Ok(endpoint)

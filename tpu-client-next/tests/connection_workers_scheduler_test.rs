@@ -20,7 +20,8 @@ use {
         leader_updater::create_leader_updater,
         send_transaction_stats::SendTransactionStatsNonAtomic,
         transaction_batch::TransactionBatch,
-        ConnectionWorkersScheduler, ConnectionWorkersSchedulerError, SendTransactionStatsPerAddr,
+        ConnectionWorkersScheduler, ConnectionWorkersSchedulerError, QuicClientCertificate,
+        SendTransactionStatsPerAddr,
     },
     std::{
         collections::HashMap,
@@ -44,7 +45,7 @@ use {
 fn test_config(validator_identity: Option<Keypair>) -> ConnectionWorkersSchedulerConfig {
     ConnectionWorkersSchedulerConfig {
         bind: SocketAddr::new(Ipv4Addr::new(127, 0, 0, 1).into(), 0),
-        stake_identity: validator_identity,
+        client_certificate: QuicClientCertificate::with_option(validator_identity.as_ref()),
         num_connections: 1,
         skip_check_transaction_age: false,
         // At the moment we have only one strategy to send transactions: we try
