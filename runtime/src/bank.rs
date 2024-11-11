@@ -4689,6 +4689,27 @@ impl Bank {
         recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
+    ) -> (Vec<TransactionCommitResult>, TransactionBalancesSet) {
+        self.do_load_execute_and_commit_transactions(
+            batch,
+            max_age,
+            collect_balances,
+            recording_config,
+            timings,
+            log_messages_bytes_limit,
+            None,
+        ).unwrap()
+    }
+
+    #[must_use]
+    pub fn do_load_execute_and_commit_transactions(
+        &self,
+        batch: &TransactionBatch,
+        max_age: usize,
+        collect_balances: bool,
+        recording_config: ExecutionRecordingConfig,
+        timings: &mut ExecuteTimings,
+        log_messages_bytes_limit: Option<usize>,
         pre_commit_callback: Option<impl FnOnce() -> bool>,
     ) -> Option<(Vec<TransactionCommitResult>, TransactionBalancesSet)> {
         let pre_balances = if collect_balances {
