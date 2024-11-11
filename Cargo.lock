@@ -170,6 +170,7 @@ dependencies = [
  "histogram",
  "itertools 0.12.1",
  "log",
+ "mimalloc",
  "num_cpus",
  "rayon",
  "regex",

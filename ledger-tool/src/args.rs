@@ -1,7 +1,6 @@
 use {
     crate::LEDGER_TOOL_DIRECTORY,
     clap::{value_t, value_t_or_exit, values_t, values_t_or_exit, Arg, ArgMatches},
-    log::{info, warn},
     solana_accounts_db::{
         accounts_db::{AccountsDb, AccountsDbConfig, CreateAncientStorage},
         accounts_file::StorageAccess,
@@ -23,7 +22,6 @@ use {
     std::{
         collections::HashSet,
         path::{Path, PathBuf},
-        process::exit,
         sync::Arc,
     },
 };
