@@ -131,7 +131,7 @@ pub struct HandlerContext {
     transaction_status_sender: Option<TransactionStatusSender>,
     replay_vote_sender: Option<ReplayVoteSender>,
     prioritization_fee_cache: Arc<PrioritizationFeeCache>,
-    transaction_recorder: Option<TransactionRecorder>,
+    transaction_recorder: TransactionRecorder,
 }
 
 pub type DefaultSchedulerPool =
@@ -196,7 +196,7 @@ where
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: Option<ReplayVoteSender>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
-        transaction_recorder: Option<TransactionRecorder>,
+        transaction_recorder: TransactionRecorder,
     ) -> Arc<Self> {
         Self::do_new(
             supported_scheduling_mode,
@@ -220,7 +220,7 @@ where
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: Option<ReplayVoteSender>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
-        transaction_recorder: Option<TransactionRecorder>,
+        transaction_recorder: TransactionRecorder,
         pool_cleaner_interval: Duration,
         max_pooling_duration: Duration,
         max_usage_queue_count: usize,
@@ -387,7 +387,7 @@ where
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: Option<ReplayVoteSender>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
-        transaction_recorder: Option<TransactionRecorder>,
+        transaction_recorder: TransactionRecorder,
     ) -> InstalledSchedulerPoolArc {
         Self::new(
             supported_scheduling_mode,
@@ -659,8 +659,6 @@ impl TaskHandler for DefaultTaskHandler {
                 SchedulingMode::BlockVerification => None,
                 SchedulingMode::BlockProduction => Some(|| {
                     let summary = handler_context.transaction_recorder
-                        .as_ref()
-                        .unwrap()
                         .record_transactions(
                             scheduling_context.bank().slot(),
                             vec![transaction.to_versioned_transaction()],
