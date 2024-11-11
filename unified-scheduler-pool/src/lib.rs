@@ -3655,7 +3655,7 @@ mod tests {
             todo!()
         }
 
-        fn is_overgrown(&self, on_hot_path: bool) -> bool {
+        fn is_overgrown(&self, _on_hot_path: bool) -> bool {
             todo!()
         }
 
