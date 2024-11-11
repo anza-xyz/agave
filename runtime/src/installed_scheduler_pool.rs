@@ -336,6 +336,14 @@ impl SchedulerStatus {
         }
     }
 
+    fn scheduling_mode(&self) -> Option<SchedulingMode> {
+        match self {
+            SchedulerStatus::Unavailable => None,
+            SchedulerStatus::Active(sch) => Some(sch.scheduling_mode()),
+            SchedulerStatus::Stale(_, mode, _) => Some(mode),
+        }
+    }
+
     fn status(&self) -> String {
         match self {
             SchedulerStatus::Unavailable => "Unavailable".to_owned(),
@@ -539,6 +547,10 @@ impl BankWithScheduler {
             &self.inner.scheduler,
             WaitReason::TerminatedToFreeze,
         )
+    }
+
+    pub fn scheduling_mode(&self) -> Option<SchedulingMode> {
+        self.inner.scheduler.read().unwrap().scheduling_mode()
     }
 
     pub const fn no_scheduler_available() -> InstalledSchedulerRwLock {
