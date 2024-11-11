@@ -245,13 +245,15 @@ impl BankForks {
     ) -> BankWithScheduler {
         if is_reinstall {
             info!(
-                "Reinserting bank (slot: {}) with scheduler into bank_forks...",
-                bank.slot()
+                "Reinserting bank (slot: {}) with scheduler (mode: {:?}) into bank_forks...",
+                bank.slot(),
+                mode,
             );
         } else {
             info!(
-                "Inserting bank (slot: {}) with scheduler into bank_forks...",
-                bank.slot()
+                "Inserting bank (slot: {}) with scheduler (mode: {:?}) into bank_forks...",
+                bank.slot(),
+                mode,
             );
         }
         let context = SchedulingContext::new(mode, bank.clone());
