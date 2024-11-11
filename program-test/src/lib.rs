@@ -1197,7 +1197,6 @@ impl ProgramTestContext {
 
         // warp_bank is frozen so go forward to get unfrozen bank at warp_slot
         bank_forks.insert(
-            panic!(),
             Bank::new_from_parent(warp_bank, &Pubkey::default(), warp_slot),
         );
 
