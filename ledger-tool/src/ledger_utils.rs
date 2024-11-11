@@ -357,7 +357,6 @@ pub fn load_and_process_ledger(
                 no_replay_vote_sender,
                 ignored_prioritization_fee_cache,
                 Some(new_poh_recorder.0.new_recorder()),
-                None,
             );
             bank_forks
                 .write()
