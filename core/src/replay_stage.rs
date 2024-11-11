@@ -2764,6 +2764,17 @@ impl ReplayStage {
         }
     }
 
+    fn wait_for_cleared_bank(cleared_bank: BankWithScheduler) {
+        if cleared_bank.scheduling_mode() == Some(SchedulingMode::BlockProduction) {
+            info!("Reaping tpu bank: {}...", cleared_bank.slot());
+            if let Some((result, completed_execute_timings)) = cleared_bank.wait_for_completed_scheduler() {
+                info!("Reaped aborted a unified scheduler tpu bank: {} {:?}", cleared_bank.slot(), result);
+            } else {
+                info!("Skipped to reap a tpu bank (seems unified scheduler is disabled): {}", cleared_bank.slot());
+            }
+        }
+    }
+
     fn reset_poh_recorder(
         my_pubkey: &Pubkey,
         blockstore: &Blockstore,
@@ -2784,14 +2795,7 @@ impl ReplayStage {
 
         let cleared_bank = poh_recorder.write().unwrap().reset(bank, next_leader_slot);
         if let Some(cleared_bank) = cleared_bank {
-            if cleared_bank.scheduling_mode() == Some(SchedulingMode::BlockProduction) {
-                info!("Reaping tpu bank: {}...", cleared_bank.slot());
-                if let Some((result, completed_execute_timings)) = cleared_bank.wait_for_completed_scheduler() {
-                    info!("Reaped aborted a unified scheduler tpu bank: {} {:?}", cleared_bank.slot(), result);
-                } else {
-                    info!("Skipped to reap a tpu bank (seems unified scheduler is disabled): {}", cleared_bank.slot());
-                }
-            }
+            Self::wait_for_cleared_bank(cleared_bank);
         }
 
         let next_leader_msg = if let Some(next_leader_slot) = next_leader_slot {
