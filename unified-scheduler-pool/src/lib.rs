@@ -235,6 +235,7 @@ where
         )
     }
 
+    #[cfg(test)]
     fn do_new_for_verification(
         handler_count: Option<usize>,
         log_messages_bytes_limit: Option<usize>,
