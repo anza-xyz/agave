@@ -39,7 +39,7 @@ use {
         transaction::{Result, SanitizedTransaction, TransactionError},
     },
     solana_timings::ExecuteTimings,
-    solana_unified_scheduler_logic::{Index, SchedulingStateMachine, Task, UsageQueue},
+    solana_unified_scheduler_logic::{SchedulingStateMachine, Task, UsageQueue},
     static_assertions::const_assert_eq,
     std::{
         fmt::Debug,
