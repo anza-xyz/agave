@@ -4835,9 +4835,7 @@ impl Bank {
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
             None,
-            None::<fn() -> bool>,
         )
-        .unwrap()
         .0
         .into_iter()
         .map(|commit_result| commit_result.map(|_| ()))
