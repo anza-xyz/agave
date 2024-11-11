@@ -253,11 +253,11 @@ where
             transaction_status_sender,
             replay_vote_sender,
             prioritization_fee_cache,
+            TransactionRecorder::new_dummy(),
             pool_cleaner_interval,
             max_pooling_duration,
             max_usage_queue_count,
             timeout_duration,
-            TransactionRecorder::new_dummy(),
         )
     }
 
