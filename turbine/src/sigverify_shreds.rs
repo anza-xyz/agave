@@ -75,7 +75,7 @@ pub fn spawn_shred_sigverify(
         CLUSTER_NODES_CACHE_TTL,
     );
     let thread_pool = ThreadPoolBuilder::new()
-        .num_threads(get_thread_count() / 4)
+        .num_threads(get_thread_count())
         .thread_name(|i| format!("solSvrfyShred{i:02}"))
         .build()
         .unwrap();

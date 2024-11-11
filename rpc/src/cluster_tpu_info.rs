@@ -52,7 +52,6 @@ impl TpuInfo for ClusterTpuInfo {
 
     fn get_leader_tpus(&self, max_count: u64, protocol: Protocol) -> Vec<&SocketAddr> {
         let recorder = self.poh_recorder.read().unwrap();
-        warn!("pipeline_tracer: get_leader_tpus: {} {max_count} {:?} {:?}", recorder.current_slot(), std::thread::current(), std::backtrace::Backtrace::force_capture());
         let leaders: Vec<_> = (0..max_count)
             .filter_map(|i| recorder.leader_after_n_slots(i * NUM_CONSECUTIVE_LEADER_SLOTS))
             .collect();
@@ -87,7 +86,6 @@ impl TpuInfo for ClusterTpuInfo {
                     })
             })
             .collect();
-        warn!("pipeline_tracer: get_leader_tpus_with_slots: {} {max_count} {leaders:?} {:?} {:?}", recorder.current_slot(), std::thread::current(), std::backtrace::Backtrace::force_capture());
         drop(recorder);
         let addrs_to_slots = leaders
             .into_iter()

@@ -3670,10 +3670,6 @@ pub mod rpc_full {
             })?;
             let (wire_transaction, unsanitized_tx) =
                 decode_and_deserialize::<VersionedTransaction>(data, binary_encoding)?;
-            const TRACER_KEY_OFFSET_IN_TRANSACTION: usize = 69;
-            if wire_transaction[TRACER_KEY_OFFSET_IN_TRANSACTION..(TRACER_KEY_OFFSET_IN_TRANSACTION+std::mem::size_of::<Pubkey>())] == *solana_sdk::packet::id().as_ref() {
-                warn!("pipeline_tracer: rpc sendTransaction({:?}) {:?} {:?}", config, std::thread::current(), std::backtrace::Backtrace::force_capture());
-            }
 
             let preflight_commitment = if skip_preflight {
                 Some(CommitmentConfig::processed())
