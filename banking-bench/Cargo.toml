@@ -12,7 +12,7 @@ edition = { workspace = true }
 clap = { version = "3.1.8", features = ["derive", "cargo"] }
 crossbeam-channel = { workspace = true }
 log = { workspace = true }
-mimalloc = "0.1.42"
+mimalloc = { workspace = true }
 rand = { workspace = true }
 rayon = { workspace = true }
 solana-client = { workspace = true }
