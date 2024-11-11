@@ -1081,6 +1081,7 @@ mod tests {
                 bank_forks,
                 &Arc::new(PrioritizationFeeCache::new(0u64)),
                 false,
+                None,
             );
             drop(non_vote_sender);
             drop(tpu_vote_sender);
@@ -1137,6 +1138,7 @@ mod tests {
                 bank_forks,
                 &Arc::new(PrioritizationFeeCache::new(0u64)),
                 false,
+                None,
             );
             trace!("sending bank");
             drop(non_vote_sender);
@@ -1217,6 +1219,7 @@ mod tests {
                 bank_forks.clone(), // keep a local-copy of bank-forks so worker threads do not lose weak access to bank-forks
                 &Arc::new(PrioritizationFeeCache::new(0u64)),
                 false,
+                None,
             );
 
             // fund another account so we can send 2 good transactions in a single batch.
