@@ -2164,7 +2164,6 @@ fn maybe_warp_slot(
         root_bank.force_flush_accounts_cache();
 
         bank_forks.insert(
-            panic!(),
             Bank::warp_from_parent(
                 root_bank,
                 &Pubkey::default(),
