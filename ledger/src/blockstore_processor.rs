@@ -1891,7 +1891,7 @@ fn load_frozen_forks(
             let bank = bank_forks
                 .write()
                 .unwrap()
-                .insert_from_ledger(SchedulingMode::BlockVerification, bank);
+                .insert_from_ledger(bank);
             if let Err(error) = process_single_slot(
                 blockstore,
                 &bank,
