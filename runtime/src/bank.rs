@@ -4697,7 +4697,7 @@ impl Bank {
             recording_config,
             timings,
             log_messages_bytes_limit,
-            None,
+            None::<fn() -> bool>,
         ).unwrap()
     }
 
