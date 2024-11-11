@@ -48,7 +48,7 @@ impl TransactionSigVerifier {
 impl SigVerifier for TransactionSigVerifier {
     type SendType = BankingPacketBatch;
 
-    #[inline(never)]
+    #[inline(always)]
     fn process_received_packet(
         &mut self,
         packet: &mut Packet,
@@ -70,14 +70,14 @@ impl SigVerifier for TransactionSigVerifier {
         }
     }
 
-    #[inline(never)]
+    #[inline(always)]
     fn process_excess_packet(&mut self, packet: &Packet) {
         if packet.meta().is_tracer_packet() {
             self.tracer_packet_stats.total_excess_tracer_packets += 1;
         }
     }
 
-    #[inline(never)]
+    #[inline(always)]
     fn process_passed_sigverify_packet(&mut self, packet: &Packet) {
         if packet.meta().is_tracer_packet() {
             self.tracer_packet_stats
@@ -90,9 +90,6 @@ impl SigVerifier for TransactionSigVerifier {
         packet_batches: Vec<PacketBatch>,
     ) -> Result<(), SigVerifyServiceError<Self::SendType>> {
         let tracer_packet_stats_to_send = std::mem::take(&mut self.tracer_packet_stats);
-        if tracer_packet_stats_to_send.total_tracker_packets_passed_sigverify > 0 {
-            warn!("pipeline_tracer: send_packets len: {} {:?} {:?} {:?}", self.packet_sender.len(), tracer_packet_stats_to_send, std::thread::current(), std::backtrace::Backtrace::force_capture());
-        }
         self.packet_sender.send(BankingPacketBatch::new((
             packet_batches,
             Some(tracer_packet_stats_to_send),

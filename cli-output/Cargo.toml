@@ -17,7 +17,6 @@ clap = "2.33.0"
 console = { workspace = true }
 humantime = { workspace = true }
 indicatif = { workspace = true }
-log = { workspace = true }
 pretty-hex = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true }
