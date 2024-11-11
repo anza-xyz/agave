@@ -3649,7 +3649,7 @@ mod tests {
                 None,
                 ignored_prioritization_fee_cache,
             );
-        let scheduler = pool.take_scheduler(context);
+        let scheduler = pool.take_scheduler(context).unwrap();
 
         let bank = BankWithScheduler::new(bank, Some(scheduler));
         assert_eq!(bank.transaction_count(), 0);
