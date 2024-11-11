@@ -43,11 +43,22 @@ pub(in crate::parse_token) fn parse_confidential_transfer_fee_instruction(
             let mut value = json!({
                 "mint": account_keys[account_indexes[0] as usize].to_string(),
                 "feeRecipient": account_keys[account_indexes[1] as usize].to_string(),
-                "instructionsSysvar": account_keys[account_indexes[2] as usize].to_string(),
                 "proofInstructionOffset": proof_instruction_offset,
-
+                "newDecryptableAvailableBalance": format!("{}", withdraw_withheld_data.new_decryptable_available_balance),
             });
             let map = value.as_object_mut().unwrap();
+            if proof_instruction_offset == 0 {
+                map.insert(
+                    "proofContextStateAccount".to_string(),
+                    json!(account_keys[account_indexes[2] as usize].to_string()),
+                );
+            } else {
+                map.insert(
+                    "instructionsSysvar".to_string(),
+                    json!(account_keys[account_indexes[2] as usize].to_string()),
+                );
+            }
+            // TODO where does the record account go?
             parse_signers(
                 map,
                 3,
@@ -72,10 +83,22 @@ pub(in crate::parse_token) fn parse_confidential_transfer_fee_instruction(
             let mut value = json!({
                 "mint": account_keys[account_indexes[0] as usize].to_string(),
                 "feeRecipient": account_keys[account_indexes[1] as usize].to_string(),
-                "instructionsSysvar": account_keys[account_indexes[2] as usize].to_string(),
                 "proofInstructionOffset": proof_instruction_offset,
+                "newDecryptableAvailableBalance": format!("{}", withdraw_withheld_data.new_decryptable_available_balance),
             });
             let map = value.as_object_mut().unwrap();
+            if proof_instruction_offset == 0 {
+                map.insert(
+                    "proofContextStateAccount".to_string(),
+                    json!(account_keys[account_indexes[2] as usize].to_string()),
+                );
+            } else {
+                map.insert(
+                    "instructionsSysvar".to_string(),
+                    json!(account_keys[account_indexes[2] as usize].to_string()),
+                );
+            }
+            // TODO where does the record account go?
             let mut source_accounts: Vec<String> = vec![];
             let first_source_account_index = account_indexes
                 .len()
