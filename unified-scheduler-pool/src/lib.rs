@@ -2734,7 +2734,7 @@ mod tests {
         ]);
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool_raw = SchedulerPool::<PooledScheduler<FaultyHandler>, _>::do_new(
+        let pool_raw = SchedulerPool::<PooledScheduler<FaultyHandler>, _>::do_new_for_verification(
             None,
             None,
             None,
