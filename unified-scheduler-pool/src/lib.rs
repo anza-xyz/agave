@@ -874,11 +874,11 @@ mod chained_channel {
         pub(super) fn aux_for_select(&self) -> &Receiver<P> {
             &self.aux_receiver
         }
-        */
 
         pub(super) fn never_receive_from_aux(&mut self) {
             self.aux_receiver = never();
         }
+        */
 
         pub(super) fn after_select(&mut self, message: ChainedChannel<P, C>) -> Option<P> {
             match message {
