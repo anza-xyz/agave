@@ -666,7 +666,6 @@ mod tests {
                 tests::create_slow_genesis_config,
             },
             banking_trace::BankingPacketBatch,
-            sigverify::SigverifyTracerPacketStats,
         },
         crossbeam_channel::{unbounded, Receiver, Sender},
         itertools::Itertools,
@@ -686,6 +685,7 @@ mod tests {
         std::sync::{atomic::AtomicBool, Arc, RwLock},
         tempfile::TempDir,
     };
+    use solana_perf::packet::SigverifyTracerPacketStats;
 
     fn create_channels<T>(num: usize) -> (Vec<Sender<T>>, Vec<Receiver<T>>) {
         (0..num).map(|_| unbounded()).unzip()
