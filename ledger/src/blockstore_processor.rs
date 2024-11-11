@@ -105,9 +105,6 @@ fn get_first_error(
 ) -> Option<(Result<()>, Signature)> {
     let mut first_err = None;
     for (commit_result, transaction) in commit_results.iter().zip(batch.sanitized_transactions()) {
-        if transaction.message().fee_payer() == &solana_sdk::packet::id() {
-            warn!("pipeline_tracer: get_first_error {:?} {:?} {:?}", (slot, is_unified_scheduler_for_block_production), std::thread::current(), std::backtrace::Backtrace::force_capture());
-        }
         if let Err(err) = commit_result {
             if first_err.is_none() {
                 first_err = Some((Err(err.clone()), *transaction.signature()));

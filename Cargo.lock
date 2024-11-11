@@ -1903,7 +1903,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b42b6fa04a440b495c8b04d0e71b707c585f83cb9cb28cf8cd0d976c315e31b4"
 dependencies = [
  "powerfmt",
- "serde",
 ]
 
 [[package]]
@@ -3055,7 +3054,6 @@ checksum = "bd070e393353796e801d209ad339e89596eb4c8d430d18ede6a1cced8fafbd99"
 dependencies = [
  "autocfg",
  "hashbrown 0.12.3",
- "serde",
 ]
 
 [[package]]
@@ -3067,7 +3065,6 @@ dependencies = [
  "equivalent",
  "hashbrown 0.14.3",
  "rayon",
- "serde",
 ]
 
 [[package]]
@@ -5293,25 +5290,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07ff71d2c147a7b57362cead5e22f772cd52f6ab31cfcd9edcd7f6aeb2a0afbe"
 dependencies = [
  "serde",
- "serde_with_macros 2.3.3",
-]
-
-[[package]]
-name = "serde_with"
-version = "3.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69cecfa94848272156ea67b2b1a53f20fc7bc638c4a46d2f8abde08f05f4b857"
-dependencies = [
- "base64 0.22.1",
- "chrono",
- "hex",
- "indexmap 1.9.3",
- "indexmap 2.5.0",
- "serde",
- "serde_derive",
- "serde_json",
- "serde_with_macros 3.9.0",
- "time",
+ "serde_with_macros",
 ]
 
 [[package]]
@@ -5319,18 +5298,6 @@ name = "serde_with_macros"
 version = "2.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "881b6f881b17d13214e5d494c939ebab463d01264ce1811e9d4ac3a882e7695f"
-dependencies = [
- "darling",
- "proc-macro2",
- "quote",
- "syn 2.0.79",
-]
-
-[[package]]
-name = "serde_with_macros"
-version = "3.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8fee4991ef4f274617a51ad4af30519438dacb2f56ac773b08a1922ff743350"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -7754,7 +7721,7 @@ dependencies = [
  "serde_bytes",
  "serde_derive",
  "serde_json",
- "serde_with 2.3.3",
+ "serde_with",
  "sha2 0.10.8",
  "sha3",
  "siphasher",
@@ -8019,13 +7986,10 @@ version = "2.1.0"
 dependencies = [
  "assert_matches",
  "bincode",
- "cpu-time",
- "crossbeam-channel",
  "itertools 0.12.1",
  "lazy_static",
  "libsecp256k1",
  "log",
- "once_cell",
  "percentage",
  "prost",
  "qualifier_attr",
@@ -8033,8 +7997,6 @@ dependencies = [
  "rustc_version 0.4.1",
  "serde",
  "serde_derive",
- "serde_json",
- "serde_with 3.9.0",
  "shuttle",
  "solana-bpf-loader-program",
  "solana-compute-budget",
@@ -8047,7 +8009,6 @@ dependencies = [
  "solana-log-collector",
  "solana-logger",
  "solana-measure",
- "solana-metrics",
  "solana-program-runtime",
  "solana-runtime-transaction",
  "solana-sdk",
