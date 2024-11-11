@@ -266,7 +266,6 @@ impl BankForks {
         bank_with_scheduler
     }
 
-    #[cfg(feature = "dev-context-only-utils")]
     pub fn insert(&mut self, mut bank: Bank) -> BankWithScheduler {
         self.insert_with_scheduling_mode(SchedulingMode::BlockVerification, bank)
     }
@@ -293,9 +292,9 @@ impl BankForks {
         bank
     }
 
-    pub fn insert_from_ledger(&mut self, mode: SchedulingMode, bank: Bank) -> BankWithScheduler {
+    pub fn insert_from_ledger(&mut self, bank: Bank) -> BankWithScheduler {
         self.highest_slot_at_startup = std::cmp::max(self.highest_slot_at_startup, bank.slot());
-        self.insert(mode, bank)
+        self.insert(bank)
     }
 
     pub fn remove(&mut self, slot: Slot) -> Option<BankWithScheduler> {
