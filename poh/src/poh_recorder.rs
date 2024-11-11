@@ -818,7 +818,7 @@ impl PohRecorder {
         if send_result.is_err() {
             info!("WorkingBank::sender disconnected {:?}", send_result);
             // revert the cache, but clear the working bank
-            self.clear_bank();
+            let _ = self.clear_bank();
         } else {
             // commit the flush
             let _ = self.tick_cache.drain(..entry_count);
