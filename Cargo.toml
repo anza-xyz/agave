@@ -271,9 +271,6 @@ index_list = "0.2.13"
 indexmap = "2.5.0"
 indicatif = "0.17.8"
 itertools = "0.12.1"
-jemallocator = { package = "tikv-jemallocator", version = "0.4.1", features = [
-    "unprefixed_malloc_on_supported_platforms",
-] }
 js-sys = "0.3.70"
 json5 = "0.4.1"
 jsonrpc-core = "18.0.0"

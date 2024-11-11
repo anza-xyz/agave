@@ -309,7 +309,6 @@ dependencies = [
  "symlink",
  "tempfile",
  "thiserror",
- "tikv-jemallocator",
  "tokio",
 ]
 
