@@ -92,7 +92,7 @@ impl VoteSimulator {
                 .bank_forks
                 .write()
                 .unwrap()
-                .insert(panic!(), new_bank)
+                .insert(new_bank)
                 .clone_without_scheduler();
             self.progress
                 .entry(slot)
