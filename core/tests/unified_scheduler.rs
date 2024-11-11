@@ -50,7 +50,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
             timings: &mut ExecuteTimings,
             scheduling_context: &SchedulingContext,
             transaction: &SanitizedTransaction,
-            index: usize,
+            index: TaskKey,
             handler_context: &HandlerContext,
         ) {
             info!("Stalling at StallingHandler::handle()...");
@@ -73,7 +73,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
     let genesis_bank = Bank::new_for_tests(&genesis_config);
     let bank_forks = BankForks::new_rw_arc(genesis_bank);
     let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-    let pool_raw = SchedulerPool::<PooledScheduler<StallingHandler>, _>::new(
+    let pool_raw = SchedulerPool::<PooledScheduler<StallingHandler>, _>::new_for_verification(
         None,
         None,
         None,
