@@ -759,7 +759,7 @@ impl PohRecorder {
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn clear_bank_for_test(&mut self) {
-        self.clear_bank();
+        let _ = self.clear_bank();
     }
 
     // Flush cache will delay flushing the cache for a bank until it past the WorkingBank::min_tick_height
