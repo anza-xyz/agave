@@ -6,3 +6,5 @@ pub enum SchedulingMode {
     BlockVerification,
     BlockProduction,
 }
+
+pub type TaskKey = u128;

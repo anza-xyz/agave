@@ -45,7 +45,6 @@ pub fn initialized_result_with_timings() -> ResultWithTimings {
     (Ok(()), ExecuteTimings::default())
 }
 
-pub type Index = u128;
 
 pub trait InstalledSchedulerPool: Send + Sync + Debug {
     fn take_scheduler(&self, context: SchedulingContext) -> Option<InstalledSchedulerBox> {
@@ -170,7 +169,7 @@ pub trait InstalledScheduler: Send + Sync + Debug + 'static {
     /// having &mut.
     fn schedule_execution<'a>(
         &'a self,
-        transaction_with_index: &'a (&'a SanitizedTransaction, Index),
+        transaction_with_index: &'a (&'a SanitizedTransaction, TaskKey),
     ) -> ScheduleResult;
 
     /// Return the error which caused the scheduler to abort.
@@ -473,7 +472,7 @@ impl BankWithScheduler {
     // 'a is needed; anonymous_lifetime_in_impl_trait isn't stabilized yet...
     pub fn schedule_transaction_executions<'a>(
         &self,
-        transactions_with_indexes: impl ExactSizeIterator<Item = (&'a SanitizedTransaction, &'a Index)>,
+        transactions_with_indexes: impl ExactSizeIterator<Item = (&'a SanitizedTransaction, &'a TaskKey)>,
     ) -> Result<()> {
         trace!(
             "schedule_transaction_executions(): {} txs",
