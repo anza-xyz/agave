@@ -316,6 +316,7 @@ pub struct PohRecorder {
 pub type NewPohRecorder = (PohRecorder, Receiver<WorkingBankEntry>, Receiver<Record>);
 
 impl PohRecorder {
+    #[must_use]
     fn clear_bank(&mut self) -> Option<BankWithScheduler> {
         let mut cleared_bank = None;
         if let Some(WorkingBank { bank, start, .. }) = self.working_bank.take() {
@@ -674,6 +675,7 @@ impl PohRecorder {
     }
 
     // synchronize PoH with a bank
+    #[must_use]
     pub fn reset(&mut self, reset_bank: Arc<Bank>, next_leader_slot: Option<(Slot, Slot)>) -> Option<BankWithScheduler> {
         let cleared_bank = self.clear_bank();
         self.reset_poh(reset_bank, true);
