@@ -2191,7 +2191,7 @@ impl ReplayStage {
             let tpu_bank = bank_forks
                 .write()
                 .unwrap()
-                .insert(SchedulingMode::BlockProduction, tpu_bank);
+                .insert_with_scheduling_mode(SchedulingMode::BlockProduction, tpu_bank);
             poh_recorder
                 .write()
                 .unwrap()
