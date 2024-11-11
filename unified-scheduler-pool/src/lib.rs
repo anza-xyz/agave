@@ -1653,7 +1653,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             log_scheduler!(trace, step_type);
                         }
 
-                        is_finished = (session_ending && state_machine.has_no_alive_task() || session_pausing && state_machine.has_no_executing_task());
+                        is_finished = session_ending && state_machine.has_no_alive_task() || session_pausing && state_machine.has_no_executing_task();
                     }
                     assert!(mem::replace(&mut is_finished, false));
 
