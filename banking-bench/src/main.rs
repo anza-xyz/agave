@@ -584,7 +584,6 @@ fn main() {
             &signal_receiver,
             packets_for_this_iteration.transactions.len(),
             &poh_recorder,
-            &dummy_receiver,
         ) {
             eprintln!(
                 "[iteration {}, tx sent {}, slot {} expired, bank tx count {}]",
