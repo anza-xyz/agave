@@ -3712,54 +3712,6 @@ impl Blockstore {
             .collect()
     }
 
-    pub fn get_slot_meta(&self, slot: Slot) -> SlotMeta {
-        self.meta_cf.get(slot).unwrap().unwrap()
-    }
-
-    pub fn get_slot_chunked_entries_in_block<'a>(
-        &'a self,
-        slot: &'a Slot,
-        start_index: u32,
-        slot_meta: &'a SlotMeta,
-    ) -> impl Iterator<Item = (Vec<Entry>, u32)> + 'a {
-        assert!(!slot_meta.completed_data_indexes.contains(&(slot_meta.consumed as u32)));
-        slot_meta.completed_data_indexes
-            .range(start_index..slot_meta.consumed as u32)
-            .scan(start_index, |begin, index| {
-                let out = (*begin, *index);
-                *begin = index + 1;
-                Some(out)
-            })
-            .map(|(start, end)| {
-            let keys = (start..=end).map(|index| (*slot, u64::from(index)));
-            let range_shreds: Vec<Shred> = self
-                .data_shred_cf
-                .multi_get_bytes(keys)
-                .into_iter()
-                .map(|shred_bytes| {
-                    Shred::new_from_serialized_shred(shred_bytes.unwrap().unwrap()).unwrap()
-                })
-                .collect();
-            let last_shred = range_shreds.last().unwrap();
-            assert!(last_shred.data_complete() || last_shred.last_in_slot());
-            let a: Vec<Entry> = Shredder::deshred(&range_shreds)
-                .map_err(|e| {
-                    BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
-                        format!("could not reconstruct entries buffer from shreds: {e:?}"),
-                    )))
-                })
-                .and_then(|payload| {
-                    bincode::deserialize::<Vec<Entry>>(&payload).map_err(|e| {
-                        BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
-                            format!("could not reconstruct entries: {e:?}"),
-                        )))
-                    })
-                })
-                .unwrap();
-            (a, end)
-        })
-    }
-
     pub fn get_entries_in_data_block(
         &self,
         slot: Slot,

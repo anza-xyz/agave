@@ -1455,55 +1455,42 @@ pub fn confirm_slot(
     prioritization_fee_cache: &PrioritizationFeeCache,
 ) -> result::Result<(), BlockstoreProcessorError> {
     let slot = bank.slot();
-    let slot_meta = blockstore.get_slot_meta(slot);
-    let mut chunked_entries = blockstore.get_slot_chunked_entries_in_block(&slot, progress.num_shreds as u32, &slot_meta);
-    //if blockstore.is_dead(slot) {
-    //    Err(BlockstoreError::DeadSlot)?;
-    //}
-    //let (entries, num_shreds, all_is_full) = blockstore
-    //    .get_slot_entries_with_shred_info(slot, progress.num_shreds, allow_dead_slots)
-    //    .unwrap();
-    //let mut chunked_entries = entries.chunks(100);
 
-    let mut current_entry = chunked_entries.next();
-    let mut last_end_index: u32 = u32::MAX;
-    loop {
-        let Some((entry, end_index)) = current_entry else {
-            break;
-        };
-        let next_entry = chunked_entries.next();
-        let is_full = next_entry.is_none() && slot_meta.is_full();
+    let slot_entries_load_result = {
+        let mut load_elapsed = Measure::start("load_elapsed");
+        let load_result = blockstore
+            .get_slot_entries_with_shred_info(slot, progress.num_shreds, allow_dead_slots)
+            .map_err(BlockstoreProcessorError::FailedToLoadEntries);
+        load_elapsed.stop();
+        if load_result.is_err() {
+            timing.fetch_fail_elapsed += load_elapsed.as_us();
+        } else {
+            timing.fetch_elapsed += load_elapsed.as_us();
+        }
+        load_result
+    }?;
 
-        //info!("chunking {slot}, {last_end_index} {}", entry.len());
-        confirm_slot_entries(
-            bank,
-            replay_tx_thread_pool,
-            (entry.to_vec(), is_full),
-            timing,
-            progress,
-            skip_verification,
-            transaction_status_sender,
-            entry_notification_sender,
-            replay_vote_sender,
-            recyclers,
-            log_messages_bytes_limit,
-            prioritization_fee_cache,
-        )?;
-        current_entry = next_entry;
-        last_end_index = end_index;
-    }
-    if last_end_index != u32::MAX {
-        progress.num_shreds = last_end_index as u64 + 1;
-    }
-    //progress.num_shreds += num_shreds;
-    return Ok(());
+    confirm_slot_entries(
+        bank,
+        replay_tx_thread_pool,
+        slot_entries_load_result,
+        timing,
+        progress,
+        skip_verification,
+        transaction_status_sender,
+        entry_notification_sender,
+        replay_vote_sender,
+        recyclers,
+        log_messages_bytes_limit,
+        prioritization_fee_cache,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
 fn confirm_slot_entries(
     bank: &BankWithScheduler,
     replay_tx_thread_pool: &ThreadPool,
-    slot_entries_load_result: (Vec<Entry>, bool),
+    slot_entries_load_result: (Vec<Entry>, u64, bool),
     timing: &mut ConfirmationTiming,
     progress: &mut ConfirmationProgress,
     skip_verification: bool,
@@ -1529,7 +1516,7 @@ fn confirm_slot_entries(
     };
 
     let slot = bank.slot();
-    let (entries, slot_full) = slot_entries_load_result;
+    let (entries, num_shreds, slot_full) = slot_entries_load_result;
     let num_entries = entries.len();
     let mut entry_tx_starting_indexes = Vec::with_capacity(num_entries);
     let mut entry_tx_starting_index = progress.num_txs;
@@ -1559,26 +1546,27 @@ fn confirm_slot_entries(
         })
         .sum::<usize>();
     trace!(
-        "Fetched entries for slot {}, num_entries: {}, num_txs: {}, slot_full: {}",
+        "Fetched entries for slot {}, num_entries: {}, num_shreds: {}, num_txs: {}, slot_full: {}",
         slot,
         num_entries,
+        num_shreds,
         num_txs,
         slot_full,
     );
 
-    // seems needed to avoid consensus stall....
-    if true /*|| !skip_verification*/ {
+    if !skip_verification {
         let tick_hash_count = &mut progress.tick_hash_count;
         verify_ticks(bank, &entries, slot_full, tick_hash_count).map_err(|err| {
             warn!(
                 "{:#?}, slot: {}, entry len: {}, tick_height: {}, last entry: {}, last_blockhash: \
-                 {}, slot_full: {}",
+                 {}, shred_index: {}, slot_full: {}",
                 err,
                 slot,
                 num_entries,
                 bank.tick_height(),
                 progress.last_entry,
                 bank.last_blockhash(),
+                num_shreds,
                 slot_full,
             );
             err
@@ -1691,6 +1679,7 @@ fn confirm_slot_entries(
 
     process_result?;
 
+    progress.num_shreds += num_shreds;
     progress.num_entries += num_entries;
     progress.num_txs += num_txs;
     if let Some(last_entry_hash) = last_entry_hash {
