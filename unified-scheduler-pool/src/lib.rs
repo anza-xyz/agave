@@ -968,7 +968,7 @@ impl TaskCreator {
         use TaskCreator::*;
 
         match self {
-            BlockVerification { usage_queue_loader } => todo!(),
+            BlockVerification { usage_queue_loader: _ } => todo!(),
             BlockProduction { banking_stage_adapter } => banking_stage_adapter.banking_stage_status(),
         }
     }
@@ -977,7 +977,7 @@ impl TaskCreator {
         use TaskCreator::*;
 
         match self {
-            BlockVerification { usage_queue_loader } => todo!(),
+            BlockVerification { usage_queue_loader: _ } => todo!(),
             BlockProduction { banking_stage_adapter } => banking_stage_adapter.reset(),
         }
     }
