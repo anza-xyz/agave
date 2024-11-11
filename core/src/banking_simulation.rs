@@ -32,7 +32,7 @@ use {
         prioritization_fee_cache::PrioritizationFeeCache,
     },
     solana_sdk::{
-        clock::{Slot, DEFAULT_MS_PER_SLOT, HOLD_TRANSACTIONS_SLOT_OFFSET},
+        clock::Slot,
         genesis_config::GenesisConfig,
         pubkey::Pubkey,
         shred_version::compute_shred_version,
