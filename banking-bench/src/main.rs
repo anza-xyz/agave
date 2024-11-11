@@ -56,7 +56,6 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 const TRANSFER_TRANSACTION_COST: u32 = 1470;
 
 use solana_sdk::transaction::VersionedTransaction;
-type DummyReceiver = Receiver<Vec<VersionedTransaction>>;
 
 fn check_txs(
     receiver: &Arc<Receiver<WorkingBankEntry>>,
