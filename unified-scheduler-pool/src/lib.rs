@@ -2496,7 +2496,7 @@ mod tests {
         for _ in 0..REDUCED_MAX_USAGE_QUEUE_COUNT {
             small_scheduler
                 .inner
-                .task_creator()
+                .task_creator
                 .usage_queue_loader()
                 .load(Pubkey::new_unique());
         }
@@ -2504,7 +2504,7 @@ mod tests {
         for _ in 0..REDUCED_MAX_USAGE_QUEUE_COUNT + 1 {
             big_scheduler
                 .inner
-                .task_creator()
+                .task_creator
                 .usage_queue_loader()
                 .load(Pubkey::new_unique());
         }
