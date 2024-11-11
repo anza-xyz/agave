@@ -34,6 +34,7 @@ use {
         sync::{Arc, Mutex},
     },
 };
+use solana_runtime::installed_scheduler_pool::SchedulingContext;
 
 #[test]
 fn test_scheduler_waited_by_drop_bank_service() {
