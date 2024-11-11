@@ -911,7 +911,7 @@ pub fn construct_eth_pubkey(
 
 /// Verifies the signatures specified in the secp256k1 instruction data.
 ///
-/// This is same as the verification routine executed by the runtime's secp256k1 native program,
+/// This is the same as the verification routine executed by the runtime's secp256k1 native program,
 /// and is primarily of use to the runtime.
 ///
 /// `data` is the secp256k1 program's instruction data. `instruction_datas` is
