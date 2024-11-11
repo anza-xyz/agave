@@ -692,18 +692,6 @@ impl TaskHandler for DefaultTaskHandler {
                     scheduling_context.bank().write_cost_tracker().unwrap().remove(&cost2);
                 }
             }
-            use solana_svm::transaction_processor::record_transaction_timings;
-            record_transaction_timings(
-                scheduling_context.slot(),
-                transaction.signature(),
-                &0,
-                &result,
-                std::thread::current().name().unwrap().into(),
-                wall_time.elapsed().as_micros().try_into().unwrap(),
-                &cpu_time.elapsed(),
-                0, // transaction.get_transaction_priority_details().map(|d| d.priority).unwrap_or_default(),
-                transaction.get_account_locks_unchecked().into(),
-            );
         }
 
         sleepless_testing::at(CheckPoint::TaskHandled(index));
