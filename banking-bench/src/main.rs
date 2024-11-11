@@ -481,7 +481,6 @@ fn main() {
     };
     let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
     let collector = solana_sdk::pubkey::new_rand();
-    let (dummy_sender, dummy_receiver) = unbounded();
     let scheduler_pool = if matches!(block_production_method, BlockProductionMethod::UnifiedScheduler) {
         let scheduler_pool = DefaultSchedulerPool::new(
             SupportedSchedulingMode::Either(SchedulingMode::BlockProduction),
