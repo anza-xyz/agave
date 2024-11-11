@@ -23,7 +23,6 @@ use {
     },
     solana_poh::poh_recorder::TransactionRecorder,
     solana_runtime::{
-        bank::Bank,
         installed_scheduler_pool::{
             initialized_result_with_timings, InstalledScheduler, InstalledSchedulerBox,
             InstalledSchedulerPool, InstalledSchedulerPoolArc, ResultWithTimings, ScheduleResult,
@@ -37,7 +36,7 @@ use {
         hash::Hash,
         pubkey::Pubkey,
         scheduling::SchedulingMode,
-        transaction::{Result, SanitizedTransaction, TransactionError, VersionedTransaction},
+        transaction::{Result, SanitizedTransaction, TransactionError},
     },
     solana_timings::ExecuteTimings,
     solana_unified_scheduler_logic::{Index, SchedulingStateMachine, Task, UsageQueue},
