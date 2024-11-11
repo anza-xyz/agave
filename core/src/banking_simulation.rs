@@ -471,7 +471,7 @@ impl SimulatorLoop {
 
                 logger.log_jitter(&bank);
                 assert!(bank.is_complete());
-                if let Some((result, completed_execute_timings)) =
+                if let Some((result, _completed_execute_timings)) =
                     bank.wait_for_completed_scheduler()
                 {
                     info!("us result: {:?}", result);
