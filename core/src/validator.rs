@@ -882,7 +882,6 @@ impl Validator {
                     Some(replay_vote_sender.clone()),
                     prioritization_fee_cache.clone(),
                     Some(poh_recorder.read().unwrap().new_recorder()),
-                    None,
                 );
                 bank_forks
                     .write()
