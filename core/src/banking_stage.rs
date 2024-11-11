@@ -740,7 +740,7 @@ impl BankingStage {
                 info!("on_block_production_scheduler_spawn: start!");
                 let decision_maker = decision_maker.clone();
                 let bank_forks = bank_forks.clone();
-                let mut id_generator = MonotonicIdGenerator::new();
+                let id_generator = MonotonicIdGenerator::new();
                 *adapter.idling_detector.lock().unwrap() = Some(Box::new(S(decision_maker.clone(), poh_recorder.read().unwrap().is_exited.clone())));
 
                 let b = Box::new(move |aaa: BankingPacketBatch| {
