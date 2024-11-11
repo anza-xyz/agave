@@ -3234,7 +3234,7 @@ mod tests {
         const TX_COUNT: TaskKey = 2;
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool = SchedulerPool::<PooledScheduler<PanickingHandler>, _>::new_dyn(
+        let pool = SchedulerPool::<PooledScheduler<PanickingHandler>, _>::new_dyn_for_verification(
             Some(TX_COUNT), // fix to use exactly 2 handlers
             None,
             None,
