@@ -461,8 +461,6 @@ const_assert_eq!(mem::size_of::<UsageQueueToken>(), 0);
 type BlockedUsageCountToken = Token<CounterWithStatus>;
 const_assert_eq!(mem::size_of::<BlockedUsageCountToken>(), 0);
 
-pub type Index = u128;
-
 #[derive(Debug, PartialEq, Clone, Copy, Default)]
 #[repr(u8)]
 enum TaskStatus {
@@ -526,7 +524,7 @@ impl CounterWithStatus {
 
 #[repr(C, packed)]
 struct PackedTaskInner {
-    index: Index,
+    index: TaskKey,
     lock_context_and_transaction: Box<(Vec<Compact<LockContext>>, Box<SanitizedTransaction>)>,
 }
 const_assert_eq!(mem::size_of::<PackedTaskInner>(), 24);
@@ -553,7 +551,7 @@ pub struct TaskInner {
 }
 
 impl TaskInner {
-    pub fn task_index(&self) -> Index {
+    pub fn task_index(&self) -> TaskKey {
         self.index()
     }
 
@@ -561,7 +559,7 @@ impl TaskInner {
         &self.packed_task_inner.lock_context_and_transaction.1
     }
 
-    pub fn index(&self) -> Index {
+    pub fn index(&self) -> TaskKey {
         self.packed_task_inner.index
     }
 
@@ -772,7 +770,7 @@ const_assert_eq!(mem::size_of::<UsageFromTask>(), 16);
 const_assert_eq!(mem::size_of::<Compact<UsageFromTask>>(), 8);
 
 impl UsageFromTask {
-    fn index(&self) -> Index {
+    fn index(&self) -> TaskKey {
         match self {
             Self::Readonly(t) => t.index(),
             Self::Writable(t) => t.index(),
@@ -980,7 +978,7 @@ impl UsageQueueInner {
     fn unlock(
         &mut self,
         unlocked_task_context: &LockContext,
-        unlocked_task_index: Index,
+        unlocked_task_index: TaskKey,
         token: &mut BlockedUsageCountToken,
     ) -> Option<UsageFromTask> {
         self.executing_count.decrement_self();
@@ -1033,7 +1031,7 @@ impl UsageQueueInner {
             .push(uft.into());
     }
 
-    fn first_blocked_task_index(&self) -> Option<Index> {
+    fn first_blocked_task_index(&self) -> Option<TaskKey> {
         self.blocked_usages_from_tasks.peek().map(|uft| uft.map_ref(|u| u.index()))
     }
 
@@ -1581,7 +1579,7 @@ impl SchedulingStateMachine {
     /// separation of concern.
     pub fn create_task(
         transaction: SanitizedTransaction,
-        index: Index,
+        index: TaskKey,
         usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
     ) -> Task {
         // It's crucial for tasks to be validated with
