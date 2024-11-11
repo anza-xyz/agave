@@ -38,6 +38,7 @@ use {
         thread,
     },
 };
+use solana_sdk::scheduling::TaskKey;
 #[cfg(feature = "dev-context-only-utils")]
 use {mockall::automock, qualifier_attr::qualifiers};
 
