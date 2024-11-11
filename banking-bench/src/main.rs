@@ -62,25 +62,15 @@ fn check_txs(
     receiver: &Arc<Receiver<WorkingBankEntry>>,
     ref_tx_count: usize,
     poh_recorder: &Arc<RwLock<PohRecorder>>,
-    dummy_receiver: &DummyReceiver,
-    use_dummy: bool,
 ) -> bool {
     let mut total = 0;
     let now = Instant::now();
     let mut no_bank = false;
     loop {
-        if use_dummy {
-            if let Ok(txs) = dummy_receiver.try_recv() {
-                total += txs.len();
-            } else {
-                sleep(Duration::from_millis(10));
-            }
+        if let Ok((_bank, (entry, _tick_height))) = receiver.try_recv() {
+            total += entry.transactions.len();
         } else {
-            if let Ok((_bank, (entry, _tick_height))) = receiver.try_recv() {
-                total += entry.transactions.len();
-            } else {
-                sleep(Duration::from_millis(10));
-            }
+            sleep(Duration::from_millis(10));
         }
 
         if total >= ref_tx_count {
@@ -492,12 +482,7 @@ fn main() {
     let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
     let collector = solana_sdk::pubkey::new_rand();
     let (dummy_sender, dummy_receiver) = unbounded();
-    let (use_dummy, scheduler_pool) = if matches!(block_production_method, BlockProductionMethod::UnifiedScheduler) {
-        let (dummy_sender, use_dummy) = if std::env::var("USE_DUMMY").is_ok() {
-            (Some(dummy_sender), true)
-        } else {
-            (None, false)
-        };
+    let scheduler_pool = if matches!(block_production_method, BlockProductionMethod::UnifiedScheduler) {
         let scheduler_pool = DefaultSchedulerPool::new(
             SupportedSchedulingMode::Either(SchedulingMode::BlockProduction),
             Some((num_banking_threads - 2) as usize),
@@ -506,15 +491,14 @@ fn main() {
             Some(replay_vote_sender.clone()),
             prioritization_fee_cache.clone(),
             Some(poh_recorder.read().unwrap().new_recorder()),
-            dummy_sender,
         );
         bank_forks
             .write()
             .unwrap()
             .install_scheduler_pool(scheduler_pool.clone());
-        (use_dummy, Some(scheduler_pool))
+        Some(scheduler_pool)
     } else {
-        (false, None)
+        None
     };
 
     let banking_stage = BankingStage::new_num_threads(
@@ -581,17 +565,15 @@ fn main() {
                 .unwrap();
         }
 
-        if !use_dummy {
-            for tx in &packets_for_this_iteration.transactions {
-                loop {
-                    if bank.get_signature_status(&tx.signatures[0]).is_some() {
-                        break;
-                    }
-                    if poh_recorder.read().unwrap().bank().is_none() {
-                        break;
-                    }
-                    sleep(Duration::from_millis(5));
+        for tx in &packets_for_this_iteration.transactions {
+            loop {
+                if bank.get_signature_status(&tx.signatures[0]).is_some() {
+                    break;
                 }
+                if poh_recorder.read().unwrap().bank().is_none() {
+                    break;
+                }
+                sleep(Duration::from_millis(5));
             }
         }
 
@@ -603,7 +585,6 @@ fn main() {
             packets_for_this_iteration.transactions.len(),
             &poh_recorder,
             &dummy_receiver,
-            use_dummy,
         ) {
             eprintln!(
                 "[iteration {}, tx sent {}, slot {} expired, bank tx count {}]",
