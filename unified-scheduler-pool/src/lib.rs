@@ -3643,11 +3643,13 @@ mod tests {
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool =
             SchedulerPool::<AsyncScheduler<TRIGGER_RACE_CONDITION>, DefaultTaskHandler>::new_dyn(
+                SupportedSchedulingMode::block_production_only(),
                 None,
                 None,
                 None,
                 None,
                 ignored_prioritization_fee_cache,
+                TransactionRecorder::new_dummy(),
             );
         let scheduler = pool.take_scheduler(context).unwrap();
 
