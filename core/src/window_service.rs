@@ -499,7 +499,6 @@ impl WindowService {
                 let mut metrics = BlockstoreInsertionMetrics::default();
                 let mut ws_metrics = WindowServiceMetrics::default();
                 let mut last_print = Instant::now();
-                let mut index_working_set = HashMap::new();
 
                 while !exit.load(Ordering::Relaxed) {
                     if let Err(e) = run_insert(
@@ -515,7 +514,6 @@ impl WindowService {
                         &outstanding_requests,
                         &reed_solomon_cache,
                         accept_repairs_only,
-                        &mut index_working_set,
                     ) {
                         ws_metrics.record_error(&e);
                         if Self::should_exit_on_error(e, &handle_error) {
