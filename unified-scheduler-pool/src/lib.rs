@@ -93,6 +93,10 @@ impl SupportedSchedulingMode {
             _ => false,
         }
     }
+
+    fn block_verification_only() -> Self {
+        Self::Either(SchedulingMode::BlockVerification)
+    }
 }
 
 // SchedulerPool must be accessed as a dyn trait from solana-runtime, because SchedulerPool
@@ -3643,7 +3647,7 @@ mod tests {
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool =
             SchedulerPool::<AsyncScheduler<TRIGGER_RACE_CONDITION>, DefaultTaskHandler>::new_dyn(
-                SupportedSchedulingMode::block_production_only(),
+                SupportedSchedulingMode::block_verification_only(),
                 None,
                 None,
                 None,
