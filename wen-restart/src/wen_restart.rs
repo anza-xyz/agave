@@ -599,7 +599,7 @@ pub(crate) fn find_bankhash_of_heaviest_fork(
                 );
                 let bank_with_scheduler;
                 {
-                    bank_with_scheduler = bank_forks.write().unwrap().insert_from_ledger(panic!(), new_bank);
+                    bank_with_scheduler = bank_forks.write().unwrap().insert_from_ledger(new_bank);
                 }
                 let mut progress = ConfirmationProgress::new(parent_bank.last_blockhash());
                 if let Err(e) = process_single_slot(
