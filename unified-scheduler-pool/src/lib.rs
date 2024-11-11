@@ -3330,8 +3330,8 @@ mod tests {
     fn test_scheduler_schedule_execution_blocked() {
         solana_logger::setup();
 
-        const STALLED_TRANSACTION_INDEX: usize = 0;
-        const BLOCKED_TRANSACTION_INDEX: usize = 1;
+        const STALLED_TRANSACTION_INDEX: TaskKey = 0;
+        const BLOCKED_TRANSACTION_INDEX: TaskKey = 1;
         static LOCK_TO_STALL: Mutex<()> = Mutex::new(());
 
         #[derive(Debug)]
