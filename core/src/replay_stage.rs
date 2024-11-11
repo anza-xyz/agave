@@ -2770,7 +2770,7 @@ impl ReplayStage {
             if let Some((result, completed_execute_timings)) = cleared_bank.wait_for_completed_scheduler() {
                 info!("Reaped aborted tpu_bank with unified scheduler: {} {:?}", cleared_bank.slot(), result);
             } else {
-                info!("Skipped to reap a tpu bank (seems unified scheduler is disabled): {}", cleared_bank.slot());
+                info!("Skipped to reap a tpu_bank (seems unified scheduler is disabled): {}", cleared_bank.slot());
             }
         }
     }
