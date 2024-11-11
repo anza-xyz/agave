@@ -2842,7 +2842,7 @@ mod tests {
             &TestCheckPoint::AfterSchedulerThreadAborted,
         ]);
 
-        static TASK_COUNT: Mutex<usize> = Mutex::new(0);
+        static TASK_COUNT: Mutex<TaskKey> = Mutex::new(0);
 
         #[derive(Debug)]
         struct CountingHandler;
