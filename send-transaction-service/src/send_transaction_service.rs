@@ -590,8 +590,8 @@ impl SendTransactionService {
             })
             .collect::<Vec<&[u8]>>();
 
-        for (address, slot) in &addresses {
-            Self::send_transactions(address, slot, &wire_transactions, connection_cache, stats);
+        for (address, _) in &addresses {
+            Self::send_transactions(address, &wire_transactions, connection_cache, stats);
         }
     }
 
@@ -724,7 +724,7 @@ impl SendTransactionService {
                 addresses.extend(leader_addresses);
 
                 for address in &addresses {
-                    Self::send_transactions(address, &Slot::MAX, chunk, connection_cache, stats);
+                    Self::send_transactions(address, chunk, connection_cache, stats);
                 }
             }
         }
@@ -752,18 +752,11 @@ impl SendTransactionService {
 
     fn send_transactions(
         tpu_address: &SocketAddr,
-        slot: &Slot,
         wire_transactions: &[&[u8]],
         connection_cache: &Arc<ConnectionCache>,
         stats: &SendTransactionServiceStats,
     ) {
         let mut measure = Measure::start("send-us");
-        for wire_transaction in wire_transactions {
-            const TRACER_KEY_OFFSET_IN_TRANSACTION: usize = 69;
-            if wire_transaction[TRACER_KEY_OFFSET_IN_TRANSACTION..(TRACER_KEY_OFFSET_IN_TRANSACTION+std::mem::size_of::<Pubkey>())] == *solana_sdk::packet::id().as_ref() {
-                warn!("pipeline_tracer: sts to {:?} leader at {} {:?} {:?}", tpu_address, slot, std::thread::current(), std::backtrace::Backtrace::force_capture());
-            }
-        }
         let result = if wire_transactions.len() == 1 {
             Self::send_transaction(tpu_address, wire_transactions[0], connection_cache)
         } else {
