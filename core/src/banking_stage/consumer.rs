@@ -865,7 +865,10 @@ mod tests {
             leader_schedule_cache::LeaderScheduleCache,
         },
         solana_perf::packet::Packet,
-        solana_poh::poh_recorder::{PohRecorder, Record, WorkingBankEntry},
+        solana_poh::{
+            mpsc,
+            poh_recorder::{PohRecorder, Record, WorkingBankEntry},
+        },
         solana_rpc::transaction_status_service::TransactionStatusService,
         solana_runtime::{bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache},
         solana_sdk::{
@@ -904,7 +907,6 @@ mod tests {
                 RwLock,
             },
             thread::{Builder, JoinHandle},
-            time::Duration,
         },
         transaction::MessageHash,
     };
@@ -1258,16 +1260,15 @@ mod tests {
             let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
             fn poh_tick_before_returning_record_response(
-                record_receiver: Receiver<Record>,
+                record_receiver: mpsc::Consumer<Record>,
                 poh_recorder: Arc<RwLock<PohRecorder>>,
             ) -> JoinHandle<()> {
                 let is_exited = poh_recorder.read().unwrap().is_exited.clone();
                 let tick_producer = Builder::new()
                     .name("solana-simulate_poh".to_string())
                     .spawn(move || loop {
-                        let timeout = Duration::from_millis(10);
-                        let record = record_receiver.recv_timeout(timeout);
-                        if let Ok(record) = record {
+                        let record = record_receiver.pop();
+                        if let Some(record) = record {
                             let record_response = poh_recorder.write().unwrap().record(
                                 record.slot,
                                 record.mixin,
