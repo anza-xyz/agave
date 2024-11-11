@@ -266,7 +266,12 @@ impl BankForks {
         bank_with_scheduler
     }
 
-    pub fn insert(&mut self, mode: SchedulingMode, mut bank: Bank) -> BankWithScheduler {
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn insert(&mut self, mut bank: Bank) -> BankWithScheduler {
+        self.insert_with_scheduling_mode(SchedulingMode::BlockVerification, bank)
+    }
+
+    pub fn insert_with_scheduling_mode(&mut self, mode: SchedulingMode, mut bank: Bank) -> BankWithScheduler {
         if self.root.load(Ordering::Relaxed) < self.highest_slot_at_startup {
             bank.set_check_program_modification_slot(true);
         }
