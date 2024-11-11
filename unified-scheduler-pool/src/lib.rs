@@ -3235,7 +3235,7 @@ mod tests {
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool = SchedulerPool::<PooledScheduler<PanickingHandler>, _>::new_dyn_for_verification(
-            Some(TX_COUNT), // fix to use exactly 2 handlers
+            Some(TX_COUNT as usize), // fix to use exactly 2 handlers
             None,
             None,
             None,
