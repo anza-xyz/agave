@@ -795,12 +795,8 @@ fn record_transactions(
     }
 }
 
-#[cfg(not(target_env = "msvc"))]
-use jemallocator::Jemalloc;
-
-#[cfg(not(target_env = "msvc"))]
 #[global_allocator]
-static GLOBAL: Jemalloc = Jemalloc;
+static GLOBAL: mimalloc::Mimalloc = mimalloc::Mimalloc;
 
 #[allow(clippy::cognitive_complexity)]
 fn main() {
