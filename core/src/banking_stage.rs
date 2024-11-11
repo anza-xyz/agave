@@ -775,14 +775,10 @@ impl BankingStage {
                                 bank.get_reserved_account_keys(),
                             )?;
 
-                            if let Err(_) =
-                                SanitizedTransaction::validate_account_locks(
-                                    tx.message(),
-                                    transaction_account_lock_limit,
-                                )
-                            {
-                                return None;
-                            }
+                            SanitizedTransaction::validate_account_locks(
+                                tx.message(),
+                                transaction_account_lock_limit,
+                            ).ok()?;
 
                             use solana_svm_transaction::svm_message::SVMMessage;
                             let Ok(fb) = process_compute_budget_instructions(
