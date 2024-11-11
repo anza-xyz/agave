@@ -813,7 +813,7 @@ impl PohRecorder {
             self.start_bank = working_bank.bank.clone();
             let working_slot = self.start_slot();
             self.start_tick_height = working_slot * self.ticks_per_slot + 1;
-            self.clear_bank();
+            let _ = self.clear_bank();
         }
         if send_result.is_err() {
             info!("WorkingBank::sender disconnected {:?}", send_result);
