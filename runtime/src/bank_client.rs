@@ -293,7 +293,7 @@ impl BankClient {
         self.bank = bank_forks
             .write()
             .unwrap()
-            .insert(panic!(), new_bank)
+            .insert(new_bank)
             .clone_without_scheduler();
 
         self.set_sysvar_for_tests(&clock::Clock {
