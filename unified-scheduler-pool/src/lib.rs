@@ -125,8 +125,6 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     _phantom: PhantomData<TH>,
 }
 
-type DummySender = Sender<Vec<VersionedTransaction>>;
-
 #[derive(Debug)]
 pub struct HandlerContext {
     log_messages_bytes_limit: Option<usize>,
