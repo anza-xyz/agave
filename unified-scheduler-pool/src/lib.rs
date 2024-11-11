@@ -2883,7 +2883,7 @@ mod tests {
         // That's because the scheduler needs to be aborted quickly as an expected behavior,
         // leaving some readily-available work untouched. So, schedule rather large number of tasks
         // to make the short-cutting abort code-path win the race easily.
-        const MAX_TASK_COUNT: usize = 100;
+        const MAX_TASK_COUNT: TaskKey = 100;
 
         for i in 0..MAX_TASK_COUNT {
             let tx =
