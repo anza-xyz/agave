@@ -1582,6 +1582,7 @@ mod tests {
                 bank_forks,
                 &Arc::new(PrioritizationFeeCache::new(0u64)),
                 false,
+                None,
             );
 
             let keypairs = (0..100).map(|_| Keypair::new()).collect_vec();
