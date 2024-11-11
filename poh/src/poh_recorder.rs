@@ -158,7 +158,7 @@ impl TransactionRecorder {
     pub fn new_dummy() -> Self {
         Self {
             record_sender: crossbeam_channel::unbounded().0,
-            is_exited: Arc::new(AtomicBool:default())
+            is_exited: Arc::new(AtomicBool::default())
         }
     }
 
