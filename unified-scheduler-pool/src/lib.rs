@@ -404,6 +404,24 @@ where
         )
     }
 
+    pub fn new_dyn_for_verification(
+        handler_count: Option<usize>,
+        log_messages_bytes_limit: Option<usize>,
+        transaction_status_sender: Option<TransactionStatusSender>,
+        replay_vote_sender: Option<ReplayVoteSender>,
+        prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+    ) -> InstalledSchedulerPoolArc {
+        Self::new(
+            SupportedSchedulingMode::block_verification_only(),
+            handler_count,
+            log_messages_bytes_limit,
+            transaction_status_sender,
+            replay_vote_sender,
+            prioritization_fee_cache,
+            TransactionRecorder::new_dummy(),
+        )
+    }
+
     // See a comment at the weak_self field for justification of this method's existence.
     fn self_arc(&self) -> Arc<Self> {
         self.weak_self
@@ -3646,14 +3664,12 @@ mod tests {
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool =
-            SchedulerPool::<AsyncScheduler<TRIGGER_RACE_CONDITION>, DefaultTaskHandler>::new_dyn(
-                SupportedSchedulingMode::block_verification_only(),
+            SchedulerPool::<AsyncScheduler<TRIGGER_RACE_CONDITION>, DefaultTaskHandler>::new_dyn_for_verification(
                 None,
                 None,
                 None,
                 None,
                 ignored_prioritization_fee_cache,
-                TransactionRecorder::new_dummy(),
             );
         let scheduler = pool.take_scheduler(context).unwrap();
 

@@ -2163,7 +2163,7 @@ mod tests {
         );
         let bank3 = Arc::new(Bank::new_from_parent(bank2, &Pubkey::default(), 3));
         assert_eq!(bank3.slot(), 3);
-        poh_recorder.reset(bank3.clone(), Some((4, 4)));
+        let _ = poh_recorder.reset(bank3.clone(), Some((4, 4)));
 
         // without sending more ticks, we should be leader now
         assert_eq!(
@@ -2275,7 +2275,7 @@ mod tests {
         assert!(!poh_recorder.would_be_leader(2 * bank.ticks_per_slot()));
 
         assert_eq!(bank.slot(), 0);
-        poh_recorder.reset(bank.clone(), None);
+        let _ = poh_recorder.reset(bank.clone(), None);
 
         assert!(!poh_recorder.would_be_leader(2 * bank.ticks_per_slot()));
 
