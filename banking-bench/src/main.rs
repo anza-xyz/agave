@@ -66,8 +66,6 @@ fn check_txs(
     loop {
         if let Ok((_bank, (entry, _tick_height))) = receiver.recv_timeout(Duration::from_millis(10)) {
             total += entry.transactions.len();
-        } else {
-            sleep(Duration::from_millis(10));
         }
 
         if total >= ref_tx_count {
