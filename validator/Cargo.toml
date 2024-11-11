@@ -27,7 +27,7 @@ jsonrpc-ipc-server = { workspace = true }
 lazy_static = { workspace = true }
 libloading = { workspace = true }
 log = { workspace = true }
-mimalloc = "0.1.42"
+mimalloc = { workspace = true }
 num_cpus = { workspace = true }
 rand = { workspace = true }
 rayon = { workspace = true }

@@ -20,6 +20,7 @@ futures = { workspace = true }
 histogram = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
+mimalloc = { workspace = true }
 num_cpus = { workspace = true }
 rayon = { workspace = true }
 regex = { workspace = true }

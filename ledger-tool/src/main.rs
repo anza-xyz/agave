@@ -796,7 +796,7 @@ fn record_transactions(
 }
 
 #[global_allocator]
-static GLOBAL: mimalloc::Mimalloc = mimalloc::Mimalloc;
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 #[allow(clippy::cognitive_complexity)]
 fn main() {
