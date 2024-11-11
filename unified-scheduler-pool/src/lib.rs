@@ -3536,7 +3536,7 @@ mod tests {
                 <DefaultTaskHandler as TaskHandler>::handle(
                     &mut result,
                     &mut timings,
-                    context.bank(),
+                    &context,
                     &transaction_and_index.0,
                     transaction_and_index.1,
                     &pool.handler_context,
