@@ -6197,7 +6197,6 @@ dependencies = [
  "ed25519-dalek",
  "humantime",
  "indicatif",
- "log",
  "pretty-hex",
  "semver 1.0.23",
  "serde",

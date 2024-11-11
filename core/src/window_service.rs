@@ -46,7 +46,6 @@ use {
     },
     tokio::sync::mpsc::Sender as AsyncSender,
 };
-use solana_ledger::blockstore::IndexMetaWorkingSetEntry;
 
 type ShredPayload = Vec<u8>;
 type DuplicateSlotSender = Sender<Slot>;
@@ -280,7 +279,6 @@ fn run_insert<F>(
     outstanding_requests: &RwLock<OutstandingShredRepairs>,
     reed_solomon_cache: &ReedSolomonCache,
     accept_repairs_only: bool,
-    index_working_set: &mut HashMap<u64, IndexMetaWorkingSetEntry>,
 ) -> Result<()>
 where
     F: Fn(PossibleDuplicateShred),
@@ -288,7 +286,7 @@ where
     const RECV_TIMEOUT: Duration = Duration::from_millis(200);
     let mut shred_receiver_elapsed = Measure::start("shred_receiver_elapsed");
     let mut packets = verified_receiver.recv_timeout(RECV_TIMEOUT)?;
-    packets.extend(verified_receiver.try_iter().take(50).flatten());
+    packets.extend(verified_receiver.try_iter().flatten());
     shred_receiver_elapsed.stop();
     ws_metrics.shred_receiver_elapsed_us += shred_receiver_elapsed.as_us();
     ws_metrics.run_insert_count += 1;
@@ -349,7 +347,6 @@ where
         &handle_duplicate,
         reed_solomon_cache,
         metrics,
-        index_working_set,
     )?;
 
     if let Some(sender) = completed_data_sets_sender {
