@@ -104,7 +104,7 @@ pub const MAX_COMPLETED_SLOTS_IN_CHANNEL: usize = 100_000;
 // An upper bound on maximum number of data shreds we can handle in a slot
 // 32K shreds would allow ~320K peak TPS
 // (32K shreds per slot * 4 TX per shred * 2.5 slots per sec)
-pub const MAX_DATA_SHREDS_PER_SLOT: usize = 32_768 as usize;
+pub const MAX_DATA_SHREDS_PER_SLOT: usize = 32_768;
 
 pub type CompletedSlotsSender = Sender<Vec<Slot>>;
 pub type CompletedSlotsReceiver = Receiver<Vec<Slot>>;
@@ -975,7 +975,6 @@ impl Blockstore {
         retransmit_sender: Option<&Sender<Vec</*shred:*/ Vec<u8>>>>,
         reed_solomon_cache: &ReedSolomonCache,
         metrics: &mut BlockstoreInsertionMetrics,
-        index_working_set: &mut HashMap<u64, IndexMetaWorkingSetEntry>,
     ) -> Result<InsertResults> {
         assert_eq!(shreds.len(), is_repaired.len());
         let mut total_start = Measure::start("Total elapsed");
@@ -990,10 +989,10 @@ impl Blockstore {
         let mut erasure_metas = BTreeMap::new();
         let mut merkle_root_metas = HashMap::new();
         let mut slot_meta_working_set = HashMap::new();
+        let mut index_working_set = HashMap::new();
         let mut duplicate_shreds = vec![];
 
         metrics.num_shreds += shreds.len();
-        let recent_slot = shreds.first().map(|a| a.slot());
         let mut start = Measure::start("Shred insertion");
         let mut index_meta_time_us = 0;
         let mut newly_completed_data_sets: Vec<CompletedDataSetInfo> = vec![];
@@ -1009,7 +1008,7 @@ impl Blockstore {
                         shred,
                         &mut erasure_metas,
                         &mut merkle_root_metas,
-                        index_working_set,
+                        &mut index_working_set,
                         &mut slot_meta_working_set,
                         &mut write_batch,
                         &mut just_inserted_shreds,
@@ -1047,7 +1046,7 @@ impl Blockstore {
                         shred,
                         &mut erasure_metas,
                         &mut merkle_root_metas,
-                        index_working_set,
+                        &mut index_working_set,
                         &mut write_batch,
                         &mut just_inserted_shreds,
                         &mut index_meta_time_us,
@@ -1066,7 +1065,7 @@ impl Blockstore {
         if let Some(leader_schedule_cache) = leader_schedule {
             let recovered_shreds = self.try_shred_recovery(
                 &erasure_metas,
-                index_working_set,
+                &mut index_working_set,
                 &just_inserted_shreds,
                 reed_solomon_cache,
             );
@@ -1080,10 +1079,10 @@ impl Blockstore {
                 .filter_map(|shred| {
                     let leader =
                         leader_schedule_cache.slot_leader_at(shred.slot(), /*bank=*/ None)?;
-                    //if !shred.verify(&leader) {
-                    //    metrics.num_recovered_failed_sig += 1;
-                    //    return None;
-                    //}
+                    if !shred.verify(&leader) {
+                        metrics.num_recovered_failed_sig += 1;
+                        return None;
+                    }
                     // Since the data shreds are fully recovered from the
                     // erasure batch, no need to store coding shreds in
                     // blockstore.
@@ -1094,7 +1093,7 @@ impl Blockstore {
                         shred.clone(),
                         &mut erasure_metas,
                         &mut merkle_root_metas,
-                        index_working_set,
+                        &mut index_working_set,
                         &mut slot_meta_working_set,
                         &mut write_batch,
                         &mut just_inserted_shreds,
@@ -1237,25 +1236,16 @@ impl Blockstore {
             )?;
         }
 
-        index_working_set.retain(|&slot, index_working_set_entry| {
+        for (&slot, index_working_set_entry) in index_working_set.iter() {
             if index_working_set_entry.did_insert_occur {
-                index_working_set_entry.did_insert_occur = false;
-                write_batch.put::<cf::Index>(slot, &index_working_set_entry.index).unwrap();
+                write_batch.put::<cf::Index>(slot, &index_working_set_entry.index)?;
             }
-            if let Some(recent_slot) = recent_slot {
-               slot >= recent_slot.saturating_sub(200)
-            }  else {
-               true
-            }
-        });
+        }
         start.stop();
         metrics.commit_working_sets_elapsed_us += start.as_us();
 
         let mut start = Measure::start("Write Batch");
-        use rocksdb::WriteOptions;
-        let mut write_options = WriteOptions::default();
-        write_options.disable_wal(true);
-        self.db.write_opt(write_batch, &write_options)?;
+        self.db.write(write_batch)?;
         start.stop();
         metrics.write_batch_elapsed_us += start.as_us();
 
@@ -1287,7 +1277,6 @@ impl Blockstore {
         handle_duplicate: &F,
         reed_solomon_cache: &ReedSolomonCache,
         metrics: &mut BlockstoreInsertionMetrics,
-        index_working_set: &mut HashMap<u64, IndexMetaWorkingSetEntry>,
     ) -> Result<Vec<CompletedDataSetInfo>>
     where
         F: Fn(PossibleDuplicateShred),
@@ -1303,7 +1292,6 @@ impl Blockstore {
             retransmit_sender,
             reed_solomon_cache,
             metrics,
-            index_working_set,
         )?;
 
         for shred in duplicate_shreds {
@@ -1366,7 +1354,6 @@ impl Blockstore {
         is_trusted: bool,
     ) -> Result<Vec<CompletedDataSetInfo>> {
         let shreds_len = shreds.len();
-        let mut index_working_set = HashMap::new();
         let insert_results = self.do_insert_shreds(
             shreds,
             vec![false; shreds_len],
@@ -1375,7 +1362,6 @@ impl Blockstore {
             None, // retransmit-sender
             &ReedSolomonCache::default(),
             &mut BlockstoreInsertionMetrics::default(),
-            &mut index_working_set,
         )?;
         Ok(insert_results.completed_data_set_infos)
     }
