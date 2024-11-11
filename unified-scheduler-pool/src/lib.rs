@@ -3646,6 +3646,21 @@ mod tests {
     impl<const TRIGGER_RACE_CONDITION: bool> SchedulerInner
         for AsyncScheduler<TRIGGER_RACE_CONDITION>
     {
+        fn id(&self) -> SchedulerId {
+            todo!()
+        }
+
+        fn banking_stage_status(&self) -> BankingStageStatus {
+            todo!()
+        }
+
+        fn is_overgrown(&self, on_hot_path: bool) -> bool {
+            todo!()
+        }
+
+        fn reset(&self) {
+            todo!()
+        }
     }
 
     impl<const TRIGGER_RACE_CONDITION: bool> SpawnableScheduler<DefaultTaskHandler>
