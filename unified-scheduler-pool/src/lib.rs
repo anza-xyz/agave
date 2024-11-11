@@ -3643,6 +3643,11 @@ mod tests {
         }
     }
 
+    impl<const TRIGGER_RACE_CONDITION: bool> SchedulerInner
+        for AsyncScheduler<TRIGGER_RACE_CONDITION>
+    {
+    }
+
     impl<const TRIGGER_RACE_CONDITION: bool> SpawnableScheduler<DefaultTaskHandler>
         for AsyncScheduler<TRIGGER_RACE_CONDITION>
     {
