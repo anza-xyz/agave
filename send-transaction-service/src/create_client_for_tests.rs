@@ -10,6 +10,7 @@ use {
         },
     },
     solana_client::connection_cache::ConnectionCache,
+    solana_tpu_client_next::QuicClientCertificate,
     std::{net::SocketAddr, sync::Arc},
     tokio::runtime::Handle,
 };
@@ -59,7 +60,7 @@ impl CreateClient for TpuClientNextClient {
             tpu_peers,
             None,
             leader_forward_count,
-            None,
+            QuicClientCertificate::with_option(None),
         )
     }
 }

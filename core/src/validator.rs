@@ -1,9 +1,6 @@
 //! The `validator` module hosts all the validator microservices.
 
-use std::sync::LazyLock;
-
 pub use solana_perf::report_target_features;
-use solana_rpc::cluster_tpu_info::ClusterTpuInfo;
 use {
     crate::{
         accounts_hash_verifier::AccountsHashVerifier,
@@ -85,6 +82,7 @@ use {
         poh_service::{self, PohService},
     },
     solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
+    solana_rpc::cluster_tpu_info::ClusterTpuInfo,
     solana_rpc::{
         max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::{
@@ -115,6 +113,7 @@ use {
         snapshot_hash::StartingSnapshotHashes,
         snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
     },
+    solana_sdk::quic::NotifyKeyUpdate,
     solana_sdk::{
         clock::Slot,
         epoch_schedule::MAX_LEADER_SCHEDULE_EPOCH_OFFSET,
@@ -127,15 +126,16 @@ use {
         signature::{Keypair, Signer},
         timing::timestamp,
     },
+    solana_send_transaction_service::transaction_client::TpuClientNextClientUpdater,
     solana_send_transaction_service::{
-        send_transaction_service,
-        transaction_client::{spawn_tpu_client_send_txs, ConnectionCacheClient},
+        send_transaction_service, transaction_client::ConnectionCacheClient,
     },
     solana_streamer::{socket::SocketAddrSpace, streamer::StakedNodes},
     solana_turbine::{self, broadcast_stage::BroadcastStageType},
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_vote_program::vote_state,
     solana_wen_restart::wen_restart::{wait_for_wen_restart, WenRestartConfig},
+    std::sync::LazyLock,
     std::{
         collections::{HashMap, HashSet},
         net::SocketAddr,
@@ -1045,6 +1045,7 @@ impl Validator {
             rpc_completed_slots_service,
             optimistically_confirmed_bank_tracker,
             bank_notification_sender,
+            client_updater,
         ) = if let Some((rpc_addr, rpc_pubsub_addr)) = config.rpc_addrs {
             assert_eq!(
                 node.info
@@ -1064,20 +1065,22 @@ impl Validator {
             };
 
             let leader_info = ClusterTpuInfo::new(cluster_info.clone(), poh_recorder.clone());
-            let json_rpc_service = if config.use_tpu_client_next {
+            let (json_rpc_service, client_updater) = if config.use_tpu_client_next {
                 let my_tpu_address = cluster_info
                     .my_contact_info()
                     .tpu(Protocol::QUIC)
                     .map_err(|err| ValidatorError::Other(format!("{err}")))?;
-                let client = spawn_tpu_client_send_txs(
+
+                let client = TpuClientNextClientUpdater::new(
                     get_runtime_handle(),
                     my_tpu_address,
                     config.send_transaction_service_config.tpu_peers.clone(),
                     Some(leader_info),
                     config.send_transaction_service_config.leader_forward_count,
-                    Some((*identity_keypair).insecure_clone()),
+                    Some(&*identity_keypair),
                 );
-                JsonRpcService::new(
+
+                let json_rpc_service = JsonRpcService::new(
                     rpc_addr,
                     config.rpc_config.clone(),
                     Some(config.snapshot_config.clone()),
@@ -1095,12 +1098,16 @@ impl Validator {
                     config.send_transaction_service_config.clone(),
                     max_slots.clone(),
                     leader_schedule_cache.clone(),
-                    client,
+                    client.clone(),
                     max_complete_transaction_status_slot,
                     max_complete_rewards_slot,
                     prioritization_fee_cache.clone(),
                 )
-                .map_err(ValidatorError::Other)?
+                .map_err(ValidatorError::Other)?;
+                (
+                    json_rpc_service,
+                    Arc::new(client) as Arc<dyn NotifyKeyUpdate + Send>,
+                )
             } else {
                 let my_tpu_address = cluster_info
                     .my_contact_info()
@@ -1113,7 +1120,7 @@ impl Validator {
                     Some(leader_info),
                     config.send_transaction_service_config.leader_forward_count,
                 );
-                JsonRpcService::new(
+                let json_rpc_service = JsonRpcService::new(
                     rpc_addr,
                     config.rpc_config.clone(),
                     Some(config.snapshot_config.clone()),
@@ -1131,12 +1138,16 @@ impl Validator {
                     config.send_transaction_service_config.clone(),
                     max_slots.clone(),
                     leader_schedule_cache.clone(),
-                    client,
+                    client.clone(),
                     max_complete_transaction_status_slot,
                     max_complete_rewards_slot,
                     prioritization_fee_cache.clone(),
                 )
-                .map_err(ValidatorError::Other)?
+                .map_err(ValidatorError::Other)?;
+                (
+                    json_rpc_service,
+                    Arc::new(client) as Arc<dyn NotifyKeyUpdate + Send>,
+                )
             };
 
             let pubsub_service = if !config.rpc_config.full_api {
@@ -1213,9 +1224,10 @@ impl Validator {
                 rpc_completed_slots_service,
                 optimistically_confirmed_bank_tracker,
                 bank_notification_sender_config,
+                Some(client_updater),
             )
         } else {
-            (None, None, None, None, None, None, None)
+            (None, None, None, None, None, None, None, None)
         };
 
         if config.halt_at_slot.is_some() {
@@ -1578,12 +1590,12 @@ impl Validator {
         );
 
         *start_progress.write().unwrap() = ValidatorStartProgress::Running;
-        if config.use_tpu_client_next {
-            unimplemented!();
+        if let Some(client_updater) = client_updater {
+            key_notifies.push(client_updater);
+        } else {
+            // add connection_cache because it is still used in Forwarder.
+            key_notifies.push(connection_cache);
         }
-        // add connection_cache regardless of `use_tpu_client_next` because it
-        // is still used in Forwarder.
-        key_notifies.push(connection_cache);
 
         *admin_rpc_service_post_init.write().unwrap() = Some(AdminRpcRequestMetadataPostInit {
             bank_forks: bank_forks.clone(),

@@ -5,12 +5,12 @@ use {
     solana_client::connection_cache::{ConnectionCache, Protocol},
     solana_connection_cache::client_connection::ClientConnection as TpuConnection,
     solana_measure::measure::Measure,
-    solana_sdk::signature::Keypair,
+    solana_sdk::{quic::NotifyKeyUpdate, signature::Keypair},
     solana_tpu_client_next::{
         connection_workers_scheduler::{ConnectionWorkersSchedulerConfig, Fanout},
         leader_updater::LeaderUpdater,
         transaction_batch::TransactionBatch,
-        ConnectionWorkersScheduler,
+        ConnectionWorkersScheduler, QuicClientCertificate,
     },
     std::{
         net::{Ipv4Addr, SocketAddr},
@@ -160,6 +160,15 @@ where
     fn cancel(&self) {}
 }
 
+impl<T> NotifyKeyUpdate for ConnectionCacheClient<T>
+where
+    T: TpuInfoWithSendStatic,
+{
+    fn update_key(&self, validator_identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
+        self.connection_cache.update_key(validator_identity)
+    }
+}
+
 pub struct SendTransactionServiceLeaderUpdater<T: TpuInfoWithSendStatic> {
     leader_info_provider: CurrentLeaderInfo<T>,
     my_tpu_address: SocketAddr,
@@ -230,7 +239,7 @@ pub fn spawn_tpu_client_send_txs<T>(
     tpu_peers: Option<Vec<SocketAddr>>,
     leader_info: Option<T>,
     leader_forward_count: u64,
-    validator_identity: Option<Keypair>,
+    client_certificate: QuicClientCertificate,
 ) -> TpuClientNextClient
 where
     T: TpuInfoWithSendStatic,
@@ -250,7 +259,7 @@ where
                 };
             let config = ConnectionWorkersSchedulerConfig {
                 bind: SocketAddr::new(Ipv4Addr::new(0, 0, 0, 0).into(), 0),
-                stake_identity: validator_identity,
+                client_certificate,
                 // to match MAX_CONNECTIONS from ConnectionCache
                 num_connections: 1024,
                 skip_check_transaction_age: true,
@@ -270,6 +279,103 @@ where
         }
     });
     TpuClientNextClient { sender, cancel }
+}
+
+/// This structure wraps [`TpuClientNext`] so that the underlying task sending
+/// transactions can be updated when the validator changes identity keypair. It
+/// implements the same interface as TpuClientNext plus [`NotifyKeyUpdate`]
+#[derive(Clone)]
+pub struct TpuClientNextClientUpdater {
+    key_update_sender: mpsc::Sender<QuicClientCertificate>,
+    client: Arc<TpuClientNextClient>,
+}
+
+impl TpuClientNextClientUpdater {
+    pub fn new<T>(
+        runtime_handle: Handle,
+        my_tpu_address: SocketAddr,
+        tpu_peers: Option<Vec<SocketAddr>>,
+        leader_info: Option<T>,
+        leader_forward_count: u64,
+        validator_identity: Option<&Keypair>,
+    ) -> Self
+    where
+        T: TpuInfoWithSendStatic + Clone,
+    {
+        let (key_update_sender, mut key_update_receiver) = mpsc::channel(1);
+
+        let client_certificate = QuicClientCertificate::with_option(validator_identity);
+        // It is Arc to replace `client` later using `get_mut`.
+        let client = Arc::new(spawn_tpu_client_send_txs(
+            runtime_handle.clone(),
+            my_tpu_address,
+            tpu_peers.clone(),
+            leader_info.clone(),
+            leader_forward_count,
+            client_certificate,
+        ));
+
+        // Spawn a background task to manage the client updates
+        runtime_handle.spawn({
+            let mut client = client.clone();
+            let leader_info = leader_info.clone();
+            let runtime_handle = runtime_handle.clone();
+            async move {
+                loop {
+                    if let Some(client_certificate) = key_update_receiver.recv().await {
+                        client.cancel();
+
+                        let new_client = spawn_tpu_client_send_txs(
+                            runtime_handle.clone(),
+                            my_tpu_address,
+                            tpu_peers.clone(),
+                            leader_info.clone(),
+                            leader_forward_count,
+                            client_certificate,
+                        );
+
+                        // Replace the client in the manager
+                        *Arc::get_mut(&mut client).expect("No other refs exist") = new_client;
+                    }
+                }
+            }
+        });
+
+        Self {
+            key_update_sender,
+            client,
+        }
+    }
+}
+
+// Implement Cancelable for the Manager
+impl Cancelable for TpuClientNextClientUpdater {
+    fn cancel(&self) {
+        self.client.cancel();
+    }
+}
+
+impl NotifyKeyUpdate for TpuClientNextClientUpdater {
+    fn update_key(&self, validator_identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
+        let client_certificate = QuicClientCertificate::with_option(Some(validator_identity));
+        self.key_update_sender.try_send(client_certificate)?;
+        Ok(())
+    }
+}
+
+impl TransactionClient for TpuClientNextClientUpdater {
+    fn send_transactions_in_batch(
+        &self,
+        wire_transactions: Vec<Vec<u8>>,
+        stats: &SendTransactionServiceStats,
+    ) {
+        self.client
+            .send_transactions_in_batch(wire_transactions, stats);
+    }
+
+    fn protocol(&self) -> Protocol {
+        self.client.protocol()
+    }
 }
 
 /// The leader info refresh rate.
