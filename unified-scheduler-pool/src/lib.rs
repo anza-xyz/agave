@@ -2326,7 +2326,7 @@ mod tests {
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool =
-            DefaultSchedulerPool::new_dyn(None, None, None, None, ignored_prioritization_fee_cache);
+            DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None, ignored_prioritization_fee_cache);
 
         // this indirectly proves that there should be circular link because there's only one Arc
         // at this moment now
@@ -2342,7 +2342,7 @@ mod tests {
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool =
-            DefaultSchedulerPool::new_dyn(None, None, None, None, ignored_prioritization_fee_cache);
+            DefaultSchedulerPool::new_dyn_for_verification(None, None, None, None, ignored_prioritization_fee_cache);
         let bank = Arc::new(Bank::default_for_tests());
         let context = SchedulingContext::for_verification(bank);
         let scheduler = pool.take_scheduler(context).unwrap();
