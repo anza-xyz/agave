@@ -1521,7 +1521,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         // consistent. Note that unified scheduler will go
                         // into busy looping to seek lowest latency eventually. However, not now,
                         // to measure _actual_ cpu usage easily with the select approach.
-                        let mut step_type = select! {
+                        let step_type = select! {
                             recv(finished_blocked_task_receiver) -> executed_task => {
                                 let Some((executed_task, should_pause)) = Self::accumulate_result_with_timings(
                                     &context,
