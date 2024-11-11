@@ -146,13 +146,13 @@ mod utils {
         #[must_use]
         #[track_caller]
         pub(super) fn increment(self) -> Self {
-            Self(self.0 + 1)
+            Self(self.0.checked_add(1).unwrap())
         }
 
         #[must_use]
         #[track_caller]
         pub(super) fn decrement(self) -> Self {
-            Self(self.0 - 1)
+            Self(self.0.checked_sub(1).unwrap())
         }
 
         #[track_caller]
@@ -550,12 +550,6 @@ pub struct TaskInner {
     packed_task_inner: PackedTaskInner,
     blocked_usage_count: TokenCell<CounterWithStatus>,
 }
-
-struct RcInnerDemo {
-  data: TaskInner,
-  counter: std::cell::Cell<u32>,
-}
-//const_assert_eq!(mem::size_of::<RcInnerDemo>(), 32);
 
 impl TaskInner {
     pub fn task_index(&self) -> Index {
