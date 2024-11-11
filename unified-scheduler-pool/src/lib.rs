@@ -1433,7 +1433,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             state_machine.reblocked_lock_total(),
                             new_task_receiver.len(),
                             runnable_task_sender.len(), runnable_task_sender.aux_len(),
-                            finished_blocked_task_receiver.len(), finished_idle_task_receiver.len(),
+                            finished_blocked_task_receiver.len(), 0 /*finished_idle_task_receiver.len()*/,
                             banking_packet_receiver.len(),
                             {
                                 let now = Instant::now();
