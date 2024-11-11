@@ -761,21 +761,19 @@ impl BankingStage {
                             (task_id..(task_id + pp.len() as u64)).collect::<Vec<_>>();
 
                         let indexes =
-                            PacketDeserializer::generate_packet_indexes(&pp);
+                            PacketDeserializer::generate_packet_indexes(pp);
                         let ppp = PacketDeserializer::deserialize_packets2(
-                            &pp, &indexes,
+                            pp, &indexes,
                         )
                         .filter_map(|(i, p)| {
                             if p.original_packet().meta().is_tracer_packet() {
                                 //warn!("pipeline_tracer: unified_scheduler submit receiver_len: {} {:?} {:?}", packet_deserializer.packet_batch_receiver.len(), std::thread::current(), std::backtrace::Backtrace::force_capture());
                             }
-                            let Some(tx) = p.build_sanitized_transaction(
+                            let tx = p.build_sanitized_transaction(
                                 bank.vote_only_bank(),
                                 &*bank,
                                 bank.get_reserved_account_keys(),
-                            ) else {
-                                return None;
-                            };
+                            )?;
 
                             if let Err(_) =
                                 SanitizedTransaction::validate_account_locks(

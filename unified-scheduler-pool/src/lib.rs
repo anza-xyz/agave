@@ -1859,7 +1859,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
         let handler_main_loop = || {
             let (banking_packet_receiver, mut on_recv) = banking_stage_context.clone().unzip();
-            let banking_packet_receiver = banking_packet_receiver.unwrap_or_else(|| never());
+            let banking_packet_receiver = banking_packet_receiver.unwrap_or_else(never);
             let new_task_sender = Arc::downgrade(&self.new_task_sender);
 
             let pool = self.pool.clone();
