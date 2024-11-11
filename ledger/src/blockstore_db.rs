@@ -746,14 +746,6 @@ impl Rocks {
         }
     }
 
-    fn write_opt(&self, batch: RWriteBatch, write_options: &rocksdb::WriteOptions) -> Result<()> {
-        let result = self.db.write_opt(batch, write_options);
-        match result {
-            Ok(_) => Ok(()),
-            Err(e) => Err(BlockstoreError::RocksDb(e)),
-        }
-    }
-
     fn is_primary_access(&self) -> bool {
         self.access_type == AccessType::Primary
             || self.access_type == AccessType::PrimaryForMaintenance
@@ -1504,10 +1496,6 @@ impl Database {
 
     pub fn write(&self, batch: WriteBatch) -> Result<()> {
         self.backend.write(batch.write_batch)
-    }
-
-    pub fn write_opt(&self, batch: WriteBatch, write_options: &rocksdb::WriteOptions) -> Result<()> {
-        self.backend.write_opt(batch.write_batch, write_options)
     }
 
     pub fn storage_size(&self) -> Result<u64> {
