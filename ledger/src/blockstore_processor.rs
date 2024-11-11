@@ -2289,6 +2289,7 @@ pub mod tests {
         std::{collections::BTreeSet, sync::RwLock},
         trees::tr,
     };
+    use solana_sdk::scheduling::SchedulingMode;
 
     // Convenience wrapper to optionally process blockstore with Secondary access.
     //
