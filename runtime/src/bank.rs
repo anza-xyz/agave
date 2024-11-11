@@ -4781,10 +4781,10 @@ impl Bank {
         let txs = vec![tx.into()];
         let batch = self.prepare_entry_batch(txs)?;
 
-        let Some((
+        let (
             mut commit_results,
             ..,
-        )) = self.load_execute_and_commit_transactions(
+        ) = self.load_execute_and_commit_transactions(
             &batch,
             MAX_PROCESSING_AGE,
             false, // collect_balances
@@ -4795,11 +4795,7 @@ impl Bank {
             },
             &mut ExecuteTimings::default(),
             Some(1000 * 1000),
-            None::<fn() -> bool>,
-        )
-        else {
-            panic!()
-        };
+        );
 
         commit_results.remove(0)
     }
