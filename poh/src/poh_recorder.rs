@@ -1156,7 +1156,7 @@ impl PohRecorder {
     pub fn schedule_dummy_max_height_reached_failure(&mut self) {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
-        self.reset(bank, None);
+        let _ = self.reset(bank, None);
     }
 }
 
