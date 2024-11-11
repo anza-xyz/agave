@@ -776,6 +776,7 @@ mod chained_channel {
         aux_sender: Sender<P>,
     }
 
+    #[allow(dead_code)]
     pub(super) trait WithMessageType {
         type ChannelMessage;
     }
