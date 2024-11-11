@@ -2558,7 +2558,7 @@ mod tests {
                 timings: &mut ExecuteTimings,
                 _bank: &Arc<Bank>,
                 _transaction: &SanitizedTransaction,
-                _index: usize,
+                _index: TaskKey,
                 _handler_context: &HandlerContext,
             ) {
                 timings.metrics[ExecuteTimingType::CheckUs] += 123;
@@ -2741,7 +2741,7 @@ mod tests {
             _timings: &mut ExecuteTimings,
             _bank: &Arc<Bank>,
             _transaction: &SanitizedTransaction,
-            _index: usize,
+            _index: TaskKey,
             _handler_context: &HandlerContext,
         ) {
             *result = Err(TransactionError::AccountNotFound);
@@ -2852,7 +2852,7 @@ mod tests {
                 _timings: &mut ExecuteTimings,
                 _bank: &Arc<Bank>,
                 _transaction: &SanitizedTransaction,
-                _index: usize,
+                _index: TaskKey,
                 _handler_context: &HandlerContext,
             ) {
                 *TASK_COUNT.lock().unwrap() += 1;
@@ -3191,7 +3191,7 @@ mod tests {
                 _timings: &mut ExecuteTimings,
                 _bank: &Arc<Bank>,
                 _transaction: &SanitizedTransaction,
-                index: usize,
+                index: TaskKey,
                 _handler_context: &HandlerContext,
             ) {
                 if index == 0 {
@@ -3272,7 +3272,7 @@ mod tests {
                 _timings: &mut ExecuteTimings,
                 _bank: &Arc<Bank>,
                 _transaction: &SanitizedTransaction,
-                index: usize,
+                index: TaskKey,
                 _handler_context: &HandlerContext,
             ) {
                 *TASK_COUNT.lock().unwrap() += 1;
@@ -3342,7 +3342,7 @@ mod tests {
                 timings: &mut ExecuteTimings,
                 bank: &Arc<Bank>,
                 transaction: &SanitizedTransaction,
-                index: usize,
+                index: TaskKey,
                 handler_context: &HandlerContext,
             ) {
                 match index {
@@ -3427,7 +3427,7 @@ mod tests {
                 _timings: &mut ExecuteTimings,
                 bank: &Arc<Bank>,
                 _transaction: &SanitizedTransaction,
-                index: usize,
+                index: TaskKey,
                 _handler_context: &HandlerContext,
             ) {
                 // The task index must always be matched to the slot.
