@@ -2783,7 +2783,7 @@ impl ReplayStage {
         );
 
         let cleared_bank = poh_recorder.write().unwrap().reset(bank, next_leader_slot);
-        if cleared_bank.map(|bank| bank.scheduling_mode()) == Some(SchedulingMode::BlockProduction) {
+        if cleared_bank.and_then(|bank| bank.scheduling_mode()) == Some(SchedulingMode::BlockProduction) {
             info!("Reaping tpu bank: {}...", bank.slot());
             if let Some((result, completed_execute_timings)) = bank.wait_for_completed_scheduler() {
                 info!("Reaped aborted a unified scheduler tpu bank: {} {:?}", bank.slot(), result);
