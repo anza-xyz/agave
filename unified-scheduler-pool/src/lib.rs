@@ -3726,6 +3726,7 @@ mod tests {
         let result = &mut Ok(());
         let timings = &mut ExecuteTimings::default();
         let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
+        let scheduling_context = &SchedulingContext::new(SchedulingMode::BlockVerification, bank);
         let handler_context = &HandlerContext {
             log_messages_bytes_limit: None,
             transaction_status_sender: None,
@@ -3733,7 +3734,7 @@ mod tests {
             prioritization_fee_cache,
         };
 
-        DefaultTaskHandler::handle(result, timings, bank, tx, 0, handler_context);
+        DefaultTaskHandler::handle(result, timings, scheduling_context, tx, 0, handler_context);
         assert_matches!(result, Err(TransactionError::AccountLoadedTwice));
     }
 }
