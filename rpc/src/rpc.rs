@@ -1,4 +1,17 @@
 //! The `rpc` module implements the Solana RPC interface.
+#[cfg(test)]
+use {
+    crate::rpc_service::get_runtime_handle,
+    solana_client::connection_cache::ConnectionCache,
+    solana_gossip::contact_info::ContactInfo,
+    solana_ledger::get_tmp_ledger_path,
+    solana_runtime::commitment::CommitmentSlots,
+    solana_send_transaction_service::transaction_client::spawn_tpu_client_send_txs,
+    solana_send_transaction_service::{
+        send_transaction_service::SendTransactionService, tpu_info::NullTpuInfo,
+    },
+    solana_streamer::socket::SocketAddrSpace,
+};
 use {
     crate::{
         filter::filter_allows, max_slots::MaxSlots,
@@ -112,17 +125,6 @@ use {
         },
         time::Duration,
     },
-};
-#[cfg(test)]
-use {
-    solana_client::connection_cache::ConnectionCache,
-    solana_gossip::contact_info::ContactInfo,
-    solana_ledger::get_tmp_ledger_path,
-    solana_runtime::commitment::CommitmentSlots,
-    solana_send_transaction_service::{
-        send_transaction_service::SendTransactionService, tpu_info::NullTpuInfo,
-    },
-    solana_streamer::socket::SocketAddrSpace,
 };
 
 pub mod account_resolver;
@@ -379,16 +381,16 @@ impl JsonRpcRequestProcessor {
             .tpu(connection_cache.protocol())
             .unwrap();
         let (sender, receiver) = unbounded();
-        SendTransactionService::new::<NullTpuInfo>(
+
+        let client = spawn_tpu_client_send_txs::<NullTpuInfo>(
+            get_runtime_handle(),
             tpu_address,
-            &bank_forks,
             None,
-            receiver,
-            connection_cache,
-            1000,
+            None,
             1,
-            exit.clone(),
+            None,
         );
+        SendTransactionService::new(&bank_forks, receiver, client, 1000, exit.clone());
 
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
         let startup_verification_complete = Arc::clone(bank.get_startup_verification_complete());
@@ -6492,16 +6494,15 @@ pub mod tests {
             Arc::new(AtomicU64::default()),
             Arc::new(PrioritizationFeeCache::default()),
         );
-        SendTransactionService::new::<NullTpuInfo>(
+        let client = spawn_tpu_client_send_txs::<NullTpuInfo>(
+            get_runtime_handle(),
             tpu_address,
-            &bank_forks,
             None,
-            receiver,
-            connection_cache,
-            1000,
+            None,
             1,
-            exit,
+            None,
         );
+        SendTransactionService::new(&bank_forks, receiver, client, 1000, exit.clone());
 
         let mut bad_transaction = system_transaction::transfer(
             &mint_keypair,
@@ -6766,16 +6767,16 @@ pub mod tests {
             Arc::new(AtomicU64::default()),
             Arc::new(PrioritizationFeeCache::default()),
         );
-        SendTransactionService::new::<NullTpuInfo>(
+        let client = spawn_tpu_client_send_txs::<NullTpuInfo>(
+            get_runtime_handle(),
             tpu_address,
-            &bank_forks,
             None,
-            receiver,
-            connection_cache,
-            1000,
+            None,
             1,
-            exit,
+            None,
         );
+        SendTransactionService::new(&bank_forks, receiver, client, 1000, exit.clone());
+
         assert_eq!(
             request_processor.get_block_commitment(0),
             RpcBlockCommitment {
