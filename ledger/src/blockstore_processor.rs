@@ -101,7 +101,6 @@ fn get_first_error(
     batch: &TransactionBatch,
     commit_results: &[TransactionCommitResult],
     is_unified_scheduler_for_block_production: bool,
-    slot: Slot,
 ) -> Option<(Result<()>, Signature)> {
     let mut first_err = None;
     for (commit_result, transaction) in commit_results.iter().zip(batch.sanitized_transactions()) {
@@ -204,7 +203,6 @@ pub fn execute_batch(
         batch,
         &commit_results,
         is_unified_scheduler_for_block_production,
-        bank.slot(),
     );
 
     if let Some(transaction_status_sender) = transaction_status_sender {
