@@ -339,7 +339,7 @@ impl SchedulerStatus {
     fn scheduling_mode(&self) -> Option<SchedulingMode> {
         match self {
             SchedulerStatus::Unavailable => None,
-            SchedulerStatus::Active(sch) => Some(sch.scheduling_mode()),
+            SchedulerStatus::Active(sch) => Some(sch.context().mode()),
             SchedulerStatus::Stale(_, mode, _) => Some(*mode),
         }
     }
