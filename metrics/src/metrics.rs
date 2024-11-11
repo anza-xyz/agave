@@ -181,7 +181,7 @@ impl Default for MetricsAgent {
 
         Self::new(
             Arc::new(InfluxDbMetricsWriter::new()),
-            Duration::from_secs(1),
+            Duration::from_secs(10),
             max_points_per_sec,
         )
     }
@@ -548,7 +548,6 @@ pub mod test_mocks {
         pub points_written: Arc<Mutex<Vec<DataPoint>>>,
     }
     impl MockMetricsWriter {
-        #[allow(dead_code)]
         pub fn new() -> Self {
             MockMetricsWriter {
                 points_written: Arc::new(Mutex::new(Vec::new())),
