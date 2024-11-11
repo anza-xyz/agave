@@ -266,7 +266,7 @@ impl BankForks {
         bank_with_scheduler
     }
 
-    pub fn insert(&mut self, mut bank: Bank) -> BankWithScheduler {
+    pub fn insert(&mut self, bank: Bank) -> BankWithScheduler {
         self.insert_with_scheduling_mode(SchedulingMode::BlockVerification, bank)
     }
 
