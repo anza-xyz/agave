@@ -1482,6 +1482,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 {
                                     (log_reported_at, reported_task_total, reported_executed_task_total) = (now, state_machine.task_total(), state_machine.executed_task_total());
                                 }
+                                #[allow(unused_assignments)]
                                 cpu_log_reported_at = cpu_now;
                                 l
                             },
