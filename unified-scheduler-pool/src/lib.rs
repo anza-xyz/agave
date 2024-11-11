@@ -133,7 +133,6 @@ pub struct HandlerContext {
     replay_vote_sender: Option<ReplayVoteSender>,
     prioritization_fee_cache: Arc<PrioritizationFeeCache>,
     transaction_recorder: Option<TransactionRecorder>,
-    dummy_sender: Option<DummySender>,
 }
 
 pub type DefaultSchedulerPool =
@@ -199,7 +198,6 @@ where
         replay_vote_sender: Option<ReplayVoteSender>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
         transaction_recorder: Option<TransactionRecorder>,
-        dummy_sender: Option<DummySender>,
     ) -> Arc<Self> {
         Self::do_new(
             supported_scheduling_mode,
@@ -209,7 +207,6 @@ where
             replay_vote_sender,
             prioritization_fee_cache,
             transaction_recorder,
-            dummy_sender,
             DEFAULT_POOL_CLEANER_INTERVAL,
             DEFAULT_MAX_POOLING_DURATION,
             DEFAULT_MAX_USAGE_QUEUE_COUNT,
@@ -225,7 +222,6 @@ where
         replay_vote_sender: Option<ReplayVoteSender>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
         transaction_recorder: Option<TransactionRecorder>,
-        dummy_sender: Option<DummySender>,
         pool_cleaner_interval: Duration,
         max_pooling_duration: Duration,
         max_usage_queue_count: usize,
@@ -249,7 +245,6 @@ where
                 replay_vote_sender,
                 prioritization_fee_cache,
                 transaction_recorder,
-                dummy_sender,
             },
             weak_self: weak_self.clone(),
             next_scheduler_id: AtomicSchedulerId::default(),
@@ -394,7 +389,6 @@ where
         replay_vote_sender: Option<ReplayVoteSender>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
         transaction_recorder: Option<TransactionRecorder>,
-        dummy_sender: Option<DummySender>,
     ) -> InstalledSchedulerPoolArc {
         Self::new(
             supported_scheduling_mode,
@@ -404,7 +398,6 @@ where
             replay_vote_sender,
             prioritization_fee_cache,
             transaction_recorder,
-            dummy_sender,
         )
     }
 
@@ -630,95 +623,86 @@ impl TaskHandler for DefaultTaskHandler {
         index: Index,
         handler_context: &HandlerContext,
     ) {
-        if handler_context.dummy_sender.is_none() {
-            let wall_time = Instant::now();
-            let cpu_time = cpu_time::ThreadTime::now();
+        let wall_time = Instant::now();
+        let cpu_time = cpu_time::ThreadTime::now();
 
-            let (cost, added_cost) = if matches!(scheduling_context.mode(), SchedulingMode::BlockProduction) {
-                use solana_cost_model::cost_model::CostModel;
-                let c = CostModel::calculate_cost(transaction, &scheduling_context.bank().feature_set);
-                loop {
-                    let r = scheduling_context.bank().write_cost_tracker().unwrap().try_add(&c);
-                    if let Err(e) = r {
-                        use solana_cost_model::cost_tracker::CostTrackerError;
-                        if matches!(e, CostTrackerError::WouldExceedAccountDataBlockLimit) {
-                            sleep(Duration::from_millis(10));
-                            continue;
-                        } else {
-                            *result = Err(e.into());
-                            break (Some(c), false)
-                        }
+        let (cost, added_cost) = if matches!(scheduling_context.mode(), SchedulingMode::BlockProduction) {
+            use solana_cost_model::cost_model::CostModel;
+            let c = CostModel::calculate_cost(transaction, &scheduling_context.bank().feature_set);
+            loop {
+                let r = scheduling_context.bank().write_cost_tracker().unwrap().try_add(&c);
+                if let Err(e) = r {
+                    use solana_cost_model::cost_tracker::CostTrackerError;
+                    if matches!(e, CostTrackerError::WouldExceedAccountDataBlockLimit) {
+                        sleep(Duration::from_millis(10));
+                        continue;
                     } else {
-                        break (Some(c), true)
+                        *result = Err(e.into());
+                        break (Some(c), false)
                     }
+                } else {
+                    break (Some(c), true)
                 }
-            } else {
-                (None, false)
-            };
-
-            if result.is_ok() {
-                // scheduler must properly prevent conflicting tx executions. thus, task handler isn't
-                // responsible for locking.
-                let batch = scheduling_context
-                    .bank()
-                    .prepare_unlocked_batch_from_single_tx(transaction);
-                let batch_with_indexes = TransactionBatchWithIndexes {
-                    batch,
-                    transaction_indexes: vec![(index as usize)],
-                };
-
-                let pre_commit_callback = match scheduling_context.mode() {
-                    SchedulingMode::BlockVerification => None,
-                    SchedulingMode::BlockProduction => Some(|| {
-                        let summary = handler_context.transaction_recorder
-                            .as_ref()
-                            .unwrap()
-                            .record_transactions(
-                                scheduling_context.bank().slot(),
-                                vec![transaction.to_versioned_transaction()],
-                            );
-                        summary.result.is_ok()
-                    }),
-                };
-
-                *result = execute_batch(
-                    &batch_with_indexes,
-                    scheduling_context.bank(),
-                    handler_context.transaction_status_sender.as_ref(),
-                    handler_context.replay_vote_sender.as_ref(),
-                    timings,
-                    handler_context.log_messages_bytes_limit,
-                    &handler_context.prioritization_fee_cache,
-                    pre_commit_callback,
-                );
-            }
-
-            if result.is_err() {
-                if let Some(cost2) = cost {
-                    if added_cost {
-                        scheduling_context.bank().write_cost_tracker().unwrap().remove(&cost2);
-                    }
-                }
-                use solana_svm::transaction_processor::record_transaction_timings;
-                record_transaction_timings(
-                    scheduling_context.slot(),
-                    transaction.signature(),
-                    &0,
-                    &result,
-                    std::thread::current().name().unwrap().into(),
-                    wall_time.elapsed().as_micros().try_into().unwrap(),
-                    &cpu_time.elapsed(),
-                    0, // transaction.get_transaction_priority_details().map(|d| d.priority).unwrap_or_default(),
-                    transaction.get_account_locks_unchecked().into(),
-                );
             }
         } else {
-            handler_context
-                .dummy_sender
-                .as_ref()
-                .unwrap()
-                .send(vec![transaction.to_versioned_transaction()])
-                .unwrap();
+            (None, false)
+        };
+
+        if result.is_ok() {
+            // scheduler must properly prevent conflicting tx executions. thus, task handler isn't
+            // responsible for locking.
+            let batch = scheduling_context
+                .bank()
+                .prepare_unlocked_batch_from_single_tx(transaction);
+            let batch_with_indexes = TransactionBatchWithIndexes {
+                batch,
+                transaction_indexes: vec![(index as usize)],
+            };
+
+            let pre_commit_callback = match scheduling_context.mode() {
+                SchedulingMode::BlockVerification => None,
+                SchedulingMode::BlockProduction => Some(|| {
+                    let summary = handler_context.transaction_recorder
+                        .as_ref()
+                        .unwrap()
+                        .record_transactions(
+                            scheduling_context.bank().slot(),
+                            vec![transaction.to_versioned_transaction()],
+                        );
+                    summary.result.is_ok()
+                }),
+            };
+
+            *result = execute_batch(
+                &batch_with_indexes,
+                scheduling_context.bank(),
+                handler_context.transaction_status_sender.as_ref(),
+                handler_context.replay_vote_sender.as_ref(),
+                timings,
+                handler_context.log_messages_bytes_limit,
+                &handler_context.prioritization_fee_cache,
+                pre_commit_callback,
+            );
+        }
+
+        if result.is_err() {
+            if let Some(cost2) = cost {
+                if added_cost {
+                    scheduling_context.bank().write_cost_tracker().unwrap().remove(&cost2);
+                }
+            }
+            use solana_svm::transaction_processor::record_transaction_timings;
+            record_transaction_timings(
+                scheduling_context.slot(),
+                transaction.signature(),
+                &0,
+                &result,
+                std::thread::current().name().unwrap().into(),
+                wall_time.elapsed().as_micros().try_into().unwrap(),
+                &cpu_time.elapsed(),
+                0, // transaction.get_transaction_priority_details().map(|d| d.priority).unwrap_or_default(),
+                transaction.get_account_locks_unchecked().into(),
+            );
         }
 
         sleepless_testing::at(CheckPoint::TaskHandled(index));
