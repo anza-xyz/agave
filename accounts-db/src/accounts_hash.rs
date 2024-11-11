@@ -388,6 +388,7 @@ impl CumulativeHashesFromFiles {
     /// Calculate offset from overall index to which file and offset within that file based on the length of each hash file.
     /// Also collect readers to access the data.
     fn from_files(hashes: Vec<AccountHashesFile>) -> Self {
+        let num_hashes = hashes.len();
         let mut readers = Vec::with_capacity(hashes.len());
         let cumulative = CumulativeOffsets::new(hashes.into_iter().filter_map(|mut hash_file| {
             // ignores all hashfiles that have zero entries
@@ -397,6 +398,12 @@ impl CumulativeHashesFromFiles {
                 count
             })
         }));
+        let reader_len = readers.len();
+        datapoint_info!(
+            "cumulative_hash_files",
+            ("num_hashes", num_hashes, i64),
+            ("num_readers", reader_len, i64),
+        );
         Self {
             cumulative,
             readers,
