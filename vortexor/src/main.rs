@@ -2,15 +2,11 @@ use {
     clap::{value_t, value_t_or_exit},
     crossbeam_channel::unbounded,
     solana_clap_utils::input_parsers::keypair_of,
-    solana_net_utils::{bind_in_range_with_config, bind_more_with_config, SocketConfig},
     solana_sdk::net::DEFAULT_TPU_COALESCE,
-    solana_streamer::{
-        nonblocking::quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT, quic::QuicServerParams,
-        streamer::StakedNodes,
-    },
+    solana_streamer::streamer::StakedNodes,
     solana_vortexor::{
         cli::{app, DefaultArgs},
-        vortexor::{TpuSockets, TpuStreamerConfig, Vortexor},
+        vortexor::Vortexor,
     },
     std::{
         sync::{atomic::AtomicBool, Arc, RwLock},
@@ -51,67 +47,29 @@ pub fn main() {
             .expect("invalid dynamic_port_range");
 
     let max_streams_per_ms = value_t_or_exit!(matches, "max_streams_per_ms", u64);
-
-    let config = TpuStreamerConfig {
-        tpu_thread_name: "solQuicTpu",
-        tpu_metrics_name: "quic_streamer_tpu",
-        tpu_fwd_thread_name: "solQuicTpuFwd",
-        tpu_fwd_metrics_name: "quic_streamer_tpu_forwards",
-        quic_server_params: QuicServerParams {
-            max_connections_per_peer: max_connections_per_peer.try_into().unwrap(),
-            max_staked_connections: max_tpu_staked_connections.try_into().unwrap(),
-            max_unstaked_connections: max_tpu_unstaked_connections.try_into().unwrap(),
-            max_streams_per_ms,
-            max_connections_per_ipaddr_per_min,
-            wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
-            coalesce: tpu_coalesce,
-        },
-    };
-
-    let quic_config = SocketConfig { reuseport: true };
-
-    let (_, tpu_quic) =
-        bind_in_range_with_config(bind_address, dynamic_port_range, quic_config.clone())
-            .expect("expected bind to succeed");
-
-    let tpu_quic = bind_more_with_config(
-        tpu_quic,
-        num_quic_endpoints.try_into().unwrap(),
-        quic_config.clone(),
-    )
-    .unwrap();
-
-    let (_, tpu_quic_fwd) =
-        bind_in_range_with_config(bind_address, dynamic_port_range, quic_config.clone())
-            .expect("expected bind to succeed");
-
-    let tpu_quic_fwd = bind_more_with_config(
-        tpu_quic_fwd,
-        num_quic_endpoints.try_into().unwrap(),
-        quic_config,
-    )
-    .unwrap();
-
-    let tpu_sockets = TpuSockets {
-        tpu_quic,
-        tpu_quic_fwd,
-    };
-
+    let exit = Arc::new(AtomicBool::new(false));
     // To be linked with the Tpu sigverify and forwarder service
     let (tpu_sender, _tpu_receiver) = unbounded();
     let (tpu_fwd_sender, _tpu_fwd_receiver) = unbounded();
 
+    let tpu_sockets =
+        Vortexor::create_tpu_sockets(bind_address, dynamic_port_range, num_quic_endpoints);
+
     // To be linked with StakedNodes service.
     let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
 
-    let exit = Arc::new(AtomicBool::new(false));
-    let vortexor = Vortexor::new(
-        &identity_keypair,
+    let vortexor = Vortexor::create_vortexor(
         tpu_sockets,
+        staked_nodes,
         tpu_sender,
         tpu_fwd_sender,
-        staked_nodes,
-        config,
+        max_connections_per_peer,
+        max_tpu_staked_connections,
+        max_tpu_unstaked_connections,
+        max_streams_per_ms,
+        max_connections_per_ipaddr_per_min,
+        tpu_coalesce,
+        &identity_keypair,
         exit,
     );
     vortexor.join().unwrap();

@@ -1,8 +1,10 @@
 use {
     crossbeam_channel::Sender,
+    solana_net_utils::{bind_in_range_with_config, bind_more_with_config, SocketConfig},
     solana_perf::packet::PacketBatch,
     solana_sdk::{quic::NotifyKeyUpdate, signature::Keypair},
     solana_streamer::{
+        nonblocking::quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
         quic::{spawn_server_multi, EndpointKeyUpdater, QuicServerParams},
         streamer::StakedNodes,
     },
@@ -10,6 +12,7 @@ use {
         net::UdpSocket,
         sync::{atomic::AtomicBool, Arc, Mutex, RwLock},
         thread::{self, JoinHandle},
+        time::Duration,
     },
 };
 
@@ -57,6 +60,87 @@ impl NotifyKeyUpdate for KeyUpdateNotifier {
 }
 
 impl Vortexor {
+    pub fn create_tpu_sockets(
+        bind_address: std::net::IpAddr,
+        dynamic_port_range: (u16, u16),
+        num_quic_endpoints: u64,
+    ) -> TpuSockets {
+        let quic_config = SocketConfig { reuseport: true };
+
+        let (_, tpu_quic) =
+            bind_in_range_with_config(bind_address, dynamic_port_range, quic_config.clone())
+                .expect("expected bind to succeed");
+
+        let tpu_quic_port = tpu_quic.local_addr().unwrap().port();
+        let tpu_quic = bind_more_with_config(
+            tpu_quic,
+            num_quic_endpoints.try_into().unwrap(),
+            quic_config.clone(),
+        )
+        .unwrap();
+
+        let (_, tpu_quic_fwd) = bind_in_range_with_config(
+            bind_address,
+            (tpu_quic_port + 1, dynamic_port_range.1),
+            quic_config.clone(),
+        )
+        .expect("expected bind to succeed");
+
+        let tpu_quic_fwd = bind_more_with_config(
+            tpu_quic_fwd,
+            num_quic_endpoints.try_into().unwrap(),
+            quic_config,
+        )
+        .unwrap();
+
+        TpuSockets {
+            tpu_quic,
+            tpu_quic_fwd,
+        }
+    }
+
+    pub fn create_vortexor(
+        tpu_sockets: TpuSockets,
+        staked_nodes: Arc<RwLock<StakedNodes>>,
+        tpu_sender: Sender<PacketBatch>,
+        tpu_fwd_sender: Sender<PacketBatch>,
+        max_connections_per_peer: u64,
+        max_tpu_staked_connections: u64,
+        max_tpu_unstaked_connections: u64,
+        max_streams_per_ms: u64,
+        max_connections_per_ipaddr_per_min: u64,
+        tpu_coalesce: Duration,
+        identity_keypair: &Keypair,
+        exit: Arc<AtomicBool>,
+    ) -> Self {
+        let config = TpuStreamerConfig {
+            tpu_thread_name: "solQuicTpu",
+            tpu_metrics_name: "quic_streamer_tpu",
+            tpu_fwd_thread_name: "solQuicTpuFwd",
+            tpu_fwd_metrics_name: "quic_streamer_tpu_forwards",
+            quic_server_params: QuicServerParams {
+                max_connections_per_peer: max_connections_per_peer.try_into().unwrap(),
+                max_staked_connections: max_tpu_staked_connections.try_into().unwrap(),
+                max_unstaked_connections: max_tpu_unstaked_connections.try_into().unwrap(),
+                max_streams_per_ms,
+                max_connections_per_ipaddr_per_min,
+                wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
+                coalesce: tpu_coalesce,
+            },
+        };
+
+        let vortexor = Vortexor::new(
+            &identity_keypair,
+            tpu_sockets,
+            tpu_sender,
+            tpu_fwd_sender,
+            staked_nodes,
+            config,
+            exit,
+        );
+        vortexor
+    }
+
     /// Create a new TPU Vortexor
     pub fn new(
         keypair: &Keypair,
