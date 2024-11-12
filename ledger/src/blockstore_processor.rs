@@ -3581,7 +3581,7 @@ pub mod tests {
                 assert_eq!(
                     *prev_bank_details,
                     bank_details,
-                    "bank hash did not mismatch for error: {:?}",
+                    "bank hash mismatched for tx error: {:?}",
                     get_instruction_errors()[err]
                 );
             } else {
