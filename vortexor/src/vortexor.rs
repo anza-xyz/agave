@@ -99,6 +99,7 @@ impl Vortexor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_vortexor(
         tpu_sockets: TpuSockets,
         staked_nodes: Arc<RwLock<StakedNodes>>,
@@ -129,16 +130,15 @@ impl Vortexor {
             },
         };
 
-        let vortexor = Vortexor::new(
-            &identity_keypair,
+        Vortexor::new(
+            identity_keypair,
             tpu_sockets,
             tpu_sender,
             tpu_fwd_sender,
             staked_nodes,
             config,
             exit,
-        );
-        vortexor
+        )
     }
 
     /// Create a new TPU Vortexor
