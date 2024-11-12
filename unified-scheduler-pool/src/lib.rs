@@ -661,7 +661,7 @@ where
         );
         let s = s.into_inner().1;
         assert!(g.0.replace(s.id()).is_none());
-        assert!(g.1.replace(scheduler).is_none());
+        assert!(g.1.replace(s).is_none());
         drop(g);
         self.block_production_scheduler_condvar.notify_all();
         info!("flash session: end!");
