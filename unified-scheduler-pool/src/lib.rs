@@ -376,17 +376,33 @@ where
 
                     info!("Scheduler pool cleaner: block_production_scheduler_inner!!!",);
 
-                    let mut g = scheduler_pool
-                        .block_production_scheduler_inner
-                        .lock()
-                        .unwrap();
-                    if let Some(pooled) = &g.1 {
-                        match pooled.banking_stage_status() {
-                            BankingStageStatus::Active => (),
-                            BankingStageStatus::Inactive => {
-                                info!("sch {} IS idle", pooled.id());
-                                if pooled.is_overgrown(false) {
-                                    info!("sch {} is overgrown!", pooled.id());
+                    {
+                        let mut g = scheduler_pool
+                            .block_production_scheduler_inner
+                            .lock()
+                            .unwrap();
+                        if let Some(pooled) = &g.1 {
+                            match pooled.banking_stage_status() {
+                                BankingStageStatus::Active => (),
+                                BankingStageStatus::Inactive => {
+                                    info!("sch {} IS idle", pooled.id());
+                                    if pooled.is_overgrown(false) {
+                                        info!("sch {} is overgrown!", pooled.id());
+                                        let pooled = g.1.take().unwrap();
+                                        assert_eq!(Some(pooled.id()), g.0.take());
+                                        drop(g);
+                                        let id = pooled.id();
+                                        info!("dropping sch {id}");
+                                        drop(pooled);
+                                        info!("dropped sch {id}");
+                                        scheduler_pool.spawn_block_production_scheduler();
+                                    } else {
+                                        info!("sch {} isn't overgrown", pooled.id());
+                                        pooled.reset();
+                                    }
+                                }
+                                BankingStageStatus::Exited => {
+                                    info!("sch {} IS Exited", pooled.id());
                                     let pooled = g.1.take().unwrap();
                                     assert_eq!(Some(pooled.id()), g.0.take());
                                     drop(g);
@@ -394,22 +410,8 @@ where
                                     info!("dropping sch {id}");
                                     drop(pooled);
                                     info!("dropped sch {id}");
-                                    scheduler_pool.spawn_block_production_scheduler();
-                                } else {
-                                    info!("sch {} isn't overgrown", pooled.id());
-                                    pooled.reset();
+                                    scheduler_pool.reset_respawner();
                                 }
-                            }
-                            BankingStageStatus::Exited => {
-                                info!("sch {} IS Exited", pooled.id());
-                                let pooled = g.1.take().unwrap();
-                                assert_eq!(Some(pooled.id()), g.0.take());
-                                drop(g);
-                                let id = pooled.id();
-                                info!("dropping sch {id}");
-                                drop(pooled);
-                                info!("dropped sch {id}");
-                                scheduler_pool.reset_respawner();
                             }
                         }
                     }
@@ -502,14 +504,17 @@ where
             // self.trashed_scheduler_inners, which is periodically drained by the `solScCleaner`
             // thread. Dropping it could take long time (in fact,
             // PooledSchedulerInner::block_verification_usage_queue_loader can contain many entries to drop).
-            let s = scheduler.banking_stage_status();
 
-            if is_block_production_scheduler_returned {
-                g.0.take();
-            }
-            if is_block_production_scheduler_returned {
+            if !is_block_production_scheduler_returned {
                 drop(g);
-                match s {
+                self.trashed_scheduler_inners
+                    .lock()
+                    .expect("not poisoned")
+                    .push(scheduler);
+            } else {
+                g.0.take();
+                drop(g);
+                match scheduler.banking_stage_status() {
                     BankingStageStatus::Active | BankingStageStatus::Inactive => {
                         info!("respawning on trashd scheduler...");
                         self.trashed_scheduler_inners
@@ -3813,7 +3818,7 @@ mod tests {
 
     impl<const TRIGGER_RACE_CONDITION: bool> SchedulerInner for AsyncScheduler<TRIGGER_RACE_CONDITION> {
         fn id(&self) -> SchedulerId {
-            todo!()
+            42
         }
 
         fn banking_stage_status(&self) -> BankingStageStatus {
