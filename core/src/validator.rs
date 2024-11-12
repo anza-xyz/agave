@@ -82,8 +82,8 @@ use {
         poh_service::{self, PohService},
     },
     solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
-    solana_rpc::cluster_tpu_info::ClusterTpuInfo,
     solana_rpc::{
+        cluster_tpu_info::ClusterTpuInfo,
         max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::{
             BankNotificationSenderConfig, OptimisticallyConfirmedBank,
@@ -113,7 +113,6 @@ use {
         snapshot_hash::StartingSnapshotHashes,
         snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
     },
-    solana_sdk::quic::NotifyKeyUpdate,
     solana_sdk::{
         clock::Slot,
         epoch_schedule::MAX_LEADER_SCHEDULE_EPOCH_OFFSET,
@@ -122,20 +121,20 @@ use {
         hard_forks::HardForks,
         hash::Hash,
         pubkey::Pubkey,
+        quic::NotifyKeyUpdate,
         shred_version::compute_shred_version,
         signature::{Keypair, Signer},
         timing::timestamp,
     },
-    solana_send_transaction_service::transaction_client::TpuClientNextClientUpdater,
     solana_send_transaction_service::{
-        send_transaction_service, transaction_client::ConnectionCacheClient,
+        send_transaction_service,
+        transaction_client::{ConnectionCacheClient, TpuClientNextClientUpdater},
     },
     solana_streamer::{socket::SocketAddrSpace, streamer::StakedNodes},
     solana_turbine::{self, broadcast_stage::BroadcastStageType},
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_vote_program::vote_state,
     solana_wen_restart::wen_restart::{wait_for_wen_restart, WenRestartConfig},
-    std::sync::LazyLock,
     std::{
         collections::{HashMap, HashSet},
         net::SocketAddr,
@@ -143,7 +142,7 @@ use {
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
-            Arc, Mutex, RwLock,
+            Arc, LazyLock, Mutex, RwLock,
         },
         thread::{sleep, Builder, JoinHandle},
         time::{Duration, Instant},
