@@ -1187,8 +1187,8 @@ pub fn fund_keypairs<T: 'static + TpsClient + Send + Sync + ?Sized>(
         );
 
         if funding_key_balance < total + rent {
-            error!(
-                "funder has {}, needed {}",
+            warn!(
+                "Funder has {}, needed {}, requesting airdrop...",
                 Sol(funding_key_balance),
                 Sol(total)
             );

@@ -1821,9 +1821,9 @@ fn post_process_restored_tower(
             let voting_has_been_active =
                 active_vote_account_exists_in_bank(&bank_forks.working_bank(), vote_account);
             if !err.is_file_missing() {
-                datapoint_error!(
+                datapoint_warn!(
                     "tower_error",
-                    ("error", format!("Unable to restore tower: {err}"), String),
+                    ("warn", format!("Unable to restore tower: {err}"), String),
                 );
             }
             if should_require_tower && voting_has_been_active {
@@ -1840,7 +1840,7 @@ fn post_process_restored_tower(
                      start with the vote account..."
                 );
             } else {
-                error!(
+                warn!(
                     "Rebuilding a new tower from the latest vote account due to failed tower \
                      restore: {}",
                     err

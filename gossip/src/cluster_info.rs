@@ -1207,7 +1207,7 @@ impl ClusterInfo {
         let mut gossip_crds = self.gossip.crds.write().unwrap();
         for entry in entries {
             if let Err(err) = gossip_crds.insert(entry, timestamp(), GossipRoute::LocalMessage) {
-                error!("Insert self failed: {err:?}");
+                warn!("Insert self failed: {err:?}");
             }
         }
     }
