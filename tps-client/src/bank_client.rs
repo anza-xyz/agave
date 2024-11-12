@@ -14,7 +14,7 @@ use {
         slot_history::Slot,
         transaction::{Result, Transaction},
     },
-    solana_transaction_status::UiConfirmedBlock,
+    solana_transaction_status::{TransactionStatus, UiConfirmedBlock},
 };
 
 impl TpsClient for BankClient {
@@ -141,5 +141,12 @@ impl TpsClient for BankClient {
         _rpc_block_config: RpcBlockConfig,
     ) -> TpsClientResult<UiConfirmedBlock> {
         unimplemented!("BankClient doesn't support get_block_with_config");
+    }
+
+    fn get_signature_statuses(
+        &self,
+        _signatures: &[Signature],
+    ) -> TpsClientResult<Vec<Option<TransactionStatus>>> {
+        unimplemented!("BankClient doesn't support get_signature_statuses");
     }
 }
