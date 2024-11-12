@@ -301,8 +301,11 @@ where
         let cleaner_main_loop = {
             let weak_scheduler_pool = Arc::downgrade(&scheduler_pool);
 
-            move || loop {
+            move || { loop {
                 sleep(pool_cleaner_interval);
+                info!(
+                    "Scheduler pool cleaner: start!!!",
+                );
 
                 let Some(scheduler_pool) = weak_scheduler_pool.upgrade() else {
                     break;
@@ -370,6 +373,10 @@ where
                     count
                 };
 
+                info!(
+                    "Scheduler pool cleaner: block_production_scheduler_inner!!!",
+                );
+
                 let mut g = scheduler_pool
                     .block_production_scheduler_inner
                     .lock()
@@ -395,6 +402,7 @@ where
                             }
                         }
                         BankingStageStatus::Exited => {
+                            info!("sch {} IS Exited", pooled.id());
                             let pooled = g.1.take().unwrap();
                             assert_eq!(Some(pooled.id()), g.0.take());
                             drop(g);
@@ -416,6 +424,8 @@ where
                 sleepless_testing::at(CheckPoint::TimeoutListenerTriggered(
                     triggered_timeout_listener_count,
                 ));
+            };
+                warn!("solScCleaner exited!");
             }
         };
 
@@ -493,17 +503,29 @@ where
             // self.trashed_scheduler_inners, which is periodically drained by the `solScCleaner`
             // thread. Dropping it could take long time (in fact,
             // PooledSchedulerInner::block_verification_usage_queue_loader can contain many entries to drop).
-            self.trashed_scheduler_inners
-                .lock()
-                .expect("not poisoned")
-                .push(scheduler);
+            let s = scheduler.banking_stage_status();
 
             if is_block_production_scheduler_returned {
                 g.0.take();
             }
             if is_block_production_scheduler_returned {
                 drop(g);
-                self.spawn_block_production_scheduler();
+                match s {
+                    BankingStageStatus::Active | BankingStageStatus::Inactive => {
+                        info!("respawning on trashd scheduler...");
+                        self.trashed_scheduler_inners
+                            .lock()
+                            .expect("not poisoned")
+                            .push(scheduler);
+                        self.spawn_block_production_scheduler();
+                    }
+                    BankingStageStatus::Exited => {
+                        info!("exiting detected not respawning...");
+                        drop(scheduler);
+                        self.reset_respawner();
+                        info!("exiting detected reset done...");
+                    }
+                }
             }
         } else {
             drop(g);

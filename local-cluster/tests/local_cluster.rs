@@ -5706,6 +5706,8 @@ fn test_randomly_mixed_block_verification_methods_between_bootstrap_and_not() {
     solana_logger::setup_with_default(
         "solana_metrics::metrics=warn,\
          solana_core=warn,\
+         solana_core::validator=info,\
+         solana_core::banking_stage=info,\
          solana_runtime::installed_scheduler_pool=trace,\
          solana_ledger::blockstore_processor=debug,\
          info",
