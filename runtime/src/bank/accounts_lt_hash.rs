@@ -3,13 +3,17 @@ use {
     rayon::prelude::*,
     solana_accounts_db::accounts_db::AccountsDb,
     solana_lattice_hash::lt_hash::LtHash,
-    solana_measure::{meas_dur, measure::Measure},
+    solana_measure::{meas_dur, measure::Measure, measure_us},
     solana_sdk::{
         account::{accounts_equal, AccountSharedData},
         pubkey::Pubkey,
     },
     solana_svm::transaction_processing_callback::AccountState,
-    std::{ops::AddAssign, time::Duration},
+    std::{
+        ops::AddAssign,
+        sync::atomic::{AtomicU64, Ordering},
+        time::Duration,
+    },
 };
 
 impl Bank {
@@ -240,6 +244,34 @@ impl Bank {
                 stats.time_mixing_hashes.as_micros(),
                 i64
             ),
+            (
+                "num_inspect_account_hits",
+                self.stats_for_accounts_lt_hash
+                    .num_inspect_account_hits
+                    .load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_inspect_account_misses",
+                self.stats_for_accounts_lt_hash
+                    .num_inspect_account_misses
+                    .load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "inspect_account_lookup_us",
+                self.stats_for_accounts_lt_hash
+                    .inspect_account_lookup_time_us
+                    .load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "inspect_account_insert_us",
+                self.stats_for_accounts_lt_hash
+                    .inspect_account_insert_time_us
+                    .load(Ordering::Relaxed),
+                i64
+            ),
         );
 
         delta_lt_hash
@@ -264,27 +296,59 @@ impl Bank {
 
         // Only insert the account the *first* time we see it.
         // We want to capture the value of the account *before* any modifications during this slot.
-        let is_in_cache = self
-            .cache_for_accounts_lt_hash
-            .read()
-            .unwrap()
-            .contains_key(address);
-        if !is_in_cache {
+        let (is_in_cache, lookup_us) = measure_us!({
             self.cache_for_accounts_lt_hash
-                .write()
+                .read()
                 .unwrap()
-                .entry(*address)
-                .or_insert_with(|| {
-                    let initial_state_of_account = match account_state {
-                        AccountState::Dead => InitialStateOfAccount::Dead,
-                        AccountState::Alive(account) => {
-                            InitialStateOfAccount::Alive((*account).clone())
-                        }
-                    };
-                    CacheValue::InspectAccount(initial_state_of_account)
-                });
+                .contains_key(address)
+        });
+        if !is_in_cache {
+            let (_, insert_us) = measure_us!({
+                self.cache_for_accounts_lt_hash
+                    .write()
+                    .unwrap()
+                    .entry(*address)
+                    .or_insert_with(|| {
+                        let initial_state_of_account = match account_state {
+                            AccountState::Dead => InitialStateOfAccount::Dead,
+                            AccountState::Alive(account) => {
+                                InitialStateOfAccount::Alive((*account).clone())
+                            }
+                        };
+                        CacheValue::InspectAccount(initial_state_of_account)
+                    });
+            });
+
+            self.stats_for_accounts_lt_hash
+                .num_inspect_account_misses
+                .fetch_add(1, Ordering::Relaxed);
+            self.stats_for_accounts_lt_hash
+                .inspect_account_insert_time_us
+                .fetch_add(insert_us, Ordering::Relaxed);
+        } else {
+            // The account is already in the cache, so nothing to do here other than update stats.
+            self.stats_for_accounts_lt_hash
+                .num_inspect_account_hits
+                .fetch_add(1, Ordering::Relaxed);
         }
+
+        self.stats_for_accounts_lt_hash
+            .inspect_account_lookup_time_us
+            .fetch_add(lookup_us, Ordering::Relaxed);
     }
+}
+
+/// Stats related to accounts lt hash
+#[derive(Debug, Default)]
+pub struct Stats {
+    /// the number of times the cache already contained the account being inspected
+    num_inspect_account_hits: AtomicU64,
+    /// the number of times the cache *did not* already contain the account being inspected
+    num_inspect_account_misses: AtomicU64,
+    /// time spent checking if accounts are in the cache
+    inspect_account_lookup_time_us: AtomicU64,
+    /// time spent inserting accounts into the cache
+    inspect_account_insert_time_us: AtomicU64,
 }
 
 /// The initial state of an account prior to being modified in this slot/transaction
