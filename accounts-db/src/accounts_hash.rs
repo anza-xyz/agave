@@ -1473,6 +1473,7 @@ mod tests {
         let hashes = (0..2).map(|i| Hash::new(&[i; 32])).collect::<Vec<_>>();
 
         // 1 hash
+        let mut file = AccountHashesFile::new(1, dir_for_temp_cache_files.path());
         file.write(&hashes[0]);
         let reader = file.get_reader().unwrap();
         assert_eq!(&[hashes[0]][..], reader.read(0));
