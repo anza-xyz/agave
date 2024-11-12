@@ -2317,6 +2317,7 @@ impl BankingStageAdapter {
         &self,
         &(transaction, index): &(&SanitizedTransaction, TaskKey),
     ) -> Option<Task> {
+        /*
         if self
             .transaction_deduper
             .contains(transaction.message_hash())
@@ -2325,6 +2326,7 @@ impl BankingStageAdapter {
         } else {
             self.transaction_deduper.insert(*transaction.message_hash());
         }
+        */
 
         Some(SchedulingStateMachine::create_task(
             transaction.clone(),
