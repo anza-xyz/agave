@@ -3903,7 +3903,7 @@ impl Blockstore {
     }
 
     pub fn is_root(&self, slot: Slot) -> bool {
-        matches!(self.db.get::<cf::Root>(slot), Ok(Some(true)))
+        matches!(self.roots_cf.get(slot), Ok(Some(true)))
     }
 
     /// Returns true if a slot is between the rooted slot bounds of the ledger, but has not itself
@@ -3915,7 +3915,7 @@ impl Blockstore {
             .ok()
             .and_then(|mut iter| iter.next())
             .unwrap_or_default();
-        match self.db.get::<cf::Root>(slot).ok().flatten() {
+        match self.roots_cf.get(slot).ok().flatten() {
             Some(_) => false,
             None => slot < self.max_root() && slot > lowest_root,
         }
@@ -4028,8 +4028,8 @@ impl Blockstore {
 
     pub fn is_dead(&self, slot: Slot) -> bool {
         matches!(
-            self.db
-                .get::<cf::DeadSlots>(slot)
+            self.dead_slots_cf
+                .get(slot)
                 .expect("fetch from DeadSlots column family failed"),
             Some(true)
         )

@@ -1422,21 +1422,6 @@ impl Database {
         Ok(())
     }
 
-    pub fn get<C>(&self, key: C::Index) -> Result<Option<C::Type>>
-    where
-        C: TypedColumn + ColumnName,
-    {
-        if let Some(pinnable_slice) = self
-            .backend
-            .get_pinned_cf(self.cf_handle::<C>(), &C::key(key))?
-        {
-            let value = deserialize(pinnable_slice.as_ref())?;
-            Ok(Some(value))
-        } else {
-            Ok(None)
-        }
-    }
-
     #[inline]
     pub fn cf_handle<C>(&self) -> &ColumnFamily
     where
