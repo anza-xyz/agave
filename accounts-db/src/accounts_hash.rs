@@ -1,6 +1,6 @@
 use {
     crate::{
-        accounts_db::{AccountStorageEntry, PUBKEY_BINS_FOR_CALCULATING_HASHES},
+        accounts_db::AccountStorageEntry,
         active_stats::{ActiveStatItem, ActiveStats},
         ancestors::Ancestors,
         pubkey_bins::PubkeyBinCalculator24,
@@ -189,6 +189,7 @@ pub struct HashStats {
     pub scan_time_total_us: u64,
     pub zeros_time_total_us: u64,
     pub hash_time_total_us: u64,
+    pub drop_hash_files_us: u64,
     pub sort_time_total_us: u64,
     pub hash_total: usize,
     pub num_snapshot_storage: usize,
@@ -245,6 +246,7 @@ impl HashStats {
             ("accounts_scan_us", self.scan_time_total_us, i64),
             ("eliminate_zeros_us", self.zeros_time_total_us, i64),
             ("hash_us", self.hash_time_total_us, i64),
+            ("drop_hash_files_us", self.drop_hash_files_us, i64),
             ("sort_us", self.sort_time_total_us, i64),
             ("hash_total", self.hash_total, i64),
             ("storage_sort_us", self.storage_sort_us, i64),
@@ -1211,13 +1213,10 @@ impl<'a> AccountsHasher<'a> {
     pub fn rest_of_hash_calculation(
         &self,
         sorted_data_by_pubkey: &[&[CalculateHashIntermediate]],
+        bins: usize,
         stats: &mut HashStats,
     ) -> (Hash, u64) {
-        let (hashes, total_lamports) = self.de_dup_accounts(
-            sorted_data_by_pubkey,
-            stats,
-            PUBKEY_BINS_FOR_CALCULATING_HASHES,
-        );
+        let (hashes, total_lamports) = self.de_dup_accounts(sorted_data_by_pubkey, stats, bins);
 
         let cumulative = CumulativeHashesFromFiles::from_files(hashes);
 
@@ -1232,6 +1231,9 @@ impl<'a> AccountsHasher<'a> {
         );
         hash_time.stop();
         stats.hash_time_total_us += hash_time.as_us();
+
+        let (_, drop_us) = measure_us!(drop(cumulative));
+        stats.drop_hash_files_us += drop_us;
         (hash, total_lamports)
     }
 }
@@ -1355,7 +1357,10 @@ impl From<IncrementalAccountsHash> for SerdeIncrementalAccountsHash {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, itertools::Itertools, std::str::FromStr, tempfile::tempdir};
+    use {
+        super::*, crate::accounts_db::DEFAULT_HASH_CALCULATION_PUBKEY_BINS, itertools::Itertools,
+        std::str::FromStr, tempfile::tempdir,
+    };
 
     lazy_static! {
         static ref ACTIVE_STATS: ActiveStats = ActiveStats::default();
@@ -1601,8 +1606,11 @@ mod tests {
 
         let dir_for_temp_cache_files = tempdir().unwrap();
         let accounts_hash = AccountsHasher::new(dir_for_temp_cache_files.path().to_path_buf());
-        let result = accounts_hash
-            .rest_of_hash_calculation(&for_rest(&account_maps), &mut HashStats::default());
+        let result = accounts_hash.rest_of_hash_calculation(
+            &for_rest(&account_maps),
+            DEFAULT_HASH_CALCULATION_PUBKEY_BINS,
+            &mut HashStats::default(),
+        );
         let expected_hash = Hash::from_str("8j9ARGFv4W2GfML7d3sVJK2MePwrikqYnu6yqer28cCa").unwrap();
         assert_eq!((result.0, result.1), (expected_hash, 88));
 
@@ -1616,8 +1624,11 @@ mod tests {
         };
         account_maps.insert(0, val);
 
-        let result = accounts_hash
-            .rest_of_hash_calculation(&for_rest(&account_maps), &mut HashStats::default());
+        let result = accounts_hash.rest_of_hash_calculation(
+            &for_rest(&account_maps),
+            DEFAULT_HASH_CALCULATION_PUBKEY_BINS,
+            &mut HashStats::default(),
+        );
         let expected_hash = Hash::from_str("EHv9C5vX7xQjjMpsJMzudnDTzoTSRwYkqLzY8tVMihGj").unwrap();
         assert_eq!((result.0, result.1), (expected_hash, 108));
 
@@ -1631,8 +1642,11 @@ mod tests {
         };
         account_maps.insert(1, val);
 
-        let result = accounts_hash
-            .rest_of_hash_calculation(&for_rest(&account_maps), &mut HashStats::default());
+        let result = accounts_hash.rest_of_hash_calculation(
+            &for_rest(&account_maps),
+            DEFAULT_HASH_CALCULATION_PUBKEY_BINS,
+            &mut HashStats::default(),
+        );
         let expected_hash = Hash::from_str("7NNPg5A8Xsg1uv4UFm6KZNwsipyyUnmgCrznP6MBWoBZ").unwrap();
         assert_eq!((result.0, result.1), (expected_hash, 118));
     }
