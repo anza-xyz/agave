@@ -149,6 +149,7 @@ use {
             TransactionVerificationMode, VersionedTransaction, MAX_TX_ACCOUNT_LOCKS,
         },
         transaction_context::{TransactionAccount, TransactionReturnData},
+        vote::state::VoteStateVersions,
     },
     solana_stake_program::{
         points::{InflationPointCalculationEvent, PointValue},
@@ -1332,6 +1333,32 @@ impl Bank {
                 // Save a snapshot of stakes for use in consensus and stake weighted networking
                 let leader_schedule_epoch = new.epoch_schedule().get_leader_schedule_epoch(slot);
                 new.update_epoch_stakes(leader_schedule_epoch);
+                // Copy the vote authorities from epoch stake into vote states.
+                let new_epoch = new.epoch();
+                let mut vote_states = new.vote_states.write().unwrap();
+                let epoch_stakes = new.epoch_stakes.get(&new_epoch).unwrap();
+                for (vote_account_pubkey, vote_authority) in
+                    epoch_stakes.epoch_authorized_voters().iter()
+                {
+                    if epoch_stakes.vote_account_stake(vote_account_pubkey) > 0 {
+                        if let Some(vote_state) = vote_states.get_mut(vote_account_pubkey) {
+                            vote_state.set_new_authorized_voter_checked(new_epoch, vote_authority);
+                        } else {
+                            // If the vote account is not in the vote_states, but it is in the stakes, then
+                            // it is a new vote account that was added in the current epoch.  Add it to the
+                            // vote_states.
+                            let mut new_vote_state = VoteState::default();
+                            new_vote_state
+                                .set_new_authorized_voter_checked(new_epoch, vote_authority);
+                            vote_states.insert(*vote_account_pubkey, new_vote_state);
+                        }
+                    } else {
+                        // If the vote account is not in the stakes, but it is in the vote_states, then
+                        // it is a vote account that was removed in the current epoch.  Remove it from the
+                        // vote_states.
+                        vote_states.remove(vote_account_pubkey);
+                    }
+                }
             }
             if new.is_partitioned_rewards_code_enabled() {
                 new.distribute_partitioned_epoch_rewards();
@@ -5566,25 +5593,20 @@ impl Bank {
 
     fn vote_only_hash_internal_state(&self) -> Hash {
         let slot = self.slot();
-        let accounts_delta_hash = self
-            .rc
-            .accounts
-            .accounts_db
-            .calculate_accounts_delta_hash_internal(
-                slot,
-                None,
-                self.skipped_rewrites.lock().unwrap().clone(),
-            );
-
-        let mut signature_count_buf = [0u8; 8];
-        LittleEndian::write_u64(&mut signature_count_buf[..], self.signature_count());
-
         let mut hash = hashv(&[
             self.parent_vote_only_hash.as_ref(),
-            accounts_delta_hash.0.as_ref(),
-            &signature_count_buf,
             self.last_blockhash().as_ref(),
         ]);
+        hash = self.vote_states.read().unwrap().iter().fold(
+            hash,
+            |old_hash, (account_pubkey, vote_state)| {
+                let mut vote_account_data: Vec<u8> = vec![0; VoteState::size_of()];
+                let versioned = VoteStateVersions::new_current(vote_state.clone());
+                assert!(VoteState::serialize(&versioned, &mut vote_account_data).is_ok());
+                let hash = extend_and_hash(&old_hash, account_pubkey.as_ref());
+                extend_and_hash(&hash, &vote_account_data)
+            },
+        );
 
         let buf = self
             .hard_forks
@@ -5597,19 +5619,7 @@ impl Bank {
             hash = hard_forked_hash;
         }
 
-        let bank_hash_stats = self
-            .rc
-            .accounts
-            .accounts_db
-            .get_bank_hash_stats(slot)
-            .expect("No bank hash stats were found for this bank, that should not be possible");
-        info!(
-            "bank vote_only_frozen: {slot} vote_only_hash: {hash} accounts_delta: {} signature_count: {} last_blockhash: {} capitalization: {}, stats: {bank_hash_stats:?}",
-            accounts_delta_hash.0,
-            self.signature_count(),
-            self.last_blockhash(),
-            self.capitalization(),
-        );
+        info!("bank vote_only_frozen: {slot} vote_only_hash: {hash}");
         hash
     }
 

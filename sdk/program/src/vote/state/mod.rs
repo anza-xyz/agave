@@ -879,6 +879,15 @@ impl VoteState {
         &self.epoch_credits
     }
 
+    pub fn set_new_authorized_voter_checked(
+        &mut self,
+        target_epoch: Epoch,
+        authorized_pubkey: &Pubkey,
+    ) {
+        self.authorized_voters
+            .insert(target_epoch, *authorized_pubkey)
+    }
+
     pub fn set_new_authorized_voter<F>(
         &mut self,
         authorized_pubkey: &Pubkey,
