@@ -68,6 +68,10 @@ struct AccountHashesFile {
 impl AccountHashesFile {
     /// create a new AccountHashesFile
     fn new(num_hashes: usize, dir_for_temp_cache_files: impl AsRef<Path>) -> Self {
+        if num_hashes == 0 {
+            return Self { writer: None };
+        }
+
         let capacity = num_hashes * std::mem::size_of::<Hash>();
         let get_file = || -> Result<_, std::io::Error> {
             let mut data = tempfile_in(&dir_for_temp_cache_files).unwrap_or_else(|err| {
