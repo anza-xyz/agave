@@ -1,7 +1,7 @@
 [package]
-name = "solana-deserialize-utils"
-description = "Solana deserialization helpers"
-documentation = "https://docs.rs/solana-deserialize-utils"
+name = "solana-serde"
+description = "Solana serde helpers"
+documentation = "https://docs.rs/solana-serde"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }

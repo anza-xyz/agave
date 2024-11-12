@@ -6768,15 +6768,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-deserialize-utils"
-version = "2.2.0"
-dependencies = [
- "bincode",
- "serde",
- "serde_derive",
-]
-
-[[package]]
 name = "solana-dos"
 version = "2.2.0"
 dependencies = [
@@ -8362,7 +8353,6 @@ dependencies = [
  "solana-commitment-config",
  "solana-decode-error",
  "solana-derivation-path",
- "solana-deserialize-utils",
  "solana-ed25519-instructions",
  "solana-feature-set",
  "solana-fee-structure",
@@ -8389,6 +8379,7 @@ dependencies = [
  "solana-secp256k1-recover",
  "solana-seed-derivable",
  "solana-seed-phrase",
+ "solana-serde",
  "solana-serde-varint",
  "solana-short-vec",
  "solana-signature",
@@ -8469,6 +8460,15 @@ dependencies = [
  "solana-runtime",
  "solana-sdk",
  "solana-tpu-client",
+]
+
+[[package]]
+name = "solana-serde"
+version = "2.2.0"
+dependencies = [
+ "bincode",
+ "serde",
+ "serde_derive",
 ]
 
 [[package]]

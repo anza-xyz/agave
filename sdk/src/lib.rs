@@ -118,8 +118,6 @@ pub use solana_bn254 as alt_bn128;
 pub use solana_decode_error as decode_error;
 #[deprecated(since = "2.1.0", note = "Use `solana-derivation-path` crate instead")]
 pub use solana_derivation_path as derivation_path;
-#[deprecated(since = "2.1.0", note = "Use `solana-deserialize-utils` crate instead")]
-pub use solana_deserialize_utils as deserialize_utils;
 #[cfg(feature = "full")]
 #[deprecated(
     since = "2.2.0",
@@ -192,6 +190,8 @@ pub use solana_sdk_macro::declare_id;
 pub use solana_sdk_macro::pubkeys;
 #[deprecated(since = "2.1.0", note = "Use `solana-secp256k1-recover` crate instead")]
 pub use solana_secp256k1_recover as secp256k1_recover;
+#[deprecated(since = "2.1.0", note = "Use `solana-serde` crate instead")]
+pub use solana_serde as deserialize_utils;
 #[deprecated(since = "2.1.0", note = "Use `solana-serde-varint` crate instead")]
 pub use solana_serde_varint as serde_varint;
 #[deprecated(since = "2.1.0", note = "Use `solana-short-vec` crate instead")]
