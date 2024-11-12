@@ -1437,21 +1437,6 @@ impl Database {
         }
     }
 
-    pub fn iter<C>(
-        &self,
-        iterator_mode: IteratorMode<C::Index>,
-    ) -> Result<impl Iterator<Item = (C::Index, Box<[u8]>)> + '_>
-    where
-        C: Column + ColumnName,
-    {
-        let cf = self.cf_handle::<C>();
-        let iter = self.backend.iterator_cf::<C>(cf, iterator_mode);
-        Ok(iter.map(|pair| {
-            let (key, value) = pair.unwrap();
-            (C::index(&key), value)
-        }))
-    }
-
     #[inline]
     pub fn cf_handle<C>(&self) -> &ColumnFamily
     where
