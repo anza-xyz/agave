@@ -143,9 +143,9 @@ pub struct HandlerContext {
 pub type DefaultSchedulerPool =
     SchedulerPool<PooledScheduler<DefaultTaskHandler>, DefaultTaskHandler>;
 
-const DEFAULT_POOL_CLEANER_INTERVAL: Duration = Duration::from_secs(10);
+const DEFAULT_POOL_CLEANER_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_MAX_POOLING_DURATION: Duration = Duration::from_secs(180);
-const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(12);
+const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(3);
 // Rough estimate of max UsageQueueLoader size in bytes:
 //   UsageFromTask * UsageQueue's capacity * DEFAULT_MAX_USAGE_QUEUE_COUNT
 //   16 bytes      * 128 items             * 262_144 entries               == 512 MiB
