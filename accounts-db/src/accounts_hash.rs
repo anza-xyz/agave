@@ -149,6 +149,8 @@ impl AccountHashesFile {
     }
 
     /// return a mmap reader that can be accessed  by slice
+    /// The reader will be None if there are no hashes in the file. And this function should only be called once after all writes are done.
+    /// After calling this function, the writer will be None. No more writes are allowed.
     fn get_reader(&mut self) -> Option<MmapAccountHashesFile> {
         let mmap = std::mem::take(&mut self.writer);
         if mmap.is_some() && mmap.as_ref().unwrap().count > 0 {
@@ -1481,7 +1483,6 @@ mod tests {
 
         // multiple hashes
         let mut file = AccountHashesFile::new(hashes.len(), dir_for_temp_cache_files.path());
-        assert!(file.get_reader().is_none());
         hashes.iter().for_each(|hash| file.write(hash));
         let reader = file.get_reader().unwrap();
         (0..2).for_each(|i| assert_eq!(&hashes[i..], reader.read(i)));
