@@ -1759,7 +1759,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                         task,
                                         result_with_timings,
                                     } = *executed_task;
-                                    let task = adapter.as_ref().unwrap().recreate_task(task.transaction());
+                                    let task = adapter.as_ref().unwrap().recreate_task(task.transaction().clone());
                                     error!("requeued tx!!!!");
                                     state_machine.do_schedule_task(task, true);
                                     std::mem::forget(result_with_timings);
