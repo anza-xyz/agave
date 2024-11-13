@@ -81,7 +81,7 @@ impl Vortexor {
 
         let (_, tpu_quic_fwd) = bind_in_range_with_config(
             bind_address,
-            (tpu_quic_port + 1, dynamic_port_range.1),
+            (tpu_quic_port.saturating_add(1), dynamic_port_range.1),
             quic_config.clone(),
         )
         .expect("expected bind to succeed");
