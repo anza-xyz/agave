@@ -2405,7 +2405,7 @@ impl BankingStageAdapter {
         ))
     }
 
-    fn recreate_task(&self, task: Task) -> Task {
+    fn recreate_task(&self, task: SanitizedTransaction) -> Task {
         task
     }
 
