@@ -4459,7 +4459,7 @@ impl Blockstore {
 
             // At this point this slot has received a parent, so it's no longer an orphan
             if was_orphan_slot {
-                write_batch.delete::<cf::Orphans>(slot)?;
+                self.orphans_cf.delete_in_batch(write_batch, slot)?;
             }
         }
 

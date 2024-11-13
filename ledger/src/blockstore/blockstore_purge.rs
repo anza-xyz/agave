@@ -1,6 +1,5 @@
 use {
     super::*,
-    crate::blockstore_db::ColumnIndexDeprecation,
     solana_sdk::message::AccountKeys,
     std::{cmp::max, time::Instant},
 };
@@ -464,21 +463,17 @@ impl Blockstore {
                 .flat_map(|entry| entry.transactions);
             for (i, transaction) in transactions.enumerate() {
                 if let Some(&signature) = transaction.signatures.first() {
-                    batch.delete::<cf::TransactionStatus>((signature, slot))?;
-                    batch.delete::<cf::TransactionMemos>((signature, slot))?;
+                    self.transaction_status_cf
+                        .delete_in_batch(batch, (signature, slot))?;
+                    self.transaction_memos_cf
+                        .delete_in_batch(batch, (signature, slot))?;
                     if !primary_indexes.is_empty() {
-                        batch.delete_raw::<cf::TransactionMemos>(
-                            &cf::TransactionMemos::deprecated_key(signature),
-                        )?;
+                        self.transaction_memos_cf
+                            .delete_deprecated_in_batch(batch, signature)?;
                     }
                     for primary_index in &primary_indexes {
-                        batch.delete_raw::<cf::TransactionStatus>(
-                            &cf::TransactionStatus::deprecated_key((
-                                *primary_index,
-                                signature,
-                                slot,
-                            )),
-                        )?;
+                        self.transaction_status_cf
+                            .delete_deprecated_in_batch(batch, (*primary_index, signature, slot))?;
                     }
 
                     let meta = self.read_transaction_status((signature, slot))?;
@@ -491,20 +486,14 @@ impl Blockstore {
                     let transaction_index =
                         u32::try_from(i).map_err(|_| BlockstoreError::TransactionIndexOverflow)?;
                     for pubkey in account_keys.iter() {
-                        batch.delete::<cf::AddressSignatures>((
-                            *pubkey,
-                            slot,
-                            transaction_index,
-                            signature,
-                        ))?;
+                        self.address_signatures_cf.delete_in_batch(
+                            batch,
+                            (*pubkey, slot, transaction_index, signature),
+                        )?;
                         for primary_index in &primary_indexes {
-                            batch.delete_raw::<cf::AddressSignatures>(
-                                &cf::AddressSignatures::deprecated_key((
-                                    *primary_index,
-                                    *pubkey,
-                                    slot,
-                                    signature,
-                                )),
+                            self.address_signatures_cf.delete_deprecated_in_batch(
+                                batch,
+                                (*primary_index, *pubkey, slot, signature),
                             )?;
                         }
                     }

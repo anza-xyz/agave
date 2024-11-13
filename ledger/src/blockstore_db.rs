@@ -1638,6 +1638,11 @@ where
         result
     }
 
+    pub fn delete_in_batch(&self, batch: &mut WriteBatch, key: C::Index) -> Result<()> {
+        let key = C::key(key);
+        batch.delete_cf(self.handle(), &key)
+    }
+
     /// Adds a \[`from`, `to`\] range that deletes all entries between the `from` slot
     /// and `to` slot inclusively.  If `from` slot and `to` slot are the same, then all
     /// entries in that slot will be removed.
@@ -1870,15 +1875,20 @@ where
                 .map(|index| (index, value))
         }))
     }
+
+    pub(crate) fn delete_deprecated_in_batch(
+        &self,
+        batch: &mut WriteBatch,
+        key: C::DeprecatedIndex,
+    ) -> Result<()> {
+        let key = C::deprecated_key(key);
+        batch.delete_cf(self.handle(), &key)
+    }
 }
 
 impl<'a> WriteBatch<'a> {
-    pub fn delete<C: Column + ColumnName>(&mut self, key: C::Index) -> Result<()> {
-        self.delete_raw::<C>(&C::key(key))
-    }
-
-    pub(crate) fn delete_raw<C: Column + ColumnName>(&mut self, key: &[u8]) -> Result<()> {
-        self.write_batch.delete_cf(self.get_cf::<C>(), key);
+    fn delete_cf(&mut self, cf: &ColumnFamily, key: &[u8]) -> Result<()> {
+        self.write_batch.delete_cf(cf, key);
         Ok(())
     }
 
