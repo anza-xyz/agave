@@ -4,7 +4,6 @@ use {
         scheduler_error::SchedulerError,
         thread_aware_account_locks::{ThreadAwareAccountLocks, ThreadId, ThreadSet},
         transaction_state::SanitizedTransactionTTL,
-        transaction_state_container::TransactionStateContainer,
     },
     crate::banking_stage::{
         consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
@@ -14,6 +13,7 @@ use {
         },
         transaction_scheduler::{
             transaction_priority_id::TransactionPriorityId, transaction_state::TransactionState,
+            transaction_state_container::StateContainer,
         },
     },
     crossbeam_channel::{Receiver, Sender, TryRecvError},
@@ -66,7 +66,7 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
         }
     }
 
-    /// Schedule transactions from the given `TransactionStateContainer` to be
+    /// Schedule transactions from the given `StateContainer` to be
     /// consumed by the worker threads. Returns summary of scheduling, or an
     /// error.
     /// `pre_graph_filter` is used to filter out transactions that should be
@@ -82,9 +82,9 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
     /// This, combined with internal tracking of threads' in-flight transactions, allows
     /// for load-balancing while prioritizing scheduling transactions onto threads that will
     /// not cause conflicts in the near future.
-    pub(crate) fn schedule(
+    pub(crate) fn schedule<S: StateContainer<Tx>>(
         &mut self,
-        container: &mut TransactionStateContainer<Tx>,
+        container: &mut S,
         pre_graph_filter: impl Fn(&[&Tx], &mut [bool]),
         pre_lock_filter: impl Fn(&Tx) -> bool,
     ) -> Result<SchedulingSummary, SchedulerError> {
@@ -119,7 +119,7 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
         let mut total_filter_time_us: u64 = 0;
 
         let mut window_budget = self.look_ahead_window_size;
-        let mut chunked_pops = |container: &mut TransactionStateContainer<Tx>,
+        let mut chunked_pops = |container: &mut S,
                                 prio_graph: &mut PrioGraph<_, _, _, _>,
                                 window_budget: &mut usize| {
             while *window_budget > 0 {
@@ -302,7 +302,7 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
     /// Returns (num_transactions, num_retryable_transactions) on success.
     pub fn receive_completed(
         &mut self,
-        container: &mut TransactionStateContainer<Tx>,
+        container: &mut impl StateContainer<Tx>,
     ) -> Result<(usize, usize), SchedulerError> {
         let mut total_num_transactions: usize = 0;
         let mut total_num_retryable: usize = 0;
@@ -321,7 +321,7 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
     /// Returns `Ok((num_transactions, num_retryable))` if a batch was received, `Ok((0, 0))` if no batch was received.
     fn try_receive_completed(
         &mut self,
-        container: &mut TransactionStateContainer<Tx>,
+        container: &mut impl StateContainer<Tx>,
     ) -> Result<(usize, usize), SchedulerError> {
         match self.finished_consume_work_receiver.try_recv() {
             Ok(FinishedConsumeWork {
@@ -607,6 +607,7 @@ mod tests {
         crate::banking_stage::{
             consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
             immutable_deserialized_packet::ImmutableDeserializedPacket,
+            transaction_scheduler::transaction_state_container::TransactionStateContainer,
         },
         crossbeam_channel::{unbounded, Receiver},
         itertools::Itertools,

@@ -10,7 +10,7 @@ use {
         },
         transaction_id_generator::TransactionIdGenerator,
         transaction_state::SanitizedTransactionTTL,
-        transaction_state_container::TransactionStateContainer,
+        transaction_state_container::{StateContainer, TransactionStateContainer},
     },
     crate::banking_stage::{
         consume_worker::ConsumeWorkerMetrics,

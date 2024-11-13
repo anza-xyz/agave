@@ -43,51 +43,93 @@ pub(crate) struct TransactionStateContainer<Tx: TransactionWithMeta> {
     id_to_transaction_state: HashMap<TransactionId, TransactionState<Tx>>,
 }
 
-impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
-    pub(crate) fn with_capacity(capacity: usize) -> Self {
+pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
+    /// Create a new `TransactionStateContainer` with the given capacity.
+    fn with_capacity(capacity: usize) -> Self;
+
+    /// Returns true if the queue is empty.
+    fn is_empty(&self) -> bool;
+
+    /// Returns the remaining capacity of the queue
+    fn remaining_queue_capacity(&self) -> usize;
+
+    /// Get the top transaction id in the priority queue.
+    fn pop(&mut self) -> Option<TransactionPriorityId>;
+
+    /// Get mutable transaction state by id.
+    fn get_mut_transaction_state(
+        &mut self,
+        id: &TransactionId,
+    ) -> Option<&mut TransactionState<Tx>>;
+
+    /// Get reference to `SanitizedTransactionTTL` by id.
+    /// Panics if the transaction does not exist.
+    fn get_transaction_ttl(&self, id: &TransactionId) -> Option<&SanitizedTransactionTTL<Tx>>;
+
+    /// Insert a new transaction into the container's queues and maps.
+    /// Returns `true` if a packet was dropped due to capacity limits.
+    fn insert_new_transaction(
+        &mut self,
+        transaction_id: TransactionId,
+        transaction_ttl: SanitizedTransactionTTL<Tx>,
+        packet: Option<Arc<ImmutableDeserializedPacket>>,
+        priority: u64,
+        cost: u64,
+    ) -> bool;
+
+    /// Retries a transaction - inserts transaction back into map (but not packet).
+    /// This transitions the transaction to `Unprocessed` state.
+    fn retry_transaction(
+        &mut self,
+        transaction_id: TransactionId,
+        transaction_ttl: SanitizedTransactionTTL<Tx>,
+    );
+
+    /// Pushes a transaction id into the priority queue. If the queue is full, the lowest priority
+    /// transaction will be dropped (removed from the queue and map).
+    /// Returns `true` if a packet was dropped due to capacity limits.
+    fn push_id_into_queue(&mut self, priority_id: TransactionPriorityId) -> bool;
+
+    /// Remove transaction by id.
+    fn remove_by_id(&mut self, id: &TransactionId);
+
+    fn get_min_max_priority(&self) -> MinMaxResult<u64>;
+}
+
+impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<Tx> {
+    fn with_capacity(capacity: usize) -> Self {
         Self {
             priority_queue: MinMaxHeap::with_capacity(capacity),
             id_to_transaction_state: HashMap::with_capacity(capacity),
         }
     }
 
-    /// Returns true if the queue is empty.
-    pub(crate) fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.priority_queue.is_empty()
     }
 
-    /// Returns the remaining capacity of the queue
-    pub(crate) fn remaining_queue_capacity(&self) -> usize {
+    fn remaining_queue_capacity(&self) -> usize {
         self.priority_queue.capacity() - self.priority_queue.len()
     }
 
-    /// Get the top transaction id in the priority queue.
-    pub(crate) fn pop(&mut self) -> Option<TransactionPriorityId> {
+    fn pop(&mut self) -> Option<TransactionPriorityId> {
         self.priority_queue.pop_max()
     }
 
-    /// Get mutable transaction state by id.
-    pub(crate) fn get_mut_transaction_state(
+    fn get_mut_transaction_state(
         &mut self,
         id: &TransactionId,
     ) -> Option<&mut TransactionState<Tx>> {
         self.id_to_transaction_state.get_mut(id)
     }
 
-    /// Get reference to `SanitizedTransactionTTL` by id.
-    /// Panics if the transaction does not exist.
-    pub(crate) fn get_transaction_ttl(
-        &self,
-        id: &TransactionId,
-    ) -> Option<&SanitizedTransactionTTL<Tx>> {
+    fn get_transaction_ttl(&self, id: &TransactionId) -> Option<&SanitizedTransactionTTL<Tx>> {
         self.id_to_transaction_state
             .get(id)
             .map(|state| state.transaction_ttl())
     }
 
-    /// Insert a new transaction into the container's queues and maps.
-    /// Returns `true` if a packet was dropped due to capacity limits.
-    pub(crate) fn insert_new_transaction(
+    fn insert_new_transaction(
         &mut self,
         transaction_id: TransactionId,
         transaction_ttl: SanitizedTransactionTTL<Tx>,
@@ -103,9 +145,7 @@ impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
         self.push_id_into_queue(priority_id)
     }
 
-    /// Retries a transaction - inserts transaction back into map (but not packet).
-    /// This transitions the transaction to `Unprocessed` state.
-    pub(crate) fn retry_transaction(
+    fn retry_transaction(
         &mut self,
         transaction_id: TransactionId,
         transaction_ttl: SanitizedTransactionTTL<Tx>,
@@ -118,10 +158,7 @@ impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
         self.push_id_into_queue(priority_id);
     }
 
-    /// Pushes a transaction id into the priority queue. If the queue is full, the lowest priority
-    /// transaction will be dropped (removed from the queue and map).
-    /// Returns `true` if a packet was dropped due to capacity limits.
-    pub(crate) fn push_id_into_queue(&mut self, priority_id: TransactionPriorityId) -> bool {
+    fn push_id_into_queue(&mut self, priority_id: TransactionPriorityId) -> bool {
         if self.remaining_queue_capacity() == 0 {
             let popped_id = self.priority_queue.push_pop_min(priority_id);
             self.remove_by_id(&popped_id.id);
@@ -132,14 +169,13 @@ impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
         }
     }
 
-    /// Remove transaction by id.
-    pub(crate) fn remove_by_id(&mut self, id: &TransactionId) {
+    fn remove_by_id(&mut self, id: &TransactionId) {
         self.id_to_transaction_state
             .remove(id)
             .expect("transaction must exist");
     }
 
-    pub(crate) fn get_min_max_priority(&self) -> MinMaxResult<u64> {
+    fn get_min_max_priority(&self) -> MinMaxResult<u64> {
         match self.priority_queue.peek_min() {
             Some(min) => match self.priority_queue.peek_max() {
                 Some(max) => MinMaxResult::MinMax(min.priority, max.priority),
