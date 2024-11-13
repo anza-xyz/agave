@@ -2388,7 +2388,7 @@ impl MonotonicIdGenerator {
     }
 
     fn bulk_assign_task_ids(&self, count: u64) -> u64 {
-        self.next_task_id.fetch_add(count, Ordering::AcqRel)
+        self.next_task_id.fetch_add(count, std::sync::atomic::Ordering::AcqRel)
     }
 }
 
