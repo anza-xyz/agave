@@ -715,7 +715,7 @@ mod tests {
             container.insert_new_transaction(
                 id,
                 transaction_ttl,
-                packet,
+                Some(packet),
                 compute_unit_price,
                 TEST_TRANSACTION_COST,
             );

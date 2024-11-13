@@ -90,7 +90,7 @@ impl TransactionStateContainer {
         &mut self,
         transaction_id: TransactionId,
         transaction_ttl: SanitizedTransactionTTL,
-        packet: Arc<ImmutableDeserializedPacket>,
+        packet: Option<Arc<ImmutableDeserializedPacket>>,
         priority: u64,
         cost: u64,
     ) -> bool {
@@ -206,7 +206,7 @@ mod tests {
             container.insert_new_transaction(
                 TransactionId::new(id),
                 transaction_ttl,
-                packet,
+                Some(packet),
                 priority,
                 cost,
             );
