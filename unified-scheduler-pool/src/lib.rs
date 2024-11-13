@@ -2383,10 +2383,10 @@ struct MonotonicIdGenerator {
 }
 
 impl MonotonicIdGenerator {
-    fn new() -> Arc<Self> {
-        Arc::new(Self {
+    fn new() -> Self {
+        Self {
             next_task_id: AtomicU64::default(),
-        })
+        }
     }
 
     fn bulk_assign_task_ids(&self, count: u64) -> u64 {
