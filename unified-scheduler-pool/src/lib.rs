@@ -2405,8 +2405,12 @@ impl BankingStageAdapter {
         ))
     }
 
-    fn recreate_task(&self, task: SanitizedTransaction) -> Task {
-        task
+    fn recreate_task(&self, transaction: SanitizedTransaction) -> Task {
+        SchedulingStateMachine::create_task(
+            transaction,
+            0,
+            &mut |pubkey| self.usage_queue_loader.load(pubkey),
+        )
     }
 
     fn banking_stage_status(&self) -> BankingStageStatus {
