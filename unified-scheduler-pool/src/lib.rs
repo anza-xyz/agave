@@ -313,7 +313,7 @@ where
                     sleep(pool_cleaner_interval);
                     info!("Scheduler pool cleaner: start!!!",);
 
-                    let Some(scheduler_pool) = strong_scheduler_pool.unwrap_or_else(|| weak_scheduler_pool.upgrade()) else {
+                    let Some(scheduler_pool) = strong_scheduler_pool.or_else(|| weak_scheduler_pool.upgrade()) else {
                         error!("weak pool!");
                         break;
                     };
