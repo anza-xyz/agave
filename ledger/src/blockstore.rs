@@ -1141,11 +1141,8 @@ impl Blockstore {
         metrics.chaining_elapsed_us += start.as_us();
 
         let mut start = Measure::start("Commit Working Sets");
-        let (should_signal, newly_completed_slots) = commit_slot_meta_working_set(
-            &slot_meta_working_set,
-            &self.completed_slots_senders.lock().unwrap(),
-            &mut write_batch,
-        )?;
+        let (should_signal, newly_completed_slots) =
+            self.commit_slot_meta_working_set(&slot_meta_working_set, &mut write_batch)?;
 
         for (erasure_set, working_erasure_meta) in erasure_metas.iter() {
             if !working_erasure_meta.should_write() {
@@ -4506,6 +4503,52 @@ impl Blockstore {
         Ok(())
     }
 
+    /// For each slot in the slot_meta_working_set which has any change, include
+    /// corresponding updates to cf::SlotMeta via the specified `write_batch`.
+    /// The `write_batch` will later be atomically committed to the blockstore.
+    ///
+    /// Arguments:
+    /// - `slot_meta_working_set`: a map that maintains slot-id to its `SlotMeta`
+    ///   mapping.
+    /// - `completed_slot_senders`: the units which are responsible for sending
+    ///   signals for completed slots.
+    /// - `write_batch`: the write batch which includes all the updates of the
+    ///   the current write and ensures their atomicity.
+    ///
+    /// On success, the function returns an Ok result with <should_signal,
+    /// newly_completed_slots> pair where:
+    ///  - `should_signal`: a boolean flag indicating whether to send signal.
+    ///  - `newly_completed_slots`: a subset of slot_meta_working_set which are
+    ///    newly completed.
+    fn commit_slot_meta_working_set(
+        &self,
+        slot_meta_working_set: &HashMap<u64, SlotMetaWorkingSetEntry>,
+        write_batch: &mut WriteBatch,
+    ) -> Result<(bool, Vec<u64>)> {
+        let mut should_signal = false;
+        let mut newly_completed_slots = vec![];
+        let completed_slots_senders = self.completed_slots_senders.lock().unwrap();
+
+        // Check if any metadata was changed, if so, insert the new version of the
+        // metadata into the write batch
+        for (slot, slot_meta_entry) in slot_meta_working_set.iter() {
+            // Any slot that wasn't written to should have been filtered out by now.
+            assert!(slot_meta_entry.did_insert_occur);
+            let meta: &SlotMeta = &RefCell::borrow(&*slot_meta_entry.new_slot_meta);
+            let meta_backup = &slot_meta_entry.old_slot_meta;
+            if !completed_slots_senders.is_empty() && is_newly_completed_slot(meta, meta_backup) {
+                newly_completed_slots.push(*slot);
+            }
+            // Check if the working copy of the metadata has changed
+            if Some(meta) != meta_backup.as_ref() {
+                should_signal = should_signal || slot_has_updates(meta, meta_backup);
+                write_batch.put::<cf::SlotMeta>(*slot, meta)?;
+            }
+        }
+
+        Ok((should_signal, newly_completed_slots))
+    }
+
     /// Obtain the SlotMeta from the in-memory slot_meta_working_set or load
     /// it from the database if it does not exist in slot_meta_working_set.
     ///
@@ -4749,51 +4792,6 @@ fn send_signals(
             }
         }
     }
-}
-
-/// For each slot in the slot_meta_working_set which has any change, include
-/// corresponding updates to cf::SlotMeta via the specified `write_batch`.
-/// The `write_batch` will later be atomically committed to the blockstore.
-///
-/// Arguments:
-/// - `slot_meta_working_set`: a map that maintains slot-id to its `SlotMeta`
-///   mapping.
-/// - `completed_slot_senders`: the units which are responsible for sending
-///   signals for completed slots.
-/// - `write_batch`: the write batch which includes all the updates of the
-///   the current write and ensures their atomicity.
-///
-/// On success, the function returns an Ok result with <should_signal,
-/// newly_completed_slots> pair where:
-///  - `should_signal`: a boolean flag indicating whether to send signal.
-///  - `newly_completed_slots`: a subset of slot_meta_working_set which are
-///    newly completed.
-fn commit_slot_meta_working_set(
-    slot_meta_working_set: &HashMap<u64, SlotMetaWorkingSetEntry>,
-    completed_slots_senders: &[Sender<Vec<u64>>],
-    write_batch: &mut WriteBatch,
-) -> Result<(bool, Vec<u64>)> {
-    let mut should_signal = false;
-    let mut newly_completed_slots = vec![];
-
-    // Check if any metadata was changed, if so, insert the new version of the
-    // metadata into the write batch
-    for (slot, slot_meta_entry) in slot_meta_working_set.iter() {
-        // Any slot that wasn't written to should have been filtered out by now.
-        assert!(slot_meta_entry.did_insert_occur);
-        let meta: &SlotMeta = &RefCell::borrow(&*slot_meta_entry.new_slot_meta);
-        let meta_backup = &slot_meta_entry.old_slot_meta;
-        if !completed_slots_senders.is_empty() && is_newly_completed_slot(meta, meta_backup) {
-            newly_completed_slots.push(*slot);
-        }
-        // Check if the working copy of the metadata has changed
-        if Some(meta) != meta_backup.as_ref() {
-            should_signal = should_signal || slot_has_updates(meta, meta_backup);
-            write_batch.put::<cf::SlotMeta>(*slot, meta)?;
-        }
-    }
-
-    Ok((should_signal, newly_completed_slots))
 }
 
 /// Returns the `SlotMeta` of the specified `slot` from the two cached states:
