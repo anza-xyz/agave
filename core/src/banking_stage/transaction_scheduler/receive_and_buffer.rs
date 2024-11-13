@@ -19,7 +19,8 @@ use {
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::{
         instructions_processor::process_compute_budget_instructions,
-        runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
+        runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
+        transaction_with_meta::TransactionWithMeta,
     },
     solana_sdk::{
         address_lookup_table::state::estimate_last_valid_slot,
@@ -44,7 +45,7 @@ pub trait ReceiveAndBuffer<Tx: TransactionWithMeta> {
     ) -> bool;
 }
 
-pub(crate) struct SanitizedTransactionReceiveAndBuffer {
+pub struct SanitizedTransactionReceiveAndBuffer {
     /// Packet/Transaction ingress.
     packet_receiver: PacketDeserializer,
     bank_forks: Arc<RwLock<BankForks>>,
@@ -130,6 +131,19 @@ impl ReceiveAndBuffer<RuntimeTransaction<SanitizedTransaction>>
 }
 
 impl SanitizedTransactionReceiveAndBuffer {
+    pub fn new(
+        packet_receiver: PacketDeserializer,
+        bank_forks: Arc<RwLock<BankForks>>,
+        forwarding_enabled: bool,
+    ) -> Self {
+        Self {
+            packet_receiver,
+            bank_forks,
+            transaction_id_generator: TransactionIdGenerator::default(),
+            forwarding_enabled,
+        }
+    }
+
     fn buffer_packets(
         &mut self,
         container: &mut impl StateContainer<RuntimeTransaction<SanitizedTransaction>>,
@@ -182,7 +196,7 @@ impl SanitizedTransactionReceiveAndBuffer {
                     .is_ok()
                 })
                 .filter_map(|(packet, tx, deactivation_slot)| {
-                    process_compute_budget_instructions(SVMMessage::program_instructions_iter(&tx))
+                    tx.compute_budget_limits(&working_bank.feature_set)
                         .map(|compute_budget| {
                             (packet, tx, deactivation_slot, compute_budget.into())
                         })
@@ -335,5 +349,35 @@ fn calculate_max_age(
     MaxAge {
         sanitized_epoch,
         alt_invalidation_slot: alt_min_expire_slot,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_calculate_max_age() {
+        let current_slot = 100;
+        let sanitized_epoch = 10;
+
+        // ALT deactivation slot is delayed
+        assert_eq!(
+            calculate_max_age(sanitized_epoch, current_slot - 1, current_slot),
+            MaxAge {
+                sanitized_epoch,
+                alt_invalidation_slot: current_slot - 1
+                    + solana_sdk::slot_hashes::get_entries() as u64,
+            }
+        );
+
+        // no deactivation slot
+        assert_eq!(
+            calculate_max_age(sanitized_epoch, u64::MAX, current_slot),
+            MaxAge {
+                sanitized_epoch,
+                alt_invalidation_slot: current_slot + solana_sdk::slot_hashes::get_entries() as u64,
+            }
+        );
     }
 }
