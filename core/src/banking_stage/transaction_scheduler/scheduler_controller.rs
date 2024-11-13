@@ -48,7 +48,7 @@ use {
 };
 
 /// Controls packet and transaction flow into scheduler, and scheduling execution.
-pub(crate) struct SchedulerController<T: LikeClusterInfo> {
+pub(crate) struct SchedulerController<C: LikeClusterInfo> {
     /// Decision maker for determining what should be done with transactions.
     decision_maker: DecisionMaker,
     /// Packet/Transaction ingress.
@@ -72,7 +72,7 @@ pub(crate) struct SchedulerController<T: LikeClusterInfo> {
     /// Metric report handles for the worker threads.
     worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
     /// State for forwarding packets to the leader, if enabled.
-    forwarder: Option<Forwarder<T>>,
+    forwarder: Option<Forwarder<C>>,
 }
 
 impl<T: LikeClusterInfo> SchedulerController<T> {
