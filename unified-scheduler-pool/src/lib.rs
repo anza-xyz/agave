@@ -2159,6 +2159,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 let result_with_timings = self.session_result_receiver.recv().unwrap();
                 debug!("ensure_join_threads(): err: {:?}", result_with_timings.0);
                 self.put_session_result_with_timings(result_with_timings);
+            } else {
+                if let Ok(result_with_timings) = self.session_result_receiver.try_recv().inspect_err(|err| {
+                    error!("ensure_join_threads(): would be bocked....: {:?}", err);
+                }) {
+                    self.put_session_result_with_timings(result_with_timings);
+                }
             }
         } else {
             warn!("ensure_join_threads(): skipping; already joined...");
