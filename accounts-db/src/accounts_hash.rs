@@ -152,7 +152,7 @@ impl AccountHashesFile {
     /// The reader will be None if there are no hashes in the file. And this function should only be called once after all writes are done.
     /// After calling this function, the writer will be None. No more writes are allowed.
     fn get_reader(&mut self) -> Option<MmapAccountHashesFile> {
-        let mmap = std::mem::take(&mut self.writer);
+        let mmap = self.writer.take();
         if mmap.is_some() && mmap.as_ref().unwrap().count > 0 {
             mmap
         } else {
