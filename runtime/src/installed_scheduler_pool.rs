@@ -607,10 +607,12 @@ impl BankWithSchedulerInner {
         let weak_bank = Arc::downgrade(self);
         TimeoutListener::new(move |pool| {
             let Some(bank) = weak_bank.upgrade() else {
+                error!("weak bank");
                 return;
             };
 
             let Ok(mut scheduler) = bank.scheduler.write() else {
+                error!("poisoned scheduler lock");
                 return;
             };
 

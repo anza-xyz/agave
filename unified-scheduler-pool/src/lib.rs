@@ -432,7 +432,7 @@ where
                                     let id = pooled.id();
                                     info!("dropping sch {id}");
                                     drop(pooled);
-                                    info!("dropped sch {id}");
+                                    info!("dropped ch {id}");
                                     scheduler_pool.reset_respawner();
                                     exiting = true;
                                     true
@@ -453,7 +453,7 @@ where
                     sleepless_testing::at(CheckPoint::TimeoutListenerTriggered(
                         triggered_timeout_listener_count,
                     ));
-                    if exiting && active_inner_count == 0 && active_timeout_listener_count == 0 && bpsi {
+                    if exiting && idle_inner_count == 0 && active_inner_count == 0 && trashed_inner_count == 0 && triggered_timeout_listener_count == 0 && active_timeout_listener_count == 0 && bpsi {
                         break;
                     }
                 }
@@ -655,6 +655,12 @@ where
 
         let on_banking_packet_receive = on_spawn_block_production_scheduler(adapter.clone());
         let banking_stage_context = (banking_packet_receiver.clone(), on_banking_packet_receive);
+        /*
+        let mut g = self
+            .block_production_scheduler_inner
+            .lock()
+            .expect("not poisoned");
+            */
         let context =
             g.2.take()
                 .inspect(|context| {
