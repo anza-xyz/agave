@@ -23,6 +23,7 @@ use {
     solana_measure::measure_us,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk::{pubkey::Pubkey, saturating_add_assign, transaction::SanitizedTransaction},
+    solana_svm_transaction::svm_message::SVMMessage,
 };
 
 #[inline(always)]
@@ -83,7 +84,7 @@ impl PrioGraphScheduler {
     /// not cause conflicts in the near future.
     pub(crate) fn schedule(
         &mut self,
-        container: &mut TransactionStateContainer,
+        container: &mut TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>>,
         pre_graph_filter: impl Fn(&[&RuntimeTransaction<SanitizedTransaction>], &mut [bool]),
         pre_lock_filter: impl Fn(&RuntimeTransaction<SanitizedTransaction>) -> bool,
     ) -> Result<SchedulingSummary, SchedulerError> {
@@ -118,7 +119,9 @@ impl PrioGraphScheduler {
         let mut total_filter_time_us: u64 = 0;
 
         let mut window_budget = self.look_ahead_window_size;
-        let mut chunked_pops = |container: &mut TransactionStateContainer,
+        let mut chunked_pops = |container: &mut TransactionStateContainer<
+            RuntimeTransaction<SanitizedTransaction>,
+        >,
                                 prio_graph: &mut PrioGraph<_, _, _, _>,
                                 window_budget: &mut usize| {
             while *window_budget > 0 {
@@ -301,7 +304,7 @@ impl PrioGraphScheduler {
     /// Returns (num_transactions, num_retryable_transactions) on success.
     pub fn receive_completed(
         &mut self,
-        container: &mut TransactionStateContainer,
+        container: &mut TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>>,
     ) -> Result<(usize, usize), SchedulerError> {
         let mut total_num_transactions: usize = 0;
         let mut total_num_retryable: usize = 0;
@@ -320,7 +323,7 @@ impl PrioGraphScheduler {
     /// Returns `Ok((num_transactions, num_retryable))` if a batch was received, `Ok((0, 0))` if no batch was received.
     fn try_receive_completed(
         &mut self,
-        container: &mut TransactionStateContainer,
+        container: &mut TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>>,
     ) -> Result<(usize, usize), SchedulerError> {
         match self.finished_consume_work_receiver.try_recv() {
             Ok(FinishedConsumeWork {
@@ -464,9 +467,9 @@ impl PrioGraphScheduler {
 
     /// Gets accessed accounts (resources) for use in `PrioGraph`.
     fn get_transaction_account_access(
-        transaction: &SanitizedTransactionTTL,
+        transaction: &SanitizedTransactionTTL<impl SVMMessage>,
     ) -> impl Iterator<Item = (Pubkey, AccessKind)> + '_ {
-        let message = transaction.transaction.message();
+        let message = &transaction.transaction;
         message
             .account_keys()
             .iter()
@@ -559,7 +562,7 @@ enum TransactionSchedulingError {
 }
 
 fn try_schedule_transaction(
-    transaction_state: &mut TransactionState,
+    transaction_state: &mut TransactionState<RuntimeTransaction<SanitizedTransaction>>,
     pre_lock_filter: impl Fn(&RuntimeTransaction<SanitizedTransaction>) -> bool,
     blocking_locks: &mut ReadWriteAccountSet,
     account_locks: &mut ThreadAwareAccountLocks,
@@ -689,7 +692,7 @@ mod tests {
                 u64,
             ),
         >,
-    ) -> TransactionStateContainer {
+    ) -> TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>> {
         let mut container = TransactionStateContainer::with_capacity(10 * 1024);
         for (index, (from_keypair, to_pubkeys, lamports, compute_unit_price)) in
             tx_infos.into_iter().enumerate()

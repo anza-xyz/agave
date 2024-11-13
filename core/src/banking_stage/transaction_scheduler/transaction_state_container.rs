@@ -9,6 +9,7 @@ use {
     },
     itertools::MinMaxResult,
     min_max_heap::MinMaxHeap,
+    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     std::{collections::HashMap, sync::Arc},
 };
 
@@ -37,12 +38,12 @@ use {
 ///
 /// The container maintains a fixed capacity. If the queue is full when pushing
 /// a new transaction, the lowest priority transaction will be dropped.
-pub(crate) struct TransactionStateContainer {
+pub(crate) struct TransactionStateContainer<Tx: TransactionWithMeta> {
     priority_queue: MinMaxHeap<TransactionPriorityId>,
-    id_to_transaction_state: HashMap<TransactionId, TransactionState>,
+    id_to_transaction_state: HashMap<TransactionId, TransactionState<Tx>>,
 }
 
-impl TransactionStateContainer {
+impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
     pub(crate) fn with_capacity(capacity: usize) -> Self {
         Self {
             priority_queue: MinMaxHeap::with_capacity(capacity),
@@ -69,7 +70,7 @@ impl TransactionStateContainer {
     pub(crate) fn get_mut_transaction_state(
         &mut self,
         id: &TransactionId,
-    ) -> Option<&mut TransactionState> {
+    ) -> Option<&mut TransactionState<Tx>> {
         self.id_to_transaction_state.get_mut(id)
     }
 
@@ -78,7 +79,7 @@ impl TransactionStateContainer {
     pub(crate) fn get_transaction_ttl(
         &self,
         id: &TransactionId,
-    ) -> Option<&SanitizedTransactionTTL> {
+    ) -> Option<&SanitizedTransactionTTL<Tx>> {
         self.id_to_transaction_state
             .get(id)
             .map(|state| state.transaction_ttl())
@@ -89,7 +90,7 @@ impl TransactionStateContainer {
     pub(crate) fn insert_new_transaction(
         &mut self,
         transaction_id: TransactionId,
-        transaction_ttl: SanitizedTransactionTTL,
+        transaction_ttl: SanitizedTransactionTTL<Tx>,
         packet: Option<Arc<ImmutableDeserializedPacket>>,
         priority: u64,
         cost: u64,
@@ -107,7 +108,7 @@ impl TransactionStateContainer {
     pub(crate) fn retry_transaction(
         &mut self,
         transaction_id: TransactionId,
-        transaction_ttl: SanitizedTransactionTTL,
+        transaction_ttl: SanitizedTransactionTTL<Tx>,
     ) {
         let transaction_state = self
             .get_mut_transaction_state(&transaction_id)
@@ -156,8 +157,14 @@ mod tests {
         crate::banking_stage::scheduler_messages::MaxAge,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
-            compute_budget::ComputeBudgetInstruction, hash::Hash, message::Message, packet::Packet,
-            signature::Keypair, signer::Signer, system_instruction, transaction::Transaction,
+            compute_budget::ComputeBudgetInstruction,
+            hash::Hash,
+            message::Message,
+            packet::Packet,
+            signature::Keypair,
+            signer::Signer,
+            system_instruction,
+            transaction::{SanitizedTransaction, Transaction},
         },
     };
 
@@ -165,7 +172,7 @@ mod tests {
     fn test_transaction(
         priority: u64,
     ) -> (
-        SanitizedTransactionTTL,
+        SanitizedTransactionTTL<RuntimeTransaction<SanitizedTransaction>>,
         Arc<ImmutableDeserializedPacket>,
         u64,
         u64,
@@ -199,7 +206,10 @@ mod tests {
         (transaction_ttl, packet, priority, TEST_TRANSACTION_COST)
     }
 
-    fn push_to_container(container: &mut TransactionStateContainer, num: usize) {
+    fn push_to_container(
+        container: &mut TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>>,
+        num: usize,
+    ) {
         for id in 0..num as u64 {
             let priority = id;
             let (transaction_ttl, packet, priority, cost) = test_transaction(priority);
