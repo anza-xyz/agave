@@ -1881,27 +1881,21 @@ where
 }
 
 impl WriteBatch {
+    fn put_cf(&mut self, cf: &ColumnFamily, key: &[u8], value: &[u8]) -> Result<()> {
+        self.write_batch.put_cf(cf, key, value);
+        Ok(())
+    }
+
     fn delete_cf(&mut self, cf: &ColumnFamily, key: &[u8]) -> Result<()> {
         self.write_batch.delete_cf(cf, key);
         Ok(())
     }
 
-    pub fn put_cf(&mut self, cf: &ColumnFamily, key: &[u8], value: &[u8]) -> Result<()> {
-        self.write_batch.put_cf(cf, key, value);
-        Ok(())
-    }
-
-    /// Adds a \[`from`, `to`) range deletion entry to the batch.
-    ///
-    /// Note that the \[`from`, `to`) deletion range of WriteBatch::delete_range_cf
-    /// is different from \[`from`, `to`\] of Database::delete_range_cf as we makes
-    /// the semantics of Database::delete_range_cf matches the blockstore purge
-    /// logic.
     fn delete_range_cf(
         &mut self,
         cf: &ColumnFamily,
         from: &[u8],
-        to: &[u8], // exclusive
+        to: &[u8],
     ) -> Result<()> {
         self.write_batch.delete_range_cf(cf, from, to);
         Ok(())
