@@ -32,11 +32,13 @@ use {
     std::sync::{Arc, RwLock},
 };
 
-pub trait ReceiveAndBuffer<Tx: TransactionWithMeta> {
+pub trait ReceiveAndBuffer {
+    type Transaction: TransactionWithMeta;
+
     /// Returns whether the packet receiver is still connected.
     fn receive_and_buffer_packets(
         &mut self,
-        container: &mut impl StateContainer<Tx>,
+        container: &mut impl StateContainer<Self::Transaction>,
         timing_metrics: &mut SchedulerTimingMetrics,
         count_metrics: &mut SchedulerCountMetrics,
         decision: &BufferedPacketsDecision,
@@ -53,13 +55,13 @@ pub struct SanitizedTransactionReceiveAndBuffer {
     forwarding_enabled: bool,
 }
 
-impl ReceiveAndBuffer<RuntimeTransaction<SanitizedTransaction>>
-    for SanitizedTransactionReceiveAndBuffer
-{
+impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
+    type Transaction = RuntimeTransaction<SanitizedTransaction>;
+
     /// Returns whether the packet receiver is still connected.
     fn receive_and_buffer_packets(
         &mut self,
-        container: &mut impl StateContainer<RuntimeTransaction<SanitizedTransaction>>,
+        container: &mut impl StateContainer<Self::Transaction>,
         timing_metrics: &mut SchedulerTimingMetrics,
         count_metrics: &mut SchedulerCountMetrics,
         decision: &BufferedPacketsDecision,

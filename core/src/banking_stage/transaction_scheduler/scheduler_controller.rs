@@ -20,7 +20,6 @@ use {
     },
     solana_measure::measure_us,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
-    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_sdk::{
         self,
         clock::{FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, MAX_PROCESSING_AGE},
@@ -34,20 +33,16 @@ use {
 };
 
 /// Controls packet and transaction flow into scheduler, and scheduling execution.
-pub(crate) struct SchedulerController<
-    C: LikeClusterInfo,
-    Tx: TransactionWithMeta,
-    R: ReceiveAndBuffer<Tx>,
-> {
+pub(crate) struct SchedulerController<C: LikeClusterInfo, R: ReceiveAndBuffer> {
     /// Decision maker for determining what should be done with transactions.
     decision_maker: DecisionMaker,
     receive_and_buffer: R,
     bank_forks: Arc<RwLock<BankForks>>,
     /// Container for transaction state.
     /// Shared resource between `packet_receiver` and `scheduler`.
-    container: TransactionStateContainer<Tx>,
+    container: TransactionStateContainer<R::Transaction>,
     /// State for scheduling and communicating with worker threads.
-    scheduler: PrioGraphScheduler<Tx>,
+    scheduler: PrioGraphScheduler<R::Transaction>,
     /// Metrics tracking time for leader bank detection.
     leader_detection_metrics: SchedulerLeaderDetectionMetrics,
     /// Metrics tracking counts on transactions in different states
@@ -62,14 +57,12 @@ pub(crate) struct SchedulerController<
     forwarder: Option<Forwarder<C>>,
 }
 
-impl<C: LikeClusterInfo, Tx: TransactionWithMeta, R: ReceiveAndBuffer<Tx>>
-    SchedulerController<C, Tx, R>
-{
+impl<C: LikeClusterInfo, R: ReceiveAndBuffer> SchedulerController<C, R> {
     pub fn new(
         decision_maker: DecisionMaker,
         receive_and_buffer: R,
         bank_forks: Arc<RwLock<BankForks>>,
-        scheduler: PrioGraphScheduler<Tx>,
+        scheduler: PrioGraphScheduler<R::Transaction>,
         worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
         forwarder: Option<Forwarder<C>>,
     ) -> Self {
@@ -212,10 +205,15 @@ impl<C: LikeClusterInfo, Tx: TransactionWithMeta, R: ReceiveAndBuffer<Tx>>
         Ok(())
     }
 
-    fn pre_graph_filter(transactions: &[&Tx], results: &mut [bool], bank: &Bank, max_age: usize) {
+    fn pre_graph_filter(
+        transactions: &[&R::Transaction],
+        results: &mut [bool],
+        bank: &Bank,
+        max_age: usize,
+    ) {
         let lock_results = vec![Ok(()); transactions.len()];
         let mut error_counters = TransactionErrorMetrics::default();
-        let check_results = bank.check_transactions::<Tx>(
+        let check_results = bank.check_transactions::<R::Transaction>(
             transactions,
             &lock_results,
             max_age,
@@ -384,7 +382,7 @@ impl<C: LikeClusterInfo, Tx: TransactionWithMeta, R: ReceiveAndBuffer<Tx>>
                 })
                 .collect();
 
-            let check_results = bank.check_transactions::<Tx>(
+            let check_results = bank.check_transactions::<R::Transaction>(
                 &sanitized_txs,
                 &lock_results,
                 MAX_PROCESSING_AGE,
@@ -506,11 +504,7 @@ mod tests {
         num_threads: usize,
     ) -> (
         TestFrame,
-        SchedulerController<
-            Arc<ClusterInfo>,
-            RuntimeTransaction<SanitizedTransaction>,
-            SanitizedTransactionReceiveAndBuffer,
-        >,
+        SchedulerController<Arc<ClusterInfo>, SanitizedTransactionReceiveAndBuffer>,
     ) {
         let GenesisConfigInfo {
             mut genesis_config,
@@ -614,7 +608,6 @@ mod tests {
     fn test_receive_then_schedule(
         scheduler_controller: &mut SchedulerController<
             Arc<ClusterInfo>,
-            RuntimeTransaction<SanitizedTransaction>,
             SanitizedTransactionReceiveAndBuffer,
         >,
     ) {
