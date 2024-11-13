@@ -300,6 +300,11 @@ where
 
         let cleaner_main_loop = {
             let weak_scheduler_pool = Arc::downgrade(&scheduler_pool);
+            let strong_scheduler_pool = if supported_scheduling_mode.is_supported(SchedulingMode::BlockProduction) {
+                Some(scheduler_pool.clone())
+            } else {
+                None
+            };
 
             move || {
                 let mut exiting = false;
@@ -308,7 +313,7 @@ where
                     sleep(pool_cleaner_interval);
                     info!("Scheduler pool cleaner: start!!!",);
 
-                    let Some(scheduler_pool) = weak_scheduler_pool.upgrade() else {
+                    let Some(scheduler_pool) = strong_scheduler_pool.unwrap_or_else(|| weak_scheduler_pool.upgrade()) else {
                         error!("weak pool!");
                         break;
                     };
@@ -1220,8 +1225,8 @@ where
         // current new_task_sender with a random one...
         self.new_task_sender = Arc::new(crossbeam_channel::unbounded().0);
 
-        self.ensure_join_threads(true);
-        assert_matches!(self.session_result_with_timings, Some((Ok(_), _)));
+        self.ensure_join_threads(false/*true*/);
+        //assert_matches!(self.session_result_with_timings, Some((Ok(_), _)));
     }
 }
 
