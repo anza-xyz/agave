@@ -20,15 +20,11 @@ use {
     },
     solana_measure::measure_us,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
-    solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
-        transaction_with_meta::TransactionWithMeta,
-    },
+    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_sdk::{
         self,
         clock::{FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, MAX_PROCESSING_AGE},
         saturating_add_assign,
-        transaction::SanitizedTransaction,
     },
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     std::{
@@ -40,7 +36,8 @@ use {
 /// Controls packet and transaction flow into scheduler, and scheduling execution.
 pub(crate) struct SchedulerController<
     C: LikeClusterInfo,
-    R: ReceiveAndBuffer<RuntimeTransaction<SanitizedTransaction>>,
+    Tx: TransactionWithMeta,
+    R: ReceiveAndBuffer<Tx>,
 > {
     /// Decision maker for determining what should be done with transactions.
     decision_maker: DecisionMaker,
@@ -48,9 +45,9 @@ pub(crate) struct SchedulerController<
     bank_forks: Arc<RwLock<BankForks>>,
     /// Container for transaction state.
     /// Shared resource between `packet_receiver` and `scheduler`.
-    container: TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>>,
+    container: TransactionStateContainer<Tx>,
     /// State for scheduling and communicating with worker threads.
-    scheduler: PrioGraphScheduler<RuntimeTransaction<SanitizedTransaction>>,
+    scheduler: PrioGraphScheduler<Tx>,
     /// Metrics tracking time for leader bank detection.
     leader_detection_metrics: SchedulerLeaderDetectionMetrics,
     /// Metrics tracking counts on transactions in different states
@@ -65,16 +62,16 @@ pub(crate) struct SchedulerController<
     forwarder: Option<Forwarder<C>>,
 }
 
-impl<T: LikeClusterInfo, R: ReceiveAndBuffer<RuntimeTransaction<SanitizedTransaction>>>
-    SchedulerController<T, R>
+impl<C: LikeClusterInfo, Tx: TransactionWithMeta, R: ReceiveAndBuffer<Tx>>
+    SchedulerController<C, Tx, R>
 {
     pub fn new(
         decision_maker: DecisionMaker,
         receive_and_buffer: R,
         bank_forks: Arc<RwLock<BankForks>>,
-        scheduler: PrioGraphScheduler<RuntimeTransaction<SanitizedTransaction>>,
+        scheduler: PrioGraphScheduler<Tx>,
         worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
-        forwarder: Option<Forwarder<T>>,
+        forwarder: Option<Forwarder<C>>,
     ) -> Self {
         Self {
             decision_maker,
@@ -215,12 +212,7 @@ impl<T: LikeClusterInfo, R: ReceiveAndBuffer<RuntimeTransaction<SanitizedTransac
         Ok(())
     }
 
-    fn pre_graph_filter<Tx: TransactionWithMeta>(
-        transactions: &[&Tx],
-        results: &mut [bool],
-        bank: &Bank,
-        max_age: usize,
-    ) {
+    fn pre_graph_filter(transactions: &[&Tx], results: &mut [bool], bank: &Bank, max_age: usize) {
         let lock_results = vec![Ok(()); transactions.len()];
         let mut error_counters = TransactionErrorMetrics::default();
         let check_results = bank.check_transactions::<Tx>(
@@ -392,13 +384,12 @@ impl<T: LikeClusterInfo, R: ReceiveAndBuffer<RuntimeTransaction<SanitizedTransac
                 })
                 .collect();
 
-            let check_results = bank
-                .check_transactions::<RuntimeTransaction<SanitizedTransaction>>(
-                    &sanitized_txs,
-                    &lock_results,
-                    MAX_PROCESSING_AGE,
-                    &mut error_counters,
-                );
+            let check_results = bank.check_transactions::<Tx>(
+                &sanitized_txs,
+                &lock_results,
+                MAX_PROCESSING_AGE,
+                &mut error_counters,
+            );
 
             for (result, id) in check_results.into_iter().zip(chunk.iter()) {
                 if result.is_err() {
@@ -473,10 +464,18 @@ mod tests {
         solana_perf::packet::{to_packet_batches, PacketBatch, NUM_PACKETS},
         solana_poh::poh_recorder::{PohRecorder, Record, WorkingBankEntry},
         solana_runtime::bank::Bank,
+        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
-            compute_budget::ComputeBudgetInstruction, fee_calculator::FeeRateGovernor, hash::Hash,
-            message::Message, poh_config::PohConfig, pubkey::Pubkey, signature::Keypair,
-            signer::Signer, system_instruction, system_transaction, transaction::Transaction,
+            compute_budget::ComputeBudgetInstruction,
+            fee_calculator::FeeRateGovernor,
+            hash::Hash,
+            message::Message,
+            poh_config::PohConfig,
+            pubkey::Pubkey,
+            signature::Keypair,
+            signer::Signer,
+            system_instruction, system_transaction,
+            transaction::{SanitizedTransaction, Transaction},
         },
         std::sync::{atomic::AtomicBool, Arc, RwLock},
         tempfile::TempDir,
@@ -507,7 +506,11 @@ mod tests {
         num_threads: usize,
     ) -> (
         TestFrame,
-        SchedulerController<Arc<ClusterInfo>, SanitizedTransactionReceiveAndBuffer>,
+        SchedulerController<
+            Arc<ClusterInfo>,
+            RuntimeTransaction<SanitizedTransaction>,
+            SanitizedTransactionReceiveAndBuffer,
+        >,
     ) {
         let GenesisConfigInfo {
             mut genesis_config,
@@ -611,6 +614,7 @@ mod tests {
     fn test_receive_then_schedule(
         scheduler_controller: &mut SchedulerController<
             Arc<ClusterInfo>,
+            RuntimeTransaction<SanitizedTransaction>,
             SanitizedTransactionReceiveAndBuffer,
         >,
     ) {

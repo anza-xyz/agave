@@ -18,7 +18,6 @@ use {
     solana_measure::measure_us,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::{
-        instructions_processor::process_compute_budget_instructions,
         runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
         transaction_with_meta::TransactionWithMeta,
     },
@@ -30,7 +29,6 @@ use {
         transaction::SanitizedTransaction,
     },
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
-    solana_svm_transaction::svm_message::SVMMessage,
     std::sync::{Arc, RwLock},
 };
 
