@@ -302,6 +302,8 @@ where
             let weak_scheduler_pool = Arc::downgrade(&scheduler_pool);
 
             move || {
+                let mut exiting = false;
+
                 loop {
                     sleep(pool_cleaner_interval);
                     info!("Scheduler pool cleaner: start!!!",);
@@ -312,7 +314,7 @@ where
 
                     let now = Instant::now();
 
-                    let idle_inner_count = {
+                    let (idle_inner_count, active_inner_count) = {
                         // Pre-allocate rather large capacity to avoid reallocation inside the lock.
                         let mut idle_inners = Vec::with_capacity(128);
 
@@ -331,11 +333,12 @@ where
                         idle_inners.extend(scheduler_inners.extract_if(|(_inner, pooled_at)| {
                             now.duration_since(*pooled_at) > max_pooling_duration
                         }));
+                        let r = scheduler_inners.len();
                         drop(scheduler_inners);
 
                         let idle_inner_count = idle_inners.len();
                         drop(idle_inners);
-                        idle_inner_count
+                        (idle_inner_count, r)
                     };
 
                     let trashed_inner_count = {
@@ -348,11 +351,28 @@ where
                         drop(trashed_scheduler_inners);
 
                         let trashed_inner_count = trashed_inners.len();
-                        drop(trashed_inners);
+                        for trashed_inner in trashed_inners {
+                            match trashed_inner.banking_stage_status() {
+                                BankingStageStatus::Active
+                                | BankingStageStatus::NotBanking
+                                | BankingStageStatus::Inactive => {
+                                    drop(trashed_inner);
+                                }
+                                BankingStageStatus::Exited => {
+                                    info!("trashed sch {} IS Exited", trashed_inner.id());
+                                    let id = trashed_inner.id();
+                                    info!("dropping trashed sch {id}");
+                                    drop(trashed_inner);
+                                    info!("dropped trashed sch {id}");
+                                    scheduler_pool.reset_respawner();
+                                    exiting = true;
+                                },
+                            }
+                        }
                         trashed_inner_count
                     };
 
-                    let triggered_timeout_listener_count = {
+                    let (triggered_timeout_listener_count, active_timeout_listener_count) = {
                         // Pre-allocate rather large capacity to avoid reallocation inside the lock.
                         let mut expired_listeners = Vec::with_capacity(128);
                         let Ok(mut timeout_listeners) = scheduler_pool.timeout_listeners.lock()
@@ -365,41 +385,44 @@ where
                                 now.duration_since(*registered_at) > timeout_duration
                             },
                         ));
+                        let r = timeout_listeners.len();
                         drop(timeout_listeners);
 
                         let count = expired_listeners.len();
                         for (timeout_listener, _registered_at) in expired_listeners {
                             timeout_listener.trigger(scheduler_pool.clone());
                         }
-                        count
+                        (count, r)
                     };
 
                     info!("Scheduler pool cleaner: block_production_scheduler_inner!!!",);
 
-                    {
+                    let bpsi = {
                         let mut g = scheduler_pool
                             .block_production_scheduler_inner
                             .lock()
                             .unwrap();
                         if let Some(pooled) = &g.1 {
                             match pooled.banking_stage_status() {
-                                BankingStageStatus::Active => (),
+                                BankingStageStatus::NotBanking => unreachable!(),
+                                BankingStageStatus::Active => false,
                                 BankingStageStatus::Inactive => {
                                     info!("sch {} IS idle", pooled.id());
                                     if pooled.is_overgrown(false) {
                                         info!("sch {} is overgrown!", pooled.id());
                                         let pooled = g.1.take().unwrap();
                                         assert_eq!(Some(pooled.id()), g.0.take());
+                                        scheduler_pool.spawn_block_production_scheduler(&mut g);
                                         drop(g);
                                         let id = pooled.id();
                                         info!("dropping sch {id}");
                                         drop(pooled);
                                         info!("dropped sch {id}");
-                                        scheduler_pool.spawn_block_production_scheduler();
                                     } else {
                                         info!("sch {} isn't overgrown", pooled.id());
                                         pooled.reset();
                                     }
+                                    false
                                 }
                                 BankingStageStatus::Exited => {
                                     info!("sch {} IS Exited", pooled.id());
@@ -411,20 +434,28 @@ where
                                     drop(pooled);
                                     info!("dropped sch {id}");
                                     scheduler_pool.reset_respawner();
+                                    exiting = true;
+                                    true
                                 }
                             }
+                        } else {
+                            g.0.is_none()
                         }
-                    }
+                    };
 
                     info!(
-                    "Scheduler pool cleaner: dropped {} idle inners, {} trashed inners, triggered {} timeout listeners",
+                    "Scheduler pool cleaner: dropped {} idle inners, {} trashed inners, triggered {} timeout listeners {} {} {:?} {:?}",
                     idle_inner_count, trashed_inner_count, triggered_timeout_listener_count,
+                    active_inner_count, active_timeout_listener_count, exiting, bpsi
                 );
                     sleepless_testing::at(CheckPoint::IdleSchedulerCleaned(idle_inner_count));
                     sleepless_testing::at(CheckPoint::TrashedSchedulerCleaned(trashed_inner_count));
                     sleepless_testing::at(CheckPoint::TimeoutListenerTriggered(
                         triggered_timeout_listener_count,
                     ));
+                    if exiting && active_inner_count == 0 && active_timeout_listener_count == 0 && bpsi {
+                        break;
+                    }
                 }
                 warn!("solScCleaner exited!");
             }
@@ -504,32 +535,16 @@ where
             // self.trashed_scheduler_inners, which is periodically drained by the `solScCleaner`
             // thread. Dropping it could take long time (in fact,
             // PooledSchedulerInner::block_verification_usage_queue_loader can contain many entries to drop).
+            self.trashed_scheduler_inners
+                .lock()
+                .expect("not poisoned")
+                .push(scheduler);
 
-            if !is_block_production_scheduler_returned {
-                drop(g);
-                self.trashed_scheduler_inners
-                    .lock()
-                    .expect("not poisoned")
-                    .push(scheduler);
-            } else {
+            if is_block_production_scheduler_returned {
+                info!("respawning on trashd scheduler...");
                 g.0.take();
+                self.spawn_block_production_scheduler(&mut g);
                 drop(g);
-                match scheduler.banking_stage_status() {
-                    BankingStageStatus::Active | BankingStageStatus::Inactive => {
-                        info!("respawning on trashd scheduler...");
-                        self.trashed_scheduler_inners
-                            .lock()
-                            .expect("not poisoned")
-                            .push(scheduler);
-                        self.spawn_block_production_scheduler();
-                    }
-                    BankingStageStatus::Exited => {
-                        info!("exiting detected not respawning...");
-                        drop(scheduler);
-                        self.reset_respawner();
-                        info!("exiting detected reset done...");
-                    }
-                }
             }
         } else {
             drop(g);
@@ -588,7 +603,7 @@ where
                 .wait_while(g, |g| {
                     let not_yet = g.0.is_none();
                     if not_yet {
-                        info!("will wait for bps...");
+                        error!("will wait for bps..., slot: {}, mode: {:?}", context.slot(), context.mode());
                         g.2 = Some(context.clone());
                     }
                     not_yet
@@ -614,13 +629,16 @@ where
                 banking_packet_receiver,
                 on_spawn_block_production_scheduler,
             });
+        self.spawn_block_production_scheduler(
+            &mut self.block_production_scheduler_inner.lock().unwrap(),
+        );
     }
 
     pub fn reset_respawner(&self) {
         *self.block_production_scheduler_respawner.lock().unwrap() = None;
     }
 
-    pub fn spawn_block_production_scheduler(&self) {
+    pub fn spawn_block_production_scheduler(&self, g: &mut std::sync::MutexGuard<'_, (Option<u64>, Option<<S as SpawnableScheduler<TH>>::Inner>, Option<SchedulingContext>)>) {
         info!("flash session: start!");
         let mut respawner_write = self.block_production_scheduler_respawner.lock().unwrap();
         let BlockProductionSchedulerRespawner {
@@ -637,10 +655,6 @@ where
 
         let on_banking_packet_receive = on_spawn_block_production_scheduler(adapter.clone());
         let banking_stage_context = (banking_packet_receiver.clone(), on_banking_packet_receive);
-        let mut g = self
-            .block_production_scheduler_inner
-            .lock()
-            .expect("not poisoned");
         let context =
             g.2.take()
                 .inspect(|context| {
@@ -662,7 +676,6 @@ where
         let s = s.into_inner().1;
         assert!(g.0.replace(s.id()).is_none());
         assert!(g.1.replace(s).is_none());
-        drop(g);
         self.block_production_scheduler_condvar.notify_all();
         info!("flash session: end!");
     }
@@ -1110,7 +1123,7 @@ impl TaskCreator {
         match self {
             BlockVerification {
                 usage_queue_loader: _,
-            } => todo!(),
+            } => BankingStageStatus::NotBanking,
             BlockProduction {
                 banking_stage_adapter,
             } => banking_stage_adapter.banking_stage_status(),
@@ -1699,16 +1712,17 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 };
                                 state_machine.deschedule_task(&executed_task.task);
                                 if should_pause && !session_ending {
-                                    /*
+                                    // /*
                                     state_machine.reset_task(&executed_task.task);
                                     let ExecutedTask {
                                         task,
                                         result_with_timings,
                                     } = *executed_task;
                                     state_machine.do_schedule_task(task, true);
+                                    error!("requeue!!!!");
                                     std::mem::forget(result_with_timings);
-                                    */
-                                    std::mem::forget(executed_task);
+                                    // */
+                                    // std::mem::forget(executed_task);
                                 } else {
                                     std::mem::forget(executed_task);
                                 }
@@ -2297,6 +2311,7 @@ pub enum BankingStageStatus {
     Active,
     Inactive,
     Exited,
+    NotBanking,
 }
 
 pub trait BankingStageMonitor: Send + Debug {
