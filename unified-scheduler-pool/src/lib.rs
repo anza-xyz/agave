@@ -2402,6 +2402,10 @@ impl BankingStageAdapter {
 */
 
 impl BankingStageAdapter {
+    pub fn bulk_assign_task_ids(&self, count: u64) -> u64 {
+        self.id_generator.bulk_assign_task_ids(count)
+    }
+
     pub fn create_task(
         &self,
         &(transaction, index): &(&SanitizedTransaction, TaskKey),
