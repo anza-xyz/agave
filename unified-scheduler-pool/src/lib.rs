@@ -446,7 +446,7 @@ where
                                     let id = pooled.id();
                                     info!("dropping sch {id}");
                                     drop(pooled);
-                                    info!("dropped ch {id}");
+                                    info!("dropped sch {id}");
                                     scheduler_pool.reset_respawner();
                                     exiting = true;
                                     true
