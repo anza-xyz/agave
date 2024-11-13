@@ -82,7 +82,7 @@ impl Bank {
             self.rc
                 .accounts
                 .accounts_db
-                .get_pubkey_hash_account_for_slot(slot)
+                .get_pubkey_account_for_slot(slot)
         });
         let num_accounts_total = accounts_curr.len();
 
@@ -118,21 +118,21 @@ impl Bank {
                 .fold_chunks(
                     CHUNK_SIZE,
                     || (LtHash::identity(), Stats::default()),
-                    |mut accum, elem| {
-                        let pubkey = &elem.pubkey;
-                        let curr_account = &elem.account;
-
+                    |mut accum, (pubkey, curr_account)| {
                         // load the initial state of the account
                         let (initial_state_of_account, measure_load) = meas_dur!({
                             match cache_for_accounts_lt_hash.get(pubkey) {
-                                Some(initial_state_of_account) => initial_state_of_account.clone(),
-                                None => {
+                                Some(CacheValue::InspectAccount(initial_state_of_account)) => {
+                                    initial_state_of_account.clone()
+                                }
+                                Some(CacheValue::BankNew) | None => {
                                     accum.1.num_cache_misses += 1;
                                     // If the initial state of the account is not in the accounts
-                                    // lt hash cache, it is likely this account was stored
-                                    // *outside* of transaction processing (e.g. as part of rent
-                                    // collection).  Do not populate the read cache, as this
-                                    // account likely will not be accessed again soon.
+                                    // lt hash cache, or is explicitly unknown, then it is likely
+                                    // this account was stored *outside* of transaction processing
+                                    // (e.g. as part of rent collection, or creating a new bank).
+                                    // Do not populate the read cache, as this account likely will
+                                    // not be accessed again soon.
                                     let account_slot = self
                                         .rc
                                         .accounts
@@ -274,23 +274,37 @@ impl Bank {
                 .write()
                 .unwrap()
                 .entry(*address)
-                .or_insert_with(|| match account_state {
-                    AccountState::Dead => InitialStateOfAccount::Dead,
-                    AccountState::Alive(account) => {
-                        InitialStateOfAccount::Alive((*account).clone())
-                    }
+                .or_insert_with(|| {
+                    let initial_state_of_account = match account_state {
+                        AccountState::Dead => InitialStateOfAccount::Dead,
+                        AccountState::Alive(account) => {
+                            InitialStateOfAccount::Alive((*account).clone())
+                        }
+                    };
+                    CacheValue::InspectAccount(initial_state_of_account)
                 });
         }
     }
 }
 
 /// The initial state of an account prior to being modified in this slot/transaction
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum InitialStateOfAccount {
     /// The account was initiall dead
     Dead,
     /// The account was initially alive
     Alive(AccountSharedData),
+}
+
+/// The value type for the accounts lt hash cache
+#[derive(Debug, Clone, PartialEq)]
+pub enum CacheValue {
+    /// The value was inserted by `inspect_account()`.
+    /// This means we will have the initial state of the account.
+    InspectAccount(InitialStateOfAccount),
+    /// The value was inserted by `Bank::new()`.
+    /// This means we will *not* have the initial state of the account.
+    BankNew,
 }
 
 #[cfg(test)]
@@ -316,7 +330,7 @@ mod tests {
         },
         std::{cmp, collections::HashMap, ops::RangeFull, str::FromStr as _, sync::Arc},
         tempfile::TempDir,
-        test_case::test_case,
+        test_case::{test_case, test_matrix},
     };
 
     /// What features should be enabled?
@@ -326,6 +340,15 @@ mod tests {
         None,
         /// Enable all features
         All,
+    }
+
+    /// Should the experimental accumulator hash cli arg be enabled?
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    enum Cli {
+        /// Do not enable the cli arg
+        Off,
+        /// Enable the cli arg
+        On,
     }
 
     /// Creates a genesis config with `features` enabled
@@ -601,7 +624,7 @@ mod tests {
         let mut account = AccountSharedData::new(initial_lamports, 0, &Pubkey::default());
         bank.inspect_account_for_accounts_lt_hash(&address, &AccountState::Alive(&account), true);
         assert_eq!(bank.cache_for_accounts_lt_hash.read().unwrap().len(), 2);
-        if let InitialStateOfAccount::Alive(cached_account) = bank
+        if let CacheValue::InspectAccount(InitialStateOfAccount::Alive(cached_account)) = bank
             .cache_for_accounts_lt_hash
             .read()
             .unwrap()
@@ -618,7 +641,7 @@ mod tests {
         account.set_lamports(updated_lamports);
         bank.inspect_account_for_accounts_lt_hash(&address, &AccountState::Alive(&account), true);
         assert_eq!(bank.cache_for_accounts_lt_hash.read().unwrap().len(), 2);
-        if let InitialStateOfAccount::Alive(cached_account) = bank
+        if let CacheValue::InspectAccount(InitialStateOfAccount::Alive(cached_account)) = bank
             .cache_for_accounts_lt_hash
             .read()
             .unwrap()
@@ -642,7 +665,9 @@ mod tests {
                 .get(&address)
                 .unwrap()
             {
-                InitialStateOfAccount::Dead => { /* this is expected, nothing to do here*/ }
+                CacheValue::InspectAccount(InitialStateOfAccount::Dead) => {
+                    // this is expected, nothing to do here
+                }
                 _ => panic!("wrong initial state for account"),
             };
 
@@ -659,7 +684,9 @@ mod tests {
                 .get(&address)
                 .unwrap()
             {
-                InitialStateOfAccount::Dead => { /* this is expected, nothing to do here*/ }
+                CacheValue::InspectAccount(InitialStateOfAccount::Dead) => {
+                    // this is expected, nothing to do here
+                }
                 _ => panic!("wrong initial state for account"),
             };
         }
@@ -812,9 +839,11 @@ mod tests {
         );
     }
 
-    #[test_case(Features::None; "no features")]
-    #[test_case(Features::All; "all features")]
-    fn test_verify_accounts_lt_hash_at_startup(features: Features) {
+    #[test_matrix(
+        [Features::None, Features::All],
+        [Cli::Off, Cli::On]
+    )]
+    fn test_verify_accounts_lt_hash_at_startup(features: Features, verify_cli: Cli) {
         let (genesis_config, mint_keypair) = genesis_config_with(features);
         let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         bank.rc
@@ -869,7 +898,10 @@ mod tests {
         .unwrap();
         let (_accounts_tempdir, accounts_dir) = snapshot_utils::create_tmp_accounts_dir_for_tests();
         let accounts_db_config = AccountsDbConfig {
-            enable_experimental_accumulator_hash: true,
+            enable_experimental_accumulator_hash: match verify_cli {
+                Cli::Off => false,
+                Cli::On => true,
+            },
             ..ACCOUNTS_DB_CONFIG_FOR_TESTING
         };
         let (roundtrip_bank, _) = snapshot_bank_utils::bank_from_snapshot_archives(
@@ -900,5 +932,46 @@ mod tests {
         // Wait for the startup verification to complete.  If we don't panic, then we're good!
         roundtrip_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
         assert_eq!(roundtrip_bank, *bank);
+    }
+
+    /// Ensure that accounts written in Bank::new() are added to the accounts lt hash cache.
+    #[test_case(Features::None; "no features")]
+    #[test_case(Features::All; "all features")]
+    fn test_accounts_lt_hash_cache_values_from_bank_new(features: Features) {
+        let (genesis_config, _mint_keypair) = genesis_config_with(features);
+        let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        bank.rc
+            .accounts
+            .accounts_db
+            .set_is_experimental_accumulator_hash_enabled(true);
+
+        // ensure the accounts lt hash is enabled, otherwise this test doesn't actually do anything...
+        assert!(bank.is_accounts_lt_hash_enabled());
+
+        let slot = bank.slot() + 1;
+        bank = new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot);
+
+        // These are the two accounts *currently* added to the bank during Bank::new().
+        // More accounts could be added later, so if the test fails, inspect the actual cache
+        // accounts and update the expected cache accounts as necessary.
+        let expected_cache = &[
+            (
+                Pubkey::from_str_const("SysvarC1ock11111111111111111111111111111111"),
+                CacheValue::BankNew,
+            ),
+            (
+                Pubkey::from_str_const("SysvarS1otHashes111111111111111111111111111"),
+                CacheValue::BankNew,
+            ),
+        ];
+        let mut actual_cache: Vec<_> = bank
+            .cache_for_accounts_lt_hash
+            .read()
+            .unwrap()
+            .iter()
+            .map(|(k, v)| (*k, v.clone()))
+            .collect();
+        actual_cache.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(expected_cache, actual_cache.as_slice());
     }
 }

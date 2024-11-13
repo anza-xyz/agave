@@ -374,7 +374,7 @@ impl<'de> Deserialize<'de> for Vote {
 pub(crate) struct LegacyVersion {
     from: Pubkey,
     wallclock: u64,
-    pub(crate) version: solana_version::LegacyVersion1,
+    version: solana_version::LegacyVersion1,
 }
 
 impl Sanitize for LegacyVersion {
@@ -390,7 +390,7 @@ impl Sanitize for LegacyVersion {
 pub(crate) struct Version {
     from: Pubkey,
     wallclock: u64,
-    pub(crate) version: solana_version::LegacyVersion2,
+    version: solana_version::LegacyVersion2,
 }
 
 impl Sanitize for Version {
@@ -540,7 +540,7 @@ mod test {
         let mut rng = rand::thread_rng();
         let keypair = Keypair::new();
         let vote = Vote::new(keypair.pubkey(), new_test_vote_tx(&mut rng), timestamp()).unwrap();
-        let vote = CrdsValue::new_signed(CrdsData::Vote(MAX_VOTES, vote), &keypair);
+        let vote = CrdsValue::new(CrdsData::Vote(MAX_VOTES, vote), &keypair);
         assert!(vote.sanitize().is_err());
     }
 
@@ -580,7 +580,7 @@ mod test {
     #[test]
     fn test_max_epoch_slots_index() {
         let keypair = Keypair::new();
-        let item = CrdsValue::new_signed(
+        let item = CrdsValue::new(
             CrdsData::EpochSlots(
                 MAX_EPOCH_SLOTS,
                 EpochSlots::new(keypair.pubkey(), timestamp()),

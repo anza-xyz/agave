@@ -34,7 +34,11 @@ use {
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
             ForkGraph, ProgramCache, ProgramCacheEntry, ProgramCacheForTxBatch,
-            ProgramCacheMatchCriteria,
+            ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
+        },
+        solana_rbpf::{
+            program::{BuiltinProgram, FunctionRegistry},
+            vm::Config as VmConfig,
         },
         sysvar_cache::SysvarCache,
     },
@@ -46,6 +50,7 @@ use {
         hash::Hash,
         inner_instruction::{InnerInstruction, InnerInstructionsList},
         instruction::{CompiledInstruction, TRANSACTION_LEVEL_STACK_HEIGHT},
+        native_loader,
         pubkey::Pubkey,
         rent_collector::RentCollector,
         saturating_add_assign,
@@ -61,6 +66,7 @@ use {
         collections::{hash_map::Entry, HashMap, HashSet},
         fmt::{Debug, Formatter},
         rc::Rc,
+        sync::Weak,
     },
 };
 
@@ -121,22 +127,40 @@ pub struct TransactionProcessingConfig<'a> {
 }
 
 /// Runtime environment for transaction batch processing.
-#[derive(Default)]
 pub struct TransactionProcessingEnvironment<'a> {
     /// The blockhash to use for the transaction batch.
     pub blockhash: Hash,
+    /// Lamports per signature that corresponds to this blockhash.
+    ///
+    /// Note: This value is primarily used for nonce accounts. If set to zero,
+    /// it will disable transaction fees. However, any non-zero value will not
+    /// change transaction fees. For this reason, it is recommended to use the
+    /// `fee_per_signature` field to adjust transaction fees.
+    pub blockhash_lamports_per_signature: u64,
     /// The total stake for the current epoch.
     pub epoch_total_stake: Option<u64>,
     /// The vote accounts for the current epoch.
     pub epoch_vote_accounts: Option<&'a VoteAccountsHashMap>,
     /// Runtime feature set to use for the transaction batch.
     pub feature_set: Arc<FeatureSet>,
-    /// Fee structure to use for assessing transaction fees.
-    pub fee_structure: Option<&'a FeeStructure>,
-    /// Lamports per signature to charge per transaction.
-    pub lamports_per_signature: u64,
+    /// Transaction fee to charge per signature, in lamports.
+    pub fee_lamports_per_signature: u64,
     /// Rent collector to use for the transaction batch.
     pub rent_collector: Option<&'a dyn SVMRentCollector>,
+}
+
+impl Default for TransactionProcessingEnvironment<'_> {
+    fn default() -> Self {
+        Self {
+            blockhash: Hash::default(),
+            blockhash_lamports_per_signature: 0,
+            epoch_total_stake: None,
+            epoch_vote_accounts: None,
+            feature_set: Arc::<FeatureSet>::default(),
+            fee_lamports_per_signature: FeeStructure::default().lamports_per_signature, // <-- Default fee.
+            rent_collector: None,
+        }
+    }
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -208,6 +232,34 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         }
     }
 
+    /// Create a new `TransactionBatchProcessor`.
+    ///
+    /// The created processor's program cache is initialized with the provided
+    /// fork graph and loaders. If any loaders are omitted, a default "empty"
+    /// loader (no syscalls) will be used.
+    ///
+    /// The cache will still not contain any builtin programs. It's advisable to
+    /// call `add_builtin` to add the required builtins before using the processor.
+    pub fn new(
+        slot: Slot,
+        epoch: Epoch,
+        fork_graph: Weak<RwLock<FG>>,
+        program_runtime_environment_v1: Option<ProgramRuntimeEnvironment>,
+        program_runtime_environment_v2: Option<ProgramRuntimeEnvironment>,
+    ) -> Self {
+        let processor = Self::new_uninitialized(slot, epoch);
+        {
+            let mut program_cache = processor.program_cache.write().unwrap();
+            program_cache.set_fork_graph(fork_graph);
+            processor.configure_program_runtime_environments_inner(
+                &mut program_cache,
+                program_runtime_environment_v1,
+                program_runtime_environment_v2,
+            );
+        }
+        processor
+    }
+
     /// Create a new `TransactionBatchProcessor` from the current instance, but
     /// with the provided slot and epoch.
     ///
@@ -222,6 +274,41 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             program_cache: self.program_cache.clone(),
             builtin_program_ids: RwLock::new(self.builtin_program_ids.read().unwrap().clone()),
         }
+    }
+
+    fn configure_program_runtime_environments_inner(
+        &self,
+        program_cache: &mut ProgramCache<FG>,
+        program_runtime_environment_v1: Option<ProgramRuntimeEnvironment>,
+        program_runtime_environment_v2: Option<ProgramRuntimeEnvironment>,
+    ) {
+        let empty_loader = || {
+            Arc::new(BuiltinProgram::new_loader(
+                VmConfig::default(),
+                FunctionRegistry::default(),
+            ))
+        };
+
+        program_cache.latest_root_slot = self.slot;
+        program_cache.latest_root_epoch = self.epoch;
+        program_cache.environments.program_runtime_v1 =
+            program_runtime_environment_v1.unwrap_or(empty_loader());
+        program_cache.environments.program_runtime_v2 =
+            program_runtime_environment_v2.unwrap_or(empty_loader());
+    }
+
+    /// Configures the program runtime environments (loaders) in the
+    /// transaction processor's program cache.
+    pub fn configure_program_runtime_environments(
+        &self,
+        program_runtime_environment_v1: Option<ProgramRuntimeEnvironment>,
+        program_runtime_environment_v2: Option<ProgramRuntimeEnvironment>,
+    ) {
+        self.configure_program_runtime_environments_inner(
+            &mut self.program_cache.write().unwrap(),
+            program_runtime_environment_v1,
+            program_runtime_environment_v2,
+        );
     }
 
     /// Returns the current environments depending on the given epoch
@@ -270,28 +357,28 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             sanitized_txs,
             check_results,
             &environment.feature_set,
-            environment
-                .fee_structure
-                .unwrap_or(&FeeStructure::default()),
+            environment.fee_lamports_per_signature,
             environment
                 .rent_collector
                 .unwrap_or(&RentCollector::default()),
             &mut error_metrics
         ));
 
-        let (mut program_accounts_map, filter_executable_us) =
-            measure_us!(Self::filter_executable_program_accounts(
+        let native_loader = native_loader::id();
+        let (program_accounts_map, filter_executable_us) = measure_us!({
+            let mut program_accounts_map = Self::filter_executable_program_accounts(
                 callbacks,
                 sanitized_txs,
                 &validation_results,
-                PROGRAM_OWNERS
-            ));
+                PROGRAM_OWNERS,
+            );
+            for builtin_program in self.builtin_program_ids.read().unwrap().iter() {
+                program_accounts_map.insert(*builtin_program, (&native_loader, 0));
+            }
+            program_accounts_map
+        });
 
         let (mut program_cache_for_tx_batch, program_cache_us) = measure_us!({
-            for builtin_program in self.builtin_program_ids.read().unwrap().iter() {
-                program_accounts_map.insert(*builtin_program, 0);
-            }
-
             let program_cache_for_tx_batch = self.replenish_program_cache(
                 callbacks,
                 &program_accounts_map,
@@ -322,6 +409,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             environment
                 .rent_collector
                 .unwrap_or(&RentCollector::default()),
+            &program_accounts_map,
             &program_cache_for_tx_batch,
         ));
 
@@ -408,7 +496,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         sanitized_txs: &[impl core::borrow::Borrow<T>],
         check_results: Vec<TransactionCheckResult>,
         feature_set: &FeatureSet,
-        fee_structure: &FeeStructure,
+        fee_lamports_per_signature: u64,
         rent_collector: &dyn SVMRentCollector,
         error_counters: &mut TransactionErrorMetrics,
     ) -> Vec<TransactionValidationResult> {
@@ -424,7 +512,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         message,
                         checked_details,
                         feature_set,
-                        fee_structure,
+                        fee_lamports_per_signature,
                         rent_collector,
                         error_counters,
                     )
@@ -443,7 +531,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         message: &impl SVMMessage,
         checked_details: CheckedTransactionDetails,
         feature_set: &FeatureSet,
-        fee_structure: &FeeStructure,
+        fee_lamports_per_signature: u64,
         rent_collector: &dyn SVMRentCollector,
         error_counters: &mut TransactionErrorMetrics,
     ) -> transaction::Result<ValidatedTransactionDetails> {
@@ -491,7 +579,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let fee_details = solana_fee::calculate_fee_details(
             message,
             lamports_per_signature == 0,
-            fee_structure.lamports_per_signature,
+            fee_lamports_per_signature,
             fee_budget_limits.prioritization_fee,
             feature_set.is_active(&remove_rounding_in_fee_calculation::id()),
         );
@@ -530,28 +618,29 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
     /// Returns a map from executable program accounts (all accounts owned by any loader)
     /// to their usage counters, for the transactions with a valid blockhash or nonce.
-    fn filter_executable_program_accounts<CB: TransactionProcessingCallback>(
+    fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>(
         callbacks: &CB,
         txs: &[impl SVMMessage],
         validation_results: &[TransactionValidationResult],
-        program_owners: &[Pubkey],
-    ) -> HashMap<Pubkey, u64> {
-        let mut result: HashMap<Pubkey, u64> = HashMap::new();
+        program_owners: &'a [Pubkey],
+    ) -> HashMap<Pubkey, (&'a Pubkey, u64)> {
+        let mut result: HashMap<Pubkey, (&'a Pubkey, u64)> = HashMap::new();
         validation_results.iter().zip(txs).for_each(|etx| {
             if let (Ok(_), tx) = etx {
                 tx.account_keys()
                     .iter()
                     .for_each(|key| match result.entry(*key) {
                         Entry::Occupied(mut entry) => {
-                            let count = entry.get_mut();
+                            let (_, count) = entry.get_mut();
                             saturating_add_assign!(*count, 1);
                         }
                         Entry::Vacant(entry) => {
-                            if callbacks
-                                .account_matches_owners(key, program_owners)
-                                .is_some()
+                            if let Some(index) =
+                                callbacks.account_matches_owners(key, program_owners)
                             {
-                                entry.insert(1);
+                                if let Some(owner) = program_owners.get(index) {
+                                    entry.insert((owner, 1));
+                                }
                             }
                         }
                     });
@@ -564,14 +653,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     fn replenish_program_cache<CB: TransactionProcessingCallback>(
         &self,
         callback: &CB,
-        program_accounts_map: &HashMap<Pubkey, u64>,
+        program_accounts_map: &HashMap<Pubkey, (&Pubkey, u64)>,
         check_program_modification_slot: bool,
         limit_to_load_programs: bool,
     ) -> ProgramCacheForTxBatch {
         let mut missing_programs: Vec<(Pubkey, (ProgramCacheMatchCriteria, u64))> =
             program_accounts_map
                 .iter()
-                .map(|(pubkey, count)| {
+                .map(|(pubkey, (_, count))| {
                     let match_criteria = if check_program_modification_slot {
                         get_program_modification_slot(callback, pubkey)
                             .map_or(ProgramCacheMatchCriteria::Tombstone, |slot| {
@@ -807,9 +896,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             None
         };
 
-        let blockhash = environment.blockhash;
-        let lamports_per_signature = environment.lamports_per_signature;
-
         let mut executed_units = 0u64;
         let sysvar_cache = &self.sysvar_cache.read().unwrap();
 
@@ -817,11 +903,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             &mut transaction_context,
             program_cache_for_tx_batch,
             EnvironmentConfig::new(
-                blockhash,
+                environment.blockhash,
+                environment.blockhash_lamports_per_signature,
                 environment.epoch_total_stake,
                 environment.epoch_vote_accounts,
                 Arc::clone(&environment.feature_set),
-                lamports_per_signature,
                 sysvar_cache,
             ),
             log_collector.clone(),
@@ -1044,7 +1130,7 @@ mod tests {
             bpf_loader,
             compute_budget::ComputeBudgetInstruction,
             epoch_schedule::EpochSchedule,
-            fee::FeeDetails,
+            fee::{FeeDetails, FeeStructure},
             fee_calculator::FeeCalculator,
             hash::Hash,
             message::{LegacyMessage, Message, MessageHeader, SanitizedMessage},
@@ -1378,14 +1464,14 @@ mod tests {
     #[should_panic = "called load_program_with_pubkey() with nonexistent account"]
     fn test_replenish_program_cache_with_nonexistent_accounts() {
         let mock_bank = MockBankCallback::default();
-        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
         let fork_graph = Arc::new(RwLock::new(TestForkGraph {}));
-        batch_processor.program_cache.write().unwrap().fork_graph =
-            Some(Arc::downgrade(&fork_graph));
+        let batch_processor =
+            TransactionBatchProcessor::new(0, 0, Arc::downgrade(&fork_graph), None, None);
         let key = Pubkey::new_unique();
+        let owner = Pubkey::new_unique();
 
-        let mut account_maps: HashMap<Pubkey, u64> = HashMap::new();
-        account_maps.insert(key, 4);
+        let mut account_maps: HashMap<Pubkey, (&Pubkey, u64)> = HashMap::new();
+        account_maps.insert(key, (&owner, 4));
 
         batch_processor.replenish_program_cache(&mock_bank, &account_maps, false, true);
     }
@@ -1393,11 +1479,11 @@ mod tests {
     #[test]
     fn test_replenish_program_cache() {
         let mock_bank = MockBankCallback::default();
-        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
         let fork_graph = Arc::new(RwLock::new(TestForkGraph {}));
-        batch_processor.program_cache.write().unwrap().fork_graph =
-            Some(Arc::downgrade(&fork_graph));
+        let batch_processor =
+            TransactionBatchProcessor::new(0, 0, Arc::downgrade(&fork_graph), None, None);
         let key = Pubkey::new_unique();
+        let owner = Pubkey::new_unique();
 
         let mut account_data = AccountSharedData::default();
         account_data.set_owner(bpf_loader::id());
@@ -1407,8 +1493,8 @@ mod tests {
             .unwrap()
             .insert(key, account_data);
 
-        let mut account_maps: HashMap<Pubkey, u64> = HashMap::new();
-        account_maps.insert(key, 4);
+        let mut account_maps: HashMap<Pubkey, (&Pubkey, u64)> = HashMap::new();
+        account_maps.insert(key, (&owner, 4));
         let mut loaded_missing = 0;
 
         for limit_to_load_programs in [false, true] {
@@ -1517,8 +1603,8 @@ mod tests {
         );
 
         assert_eq!(result.len(), 2);
-        assert_eq!(result[&key1], 2);
-        assert_eq!(result[&key2], 1);
+        assert_eq!(result[&key1], (&owner1, 2));
+        assert_eq!(result[&key2], (&owner2, 1));
     }
 
     #[test]
@@ -1607,13 +1693,13 @@ mod tests {
             programs
                 .get(&account3_pubkey)
                 .expect("failed to find the program account"),
-            &2
+            &(&program1_pubkey, 2)
         );
         assert_eq!(
             programs
                 .get(&account4_pubkey)
                 .expect("failed to find the program account"),
-            &1
+            &(&program2_pubkey, 1)
         );
     }
 
@@ -1705,7 +1791,7 @@ mod tests {
             programs
                 .get(&account3_pubkey)
                 .expect("failed to find the program account"),
-            &1
+            &(&program1_pubkey, 1)
         );
     }
 
@@ -1881,10 +1967,9 @@ mod tests {
     #[test]
     fn test_add_builtin() {
         let mock_bank = MockBankCallback::default();
-        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
         let fork_graph = Arc::new(RwLock::new(TestForkGraph {}));
-        batch_processor.program_cache.write().unwrap().fork_graph =
-            Some(Arc::downgrade(&fork_graph));
+        let batch_processor =
+            TransactionBatchProcessor::new(0, 0, Arc::downgrade(&fork_graph), None, None);
 
         let key = Pubkey::new_unique();
         let name = "a_builtin_name";
@@ -1978,7 +2063,7 @@ mod tests {
                 lamports_per_signature,
             },
             &FeatureSet::default(),
-            &FeeStructure::default(),
+            FeeStructure::default().lamports_per_signature,
             &rent_collector,
             &mut error_counters,
         );
@@ -2056,7 +2141,7 @@ mod tests {
                 lamports_per_signature,
             },
             &FeatureSet::default(),
-            &FeeStructure::default(),
+            FeeStructure::default().lamports_per_signature,
             &rent_collector,
             &mut error_counters,
         );
@@ -2107,7 +2192,7 @@ mod tests {
                 lamports_per_signature,
             },
             &FeatureSet::default(),
-            &FeeStructure::default(),
+            FeeStructure::default().lamports_per_signature,
             &RentCollector::default(),
             &mut error_counters,
         );
@@ -2141,7 +2226,7 @@ mod tests {
                 lamports_per_signature,
             },
             &FeatureSet::default(),
-            &FeeStructure::default(),
+            FeeStructure::default().lamports_per_signature,
             &RentCollector::default(),
             &mut error_counters,
         );
@@ -2179,7 +2264,7 @@ mod tests {
                 lamports_per_signature,
             },
             &FeatureSet::default(),
-            &FeeStructure::default(),
+            FeeStructure::default().lamports_per_signature,
             &rent_collector,
             &mut error_counters,
         );
@@ -2215,7 +2300,7 @@ mod tests {
                 lamports_per_signature,
             },
             &FeatureSet::default(),
-            &FeeStructure::default(),
+            FeeStructure::default().lamports_per_signature,
             &RentCollector::default(),
             &mut error_counters,
         );
@@ -2247,7 +2332,7 @@ mod tests {
                 lamports_per_signature,
             },
             &FeatureSet::default(),
-            &FeeStructure::default(),
+            FeeStructure::default().lamports_per_signature,
             &RentCollector::default(),
             &mut error_counters,
         );
@@ -2314,7 +2399,7 @@ mod tests {
                     lamports_per_signature,
                 },
                 &feature_set,
-                &FeeStructure::default(),
+                FeeStructure::default().lamports_per_signature,
                 &rent_collector,
                 &mut error_counters,
             );
@@ -2376,7 +2461,7 @@ mod tests {
                     lamports_per_signature,
                 },
                 &feature_set,
-                &FeeStructure::default(),
+                FeeStructure::default().lamports_per_signature,
                 &rent_collector,
                 &mut error_counters,
             );
@@ -2430,7 +2515,7 @@ mod tests {
                 lamports_per_signature,
             },
             &FeatureSet::default(),
-            &FeeStructure::default(),
+            FeeStructure::default().lamports_per_signature,
             &rent_collector,
             &mut error_counters,
         );
@@ -2478,7 +2563,7 @@ mod tests {
                     lamports_per_signature: 5000,
                 },
                 &FeatureSet::default(),
-                &FeeStructure::default(),
+                FeeStructure::default().lamports_per_signature,
                 &RentCollector::default(),
                 &mut TransactionErrorMetrics::default(),
             )

@@ -1358,8 +1358,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .value_name("METHOD")
                 .takes_value(true)
                 .possible_values(&["mmap", "file"])
-                .help("Access account storage using this method")
-                .hidden(hidden_unless_forced()),
+                .help("Access account storages using this method")
         )
         .arg(
             Arg::with_name("accounts_db_ancient_append_vecs")
@@ -1389,6 +1388,15 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .validator(is_parsable::<usize>)
                 .takes_value(true)
                 .help("The number of ancient storages the ancient slot combining should converge to.")
+                .hidden(hidden_unless_forced()),
+        )
+        .arg(
+            Arg::with_name("accounts_db_hash_calculation_pubkey_bins")
+                .long("accounts-db-hash-calculation-pubkey-bins")
+                .value_name("USIZE")
+                .validator(is_parsable::<usize>)
+                .takes_value(true)
+                .help("The number of pubkey bins used for accounts hash calculation.")
                 .hidden(hidden_unless_forced()),
         )
         .arg(

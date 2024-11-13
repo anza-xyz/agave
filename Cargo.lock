@@ -1007,11 +1007,11 @@ dependencies = [
 
 [[package]]
 name = "borsh"
-version = "1.5.1"
+version = "1.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6362ed55def622cddc70a4746a68554d7b687713770de539e59a739b249f8ed"
+checksum = "f5327f6c99920069d1fe374aa743be1af0031dea9f250852cdf1ae6a0861ee24"
 dependencies = [
- "borsh-derive 1.5.1",
+ "borsh-derive 1.5.2",
  "cfg_aliases",
 ]
 
@@ -1030,16 +1030,15 @@ dependencies = [
 
 [[package]]
 name = "borsh-derive"
-version = "1.5.1"
+version = "1.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3ef8005764f53cd4dca619f5bf64cafd4664dada50ece25e4d81de54c80cc0b"
+checksum = "10aedd8f1a81a8aafbfde924b0e3061cd6fedd6f6bbcfc6a76e6fd426d7bfe26"
 dependencies = [
  "once_cell",
  "proc-macro-crate 3.1.0",
  "proc-macro2",
  "quote",
  "syn 2.0.87",
- "syn_derive",
 ]
 
 [[package]]
@@ -1737,9 +1736,9 @@ dependencies = [
 
 [[package]]
 name = "csv"
-version = "1.3.0"
+version = "1.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac574ff4d437a7b5ad237ef331c17ccca63c46479e5b5453eb8e10bb99a759fe"
+checksum = "acdc4883a9c96732e4733212c01447ebd805833b7275a73ca3ee080fd77afdaf"
 dependencies = [
  "csv-core",
  "itoa",
@@ -3496,9 +3495,9 @@ checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
 name = "libc"
-version = "0.2.161"
+version = "0.2.162"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e9489c2807c139ffd9c1794f4af0ebe86a828db53ecdc7fea2111d0fed085d1"
+checksum = "18d287de67fe55fd7e1581fe933d965a5a9477b38e949cfa9f8574ef01506398"
 
 [[package]]
 name = "libloading"
@@ -5178,9 +5177,9 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "0.38.37"
+version = "0.38.39"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8acb788b847c24f28525660c4d7758620a7210875711f79e7f663cc152726811"
+checksum = "375116bee2be9ed569afe2154ea6a99dfdffd257f533f187498c2a8f5feaf4ee"
 dependencies = [
  "bitflags 2.6.0",
  "errno",
@@ -6041,7 +6040,7 @@ dependencies = [
 name = "solana-banks-client"
 version = "2.2.0"
 dependencies = [
- "borsh 1.5.1",
+ "borsh 1.5.2",
  "futures 0.3.31",
  "solana-banks-interface",
  "solana-banks-server",
@@ -6191,7 +6190,7 @@ name = "solana-borsh"
 version = "2.2.0"
 dependencies = [
  "borsh 0.10.3",
- "borsh 1.5.1",
+ "borsh 1.5.2",
 ]
 
 [[package]]
@@ -6291,8 +6290,8 @@ dependencies = [
  "semver 1.0.23",
  "serial_test",
  "solana-file-download",
+ "solana-keypair",
  "solana-logger",
- "solana-sdk",
  "tar",
 ]
 
@@ -6515,6 +6514,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-clock",
+ "solana-sdk-ids",
  "solana-sdk-macro",
  "solana-sysvar-id",
  "static_assertions",
@@ -6574,11 +6574,13 @@ dependencies = [
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rayon",
+ "solana-keypair",
  "solana-logger",
  "solana-measure",
  "solana-metrics",
  "solana-net-utils",
- "solana-sdk",
+ "solana-time-utils",
+ "solana-transaction-error",
  "thiserror",
  "tokio",
 ]
@@ -6841,6 +6843,7 @@ dependencies = [
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-hash",
+ "solana-sdk-ids",
  "solana-sdk-macro",
  "solana-sysvar-id",
 ]
@@ -6855,6 +6858,7 @@ dependencies = [
  "solana-epoch-schedule",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
+ "solana-sdk-ids",
  "solana-sdk-macro",
  "solana-sysvar-id",
  "static_assertions",
@@ -6887,7 +6891,6 @@ name = "solana-feature-set"
 version = "2.2.0"
 dependencies = [
  "lazy_static",
- "solana-clock",
  "solana-epoch-schedule",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
@@ -7090,7 +7093,7 @@ dependencies = [
 name = "solana-hash"
 version = "2.2.0"
 dependencies = [
- "borsh 1.5.1",
+ "borsh 1.5.2",
  "bs58",
  "bytemuck",
  "bytemuck_derive",
@@ -7128,7 +7131,7 @@ name = "solana-instruction"
 version = "2.2.0"
 dependencies = [
  "bincode",
- "borsh 1.5.1",
+ "borsh 1.5.2",
  "getrandom 0.2.10",
  "js-sys",
  "num-traits",
@@ -7187,6 +7190,7 @@ version = "2.2.0"
 dependencies = [
  "serde",
  "serde_derive",
+ "solana-sdk-ids",
  "solana-sdk-macro",
  "solana-sysvar-id",
 ]
@@ -7640,7 +7644,7 @@ dependencies = [
  "bitflags 2.6.0",
  "blake3",
  "borsh 0.10.3",
- "borsh 1.5.1",
+ "borsh 1.5.2",
  "bs58",
  "bv",
  "bytemuck",
@@ -7697,6 +7701,7 @@ dependencies = [
  "solana-pubkey",
  "solana-rent",
  "solana-sanitize",
+ "solana-sdk-ids",
  "solana-sdk-macro",
  "solana-secp256k1-recover",
  "solana-secp256r1-program",
@@ -7729,7 +7734,7 @@ dependencies = [
 name = "solana-program-error"
 version = "2.2.0"
 dependencies = [
- "borsh 1.5.1",
+ "borsh 1.5.2",
  "num-traits",
  "serde",
  "serde_derive",
@@ -7834,7 +7839,7 @@ dependencies = [
  "anyhow",
  "arbitrary",
  "borsh 0.10.3",
- "borsh 1.5.1",
+ "borsh 1.5.2",
  "bs58",
  "bytemuck",
  "bytemuck_derive",
@@ -7912,6 +7917,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-quic-definitions"
+version = "2.2.0"
+dependencies = [
+ "solana-keypair",
+]
+
+[[package]]
 name = "solana-rayon-threadlimit"
 version = "2.2.0"
 dependencies = [
@@ -7948,9 +7960,23 @@ dependencies = [
  "solana-clock",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
+ "solana-sdk-ids",
  "solana-sdk-macro",
  "solana-sysvar-id",
  "static_assertions",
+]
+
+[[package]]
+name = "solana-reserved-account-keys"
+version = "2.2.0"
+dependencies = [
+ "lazy_static",
+ "solana-feature-set",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
+ "solana-program",
+ "solana-pubkey",
+ "solana-sdk-ids",
 ]
 
 [[package]]
@@ -8254,7 +8280,7 @@ dependencies = [
  "assert_matches",
  "bincode",
  "bitflags 2.6.0",
- "borsh 1.5.1",
+ "borsh 1.5.2",
  "bs58",
  "bytemuck",
  "bytemuck_derive",
@@ -8306,9 +8332,12 @@ dependencies = [
  "solana-program",
  "solana-program-memory",
  "solana-pubkey",
+ "solana-quic-definitions",
+ "solana-reserved-account-keys",
  "solana-reward-info",
  "solana-sanitize",
  "solana-sdk",
+ "solana-sdk-ids",
  "solana-sdk-macro",
  "solana-secp256k1-recover",
  "solana-secp256r1-program",
@@ -8327,6 +8356,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-sdk-ids"
+version = "2.2.0"
+dependencies = [
+ "solana-pubkey",
+]
+
+[[package]]
 name = "solana-sdk-macro"
 version = "2.2.0"
 dependencies = [
@@ -8341,7 +8377,7 @@ name = "solana-secp256k1-recover"
 version = "2.2.0"
 dependencies = [
  "anyhow",
- "borsh 1.5.1",
+ "borsh 1.5.2",
  "libsecp256k1",
  "solana-define-syscall",
  "solana-frozen-abi",
@@ -8420,7 +8456,7 @@ name = "solana-serialize-utils"
 version = "2.2.0"
 dependencies = [
  "bincode",
- "borsh 1.5.1",
+ "borsh 1.5.2",
  "rand 0.8.5",
  "serde",
  "solana-instruction",
@@ -8482,6 +8518,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-hash",
+ "solana-sdk-ids",
  "solana-sha256-hasher",
  "solana-sysvar-id",
 ]
@@ -8493,6 +8530,7 @@ dependencies = [
  "bv",
  "serde",
  "serde_derive",
+ "solana-sdk-ids",
  "solana-sysvar-id",
 ]
 
@@ -8648,7 +8686,7 @@ dependencies = [
  "assert_matches",
  "base64 0.22.1",
  "bincode",
- "borsh 1.5.1",
+ "borsh 1.5.2",
  "bs58",
  "clap 2.33.3",
  "crossbeam-channel",
@@ -8700,6 +8738,7 @@ dependencies = [
  "solana-type-overrides",
  "solana-version",
  "solana-vote",
+ "solana_rbpf",
  "spl-token-2022",
  "test-case",
  "thiserror",
@@ -8772,6 +8811,7 @@ name = "solana-sysvar-id"
 version = "2.2.0"
 dependencies = [
  "solana-pubkey",
+ "solana-sdk-ids",
 ]
 
 [[package]]
@@ -8992,7 +9032,7 @@ dependencies = [
  "Inflector",
  "base64 0.22.1",
  "bincode",
- "borsh 1.5.1",
+ "borsh 1.5.2",
  "bs58",
  "lazy_static",
  "log",
@@ -9084,9 +9124,11 @@ version = "2.2.0"
 dependencies = [
  "async-trait",
  "solana-connection-cache",
+ "solana-keypair",
  "solana-net-utils",
- "solana-sdk",
+ "solana-packet",
  "solana-streamer",
+ "solana-transaction-error",
  "thiserror",
  "tokio",
 ]
@@ -9159,6 +9201,7 @@ dependencies = [
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-sdk",
+ "solana-svm-transaction",
  "thiserror",
 ]
 
@@ -9269,6 +9312,7 @@ dependencies = [
  "solana-instruction",
  "solana-pubkey",
  "solana-sdk",
+ "solana-sdk-ids",
  "subtle",
  "thiserror",
  "tiny-bip39",
@@ -9330,6 +9374,7 @@ dependencies = [
  "solana-instruction",
  "solana-pubkey",
  "solana-sdk",
+ "solana-sdk-ids",
  "subtle",
  "thiserror",
  "tiny-bip39",
@@ -9384,7 +9429,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68034596cf4804880d265f834af1ff2f821ad5293e41fa0f8f59086c181fc38e"
 dependencies = [
  "assert_matches",
- "borsh 1.5.1",
+ "borsh 1.5.2",
  "num-derive",
  "num-traits",
  "solana-program",
@@ -9453,7 +9498,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6166a591d93af33afd75bbd8573c5fd95fb1213f1bf254f0508c89fdb5ee156"
 dependencies = [
- "borsh 1.5.1",
+ "borsh 1.5.2",
  "bytemuck",
  "bytemuck_derive",
  "solana-program",
@@ -9558,7 +9603,7 @@ version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c6c2318ddff97e006ed9b1291ebec0750a78547f870f62a69c56fe3b46a5d8fc"
 dependencies = [
- "borsh 1.5.1",
+ "borsh 1.5.2",
  "solana-program",
  "spl-discriminator",
  "spl-pod",
@@ -9684,18 +9729,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
-]
-
-[[package]]
-name = "syn_derive"
-version = "0.1.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1329189c02ff984e9736652b1631330da25eaa6bc639089ed4915d25446cbe7b"
-dependencies = [
- "proc-macro-error",
- "proc-macro2",
- "quote",
- "syn 2.0.87",
 ]
 
 [[package]]
@@ -9848,9 +9881,9 @@ dependencies = [
 
 [[package]]
 name = "tempfile"
-version = "3.13.0"
+version = "3.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0f2c9fc62d0beef6951ccffd757e241266a2c833136efbe35af6cd2567dca5b"
+checksum = "28cce251fcbc87fac86a866eeb0d6c2d536fc16d06f184bb61aeae11aa4cee0c"
 dependencies = [
  "cfg-if 1.0.0",
  "fastrand",
@@ -9926,18 +9959,18 @@ checksum = "222a222a5bfe1bba4a77b45ec488a741b3cb8872e5e499451fd7d0129c9c7c3d"
 
 [[package]]
 name = "thiserror"
-version = "1.0.68"
+version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02dd99dc800bbb97186339685293e1cc5d9df1f8fae2d0aecd9ff1c77efea892"
+checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
 dependencies = [
  "thiserror-impl",
 ]
 
 [[package]]
 name = "thiserror-impl"
-version = "1.0.68"
+version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7c61ec9a6f64d2793d8a45faba21efbe3ced62a886d44c36a009b2b519b4c7e"
+checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
 dependencies = [
  "proc-macro2",
  "quote",

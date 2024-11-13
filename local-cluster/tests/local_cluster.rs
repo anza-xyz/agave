@@ -4384,18 +4384,37 @@ fn test_cluster_partition_1_1_1() {
     )
 }
 
-// Cluster needs a supermajority to remain, so the minimum size for this test is 4
 #[test]
 #[serial]
 fn test_leader_failure_4() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
     error!("test_leader_failure_4");
+    // Cluster needs a supermajority to remain even after taking 1 node offline,
+    // so the minimum number of nodes for this test is 4.
     let num_nodes = 4;
     let validator_config = ValidatorConfig::default_for_test();
+    // Embed vote and stake account in genesis to avoid waiting for stake
+    // activation and race conditions around accepting gossip votes, repairing
+    // blocks, etc. before we advance through too many epochs.
+    let validator_keys: Option<Vec<(Arc<Keypair>, bool)>> = Some(
+        (0..num_nodes)
+            .map(|_| (Arc::new(Keypair::new()), true))
+            .collect(),
+    );
+    // Skip the warmup slots because these short epochs can cause problems when
+    // bringing multiple fresh validators online that are pre-staked in genesis.
+    // The problems arise because we skip their leader slots while they're still
+    // starting up, experience partitioning, and can fail to generate leader
+    // schedules in time because the short epochs have the same slots per epoch
+    // as the total tower height, so any skipped slots can lead to not rooting,
+    // not generating leader schedule, and stalling the cluster.
+    let skip_warmup_slots = true;
     let mut config = ClusterConfig {
         cluster_lamports: DEFAULT_CLUSTER_LAMPORTS,
-        node_stakes: vec![DEFAULT_NODE_STAKE; 4],
+        node_stakes: vec![DEFAULT_NODE_STAKE; num_nodes],
         validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
+        validator_keys,
+        skip_warmup_slots,
         ..ClusterConfig::default()
     };
     let local = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
@@ -5309,7 +5328,7 @@ fn test_boot_from_local_state_missing_archive() {
 // 0
 //   \--- 2
 //
-// 1. > DUPLICATE_THRESHOLD of the nodes vote on some version of the the duplicate block 3,
+// 1. > DUPLICATE_THRESHOLD of the nodes vote on some version of the duplicate block 3,
 // but don't immediately duplicate confirm so they remove 3 from fork choice and reset PoH back to 1.
 // 2. All the votes on 3 don't land because there are no further blocks building off 3.
 // 3. Some < SWITCHING_THRESHOLD of nodes vote on 2, making it the heaviest fork because no votes on 3 landed

@@ -523,7 +523,7 @@ pub(crate) fn generate_snapshot(
     };
     // In very rare cases it's possible that the local root is not on the heaviest fork, so the
     // validator generated snapshot for slots > local root. If the cluster agreed upon restart
-    // slot my_heaviest_fork_slot is less than the the current highest full_snapshot_slot, that means the
+    // slot my_heaviest_fork_slot is less than the current highest full_snapshot_slot, that means the
     // locally rooted full_snapshot_slot will be rolled back. this requires human inspection。
     //
     // In even rarer cases, the selected slot might be the latest full snapshot slot. We could
@@ -1466,8 +1466,8 @@ mod tests {
         )
         .unwrap();
         let entries = vec![
-            CrdsValue::new_signed(CrdsData::ContactInfo(node.clone()), node_keypair),
-            CrdsValue::new_signed(CrdsData::RestartLastVotedForkSlots(slots), node_keypair),
+            CrdsValue::new(CrdsData::ContactInfo(node.clone()), node_keypair),
+            CrdsValue::new(CrdsData::RestartLastVotedForkSlots(slots), node_keypair),
         ];
         {
             let mut gossip_crds = cluster_info.gossip.crds.write().unwrap();
@@ -1502,7 +1502,7 @@ mod tests {
             .write()
             .unwrap()
             .insert(
-                CrdsValue::new_signed(CrdsData::RestartHeaviestFork(heaviest_fork), node_keypair),
+                CrdsValue::new(CrdsData::RestartHeaviestFork(heaviest_fork), node_keypair),
                 /*now=*/ 0,
                 GossipRoute::LocalMessage
             )
@@ -1817,8 +1817,11 @@ mod tests {
                 .unwrap()
                 .get(my_heaviest_fork_slot)
             {
-                my_heaviest_fork_bankhash = bank.hash();
-                break;
+                // When deciding the local heaviest fork, we will freeze the bank.
+                if bank.is_frozen() {
+                    my_heaviest_fork_bankhash = bank.hash();
+                    break;
+                }
             }
             sleep(Duration::from_millis(100));
         }

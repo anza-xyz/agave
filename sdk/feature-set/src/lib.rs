@@ -21,7 +21,6 @@
 
 use {
     lazy_static::lazy_static,
-    solana_clock::{Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
@@ -877,6 +876,10 @@ pub mod lift_cpi_caller_restriction {
     solana_pubkey::declare_id!("HcW8ZjBezYYgvcbxNJwqv1t484Y2556qJsfNDWvJGZRH");
 }
 
+pub mod disable_account_loader_special_case {
+    solana_pubkey::declare_id!("EQUMpNFr7Nacb1sva56xn1aLfBxppEoSBH8RRVdkcD1x");
+}
+
 pub mod enable_secp256r1_precompile {
     solana_pubkey::declare_id!("sr11RdZWgbHTHxSroPALe6zgaT5A1K9LcE4nfsZS4gi");
 }
@@ -1095,7 +1098,8 @@ lazy_static! {
         (reenable_sbpf_v1_execution::id(), "Re-enables execution of SBPFv1 programs"),
         (remove_accounts_executable_flag_checks::id(), "Remove checks of accounts is_executable flag SIMD-0162"),
         (lift_cpi_caller_restriction::id(), "Lift the restriction in CPI that the caller must have the callee as an instruction account #2202"),
-        (enable_secp256r1_precompile::id(), "Enable secp256r1 precompile SIMD-0075"),
+        (disable_account_loader_special_case::id(), "Disable account loader special case #3513"),
+        (enable_secp256r1_precompile::id(), "Enable secp256r1 precompile SIMD-0075")
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
@@ -1137,7 +1141,7 @@ lazy_static! {
 #[cfg_attr(feature = "frozen-abi", derive(solana_frozen_abi_macro::AbiExample))]
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct FeatureSet {
-    pub active: HashMap<Pubkey, Slot>,
+    pub active: HashMap<Pubkey, u64>,
     pub inactive: HashSet<Pubkey>,
 }
 impl Default for FeatureSet {
@@ -1154,7 +1158,7 @@ impl FeatureSet {
         self.active.contains_key(feature_id)
     }
 
-    pub fn activated_slot(&self, feature_id: &Pubkey) -> Option<Slot> {
+    pub fn activated_slot(&self, feature_id: &Pubkey) -> Option<u64> {
         self.active.get(feature_id).copied()
     }
 
@@ -1186,7 +1190,7 @@ impl FeatureSet {
     }
 
     /// Activate a feature
-    pub fn activate(&mut self, feature_id: &Pubkey, slot: Slot) {
+    pub fn activate(&mut self, feature_id: &Pubkey, slot: u64) {
         self.inactive.remove(feature_id);
         self.active.insert(*feature_id, slot);
     }
@@ -1197,7 +1201,7 @@ impl FeatureSet {
         self.inactive.insert(*feature_id);
     }
 
-    pub fn new_warmup_cooldown_rate_epoch(&self, epoch_schedule: &EpochSchedule) -> Option<Epoch> {
+    pub fn new_warmup_cooldown_rate_epoch(&self, epoch_schedule: &EpochSchedule) -> Option<u64> {
         self.activated_slot(&reduce_stake_warmup_cooldown::id())
             .map(|slot| epoch_schedule.get_epoch(slot))
     }

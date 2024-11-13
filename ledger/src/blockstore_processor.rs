@@ -39,7 +39,7 @@ use {
         vote_sender_types::ReplayVoteSender,
     },
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, svm_transaction_adapter::SVMTransactionAdapter,
+        runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
     },
     solana_sdk::{
         clock::{Slot, MAX_PROCESSING_AGE},
@@ -57,7 +57,7 @@ use {
         transaction_commit_result::{TransactionCommitResult, TransactionCommitResultExtensions},
         transaction_processor::ExecutionRecordingConfig,
     },
-    solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
     solana_timings::{report_execute_timings, ExecuteTimingType, ExecuteTimings},
     solana_transaction_status::token_balances::TransactionTokenBalancesSet,
     solana_vote::vote_account::VoteAccountsHashMap,
@@ -94,7 +94,7 @@ pub struct LockedTransactionsWithIndexes<Tx: SVMMessage> {
 }
 
 struct ReplayEntry {
-    entry: EntryType,
+    entry: EntryType<RuntimeTransaction<SanitizedTransaction>>,
     starting_index: usize,
 }
 
@@ -109,7 +109,7 @@ fn first_err(results: &[Result<()>]) -> Result<()> {
 
 // Includes transaction signature for unit-testing
 fn get_first_error(
-    batch: &TransactionBatch<SanitizedTransaction>,
+    batch: &TransactionBatch<impl SVMTransaction>,
     commit_results: &[TransactionCommitResult],
 ) -> Option<(Result<()>, Signature)> {
     let mut first_err = None;
@@ -144,7 +144,7 @@ fn create_thread_pool(num_threads: usize) -> ThreadPool {
 }
 
 pub fn execute_batch(
-    batch: &TransactionBatchWithIndexes<SanitizedTransaction>,
+    batch: &TransactionBatchWithIndexes<impl TransactionWithMeta>,
     bank: &Arc<Bank>,
     transaction_status_sender: Option<&TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
@@ -240,7 +240,7 @@ pub fn execute_batch(
 fn check_block_cost_limits(
     bank: &Bank,
     commit_results: &[TransactionCommitResult],
-    sanitized_transactions: &[RuntimeTransaction<SanitizedTransaction>],
+    sanitized_transactions: &[impl TransactionWithMeta],
 ) -> Result<()> {
     assert_eq!(sanitized_transactions.len(), commit_results.len());
 
@@ -297,7 +297,7 @@ impl ExecuteBatchesInternalMetrics {
 fn execute_batches_internal(
     bank: &Arc<Bank>,
     replay_tx_thread_pool: &ThreadPool,
-    batches: &[TransactionBatchWithIndexes<SanitizedTransaction>],
+    batches: &[TransactionBatchWithIndexes<RuntimeTransaction<SanitizedTransaction>>],
     transaction_status_sender: Option<&TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     log_messages_bytes_limit: Option<usize>,
@@ -455,10 +455,10 @@ fn schedule_batches_for_execution(
     first_err
 }
 
-fn rebatch_transactions<'a, Tx: SVMMessage>(
+fn rebatch_transactions<'a, Tx: TransactionWithMeta>(
     lock_results: &'a [Result<()>],
     bank: &'a Arc<Bank>,
-    sanitized_txs: &'a [RuntimeTransaction<Tx>],
+    sanitized_txs: &'a [Tx],
     range: Range<usize>,
     transaction_indexes: &'a [usize],
 ) -> TransactionBatchWithIndexes<'a, 'a, Tx> {
@@ -525,7 +525,7 @@ fn rebatch_and_execute_batches(
 
     let target_batch_count = get_thread_count() as u64;
 
-    let mut tx_batches: Vec<TransactionBatchWithIndexes<SanitizedTransaction>> = vec![];
+    let mut tx_batches = vec![];
     let rebatched_txs = if total_cost > target_batch_count.saturating_mul(minimal_tx_cost) {
         let target_batch_cost = total_cost / target_batch_count;
         let mut batch_cost: u64 = 0;
@@ -2323,6 +2323,7 @@ pub mod tests {
         solana_entry::entry::{create_ticks, next_entry, next_entry_mut},
         solana_program_runtime::declare_process_instruction,
         solana_runtime::{
+            bank::bank_hash_details::SlotDetails,
             genesis_utils::{
                 self, create_genesis_config_with_vote_accounts, ValidatorVoteKeypairs,
             },
@@ -3514,8 +3515,7 @@ pub mod tests {
         let entry = next_entry(&bank.last_blockhash(), 1, vec![tx]);
         let result = process_entries_for_tests_without_scheduler(&bank, vec![entry]);
         bank.freeze();
-        let blockhash_ok = bank.last_blockhash();
-        let bankhash_ok = bank.hash();
+        let ok_bank_details = SlotDetails::new_from_bank(&bank, true).unwrap();
         assert!(result.is_ok());
 
         declare_process_instruction!(MockBuiltinErr, 1, |invoke_context| {
@@ -3534,7 +3534,8 @@ pub mod tests {
                 .clone())
         });
 
-        let mut bankhash_err = None;
+        // Store details to compare against subsequent iterations
+        let mut err_bank_details = None;
 
         (0..get_instruction_errors().len()).for_each(|err| {
             let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
@@ -3558,13 +3559,34 @@ pub mod tests {
             let bank = Arc::new(bank);
             let _result = process_entries_for_tests_without_scheduler(&bank, vec![entry]);
             bank.freeze();
+            let bank_details = SlotDetails::new_from_bank(&bank, true).unwrap();
 
-            assert_eq!(blockhash_ok, bank.last_blockhash());
-            assert!(bankhash_ok != bank.hash());
-            if let Some(bankhash) = bankhash_err {
-                assert_eq!(bankhash, bank.hash());
+            // Transaction success/failure should not affect block hash ...
+            assert_eq!(
+                ok_bank_details
+                    .bank_hash_components
+                    .as_ref()
+                    .unwrap()
+                    .last_blockhash,
+                bank_details
+                    .bank_hash_components
+                    .as_ref()
+                    .unwrap()
+                    .last_blockhash
+            );
+            // ... but should affect bank hash
+            assert_ne!(ok_bank_details, bank_details);
+            // Different types of transaction failure should not affect bank hash
+            if let Some(prev_bank_details) = &err_bank_details {
+                assert_eq!(
+                    *prev_bank_details,
+                    bank_details,
+                    "bank hash mismatched for tx error: {:?}",
+                    get_instruction_errors()[err]
+                );
+            } else {
+                err_bank_details = Some(bank_details);
             }
-            bankhash_err = Some(bank.hash());
         });
     }
 
