@@ -51,7 +51,10 @@ use {
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
     },
-    transaction_scheduler::receive_and_buffer::SanitizedTransactionReceiveAndBuffer,
+    transaction_scheduler::{
+        receive_and_buffer::SanitizedTransactionReceiveAndBuffer,
+        transaction_state_container::{StateContainer, TransactionStateContainer},
+    },
 };
 
 // Below modules are pub to allow use by banking_stage bench
@@ -618,11 +621,13 @@ impl BankingStage {
                 bank_forks.clone(),
                 forwarder.is_some(),
             );
+            let container = TransactionStateContainer::with_capacity(TOTAL_BUFFERED_PACKETS);
             let scheduler = PrioGraphScheduler::new(work_senders, finished_work_receiver);
             let scheduler_controller = SchedulerController::new(
                 decision_maker.clone(),
                 receive_and_buffer,
                 bank_forks,
+                container,
                 scheduler,
                 worker_metrics,
                 forwarder,

@@ -9,14 +9,14 @@ use {
         scheduler_metrics::{
             SchedulerCountMetrics, SchedulerLeaderDetectionMetrics, SchedulerTimingMetrics,
         },
-        transaction_state_container::{StateContainer, TransactionStateContainer},
+        transaction_state_container::StateContainer,
     },
     crate::banking_stage::{
         consume_worker::ConsumeWorkerMetrics,
         consumer::Consumer,
         decision_maker::{BufferedPacketsDecision, DecisionMaker},
         forwarder::Forwarder,
-        ForwardOption, LikeClusterInfo, TOTAL_BUFFERED_PACKETS,
+        ForwardOption, LikeClusterInfo,
     },
     solana_measure::measure_us,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
@@ -33,14 +33,18 @@ use {
 };
 
 /// Controls packet and transaction flow into scheduler, and scheduling execution.
-pub(crate) struct SchedulerController<C: LikeClusterInfo, R: ReceiveAndBuffer> {
+pub(crate) struct SchedulerController<
+    C: LikeClusterInfo,
+    R: ReceiveAndBuffer,
+    S: StateContainer<R::Transaction>,
+> {
     /// Decision maker for determining what should be done with transactions.
     decision_maker: DecisionMaker,
     receive_and_buffer: R,
     bank_forks: Arc<RwLock<BankForks>>,
     /// Container for transaction state.
     /// Shared resource between `packet_receiver` and `scheduler`.
-    container: TransactionStateContainer<R::Transaction>,
+    container: S,
     /// State for scheduling and communicating with worker threads.
     scheduler: PrioGraphScheduler<R::Transaction>,
     /// Metrics tracking time for leader bank detection.
@@ -57,11 +61,14 @@ pub(crate) struct SchedulerController<C: LikeClusterInfo, R: ReceiveAndBuffer> {
     forwarder: Option<Forwarder<C>>,
 }
 
-impl<C: LikeClusterInfo, R: ReceiveAndBuffer> SchedulerController<C, R> {
+impl<C: LikeClusterInfo, R: ReceiveAndBuffer, S: StateContainer<R::Transaction>>
+    SchedulerController<C, R, S>
+{
     pub fn new(
         decision_maker: DecisionMaker,
         receive_and_buffer: R,
         bank_forks: Arc<RwLock<BankForks>>,
+        container: S,
         scheduler: PrioGraphScheduler<R::Transaction>,
         worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
         forwarder: Option<Forwarder<C>>,
@@ -70,7 +77,7 @@ impl<C: LikeClusterInfo, R: ReceiveAndBuffer> SchedulerController<C, R> {
             decision_maker,
             receive_and_buffer,
             bank_forks,
-            container: TransactionStateContainer::with_capacity(TOTAL_BUFFERED_PACKETS),
+            container,
             scheduler,
             leader_detection_metrics: SchedulerLeaderDetectionMetrics::default(),
             count_metrics: SchedulerCountMetrics::default(),
@@ -448,6 +455,7 @@ mod tests {
                 scheduler_messages::{ConsumeWork, FinishedConsumeWork, TransactionBatchId},
                 tests::create_slow_genesis_config,
                 transaction_scheduler::receive_and_buffer::SanitizedTransactionReceiveAndBuffer,
+                TransactionStateContainer,
             },
             banking_trace::BankingPacketBatch,
             sigverify::SigverifyTracerPacketStats,
@@ -500,11 +508,16 @@ mod tests {
             Sender<FinishedConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
     }
 
+    #[allow(clippy::type_complexity)]
     fn create_test_frame(
         num_threads: usize,
     ) -> (
         TestFrame,
-        SchedulerController<Arc<ClusterInfo>, SanitizedTransactionReceiveAndBuffer>,
+        SchedulerController<
+            Arc<ClusterInfo>,
+            SanitizedTransactionReceiveAndBuffer,
+            TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>>,
+        >,
     ) {
         let GenesisConfigInfo {
             mut genesis_config,
@@ -559,6 +572,7 @@ mod tests {
             decision_maker,
             receive_and_buffer,
             bank_forks,
+            TransactionStateContainer::with_capacity(1024),
             PrioGraphScheduler::new(consume_work_senders, finished_consume_work_receiver),
             vec![], // no actual workers with metrics to report, this can be empty
             None,
@@ -609,6 +623,7 @@ mod tests {
         scheduler_controller: &mut SchedulerController<
             Arc<ClusterInfo>,
             SanitizedTransactionReceiveAndBuffer,
+            TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>>,
         >,
     ) {
         let decision = scheduler_controller

@@ -9,4 +9,4 @@ mod thread_aware_account_locks;
 pub(crate) mod transaction_id_generator;
 mod transaction_priority_id;
 mod transaction_state;
-mod transaction_state_container;
+pub(crate) mod transaction_state_container;
