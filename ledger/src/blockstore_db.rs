@@ -32,7 +32,7 @@ use {
     },
     solana_storage_proto::convert::generated,
     std::{
-        collections::{HashMap, HashSet},
+        collections::HashSet,
         ffi::{CStr, CString},
         fs,
         marker::PhantomData,
@@ -1399,9 +1399,8 @@ impl<C: Column + ColumnName> LedgerColumn<C> {
     }
 }
 
-pub struct WriteBatch<'a> {
+pub struct WriteBatch {
     write_batch: RWriteBatch,
-    map: HashMap<&'static str, &'a ColumnFamily>,
 }
 
 impl Database {
@@ -1450,12 +1449,7 @@ impl Database {
 
     pub fn batch(&self) -> Result<WriteBatch> {
         let write_batch = self.backend.batch();
-        let map = Rocks::columns()
-            .into_iter()
-            .map(|desc| (desc, self.backend.cf_handle(desc)))
-            .collect();
-
-        Ok(WriteBatch { write_batch, map })
+        Ok(WriteBatch { write_batch })
     }
 
     pub fn write(&self, batch: WriteBatch) -> Result<()> {
@@ -1886,7 +1880,7 @@ where
     }
 }
 
-impl<'a> WriteBatch<'a> {
+impl WriteBatch {
     fn delete_cf(&mut self, cf: &ColumnFamily, key: &[u8]) -> Result<()> {
         self.write_batch.delete_cf(cf, key);
         Ok(())
@@ -1895,11 +1889,6 @@ impl<'a> WriteBatch<'a> {
     pub fn put_cf(&mut self, cf: &ColumnFamily, key: &[u8], value: &[u8]) -> Result<()> {
         self.write_batch.put_cf(cf, key, value);
         Ok(())
-    }
-
-    #[inline]
-    fn get_cf<C: Column + ColumnName>(&self) -> &'a ColumnFamily {
-        self.map[C::NAME]
     }
 
     /// Adds a \[`from`, `to`) range deletion entry to the batch.

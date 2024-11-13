@@ -2950,7 +2950,7 @@ impl Blockstore {
         keys_with_writable: impl Iterator<Item = (&'a Pubkey, bool)>,
         status: TransactionStatusMeta,
         transaction_index: usize,
-        db_write_batch: &mut WriteBatch<'_>,
+        db_write_batch: &mut WriteBatch,
     ) -> Result<()> {
         self.write_transaction_status_helper(
             slot,
@@ -3000,7 +3000,7 @@ impl Blockstore {
         signature: &Signature,
         slot: Slot,
         memos: String,
-        db_write_batch: &mut WriteBatch<'_>,
+        db_write_batch: &mut WriteBatch,
     ) -> Result<()> {
         self.transaction_memos_cf
             .put_in_batch(db_write_batch, (*signature, slot), &memos)
@@ -4687,7 +4687,7 @@ impl Blockstore {
         res
     }
 
-    pub fn get_write_batch(&self) -> std::result::Result<WriteBatch<'_>, BlockstoreError> {
+    pub fn get_write_batch(&self) -> std::result::Result<WriteBatch, BlockstoreError> {
         self.db.batch()
     }
 
