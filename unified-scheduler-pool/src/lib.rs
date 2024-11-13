@@ -309,6 +309,7 @@ where
                     info!("Scheduler pool cleaner: start!!!",);
 
                     let Some(scheduler_pool) = weak_scheduler_pool.upgrade() else {
+                        error!("weak pool!");
                         break;
                     };
 
@@ -320,6 +321,7 @@ where
 
                         let Ok(mut scheduler_inners) = scheduler_pool.scheduler_inners.lock()
                         else {
+                            error!("poison1!");
                             break;
                         };
                         // Use the still-unstable Vec::extract_if() even on stable rust toolchain by
@@ -345,6 +347,7 @@ where
                         let Ok(mut trashed_scheduler_inners) =
                             scheduler_pool.trashed_scheduler_inners.lock()
                         else {
+                            error!("poison2!");
                             break;
                         };
                         let trashed_inners: Vec<_> = mem::take(&mut *trashed_scheduler_inners);
@@ -377,6 +380,7 @@ where
                         let mut expired_listeners = Vec::with_capacity(128);
                         let Ok(mut timeout_listeners) = scheduler_pool.timeout_listeners.lock()
                         else {
+                            error!("poison3!");
                             break;
                         };
                         #[allow(unstable_name_collisions)]
@@ -454,6 +458,7 @@ where
                         triggered_timeout_listener_count,
                     ));
                     if exiting && idle_inner_count == 0 && active_inner_count == 0 && trashed_inner_count == 0 && triggered_timeout_listener_count == 0 && active_timeout_listener_count == 0 && bpsi {
+                        error!("proper exit!");
                         break;
                     }
                 }
