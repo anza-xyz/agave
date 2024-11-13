@@ -2429,7 +2429,7 @@ impl BankingStageAdapter {
     }
 
     fn recreate_task(&self, transaction: SanitizedTransaction, old_index: TaskKey) -> Task {
-        let new_index = (old_index & (u64::MAX as TaskKey << 64)) | self.bulk_assign_task_ids(1) as TaskKey;
+        let new_index = (old_index & ((u64::MAX as TaskKey) << 64)) | self.bulk_assign_task_ids(1) as TaskKey;
         SchedulingStateMachine::create_task(
             transaction,
             new_index,
