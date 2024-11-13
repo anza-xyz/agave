@@ -1760,7 +1760,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                         task,
                                         result_with_timings,
                                     } = *executed_task;
-                                    let task = adapter.as_ref().unwrap().recreate_task(task.transaction().clone());
+                                    let task = adapter.as_ref().unwrap().recreate_task(task.transaction().clone(), task.index());
                                     error!("requeued tx!!!!");
                                     state_machine.do_schedule_task(task, true);
                                     std::mem::forget(result_with_timings);
@@ -2428,10 +2428,11 @@ impl BankingStageAdapter {
         ))
     }
 
-    fn recreate_task(&self, transaction: SanitizedTransaction) -> Task {
+    fn recreate_task(&self, transaction: SanitizedTransaction, old_index: TaskKey) -> Task {
+        let new_index = (old_index & 0xffffffffffffffff_0000000000000000) | self.bulk_assign_task_ids(1);
         SchedulingStateMachine::create_task(
             transaction,
-            0,
+            new_index,
             &mut |pubkey| self.usage_queue_loader.load(pubkey),
         )
     }
