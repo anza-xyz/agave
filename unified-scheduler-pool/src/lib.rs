@@ -2188,7 +2188,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 #[allow(clippy::collapsible_else_if)]
                 if let Ok(result_with_timings) =
                     self.session_result_receiver.try_recv().inspect_err(|err| {
-                        error!("ensure_join_threads(): would be bocked....: {:?}", err);
+                        error!("ensure_join_threads(): would be blocked....: {:?}", err);
                     })
                 {
                     self.put_session_result_with_timings(result_with_timings);
