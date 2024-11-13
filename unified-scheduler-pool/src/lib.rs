@@ -275,6 +275,7 @@ where
     ) -> Arc<Self> {
         let handler_count = handler_count.unwrap_or(Self::default_handler_count());
         assert!(handler_count >= 1);
+        let bp_is_supported = supported_scheduling_mode.is_supported(SchedulingMode::BlockProduction);
 
         let scheduler_pool = Arc::new_cyclic(|weak_self| Self {
             supported_scheduling_mode,
@@ -300,7 +301,7 @@ where
 
         let cleaner_main_loop = {
             let weak_scheduler_pool = Arc::downgrade(&scheduler_pool);
-            let strong_scheduler_pool = if supported_scheduling_mode.is_supported(SchedulingMode::BlockProduction) {
+            let strong_scheduler_pool = if bp_is_supported {
                 Some(scheduler_pool.clone())
             } else {
                 None
