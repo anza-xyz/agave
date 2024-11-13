@@ -198,6 +198,7 @@ where
 
 #[derive(Clone)]
 pub struct TpuClientNextClient {
+    runtime_handle: Handle,
     sender: Sender<TransactionBatch>,
     cancel: CancellationToken,
 }
@@ -214,18 +215,20 @@ impl TransactionClient for TpuClientNextClient {
         wire_transactions: Vec<Vec<u8>>,
         stats: &SendTransactionServiceStats,
     ) {
-        let res = self
-            .sender
-            .try_send(TransactionBatch::new(wire_transactions));
-        match res {
-            Ok(_) => {
-                stats.send_attempt_count.fetch_add(1, Ordering::Relaxed);
+        let mut measure = Measure::start("send-us");
+        self.runtime_handle.spawn({
+            let sender = self.sender.clone();
+            async move {
+                let res = sender.send(TransactionBatch::new(wire_transactions)).await;
+                if res.is_err() {
+                    warn!("Failed to send transaction to channel: it is closed.");
+                }
             }
-            Err(_) => {
-                warn!("Failed to send transaction transaction, transaction chanel is full.");
-                stats.send_failure_count.fetch_add(1, Ordering::Relaxed);
-            }
-        }
+        });
+
+        measure.stop();
+        stats.send_us.fetch_add(measure.as_us(), Ordering::Relaxed);
+        stats.send_attempt_count.fetch_add(1, Ordering::Relaxed);
     }
 
     fn protocol(&self) -> Protocol {
@@ -246,7 +249,7 @@ where
 {
     let leader_info_provider = CurrentLeaderInfo::new(leader_info);
 
-    let (sender, receiver) = mpsc::channel(16);
+    let (sender, receiver) = mpsc::channel(128);
     let cancel = CancellationToken::new();
     let _handle = runtime_handle.spawn({
         let cancel = cancel.clone();
@@ -278,7 +281,11 @@ where
             ));
         }
     });
-    TpuClientNextClient { sender, cancel }
+    TpuClientNextClient {
+        runtime_handle,
+        sender,
+        cancel,
+    }
 }
 
 /// This structure wraps [`TpuClientNext`] so that the underlying task sending
