@@ -741,7 +741,7 @@ impl BankingStage {
                     let mut tasks = vec![];
                     for pp in &aaa.0 {
                         // over-provision
-                        let task_id = id_generator.bulk_assign_task_ids(pp.len() as u64);
+                        let task_id = adapter.bulk_assign_task_ids(pp.len() as u64);
                         let task_ids = (task_id..(task_id + pp.len() as u64)).collect::<Vec<_>>();
 
                         let indexes = PacketDeserializer::generate_packet_indexes(pp);
