@@ -2390,7 +2390,8 @@ impl MonotonicIdGenerator {
     }
 
     fn bulk_assign_task_ids(&self, count: u64) -> u64 {
-        self.next_task_id.fetch_add(count, std::sync::atomic::Ordering::AcqRel)
+        self.next_task_id
+            .fetch_add(count, std::sync::atomic::Ordering::AcqRel)
     }
 }
 
@@ -2431,12 +2432,11 @@ impl BankingStageAdapter {
     fn recreate_task(&self, task: Task) -> Task {
         let transaction = task.transaction().clone();
         let old_index = task.index();
-        let new_index = (old_index & ((u64::MAX as TaskKey) << 64)) | self.bulk_assign_task_ids(1) as TaskKey;
-        SchedulingStateMachine::create_task(
-            transaction,
-            new_index,
-            &mut |pubkey| self.usage_queue_loader.load(pubkey),
-        )
+        let new_index =
+            (old_index & ((u64::MAX as TaskKey) << 64)) | self.bulk_assign_task_ids(1) as TaskKey;
+        SchedulingStateMachine::create_task(transaction, new_index, &mut |pubkey| {
+            self.usage_queue_loader.load(pubkey)
+        })
     }
 
     fn banking_stage_status(&self) -> BankingStageStatus {
