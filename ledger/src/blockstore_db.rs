@@ -1621,6 +1621,16 @@ where
         result
     }
 
+    pub fn put_bytes_in_batch(
+        &self,
+        batch: &mut WriteBatch,
+        key: C::Index,
+        value: &[u8],
+    ) -> Result<()> {
+        let key = C::key(key);
+        batch.put_cf(self.handle(), &key, value)
+    }
+
     /// Retrieves the specified RocksDB integer property of the current
     /// column family.
     ///
@@ -1727,6 +1737,17 @@ where
             );
         }
         result
+    }
+
+    pub fn put_in_batch(
+        &self,
+        batch: &mut WriteBatch,
+        key: C::Index,
+        value: &C::Type,
+    ) -> Result<()> {
+        let key = C::key(key);
+        let serialized_value = serialize(value)?;
+        batch.put_cf(self.handle(), &key, &serialized_value)
     }
 }
 
@@ -1854,12 +1875,6 @@ where
 }
 
 impl<'a> WriteBatch<'a> {
-    pub fn put_bytes<C: Column + ColumnName>(&mut self, key: C::Index, bytes: &[u8]) -> Result<()> {
-        self.write_batch
-            .put_cf(self.get_cf::<C>(), C::key(key), bytes);
-        Ok(())
-    }
-
     pub fn delete<C: Column + ColumnName>(&mut self, key: C::Index) -> Result<()> {
         self.delete_raw::<C>(&C::key(key))
     }
@@ -1869,14 +1884,8 @@ impl<'a> WriteBatch<'a> {
         Ok(())
     }
 
-    pub fn put<C: TypedColumn + ColumnName>(
-        &mut self,
-        key: C::Index,
-        value: &C::Type,
-    ) -> Result<()> {
-        let serialized_value = serialize(&value)?;
-        self.write_batch
-            .put_cf(self.get_cf::<C>(), C::key(key), serialized_value);
+    pub fn put_cf(&mut self, cf: &ColumnFamily, key: &[u8], value: &[u8]) -> Result<()> {
+        self.write_batch.put_cf(cf, key, value);
         Ok(())
     }
 

@@ -167,7 +167,8 @@ impl Blockstore {
                 parent_slot_meta
                     .next_slots
                     .retain(|&next_slot| next_slot != slot);
-                write_batch.put::<cf::SlotMeta>(parent_slot, &parent_slot_meta)?;
+                self.meta_cf
+                    .put_in_batch(&mut write_batch, parent_slot, &parent_slot_meta)?;
             } else {
                 error!(
                     "Parent slot meta {} for child {} is missing  or cleaned up.
@@ -179,7 +180,8 @@ impl Blockstore {
 
         // Retain a SlotMeta for `slot` with the `next_slots` field retained
         slot_meta.clear_unconfirmed_slot();
-        write_batch.put::<cf::SlotMeta>(slot, &slot_meta)?;
+        self.meta_cf
+            .put_in_batch(&mut write_batch, slot, &slot_meta)?;
 
         self.db.write(write_batch).inspect_err(|e| {
             error!(
@@ -512,12 +514,14 @@ impl Blockstore {
         let mut update_highest_primary_index_slot = false;
         if index0.max_slot >= from_slot && index0.max_slot <= to_slot {
             index0.max_slot = from_slot.saturating_sub(1);
-            batch.put::<cf::TransactionStatusIndex>(0, &index0)?;
+            self.transaction_status_index_cf
+                .put_in_batch(batch, 0, &index0)?;
             update_highest_primary_index_slot = true;
         }
         if index1.max_slot >= from_slot && index1.max_slot <= to_slot {
             index1.max_slot = from_slot.saturating_sub(1);
-            batch.put::<cf::TransactionStatusIndex>(1, &index1)?;
+            self.transaction_status_index_cf
+                .put_in_batch(batch, 1, &index1)?;
             update_highest_primary_index_slot = true
         }
         if update_highest_primary_index_slot {
