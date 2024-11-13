@@ -135,20 +135,22 @@ pub fn is_version_string(arg: &str) -> Result<(), String> {
     Err("a version string may start with 'v' and contains major and minor version numbers separated by a dot, e.g. v1.32 or 1.32".to_string())
 }
 
-fn get_home_dir() -> PathBuf {
+fn home_dir() -> PathBuf {
     PathBuf::from(
         env::var("HOME")
             .or_else(|err| {
                 #[cfg(windows)]
                 {
-                    debug!("Could not read env variable 'HOME': {}", err);
-                    debug!("Falling back to 'USERPROFILE'");
+                    debug!(
+                        "Could not read env variable 'HOME': {}, falling back to 'USERPROFILE'",
+                        err
+                    );
                     env::var("USERPROFILE")
                 }
 
                 #[cfg(not(windows))]
                 {
-                    Err(e)
+                    Err(err)
                 }
             })
             .unwrap_or_else(|err| {
@@ -159,8 +161,7 @@ fn get_home_dir() -> PathBuf {
 }
 
 fn find_installed_platform_tools() -> Vec<String> {
-    let home_dir = get_home_dir();
-    let solana = home_dir.join(".cache").join("solana");
+    let solana = home_dir().join(".cache").join("solana");
     let package = "platform-tools";
     std::fs::read_dir(solana)
         .unwrap()
@@ -262,7 +263,7 @@ fn validate_platform_tools_version(requested_version: &str, builtin_version: &st
 }
 
 fn make_platform_tools_path_for_version(package: &str, version: &str) -> PathBuf {
-    get_home_dir()
+    home_dir()
         .join(".cache")
         .join("solana")
         .join(version)
