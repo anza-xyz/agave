@@ -643,12 +643,10 @@ fn process_entries(
                         vote_only_execution,
                     )?;
                     batches.clear();
-                    if !vote_only_execution {
-                        for hash in &tick_hashes {
-                            bank.register_tick(hash);
-                        }
-                        tick_hashes.clear();
+                    for hash in &tick_hashes {
+                        bank.register_tick(hash, vote_only_execution);
                     }
+                    tick_hashes.clear();
                 }
             }
             EntryType::Transactions(transactions) => {
@@ -717,10 +715,8 @@ fn process_entries(
         prioritization_fee_cache,
         vote_only_execution,
     )?;
-    if !vote_only_execution {
-        for hash in tick_hashes {
-            bank.register_tick(hash);
-        }
+    for hash in tick_hashes {
+        bank.register_tick(hash, vote_only_execution);
     }
     Ok(())
 }

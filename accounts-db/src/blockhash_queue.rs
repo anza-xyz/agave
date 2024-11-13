@@ -110,7 +110,11 @@ impl BlockhashQueue {
         last_hash_index - hash_index <= max_age as u64
     }
 
-    pub fn register_hash(&mut self, hash: &Hash, lamports_per_signature: u64) {
+    pub fn register_hash(&mut self, hash: &Hash, lamports_per_signature: u64) -> bool {
+        if self.last_hash == Some(*hash) {
+            return false;
+        }
+
         self.last_hash_index += 1;
         if self.hashes.len() >= self.max_age {
             self.hashes.retain(|_, info| {
@@ -128,6 +132,7 @@ impl BlockhashQueue {
         );
 
         self.last_hash = Some(*hash);
+        true
     }
 
     #[deprecated(

@@ -435,6 +435,7 @@ pub struct BankFieldsToDeserialize {
     pub(crate) hard_forks: HardForks,
     pub(crate) transaction_count: u64,
     pub(crate) tick_height: u64,
+    pub(crate) tick_height_for_vote_only: u64,
     pub(crate) signature_count: u64,
     pub(crate) capitalization: u64,
     pub(crate) max_tick_height: u64,
@@ -482,6 +483,7 @@ pub struct BankFieldsToSerialize {
     pub hard_forks: HardForks,
     pub transaction_count: u64,
     pub tick_height: u64,
+    pub tick_height_for_vote_only: u64,
     pub signature_count: u64,
     pub capitalization: u64,
     pub max_tick_height: u64,
@@ -535,6 +537,7 @@ impl PartialEq for Bank {
             transaction_entries_count: _,
             transactions_per_entry_max: _,
             tick_height,
+            tick_height_for_vote_only,
             signature_count,
             capitalization,
             max_tick_height,
@@ -571,6 +574,7 @@ impl PartialEq for Bank {
             reserved_account_keys: _,
             drop_callback: _,
             freeze_started: _,
+            vote_only_freeze_started: _,
             vote_only_bank: _,
             cost_tracker: _,
             accounts_data_size_initial: _,
@@ -598,6 +602,7 @@ impl PartialEq for Bank {
             && *hard_forks.read().unwrap() == *other.hard_forks.read().unwrap()
             && transaction_count.load(Relaxed) == other.transaction_count.load(Relaxed)
             && tick_height.load(Relaxed) == other.tick_height.load(Relaxed)
+            && tick_height_for_vote_only.load(Relaxed) == other.tick_height_for_vote_only.load(Relaxed)
             && signature_count.load(Relaxed) == other.signature_count.load(Relaxed)
             && capitalization.load(Relaxed) == other.capitalization.load(Relaxed)
             && max_tick_height == &other.max_tick_height
@@ -643,6 +648,7 @@ impl BankFieldsToSerialize {
             hard_forks: HardForks::default(),
             transaction_count: u64::default(),
             tick_height: u64::default(),
+            tick_height_for_vote_only: u64::default(),
             signature_count: u64::default(),
             capitalization: u64::default(),
             max_tick_height: u64::default(),
@@ -796,6 +802,9 @@ pub struct Bank {
     /// Bank tick height
     tick_height: AtomicU64,
 
+    /// Bank tick height for vote only execution
+    tick_height_for_vote_only: AtomicU64,
+
     /// The number of signatures from valid transactions in this slot
     signature_count: AtomicU64,
 
@@ -891,6 +900,7 @@ pub struct Bank {
     pub drop_callback: RwLock<OptionalDropCallback>,
 
     pub freeze_started: AtomicBool,
+    pub vote_only_freeze_started: AtomicBool,
 
     vote_only_bank: bool,
 
@@ -1004,6 +1014,7 @@ impl Bank {
             transaction_entries_count: AtomicU64::default(),
             transactions_per_entry_max: AtomicU64::default(),
             tick_height: AtomicU64::default(),
+            tick_height_for_vote_only: AtomicU64::default(),
             signature_count: AtomicU64::default(),
             capitalization: AtomicU64::default(),
             max_tick_height: u64::default(),
@@ -1038,6 +1049,7 @@ impl Bank {
             reserved_account_keys: Arc::<ReservedAccountKeys>::default(),
             drop_callback: RwLock::new(OptionalDropCallback(None)),
             freeze_started: AtomicBool::default(),
+            vote_only_freeze_started: AtomicBool::default(),
             vote_only_bank: false,
             cost_tracker: RwLock::<CostTracker>::default(),
             accounts_data_size_initial: 0,
@@ -1275,6 +1287,9 @@ impl Bank {
             vote_only_hash: RwLock::new(Hash::default()),
             is_delta: AtomicBool::new(false),
             tick_height: AtomicU64::new(parent.tick_height.load(Relaxed)),
+            tick_height_for_vote_only: AtomicU64::new(
+                parent.tick_height_for_vote_only.load(Relaxed),
+            ),
             signature_count: AtomicU64::new(0),
             hard_forks: parent.hard_forks.clone(),
             rewards: RwLock::new(vec![]),
@@ -1296,6 +1311,7 @@ impl Bank {
                     .map(|drop_callback| drop_callback.clone_box()),
             )),
             freeze_started: AtomicBool::new(false),
+            vote_only_freeze_started: AtomicBool::new(false),
             cost_tracker: RwLock::new(parent.read_cost_tracker().unwrap().new_from_parent_limits()),
             accounts_data_size_initial,
             accounts_data_size_delta_on_chain: AtomicI64::new(0),
@@ -1666,6 +1682,7 @@ impl Bank {
             transaction_entries_count: AtomicU64::default(),
             transactions_per_entry_max: AtomicU64::default(),
             tick_height: AtomicU64::new(fields.tick_height),
+            tick_height_for_vote_only: AtomicU64::new(fields.tick_height_for_vote_only),
             signature_count: AtomicU64::new(fields.signature_count),
             capitalization: AtomicU64::new(fields.capitalization),
             max_tick_height: fields.max_tick_height,
@@ -1701,6 +1718,7 @@ impl Bank {
             reserved_account_keys: Arc::<ReservedAccountKeys>::default(),
             drop_callback: RwLock::new(OptionalDropCallback(None)),
             freeze_started: AtomicBool::new(fields.hash != Hash::default()),
+            vote_only_freeze_started: AtomicBool::new(fields.vote_only_hash != Hash::default()),
             vote_only_bank: false,
             cost_tracker: RwLock::new(CostTracker::default()),
             accounts_data_size_initial,
@@ -1799,6 +1817,7 @@ impl Bank {
             hard_forks: self.hard_forks.read().unwrap().clone(),
             transaction_count: self.transaction_count.load(Relaxed),
             tick_height: self.tick_height.load(Relaxed),
+            tick_height_for_vote_only: self.tick_height_for_vote_only.load(Relaxed),
             signature_count: self.signature_count.load(Relaxed),
             capitalization: self.capitalization.load(Relaxed),
             max_tick_height: self.max_tick_height,
@@ -1875,6 +1894,10 @@ impl Bank {
 
     pub fn freeze_started(&self) -> bool {
         self.freeze_started.load(Relaxed)
+    }
+
+    pub fn vote_only_freeze_started(&self) -> bool {
+        self.vote_only_freeze_started.load(Relaxed)
     }
 
     pub fn status_cache_ancestors(&self) -> Vec<u64> {
@@ -2929,6 +2952,7 @@ impl Bank {
     pub fn vote_only_freeze(&self) {
         let mut hash = self.vote_only_hash.write().unwrap();
         if *hash == Hash::default() {
+            self.vote_only_freeze_started.store(true, Relaxed);
             *hash = self.vote_only_hash_internal_state();
         }
     }
@@ -3348,13 +3372,25 @@ impl Bank {
     ///
     /// This is NOT thread safe because if tick height is updated by two different threads, the
     /// block boundary condition could be missed.
-    pub fn register_tick(&self, hash: &Hash, scheduler: &InstalledSchedulerRwLock) {
+    pub fn register_tick(
+        &self,
+        hash: &Hash,
+        scheduler: &InstalledSchedulerRwLock,
+        vote_only_execution: bool,
+    ) {
         assert!(
-            !self.freeze_started(),
+            !vote_only_execution && !self.freeze_started(),
             "register_tick() working on a bank that is already frozen or is undergoing freezing!"
         );
 
-        if self.is_block_boundary(self.tick_height.load(Relaxed) + 1) {
+        assert!(
+            vote_only_execution && !self.vote_only_freeze_started(),
+            "register_tick() working on a bank that is already frozen or is undergoing vote_only_freezing!"
+        );
+
+        if vote_only_execution
+            && self.is_block_boundary(self.tick_height_for_vote_only.load(Relaxed) + 1)
+        {
             self.register_recent_blockhash(hash, scheduler);
         }
 
@@ -3363,12 +3399,17 @@ impl Bank {
         // needs to guarantee all account updates for the slot have been
         // committed before this tick height is incremented (like the blockhash
         // sysvar above)
-        self.tick_height.fetch_add(1, Relaxed);
+        if vote_only_execution {
+            self.tick_height_for_vote_only.fetch_add(1, Relaxed);
+        } else {
+            self.tick_height.fetch_add(1, Relaxed);
+        }
     }
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn register_tick_for_test(&self, hash: &Hash) {
-        self.register_tick(hash, &BankWithScheduler::no_scheduler_available())
+        self.register_tick(hash, &BankWithScheduler::no_scheduler_available(), false);
+        self.register_tick(hash, &BankWithScheduler::no_scheduler_available(), true);
     }
 
     #[cfg(feature = "dev-context-only-utils")]
@@ -3383,6 +3424,10 @@ impl Bank {
 
     pub fn is_complete(&self) -> bool {
         self.tick_height() == self.max_tick_height()
+    }
+
+    pub fn is_vote_only_complete(&self) -> bool {
+        self.tick_height_for_vote_only() == self.max_tick_height()
     }
 
     pub fn is_block_boundary(&self, tick_height: u64) -> bool {
@@ -6177,6 +6222,10 @@ impl Bank {
         self.tick_height.load(Relaxed)
     }
 
+    pub fn tick_height_for_vote_only(&self) -> u64 {
+        self.tick_height_for_vote_only.load(Relaxed)
+    }
+
     /// Return the inflation parameters of the Bank
     pub fn inflation(&self) -> Inflation {
         *self.inflation.read().unwrap()
@@ -6473,7 +6522,8 @@ impl Bank {
         if self.tick_height.load(Relaxed) < self.max_tick_height {
             let last_blockhash = self.last_blockhash();
             while self.last_blockhash() == last_blockhash {
-                self.register_tick(&Hash::new_unique(), scheduler)
+                self.register_tick(&Hash::new_unique(), scheduler, true);
+                self.register_tick(&Hash::new_unique(), scheduler, false);
             }
         } else {
             warn!("Bank already reached max tick height, cannot fill it with more ticks");
@@ -7356,7 +7406,7 @@ pub mod test_utils {
         let mut tick_hash = bank.last_blockhash();
         loop {
             tick_hash = hashv(&[tick_hash.as_ref(), &[42]]);
-            bank.register_tick(&tick_hash);
+            bank.register_tick(&tick_hash, false);
             if tick_hash == bank.last_blockhash() {
                 bank.freeze();
                 return;

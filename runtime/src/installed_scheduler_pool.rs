@@ -421,8 +421,10 @@ impl BankWithScheduler {
         self.inner.bank.clone()
     }
 
-    pub fn register_tick(&self, hash: &Hash) {
-        self.inner.bank.register_tick(hash, &self.inner.scheduler);
+    pub fn register_tick(&self, hash: &Hash, vote_only_execution: bool) {
+        self.inner
+            .bank
+            .register_tick(hash, &self.inner.scheduler, vote_only_execution);
     }
 
     #[cfg(feature = "dev-context-only-utils")]

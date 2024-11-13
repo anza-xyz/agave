@@ -188,7 +188,7 @@ impl BankForks {
     pub fn active_bank_slots(&self) -> Vec<Slot> {
         self.banks
             .iter()
-            .filter(|(_, v)| !v.is_frozen())
+            .filter(|(_, v)| !v.is_frozen() && v.parent().map_or(true, |parent| parent.is_frozen()))
             .map(|(k, _v)| *k)
             .collect()
     }

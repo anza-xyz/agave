@@ -727,6 +727,7 @@ impl VoteState {
         epoch: Epoch,
         current_slot: Slot,
         timely_vote_credits: bool,
+        replay_tip_slot: Slot,
     ) {
         // Ignore votes for slots earlier than we already have votes for
         if self
@@ -748,7 +749,12 @@ impl VoteState {
         };
 
         // Once the stack is full, pop the oldest lockout and distribute rewards
-        if self.votes.len() == MAX_LOCKOUT_HISTORY {
+        while self.votes.len() >= MAX_LOCKOUT_HISTORY
+            && self
+                .votes
+                .front()
+                .map_or(true, |v| v.slot() <= replay_tip_slot)
+        {
             let credits = self.credits_for_vote_at_index(0, timely_vote_credits);
             let landed_vote = self.votes.pop_front().unwrap();
             self.root_slot = Some(landed_vote.slot());

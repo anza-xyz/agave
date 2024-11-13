@@ -752,7 +752,13 @@ pub fn process_vote_unfiltered(
 ) -> Result<(), VoteError> {
     check_slots_are_valid(vote_state, vote_slots, &vote.hash, slot_hashes)?;
     vote_slots.iter().for_each(|s| {
-        vote_state.process_next_vote_slot(*s, epoch, current_slot, timely_vote_credits)
+        vote_state.process_next_vote_slot(
+            *s,
+            epoch,
+            current_slot,
+            timely_vote_credits,
+            vote.replay_tip_slot,
+        )
     });
     Ok(())
 }

@@ -905,7 +905,7 @@ fn bank_to_full_snapshot_archive_with(
     incremental_snapshot_archives_dir: impl AsRef<Path>,
     archive_format: ArchiveFormat,
 ) -> snapshot_utils::Result<FullSnapshotArchiveInfo> {
-    assert!(bank.is_complete());
+    assert!(bank.is_complete() && bank.is_vote_only_complete());
     // set accounts-db's latest full snapshot slot here to ensure zero lamport
     // accounts are handled properly.
     bank.rc
@@ -967,7 +967,7 @@ pub fn bank_to_incremental_snapshot_archive(
 ) -> snapshot_utils::Result<IncrementalSnapshotArchiveInfo> {
     let snapshot_version = snapshot_version.unwrap_or_default();
 
-    assert!(bank.is_complete());
+    assert!(bank.is_complete() && bank.is_vote_only_complete());
     assert!(bank.slot() > full_snapshot_slot);
     // set accounts-db's latest full snapshot slot here to ensure zero lamport
     // accounts are handled properly.
