@@ -201,6 +201,7 @@ check_dcou() {
     # shellcheck source=scripts/spl-token-cli-version.sh
     source "$SOLANA_ROOT"/scripts/spl-token-cli-version.sh
 
+    # shellcheck disable=SC2086
     "$cargo" $maybeRustVersion install --locked spl-token-cli --root "$installDir" $maybeSplTokenCliVersionArg
   fi
 )
