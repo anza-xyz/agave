@@ -120,33 +120,24 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
                 offset += 1;
             }
 
-            if mint_data.equality_proof_instruction_offset == 0 {
-                let account_index = *account_indexes.get(offset).ok_or(
-                    ParseInstructionError::InstructionKeyMismatch(ParsableProgram::SplToken),
-                )?;
+            if offset < account_indexes.len() - 1 {
                 map.insert(
                     "equalityProofRecordAccount".to_string(),
-                    json!(account_keys[account_index as usize].to_string()),
+                    json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
-            if mint_data.ciphertext_validity_proof_instruction_offset == 0 {
-                let account_index = *account_indexes.get(offset).ok_or(
-                    ParseInstructionError::InstructionKeyMismatch(ParsableProgram::SplToken),
-                )?;
+            if offset < account_indexes.len() - 1 {
                 map.insert(
                     "ciphertextValidityProofRecordAccount".to_string(),
-                    json!(account_keys[account_index as usize].to_string()),
+                    json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
-            if mint_data.range_proof_instruction_offset == 0 {
-                let account_index = *account_indexes.get(offset).ok_or(
-                    ParseInstructionError::InstructionKeyMismatch(ParsableProgram::SplToken),
-                )?;
+            if offset < account_indexes.len() - 1 {
                 map.insert(
                     "rangeProofRecordAccount".to_string(),
-                    json!(account_keys[account_index as usize].to_string()),
+                    json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
@@ -192,33 +183,24 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
                 offset += 1;
             }
 
-            if burn_data.equality_proof_instruction_offset == 0 {
-                let account_index = *account_indexes.get(offset).ok_or(
-                    ParseInstructionError::InstructionKeyMismatch(ParsableProgram::SplToken),
-                )?;
+            if offset < account_indexes.len() - 1 {
                 map.insert(
                     "equalityProofRecordAccount".to_string(),
-                    json!(account_keys[account_index as usize].to_string()),
+                    json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
-            if burn_data.ciphertext_validity_proof_instruction_offset == 0 {
-                let account_index = *account_indexes.get(offset).ok_or(
-                    ParseInstructionError::InstructionKeyMismatch(ParsableProgram::SplToken),
-                )?;
+            if offset < account_indexes.len() - 1 {
                 map.insert(
                     "ciphertextValidityProofRecordAccount".to_string(),
-                    json!(account_keys[account_index as usize].to_string()),
+                    json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
-            if burn_data.range_proof_instruction_offset == 0 {
-                let account_index = *account_indexes.get(offset).ok_or(
-                    ParseInstructionError::InstructionKeyMismatch(ParsableProgram::SplToken),
-                )?;
+            if offset < account_indexes.len() - 1 {
                 map.insert(
                     "rangeProofRecordAccount".to_string(),
-                    json!(account_keys[account_index as usize].to_string()),
+                    json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }

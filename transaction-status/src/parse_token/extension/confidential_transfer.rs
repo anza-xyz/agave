@@ -69,21 +69,30 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
 
             });
             let map = value.as_object_mut().unwrap();
-            if configure_account_data.proof_instruction_offset == 0 {
+            let offset = if configure_account_data.proof_instruction_offset == 0 {
                 map.insert(
                     "proofContextStateAccount".to_string(),
                     json!(account_keys[account_indexes[2] as usize].to_string()),
                 );
+                3
             } else {
                 map.insert(
                     "instructionsSysvar".to_string(),
                     json!(account_keys[account_indexes[2] as usize].to_string()),
                 );
-            }
-            // TODO where does the record account go?
+                if account_indexes.len() > 4 {
+                    map.insert(
+                        "recordAccount".to_string(),
+                        json!(account_keys[account_indexes[3] as usize].to_string()),
+                    );
+                    4
+                } else {
+                    3
+                }
+            };
             parse_signers(
                 map,
-                3,
+                offset,
                 account_keys,
                 account_indexes,
                 "owner",
@@ -118,21 +127,30 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
 
             });
             let map = value.as_object_mut().unwrap();
-            if proof_instruction_offset == 0 {
+            let offset = if proof_instruction_offset == 0 {
                 map.insert(
                     "proofContextStateAccount".to_string(),
                     json!(account_keys[account_indexes[1] as usize].to_string()),
                 );
+                2
             } else {
                 map.insert(
                     "instructionsSysvar".to_string(),
                     json!(account_keys[account_indexes[1] as usize].to_string()),
                 );
-            }
-            // TODO where does the record account go?
+                if account_indexes.len() > 3 {
+                    map.insert(
+                        "recordAccount".to_string(),
+                        json!(account_keys[account_indexes[2] as usize].to_string()),
+                    );
+                    3
+                } else {
+                    2
+                }
+            };
             parse_signers(
                 map,
-                2,
+                offset,
                 account_keys,
                 account_indexes,
                 "owner",
@@ -202,24 +220,18 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
                 offset += 1;
             }
 
-            if withdrawal_data.equality_proof_instruction_offset == 0 {
-                let account_index = *account_indexes.get(offset).ok_or(
-                    ParseInstructionError::InstructionKeyMismatch(ParsableProgram::SplToken),
-                )?;
+            if offset < account_indexes.len() - 1 {
                 map.insert(
                     "equalityProofAccount".to_string(),
-                    json!(account_keys[account_index as usize].to_string()),
+                    json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
 
-            if withdrawal_data.range_proof_instruction_offset == 0 {
-                let account_index = *account_indexes.get(offset).ok_or(
-                    ParseInstructionError::InstructionKeyMismatch(ParsableProgram::SplToken),
-                )?;
+            if offset < account_indexes.len() - 1 {
                 map.insert(
                     "rangeProofAccount".to_string(),
-                    json!(account_keys[account_index as usize].to_string()),
+                    json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
@@ -265,35 +277,26 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
                 offset += 1;
             }
 
-            if transfer_data.equality_proof_instruction_offset == 0 {
-                let account_index = *account_indexes.get(offset).ok_or(
-                    ParseInstructionError::InstructionKeyMismatch(ParsableProgram::SplToken),
-                )?;
+            if offset < account_indexes.len() - 1 {
                 map.insert(
                     "equalityProofAccount".to_string(),
-                    json!(account_keys[account_index as usize].to_string()),
+                    json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
 
-            if transfer_data.ciphertext_validity_proof_instruction_offset == 0 {
-                let account_index = *account_indexes.get(offset).ok_or(
-                    ParseInstructionError::InstructionKeyMismatch(ParsableProgram::SplToken),
-                )?;
+            if offset < account_indexes.len() - 1 {
                 map.insert(
                     "ciphertextValidityProofAccount".to_string(),
-                    json!(account_keys[account_index as usize].to_string()),
+                    json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
 
-            if transfer_data.range_proof_instruction_offset == 0 {
-                let account_index = *account_indexes.get(offset).ok_or(
-                    ParseInstructionError::InstructionKeyMismatch(ParsableProgram::SplToken),
-                )?;
+            if offset < account_indexes.len() - 1 {
                 map.insert(
                     "rangeProofAccount".to_string(),
-                    json!(account_keys[account_index as usize].to_string()),
+                    json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
@@ -353,57 +356,42 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
                 offset += 1;
             }
 
-            if equality_proof_instruction_offset == 0 {
-                let account_index = *account_indexes.get(offset).ok_or(
-                    ParseInstructionError::InstructionKeyMismatch(ParsableProgram::SplToken),
-                )?;
+            if offset < account_indexes.len() - 1 {
                 map.insert(
                     "equalityProofAccount".to_string(),
-                    json!(account_keys[account_index as usize].to_string()),
+                    json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
 
-            if transfer_amount_ciphertext_validity_proof_instruction_offset == 0 {
-                let account_index = *account_indexes.get(offset).ok_or(
-                    ParseInstructionError::InstructionKeyMismatch(ParsableProgram::SplToken),
-                )?;
+            if offset < account_indexes.len() - 1 {
                 map.insert(
                     "transferAmountCiphertextValidityProofAccount".to_string(),
-                    json!(account_keys[account_index as usize].to_string()),
+                    json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
 
-            if fee_ciphertext_validity_proof_instruction_offset == 0 {
-                let account_index = *account_indexes.get(offset).ok_or(
-                    ParseInstructionError::InstructionKeyMismatch(ParsableProgram::SplToken),
-                )?;
+            if offset < account_indexes.len() - 1 {
                 map.insert(
                     "feeCiphertextValidityProofAccount".to_string(),
-                    json!(account_keys[account_index as usize].to_string()),
+                    json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
 
-            if fee_sigma_proof_instruction_offset == 0 {
-                let account_index = *account_indexes.get(offset).ok_or(
-                    ParseInstructionError::InstructionKeyMismatch(ParsableProgram::SplToken),
-                )?;
+            if offset < account_indexes.len() - 1 {
                 map.insert(
                     "feeSigmaProofAccount".to_string(),
-                    json!(account_keys[account_index as usize].to_string()),
+                    json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
 
-            if range_proof_instruction_offset == 0 {
-                let account_index = *account_indexes.get(offset).ok_or(
-                    ParseInstructionError::InstructionKeyMismatch(ParsableProgram::SplToken),
-                )?;
+            if offset < account_indexes.len() - 1 {
                 map.insert(
                     "rangeProofAccount".to_string(),
-                    json!(account_keys[account_index as usize].to_string()),
+                    json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }

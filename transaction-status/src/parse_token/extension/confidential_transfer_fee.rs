@@ -47,21 +47,30 @@ pub(in crate::parse_token) fn parse_confidential_transfer_fee_instruction(
                 "newDecryptableAvailableBalance": format!("{}", withdraw_withheld_data.new_decryptable_available_balance),
             });
             let map = value.as_object_mut().unwrap();
-            if proof_instruction_offset == 0 {
+            let offset = if proof_instruction_offset == 0 {
                 map.insert(
                     "proofContextStateAccount".to_string(),
                     json!(account_keys[account_indexes[2] as usize].to_string()),
                 );
+                3
             } else {
                 map.insert(
                     "instructionsSysvar".to_string(),
                     json!(account_keys[account_indexes[2] as usize].to_string()),
                 );
-            }
-            // TODO where does the record account go?
+                if account_indexes.len() > 4 {
+                    map.insert(
+                        "recordAccount".to_string(),
+                        json!(account_keys[account_indexes[3] as usize].to_string()),
+                    );
+                    4
+                } else {
+                    3
+                }
+            };
             parse_signers(
                 map,
-                3,
+                offset,
                 account_keys,
                 account_indexes,
                 "withdrawWithheldAuthority",
@@ -87,29 +96,38 @@ pub(in crate::parse_token) fn parse_confidential_transfer_fee_instruction(
                 "newDecryptableAvailableBalance": format!("{}", withdraw_withheld_data.new_decryptable_available_balance),
             });
             let map = value.as_object_mut().unwrap();
-            if proof_instruction_offset == 0 {
+            let first_source_account_index = account_indexes
+                .len()
+                .saturating_sub(num_token_accounts as usize);
+            let offset = if proof_instruction_offset == 0 {
                 map.insert(
                     "proofContextStateAccount".to_string(),
                     json!(account_keys[account_indexes[2] as usize].to_string()),
                 );
+                3
             } else {
                 map.insert(
                     "instructionsSysvar".to_string(),
                     json!(account_keys[account_indexes[2] as usize].to_string()),
                 );
-            }
-            // TODO where does the record account go?
+                if first_source_account_index > 4 {
+                    map.insert(
+                        "proofAccount".to_string(),
+                        json!(account_keys[account_indexes[3] as usize].to_string()),
+                    );
+                    4
+                } else {
+                    3
+                }
+            };
             let mut source_accounts: Vec<String> = vec![];
-            let first_source_account_index = account_indexes
-                .len()
-                .saturating_sub(num_token_accounts as usize);
             for i in account_indexes[first_source_account_index..].iter() {
                 source_accounts.push(account_keys[*i as usize].to_string());
             }
             map.insert("sourceAccounts".to_string(), json!(source_accounts));
             parse_signers(
                 map,
-                3,
+                offset,
                 account_keys,
                 &account_indexes[..first_source_account_index],
                 "withdrawWithheldAuthority",
