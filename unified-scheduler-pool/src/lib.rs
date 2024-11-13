@@ -2405,7 +2405,7 @@ impl BankingStageAdapter {
         ))
     }
 
-    fn recreate_task(&self, task: Task) -> Self {
+    fn recreate_task(&self, task: Task) -> Task {
         task
     }
 
