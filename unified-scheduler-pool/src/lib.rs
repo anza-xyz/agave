@@ -2373,6 +2373,23 @@ pub struct BankingStageAdapter {
     usage_queue_loader: UsageQueueLoader,
     transaction_deduper: DashSet<Hash>,
     pub idling_detector: Mutex<Option<Box<dyn BankingStageMonitor>>>,
+    id_generator: MonotonicIdGenerator,
+}
+
+struct MonotonicIdGenerator {
+    next_task_id: AtomicU64,
+}
+
+impl MonotonicIdGenerator {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            next_task_id: AtomicU64::default(),
+        })
+    }
+
+    fn bulk_assign_task_ids(&self, count: u64) -> u64 {
+        self.next_task_id.fetch_add(count, Ordering::AcqRel)
+    }
 }
 
 /*

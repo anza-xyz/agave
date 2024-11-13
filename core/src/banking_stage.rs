@@ -691,21 +691,6 @@ impl BankingStage {
         drop((tpu_vote_receiver, gossip_vote_receiver));
 
         // todo: forwarding, vote only blocks...
-        struct MonotonicIdGenerator {
-            next_task_id: AtomicU64,
-        }
-
-        impl MonotonicIdGenerator {
-            fn new() -> Arc<Self> {
-                Arc::new(Self {
-                    next_task_id: AtomicU64::default(),
-                })
-            }
-
-            fn bulk_assign_task_ids(&self, count: u64) -> u64 {
-                self.next_task_id.fetch_add(count, Ordering::AcqRel)
-            }
-        }
         let decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
 
         struct S(DecisionMaker, Arc<AtomicBool>);
@@ -741,7 +726,6 @@ impl BankingStage {
                 info!("on_block_production_scheduler_spawn: start!");
                 let decision_maker = decision_maker.clone();
                 let bank_forks = bank_forks.clone();
-                let id_generator = MonotonicIdGenerator::new();
                 *adapter.idling_detector.lock().unwrap() = Some(Box::new(S(
                     decision_maker.clone(),
                     poh_recorder.read().unwrap().is_exited.clone(),
