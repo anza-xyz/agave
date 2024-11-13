@@ -57,6 +57,7 @@ frozen-abi = [
     "solana-signature/frozen-abi",
     "solana-transaction-error/frozen-abi"
 ]
+# Enables the "vendored" feature openssl inside of secp256r1-program
 openssl = ["solana-secp256r1-program/vendored"]
 
 [dependencies]
