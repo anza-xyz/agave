@@ -1403,6 +1403,28 @@ pub struct WriteBatch {
     write_batch: RWriteBatch,
 }
 
+impl WriteBatch {
+    fn put_cf(&mut self, cf: &ColumnFamily, key: &[u8], value: &[u8]) -> Result<()> {
+        self.write_batch.put_cf(cf, key, value);
+        Ok(())
+    }
+
+    fn delete_cf(&mut self, cf: &ColumnFamily, key: &[u8]) -> Result<()> {
+        self.write_batch.delete_cf(cf, key);
+        Ok(())
+    }
+
+    fn delete_range_cf(
+        &mut self,
+        cf: &ColumnFamily,
+        from: &[u8],
+        to: &[u8],
+    ) -> Result<()> {
+        self.write_batch.delete_range_cf(cf, from, to);
+        Ok(())
+    }
+}
+
 impl Database {
     pub fn open(path: &Path, options: BlockstoreOptions) -> Result<Self> {
         let column_options = Arc::new(options.column_options.clone());
@@ -1877,28 +1899,6 @@ where
     ) -> Result<()> {
         let key = C::deprecated_key(key);
         batch.delete_cf(self.handle(), &key)
-    }
-}
-
-impl WriteBatch {
-    fn put_cf(&mut self, cf: &ColumnFamily, key: &[u8], value: &[u8]) -> Result<()> {
-        self.write_batch.put_cf(cf, key, value);
-        Ok(())
-    }
-
-    fn delete_cf(&mut self, cf: &ColumnFamily, key: &[u8]) -> Result<()> {
-        self.write_batch.delete_cf(cf, key);
-        Ok(())
-    }
-
-    fn delete_range_cf(
-        &mut self,
-        cf: &ColumnFamily,
-        from: &[u8],
-        to: &[u8],
-    ) -> Result<()> {
-        self.write_batch.delete_range_cf(cf, from, to);
-        Ok(())
     }
 }
 
