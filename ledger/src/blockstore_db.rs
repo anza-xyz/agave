@@ -1424,12 +1424,22 @@ impl<C, const K: usize> LedgerColumn<C, K>
 where
     C: Column + ColumnName,
 {
+    #[inline]
+    fn key_from_index(index: C::Index) -> [u8; K] {
+        let mut key = [0u8; K];
+        C::serialize_index(&mut key, index);
+        key
+    }
+
     pub fn get_bytes(&self, index: C::Index) -> Result<Option<Vec<u8>>> {
         let is_perf_enabled = maybe_enable_rocksdb_perf(
             self.column_options.rocks_perf_sample_interval,
             &self.read_perf_status,
         );
-        let result = self.backend.get_cf(self.handle(), &C::key(index));
+
+        let key = Self::key_from_index(index);
+        let result = self.backend.get_cf(self.handle(), &key);
+
         if let Some(op_start_instant) = is_perf_enabled {
             report_rocksdb_read_perf(
                 C::NAME,
@@ -1474,18 +1484,17 @@ where
         &self,
         iterator_mode: IteratorMode<C::Index>,
     ) -> Result<impl Iterator<Item = (C::Index, Box<[u8]>)> + '_> {
-        let cf = self.handle();
-        let start_key;
+        let mut start_key = [0u8; K];
         let iterator_mode = match iterator_mode {
             IteratorMode::Start => RocksIteratorMode::Start,
             IteratorMode::End => RocksIteratorMode::End,
-            IteratorMode::From(start_from, direction) => {
-                start_key = C::key(start_from);
+            IteratorMode::From(start, direction) => {
+                C::serialize_index(&mut start_key, start);
                 RocksIteratorMode::From(&start_key, direction)
             }
         };
 
-        let iter = self.backend.iterator_cf(cf, iterator_mode);
+        let iter = self.backend.iterator_cf(self.handle(), iterator_mode);
         Ok(iter.map(|pair| {
             let (key, value) = pair.unwrap();
             (C::index(&key), value)
@@ -1496,17 +1505,20 @@ where
     where
         C::Index: PartialOrd + Copy,
     {
-        let cf = self.handle();
-        let from = Some(C::key(C::as_index(from)));
-        let to = Some(C::key(C::as_index(to)));
-        self.backend.db.compact_range_cf(cf, from, to);
+        let from_key = Self::key_from_index(C::as_index(from));
+        let to_key = Self::key_from_index(C::as_index(to));
+
+        self.backend
+            .db
+            .compact_range_cf(self.handle(), Some(&from_key), Some(&to_key));
         Ok(true)
     }
 
     #[cfg(test)]
     pub fn compact_range_raw_key(&self, from: &[u8], to: &[u8]) {
-        let cf = self.handle();
-        self.backend.db.compact_range_cf(cf, Some(from), Some(to));
+        self.backend
+            .db
+            .compact_range_cf(self.handle(), Some(from), Some(to));
     }
 
     #[inline]
@@ -1526,7 +1538,10 @@ where
             self.column_options.rocks_perf_sample_interval,
             &self.write_perf_status,
         );
-        let result = self.backend.put_cf(self.handle(), &C::key(index), value);
+
+        let key = Self::key_from_index(index);
+        let result = self.backend.put_cf(self.handle(), &key, value);
+
         if let Some(op_start_instant) = is_perf_enabled {
             report_rocksdb_write_perf(
                 C::NAME,
@@ -1544,7 +1559,7 @@ where
         index: C::Index,
         value: &[u8],
     ) -> Result<()> {
-        let key = C::key(index);
+        let key = Self::key_from_index(index);
         batch.put_cf(self.handle(), &key, value)
     }
 
@@ -1562,7 +1577,10 @@ where
             self.column_options.rocks_perf_sample_interval,
             &self.write_perf_status,
         );
-        let result = self.backend.delete_cf(self.handle(), &C::key(index));
+
+        let key = Self::key_from_index(index);
+        let result = self.backend.delete_cf(self.handle(), &key);
+
         if let Some(op_start_instant) = is_perf_enabled {
             report_rocksdb_write_perf(
                 C::NAME,
@@ -1575,7 +1593,7 @@ where
     }
 
     pub fn delete_in_batch(&self, batch: &mut WriteBatch, index: C::Index) -> Result<()> {
-        let key = C::key(index);
+        let key = Self::key_from_index(index);
         batch.delete_cf(self.handle(), &key)
     }
 
@@ -1591,8 +1609,10 @@ where
         //
         // For consistency, we make our delete_range_cf works for [from, to] by
         // adjusting the `to` slot range by 1.
-        let from_key = C::key(C::as_index(from));
-        let to_key = C::key(C::as_index(to.saturating_add(1)));
+        let mut from_key = [0u8; K];
+        C::serialize_index(&mut from_key, C::as_index(from));
+        let mut to_key = [0u8; K];
+        C::serialize_index(&mut to_key, C::as_index(to.saturating_add(1)));
         batch.delete_range_cf(self.handle(), &from_key, &to_key)
     }
 
@@ -1601,11 +1621,12 @@ where
     where
         C: Column + ColumnName,
     {
-        self.backend.delete_file_in_range_cf(
-            self.handle(),
-            &C::key(C::as_index(from)),
-            &C::key(C::as_index(to)),
-        )
+        let mut from_key = [0u8; K];
+        C::serialize_index(&mut from_key, C::as_index(from));
+        let mut to_key = [0u8; K];
+        C::serialize_index(&mut to_key, C::as_index(to));
+        self.backend
+            .delete_file_in_range_cf(self.handle(), &from_key, &to_key)
     }
 }
 
@@ -1643,7 +1664,8 @@ where
     }
 
     pub fn get(&self, index: C::Index) -> Result<Option<C::Type>> {
-        self.get_raw(&C::key(index))
+        let key = Self::key_from_index(index);
+        self.get_raw(&key)
     }
 
     pub fn get_raw(&self, key: &[u8]) -> Result<Option<C::Type>> {
@@ -1675,9 +1697,8 @@ where
         );
         let serialized_value = serialize(value)?;
 
-        let result = self
-            .backend
-            .put_cf(self.handle(), &C::key(index), &serialized_value);
+        let key = Self::key_from_index(index);
+        let result = self.backend.put_cf(self.handle(), &key, &serialized_value);
 
         if let Some(op_start_instant) = is_perf_enabled {
             report_rocksdb_write_perf(
@@ -1696,7 +1717,7 @@ where
         index: C::Index,
         value: &C::Type,
     ) -> Result<()> {
-        let key = C::key(index);
+        let key = Self::key_from_index(index);
         let serialized_value = serialize(value)?;
         batch.put_cf(self.handle(), &key, &serialized_value)
     }
@@ -1710,7 +1731,8 @@ where
         &self,
         index: C::Index,
     ) -> Result<Option<C::Type>> {
-        self.get_raw_protobuf_or_bincode::<T>(&C::key(index))
+        let key = Self::key_from_index(index);
+        self.get_raw_protobuf_or_bincode::<T>(&key)
     }
 
     pub(crate) fn get_raw_protobuf_or_bincode<T: DeserializeOwned + Into<C::Type>>(
@@ -1747,7 +1769,10 @@ where
             self.column_options.rocks_perf_sample_interval,
             &self.read_perf_status,
         );
-        let result = self.backend.get_pinned_cf(self.handle(), &C::key(index));
+
+        let key = Self::key_from_index(index);
+        let result = self.backend.get_pinned_cf(self.handle(), &key);
+
         if let Some(op_start_instant) = is_perf_enabled {
             report_rocksdb_read_perf(
                 C::NAME,
@@ -1772,7 +1797,10 @@ where
             self.column_options.rocks_perf_sample_interval,
             &self.write_perf_status,
         );
-        let result = self.backend.put_cf(self.handle(), &C::key(index), &buf);
+
+        let key = Self::key_from_index(index);
+        let result = self.backend.put_cf(self.handle(), &key, &buf);
+
         if let Some(op_start_instant) = is_perf_enabled {
             report_rocksdb_write_perf(
                 C::NAME,
@@ -1794,18 +1822,17 @@ where
         &self,
         iterator_mode: IteratorMode<C::Index>,
     ) -> Result<impl Iterator<Item = (C::Index, Box<[u8]>)> + '_> {
-        let cf = self.handle();
-        let start_key;
+        let mut start_key = [0u8; K];
         let iterator_mode = match iterator_mode {
             IteratorMode::Start => RocksIteratorMode::Start,
             IteratorMode::End => RocksIteratorMode::End,
-            IteratorMode::From(start_from, direction) => {
-                start_key = C::key(start_from);
+            IteratorMode::From(start, direction) => {
+                C::serialize_index(&mut start_key, start);
                 RocksIteratorMode::From(&start_key, direction)
             }
         };
 
-        let iter = self.backend.iterator_cf(cf, iterator_mode);
+        let iter = self.backend.iterator_cf(self.handle(), iterator_mode);
         Ok(iter.filter_map(|pair| {
             let (key, value) = pair.unwrap();
             C::try_current_index(&key).ok().map(|index| (index, value))
@@ -1816,7 +1843,6 @@ where
         &self,
         iterator_mode: IteratorMode<C::DeprecatedIndex>,
     ) -> Result<impl Iterator<Item = (C::DeprecatedIndex, Box<[u8]>)> + '_> {
-        let cf = self.handle();
         let start_key;
         let iterator_mode = match iterator_mode {
             IteratorMode::Start => RocksIteratorMode::Start,
@@ -1827,7 +1853,7 @@ where
             }
         };
 
-        let iterator = self.backend.iterator_cf(cf, iterator_mode);
+        let iterator = self.backend.iterator_cf(self.handle(), iterator_mode);
         Ok(iterator.filter_map(|pair| {
             let (key, value) = pair.unwrap();
             C::try_deprecated_index(&key)
