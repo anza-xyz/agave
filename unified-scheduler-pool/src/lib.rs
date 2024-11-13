@@ -275,7 +275,8 @@ where
     ) -> Arc<Self> {
         let handler_count = handler_count.unwrap_or(Self::default_handler_count());
         assert!(handler_count >= 1);
-        let bp_is_supported = supported_scheduling_mode.is_supported(SchedulingMode::BlockProduction);
+        let bp_is_supported =
+            supported_scheduling_mode.is_supported(SchedulingMode::BlockProduction);
 
         let scheduler_pool = Arc::new_cyclic(|weak_self| Self {
             supported_scheduling_mode,
@@ -314,7 +315,10 @@ where
                     sleep(pool_cleaner_interval);
                     info!("Scheduler pool cleaner: start!!!",);
 
-                    let Some(scheduler_pool) = strong_scheduler_pool.clone().or_else(|| weak_scheduler_pool.upgrade()) else {
+                    let Some(scheduler_pool) = strong_scheduler_pool
+                        .clone()
+                        .or_else(|| weak_scheduler_pool.upgrade())
+                    else {
                         error!("weak pool!");
                         break;
                     };
@@ -375,7 +379,7 @@ where
                                     info!("dropped trashed sch {id}");
                                     scheduler_pool.reset_respawner();
                                     exiting = true;
-                                },
+                                }
                             }
                         }
                         trashed_inner_count
@@ -463,7 +467,14 @@ where
                     sleepless_testing::at(CheckPoint::TimeoutListenerTriggered(
                         triggered_timeout_listener_count,
                     ));
-                    if exiting && idle_inner_count == 0 && active_inner_count == 0 && trashed_inner_count == 0 && triggered_timeout_listener_count == 0 && active_timeout_listener_count == 0 && bpsi {
+                    if exiting
+                        && idle_inner_count == 0
+                        && active_inner_count == 0
+                        && trashed_inner_count == 0
+                        && triggered_timeout_listener_count == 0
+                        && active_timeout_listener_count == 0
+                        && bpsi
+                    {
                         error!("proper exit!");
                         break;
                     }
@@ -614,7 +625,11 @@ where
                 .wait_while(g, |g| {
                     let not_yet = g.0.is_none();
                     if not_yet {
-                        error!("will wait for bps..., slot: {}, mode: {:?}", context.slot(), context.mode());
+                        error!(
+                            "will wait for bps..., slot: {}, mode: {:?}",
+                            context.slot(),
+                            context.mode()
+                        );
                         g.2 = Some(context.clone());
                     }
                     not_yet
@@ -649,7 +664,17 @@ where
         *self.block_production_scheduler_respawner.lock().unwrap() = None;
     }
 
-    pub fn spawn_block_production_scheduler(&self, g: &mut std::sync::MutexGuard<'_, (Option<u64>, Option<<S as SpawnableScheduler<TH>>::Inner>, Option<SchedulingContext>)>) {
+    pub fn spawn_block_production_scheduler(
+        &self,
+        g: &mut std::sync::MutexGuard<
+            '_,
+            (
+                Option<u64>,
+                Option<<S as SpawnableScheduler<TH>>::Inner>,
+                Option<SchedulingContext>,
+            ),
+        >,
+    ) {
         info!("flash session: start!");
         let mut respawner_write = self.block_production_scheduler_respawner.lock().unwrap();
         let BlockProductionSchedulerRespawner {
@@ -1226,7 +1251,7 @@ where
         // current new_task_sender with a random one...
         self.new_task_sender = Arc::new(crossbeam_channel::unbounded().0);
 
-        self.ensure_join_threads(false/*true*/);
+        self.ensure_join_threads(false /*true*/);
         //assert_matches!(self.session_result_with_timings, Some((Ok(_), _)));
     }
 }
@@ -2160,9 +2185,11 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 debug!("ensure_join_threads(): err: {:?}", result_with_timings.0);
                 self.put_session_result_with_timings(result_with_timings);
             } else {
-                if let Ok(result_with_timings) = self.session_result_receiver.try_recv().inspect_err(|err| {
-                    error!("ensure_join_threads(): would be bocked....: {:?}", err);
-                }) {
+                if let Ok(result_with_timings) =
+                    self.session_result_receiver.try_recv().inspect_err(|err| {
+                        error!("ensure_join_threads(): would be bocked....: {:?}", err);
+                    })
+                {
                     self.put_session_result_with_timings(result_with_timings);
                 }
             }
