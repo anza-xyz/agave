@@ -137,24 +137,22 @@ pub fn is_version_string(arg: &str) -> Result<(), String> {
 
 fn home_dir() -> PathBuf {
     PathBuf::from(
-        env::var("HOME")
-            .or_else(|err| {
+        #[cfg_attr(not(windows), allow(clippy::unnecessary_lazy_evaluations))]
+        env::var_os("HOME")
+            .or_else(|| {
                 #[cfg(windows)]
                 {
-                    debug!(
-                        "Could not read env variable 'HOME': {}, falling back to 'USERPROFILE'",
-                        err
-                    );
-                    env::var("USERPROFILE")
+                    debug!("Could not read env variable 'HOME', falling back to 'USERPROFILE'");
+                    env::var_os("USERPROFILE")
                 }
 
                 #[cfg(not(windows))]
                 {
-                    Err(err)
+                    None
                 }
             })
-            .unwrap_or_else(|err| {
-                error!("Can't get home directory path: {}", err);
+            .unwrap_or_else(|| {
+                error!("Can't get home directory path");
                 exit(1);
             }),
     )
