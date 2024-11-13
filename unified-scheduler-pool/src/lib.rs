@@ -2376,6 +2376,7 @@ pub struct BankingStageAdapter {
     id_generator: MonotonicIdGenerator,
 }
 
+#[derive(Debug)]
 struct MonotonicIdGenerator {
     next_task_id: AtomicU64,
 }
