@@ -1426,6 +1426,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             BankingPacketReceiver,
             impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static,
         )>,
+        adapter: Option<Arc<BankingStageAdapter>>,
     ) {
         let scheduler_id = self.scheduler_id;
         let mut slot = context.bank().slot();
@@ -1754,17 +1755,14 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 };
                                 state_machine.deschedule_task(&executed_task.task);
                                 if should_pause && !session_ending {
-                                    error!("dropped tx!!!!");
-                                    /*
-                                    state_machine.reset_task(&executed_task.task);
                                     let ExecutedTask {
                                         task,
                                         result_with_timings,
                                     } = *executed_task;
+                                    let task = adapter.as_ref().unwrap().recreate_task(task);
+                                    error!("requeued tx!!!!");
                                     state_machine.do_schedule_task(task, true);
                                     std::mem::forget(result_with_timings);
-                                    */
-                                    std::mem::forget(executed_task);
                                 } else {
                                     std::mem::forget(executed_task);
                                 }
@@ -2352,6 +2350,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
             context.clone(),
             result_with_timings,
             banking_stage_context,
+            banking_stage_adapter,
         );
         Self { inner, context }
     }
@@ -2404,6 +2403,10 @@ impl BankingStageAdapter {
             index,
             &mut |pubkey| self.usage_queue_loader.load(pubkey),
         ))
+    }
+
+    fn recreate_task(&self, task: Task) -> Self {
+        task
     }
 
     fn banking_stage_status(&self) -> BankingStageStatus {
