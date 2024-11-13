@@ -1466,25 +1466,6 @@ impl Database {
         Ok(fs_extra::dir::get_size(&self.path)?)
     }
 
-    /// Adds a \[`from`, `to`\] range that deletes all entries between the `from` slot
-    /// and `to` slot inclusively.  If `from` slot and `to` slot are the same, then all
-    /// entries in that slot will be removed.
-    ///
-    pub fn delete_range_cf<C>(&self, batch: &mut WriteBatch, from: Slot, to: Slot) -> Result<()>
-    where
-        C: Column + ColumnName,
-    {
-        let cf = self.cf_handle::<C>();
-        // Note that the default behavior of rocksdb's delete_range_cf deletes
-        // files within [from, to), while our purge logic applies to [from, to].
-        //
-        // For consistency, we make our delete_range_cf works for [from, to] by
-        // adjusting the `to` slot range by 1.
-        let from_index = C::as_index(from);
-        let to_index = C::as_index(to.saturating_add(1));
-        batch.delete_range_cf::<C>(cf, from_index, to_index)
-    }
-
     /// Delete files whose slot range is within \[`from`, `to`\].
     pub fn delete_file_in_range_cf<C>(&self, from: Slot, to: Slot) -> Result<()>
     where
@@ -1655,6 +1636,23 @@ where
             );
         }
         result
+    }
+
+    /// Adds a \[`from`, `to`\] range that deletes all entries between the `from` slot
+    /// and `to` slot inclusively.  If `from` slot and `to` slot are the same, then all
+    /// entries in that slot will be removed.
+    pub fn delete_range_in_batch(&self, batch: &mut WriteBatch, from: Slot, to: Slot) -> Result<()>
+    where
+        C: Column + ColumnName,
+    {
+        // Note that the default behavior of rocksdb's delete_range_cf deletes
+        // files within [from, to), while our purge logic applies to [from, to].
+        //
+        // For consistency, we make our delete_range_cf works for [from, to] by
+        // adjusting the `to` slot range by 1.
+        let from_key = C::key(C::as_index(from));
+        let to_key = C::key(C::as_index(to.saturating_add(1)));
+        batch.delete_range_cf(self.handle(), &from_key, &to_key)
     }
 }
 
@@ -1900,14 +1898,13 @@ impl<'a> WriteBatch<'a> {
     /// is different from \[`from`, `to`\] of Database::delete_range_cf as we makes
     /// the semantics of Database::delete_range_cf matches the blockstore purge
     /// logic.
-    fn delete_range_cf<C: Column>(
+    fn delete_range_cf(
         &mut self,
         cf: &ColumnFamily,
-        from: C::Index,
-        to: C::Index, // exclusive
+        from: &[u8],
+        to: &[u8], // exclusive
     ) -> Result<()> {
-        self.write_batch
-            .delete_range_cf(cf, C::key(from), C::key(to));
+        self.write_batch.delete_range_cf(cf, from, to);
         Ok(())
     }
 }

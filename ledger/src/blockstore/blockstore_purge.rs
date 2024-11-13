@@ -255,68 +255,68 @@ impl Blockstore {
         purge_type: PurgeType,
     ) -> Result<bool> {
         let columns_purged = self
-            .db
-            .delete_range_cf::<cf::SlotMeta>(write_batch, from_slot, to_slot)
+            .meta_cf
+            .delete_range_in_batch(write_batch, from_slot, to_slot)
             .is_ok()
             & self
-                .db
-                .delete_range_cf::<cf::BankHash>(write_batch, from_slot, to_slot)
+                .bank_hash_cf
+                .delete_range_in_batch(write_batch, from_slot, to_slot)
                 .is_ok()
             & self
-                .db
-                .delete_range_cf::<cf::Root>(write_batch, from_slot, to_slot)
+                .roots_cf
+                .delete_range_in_batch(write_batch, from_slot, to_slot)
                 .is_ok()
             & self
-                .db
-                .delete_range_cf::<cf::ShredData>(write_batch, from_slot, to_slot)
+                .data_shred_cf
+                .delete_range_in_batch(write_batch, from_slot, to_slot)
                 .is_ok()
             & self
-                .db
-                .delete_range_cf::<cf::ShredCode>(write_batch, from_slot, to_slot)
+                .code_shred_cf
+                .delete_range_in_batch(write_batch, from_slot, to_slot)
                 .is_ok()
             & self
-                .db
-                .delete_range_cf::<cf::DeadSlots>(write_batch, from_slot, to_slot)
+                .dead_slots_cf
+                .delete_range_in_batch(write_batch, from_slot, to_slot)
                 .is_ok()
             & self
-                .db
-                .delete_range_cf::<cf::DuplicateSlots>(write_batch, from_slot, to_slot)
+                .duplicate_slots_cf
+                .delete_range_in_batch(write_batch, from_slot, to_slot)
                 .is_ok()
             & self
-                .db
-                .delete_range_cf::<cf::ErasureMeta>(write_batch, from_slot, to_slot)
+                .erasure_meta_cf
+                .delete_range_in_batch(write_batch, from_slot, to_slot)
                 .is_ok()
             & self
-                .db
-                .delete_range_cf::<cf::Orphans>(write_batch, from_slot, to_slot)
+                .orphans_cf
+                .delete_range_in_batch(write_batch, from_slot, to_slot)
                 .is_ok()
             & self
-                .db
-                .delete_range_cf::<cf::Index>(write_batch, from_slot, to_slot)
+                .index_cf
+                .delete_range_in_batch(write_batch, from_slot, to_slot)
                 .is_ok()
             & self
-                .db
-                .delete_range_cf::<cf::Rewards>(write_batch, from_slot, to_slot)
+                .rewards_cf
+                .delete_range_in_batch(write_batch, from_slot, to_slot)
                 .is_ok()
             & self
-                .db
-                .delete_range_cf::<cf::Blocktime>(write_batch, from_slot, to_slot)
+                .blocktime_cf
+                .delete_range_in_batch(write_batch, from_slot, to_slot)
                 .is_ok()
             & self
-                .db
-                .delete_range_cf::<cf::PerfSamples>(write_batch, from_slot, to_slot)
+                .perf_samples_cf
+                .delete_range_in_batch(write_batch, from_slot, to_slot)
                 .is_ok()
             & self
-                .db
-                .delete_range_cf::<cf::BlockHeight>(write_batch, from_slot, to_slot)
+                .block_height_cf
+                .delete_range_in_batch(write_batch, from_slot, to_slot)
                 .is_ok()
             & self
-                .db
-                .delete_range_cf::<cf::OptimisticSlots>(write_batch, from_slot, to_slot)
+                .optimistic_slots_cf
+                .delete_range_in_batch(write_batch, from_slot, to_slot)
                 .is_ok()
             & self
-                .db
-                .delete_range_cf::<cf::MerkleRootMeta>(write_batch, from_slot, to_slot)
+                .merkle_root_meta_cf
+                .delete_range_in_batch(write_batch, from_slot, to_slot)
                 .is_ok();
 
         match purge_type {
