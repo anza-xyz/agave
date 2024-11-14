@@ -13,8 +13,8 @@ use {
         secp256k1_program, stake, system_program, sysvar, vote, zk_elgamal_proof_program,
         zk_token_proof_program,
     },
+    solana_secp256r1_program as secp256r1_program,
     std::collections::{HashMap, HashSet},
-    solana_secp256r1_program as secp256r1_program
 };
 
 // ReservedAccountKeys is not serialized into or deserialized from bank
