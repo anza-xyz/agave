@@ -153,11 +153,9 @@ done
 
 mkdir -p "$installDir/bin"
 
-# All release binaries should be built with openssl in vendored mode, since the
-# determinism of sdk/secp256r1 is crucial
 cargo_build() {
   # shellcheck disable=SC2086 # Don't want to double quote $maybeRustVersion
-  "$cargo" $maybeRustVersion build $buildProfileArg --features solana-sdk/openssl "$@"
+  "$cargo" $maybeRustVersion build $buildProfileArg "$@"
 }
 
 # This is called to detect both of unintended activation AND deactivation of
