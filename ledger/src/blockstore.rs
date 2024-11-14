@@ -297,6 +297,8 @@ struct ShredInsertionTracker {
     index_working_set: HashMap<u64, IndexMetaWorkingSetEntry>,
     duplicate_shreds: Vec<PossibleDuplicateShred>,
     write_batch: WriteBatch,
+    index_meta_time_us: u64,
+    newly_completed_data_sets: Vec<CompletedDataSetInfo>,
 }
 
 impl ShredInsertionTracker {
@@ -309,6 +311,8 @@ impl ShredInsertionTracker {
             index_working_set: HashMap::new(),
             duplicate_shreds: vec![],
             write_batch,
+            index_meta_time_us: 0,
+            newly_completed_data_sets: vec![],
         }
     }
 }
@@ -883,6 +887,88 @@ impl Blockstore {
         self.rpc_api_metrics.report();
     }
 
+    /// Attempts to insert shreds into blockstore and updates relevant metrics
+    /// based on the results, split out by shred source (tubine vs. repair).
+    fn attempt_shred_insertion(
+        &self,
+        shreds: Vec<Shred>,
+        is_repaired: Vec<bool>,
+        is_trusted: bool,
+        leader_schedule: Option<&LeaderScheduleCache>,
+        shred_insertion_tracker: &mut ShredInsertionTracker,
+        metrics: &mut BlockstoreInsertionMetrics,
+    ) {
+        metrics.num_shreds += shreds.len();
+        let mut start = Measure::start("Shred insertion");
+        for (shred, is_repaired) in shreds.into_iter().zip(is_repaired) {
+            let shred_source = if is_repaired {
+                ShredSource::Repaired
+            } else {
+                ShredSource::Turbine
+            };
+            match shred.shred_type() {
+                ShredType::Data => {
+                    match self.check_insert_data_shred(
+                        shred,
+                        &mut shred_insertion_tracker.erasure_metas,
+                        &mut shred_insertion_tracker.merkle_root_metas,
+                        &mut shred_insertion_tracker.index_working_set,
+                        &mut shred_insertion_tracker.slot_meta_working_set,
+                        &mut shred_insertion_tracker.write_batch,
+                        &mut shred_insertion_tracker.just_inserted_shreds,
+                        &mut shred_insertion_tracker.index_meta_time_us,
+                        is_trusted,
+                        &mut shred_insertion_tracker.duplicate_shreds,
+                        leader_schedule,
+                        shred_source,
+                    ) {
+                        Err(InsertDataShredError::Exists) => {
+                            if is_repaired {
+                                metrics.num_repaired_data_shreds_exists += 1;
+                            } else {
+                                metrics.num_turbine_data_shreds_exists += 1;
+                            }
+                        }
+                        Err(InsertDataShredError::InvalidShred) => {
+                            metrics.num_data_shreds_invalid += 1
+                        }
+                        Err(InsertDataShredError::BlockstoreError(err)) => {
+                            metrics.num_data_shreds_blockstore_error += 1;
+                            error!("blockstore error: {}", err);
+                        }
+                        Ok(completed_data_sets) => {
+                            if is_repaired {
+                                metrics.num_repair += 1;
+                            }
+                            shred_insertion_tracker
+                                .newly_completed_data_sets
+                                .extend(completed_data_sets);
+                            metrics.num_inserted += 1;
+                        }
+                    };
+                }
+                ShredType::Code => {
+                    self.check_insert_coding_shred(
+                        shred,
+                        &mut shred_insertion_tracker.erasure_metas,
+                        &mut shred_insertion_tracker.merkle_root_metas,
+                        &mut shred_insertion_tracker.index_working_set,
+                        &mut shred_insertion_tracker.write_batch,
+                        &mut shred_insertion_tracker.just_inserted_shreds,
+                        &mut shred_insertion_tracker.index_meta_time_us,
+                        &mut shred_insertion_tracker.duplicate_shreds,
+                        is_trusted,
+                        shred_source,
+                        metrics,
+                    );
+                }
+            };
+        }
+        start.stop();
+
+        metrics.insert_shreds_elapsed_us += start.as_us();
+    }
+
     fn try_shred_recovery(
         &self,
         erasure_metas: &BTreeMap<ErasureSetId, WorkingEntry<ErasureMeta>>,
@@ -928,6 +1014,212 @@ impl Blockstore {
             };
         }
         recovered_shreds
+    }
+
+    /// Attempts shred recovery and does the following for recovered data
+    /// shreds:
+    /// 1. Verify signatures
+    /// 2. Insert into blockstore
+    /// 3. Send for retransmit.
+    fn handle_shred_recovery(
+        &self,
+        leader_schedule: Option<&LeaderScheduleCache>,
+        reed_solomon_cache: &ReedSolomonCache,
+        shred_insertion_tracker: &mut ShredInsertionTracker,
+        retransmit_sender: Option<&Sender<Vec</*shred:*/ Vec<u8>>>>,
+        is_trusted: bool,
+        metrics: &mut BlockstoreInsertionMetrics,
+    ) {
+        let mut start = Measure::start("Shred recovery");
+        if let Some(leader_schedule_cache) = leader_schedule {
+            let recovered_shreds = self.try_shred_recovery(
+                &shred_insertion_tracker.erasure_metas,
+                &mut shred_insertion_tracker.index_working_set,
+                &shred_insertion_tracker.just_inserted_shreds,
+                reed_solomon_cache,
+            );
+
+            metrics.num_recovered += recovered_shreds
+                .iter()
+                .filter(|shred| shred.is_data())
+                .count();
+            let recovered_shreds: Vec<_> = recovered_shreds
+                .into_iter()
+                .filter_map(|shred| {
+                    let leader =
+                        leader_schedule_cache.slot_leader_at(shred.slot(), /*bank=*/ None)?;
+                    if !shred.verify(&leader) {
+                        metrics.num_recovered_failed_sig += 1;
+                        return None;
+                    }
+                    // Since the data shreds are fully recovered from the
+                    // erasure batch, no need to store coding shreds in
+                    // blockstore.
+                    if shred.is_code() {
+                        return Some(shred);
+                    }
+                    match self.check_insert_data_shred(
+                        shred.clone(),
+                        &mut shred_insertion_tracker.erasure_metas,
+                        &mut shred_insertion_tracker.merkle_root_metas,
+                        &mut shred_insertion_tracker.index_working_set,
+                        &mut shred_insertion_tracker.slot_meta_working_set,
+                        &mut shred_insertion_tracker.write_batch,
+                        &mut shred_insertion_tracker.just_inserted_shreds,
+                        &mut shred_insertion_tracker.index_meta_time_us,
+                        is_trusted,
+                        &mut shred_insertion_tracker.duplicate_shreds,
+                        leader_schedule,
+                        ShredSource::Recovered,
+                    ) {
+                        Err(InsertDataShredError::Exists) => {
+                            metrics.num_recovered_exists += 1;
+                            None
+                        }
+                        Err(InsertDataShredError::InvalidShred) => {
+                            metrics.num_recovered_failed_invalid += 1;
+                            None
+                        }
+                        Err(InsertDataShredError::BlockstoreError(err)) => {
+                            metrics.num_recovered_blockstore_error += 1;
+                            error!("blockstore error: {}", err);
+                            None
+                        }
+                        Ok(completed_data_sets) => {
+                            shred_insertion_tracker
+                                .newly_completed_data_sets
+                                .extend(completed_data_sets);
+                            metrics.num_recovered_inserted += 1;
+                            Some(shred)
+                        }
+                    }
+                })
+                // Always collect recovered-shreds so that above insert code is
+                // executed even if retransmit-sender is None.
+                .collect();
+            if !recovered_shreds.is_empty() {
+                if let Some(retransmit_sender) = retransmit_sender {
+                    let _ = retransmit_sender.send(
+                        recovered_shreds
+                            .into_iter()
+                            .map(Shred::into_payload)
+                            .collect(),
+                    );
+                }
+            }
+        }
+        start.stop();
+        metrics.shred_recovery_elapsed_us += start.as_us();
+    }
+
+    fn check_chained_merkle_root_consistency(
+        &self,
+        shred_insertion_tracker: &mut ShredInsertionTracker,
+    ) {
+        for (erasure_set, working_erasure_meta) in shred_insertion_tracker.erasure_metas.iter() {
+            if !working_erasure_meta.should_write() {
+                // Not a new erasure meta
+                continue;
+            }
+            let (slot, _) = erasure_set.store_key();
+            if self.has_duplicate_shreds_in_slot(slot) {
+                continue;
+            }
+            // First coding shred from this erasure batch, check the forward merkle root chaining
+            let erasure_meta = working_erasure_meta.as_ref();
+            let shred_id = ShredId::new(
+                slot,
+                erasure_meta
+                    .first_received_coding_shred_index()
+                    .expect("First received coding index must fit in u32"),
+                ShredType::Code,
+            );
+            let shred = shred_insertion_tracker
+                .just_inserted_shreds
+                .get(&shred_id)
+                .expect("Erasure meta was just created, initial shred must exist");
+
+            self.check_forward_chained_merkle_root_consistency(
+                shred,
+                erasure_meta,
+                &shred_insertion_tracker.just_inserted_shreds,
+                &mut shred_insertion_tracker.merkle_root_metas,
+                &mut shred_insertion_tracker.duplicate_shreds,
+            );
+        }
+
+        for (erasure_set, working_merkle_root_meta) in
+            shred_insertion_tracker.merkle_root_metas.iter()
+        {
+            if !working_merkle_root_meta.should_write() {
+                // Not a new merkle root meta
+                continue;
+            }
+            let (slot, _) = erasure_set.store_key();
+            if self.has_duplicate_shreds_in_slot(slot) {
+                continue;
+            }
+            // First shred from this erasure batch, check the backwards merkle root chaining
+            let merkle_root_meta = working_merkle_root_meta.as_ref();
+            let shred_id = ShredId::new(
+                slot,
+                merkle_root_meta.first_received_shred_index(),
+                merkle_root_meta.first_received_shred_type(),
+            );
+            let shred = shred_insertion_tracker
+                .just_inserted_shreds
+                .get(&shred_id)
+                .expect("Merkle root meta was just created, initial shred must exist");
+
+            self.check_backwards_chained_merkle_root_consistency(
+                shred,
+                &shred_insertion_tracker.just_inserted_shreds,
+                &shred_insertion_tracker.erasure_metas,
+                &mut shred_insertion_tracker.duplicate_shreds,
+            );
+        }
+    }
+
+    fn commit_updates_to_write_batch(
+        &self,
+        shred_insertion_tracker: &mut ShredInsertionTracker,
+    ) -> Result<()> {
+        for (erasure_set, working_erasure_meta) in &shred_insertion_tracker.erasure_metas {
+            if !working_erasure_meta.should_write() {
+                // No need to rewrite the column
+                continue;
+            }
+            let (slot, fec_set_index) = erasure_set.store_key();
+            self.erasure_meta_cf.put_in_batch(
+                &mut shred_insertion_tracker.write_batch,
+                (slot, u64::from(fec_set_index)),
+                working_erasure_meta.as_ref(),
+            )?;
+        }
+
+        for (erasure_set, working_merkle_root_meta) in &shred_insertion_tracker.merkle_root_metas {
+            if !working_merkle_root_meta.should_write() {
+                // No need to rewrite the column
+                continue;
+            }
+            self.merkle_root_meta_cf.put_in_batch(
+                &mut shred_insertion_tracker.write_batch,
+                erasure_set.store_key(),
+                working_merkle_root_meta.as_ref(),
+            )?;
+        }
+
+        for (&slot, index_working_set_entry) in shred_insertion_tracker.index_working_set.iter() {
+            if index_working_set_entry.did_insert_occur {
+                self.index_cf.put_in_batch(
+                    &mut shred_insertion_tracker.write_batch,
+                    slot,
+                    &index_working_set_entry.index,
+                )?;
+            }
+        }
+
+        Ok(())
     }
 
     /// The main helper function that performs the shred insertion logic
@@ -1003,157 +1295,27 @@ impl Blockstore {
         let mut shred_insertion_tracker =
             ShredInsertionTracker::new(shreds.len(), self.db.batch()?);
 
-        metrics.num_shreds += shreds.len();
-        let mut start = Measure::start("Shred insertion");
-        let mut index_meta_time_us = 0;
-        let mut newly_completed_data_sets: Vec<CompletedDataSetInfo> = vec![];
-        for (shred, is_repaired) in shreds.into_iter().zip(is_repaired) {
-            let shred_source = if is_repaired {
-                ShredSource::Repaired
-            } else {
-                ShredSource::Turbine
-            };
-            match shred.shred_type() {
-                ShredType::Data => {
-                    match self.check_insert_data_shred(
-                        shred,
-                        &mut shred_insertion_tracker.erasure_metas,
-                        &mut shred_insertion_tracker.merkle_root_metas,
-                        &mut shred_insertion_tracker.index_working_set,
-                        &mut shred_insertion_tracker.slot_meta_working_set,
-                        &mut shred_insertion_tracker.write_batch,
-                        &mut shred_insertion_tracker.just_inserted_shreds,
-                        &mut index_meta_time_us,
-                        is_trusted,
-                        &mut shred_insertion_tracker.duplicate_shreds,
-                        leader_schedule,
-                        shred_source,
-                    ) {
-                        Err(InsertDataShredError::Exists) => {
-                            if is_repaired {
-                                metrics.num_repaired_data_shreds_exists += 1;
-                            } else {
-                                metrics.num_turbine_data_shreds_exists += 1;
-                            }
-                        }
-                        Err(InsertDataShredError::InvalidShred) => {
-                            metrics.num_data_shreds_invalid += 1
-                        }
-                        Err(InsertDataShredError::BlockstoreError(err)) => {
-                            metrics.num_data_shreds_blockstore_error += 1;
-                            error!("blockstore error: {}", err);
-                        }
-                        Ok(completed_data_sets) => {
-                            if is_repaired {
-                                metrics.num_repair += 1;
-                            }
-                            newly_completed_data_sets.extend(completed_data_sets);
-                            metrics.num_inserted += 1;
-                        }
-                    };
-                }
-                ShredType::Code => {
-                    self.check_insert_coding_shred(
-                        shred,
-                        &mut shred_insertion_tracker.erasure_metas,
-                        &mut shred_insertion_tracker.merkle_root_metas,
-                        &mut shred_insertion_tracker.index_working_set,
-                        &mut shred_insertion_tracker.write_batch,
-                        &mut shred_insertion_tracker.just_inserted_shreds,
-                        &mut index_meta_time_us,
-                        &mut shred_insertion_tracker.duplicate_shreds,
-                        is_trusted,
-                        shred_source,
-                        metrics,
-                    );
-                }
-            };
-        }
-        start.stop();
+        self.attempt_shred_insertion(
+            shreds,
+            is_repaired,
+            is_trusted,
+            leader_schedule,
+            &mut shred_insertion_tracker,
+            metrics,
+        );
 
-        metrics.insert_shreds_elapsed_us += start.as_us();
-        let mut start = Measure::start("Shred recovery");
-        if let Some(leader_schedule_cache) = leader_schedule {
-            let recovered_shreds = self.try_shred_recovery(
-                &shred_insertion_tracker.erasure_metas,
-                &mut shred_insertion_tracker.index_working_set,
-                &shred_insertion_tracker.just_inserted_shreds,
-                reed_solomon_cache,
-            );
+        self.handle_shred_recovery(
+            leader_schedule,
+            reed_solomon_cache,
+            &mut shred_insertion_tracker,
+            retransmit_sender,
+            is_trusted,
+            metrics,
+        );
 
-            metrics.num_recovered += recovered_shreds
-                .iter()
-                .filter(|shred| shred.is_data())
-                .count();
-            let recovered_shreds: Vec<_> = recovered_shreds
-                .into_iter()
-                .filter_map(|shred| {
-                    let leader =
-                        leader_schedule_cache.slot_leader_at(shred.slot(), /*bank=*/ None)?;
-                    if !shred.verify(&leader) {
-                        metrics.num_recovered_failed_sig += 1;
-                        return None;
-                    }
-                    // Since the data shreds are fully recovered from the
-                    // erasure batch, no need to store coding shreds in
-                    // blockstore.
-                    if shred.is_code() {
-                        return Some(shred);
-                    }
-                    match self.check_insert_data_shred(
-                        shred.clone(),
-                        &mut shred_insertion_tracker.erasure_metas,
-                        &mut shred_insertion_tracker.merkle_root_metas,
-                        &mut shred_insertion_tracker.index_working_set,
-                        &mut shred_insertion_tracker.slot_meta_working_set,
-                        &mut shred_insertion_tracker.write_batch,
-                        &mut shred_insertion_tracker.just_inserted_shreds,
-                        &mut index_meta_time_us,
-                        is_trusted,
-                        &mut shred_insertion_tracker.duplicate_shreds,
-                        leader_schedule,
-                        ShredSource::Recovered,
-                    ) {
-                        Err(InsertDataShredError::Exists) => {
-                            metrics.num_recovered_exists += 1;
-                            None
-                        }
-                        Err(InsertDataShredError::InvalidShred) => {
-                            metrics.num_recovered_failed_invalid += 1;
-                            None
-                        }
-                        Err(InsertDataShredError::BlockstoreError(err)) => {
-                            metrics.num_recovered_blockstore_error += 1;
-                            error!("blockstore error: {}", err);
-                            None
-                        }
-                        Ok(completed_data_sets) => {
-                            newly_completed_data_sets.extend(completed_data_sets);
-                            metrics.num_recovered_inserted += 1;
-                            Some(shred)
-                        }
-                    }
-                })
-                // Always collect recovered-shreds so that above insert code is
-                // executed even if retransmit-sender is None.
-                .collect();
-            if !recovered_shreds.is_empty() {
-                if let Some(retransmit_sender) = retransmit_sender {
-                    let _ = retransmit_sender.send(
-                        recovered_shreds
-                            .into_iter()
-                            .map(Shred::into_payload)
-                            .collect(),
-                    );
-                }
-            }
-        }
-        start.stop();
-        metrics.shred_recovery_elapsed_us += start.as_us();
-
-        let mut start = Measure::start("Shred recovery");
-        // Handle chaining for the members of the slot_meta_working_set that were inserted into,
-        // drop the others
+        // Handle chaining for the members of the slot_meta_working_set that
+        // were inserted into, drop the others.
+        let mut start = Measure::start("Shred chaining");
         self.handle_chaining(
             &mut shred_insertion_tracker.write_batch,
             &mut shred_insertion_tracker.slot_meta_working_set,
@@ -1167,103 +1329,9 @@ impl Blockstore {
             &mut shred_insertion_tracker.write_batch,
         )?;
 
-        for (erasure_set, working_erasure_meta) in shred_insertion_tracker.erasure_metas.iter() {
-            if !working_erasure_meta.should_write() {
-                // Not a new erasure meta
-                continue;
-            }
-            let (slot, _) = erasure_set.store_key();
-            if self.has_duplicate_shreds_in_slot(slot) {
-                continue;
-            }
-            // First coding shred from this erasure batch, check the forward merkle root chaining
-            let erasure_meta = working_erasure_meta.as_ref();
-            let shred_id = ShredId::new(
-                slot,
-                erasure_meta
-                    .first_received_coding_shred_index()
-                    .expect("First received coding index must fit in u32"),
-                ShredType::Code,
-            );
-            let shred = shred_insertion_tracker
-                .just_inserted_shreds
-                .get(&shred_id)
-                .expect("Erasure meta was just created, initial shred must exist");
+        self.check_chained_merkle_root_consistency(&mut shred_insertion_tracker);
 
-            self.check_forward_chained_merkle_root_consistency(
-                shred,
-                erasure_meta,
-                &shred_insertion_tracker.just_inserted_shreds,
-                &mut shred_insertion_tracker.merkle_root_metas,
-                &mut shred_insertion_tracker.duplicate_shreds,
-            );
-        }
-
-        for (erasure_set, working_merkle_root_meta) in
-            shred_insertion_tracker.merkle_root_metas.iter()
-        {
-            if !working_merkle_root_meta.should_write() {
-                // Not a new merkle root meta
-                continue;
-            }
-            let (slot, _) = erasure_set.store_key();
-            if self.has_duplicate_shreds_in_slot(slot) {
-                continue;
-            }
-            // First shred from this erasure batch, check the backwards merkle root chaining
-            let merkle_root_meta = working_merkle_root_meta.as_ref();
-            let shred_id = ShredId::new(
-                slot,
-                merkle_root_meta.first_received_shred_index(),
-                merkle_root_meta.first_received_shred_type(),
-            );
-            let shred = shred_insertion_tracker
-                .just_inserted_shreds
-                .get(&shred_id)
-                .expect("Merkle root meta was just created, initial shred must exist");
-
-            self.check_backwards_chained_merkle_root_consistency(
-                shred,
-                &shred_insertion_tracker.just_inserted_shreds,
-                &shred_insertion_tracker.erasure_metas,
-                &mut shred_insertion_tracker.duplicate_shreds,
-            );
-        }
-
-        for (erasure_set, working_erasure_meta) in shred_insertion_tracker.erasure_metas {
-            if !working_erasure_meta.should_write() {
-                // No need to rewrite the column
-                continue;
-            }
-            let (slot, fec_set_index) = erasure_set.store_key();
-            self.erasure_meta_cf.put_in_batch(
-                &mut shred_insertion_tracker.write_batch,
-                (slot, u64::from(fec_set_index)),
-                working_erasure_meta.as_ref(),
-            )?;
-        }
-
-        for (erasure_set, working_merkle_root_meta) in shred_insertion_tracker.merkle_root_metas {
-            if !working_merkle_root_meta.should_write() {
-                // No need to rewrite the column
-                continue;
-            }
-            self.merkle_root_meta_cf.put_in_batch(
-                &mut shred_insertion_tracker.write_batch,
-                erasure_set.store_key(),
-                working_merkle_root_meta.as_ref(),
-            )?;
-        }
-
-        for (&slot, index_working_set_entry) in shred_insertion_tracker.index_working_set.iter() {
-            if index_working_set_entry.did_insert_occur {
-                self.index_cf.put_in_batch(
-                    &mut shred_insertion_tracker.write_batch,
-                    slot,
-                    &index_working_set_entry.index,
-                )?;
-            }
-        }
+        self.commit_updates_to_write_batch(&mut shred_insertion_tracker)?;
         start.stop();
         metrics.commit_working_sets_elapsed_us += start.as_us();
 
@@ -1282,10 +1350,10 @@ impl Blockstore {
         total_start.stop();
 
         metrics.total_elapsed_us += total_start.as_us();
-        metrics.index_meta_time_us += index_meta_time_us;
+        metrics.index_meta_time_us += shred_insertion_tracker.index_meta_time_us;
 
         Ok(InsertResults {
-            completed_data_set_infos: newly_completed_data_sets,
+            completed_data_set_infos: shred_insertion_tracker.newly_completed_data_sets,
             duplicate_shreds: shred_insertion_tracker.duplicate_shreds,
         })
     }
