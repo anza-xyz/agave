@@ -292,10 +292,7 @@ impl<C: LikeClusterInfo, R: ReceiveAndBuffer, S: StateContainer<R::Transaction>>
                 ids_to_add_back.push(*id); // add back to the queue at end
                 let state = self.container.get_mut_transaction_state(&id.id).unwrap();
                 let sanitized_transaction = &state.transaction_ttl().transaction;
-                let immutable_packet = state
-                    .packet()
-                    .expect("packet must exist if forwarding")
-                    .clone();
+                let immutable_packet = state.packet().clone();
 
                 // If not already forwarded and can be forwarded, add to forwardable packets.
                 if state.should_forward()

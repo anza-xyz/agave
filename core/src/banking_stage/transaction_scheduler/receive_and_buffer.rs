@@ -246,7 +246,7 @@ impl SanitizedTransactionReceiveAndBuffer {
                 if container.insert_new_transaction(
                     transaction_id,
                     transaction_ttl,
-                    Some(packet),
+                    packet,
                     priority,
                     cost,
                 ) {
