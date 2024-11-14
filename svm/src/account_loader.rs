@@ -1093,7 +1093,7 @@ mod tests {
         assert_eq!(error_metrics.account_not_found, 0);
         match &loaded_accounts {
             TransactionLoadResult::Loaded(loaded_transaction) => {
-                assert_eq!(loaded_transaction.accounts.len(), 4);
+                assert_eq!(loaded_transaction.accounts.len(), 3);
                 assert_eq!(loaded_transaction.accounts[0].1, accounts[0].1);
                 assert_eq!(loaded_transaction.program_indices.len(), 2);
                 assert_eq!(loaded_transaction.program_indices[0], &[1]);
@@ -1601,7 +1601,6 @@ mod tests {
                 accounts: vec![
                     (account_keypair.pubkey(), account_data.clone()),
                     (program_keypair.pubkey(), cached_program),
-                    (loader_v2, loader_data),
                 ],
                 program_indices: vec![vec![1]],
                 rent: 0,
@@ -1982,10 +1981,6 @@ mod tests {
                         key1.pubkey(),
                         mock_bank.accounts_map[&key1.pubkey()].clone()
                     ),
-                    (
-                        key3.pubkey(),
-                        mock_bank.accounts_map[&key3.pubkey()].clone()
-                    ),
                 ],
                 program_indices: vec![vec![1]],
                 rent: 0,
@@ -2070,10 +2065,6 @@ mod tests {
                         mock_bank.accounts_map[&key1.pubkey()].clone()
                     ),
                     (key4.pubkey(), account_data),
-                    (
-                        key3.pubkey(),
-                        mock_bank.accounts_map[&key3.pubkey()].clone()
-                    ),
                 ],
                 program_indices: vec![vec![1], vec![1]],
                 rent: 0,
@@ -2232,10 +2223,6 @@ mod tests {
                         mock_bank.accounts_map[&key1.pubkey()].clone()
                     ),
                     (key4.pubkey(), account_data),
-                    (
-                        key3.pubkey(),
-                        mock_bank.accounts_map[&key3.pubkey()].clone()
-                    ),
                 ],
                 program_indices: vec![vec![1], vec![1]],
                 fee_details: FeeDetails::default(),
@@ -2284,7 +2271,7 @@ mod tests {
         assert!(matches!(
             load_result,
             TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
-                load_error: TransactionError::InvalidProgramForExecution,
+                load_error: TransactionError::ProgramAccountNotFound,
                 ..
             }),
         ));
@@ -2400,7 +2387,7 @@ mod tests {
         let mut account3 = AccountSharedData::default();
         account3.set_lamports(4_000_000_000);
         account3.set_executable(true);
-        account3.set_owner(native_loader::id());
+        account3.set_owner(bpf_loader::id());
         mock_bank.accounts_map.insert(address3, account3.clone());
         let mut account_loader = (&mock_bank).into();
 
@@ -2456,11 +2443,17 @@ mod tests {
             .collect();
         actual_inspected_accounts.sort_unstable_by(|a, b| a.0.cmp(&b.0));
 
+        // TODO i think this goes back to normal once account cache is in
+        // remember i changed owner above
         let mut expected_inspected_accounts = vec![
             // *not* key0, since it is loaded during fee payer validation
             (address1, vec![(Some(account1), true)]),
             (address2, vec![(None, true)]),
-            (address3, vec![(Some(account3), false)]),
+            (
+                address3,
+                vec![(Some(account3.clone()), false), (Some(account3), false)],
+            ),
+            (bpf_loader::id(), vec![(None, false)]),
         ];
         expected_inspected_accounts.sort_unstable_by(|a, b| a.0.cmp(&b.0));
 
