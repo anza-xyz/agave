@@ -3378,15 +3378,17 @@ impl Bank {
         scheduler: &InstalledSchedulerRwLock,
         vote_only_execution: bool,
     ) {
-        assert!(
-            !vote_only_execution && !self.freeze_started(),
-            "register_tick() working on a bank that is already frozen or is undergoing freezing!"
-        );
-
-        assert!(
-            vote_only_execution && !self.vote_only_freeze_started(),
-            "register_tick() working on a bank that is already frozen or is undergoing vote_only_freezing!"
-        );
+        if vote_only_execution {
+            assert!(
+                !self.vote_only_freeze_started(),
+                "register_tick() working on a bank that is already frozen or is undergoing vote_only_freezing!"
+            );
+        } else {
+            assert!(
+                !self.freeze_started(),
+                "register_tick() working on a bank that is already frozen or is undergoing freezing!"
+            );
+        }
 
         if vote_only_execution
             && self.is_block_boundary(self.tick_height_for_vote_only.load(Relaxed) + 1)

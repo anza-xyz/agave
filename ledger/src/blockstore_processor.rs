@@ -1117,7 +1117,12 @@ fn confirm_full_slot(
 
     timing.accumulate(&confirmation_timing.batch_execute.totals);
 
-    if !bank.is_complete() {
+    let bank_complete = if vote_only_execution {
+        bank.is_vote_only_complete()
+    } else {
+        bank.is_complete()
+    };
+    if !bank_complete {
         Err(BlockstoreProcessorError::InvalidBlock(
             BlockError::Incomplete,
         ))
