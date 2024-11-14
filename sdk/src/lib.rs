@@ -190,7 +190,7 @@ pub use solana_sdk_macro::declare_id;
 pub use solana_sdk_macro::pubkeys;
 #[deprecated(since = "2.1.0", note = "Use `solana-secp256k1-recover` crate instead")]
 pub use solana_secp256k1_recover as secp256k1_recover;
-#[deprecated(since = "2.1.0", note = "Use `solana-serde` crate instead")]
+#[deprecated(since = "2.2.0", note = "Use `solana-serde` crate instead")]
 pub use solana_serde as deserialize_utils;
 #[deprecated(since = "2.1.0", note = "Use `solana-serde-varint` crate instead")]
 pub use solana_serde_varint as serde_varint;
