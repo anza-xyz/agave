@@ -1,8 +1,7 @@
 use {
     super::*,
-    solana_account_decoder::parse_token_extension::convert_confidential_transfer_mint,
     spl_token_2022::{
-        extension::confidential_transfer::{instruction::*, ConfidentialTransferMint},
+        extension::confidential_transfer::instruction::*,
         instruction::{decode_instruction_data, decode_instruction_type},
         solana_zk_sdk::encryption::pod::elgamal::PodElGamalPubkey,
     },
@@ -18,17 +17,19 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
     {
         ConfidentialTransferInstruction::InitializeMint => {
             check_num_token_accounts(account_indexes, 1)?;
-            let confidential_transfer_mint: ConfidentialTransferMint =
+            let initialize_mint_data: InitializeMintData =
                 *decode_instruction_data(instruction_data).map_err(|_| {
                     ParseInstructionError::InstructionNotParsable(ParsableProgram::SplToken)
                 })?;
-            let confidential_transfer_mint =
-                convert_confidential_transfer_mint(confidential_transfer_mint);
             let mut value = json!({
                 "mint": account_keys[account_indexes[0] as usize].to_string(),
+                "autoApproveNewAccounts": bool::from(initialize_mint_data.auto_approve_new_accounts),
+                "auditorElGamalPubkey": Option::<PodElGamalPubkey>::from(initialize_mint_data.auditor_elgamal_pubkey).map(|k| k.to_string()),
             });
             let map = value.as_object_mut().unwrap();
-            map.append(json!(confidential_transfer_mint).as_object_mut().unwrap());
+            if let Some(authority) = Option::<Pubkey>::from(initialize_mint_data.authority) {
+                map.insert("authority".to_string(), json!(authority.to_string()));
+            }
             Ok(ParsedInstructionEnum {
                 instruction_type: "initializeConfidentialTransferMint".to_string(),
                 info: value,
