@@ -9,7 +9,6 @@ use {
     solana_feature_set::FeatureSet,
     solana_perf::packet::Packet,
     solana_sdk::transaction::SanitizedTransaction,
-    solana_svm_transaction::svm_message::SVMMessage,
     std::sync::Arc,
 };
 
@@ -154,26 +153,9 @@ impl ForwardPacketBatchesByAccounts {
     // would be exceeded. Eg, if by block limit, it can be put into batch #1; by vote limit, it can
     // be put into batch #2; and by account limit, it can be put into batch #3; then it should be
     // put into batch #3 to satisfy all batch limits.
-<<<<<<< HEAD
-    fn get_batch_index_by_updated_costs(
-        &self,
-        tx_cost: &TransactionCost<impl SVMMessage>,
-        updated_costs: &UpdatedCosts,
-    ) -> usize {
-        let Some(batch_index_by_block_limit) =
-            updated_costs.updated_block_cost.checked_div(match tx_cost {
-                TransactionCost::SimpleVote { .. } => self.batch_vote_limit,
-                TransactionCost::Transaction(_) => self.batch_block_limit,
-            })
-        else {
-            unreachable!("batch vote limit or block limit must not be zero")
-        };
-
-=======
     fn get_batch_index_by_updated_costs(&self, updated_costs: &UpdatedCosts) -> usize {
         let batch_index_by_block_cost =
             updated_costs.updated_block_cost / self.batch_block_limit.get();
->>>>>>> 2cb11a7e2c (simplify forward packet batches (#3642))
         let batch_index_by_account_limit =
             updated_costs.updated_costliest_account_cost / self.batch_account_limit.get();
         batch_index_by_block_cost.max(batch_index_by_account_limit) as usize
@@ -185,17 +167,10 @@ mod tests {
     use {
         super::*,
         crate::banking_stage::unprocessed_packet_batches::DeserializedPacket,
-<<<<<<< HEAD
-        solana_cost_model::transaction_cost::{UsageCostDetails, WritableKeysTransaction},
-=======
->>>>>>> 2cb11a7e2c (simplify forward packet batches (#3642))
         solana_feature_set::FeatureSet,
         solana_sdk::{
-            compute_budget::ComputeBudgetInstruction,
-            message::{Message, TransactionSignatureDetails},
-            pubkey::Pubkey,
-            system_instruction,
-            transaction::Transaction,
+            compute_budget::ComputeBudgetInstruction, message::Message, pubkey::Pubkey,
+            system_instruction, transaction::Transaction,
         },
     };
 
@@ -227,24 +202,6 @@ mod tests {
         (sanitized_transaction, deserialized_packet, limit_ratio)
     }
 
-<<<<<<< HEAD
-    fn zero_transaction_cost() -> TransactionCost<'static, WritableKeysTransaction> {
-        static DUMMY_TRANSACTION: WritableKeysTransaction = WritableKeysTransaction(vec![]);
-
-        TransactionCost::Transaction(UsageCostDetails {
-            transaction: &DUMMY_TRANSACTION,
-            signature_cost: 0,
-            write_lock_cost: 0,
-            data_bytes_cost: 0,
-            programs_execution_cost: 0,
-            loaded_accounts_data_size_cost: 0,
-            allocated_accounts_data_size: 0,
-            signature_details: TransactionSignatureDetails::new(0, 0, 0),
-        })
-    }
-
-=======
->>>>>>> 2cb11a7e2c (simplify forward packet batches (#3642))
     #[test]
     fn test_try_add_packet_to_multiple_batches() {
         // setup two transactions, one has high priority that writes to hot account, the
