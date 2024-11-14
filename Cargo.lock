@@ -7704,7 +7704,6 @@ dependencies = [
  "solana-sdk-ids",
  "solana-sdk-macro",
  "solana-secp256k1-recover",
- "solana-secp256r1-program",
  "solana-serde-varint",
  "solana-serialize-utils",
  "solana-sha256-hasher",
@@ -7977,6 +7976,7 @@ dependencies = [
  "solana-program",
  "solana-pubkey",
  "solana-sdk-ids",
+ "solana-secp256r1-program",
 ]
 
 [[package]]
@@ -8398,7 +8398,6 @@ dependencies = [
  "solana-precompile-error",
  "solana-pubkey",
  "solana-sdk",
- "solana-transaction-error",
 ]
 
 [[package]]
