@@ -2778,7 +2778,7 @@ impl ReplayStage {
         leader_schedule_cache: &LeaderScheduleCache,
     ) {
         let slot = bank.slot();
-        let tick_height = bank.tick_height();
+        let tick_height = bank.tick_height_for_vote_only();
 
         let next_leader_slot = leader_schedule_cache.next_leader_slot(
             my_pubkey,
@@ -3237,7 +3237,7 @@ impl ReplayStage {
                 trace!(
                     "bank {} not completed tick_height: {}, max_tick_height: {}",
                     bank.slot(),
-                    bank.tick_height(),
+                    bank.tick_height_for_vote_only(),
                     bank.max_tick_height()
                 );
             }

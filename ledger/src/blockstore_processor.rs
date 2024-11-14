@@ -628,7 +628,12 @@ fn process_entries(
             EntryType::Tick(hash) => {
                 // If it's a tick, save it for later
                 tick_hashes.push(hash);
-                if bank.is_block_boundary(bank.tick_height() + tick_hashes.len() as u64) {
+                let tick_height = if vote_only_execution {
+                    bank.tick_height_for_vote_only()
+                } else {
+                    bank.tick_height()
+                };
+                if bank.is_block_boundary(tick_height + tick_hashes.len() as u64) {
                     // If it's a tick that will cause a new blockhash to be created,
                     // execute the group and register the tick
                     process_batches(
@@ -1040,8 +1045,14 @@ fn verify_ticks(
     entries: &[Entry],
     slot_full: bool,
     tick_hash_count: &mut u64,
+    vote_only_execution: bool,
 ) -> std::result::Result<(), BlockError> {
-    let next_bank_tick_height = bank.tick_height() + entries.tick_count();
+    let tick_height = if vote_only_execution {
+        bank.tick_height_for_vote_only()
+    } else {
+        bank.tick_height()
+    };
+    let next_bank_tick_height = tick_height + entries.tick_count();
     let max_bank_tick_height = bank.max_tick_height();
 
     if next_bank_tick_height > max_bank_tick_height {
@@ -1562,14 +1573,26 @@ fn confirm_slot_entries(
 
     if !skip_verification {
         let tick_hash_count = &mut progress.tick_hash_count;
-        verify_ticks(bank, &entries, slot_full, tick_hash_count).map_err(|err| {
+        verify_ticks(
+            bank,
+            &entries,
+            slot_full,
+            tick_hash_count,
+            vote_only_execution,
+        )
+        .map_err(|err| {
+            let tick_height = if vote_only_execution {
+                bank.tick_height_for_vote_only()
+            } else {
+                bank.tick_height()
+            };
             warn!(
                 "{:#?}, slot: {}, entry len: {}, tick_height: {}, last entry: {}, last_blockhash: \
                  {}, shred_index: {}, slot_full: {}",
                 err,
                 slot,
                 num_entries,
-                bank.tick_height(),
+                tick_height,
                 progress.last_entry,
                 bank.last_blockhash(),
                 num_shreds,
@@ -1744,6 +1767,7 @@ fn process_bank_0(
         result.unwrap();
     }
     bank0.vote_only_freeze();
+    let mut progress = ConfirmationProgress::new(bank0.last_blockhash());
     confirm_full_slot(
         blockstore,
         bank0,
