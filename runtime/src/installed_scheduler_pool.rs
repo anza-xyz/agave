@@ -604,13 +604,12 @@ impl BankWithSchedulerInner {
     }
 
     fn do_create_timeout_listener(self: &Arc<Self>) -> TimeoutListener {
-        //let weak_bank = Arc::downgrade(self);
-        let bank = self.clone();
+        let weak_bank = Arc::downgrade(self);
         TimeoutListener::new(move |pool| {
-            //let Some(bank) = weak_bank.upgrade() else {
-            //    error!("weak bank");
-            //    return;
-            //};
+            let Some(bank) = weak_bank.upgrade() else {
+                error!("weak bank");
+                return;
+            };
 
             let Ok(mut scheduler) = bank.scheduler.write() else {
                 error!("poisoned scheduler lock");
