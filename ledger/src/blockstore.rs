@@ -910,15 +910,8 @@ impl Blockstore {
                 ShredType::Data => {
                     match self.check_insert_data_shred(
                         shred,
-                        &mut shred_insertion_tracker.erasure_metas,
-                        &mut shred_insertion_tracker.merkle_root_metas,
-                        &mut shred_insertion_tracker.index_working_set,
-                        &mut shred_insertion_tracker.slot_meta_working_set,
-                        &mut shred_insertion_tracker.write_batch,
-                        &mut shred_insertion_tracker.just_inserted_shreds,
-                        &mut shred_insertion_tracker.index_meta_time_us,
+                        shred_insertion_tracker,
                         is_trusted,
-                        &mut shred_insertion_tracker.duplicate_shreds,
                         leader_schedule,
                         shred_source,
                     ) {
@@ -936,13 +929,10 @@ impl Blockstore {
                             metrics.num_data_shreds_blockstore_error += 1;
                             error!("blockstore error: {}", err);
                         }
-                        Ok(completed_data_sets) => {
+                        Ok(()) => {
                             if is_repaired {
                                 metrics.num_repair += 1;
                             }
-                            shred_insertion_tracker
-                                .newly_completed_data_sets
-                                .extend(completed_data_sets);
                             metrics.num_inserted += 1;
                         }
                     };
@@ -1060,15 +1050,8 @@ impl Blockstore {
                     }
                     match self.check_insert_data_shred(
                         shred.clone(),
-                        &mut shred_insertion_tracker.erasure_metas,
-                        &mut shred_insertion_tracker.merkle_root_metas,
-                        &mut shred_insertion_tracker.index_working_set,
-                        &mut shred_insertion_tracker.slot_meta_working_set,
-                        &mut shred_insertion_tracker.write_batch,
-                        &mut shred_insertion_tracker.just_inserted_shreds,
-                        &mut shred_insertion_tracker.index_meta_time_us,
+                        shred_insertion_tracker,
                         is_trusted,
-                        &mut shred_insertion_tracker.duplicate_shreds,
                         leader_schedule,
                         ShredSource::Recovered,
                     ) {
@@ -1085,10 +1068,7 @@ impl Blockstore {
                             error!("blockstore error: {}", err);
                             None
                         }
-                        Ok(completed_data_sets) => {
-                            shred_insertion_tracker
-                                .newly_completed_data_sets
-                                .extend(completed_data_sets);
+                        Ok(()) => {
                             metrics.num_recovered_inserted += 1;
                             Some(shred)
                         }
@@ -1707,20 +1687,25 @@ impl Blockstore {
     fn check_insert_data_shred(
         &self,
         shred: Shred,
-        erasure_metas: &mut BTreeMap<ErasureSetId, WorkingEntry<ErasureMeta>>,
-        merkle_root_metas: &mut HashMap<ErasureSetId, WorkingEntry<MerkleRootMeta>>,
-        index_working_set: &mut HashMap<u64, IndexMetaWorkingSetEntry>,
-        slot_meta_working_set: &mut HashMap<u64, SlotMetaWorkingSetEntry>,
-        write_batch: &mut WriteBatch,
-        just_inserted_shreds: &mut HashMap<ShredId, Shred>,
-        index_meta_time_us: &mut u64,
+        shred_insertion_tracker: &mut ShredInsertionTracker,
         is_trusted: bool,
-        duplicate_shreds: &mut Vec<PossibleDuplicateShred>,
         leader_schedule: Option<&LeaderScheduleCache>,
         shred_source: ShredSource,
-    ) -> std::result::Result<Vec<CompletedDataSetInfo>, InsertDataShredError> {
+    ) -> std::result::Result<(), InsertDataShredError> {
         let slot = shred.slot();
         let shred_index = u64::from(shred.index());
+
+        let ShredInsertionTracker {
+            index_working_set,
+            slot_meta_working_set,
+            just_inserted_shreds,
+            merkle_root_metas,
+            duplicate_shreds,
+            index_meta_time_us,
+            erasure_metas,
+            write_batch,
+            newly_completed_data_sets,
+        } = shred_insertion_tracker;
 
         let index_meta_working_set_entry =
             self.get_index_meta_entry(slot, index_working_set, index_meta_time_us);
@@ -1795,13 +1780,14 @@ impl Blockstore {
             }
         }
 
-        let newly_completed_data_sets = self.insert_data_shred(
+        let completed_data_sets = self.insert_data_shred(
             slot_meta,
             index_meta.data_mut(),
             &shred,
             write_batch,
             shred_source,
         )?;
+        newly_completed_data_sets.extend(completed_data_sets);
         merkle_root_metas
             .entry(erasure_set)
             .or_insert(WorkingEntry::Dirty(MerkleRootMeta::from_shred(&shred)));
@@ -1813,7 +1799,7 @@ impl Blockstore {
                 entry.insert(WorkingEntry::Clean(meta));
             }
         }
-        Ok(newly_completed_data_sets)
+        Ok(())
     }
 
     fn should_insert_coding_shred(shred: &Shred, max_root: Slot) -> bool {
@@ -7788,30 +7774,22 @@ pub mod tests {
             setup_erasure_shreds_with_index(slot, parent_slot, 10, fec_set_index);
         let data_shred = data_shreds[0].clone();
 
-        let mut erasure_metas = BTreeMap::new();
-        let mut merkle_root_metas = HashMap::new();
-        let mut index_working_set = HashMap::new();
-        let mut just_received_shreds = HashMap::new();
-        let mut slot_meta_working_set = HashMap::new();
-        let mut write_batch = blockstore.db.batch().unwrap();
-        let mut index_meta_time_us = 0;
+        let mut shred_insertion_tracker =
+            ShredInsertionTracker::new(data_shreds.len(), blockstore.db.batch().unwrap());
         blockstore
             .check_insert_data_shred(
                 data_shred.clone(),
-                &mut erasure_metas,
-                &mut merkle_root_metas,
-                &mut index_working_set,
-                &mut slot_meta_working_set,
-                &mut write_batch,
-                &mut just_received_shreds,
-                &mut index_meta_time_us,
+                &mut shred_insertion_tracker,
                 false,
-                &mut vec![],
                 None,
                 ShredSource::Turbine,
             )
             .unwrap();
-
+        let ShredInsertionTracker {
+            merkle_root_metas,
+            mut write_batch,
+            ..
+        } = shred_insertion_tracker;
         assert_eq!(merkle_root_metas.len(), 1);
         assert_eq!(
             merkle_root_metas
@@ -7851,34 +7829,28 @@ pub mod tests {
             setup_erasure_shreds_with_index(slot, parent_slot, 10, fec_set_index);
         let new_data_shred = data_shreds[1].clone();
 
-        erasure_metas.clear();
-        index_working_set.clear();
-        just_received_shreds.clear();
-        let mut merkle_root_metas = HashMap::new();
-        let mut write_batch = blockstore.db.batch().unwrap();
-        let mut duplicates = vec![];
+        let mut shred_insertion_tracker =
+            ShredInsertionTracker::new(data_shreds.len(), blockstore.db.batch().unwrap());
 
         assert!(blockstore
             .check_insert_data_shred(
                 new_data_shred.clone(),
-                &mut erasure_metas,
-                &mut merkle_root_metas,
-                &mut index_working_set,
-                &mut slot_meta_working_set,
-                &mut write_batch,
-                &mut just_received_shreds,
-                &mut index_meta_time_us,
+                &mut shred_insertion_tracker,
                 false,
-                &mut duplicates,
                 None,
                 ShredSource::Turbine,
             )
             .is_err());
+        let ShredInsertionTracker {
+            ref merkle_root_metas,
+            ref duplicate_shreds,
+            ..
+        } = shred_insertion_tracker;
 
         // No insert, notify duplicate
-        assert_eq!(duplicates.len(), 1);
+        assert_eq!(duplicate_shreds.len(), 1);
         assert_matches!(
-            duplicates[0],
+            duplicate_shreds[0],
             PossibleDuplicateShred::MerkleRootConflict(_, _)
         );
 
@@ -7935,19 +7907,15 @@ pub mod tests {
         blockstore
             .check_insert_data_shred(
                 new_data_shred.clone(),
-                &mut erasure_metas,
-                &mut merkle_root_metas,
-                &mut index_working_set,
-                &mut slot_meta_working_set,
-                &mut write_batch,
-                &mut just_received_shreds,
-                &mut index_meta_time_us,
+                &mut shred_insertion_tracker,
                 false,
-                &mut vec![],
                 None,
                 ShredSource::Turbine,
             )
             .unwrap();
+        let ShredInsertionTracker {
+            merkle_root_metas, ..
+        } = shred_insertion_tracker;
 
         // Verify that we still have the merkle root meta for the original shred
         // and the new shred
