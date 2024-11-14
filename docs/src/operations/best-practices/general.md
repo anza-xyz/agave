@@ -110,14 +110,14 @@ If you are not comfortable building from source, or you need to quickly install
 a new version to test something out, you could instead try using the
 `agave-install` command.
 
-Assuming you want to install Agave version `1.14.17`, you would execute the
+Assuming you want to install Agave version `2.0.15`, you would execute the
 following:
 
 ```
-agave-install init 1.14.17
+agave-install init 2.0.15
 ```
 
-This command downloads the executable for `1.14.17` and installs it into a
+This command downloads the executable for `2.0.15` and installs it into a
 `.local` directory. You can also look at `agave-install --help` for more
 options.
 
