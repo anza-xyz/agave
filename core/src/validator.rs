@@ -665,6 +665,10 @@ impl Validator {
             .as_ref()
             .and_then(|geyser_plugin_service| geyser_plugin_service.get_accounts_update_notifier());
 
+        let gossip_message_notifier = geyser_plugin_service
+            .as_ref()
+            .and_then(|geyser_plugin_service| geyser_plugin_service.get_gossip_message_notifier());
+
         let transaction_notifier = geyser_plugin_service
             .as_ref()
             .and_then(|geyser_plugin_service| geyser_plugin_service.get_transaction_notifier());
@@ -683,10 +687,12 @@ impl Validator {
 
         info!(
             "Geyser plugin: accounts_update_notifier: {}, transaction_notifier: {}, \
-             entry_notifier: {}",
+            entry_notifier: {}, \
+            gossip_message_notifier: {}",
             accounts_update_notifier.is_some(),
             transaction_notifier.is_some(),
-            entry_notifier.is_some()
+            entry_notifier.is_some(),
+            gossip_message_notifier.is_some()
         );
 
         let system_monitor_service = Some(SystemMonitorService::new(
@@ -790,6 +796,7 @@ impl Validator {
         cluster_info.set_contact_debug_interval(config.contact_debug_interval);
         cluster_info.set_entrypoints(cluster_entrypoints);
         cluster_info.restore_contact_info(ledger_path, config.contact_save_interval);
+        cluster_info.set_gossip_message_notifier(gossip_message_notifier);
         let cluster_info = Arc::new(cluster_info);
 
         assert!(is_snapshot_config_valid(

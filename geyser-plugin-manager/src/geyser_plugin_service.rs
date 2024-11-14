@@ -5,6 +5,7 @@ use {
         block_metadata_notifier_interface::BlockMetadataNotifierArc,
         entry_notifier::EntryNotifierImpl,
         geyser_plugin_manager::{GeyserPluginManager, GeyserPluginManagerRequest},
+        gossip_message_receiver_notifier::GossipMessageNotifierImpl,
         slot_status_notifier::SlotStatusNotifierImpl,
         slot_status_observer::SlotStatusObserver,
         transaction_notifier::TransactionNotifierImpl,
@@ -12,6 +13,7 @@ use {
     crossbeam_channel::Receiver,
     log::*,
     solana_accounts_db::accounts_update_notifier_interface::AccountsUpdateNotifier,
+    solana_gossip::gossip_message_notifier_interface::GossipMessageNotifier,
     solana_ledger::entry_notifier_interface::EntryNotifierArc,
     solana_rpc::{
         optimistically_confirmed_bank_tracker::SlotNotification,
@@ -35,6 +37,7 @@ pub struct GeyserPluginService {
     slot_status_observer: Option<SlotStatusObserver>,
     plugin_manager: Arc<RwLock<GeyserPluginManager>>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
+    gossip_message_notifier: Option<GossipMessageNotifier>,
     transaction_notifier: Option<TransactionNotifierArc>,
     entry_notifier: Option<EntryNotifierArc>,
     block_metadata_notifier: Option<BlockMetadataNotifierArc>,
@@ -83,6 +86,8 @@ impl GeyserPluginService {
             plugin_manager.account_data_notifications_enabled();
         let transaction_notifications_enabled = plugin_manager.transaction_notifications_enabled();
         let entry_notifications_enabled = plugin_manager.entry_notifications_enabled();
+        let gossip_messages_notifications_enabled =
+            plugin_manager.gossip_messages_notifications_enabled();
         let plugin_manager = Arc::new(RwLock::new(plugin_manager));
 
         let accounts_update_notifier: Option<AccountsUpdateNotifier> =
@@ -90,6 +95,15 @@ impl GeyserPluginService {
                 let accounts_update_notifier =
                     AccountsUpdateNotifierImpl::new(plugin_manager.clone());
                 Some(Arc::new(accounts_update_notifier))
+            } else {
+                None
+            };
+
+        let gossip_message_notifier: Option<GossipMessageNotifier> =
+            if gossip_messages_notifications_enabled {
+                let gossip_message_notifier =
+                    GossipMessageNotifierImpl::new(plugin_manager.clone());
+                Some(Arc::new(gossip_message_notifier))
             } else {
                 None
             };
@@ -148,6 +162,7 @@ impl GeyserPluginService {
             entry_notifier,
             block_metadata_notifier,
             slot_status_notifier,
+            gossip_message_notifier,
         })
     }
 
@@ -163,6 +178,10 @@ impl GeyserPluginService {
 
     pub fn get_accounts_update_notifier(&self) -> Option<AccountsUpdateNotifier> {
         self.accounts_update_notifier.clone()
+    }
+
+    pub fn get_gossip_message_notifier(&self) -> Option<GossipMessageNotifier> {
+        self.gossip_message_notifier.clone()
     }
 
     pub fn get_transaction_notifier(&self) -> Option<TransactionNotifierArc> {

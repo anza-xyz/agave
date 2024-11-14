@@ -112,6 +112,7 @@ name = "agave-geyser-plugin-interface"
 version = "2.2.0"
 dependencies = [
  "log",
+ "solana-gossip",
  "solana-sdk",
  "solana-transaction-status",
  "thiserror 1.0.69",
@@ -7061,6 +7062,7 @@ dependencies = [
  "serde_json",
  "solana-accounts-db",
  "solana-entry",
+ "solana-gossip",
  "solana-ledger",
  "solana-measure",
  "solana-metrics",

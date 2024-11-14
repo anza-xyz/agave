@@ -85,6 +85,16 @@ impl GeyserPluginManager {
         false
     }
 
+    /// Check if there is any plugin interested in gossip messages
+    pub fn gossip_messages_notifications_enabled(&self) -> bool {
+        for plugin in &self.plugins {
+            if plugin.node_update_notifications_enabled() {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Check if there is any plugin interested in transaction data
     pub fn transaction_notifications_enabled(&self) -> bool {
         for plugin in &self.plugins {

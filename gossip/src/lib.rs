@@ -4,6 +4,7 @@
 pub mod cluster_info;
 pub mod cluster_info_metrics;
 pub mod contact_info;
+pub mod contact_info_ffi;
 pub mod crds;
 pub mod crds_data;
 pub mod crds_entry;
@@ -19,6 +20,7 @@ pub mod duplicate_shred_handler;
 pub mod duplicate_shred_listener;
 pub mod epoch_slots;
 pub mod gossip_error;
+pub mod gossip_message_notifier_interface;
 pub mod gossip_service;
 #[macro_use]
 mod legacy_contact_info;

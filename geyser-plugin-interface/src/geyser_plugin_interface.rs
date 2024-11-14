@@ -3,6 +3,7 @@
 /// In addition, the dynamic library must export a "C" function _create_plugin which
 /// creates the implementation of the plugin.
 use {
+    solana_gossip::contact_info_ffi::FfiContactInfoInterface,
     solana_sdk::{
         clock::{Slot, UnixTimestamp},
         signature::Signature,
@@ -303,6 +304,10 @@ pub enum GeyserPluginError {
     /// Error when updating the transaction.
     #[error("Error updating transaction. Error message: ({msg})")]
     TransactionUpdateError { msg: String },
+
+    /// Error when updating the node status.
+    #[error("Error updating node. Error message: ({msg})")]
+    NodeUpdateError { msg: String },
 }
 
 /// The current status of a slot
@@ -345,6 +350,12 @@ impl SlotStatus {
             SlotStatus::Dead(_error) => "dead",
         }
     }
+}
+
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub struct FfiPubkey {
+    pub pubkey: [u8; 32],
 }
 
 pub type Result<T> = std::result::Result<T, GeyserPluginError>;
@@ -450,6 +461,20 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
         Ok(())
     }
 
+    /// Called when a ContactInfo is received from a node
+    #[allow(unused_variables)]
+    fn notify_node_update(&self, interface: &FfiContactInfoInterface) -> Result<()> {
+        Ok(())
+    }
+
+    /// Called when a node is removed from the network
+    /// TODO: may need to provide wrapper here? Also maybe ok
+    /// if we marshall to repr(c) for this...
+    #[allow(unused_variables)]
+    fn notify_node_removal(&self, pubkey: &FfiPubkey) -> Result<()> {
+        Ok(())
+    }
+
     /// Check if the plugin is interested in account data
     /// Default is true -- if the plugin is not interested in
     /// account data, please return false.
@@ -468,6 +493,13 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
     /// Default is false -- if the plugin is interested in
     /// entry data, return true.
     fn entry_notifications_enabled(&self) -> bool {
+        false
+    }
+
+    /// Check if the plugin is interested in gossip m essages
+    /// Default is true -- if the plugin is not interested in
+    /// gossip messages, please return false.
+    fn node_update_notifications_enabled(&self) -> bool {
         false
     }
 }
