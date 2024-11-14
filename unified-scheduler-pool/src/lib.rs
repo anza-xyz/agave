@@ -372,12 +372,12 @@ where
                                     drop(trashed_inner);
                                 }
                                 BankingStageStatus::Exited => {
+                                    scheduler_pool.reset_respawner();
                                     info!("trashed sch {} IS Exited", trashed_inner.id());
                                     let id = trashed_inner.id();
                                     info!("dropping trashed sch {id}");
                                     drop(trashed_inner);
                                     info!("dropped trashed sch {id}");
-                                    scheduler_pool.reset_respawner();
                                     exiting = true;
                                 }
                             }
@@ -439,6 +439,7 @@ where
                                     false
                                 }
                                 BankingStageStatus::Exited => {
+                                    scheduler_pool.reset_respawner();
                                     info!("sch {} IS Exited", pooled.id());
                                     exiting = true;
                                     true
@@ -468,6 +469,7 @@ where
                         && bpsi
                     {
                         error!("proper exit!");
+                        sleep(Duration::from_secs(1));
                         let mut g = scheduler_pool
                             .block_production_scheduler_inner
                             .lock()
@@ -479,7 +481,6 @@ where
                             info!("dropping sch {id}");
                             drop(pooled);
                             info!("dropped sch {id}");
-                            scheduler_pool.reset_respawner();
                         }
                         break;
                     }
