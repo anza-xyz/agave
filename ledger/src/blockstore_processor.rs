@@ -1092,6 +1092,7 @@ fn confirm_full_slot(
     entry_notification_sender: Option<&EntryNotifierSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     timing: &mut ExecuteTimings,
+    vote_only_execution: bool,
 ) -> result::Result<(), BlockstoreProcessorError> {
     let mut confirmation_timing = ConfirmationTiming::default();
     let skip_verification = !opts.run_verification;
@@ -1111,7 +1112,7 @@ fn confirm_full_slot(
         opts.allow_dead_slots,
         opts.runtime_config.log_messages_bytes_limit,
         &ignored_prioritization_fee_cache,
-        false, // vote_only_execution
+        vote_only_execution,
     )?;
 
     timing.accumulate(&confirmation_timing.batch_execute.totals);
@@ -1731,12 +1732,30 @@ fn process_bank_0(
         entry_notification_sender,
         None,
         &mut ExecuteTimings::default(),
+        true,
     )
     .expect("Failed to process bank 0 from ledger. Did you forget to provide a snapshot?");
     if let Some((result, _timings)) = bank0.wait_for_completed_scheduler() {
         result.unwrap();
     }
     bank0.vote_only_freeze();
+    confirm_full_slot(
+        blockstore,
+        bank0,
+        replay_tx_thread_pool,
+        opts,
+        recyclers,
+        &mut progress,
+        None,
+        entry_notification_sender,
+        None,
+        &mut ExecuteTimings::default(),
+        false,
+    )
+    .expect("Failed to process bank 0 from ledger. Did you forget to provide a snapshot?");
+    if let Some((result, _timings)) = bank0.wait_for_completed_scheduler() {
+        result.unwrap();
+    }
     bank0.freeze();
     if blockstore.is_primary_access() {
         blockstore.insert_bank_hash(bank0.slot(), bank0.hash(), false);
@@ -2099,54 +2118,61 @@ pub fn process_single_slot(
 ) -> result::Result<(), BlockstoreProcessorError> {
     // Mark corrupt slots as dead so validators don't replay this slot and
     // see AlreadyProcessed errors later in ReplayStage
-    confirm_full_slot(
-        blockstore,
-        bank,
-        replay_tx_thread_pool,
-        opts,
-        recyclers,
-        progress,
-        transaction_status_sender,
-        entry_notification_sender,
-        replay_vote_sender,
-        timing,
-    )
-    .and_then(|()| {
-        if let Some((result, completed_timings)) = bank.wait_for_completed_scheduler() {
-            timing.accumulate(&completed_timings);
+    for vote_only_execution in [false, true] {
+        confirm_full_slot(
+            blockstore,
+            bank,
+            replay_tx_thread_pool,
+            opts,
+            recyclers,
+            progress,
+            transaction_status_sender,
+            entry_notification_sender,
+            replay_vote_sender,
+            timing,
+            vote_only_execution,
+        )
+        .and_then(|()| {
+            if let Some((result, completed_timings)) = bank.wait_for_completed_scheduler() {
+                timing.accumulate(&completed_timings);
+                result?
+            }
+            Ok(())
+        })
+        .map_err(|err| {
+            let slot = bank.slot();
+            warn!("slot {} failed to verify: {}", slot, err);
+            if blockstore.is_primary_access() {
+                blockstore
+                    .set_dead_slot(slot)
+                    .expect("Failed to mark slot as dead in blockstore");
+            } else {
+                info!(
+                    "Failed slot {} won't be marked dead due to being secondary blockstore access",
+                    slot
+                );
+            }
+            err
+        })?;
+
+        if let Some((result, _timings)) = bank.wait_for_completed_scheduler() {
             result?
         }
-        Ok(())
-    })
-    .map_err(|err| {
-        let slot = bank.slot();
-        warn!("slot {} failed to verify: {}", slot, err);
-        if blockstore.is_primary_access() {
-            blockstore
-                .set_dead_slot(slot)
-                .expect("Failed to mark slot as dead in blockstore");
+        if vote_only_execution {
+            bank.vote_only_freeze();
         } else {
-            info!(
-                "Failed slot {} won't be marked dead due to being secondary blockstore access",
-                slot
-            );
+            bank.freeze(); // all banks handled by this routine are created from complete slots
+
+            if let Some(slot_callback) = &opts.slot_callback {
+                slot_callback(bank);
+            }
+
+            if blockstore.is_primary_access() && !vote_only_execution {
+                blockstore.insert_bank_hash(bank.slot(), bank.hash(), false);
+            }
+            cache_block_meta(bank, cache_block_meta_sender);
         }
-        err
-    })?;
-
-    if let Some((result, _timings)) = bank.wait_for_completed_scheduler() {
-        result?
     }
-    bank.freeze(); // all banks handled by this routine are created from complete slots
-
-    if let Some(slot_callback) = &opts.slot_callback {
-        slot_callback(bank);
-    }
-
-    if blockstore.is_primary_access() {
-        blockstore.insert_bank_hash(bank.slot(), bank.hash(), false);
-    }
-    cache_block_meta(bank, cache_block_meta_sender);
 
     Ok(())
 }
