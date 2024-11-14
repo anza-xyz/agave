@@ -440,14 +440,6 @@ where
                                 }
                                 BankingStageStatus::Exited => {
                                     info!("sch {} IS Exited", pooled.id());
-                                    let pooled = g.1.take().unwrap();
-                                    assert_eq!(Some(pooled.id()), g.0.take());
-                                    drop(g);
-                                    let id = pooled.id();
-                                    info!("dropping sch {id}");
-                                    drop(pooled);
-                                    info!("dropped sch {id}");
-                                    scheduler_pool.reset_respawner();
                                     exiting = true;
                                     true
                                 }
@@ -476,6 +468,19 @@ where
                         && bpsi
                     {
                         error!("proper exit!");
+                        let mut g = scheduler_pool
+                            .block_production_scheduler_inner
+                            .lock()
+                            .unwrap();
+                        if let Some(pooled) = g.1.take() {
+                            assert_eq!(Some(pooled.id()), g.0.take());
+                            drop(g);
+                            let id = pooled.id();
+                            info!("dropping sch {id}");
+                            drop(pooled);
+                            info!("dropped sch {id}");
+                            scheduler_pool.reset_respawner();
+                        }
                         break;
                     }
                 }
@@ -566,6 +571,7 @@ where
                 info!("respawning on trashd scheduler...");
                 g.0.take();
                 self.spawn_block_production_scheduler(&mut g);
+                info!("respawned on trashd scheduler...");
                 drop(g);
             }
         } else {

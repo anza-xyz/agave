@@ -626,13 +626,13 @@ impl BankWithSchedulerInner {
                     scheduler.wait_for_termination(false);
                 uninstalled_scheduler.return_to_pool();
                 info!(
-                    "timeout_listener: bank (slot: {}) got stale, returning scheduler (id: {})",
+                    "timeout_listener: bank (slot: {}) got stale, returned scheduler (id: {})",
                     bank.bank.slot(),
                     id,
                 );
                 (pool, result_with_timings)
             });
-            trace!("timeout_listener: {:?}", scheduler);
+            trace!("timeout_listener: ???");
         })
     }
 
