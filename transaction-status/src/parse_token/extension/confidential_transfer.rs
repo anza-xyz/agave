@@ -228,16 +228,26 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
             // Assume that extra accounts are proof accounts and not multisig
             // signers. This might be wrong, but it's the best possible option.
             if offset < account_indexes.len() - 1 {
+                let label = if withdrawal_data.equality_proof_instruction_offset == 0 {
+                    "equalityProofContextStateAccount"
+                } else {
+                    "equalityProofRecordAccount"
+                };
                 map.insert(
-                    "equalityProofAccount".to_string(),
+                    label.to_string(),
                     json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
 
             if offset < account_indexes.len() - 1 {
+                let label = if withdrawal_data.range_proof_instruction_offset == 0 {
+                    "rangeProofContextStateAccount"
+                } else {
+                    "rangeProofRecordAccount"
+                };
                 map.insert(
-                    "rangeProofAccount".to_string(),
+                    label.to_string(),
                     json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
@@ -287,24 +297,39 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
             // Assume that extra accounts are proof accounts and not multisig
             // signers. This might be wrong, but it's the best possible option.
             if offset < account_indexes.len() - 1 {
+                let label = if transfer_data.equality_proof_instruction_offset == 0 {
+                    "equalityProofContextStateAccount"
+                } else {
+                    "equalityProofRecordAccount"
+                };
                 map.insert(
-                    "equalityProofAccount".to_string(),
+                    label.to_string(),
                     json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
 
             if offset < account_indexes.len() - 1 {
+                let label = if transfer_data.ciphertext_validity_proof_instruction_offset == 0 {
+                    "ciphertextValidityProofContextStateAccount"
+                } else {
+                    "ciphertextValidityProofRecordAccount"
+                };
                 map.insert(
-                    "ciphertextValidityProofAccount".to_string(),
+                    label.to_string(),
                     json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
 
             if offset < account_indexes.len() - 1 {
+                let label = if transfer_data.range_proof_instruction_offset == 0 {
+                    "rangeProofContextStateAccount"
+                } else {
+                    "rangeProofRecordAccount"
+                };
                 map.insert(
-                    "rangeProofAccount".to_string(),
+                    label.to_string(),
                     json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
@@ -368,36 +393,61 @@ pub(in crate::parse_token) fn parse_confidential_transfer_instruction(
             // Assume that extra accounts are proof accounts and not multisig
             // signers. This might be wrong, but it's the best possible option.
             if offset < account_indexes.len() - 1 {
+                let label = if equality_proof_instruction_offset == 0 {
+                    "equalityProofContextStateAccount"
+                } else {
+                    "equalityProofRecordAccount"
+                };
                 map.insert(
-                    "equalityProofAccount".to_string(),
+                    label.to_string(),
                     json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
             if offset < account_indexes.len() - 1 {
+                let label = if transfer_amount_ciphertext_validity_proof_instruction_offset == 0 {
+                    "transferAmountCiphertextValidityProofContextStateAccount"
+                } else {
+                    "transferAmountCiphertextValidityProofRecordAccount"
+                };
                 map.insert(
-                    "transferAmountCiphertextValidityProofAccount".to_string(),
+                    label.to_string(),
                     json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
             if offset < account_indexes.len() - 1 {
+                let label = if fee_ciphertext_validity_proof_instruction_offset == 0 {
+                    "feeCiphertextValidityProofContextStateAccount"
+                } else {
+                    "feeCiphertextValidityProofRecordAccount"
+                };
                 map.insert(
-                    "feeCiphertextValidityProofAccount".to_string(),
+                    label.to_string(),
                     json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
             if offset < account_indexes.len() - 1 {
+                let label = if fee_sigma_proof_instruction_offset == 0 {
+                    "feeSigmaProofContextStateAccount"
+                } else {
+                    "feeSigmaProofRecordAccount"
+                };
                 map.insert(
-                    "feeSigmaProofAccount".to_string(),
+                    label.to_string(),
                     json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
             }
             if offset < account_indexes.len() - 1 {
+                let label = if range_proof_instruction_offset == 0 {
+                    "rangeProofContextStateAccount"
+                } else {
+                    "rangeProofRecordAccount"
+                };
                 map.insert(
-                    "rangeProofAccount".to_string(),
+                    label.to_string(),
                     json!(account_keys[account_indexes[offset] as usize].to_string()),
                 );
                 offset += 1;
