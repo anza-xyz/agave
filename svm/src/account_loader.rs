@@ -12,7 +12,7 @@ use {
     solana_feature_set::{self as feature_set, FeatureSet},
     solana_program_runtime::loaded_programs::ProgramCacheForTxBatch,
     solana_sdk::{
-        account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
+        account::{Account, AccountSharedData, ReadableAccount, WritableAccount, PROGRAM_OWNERS},
         fee::FeeDetails,
         native_loader,
         nonce::State as NonceState,
@@ -32,7 +32,11 @@ use {
     solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_system_program::{get_system_account_kind, SystemAccountKind},
-    std::{collections::HashMap, num::NonZeroU32, sync::Arc},
+    std::{
+        collections::{HashMap, HashSet},
+        num::NonZeroU32,
+        sync::Arc,
+    },
 };
 
 // for the load instructions
@@ -431,11 +435,11 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     let mut tx_rent: TransactionRent = 0;
     let account_keys = message.account_keys();
     let mut accounts = Vec::with_capacity(account_keys.len());
-    let mut accounts_found = Vec::with_capacity(account_keys.len());
+    let mut validated_loaders = HashSet::with_capacity(PROGRAM_OWNERS.len()); // TODO AHashSet
     let mut rent_debits = RentDebits::default();
     let mut accumulated_accounts_data_size: u32 = 0;
 
-    let mut collect_loaded_account = |key, (loaded_account, found)| -> Result<()> {
+    let mut collect_loaded_account = |key, loaded_account| -> Result<()> {
         let LoadedTransactionAccount {
             account,
             loaded_size,
@@ -453,29 +457,25 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
         rent_debits.insert(key, rent_collected, account.lamports());
 
         accounts.push((*key, account));
-        accounts_found.push(found);
         Ok(())
     };
 
-    // Since the fee payer is always the first account, collect it first. Note
-    // that account overrides are already applied during fee payer validation so
-    // it's fine to use the fee payer directly here rather than checking account
-    // overrides again.
-    collect_loaded_account(message.fee_payer(), (loaded_fee_payer_account, true))?;
+    // Since the fee payer is always the first account, collect it first.
+    // We can use it directly because it was already loaded during validation.
+    collect_loaded_account(message.fee_payer(), loaded_fee_payer_account)?;
 
     // Attempt to load and collect remaining non-fee payer accounts
     for (account_index, account_key) in account_keys.iter().enumerate().skip(1) {
-        let (loaded_account, account_found) = load_transaction_account(
+        let loaded_account = load_transaction_account(
             account_loader,
             message,
             account_key,
             account_index,
             rent_collector,
-        )?;
-        collect_loaded_account(account_key, (loaded_account, account_found))?;
+        );
+        collect_loaded_account(account_key, loaded_account)?;
     }
 
-    let builtins_start_index = accounts.len();
     let program_indices = message
         .instructions_iter()
         .map(|instruction| {
@@ -489,7 +489,9 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                 return Ok(account_indices);
             }
 
-            let account_found = accounts_found.get(program_index).unwrap_or(&true);
+            let account_found = account_loader
+                .load_account(program_id, AccountUsagePattern::ReadOnlyInvisible)
+                .is_some();
             if !account_found {
                 error_metrics.account_not_found += 1;
                 return Err(TransactionError::ProgramAccountNotFound);
@@ -508,17 +510,38 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
             if native_loader::check_id(owner_id) {
                 return Ok(account_indices);
             }
-            if !accounts
-                .get(builtins_start_index..)
-                .ok_or(TransactionError::ProgramAccountNotFound)?
-                .iter()
-                .any(|(key, _)| key == owner_id)
-            {
-                // NOTE this will be changed to a `load_account()` call in a PR immediately following this one
-                // we want to stop pushing loaders on the accounts vec, but tests need to change if we do that
-                // and this PR is complex enough that we want to code review any new behaviors separately
-                if let Some(owner_account) =
-                    account_loader.callbacks.get_account_shared_data(owner_id)
+            if !validated_loaders.contains(owner_id) {
+                // NOTE we load as `ReadOnlyInstruction` to bypass the program cache
+                // since the program cache would incorrectly mark a user-created native-owned account as executable
+                // this is just to be careful; an account owned by a native-owned non-program cannot be set executable
+                //
+                // there are a panopoly of fetaure gate activations that affect this code, in generally benign ways:
+                // * `remove_accounts_executable_flag_checks`: incorrect executable flag from program cache no longer matters
+                //   we should still avoid program cache because it changes transaction size
+                //   albeit in a consensus-safe manner because it would result from feature activation
+                // * `disable_account_loader_special_case`: program cache codepath goes away entirely
+                //   at this point the instruction vs invisible distinction ceases to affect loading
+                //   however we might not remove it, because...
+                // * SIMD-163: allows non-instruction account keys to be used for CPI
+                //   the instruction/invisible distinction may be useful again, to optimize loading, but maybe not
+                // * `enable_transaction_loading_failure_fees`: loading failures behave the same as execution failures
+                //   at this point we can restrict valid loaders to those contained in `PROGRAM_OWNERS`
+                //   since any other pseudo-loader owner is destined to fail at execution
+                //   in theory we could do this now with no change in behavior
+                //   but then the behavior _would_ change when `remove_accounts_executable_flag_checks` activates
+                // * SIMD-186: explicitly defines a sensible transaction data size algorithm
+                //   at this point we stop counting loaders toward transaction data size entirely
+                //
+                // when _all three_ of `remove_accounts_executable_flag_checks`, `enable_transaction_loading_failure_fees`,
+                // and SIMD-186 are active, we do not need to load loaders at all to comply with consensus rules
+                // we may verify program ids are owned by `PROGRAM_OWNERS` purely as an optimization
+                // this could even be done before loading the rest of the accounts for a transaction
+                if let Some(LoadedTransactionAccount {
+                    account: owner_account,
+                    loaded_size: owner_size,
+                    ..
+                }) =
+                    account_loader.load_account(owner_id, AccountUsagePattern::ReadOnlyInstruction)
                 {
                     if !native_loader::check_id(owner_account.owner())
                         || (!account_loader
@@ -531,11 +554,11 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                     }
                     accumulate_and_check_loaded_account_data_size(
                         &mut accumulated_accounts_data_size,
-                        owner_account.data().len(),
+                        owner_size,
                         compute_budget_limits.loaded_accounts_bytes,
                         error_metrics,
                     )?;
-                    accounts.push((*owner_id, owner_account));
+                    validated_loaders.insert(*owner_id);
                 } else {
                     error_metrics.account_not_found += 1;
                     return Err(TransactionError::ProgramAccountNotFound);
@@ -560,8 +583,7 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
     account_key: &Pubkey,
     account_index: usize,
     rent_collector: &dyn SVMRentCollector,
-) -> Result<(LoadedTransactionAccount, bool)> {
-    let mut account_found = true;
+) -> LoadedTransactionAccount {
     let usage_pattern = AccountUsagePattern::new(message, account_index);
 
     let loaded_account = if solana_sdk::sysvar::instructions::check_id(account_key) {
@@ -588,7 +610,6 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
 
         loaded_account
     } else {
-        account_found = false;
         let mut default_account = AccountSharedData::default();
         // All new accounts must be rent-exempt (enforced in Bank::execute_loaded_transaction).
         // Currently, rent collection sets rent_epoch to u64::MAX, but initializing the account
@@ -601,7 +622,7 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
         }
     };
 
-    Ok((loaded_account, account_found))
+    loaded_account
 }
 
 fn account_shared_data_from_program(
