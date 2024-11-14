@@ -14,6 +14,7 @@ use {
         zk_token_proof_program,
     },
     std::collections::{HashMap, HashSet},
+    solana_secp256r1_program as secp256r1_program
 };
 
 // ReservedAccountKeys is not serialized into or deserialized from bank
@@ -151,6 +152,7 @@ lazy_static! {
         ReservedAccount::new_active(feature::id()),
         ReservedAccount::new_pending(loader_v4::id(), feature_set::add_new_reserved_account_keys::id()),
         ReservedAccount::new_pending(secp256k1_program::id(), feature_set::add_new_reserved_account_keys::id()),
+        ReservedAccount::new_pending(secp256r1_program::id(), feature_set::add_new_reserved_account_keys::id()),
         #[allow(deprecated)]
         ReservedAccount::new_active(stake::config::id()),
         ReservedAccount::new_active(stake::id()),
