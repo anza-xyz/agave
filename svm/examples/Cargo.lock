@@ -4927,7 +4927,7 @@ dependencies = [
  "ark-ff",
  "ark-serialize",
  "bytemuck",
- "solana-program",
+ "solana-define-syscall",
  "thiserror 1.0.69",
 ]
 
@@ -5283,7 +5283,7 @@ dependencies = [
  "bytemuck",
  "bytemuck_derive",
  "curve25519-dalek 4.1.3",
- "solana-program",
+ "solana-define-syscall",
  "thiserror 1.0.69",
 ]
 
@@ -5305,6 +5305,19 @@ dependencies = [
  "derivation-path",
  "qstring",
  "uriparse",
+]
+
+[[package]]
+name = "solana-ed25519-program"
+version = "2.2.0"
+dependencies = [
+ "bytemuck",
+ "bytemuck_derive",
+ "ed25519-dalek",
+ "solana-feature-set",
+ "solana-instruction",
+ "solana-precompile-error",
+ "solana-sdk-ids",
 ]
 
 [[package]]
@@ -6071,12 +6084,16 @@ dependencies = [
  "quinn-proto",
  "rustls 0.23.16",
  "solana-connection-cache",
+ "solana-keypair",
  "solana-measure",
  "solana-metrics",
  "solana-net-utils",
+ "solana-pubkey",
+ "solana-quic-definitions",
  "solana-rpc-client-api",
- "solana-sdk",
+ "solana-signer",
  "solana-streamer",
+ "solana-transaction-error",
  "thiserror 1.0.69",
  "tokio",
 ]
@@ -6403,6 +6420,7 @@ dependencies = [
  "solana-commitment-config",
  "solana-decode-error",
  "solana-derivation-path",
+ "solana-ed25519-program",
  "solana-feature-set",
  "solana-fee-structure",
  "solana-inflation",
@@ -6424,6 +6442,7 @@ dependencies = [
  "solana-secp256k1-recover",
  "solana-seed-derivable",
  "solana-seed-phrase",
+ "solana-serde",
  "solana-serde-varint",
  "solana-short-vec",
  "solana-signature",
@@ -6497,6 +6516,13 @@ dependencies = [
  "solana-runtime",
  "solana-sdk",
  "solana-tpu-client",
+]
+
+[[package]]
+name = "solana-serde"
+version = "2.2.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
