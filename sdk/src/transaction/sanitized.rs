@@ -145,6 +145,29 @@ impl SanitizedTransaction {
         Self::try_from_legacy_transaction(tx, &ReservedAccountKeys::empty_key_set()).unwrap()
     }
 
+    /// Create a sanitized transaction from the parts.
+    /// This is only here to support conversion from new transactions
+    /// representations in the validator. If you are an SDK user, you should
+    /// not use this function.
+    /// # Safety
+    /// - `SanitizedMessage` must be valid
+    /// - `message_hash` must be the hash of the `SanitizedMessage`
+    /// - `is_simple_vote_tx` must be true if the transaction is a simple vote
+    /// - `signatures` must be valid for the `SanitizedMessage`
+    pub unsafe fn new_from_parts(
+        message: SanitizedMessage,
+        message_hash: Hash,
+        is_simple_vote_tx: bool,
+        signatures: Vec<Signature>,
+    ) -> Self {
+        Self {
+            message,
+            message_hash,
+            signatures,
+            is_simple_vote_tx,
+        }
+    }
+
     /// Return the first signature for this transaction.
     ///
     /// Notes:

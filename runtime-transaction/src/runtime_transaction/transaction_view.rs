@@ -1,19 +1,28 @@
 use {
     super::{ComputeBudgetInstructionDetails, RuntimeTransaction},
     crate::{
-        signature_details::get_precompile_signature_details, transaction_meta::TransactionMeta,
+        signature_details::get_precompile_signature_details,
+        transaction_meta::{StaticMeta, TransactionMeta},
+        transaction_with_meta::TransactionWithMeta,
     },
     agave_transaction_view::{
         resolved_transaction_view::ResolvedTransactionView, transaction_data::TransactionData,
         transaction_version::TransactionVersion, transaction_view::SanitizedTransactionView,
     },
+    core::borrow::Borrow,
     solana_pubkey::Pubkey,
     solana_sdk::{
-        message::{v0::LoadedAddresses, TransactionSignatureDetails, VersionedMessage},
+        message::{
+            v0::{LoadedAddresses, LoadedMessage},
+            LegacyMessage, SanitizedMessage, TransactionSignatureDetails, VersionedMessage,
+        },
         simple_vote_transaction_checker::is_simple_vote_transaction_impl,
-        transaction::{MessageHash, Result, TransactionError},
+        transaction::{
+            MessageHash, Result, SanitizedTransaction, TransactionError, VersionedTransaction,
+        },
     },
-    std::collections::HashSet,
+    solana_svm_transaction::svm_message::SVMMessage,
+    std::{borrow::Cow, collections::HashSet},
 };
 
 fn is_simple_vote_transaction<D: TransactionData>(
@@ -88,6 +97,47 @@ impl<D: TransactionData> RuntimeTransaction<ResolvedTransactionView<D>> {
 
     fn load_dynamic_metadata(&mut self) -> Result<()> {
         Ok(())
+    }
+}
+
+impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTransactionView<D>> {
+    fn as_sanitized_transaction(&self) -> impl Borrow<SanitizedTransaction> {
+        let VersionedTransaction {
+            signatures,
+            message,
+        } = self.to_versioned_transaction();
+
+        let is_writable_account_cache = (0..self.transaction.total_num_accounts())
+            .map(|index| self.is_writable(usize::from(index)))
+            .collect();
+
+        let message = match message {
+            VersionedMessage::Legacy(message) => SanitizedMessage::Legacy(LegacyMessage {
+                message: Cow::Owned(message),
+                is_writable_account_cache,
+            }),
+            VersionedMessage::V0(message) => SanitizedMessage::V0(LoadedMessage {
+                message: Cow::Owned(message),
+                loaded_addresses: Cow::Owned(self.loaded_addresses().unwrap().clone()),
+                is_writable_account_cache,
+            }),
+        };
+
+        // SAFETY:
+        // - Simple conversion between different formats
+        // - `ResolvedTransactionView` has undergone sanitization checks
+        unsafe {
+            SanitizedTransaction::new_from_parts(
+                message,
+                *self.message_hash(),
+                self.is_simple_vote_transaction(),
+                signatures,
+            )
+        }
+    }
+
+    fn to_versioned_transaction(&self) -> VersionedTransaction {
+        bincode::deserialize(self.transaction.data()).unwrap()
     }
 }
 

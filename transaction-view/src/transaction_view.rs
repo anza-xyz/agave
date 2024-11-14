@@ -112,6 +112,12 @@ impl<const SANITIZED: bool, D: TransactionData> TransactionView<SANITIZED, D> {
         self.frame.total_readonly_lookup_accounts()
     }
 
+    /// Return the total number of accounts in the transactions.
+    #[inline]
+    pub fn total_num_accounts(&self) -> u16 {
+        self.frame.total_num_accounts()
+    }
+
     /// Return the slice of signatures in the transaction.
     #[inline]
     pub fn signatures(&self) -> &[Signature] {
