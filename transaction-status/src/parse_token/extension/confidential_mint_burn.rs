@@ -120,6 +120,8 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
                 offset += 1;
             }
 
+            // Assume that extra accounts are proof accounts and not multisig
+            // signers. This might be wrong, but it's the best possible option.
             if offset < account_indexes.len() - 1 {
                 map.insert(
                     "equalityProofRecordAccount".to_string(),
@@ -183,6 +185,8 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
                 offset += 1;
             }
 
+            // Assume that extra accounts are proof accounts and not multisig
+            // signers. This might be wrong, but it's the best possible option.
             if offset < account_indexes.len() - 1 {
                 map.insert(
                     "equalityProofRecordAccount".to_string(),

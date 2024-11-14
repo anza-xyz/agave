@@ -59,6 +59,8 @@ pub(in crate::parse_token) fn parse_confidential_transfer_fee_instruction(
                     "instructionsSysvar".to_string(),
                     json!(account_keys[account_indexes[2] as usize].to_string()),
                 );
+                // Assume that the extra account is a proof account and not a multisig
+                // signer. This might be wrong, but it's the best possible option.
                 if account_indexes.len() > 4 {
                     map.insert(
                         "recordAccount".to_string(),
@@ -112,6 +114,8 @@ pub(in crate::parse_token) fn parse_confidential_transfer_fee_instruction(
                     json!(account_keys[account_indexes[2] as usize].to_string()),
                 );
                 if first_source_account_index > 4 {
+                    // Assume that the extra account is a proof account and not a multisig
+                    // signer. This might be wrong, but it's the best possible option.
                     map.insert(
                         "proofAccount".to_string(),
                         json!(account_keys[account_indexes[3] as usize].to_string()),
