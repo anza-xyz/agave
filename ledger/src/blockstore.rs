@@ -1183,7 +1183,17 @@ impl Blockstore {
     fn commit_updates_to_write_batch(
         &self,
         shred_insertion_tracker: &mut ShredInsertionTracker,
-    ) -> Result<()> {
+        metrics: &mut BlockstoreInsertionMetrics,
+    ) -> Result<(
+        /* signal slot updates */ bool,
+        /* slots updated */ Vec<u64>,
+    )> {
+        let mut start = Measure::start("Commit Working Sets");
+        let (should_signal, newly_completed_slots) = self.commit_slot_meta_working_set(
+            &shred_insertion_tracker.slot_meta_working_set,
+            &mut shred_insertion_tracker.write_batch,
+        )?;
+
         for (erasure_set, working_erasure_meta) in &shred_insertion_tracker.erasure_metas {
             if !working_erasure_meta.should_write() {
                 // No need to rewrite the column
@@ -1218,8 +1228,10 @@ impl Blockstore {
                 )?;
             }
         }
+        start.stop();
+        metrics.commit_working_sets_elapsed_us += start.as_us();
 
-        Ok(())
+        Ok((should_signal, newly_completed_slots))
     }
 
     /// The main helper function that performs the shred insertion logic
@@ -1287,6 +1299,8 @@ impl Blockstore {
     ) -> Result<InsertResults> {
         assert_eq!(shreds.len(), is_repaired.len());
         let mut total_start = Measure::start("Total elapsed");
+
+        // Acquire the insertion lock
         let mut start = Measure::start("Blockstore lock");
         let _lock = self.insert_shreds_lock.lock().unwrap();
         start.stop();
@@ -1315,26 +1329,18 @@ impl Blockstore {
 
         // Handle chaining for the members of the slot_meta_working_set that
         // were inserted into, drop the others.
-        let mut start = Measure::start("Shred chaining");
         self.handle_chaining(
             &mut shred_insertion_tracker.write_batch,
             &mut shred_insertion_tracker.slot_meta_working_set,
-        )?;
-        start.stop();
-        metrics.chaining_elapsed_us += start.as_us();
-
-        let mut start = Measure::start("Commit Working Sets");
-        let (should_signal, newly_completed_slots) = self.commit_slot_meta_working_set(
-            &shred_insertion_tracker.slot_meta_working_set,
-            &mut shred_insertion_tracker.write_batch,
+            metrics,
         )?;
 
         self.check_chained_merkle_root_consistency(&mut shred_insertion_tracker);
 
-        self.commit_updates_to_write_batch(&mut shred_insertion_tracker)?;
-        start.stop();
-        metrics.commit_working_sets_elapsed_us += start.as_us();
+        let (should_signal, newly_completed_slots) =
+            self.commit_updates_to_write_batch(&mut shred_insertion_tracker, metrics)?;
 
+        // Write out the accumulated batch.
         let mut start = Measure::start("Write Batch");
         self.db.write(shred_insertion_tracker.write_batch)?;
         start.stop();
@@ -1347,8 +1353,8 @@ impl Blockstore {
             newly_completed_slots,
         );
 
+        // Roll up metrics
         total_start.stop();
-
         metrics.total_elapsed_us += total_start.as_us();
         metrics.index_meta_time_us += shred_insertion_tracker.index_meta_time_us;
 
@@ -4458,7 +4464,9 @@ impl Blockstore {
         &self,
         write_batch: &mut WriteBatch,
         working_set: &mut HashMap<u64, SlotMetaWorkingSetEntry>,
+        metrics: &mut BlockstoreInsertionMetrics,
     ) -> Result<()> {
+        let mut start = Measure::start("Shred chaining");
         // Handle chaining for all the SlotMetas that were inserted into
         working_set.retain(|_, entry| entry.did_insert_occur);
         let mut new_chained_slots = HashMap::new();
@@ -4472,6 +4480,8 @@ impl Blockstore {
             let meta: &SlotMeta = &RefCell::borrow(meta);
             self.meta_cf.put_in_batch(write_batch, *slot, meta)?;
         }
+        start.stop();
+        metrics.chaining_elapsed_us += start.as_us();
         Ok(())
     }
 
