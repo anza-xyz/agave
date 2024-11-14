@@ -2846,15 +2846,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "home"
-version = "0.5.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3d1354bf6b7235cb4a0576c2619fd4ed18183f689b12b006a0ee7329eeff9a5"
-dependencies = [
- "windows-sys 0.52.0",
-]
-
-[[package]]
 name = "http"
 version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8720,20 +8711,8 @@ dependencies = [
 name = "solana-svm"
 version = "2.2.0"
 dependencies = [
- "assert_matches",
- "base64 0.22.1",
  "bincode",
- "borsh 1.5.3",
- "bs58",
- "clap 2.33.3",
- "crossbeam-channel",
- "env_logger",
- "home",
  "itertools 0.12.1",
- "jsonrpc-core",
- "jsonrpc-core-client",
- "jsonrpc-derive",
- "jsonrpc-http-server",
  "lazy_static",
  "libsecp256k1",
  "log",
@@ -8743,11 +8722,8 @@ dependencies = [
  "rand 0.8.5",
  "serde",
  "serde_derive",
- "serde_json",
  "shuttle",
- "solana-account-decoder",
  "solana-bpf-loader-program",
- "solana-client",
  "solana-compute-budget",
  "solana-compute-budget-program",
  "solana-feature-set",
@@ -8758,11 +8734,7 @@ dependencies = [
  "solana-log-collector",
  "solana-logger",
  "solana-measure",
- "solana-perf",
- "solana-program",
  "solana-program-runtime",
- "solana-rpc-client",
- "solana-rpc-client-api",
  "solana-runtime-transaction",
  "solana-sdk",
  "solana-svm",
@@ -8771,17 +8743,11 @@ dependencies = [
  "solana-svm-transaction",
  "solana-system-program",
  "solana-timings",
- "solana-transaction-status",
  "solana-type-overrides",
- "solana-version",
  "solana-vote",
  "solana_rbpf",
- "spl-token-2022",
  "test-case",
- "thiserror 1.0.69",
- "tokio",
- "tokio-util 0.7.12",
- "yaml-rust",
+ "thiserror",
 ]
 
 [[package]]
@@ -8791,24 +8757,6 @@ dependencies = [
  "prost",
  "prost-build",
  "prost-types",
-]
-
-[[package]]
-name = "solana-svm-example-paytube"
-version = "2.2.0"
-dependencies = [
- "solana-bpf-loader-program",
- "solana-client",
- "solana-compute-budget",
- "solana-logger",
- "solana-program-runtime",
- "solana-sdk",
- "solana-svm",
- "solana-system-program",
- "solana-test-validator",
- "spl-associated-token-account",
- "spl-token",
- "termcolor",
 ]
 
 [[package]]
