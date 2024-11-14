@@ -462,7 +462,7 @@ where
                     ));
                     if exiting
                         && idle_inner_count == 0
-                        && active_inner_count == 0
+                        //&& active_inner_count == 0
                         && trashed_inner_count == 0
                         && triggered_timeout_listener_count == 0
                         && active_timeout_listener_count == 0
