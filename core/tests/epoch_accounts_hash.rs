@@ -342,14 +342,19 @@ fn test_epoch_accounts_hash_basic(test_environment: TestEnvironment) {
         if bank.slot() == epoch_accounts_hash_utils::calculation_stop(&bank) {
             // Sometimes AHV does not get scheduled to run, which causes the test to fail
             // spuriously.  Sleep a bit here to ensure AHV gets a chance to run.
-            std::thread::sleep(Duration::from_secs(1));
-            let actual_epoch_accounts_hash = bank.epoch_accounts_hash();
-            debug!(
-                "slot {},   actual epoch accounts hash: {:?}",
-                bank.slot(),
-                actual_epoch_accounts_hash,
-            );
-            assert_eq!(expected_epoch_accounts_hash, actual_epoch_accounts_hash);
+            for _i in 0..10 {
+                let actual_epoch_accounts_hash = bank.epoch_accounts_hash();
+                if actual_epoch_accounts_hash == expected_epoch_accounts_hash {
+                    break;
+                }
+                std::thread::sleep(Duration::from_secs(1));
+                debug!(
+                    "slot {},   actual epoch accounts hash: {:?}",
+                    bank.slot(),
+                    actual_epoch_accounts_hash,
+                );
+            }
+            assert_eq!(expected_epoch_accounts_hash, bank.epoch_accounts_hash());
         }
 
         // Give the background services a chance to run
