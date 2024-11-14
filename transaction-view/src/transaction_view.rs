@@ -112,12 +112,6 @@ impl<const SANITIZED: bool, D: TransactionData> TransactionView<SANITIZED, D> {
         self.frame.total_readonly_lookup_accounts()
     }
 
-    /// Return the total number of accounts in the transactions.
-    #[inline]
-    pub fn total_num_accounts(&self) -> u16 {
-        self.frame.total_num_accounts()
-    }
-
     /// Return the slice of signatures in the transaction.
     #[inline]
     pub fn signatures(&self) -> &[Signature] {
@@ -202,6 +196,14 @@ impl<D: TransactionData> TransactionView<true, D> {
     pub(crate) fn num_writable_signed_static_accounts(&self) -> u8 {
         self.num_required_signatures()
             .wrapping_sub(self.num_readonly_signed_static_accounts())
+    }
+
+    /// Return the total number of accounts in the transactions.
+    #[inline]
+    pub fn total_num_accounts(&self) -> u16 {
+        u16::from(self.num_static_account_keys())
+            .wrapping_add(self.total_writable_lookup_accounts())
+            .wrapping_add(self.total_readonly_lookup_accounts())
     }
 }
 

@@ -129,13 +129,6 @@ impl TransactionFrame {
         self.address_table_lookup.total_readonly_lookup_accounts
     }
 
-    #[inline]
-    pub(crate) fn total_num_accounts(&self) -> u16 {
-        u16::from(self.num_static_account_keys())
-            + self.total_writable_lookup_accounts()
-            + self.total_readonly_lookup_accounts()
-    }
-
     /// Return the offset to the message.
     #[inline]
     pub(crate) fn message_offset(&self) -> u16 {
