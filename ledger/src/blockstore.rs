@@ -290,14 +290,27 @@ pub struct SlotMetaWorkingSetEntry {
 }
 
 struct ShredInsertionTracker {
+    // Map which contains data shreds that have just been inserted.
     just_inserted_shreds: HashMap<ShredId, Shred>,
+    // In-memory map that maintains the dirty copy of the erasure meta.  It will
+    // later be written to `cf::ErasureMeta`
     erasure_metas: BTreeMap<ErasureSetId, WorkingEntry<ErasureMeta>>,
+    // In-memory map that maintains the dirty copy of the merkle root meta. It
+    // will later be written to `cf::MerkleRootMeta`
     merkle_root_metas: HashMap<ErasureSetId, WorkingEntry<MerkleRootMeta>>,
+    // In-memory map that maintains the dirty copy of the index meta.  It will
+    // later be written to `cf::SlotMeta`
     slot_meta_working_set: HashMap<u64, SlotMetaWorkingSetEntry>,
+    // In-memory map that maintains the dirty copy of the index meta.  It will
+    // later be written to `cf::Index`
     index_working_set: HashMap<u64, IndexMetaWorkingSetEntry>,
     duplicate_shreds: Vec<PossibleDuplicateShred>,
+    // Collection of the current blockstore writes which will be committed
+    // atomically.
     write_batch: WriteBatch,
+    // Time spent on loading or creating the index meta entry from the db
     index_meta_time_us: u64,
+    // Collection of recently completed data sets (data portion of erasure batch)
     newly_completed_data_sets: Vec<CompletedDataSetInfo>,
 }
 
@@ -1658,24 +1671,8 @@ impl Blockstore {
     ///
     /// Arguments:
     /// - `shred`: the shred to be inserted
-    /// - `erasure_metas`: the in-memory hash-map that maintains the dirty
-    ///     copy of the erasure meta.  It will later be written to
-    ///     `cf::ErasureMeta` in insert_shreds_handle_duplicate().
-    /// - `merkle_root_metas`: the in-memory hash-map that maintains the dirty
-    ///     copy of the merkle root meta. It will later be written to
-    ///     `cf::MerkleRootMeta` in `insert_shreds_handle_duplicate()`.
-    /// - `index_working_set`: the in-memory hash-map that maintains the
-    ///     dirty copy of the index meta.  It will later be written to
-    ///     `cf::Index` in insert_shreds_handle_duplicate().
-    /// - `slot_meta_working_set`: the in-memory hash-map that maintains
-    ///     the dirty copy of the index meta.  It will later be written to
-    ///     `cf::SlotMeta` in insert_shreds_handle_duplicate().
-    /// - `write_batch`: the collection of the current writes which will
-    ///     be committed atomically.
-    /// - `just_inserted_data_shreds`: a (slot, shred index within the slot)
-    ///     to shred map which maintains which data shreds have been inserted.
-    /// - `index_meta_time_us`: the time spent on loading or creating the
-    ///     index meta entry from the db.
+    /// - `shred_insertion_tracker`: collection of shred insertion tracking
+    ///     data.
     /// - `is_trusted`: if false, this function will check whether the
     ///     input shred is duplicate.
     /// - `handle_duplicate`: the function that handles duplication.
@@ -7591,7 +7588,7 @@ pub mod tests {
         ));
         let ShredInsertionTracker {
             merkle_root_metas,
-            mut write_batch,
+            write_batch,
             ..
         } = shred_insertion_tracker;
 
@@ -7774,7 +7771,7 @@ pub mod tests {
             .unwrap();
         let ShredInsertionTracker {
             merkle_root_metas,
-            mut write_batch,
+            write_batch,
             ..
         } = shred_insertion_tracker;
         assert_eq!(merkle_root_metas.len(), 1);
