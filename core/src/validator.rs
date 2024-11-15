@@ -183,8 +183,8 @@ impl BlockVerificationMethod {
 #[strum(serialize_all = "kebab-case")]
 pub enum BlockProductionMethod {
     ThreadLocalMultiIterator,
-    CentralScheduler,
     #[default]
+    CentralScheduler,
     UnifiedScheduler,
 }
 
