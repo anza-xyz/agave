@@ -41,6 +41,7 @@ rand_chacha = { workspace = true }
 rayon = { workspace = true }
 rolling-file = { workspace = true }
 rustls = { workspace = true }
+scopeguard = { workspace = true }
 serde = { workspace = true }
 serde_bytes = { workspace = true }
 serde_derive = { workspace = true }
