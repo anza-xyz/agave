@@ -124,8 +124,19 @@ impl VersionedTransaction {
     }
 
     pub(crate) fn sanitize_signatures(&self) -> std::result::Result<(), SanitizeError> {
-        let num_required_signatures = usize::from(self.message.header().num_required_signatures);
-        match num_required_signatures.cmp(&self.signatures.len()) {
+        Self::sanitize_signatures_inner(
+            usize::from(self.message.header().num_required_signatures),
+            self.message.static_account_keys().len(),
+            self.signatures.len(),
+        )
+    }
+
+    pub(crate) fn sanitize_signatures_inner(
+        num_required_signatures: usize,
+        num_static_account_keys: usize,
+        num_signatures: usize,
+    ) -> std::result::Result<(), SanitizeError> {
+        match num_required_signatures.cmp(&num_signatures) {
             Ordering::Greater => Err(SanitizeError::IndexOutOfBounds),
             Ordering::Less => Err(SanitizeError::InvalidValue),
             Ordering::Equal => Ok(()),
@@ -133,7 +144,7 @@ impl VersionedTransaction {
 
         // Signatures are verified before message keys are loaded so all signers
         // must correspond to static account keys.
-        if self.signatures.len() > self.message.static_account_keys().len() {
+        if num_signatures > num_static_account_keys {
             return Err(SanitizeError::IndexOutOfBounds);
         }
 

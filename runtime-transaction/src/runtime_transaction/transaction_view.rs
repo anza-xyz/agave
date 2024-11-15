@@ -127,14 +127,15 @@ impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTran
         // SAFETY:
         // - Simple conversion between different formats
         // - `ResolvedTransactionView` has undergone sanitization checks
-        unsafe {
-            Cow::Owned(SanitizedTransaction::new_from_parts(
+        Cow::Owned(
+            SanitizedTransaction::try_new_from_fields(
                 message,
                 *self.message_hash(),
                 self.is_simple_vote_transaction(),
                 signatures,
-            ))
-        }
+            )
+            .expect("transaction view is sanitized"),
+        )
     }
 
     fn to_versioned_transaction(&self) -> VersionedTransaction {
