@@ -113,13 +113,7 @@ solana-pubkey = { workspace = true, default-features = false, features = ["std"]
 solana-sanitize = { workspace = true }
 solana-sdk-macro = { workspace = true }
 solana-secp256k1-recover = { workspace = true }
-<<<<<<< HEAD
-=======
 solana-secp256r1-program = { workspace = true, default-features = false }
-solana-seed-derivable = { workspace = true, optional = true }
-solana-seed-phrase = { workspace = true, optional = true }
-solana-serde = { workspace = true }
->>>>>>> da4f55ef4e (SIMD-0075: Precompile for Secp256r1 (#3152))
 solana-serde-varint = { workspace = true }
 solana-short-vec = { workspace = true }
 solana-signature = { workspace = true, features = [
