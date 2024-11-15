@@ -2598,7 +2598,6 @@ dependencies = [
  "solana-system-program",
  "solana-transaction-status",
  "solana-version",
- "solana-vote",
  "spl-token-2022",
  "tokio",
  "tokio-util 0.7.12",
@@ -6779,7 +6778,6 @@ dependencies = [
  "solana-system-program",
  "solana-timings",
  "solana-type-overrides",
- "solana-vote",
  "thiserror 2.0.3",
 ]
 
