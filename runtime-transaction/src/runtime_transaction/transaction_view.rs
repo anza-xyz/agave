@@ -9,7 +9,6 @@ use {
         resolved_transaction_view::ResolvedTransactionView, transaction_data::TransactionData,
         transaction_version::TransactionVersion, transaction_view::SanitizedTransactionView,
     },
-    core::borrow::Borrow,
     solana_pubkey::Pubkey,
     solana_sdk::{
         message::{
@@ -101,7 +100,7 @@ impl<D: TransactionData> RuntimeTransaction<ResolvedTransactionView<D>> {
 }
 
 impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTransactionView<D>> {
-    fn as_sanitized_transaction(&self) -> impl Borrow<SanitizedTransaction> {
+    fn as_sanitized_transaction(&self) -> Cow<SanitizedTransaction> {
         let VersionedTransaction {
             signatures,
             message,
@@ -127,12 +126,12 @@ impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTran
         // - Simple conversion between different formats
         // - `ResolvedTransactionView` has undergone sanitization checks
         unsafe {
-            SanitizedTransaction::new_from_parts(
+            Cow::Owned(SanitizedTransaction::new_from_parts(
                 message,
                 *self.message_hash(),
                 self.is_simple_vote_transaction(),
                 signatures,
-            )
+            ))
         }
     }
 
