@@ -135,6 +135,14 @@ members = [
     "sdk/pubkey",
     "sdk/rent",
     "sdk/sanitize",
+<<<<<<< HEAD
+=======
+    "sdk/sdk-ids",
+    "sdk/secp256r1-program",
+    "sdk/seed-derivable",
+    "sdk/seed-phrase",
+    "sdk/serde",
+>>>>>>> da4f55ef4e (SIMD-0075: Precompile for Secp256r1 (#3152))
     "sdk/serde-varint",
     "sdk/serialize-utils",
     "sdk/sha256-hasher",
@@ -453,6 +461,7 @@ solana-msg = { path = "sdk/msg", version = "=2.1.1" }
 solana-native-token = { path = "sdk/native-token", version = "=2.1.1" }
 solana-net-utils = { path = "net-utils", version = "=2.1.1" }
 solana-nohash-hasher = "0.2.1"
+<<<<<<< HEAD
 solana-notifier = { path = "notifier", version = "=2.1.1" }
 solana-package-metadata = { path = "sdk/package-metadata", version = "=2.1.1" }
 solana-package-metadata-macro = { path = "sdk/package-metadata-macro", version = "=2.1.1" }
@@ -526,6 +535,94 @@ solana-zk-keygen = { path = "zk-keygen", version = "=2.1.1" }
 solana-zk-sdk = { path = "zk-sdk", version = "=2.1.1" }
 solana-zk-token-proof-program = { path = "programs/zk-token-proof", version = "=2.1.1" }
 solana-zk-token-sdk = { path = "zk-token-sdk", version = "=2.1.1" }
+=======
+solana-nonce = { path = "sdk/nonce", version = "=2.2.0" }
+solana-notifier = { path = "notifier", version = "=2.2.0" }
+solana-package-metadata = { path = "sdk/package-metadata", version = "=2.2.0" }
+solana-package-metadata-macro = { path = "sdk/package-metadata-macro", version = "=2.2.0" }
+solana-packet = { path = "sdk/packet", version = "=2.2.0" }
+solana-perf = { path = "perf", version = "=2.2.0" }
+solana-poh = { path = "poh", version = "=2.2.0" }
+solana-poseidon = { path = "poseidon", version = "=2.2.0" }
+solana-precompile-error = { path = "sdk/precompile-error", version = "=2.2.0" }
+solana-presigner = { path = "sdk/presigner", version = "=2.2.0" }
+solana-program = { path = "sdk/program", version = "=2.2.0", default-features = false }
+solana-program-error = { path = "sdk/program-error", version = "=2.2.0" }
+solana-program-memory = { path = "sdk/program-memory", version = "=2.2.0" }
+solana-program-option = { path = "sdk/program-option", version = "=2.2.0" }
+solana-program-pack = { path = "sdk/program-pack", version = "=2.2.0" }
+solana-program-runtime = { path = "program-runtime", version = "=2.2.0" }
+solana-program-test = { path = "program-test", version = "=2.2.0" }
+solana-pubkey = { path = "sdk/pubkey", version = "=2.2.0", default-features = false }
+solana-pubsub-client = { path = "pubsub-client", version = "=2.2.0" }
+solana-quic-client = { path = "quic-client", version = "=2.2.0" }
+solana-quic-definitions = { path = "sdk/quic-definitions", version = "=2.2.0" }
+solana-rayon-threadlimit = { path = "rayon-threadlimit", version = "=2.2.0" }
+solana-remote-wallet = { path = "remote-wallet", version = "=2.2.0", default-features = false }
+solana-rent = { path = "sdk/rent", version = "=2.2.0", default-features = false }
+solana-reserved-account-keys = { path = "sdk/reserved-account-keys", version = "=2.2.0", default-features = false }
+solana-reward-info = { path = "sdk/reward-info", version = "=2.2.0" }
+solana-secp256r1-program = { path = "sdk/secp256r1-program", version = "=2.2.0", default-features = false }
+solana-sanitize = { path = "sdk/sanitize", version = "=2.2.0" }
+solana-seed-derivable = { path = "sdk/seed-derivable", version = "=2.2.0" }
+solana-seed-phrase = { path = "sdk/seed-phrase", version = "=2.2.0" }
+solana-serde = { path = "sdk/serde", version = "=2.2.0" }
+solana-serde-varint = { path = "sdk/serde-varint", version = "=2.2.0" }
+solana-serialize-utils = { path = "sdk/serialize-utils", version = "=2.2.0" }
+solana-sha256-hasher = { path = "sdk/sha256-hasher", version = "=2.2.0" }
+solana-signature = { path = "sdk/signature", version = "=2.2.0", default-features = false }
+solana-signer = { path = "sdk/signer", version = "=2.2.0" }
+solana-slot-hashes = { path = "sdk/slot-hashes", version = "=2.2.0" }
+solana-slot-history = { path = "sdk/slot-history", version = "=2.2.0" }
+solana-time-utils = { path = "sdk/time-utils", version = "=2.2.0" }
+solana-timings = { path = "timings", version = "=2.2.0" }
+solana-unified-scheduler-logic = { path = "unified-scheduler-logic", version = "=2.2.0" }
+solana-unified-scheduler-pool = { path = "unified-scheduler-pool", version = "=2.2.0" }
+solana-rpc = { path = "rpc", version = "=2.2.0" }
+solana-rpc-client = { path = "rpc-client", version = "=2.2.0", default-features = false }
+solana-rpc-client-api = { path = "rpc-client-api", version = "=2.2.0" }
+solana-rpc-client-nonce-utils = { path = "rpc-client-nonce-utils", version = "=2.2.0" }
+solana-runtime = { path = "runtime", version = "=2.2.0" }
+solana-runtime-transaction = { path = "runtime-transaction", version = "=2.2.0" }
+solana-sdk = { path = "sdk", version = "=2.2.0" }
+solana-sdk-ids = { path = "sdk/sdk-ids", version = "=2.2.0" }
+solana-sdk-macro = { path = "sdk/macro", version = "=2.2.0" }
+solana-secp256k1-recover = { path = "curves/secp256k1-recover", version = "=2.2.0", default-features = false }
+solana-send-transaction-service = { path = "send-transaction-service", version = "=2.2.0" }
+solana-short-vec = { path = "sdk/short-vec", version = "=2.2.0" }
+solana-stable-layout = { path = "sdk/stable-layout", version = "=2.2.0" }
+solana-stake-program = { path = "programs/stake", version = "=2.2.0" }
+solana-storage-bigtable = { path = "storage-bigtable", version = "=2.2.0" }
+solana-storage-proto = { path = "storage-proto", version = "=2.2.0" }
+solana-streamer = { path = "streamer", version = "=2.2.0" }
+solana-svm = { path = "svm", version = "=2.2.0" }
+solana-svm-conformance = { path = "svm-conformance", version = "=2.2.0" }
+solana-svm-example-paytube = { path = "svm/examples/paytube", version = "=2.2.0" }
+solana-svm-rent-collector = { path = "svm-rent-collector", version = "=2.2.0" }
+solana-svm-transaction = { path = "svm-transaction", version = "=2.2.0" }
+solana-system-program = { path = "programs/system", version = "=2.2.0" }
+solana-sysvar-id = { path = "sdk/sysvar-id", version = "=2.2.0" }
+solana-test-validator = { path = "test-validator", version = "=2.2.0" }
+solana-thin-client = { path = "thin-client", version = "=2.2.0" }
+solana-transaction-error = { path = "sdk/transaction-error", version = "=2.2.0" }
+solana-tpu-client = { path = "tpu-client", version = "=2.2.0", default-features = false }
+solana-tpu-client-next = { path = "tpu-client-next", version = "=2.2.0" }
+solana-transaction-status = { path = "transaction-status", version = "=2.2.0" }
+solana-transaction-status-client-types = { path = "transaction-status-client-types", version = "=2.2.0" }
+solana-transaction-metrics-tracker = { path = "transaction-metrics-tracker", version = "=2.2.0" }
+solana-turbine = { path = "turbine", version = "=2.2.0" }
+solana-type-overrides = { path = "type-overrides", version = "=2.2.0" }
+solana-udp-client = { path = "udp-client", version = "=2.2.0" }
+solana-version = { path = "version", version = "=2.2.0" }
+solana-vote = { path = "vote", version = "=2.2.0" }
+solana-vote-program = { path = "programs/vote", version = "=2.2.0" }
+solana-wen-restart = { path = "wen-restart", version = "=2.2.0" }
+solana-zk-elgamal-proof-program = { path = "programs/zk-elgamal-proof", version = "=2.2.0" }
+solana-zk-keygen = { path = "zk-keygen", version = "=2.2.0" }
+solana-zk-sdk = { path = "zk-sdk", version = "=2.2.0" }
+solana-zk-token-proof-program = { path = "programs/zk-token-proof", version = "=2.2.0" }
+solana-zk-token-sdk = { path = "zk-token-sdk", version = "=2.2.0" }
+>>>>>>> da4f55ef4e (SIMD-0075: Precompile for Secp256r1 (#3152))
 solana_rbpf = "=0.8.5"
 spl-associated-token-account = "=4.0.0"
 spl-instruction-padding = "0.2"

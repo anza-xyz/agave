@@ -7708,6 +7708,33 @@ dependencies = [
 ]
 
 [[package]]
+<<<<<<< HEAD
+=======
+name = "solana-reserved-account-keys"
+version = "2.2.0"
+dependencies = [
+ "lazy_static",
+ "solana-feature-set",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
+ "solana-program",
+ "solana-pubkey",
+ "solana-sdk-ids",
+ "solana-secp256r1-program",
+]
+
+[[package]]
+name = "solana-reward-info"
+version = "2.2.0"
+dependencies = [
+ "serde",
+ "serde_derive",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
+]
+
+[[package]]
+>>>>>>> da4f55ef4e (SIMD-0075: Precompile for Secp256r1 (#3152))
 name = "solana-rpc"
 version = "2.1.1"
 dependencies = [
@@ -8052,6 +8079,13 @@ dependencies = [
  "solana-sdk",
  "solana-sdk-macro",
  "solana-secp256k1-recover",
+<<<<<<< HEAD
+=======
+ "solana-secp256r1-program",
+ "solana-seed-derivable",
+ "solana-seed-phrase",
+ "solana-serde",
+>>>>>>> da4f55ef4e (SIMD-0075: Precompile for Secp256r1 (#3152))
  "solana-serde-varint",
  "solana-short-vec",
  "solana-signature",
@@ -8084,6 +8118,20 @@ dependencies = [
  "solana-frozen-abi-macro",
  "solana-program",
  "thiserror",
+]
+
+[[package]]
+name = "solana-secp256r1-program"
+version = "2.2.0"
+dependencies = [
+ "bytemuck",
+ "openssl",
+ "solana-feature-set",
+ "solana-instruction",
+ "solana-logger",
+ "solana-precompile-error",
+ "solana-pubkey",
+ "solana-sdk",
 ]
 
 [[package]]
