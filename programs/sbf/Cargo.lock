@@ -5030,6 +5030,7 @@ dependencies = [
  "rayon",
  "rolling-file",
  "rustls",
+ "scopeguard",
  "serde",
  "serde_bytes",
  "serde_derive",
