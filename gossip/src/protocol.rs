@@ -46,7 +46,7 @@ pub(crate) const PULL_RESPONSE_MIN_SERIALIZED_SIZE: usize = 161;
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "DBz7mUjknfMiea98WMx9b5jYyT9X9bmQV2JxmMN1VggR")
+    frozen_abi(digest = "6Bq5nLYt9eX7BBuW3JAHPRTcutfbkZph8WAXHtAfU2x4")
 )]
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(clippy::large_enum_variant)]
