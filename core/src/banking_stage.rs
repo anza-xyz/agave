@@ -53,7 +53,7 @@ use {
     },
     transaction_scheduler::{
         receive_and_buffer::SanitizedTransactionReceiveAndBuffer,
-        transaction_state_container::{StateContainer, TransactionStateContainer},
+        transaction_state_container::TransactionStateContainer,
     },
 };
 
@@ -621,13 +621,11 @@ impl BankingStage {
                 bank_forks.clone(),
                 forwarder.is_some(),
             );
-            let container = TransactionStateContainer::with_capacity(TOTAL_BUFFERED_PACKETS);
             let scheduler = PrioGraphScheduler::new(work_senders, finished_work_receiver);
             let scheduler_controller = SchedulerController::new(
                 decision_maker.clone(),
                 receive_and_buffer,
                 bank_forks,
-                container,
                 scheduler,
                 worker_metrics,
                 forwarder,

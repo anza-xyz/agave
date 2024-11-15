@@ -9,6 +9,7 @@ use {
         immutable_deserialized_packet::ImmutableDeserializedPacket,
         packet_deserializer::PacketDeserializer, scheduler_messages::MaxAge,
         transaction_scheduler::transaction_state::SanitizedTransactionTTL,
+        TransactionStateContainer,
     },
     arrayvec::ArrayVec,
     core::time::Duration,
@@ -32,13 +33,14 @@ use {
     std::sync::{Arc, RwLock},
 };
 
-pub trait ReceiveAndBuffer {
+pub(crate) trait ReceiveAndBuffer {
     type Transaction: TransactionWithMeta;
+    type Container: StateContainer<Self::Transaction>;
 
     /// Returns whether the packet receiver is still connected.
     fn receive_and_buffer_packets(
         &mut self,
-        container: &mut impl StateContainer<Self::Transaction>,
+        container: &mut Self::Container,
         timing_metrics: &mut SchedulerTimingMetrics,
         count_metrics: &mut SchedulerCountMetrics,
         decision: &BufferedPacketsDecision,
@@ -57,11 +59,12 @@ pub struct SanitizedTransactionReceiveAndBuffer {
 
 impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
     type Transaction = RuntimeTransaction<SanitizedTransaction>;
+    type Container = TransactionStateContainer<Self::Transaction>;
 
     /// Returns whether the packet receiver is still connected.
     fn receive_and_buffer_packets(
         &mut self,
-        container: &mut impl StateContainer<Self::Transaction>,
+        container: &mut Self::Container,
         timing_metrics: &mut SchedulerTimingMetrics,
         count_metrics: &mut SchedulerCountMetrics,
         decision: &BufferedPacketsDecision,
@@ -146,7 +149,7 @@ impl SanitizedTransactionReceiveAndBuffer {
 
     fn buffer_packets(
         &mut self,
-        container: &mut impl StateContainer<RuntimeTransaction<SanitizedTransaction>>,
+        container: &mut TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>>,
         _timing_metrics: &mut SchedulerTimingMetrics,
         count_metrics: &mut SchedulerCountMetrics,
         packets: Vec<ImmutableDeserializedPacket>,
