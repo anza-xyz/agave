@@ -656,7 +656,7 @@ impl ReplayStage {
                 &leader_schedule_cache,
             );
 
-            defer! {
+            scopeguard::defer! {
                 info!("wait begin")
                 bank_forks.wait_all_banks_for_completed_scheduler();
                 info!("wait end")
