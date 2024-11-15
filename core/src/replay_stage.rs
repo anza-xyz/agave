@@ -658,7 +658,7 @@ impl ReplayStage {
 
             scopeguard::defer! {
                 info!("wait begin");
-                bank_forks.wait_all_banks_for_completed_scheduler();
+                bank_forks.read().unwrap().wait_all_banks_for_completed_scheduler();
                 info!("wait end");
             }
 
