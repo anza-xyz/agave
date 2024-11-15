@@ -63,15 +63,23 @@ struct FinalReplayProgress {
 
 #[derive(Default)]
 struct FinalReplayProgressMap {
-    pub replay_stats: RwLock<HashMap<Slot, FinalReplayProgress>>,
+    pub replay_stats: RwLock<HashMap<Slot, Arc<FinalReplayProgress>>>,
 }
 
 impl FinalReplayProgressMap {
-    pub fn insert_if_not_exist(&mut self, slot: &Slot) {
-        self.replay_stats.write().unwrap().entry(*slot).or_default();
+    pub fn insert_if_not_exist(&mut self, bank: &Bank) {
+        let mut w_replay_stats = self.replay_stats.write().unwrap();
+        let _ = w_replay_stats.entry(bank.slot()).or_insert({
+            let parent = bank.parent().expect("must have parent");
+            let parent_blockhash = parent.last_blockhash();
+            Arc::new(FinalReplayProgress {
+                stats: Arc::new(RwLock::new(ReplaySlotStats::default())),
+                progress: Arc::new(RwLock::new(ConfirmationProgress::new(parent_blockhash))),
+            })
+        });
     }
 
-    pub fn get(&self, slot: &Slot) -> Option<FinalReplayProgress> {
+    pub fn get(&self, slot: &Slot) -> Option<Arc<FinalReplayProgress>> {
         self.replay_stats.read().unwrap().get(slot).cloned()
     }
 }
@@ -179,10 +187,15 @@ impl FinalReplayStage {
         replay_stats: &mut FinalReplayProgressMap,
     ) -> Vec<ReplayResult> {
         let longest_replay_time_us = AtomicU64::new(0);
-        // Apply insert_if_not_exist on all active_bank_slots.
-        active_bank_slots.iter().for_each(|slot| {
-            replay_stats.insert_if_not_exist(slot);
-        });
+        for slot in active_bank_slots {
+            replay_stats.insert_if_not_exist(
+                &bank_forks
+                    .read()
+                    .unwrap()
+                    .get_with_scheduler(*slot)
+                    .unwrap(),
+            );
+        }
         let replay_result_vec: Vec<ReplayResult> = fork_thread_pool.install(|| {
             active_bank_slots
                 .into_par_iter()

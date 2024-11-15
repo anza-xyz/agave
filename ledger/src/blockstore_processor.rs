@@ -1748,7 +1748,8 @@ fn process_bank_0(
     entry_notification_sender: Option<&EntryNotifierSender>,
 ) {
     assert_eq!(bank0.slot(), 0);
-    let mut progress = ConfirmationProgress::new(bank0.last_blockhash());
+    let last_blockhash = bank0.last_blockhash();
+    let mut progress = ConfirmationProgress::new(last_blockhash);
     confirm_full_slot(
         blockstore,
         bank0,
@@ -1767,7 +1768,7 @@ fn process_bank_0(
         result.unwrap();
     }
     bank0.vote_only_freeze();
-    let mut progress = ConfirmationProgress::new(bank0.last_blockhash());
+    let mut progress = ConfirmationProgress::new(last_blockhash);
     confirm_full_slot(
         blockstore,
         bank0,

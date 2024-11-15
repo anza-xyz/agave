@@ -168,7 +168,7 @@ impl ForkProgress {
             num_dropped_blocks_on_fork,
         );
 
-        if bank.is_frozen() {
+        if bank.is_vote_only_frozen() {
             new_progress.fork_stats.vote_only_hash = Some(bank.vote_only_hash());
         }
         new_progress
