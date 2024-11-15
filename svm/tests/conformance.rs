@@ -441,11 +441,12 @@ fn execute_fixture_as_instr(
     let log_collector = LogCollector::new_ref();
 
     let sysvar_cache = &batch_processor.sysvar_cache();
+    let epoch_vote_stake = HashMap::default();
     let env_config = EnvironmentConfig::new(
         Hash::default(),
         0,
         None,
-        None,
+        &epoch_vote_stake,
         mock_bank.feature_set.clone(),
         sysvar_cache,
     );

@@ -3764,11 +3764,16 @@ impl Bank {
             self.last_blockhash_and_lamports_per_signature();
         let rent_collector_with_metrics =
             RentCollectorWithMetrics::new(self.rent_collector.clone());
+        let epoch_vote_stake = self
+            .get_current_epoch_vote_accounts()
+            .iter()
+            .map(|(address, (stake, _))| (*address, *stake))
+            .collect();
         let processing_environment = TransactionProcessingEnvironment {
             blockhash,
             blockhash_lamports_per_signature,
             epoch_total_stake: Some(self.get_current_epoch_total_stake()),
-            epoch_vote_accounts: Some(self.get_current_epoch_vote_accounts()),
+            epoch_vote_stake,
             feature_set: Arc::clone(&self.feature_set),
             fee_lamports_per_signature: self.fee_structure.lamports_per_signature,
             rent_collector: Some(&rent_collector_with_metrics),

@@ -40,10 +40,10 @@ use {
     },
     solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_type_overrides::sync::{atomic::Ordering, Arc},
-    solana_vote::vote_account::VoteAccountsHashMap,
     std::{
         alloc::Layout,
         cell::RefCell,
+        collections::HashMap,
         fmt::{self, Debug},
         rc::Rc,
     },
@@ -152,7 +152,7 @@ pub struct EnvironmentConfig<'a> {
     pub blockhash: Hash,
     pub blockhash_lamports_per_signature: u64,
     epoch_total_stake: Option<u64>,
-    epoch_vote_accounts: Option<&'a VoteAccountsHashMap>,
+    epoch_vote_stake: &'a HashMap<Pubkey, u64>,
     pub feature_set: Arc<FeatureSet>,
     sysvar_cache: &'a SysvarCache,
 }
@@ -161,7 +161,7 @@ impl<'a> EnvironmentConfig<'a> {
         blockhash: Hash,
         blockhash_lamports_per_signature: u64,
         epoch_total_stake: Option<u64>,
-        epoch_vote_accounts: Option<&'a VoteAccountsHashMap>,
+        epoch_vote_stake: &'a HashMap<Pubkey, u64>,
         feature_set: Arc<FeatureSet>,
         sysvar_cache: &'a SysvarCache,
     ) -> Self {
@@ -169,7 +169,7 @@ impl<'a> EnvironmentConfig<'a> {
             blockhash,
             blockhash_lamports_per_signature,
             epoch_total_stake,
-            epoch_vote_accounts,
+            epoch_vote_stake,
             feature_set,
             sysvar_cache,
         }
@@ -662,9 +662,9 @@ impl<'a> InvokeContext<'a> {
         self.environment_config.epoch_total_stake
     }
 
-    /// Get cached epoch vote accounts.
-    pub fn get_epoch_vote_accounts(&self) -> Option<&VoteAccountsHashMap> {
-        self.environment_config.epoch_vote_accounts
+    /// Get cached stake for epoch vote accounts.
+    pub fn get_epoch_vote_stake(&self) -> &HashMap<Pubkey, u64> {
+        self.environment_config.epoch_vote_stake
     }
 
     // Should alignment be enforced during user pointer translation
@@ -762,11 +762,12 @@ macro_rules! with_mock_invoke_context {
                 }
             }
         });
+        let epoch_vote_stake = HashMap::default();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             None,
-            None,
+            &epoch_vote_stake,
             Arc::new(FeatureSet::all_enabled()),
             &sysvar_cache,
         );

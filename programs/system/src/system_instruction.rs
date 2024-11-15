@@ -257,6 +257,7 @@ mod test {
             system_program,
             transaction_context::InstructionAccount,
         },
+        std::collections::HashMap,
     };
 
     pub const NONCE_ACCOUNT_INDEX: IndexOfAccount = 0;

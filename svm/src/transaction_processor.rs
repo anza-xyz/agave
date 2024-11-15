@@ -63,7 +63,6 @@ use {
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
     solana_timings::{ExecuteTimingType, ExecuteTimings},
     solana_type_overrides::sync::{atomic::Ordering, Arc, RwLock, RwLockReadGuard},
-    solana_vote::vote_account::VoteAccountsHashMap,
     std::{
         collections::{hash_map::Entry, HashMap, HashSet},
         fmt::{Debug, Formatter},
@@ -141,8 +140,8 @@ pub struct TransactionProcessingEnvironment<'a> {
     pub blockhash_lamports_per_signature: u64,
     /// The total stake for the current epoch.
     pub epoch_total_stake: Option<u64>,
-    /// The vote accounts for the current epoch.
-    pub epoch_vote_accounts: Option<&'a VoteAccountsHashMap>,
+    /// The stake for vote accounts for the current epoch.
+    pub epoch_vote_stake: HashMap<Pubkey, u64>,
     /// Runtime feature set to use for the transaction batch.
     pub feature_set: Arc<FeatureSet>,
     /// Transaction fee to charge per signature, in lamports.
@@ -157,7 +156,7 @@ impl Default for TransactionProcessingEnvironment<'_> {
             blockhash: Hash::default(),
             blockhash_lamports_per_signature: 0,
             epoch_total_stake: None,
-            epoch_vote_accounts: None,
+            epoch_vote_stake: HashMap::default(),
             feature_set: Arc::<FeatureSet>::default(),
             fee_lamports_per_signature: FeeStructure::default().lamports_per_signature, // <-- Default fee.
             rent_collector: None,
@@ -978,7 +977,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 environment.blockhash,
                 environment.blockhash_lamports_per_signature,
                 environment.epoch_total_stake,
-                environment.epoch_vote_accounts,
+                &environment.epoch_vote_stake,
                 Arc::clone(&environment.feature_set),
                 sysvar_cache,
             ),

@@ -2103,16 +2103,11 @@ declare_builtin_function!(
             let check_aligned = invoke_context.get_check_aligned();
             let vote_address = translate_type::<Pubkey>(memory_mapping, var_addr, check_aligned)?;
 
-            Ok(
-                if let Some(vote_accounts) = invoke_context.get_epoch_vote_accounts() {
-                    vote_accounts
-                        .get(vote_address)
-                        .map(|(stake, _)| *stake)
-                        .unwrap_or(0)
-                } else {
-                    0
-                },
-            )
+            Ok(invoke_context
+                .get_epoch_vote_stake()
+                .get(vote_address)
+                .map(|stake| *stake)
+                .unwrap_or(0))
         }
     }
 );
@@ -2147,7 +2142,6 @@ mod tests {
                 last_restart_slot::LastRestartSlot,
             },
         },
-        solana_vote::vote_account::VoteAccount,
         std::{collections::HashMap, mem, str::FromStr},
         test_case::test_case,
     };
@@ -4798,11 +4792,12 @@ mod tests {
         compute_budget.compute_unit_limit = expected_cus;
 
         with_mock_invoke_context!(invoke_context, transaction_context, vec![]);
+        let epoch_vote_stake = HashMap::default();
         invoke_context.environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             Some(expected_total_stake),
-            None, // Vote accounts are not needed for this test.
+            &epoch_vote_stake, // Vote accounts are not needed for this test.
             Arc::<FeatureSet>::default(),
             &sysvar_cache,
         );
@@ -4846,17 +4841,14 @@ mod tests {
 
         let vote_address = Pubkey::new_unique();
         let mut vote_accounts_map = HashMap::new();
-        vote_accounts_map.insert(
-            vote_address,
-            (expected_epoch_stake, VoteAccount::new_random()),
-        );
+        vote_accounts_map.insert(vote_address, expected_epoch_stake);
 
         with_mock_invoke_context!(invoke_context, transaction_context, vec![]);
         invoke_context.environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             None, // Total stake is not needed for this test.
-            Some(&vote_accounts_map),
+            &vote_accounts_map,
             Arc::<FeatureSet>::default(),
             &sysvar_cache,
         );

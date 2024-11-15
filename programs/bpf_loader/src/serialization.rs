@@ -632,6 +632,7 @@ mod tests {
         },
         std::{
             cell::RefCell,
+            collections::HashMap,
             mem::transmute,
             rc::Rc,
             slice::{self, from_raw_parts, from_raw_parts_mut},

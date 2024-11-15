@@ -21,7 +21,7 @@ use {
         transaction_context::TransactionContext,
     },
     source_buffer::SourceBuffer,
-    std::{cmp::Ordering, sync::atomic::Ordering::Relaxed},
+    std::{cmp::Ordering, collections::HashMap, sync::atomic::Ordering::Relaxed},
     target_builtin::TargetBuiltin,
     target_core_bpf::TargetCoreBpf,
 };
@@ -196,6 +196,8 @@ impl Bank {
                 compute_budget.max_instruction_trace_length,
             );
 
+            let epoch_vote_stake: HashMap<Pubkey, u64> = HashMap::default();
+
             let mut dummy_invoke_context = InvokeContext::new(
                 &mut dummy_transaction_context,
                 &mut program_cache_for_tx_batch,
@@ -203,7 +205,7 @@ impl Bank {
                     Hash::default(),
                     0,
                     None,
-                    None,
+                    &epoch_vote_stake,
                     self.feature_set.clone(),
                     &sysvar_cache,
                 ),

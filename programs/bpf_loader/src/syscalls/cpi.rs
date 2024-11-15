@@ -1614,6 +1614,7 @@ mod tests {
         },
         std::{
             cell::{Cell, RefCell},
+            collections::HashMap,
             mem, ptr,
             rc::Rc,
             slice,

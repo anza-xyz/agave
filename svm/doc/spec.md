@@ -172,7 +172,7 @@ the runtime environment to use for processing transactions.
 
 - `blockhash`: The blockhash to use for the transaction batch.
 - `epoch_total_stake`: The total stake for the current epoch.
-- `epoch_vote_accounts`: The vote accounts for the current epoch.
+- `epoch_vote_stake`: The stake for vote accounts for the current epoch.
 - `feature_set`: Runtime feature set to use for the transaction batch.
 - `fee_structure`: Fee structure to use for assessing transaction fees.
 - `lamports_per_signature`: Lamports per signature to charge per transaction.

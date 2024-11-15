@@ -158,7 +158,7 @@ mod tests {
             secp256k1_program, system_program,
             transaction_context::TransactionContext,
         },
-        std::sync::Arc,
+        std::{collections::HashMap, sync::Arc},
     };
 
     fn new_sanitized_message(message: Message) -> SanitizedMessage {
@@ -255,11 +255,12 @@ mod tests {
             ]),
         ));
         let sysvar_cache = SysvarCache::default();
+        let epoch_vote_stake = HashMap::default();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             None,
-            None,
+            &epoch_vote_stake,
             Arc::new(FeatureSet::all_enabled()),
             &sysvar_cache,
         );
@@ -313,7 +314,7 @@ mod tests {
             Hash::default(),
             0,
             None,
-            None,
+            &epoch_vote_stake,
             Arc::new(FeatureSet::all_enabled()),
             &sysvar_cache,
         );
@@ -357,7 +358,7 @@ mod tests {
             Hash::default(),
             0,
             None,
-            None,
+            &epoch_vote_stake,
             Arc::new(FeatureSet::all_enabled()),
             &sysvar_cache,
         );
@@ -488,11 +489,12 @@ mod tests {
             Some(transaction_context.get_key_of_account_at_index(0).unwrap()),
         ));
         let sysvar_cache = SysvarCache::default();
+        let epoch_vote_stake = HashMap::default();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             None,
-            None,
+            &epoch_vote_stake,
             Arc::new(FeatureSet::all_enabled()),
             &sysvar_cache,
         );
@@ -531,7 +533,7 @@ mod tests {
             Hash::default(),
             0,
             None,
-            None,
+            &epoch_vote_stake,
             Arc::new(FeatureSet::all_enabled()),
             &sysvar_cache,
         );
@@ -567,7 +569,7 @@ mod tests {
             Hash::default(),
             0,
             None,
-            None,
+            &epoch_vote_stake,
             Arc::new(FeatureSet::all_enabled()),
             &sysvar_cache,
         );
@@ -660,11 +662,12 @@ mod tests {
             mock_program_id,
             Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::vm)),
         );
+        let epoch_vote_stake = HashMap::default();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             None,
-            None,
+            &epoch_vote_stake,
             Arc::new(FeatureSet::all_enabled()),
             &sysvar_cache,
         );
