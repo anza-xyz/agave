@@ -7444,7 +7444,6 @@ dependencies = [
  "solana-system-program",
  "solana-timings",
  "solana-type-overrides",
- "solana-vote",
  "thiserror 2.0.3",
 ]
 
