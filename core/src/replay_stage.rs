@@ -656,6 +656,12 @@ impl ReplayStage {
                 &leader_schedule_cache,
             );
 
+            defer! {
+                info!("wait begin")
+                bank_forks.wait_all_banks_for_completed_scheduler();
+                info!("wait end")
+            }
+
             loop {
                 // Stop getting entries if we get exit signal
                 if exit.load(Ordering::Relaxed) {
