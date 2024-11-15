@@ -235,18 +235,20 @@ impl BankForks {
 
     pub fn wait_all_banks_for_completed_scheduler(&self) {
         for (_slot, bank) in self.banks.iter() {
-            info!("waiting... {:?} {:?}", bank.scheduling_mode(), bank.id_and_slot_with_scheduler_status());
-            if let Some((result, _completed_execute_timings)) = bank.wait_for_completed_scheduler() {
+            info!(
+                "waiting... {:?} {:?}",
+                bank.scheduling_mode(),
+                bank.id_and_slot_with_scheduler_status()
+            );
+            if let Some((result, _completed_execute_timings)) = bank.wait_for_completed_scheduler()
+            {
                 info!(
                     "waited one of all banks with unified scheduler: {} {:?}",
                     bank.slot(),
                     result
                 );
             } else {
-                info!(
-                    "Skipped to wait one of all banks: {}",
-                    bank.slot()
-                );
+                info!("Skipped to wait one of all banks: {}", bank.slot());
             }
         }
     }
