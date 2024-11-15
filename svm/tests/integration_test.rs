@@ -157,21 +157,17 @@ impl SvmTestEnvironment<'_> {
 
             match processed_transaction {
                 Ok(ProcessedTransaction::Executed(executed_transaction)) => {
-                    for (pubkey, account_data) in
-                        executed_transaction.loaded_transaction.accounts.clone()
+                    for (index, (pubkey, account_data)) in executed_transaction
+                        .loaded_transaction
+                        .accounts
+                        .iter()
+                        .enumerate()
                     {
-                        let is_writable = sanitized_transaction
-                            .account_keys()
-                            .iter()
-                            .position(|key| key == &pubkey)
-                            .map(|index| sanitized_transaction.is_writable(index))
-                            .unwrap_or(false);
-
-                        if is_writable {
+                        if sanitized_transaction.is_writable(index) {
                             update_or_dealloc_account(
                                 &mut final_accounts_actual,
-                                pubkey,
-                                account_data,
+                                *pubkey,
+                                account_data.clone(),
                             );
                         }
                     }
