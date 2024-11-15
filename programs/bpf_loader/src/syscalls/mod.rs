@@ -2106,7 +2106,7 @@ declare_builtin_function!(
             Ok(invoke_context
                 .get_epoch_vote_stake()
                 .get(vote_address)
-                .map(|stake| *stake)
+                .copied()
                 .unwrap_or(0))
         }
     }
