@@ -11,9 +11,11 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_sdk::{
+        instruction::CompiledInstruction,
         message::{
-            v0::{LoadedAddresses, LoadedMessage},
-            LegacyMessage, SanitizedMessage, TransactionSignatureDetails, VersionedMessage,
+            v0::{LoadedAddresses, LoadedMessage, MessageAddressTableLookup},
+            LegacyMessage, MessageHeader, SanitizedMessage, TransactionSignatureDetails,
+            VersionedMessage,
         },
         simple_vote_transaction_checker::is_simple_vote_transaction_impl,
         transaction::{
@@ -136,7 +138,51 @@ impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTran
     }
 
     fn to_versioned_transaction(&self) -> VersionedTransaction {
-        bincode::deserialize(self.transaction.data()).unwrap()
+        let header = MessageHeader {
+            num_required_signatures: self.num_required_signatures(),
+            num_readonly_signed_accounts: self.num_readonly_signed_static_accounts(),
+            num_readonly_unsigned_accounts: self.num_readonly_unsigned_static_accounts(),
+        };
+        let static_account_keys = self.static_account_keys().to_vec();
+        let recent_blockhash = *self.recent_blockhash();
+        let instructions = self
+            .instructions_iter()
+            .map(|ix| CompiledInstruction {
+                program_id_index: ix.program_id_index,
+                accounts: ix.accounts.to_vec(),
+                data: ix.data.to_vec(),
+            })
+            .collect();
+
+        let message = match self.version() {
+            TransactionVersion::Legacy => {
+                VersionedMessage::Legacy(solana_sdk::message::legacy::Message {
+                    header,
+                    account_keys: static_account_keys,
+                    recent_blockhash,
+                    instructions,
+                })
+            }
+            TransactionVersion::V0 => VersionedMessage::V0(solana_sdk::message::v0::Message {
+                header,
+                account_keys: static_account_keys,
+                recent_blockhash,
+                instructions,
+                address_table_lookups: self
+                    .address_table_lookup_iter()
+                    .map(|atl| MessageAddressTableLookup {
+                        account_key: *atl.account_key,
+                        writable_indexes: atl.writable_indexes.to_vec(),
+                        readonly_indexes: atl.readonly_indexes.to_vec(),
+                    })
+                    .collect(),
+            }),
+        };
+
+        VersionedTransaction {
+            signatures: self.signatures().to_vec(),
+            message,
+        }
     }
 }
 
