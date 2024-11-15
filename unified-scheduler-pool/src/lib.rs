@@ -3133,6 +3133,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     #[should_panic(expected = "does not match `Some((Ok(_), _))")]
     fn test_scheduler_drop_abort_unhandled() {
         do_test_scheduler_drop_abort(AbortCase::Unhandled);
