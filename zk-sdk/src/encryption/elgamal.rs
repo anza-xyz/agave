@@ -20,27 +20,6 @@ use wasm_bindgen::prelude::*;
 // types and functions exported for wasm targets in all of its dependencies
 // (https://github.com/rustwasm/wasm-bindgen/issues/3759). We specifically exclude some of the
 // dependencies that will cause unnecessary bloat to the wasm binary.
-<<<<<<< HEAD
-#[cfg(not(target_arch = "wasm32"))]
-use {
-    crate::encryption::discrete_log::DiscreteLog,
-    sha3::Digest,
-    solana_derivation_path::DerivationPath,
-    solana_sdk::{
-        signature::Signature,
-        signer::{
-            keypair::generate_seed_from_seed_phrase_and_passphrase, EncodableKey, EncodableKeypair,
-            SeedDerivable, Signer, SignerError,
-        },
-    },
-    std::{
-        error,
-        io::{Read, Write},
-        path::Path,
-    },
-};
-=======
->>>>>>> 8b720f78c3 ([zk-sdk] Expose ElGamal decryption and proof program to wasm target (#3601))
 use {
     crate::{
         encryption::{
@@ -69,10 +48,13 @@ use {
 use {
     sha3::Digest,
     solana_derivation_path::DerivationPath,
-    solana_seed_derivable::SeedDerivable,
-    solana_seed_phrase::generate_seed_from_seed_phrase_and_passphrase,
-    solana_signature::Signature,
-    solana_signer::{EncodableKey, EncodableKeypair, Signer, SignerError},
+    solana_sdk::{
+        signature::Signature,
+        signer::{
+            keypair::generate_seed_from_seed_phrase_and_passphrase, EncodableKey, EncodableKeypair,
+            SeedDerivable, Signer, SignerError,
+        },
+    },
     std::{
         error,
         io::{Read, Write},
