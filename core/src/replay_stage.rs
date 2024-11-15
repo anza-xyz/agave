@@ -657,9 +657,9 @@ impl ReplayStage {
             );
 
             scopeguard::defer! {
-                info!("wait begin")
+                info!("wait begin");
                 bank_forks.wait_all_banks_for_completed_scheduler();
-                info!("wait end")
+                info!("wait end");
             }
 
             loop {
