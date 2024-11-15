@@ -1502,12 +1502,18 @@ pub struct AccountsDb {
     pub epoch_accounts_hash_manager: EpochAccountsHashManager,
 }
 
+<<<<<<< HEAD
 #[derive(Debug, Default)]
 pub struct AccountsStats {
     delta_hash_scan_time_total_us: AtomicU64,
     delta_hash_accumulate_time_total_us: AtomicU64,
     delta_hash_num: AtomicU64,
     skipped_rewrites_num: AtomicUsize,
+=======
+    /// The latest full snapshot slot dictates how to handle zero lamport accounts
+    /// Note, this is None if we're told to *not* take snapshots
+    latest_full_snapshot_slot: SeqLock<Option<Slot>>,
+>>>>>>> 4ea10c224a (Startup only sets latest_full_snapshot_slot if generating snapshots (#3633))
 
     last_store_report: AtomicInterval,
     store_hash_accounts: AtomicU64,
