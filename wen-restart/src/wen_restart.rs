@@ -459,7 +459,7 @@ fn check_slot_smaller_than_intended_snapshot_slot(
 // Given the agreed upon slot, add hard fork and rehash the corresponding bank, then
 // generate new snapshot. Generate incremental snapshot if possible, but generate full
 // snapshot if there is no full snapshot or snapshot generation is turned off (in this
-// case the full snapshot may be too old).
+// case the incremental snasphot based on the full snapshot is incorrect).
 //
 // We don't use set_root() explicitly, because it may kick off snapshot requests, we
 // can't have multiple snapshot requests in progress. In bank_to_snapshot_archive()
