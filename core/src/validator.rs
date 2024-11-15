@@ -812,7 +812,13 @@ impl Validator {
         let pruned_banks_request_handler = PrunedBanksRequestHandler {
             pruned_banks_receiver,
         };
-        let last_full_snapshot_slot = starting_snapshot_hashes.map(|x| x.full.0 .0);
+        // If we're not generating snapshots, ensure ABS's last full snapshot slot is None to
+        // ensure we handle zero lamport accounts correctly.
+        let last_full_snapshot_slot = if config.snapshot_config.should_generate_snapshots() {
+            starting_snapshot_hashes.map(|x| x.full.0 .0)
+        } else {
+            None
+        };
         let accounts_background_service = AccountsBackgroundService::new(
             bank_forks.clone(),
             exit.clone(),
