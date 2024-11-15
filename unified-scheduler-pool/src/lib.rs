@@ -1259,8 +1259,8 @@ where
         // current new_task_sender with a random one...
         self.new_task_sender = Arc::new(crossbeam_channel::unbounded().0);
 
-        self.ensure_join_threads(false /*true*/);
-        //assert_matches!(self.session_result_with_timings, Some((Ok(_), _)));
+        self.ensure_join_threads(true);
+        assert_matches!(self.session_result_with_timings, Some((Ok(_), _)));
     }
 }
 
@@ -2190,15 +2190,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 let result_with_timings = self.session_result_receiver.recv().unwrap();
                 debug!("ensure_join_threads(): err: {:?}", result_with_timings.0);
                 self.put_session_result_with_timings(result_with_timings);
-            } else {
-                #[allow(clippy::collapsible_else_if)]
-                if let Ok(result_with_timings) =
-                    self.session_result_receiver.try_recv().inspect_err(|err| {
-                        error!("ensure_join_threads(): would be blocked....: {:?}", err);
-                    })
-                {
-                    self.put_session_result_with_timings(result_with_timings);
-                }
             }
         } else {
             warn!("ensure_join_threads(): skipping; already joined...");
