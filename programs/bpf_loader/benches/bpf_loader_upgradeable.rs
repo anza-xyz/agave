@@ -4,6 +4,7 @@ use {
     solana_program_runtime::invoke_context::mock_process_instruction,
     solana_sdk::{
         account::AccountSharedData,
+        account_utils::StateMut,
         bpf_loader_upgradeable::{self, UpgradeableLoaderState},
         instruction::AccountMeta,
         loader_upgradeable_instruction::UpgradeableLoaderInstruction,
@@ -69,13 +70,40 @@ impl TestSetup {
                 is_writable: false,
             },
         ];
-
         self.instruction_data =
             bincode::serialize(&UpgradeableLoaderInstruction::InitializeBuffer).unwrap();
     }
 
+    fn prep_write(&mut self) {
+        self.instruction_accounts = vec![
+            AccountMeta {
+                pubkey: self.buffer_address,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: self.authority_address,
+                is_signer: true,
+                is_writable: false,
+            },
+        ];
+
+        self.transaction_accounts[0]
+            .1
+            .set_state(&UpgradeableLoaderState::Buffer {
+                authority_address: Some(self.authority_address),
+            })
+            .unwrap();
+
+        self.instruction_data = bincode::serialize(&UpgradeableLoaderInstruction::Write {
+            offset: 0,
+            bytes: vec![64; PROGRAM_BUFFER_SIZE],
+        })
+        .unwrap();
+    }
+
     fn run(&self) {
-        mock_process_instruction(
+        let accounts = mock_process_instruction(
             &self.loader_address,
             Vec::new(),
             &self.instruction_data,
@@ -85,6 +113,13 @@ impl TestSetup {
             Entrypoint::vm,
             |_invoke_context| {},
             |_invoke_context| {},
+        );
+        let state: UpgradeableLoaderState = accounts.first().unwrap().state().unwrap();
+        assert_eq!(
+            state,
+            UpgradeableLoaderState::Buffer {
+                authority_address: Some(self.authority_address)
+            }
         );
     }
 }
@@ -98,5 +133,16 @@ fn bench_initialize_buffer(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_initialize_buffer,);
+fn bench_write(c: &mut Criterion) {
+    let mut test_setup = TestSetup::new();
+    test_setup.prep_write();
+
+    c.bench_function("write", |bencher| {
+        bencher.iter(|| {
+            test_setup.run();
+        })
+    });
+}
+
+criterion_group!(benches, bench_initialize_buffer, bench_write);
 criterion_main!(benches);
