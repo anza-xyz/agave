@@ -6,10 +6,15 @@ use {
     solana_measure::{meas_dur, measure::Measure},
     solana_sdk::{
         account::{accounts_equal, AccountSharedData},
+        feature_set,
         pubkey::Pubkey,
     },
     solana_svm::transaction_processing_callback::AccountState,
-    std::{ops::AddAssign, time::Duration},
+    std::{
+        ops::AddAssign,
+        sync::atomic::{AtomicU64, Ordering},
+        time::Duration,
+    },
 };
 
 impl Bank {
@@ -19,6 +24,9 @@ impl Bank {
             .accounts
             .accounts_db
             .is_experimental_accumulator_hash_enabled()
+            || self
+                .feature_set
+                .is_active(&feature_set::accounts_lt_hash::id())
     }
 
     /// Updates the accounts lt hash
@@ -34,6 +42,19 @@ impl Bank {
         let delta_lt_hash = self.calculate_delta_lt_hash();
         let mut accounts_lt_hash = self.accounts_lt_hash.lock().unwrap();
         accounts_lt_hash.0.mix_in(&delta_lt_hash);
+
+        // If the feature gate is not yet active, log the lt hash checksums for debug/testing
+        if !self
+            .feature_set
+            .is_active(&feature_set::accounts_lt_hash::id())
+        {
+            log::info!(
+                "updated accounts lattice hash for slot {}, delta_lt_hash checksum: {}, accounts_lt_hash checksum: {}",
+                self.slot(),
+                delta_lt_hash.checksum(),
+                accounts_lt_hash.0.checksum(),
+            );
+        }
     }
 
     /// Calculates the lt hash *of only this slot*
@@ -240,6 +261,34 @@ impl Bank {
                 stats.time_mixing_hashes.as_micros(),
                 i64
             ),
+            (
+                "num_inspect_account_hits",
+                self.stats_for_accounts_lt_hash
+                    .num_inspect_account_hits
+                    .load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_inspect_account_misses",
+                self.stats_for_accounts_lt_hash
+                    .num_inspect_account_misses
+                    .load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "inspect_account_lookup_ns",
+                self.stats_for_accounts_lt_hash
+                    .inspect_account_lookup_time_ns
+                    .load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "inspect_account_insert_ns",
+                self.stats_for_accounts_lt_hash
+                    .inspect_account_insert_time_ns
+                    .load(Ordering::Relaxed),
+                i64
+            ),
         );
 
         delta_lt_hash
@@ -264,27 +313,61 @@ impl Bank {
 
         // Only insert the account the *first* time we see it.
         // We want to capture the value of the account *before* any modifications during this slot.
-        let is_in_cache = self
-            .cache_for_accounts_lt_hash
-            .read()
-            .unwrap()
-            .contains_key(address);
-        if !is_in_cache {
+        let (is_in_cache, lookup_time) = meas_dur!({
             self.cache_for_accounts_lt_hash
-                .write()
+                .read()
                 .unwrap()
-                .entry(*address)
-                .or_insert_with(|| {
-                    let initial_state_of_account = match account_state {
-                        AccountState::Dead => InitialStateOfAccount::Dead,
-                        AccountState::Alive(account) => {
-                            InitialStateOfAccount::Alive((*account).clone())
-                        }
-                    };
-                    CacheValue::InspectAccount(initial_state_of_account)
-                });
+                .contains_key(address)
+        });
+        if !is_in_cache {
+            let (_, insert_time) = meas_dur!({
+                self.cache_for_accounts_lt_hash
+                    .write()
+                    .unwrap()
+                    .entry(*address)
+                    .or_insert_with(|| {
+                        let initial_state_of_account = match account_state {
+                            AccountState::Dead => InitialStateOfAccount::Dead,
+                            AccountState::Alive(account) => {
+                                InitialStateOfAccount::Alive((*account).clone())
+                            }
+                        };
+                        CacheValue::InspectAccount(initial_state_of_account)
+                    });
+            });
+
+            self.stats_for_accounts_lt_hash
+                .num_inspect_account_misses
+                .fetch_add(1, Ordering::Relaxed);
+            self.stats_for_accounts_lt_hash
+                .inspect_account_insert_time_ns
+                // N.B. this needs to be nanoseconds because it can be so fast
+                .fetch_add(insert_time.as_nanos() as u64, Ordering::Relaxed);
+        } else {
+            // The account is already in the cache, so nothing to do here other than update stats.
+            self.stats_for_accounts_lt_hash
+                .num_inspect_account_hits
+                .fetch_add(1, Ordering::Relaxed);
         }
+
+        self.stats_for_accounts_lt_hash
+            .inspect_account_lookup_time_ns
+            // N.B. this needs to be nanoseconds because it can be so fast
+            .fetch_add(lookup_time.as_nanos() as u64, Ordering::Relaxed);
     }
+}
+
+/// Stats related to accounts lt hash
+#[derive(Debug, Default)]
+pub struct Stats {
+    /// the number of times the cache already contained the account being inspected
+    num_inspect_account_hits: AtomicU64,
+    /// the number of times the cache *did not* already contain the account being inspected
+    num_inspect_account_misses: AtomicU64,
+    /// time spent checking if accounts are in the cache
+    inspect_account_lookup_time_ns: AtomicU64,
+    /// time spent inserting accounts into the cache
+    inspect_account_insert_time_ns: AtomicU64,
 }
 
 /// The initial state of an account prior to being modified in this slot/transaction
@@ -312,8 +395,11 @@ mod tests {
     use {
         super::*,
         crate::{
-            bank::tests::new_bank_from_parent_with_bank_forks, genesis_utils,
-            runtime_config::RuntimeConfig, snapshot_bank_utils, snapshot_config::SnapshotConfig,
+            bank::tests::{new_bank_from_parent_with_bank_forks, new_from_parent_next_epoch},
+            genesis_utils,
+            runtime_config::RuntimeConfig,
+            snapshot_bank_utils,
+            snapshot_config::SnapshotConfig,
             snapshot_utils,
         },
         solana_accounts_db::accounts_db::{
@@ -321,6 +407,7 @@ mod tests {
         },
         solana_sdk::{
             account::{ReadableAccount as _, WritableAccount as _},
+            feature::{self, Feature},
             fee_calculator::FeeRateGovernor,
             genesis_config::{self, GenesisConfig},
             native_token::LAMPORTS_PER_SOL,
@@ -554,7 +641,7 @@ mod tests {
         bank.rc
             .accounts
             .accounts_db
-            .set_is_experimental_accumulator_hash_enabled(true);
+            .set_is_experimental_accumulator_hash_enabled(features == Features::None);
 
         // ensure the accounts lt hash is enabled, otherwise this test doesn't actually do anything...
         assert!(bank.is_accounts_lt_hash_enabled());
@@ -587,7 +674,7 @@ mod tests {
         bank.rc
             .accounts
             .accounts_db
-            .set_is_experimental_accumulator_hash_enabled(true);
+            .set_is_experimental_accumulator_hash_enabled(features == Features::None);
 
         // ensure the accounts lt hash is enabled, otherwise this test doesn't actually do anything...
         assert!(bank.is_accounts_lt_hash_enabled());
@@ -700,7 +787,7 @@ mod tests {
         bank.rc
             .accounts
             .accounts_db
-            .set_is_experimental_accumulator_hash_enabled(true);
+            .set_is_experimental_accumulator_hash_enabled(features == Features::None);
 
         // ensure the accounts lt hash is enabled, otherwise this test doesn't actually do anything...
         assert!(bank.is_accounts_lt_hash_enabled());
@@ -749,7 +836,7 @@ mod tests {
         bank.rc
             .accounts
             .accounts_db
-            .set_is_experimental_accumulator_hash_enabled(true);
+            .set_is_experimental_accumulator_hash_enabled(features == Features::None);
 
         // ensure the accounts lt hash is enabled, otherwise this test doesn't actually do anything...
         assert!(bank.is_accounts_lt_hash_enabled());
@@ -849,7 +936,7 @@ mod tests {
         bank.rc
             .accounts
             .accounts_db
-            .set_is_experimental_accumulator_hash_enabled(true);
+            .set_is_experimental_accumulator_hash_enabled(features == Features::None);
 
         // ensure the accounts lt hash is enabled, otherwise this test doesn't actually do anything...
         assert!(bank.is_accounts_lt_hash_enabled());
@@ -943,7 +1030,7 @@ mod tests {
         bank.rc
             .accounts
             .accounts_db
-            .set_is_experimental_accumulator_hash_enabled(true);
+            .set_is_experimental_accumulator_hash_enabled(features == Features::None);
 
         // ensure the accounts lt hash is enabled, otherwise this test doesn't actually do anything...
         assert!(bank.is_accounts_lt_hash_enabled());
@@ -973,5 +1060,136 @@ mod tests {
             .collect();
         actual_cache.sort_unstable_by(|a, b| a.0.cmp(&b.0));
         assert_eq!(expected_cache, actual_cache.as_slice());
+    }
+
+    /// Ensure that feature activation plays nicely with the cli arg
+    #[test_matrix(
+        [Features::None, Features::All],
+        [Cli::Off, Cli::On],
+        [Cli::Off, Cli::On]
+    )]
+    fn test_accounts_lt_hash_feature_activation(features: Features, cli: Cli, verify_cli: Cli) {
+        let (mut genesis_config, mint_keypair) = genesis_config_with(features);
+        // since we're testing feature activation, it must start deactivated (i.e. not present)
+        _ = genesis_config
+            .accounts
+            .remove(&feature_set::accounts_lt_hash::id());
+        let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        bank.rc
+            .accounts
+            .accounts_db
+            .set_is_experimental_accumulator_hash_enabled(match cli {
+                Cli::Off => false,
+                Cli::On => true,
+            });
+
+        let amount = cmp::max(
+            bank.get_minimum_balance_for_rent_exemption(Feature::size_of()),
+            1,
+        );
+
+        // create some banks with some modified accounts so that there are stored accounts
+        // (note: the number of banks and transfers are arbitrary)
+        for _ in 0..9 {
+            let slot = bank.slot() + 1;
+            bank =
+                new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot);
+            bank.register_unique_recent_blockhash_for_test();
+            bank.transfer(amount, &mint_keypair, &pubkey::new_rand())
+                .unwrap();
+            bank.fill_bank_with_ticks_for_tests();
+            bank.squash();
+            bank.force_flush_accounts_cache();
+        }
+
+        // Create a new bank so that we can store the feature gate account;
+        // this triggers feature activation at the next epoch boundary.
+        // Then create another bank in the next epoch to activate the feature.
+        let slot = bank.slot() + 1;
+        bank = new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot);
+        bank.store_account_and_update_capitalization(
+            &feature_set::accounts_lt_hash::id(),
+            &feature::create_account(&Feature { activated_at: None }, amount),
+        );
+        assert!(!bank
+            .feature_set
+            .is_active(&feature_set::accounts_lt_hash::id()));
+        bank = new_from_parent_next_epoch(bank, &bank_forks, 1);
+        assert!(bank
+            .feature_set
+            .is_active(&feature_set::accounts_lt_hash::id()));
+
+        // create some more banks with some more modified accounts
+        for _ in 0..5 {
+            let slot = bank.slot() + 1;
+            bank =
+                new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot);
+            bank.register_unique_recent_blockhash_for_test();
+            bank.transfer(amount, &mint_keypair, &pubkey::new_rand())
+                .unwrap();
+            bank.fill_bank_with_ticks_for_tests();
+        }
+
+        // Now verify the accounts lt hash from feature activation is the same as if we calculated
+        // it at startup.  We root the bank and flush the accounts write cache for snapshots,
+        // yet also do it here explicitly.  This allows us to verify the accounts lt hash with both
+        // the index-based and the storages-based calculation in similar startup-like states.
+        bank.squash();
+        bank.force_flush_accounts_cache();
+        let calculated_accounts_lt_hash_from_index = bank
+            .rc
+            .accounts
+            .accounts_db
+            .calculate_accounts_lt_hash_at_startup_from_index(&bank.ancestors, bank.slot);
+        assert_eq!(
+            calculated_accounts_lt_hash_from_index,
+            *bank.accounts_lt_hash.lock().unwrap(),
+        );
+
+        // Verification using storages happens at startup.
+        // Mimic the behavior by taking, then loading from, a snapshot.
+        let snapshot_config = SnapshotConfig::default();
+        let bank_snapshots_dir = TempDir::new().unwrap();
+        let snapshot_archives_dir = TempDir::new().unwrap();
+        let snapshot = snapshot_bank_utils::bank_to_full_snapshot_archive(
+            &bank_snapshots_dir,
+            &bank,
+            Some(snapshot_config.snapshot_version),
+            &snapshot_archives_dir,
+            &snapshot_archives_dir,
+            snapshot_config.archive_format,
+        )
+        .unwrap();
+        let (_accounts_tempdir, accounts_dir) = snapshot_utils::create_tmp_accounts_dir_for_tests();
+        let accounts_db_config = AccountsDbConfig {
+            enable_experimental_accumulator_hash: match verify_cli {
+                Cli::Off => false,
+                Cli::On => true,
+            },
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        };
+        let (roundtrip_bank, _) = snapshot_bank_utils::bank_from_snapshot_archives(
+            &[accounts_dir],
+            &bank_snapshots_dir,
+            &snapshot,
+            None,
+            &genesis_config,
+            &RuntimeConfig::default(),
+            None,
+            None,
+            None,
+            false,
+            false,
+            false,
+            false,
+            Some(accounts_db_config),
+            None,
+            Arc::default(),
+        )
+        .unwrap();
+
+        // Wait for the startup verification to complete.  If we don't panic, then we're good!
+        roundtrip_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
+        assert_eq!(roundtrip_bank, *bank);
     }
 }
