@@ -59,6 +59,7 @@ use {
     },
     vec_extract_if_polyfill::MakeExtractIf,
 };
+use std::sync::atomic::AtomicBool;
 
 mod sleepless_testing;
 use crate::sleepless_testing::BuilderTracked;
@@ -271,6 +272,7 @@ where
         replay_vote_sender: Option<ReplayVoteSender>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
         transaction_recorder: TransactionRecorder,
+        exit: Arc<AtomicBool>,
         pool_cleaner_interval: Duration,
         max_pooling_duration: Duration,
         max_usage_queue_count: usize,
