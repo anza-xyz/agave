@@ -540,6 +540,7 @@ where
             replay_vote_sender,
             prioritization_fee_cache,
             TransactionRecorder::new_dummy(),
+            Arc::default(),
         )
     }
 
