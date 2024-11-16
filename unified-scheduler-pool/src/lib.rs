@@ -323,10 +323,6 @@ where
                     sleep(pool_cleaner_interval);
                     info!("Scheduler pool cleaner: start!!!",);
 
-                    if exit.load(Relaxed) {
-                        break;
-                    }
-
                     let Some(scheduler_pool) = strong_scheduler_pool
                         .clone()
                         .or_else(|| weak_scheduler_pool.upgrade())
@@ -334,6 +330,11 @@ where
                         error!("weak pool!");
                         break;
                     };
+
+                    if exit.load(Relaxed) {
+                        scheduler_pool.reset_respawner();
+                        break;
+                    }
 
                     let now = Instant::now();
 
