@@ -13,7 +13,6 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
-    crate::crossbeam_channel::RecvTimeoutError,
     assert_matches::assert_matches,
     crossbeam_channel::{
         self, never, select, select_biased, Receiver, RecvError, SendError, Sender,
@@ -52,7 +51,7 @@ use {
         marker::PhantomData,
         mem,
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering::Relaxed},
+            atomic::{AtomicU64, Ordering::Relaxed},
             Arc, Condvar, Mutex, OnceLock, RwLock, Weak,
         },
         thread::{self, sleep, JoinHandle},
@@ -129,7 +128,6 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     weak_self: Weak<Self>,
     next_scheduler_id: AtomicSchedulerId,
     max_usage_queue_count: usize,
-    exit: Arc<AtomicBool>,
     _phantom: PhantomData<TH>,
 }
 
@@ -200,7 +198,6 @@ where
         replay_vote_sender: Option<ReplayVoteSender>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
         transaction_recorder: TransactionRecorder,
-        exit: Arc<AtomicBool>,
     ) -> Arc<Self> {
         Self::do_new(
             supported_scheduling_mode,
@@ -210,7 +207,6 @@ where
             replay_vote_sender,
             prioritization_fee_cache,
             transaction_recorder,
-            exit,
             DEFAULT_POOL_CLEANER_INTERVAL,
             DEFAULT_MAX_POOLING_DURATION,
             DEFAULT_MAX_USAGE_QUEUE_COUNT,
@@ -233,7 +229,6 @@ where
             replay_vote_sender,
             prioritization_fee_cache,
             TransactionRecorder::new_dummy(),
-            Arc::default(),
         )
     }
 
@@ -257,7 +252,6 @@ where
             replay_vote_sender,
             prioritization_fee_cache,
             TransactionRecorder::new_dummy(),
-            Arc::default(),
             pool_cleaner_interval,
             max_pooling_duration,
             max_usage_queue_count,
@@ -274,7 +268,6 @@ where
         replay_vote_sender: Option<ReplayVoteSender>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
         transaction_recorder: TransactionRecorder,
-        exit: Arc<AtomicBool>,
         pool_cleaner_interval: Duration,
         max_pooling_duration: Duration,
         max_usage_queue_count: usize,
@@ -304,7 +297,6 @@ where
             weak_self: weak_self.clone(),
             next_scheduler_id: AtomicSchedulerId::default(),
             max_usage_queue_count,
-            exit: exit.clone(),
             _phantom: PhantomData,
         });
 
@@ -330,11 +322,6 @@ where
                         error!("weak pool!");
                         break;
                     };
-
-                    if exit.load(Relaxed) {
-                        scheduler_pool.reset_respawner();
-                        break;
-                    }
 
                     let now = Instant::now();
 
@@ -521,7 +508,6 @@ where
         replay_vote_sender: Option<ReplayVoteSender>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
         transaction_recorder: TransactionRecorder,
-        exit: Arc<AtomicBool>,
     ) -> InstalledSchedulerPoolArc {
         Self::new(
             supported_scheduling_mode,
@@ -531,7 +517,6 @@ where
             replay_vote_sender,
             prioritization_fee_cache,
             transaction_recorder,
-            exit,
         )
     }
 
@@ -550,7 +535,6 @@ where
             replay_vote_sender,
             prioritization_fee_cache,
             TransactionRecorder::new_dummy(),
-            Arc::default(),
         )
     }
 
@@ -1626,7 +1610,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             // cycles out of the scheduler thread. Thus, any kinds of unessential overhead sources
             // like syscalls, VDSO, and even memory (de)allocation should be avoided at all costs
             // by design or by means of offloading at the last resort.
-            let exit = self.pool.exit.clone();
             move || {
                 let (do_now, dont_now) = (&disconnected::<()>(), &never::<()>());
                 let dummy_receiver = |trigger| {
@@ -1882,9 +1865,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             },
                             */
                             default => {
-                                if exit.load(Relaxed) {
-                                    break 'nonaborted_main_loop;
-                                }
                                 if let Some(task) = (!session_pausing).then(|| state_machine.scan_and_schedule_next_task()).flatten() {
                                     runnable_task_sender.send_payload(task).unwrap();
                                     "scan"
@@ -1955,10 +1935,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             error_count = 0;
                             session_resetting = false;
                         }
-                        match new_task_receiver
-                            .recv_timeout(Duration::from_millis(100))
-                            .map(|a| a.into())
-                        {
+                        match new_task_receiver.recv().map(|a| a.into()) {
                             Ok(NewTaskPayload::OpenSubchannel(context_and_result_with_timings)) => {
                                 let (new_context, new_result_with_timings) =
                                     *context_and_result_with_timings;
@@ -2022,8 +1999,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     log_scheduler!(trace, "rebuffer");
                                 }
                             }
-                            Ok(NewTaskPayload::Disconnect(_))
-                            | Err(RecvTimeoutError::Disconnected) => {
+                            Ok(NewTaskPayload::Disconnect(_)) | Err(_) => {
                                 // This unusual condition must be triggered by ThreadManager::drop().
                                 // Initialize result_with_timings with a harmless value...
                                 result_with_timings = initialized_result_with_timings();
@@ -2032,16 +2008,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 break 'nonaborted_main_loop;
                             }
                             Ok(_) => unreachable!(),
-                            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                                if exit.load(Relaxed) {
-                                    result_with_timings = initialized_result_with_timings();
-                                    session_ending = false;
-                                    session_pausing = false;
-                                    break 'nonaborted_main_loop;
-                                } else {
-                                    continue;
-                                }
-                            }
                         }
                     }
                 }
@@ -2089,7 +2055,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             // 2. Subsequent contexts are propagated explicitly inside `.after_select()` as part of
             //    `select_biased!`, which are sent from `.send_chained_channel()` in the scheduler
             //    thread for all-but-initial sessions.
-            let exit = self.pool.exit.clone();
             move || loop {
                 let (task, sender) = select_biased! {
                     recv(runnable_task_receiver.for_select()) -> message => {
@@ -2137,13 +2102,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         }
                     },
                     */
-                    default(Duration::from_millis(100)) => {
-                        if exit.load(Relaxed) {
-                            break;
-                        } else {
-                            continue;
-                        }
-                    }
                 };
                 defer! {
                     if !thread::panicking() {

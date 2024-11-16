@@ -493,7 +493,6 @@ fn main() {
             Some(replay_vote_sender.clone()),
             prioritization_fee_cache.clone(),
             poh_recorder.read().unwrap().new_recorder(),
-            exit.clone(),
         );
         bank_forks
             .write()
