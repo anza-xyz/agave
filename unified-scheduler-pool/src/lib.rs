@@ -13,6 +13,7 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
+    crate::crossbeam_channel::RecvTimeoutError,
     assert_matches::assert_matches,
     crossbeam_channel::{
         self, never, select, select_biased, Receiver, RecvError, SendError, Sender,
@@ -51,7 +52,7 @@ use {
         marker::PhantomData,
         mem,
         sync::{
-            atomic::{AtomicU64, Ordering::Relaxed},
+            atomic::{AtomicBool, AtomicU64, Ordering::Relaxed},
             Arc, Condvar, Mutex, OnceLock, RwLock, Weak,
         },
         thread::{self, sleep, JoinHandle},
@@ -59,8 +60,6 @@ use {
     },
     vec_extract_if_polyfill::MakeExtractIf,
 };
-use crate::crossbeam_channel::RecvTimeoutError;
-use std::sync::atomic::AtomicBool;
 
 mod sleepless_testing;
 use crate::sleepless_testing::BuilderTracked;
@@ -1955,7 +1954,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             error_count = 0;
                             session_resetting = false;
                         }
-                        match new_task_receiver.recv_timeout(Duration::from_millis(100)).map(|a| a.into()) {
+                        match new_task_receiver
+                            .recv_timeout(Duration::from_millis(100))
+                            .map(|a| a.into())
+                        {
                             Ok(NewTaskPayload::OpenSubchannel(context_and_result_with_timings)) => {
                                 let (new_context, new_result_with_timings) =
                                     *context_and_result_with_timings;
@@ -2019,7 +2021,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     log_scheduler!(trace, "rebuffer");
                                 }
                             }
-                            Ok(NewTaskPayload::Disconnect(_)) | Err(RecvTimeoutError::Disconnected) => {
+                            Ok(NewTaskPayload::Disconnect(_))
+                            | Err(RecvTimeoutError::Disconnected) => {
                                 // This unusual condition must be triggered by ThreadManager::drop().
                                 // Initialize result_with_timings with a harmless value...
                                 result_with_timings = initialized_result_with_timings();
