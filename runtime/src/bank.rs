@@ -1195,7 +1195,7 @@ impl Bank {
         let mut time = Measure::start("bank::new_from_parent");
         let NewBankOptions { vote_only_bank } = new_bank_options;
 
-        parent.freeze();
+        parent.vote_only_freeze();
         assert_ne!(slot, parent.slot());
 
         let epoch_schedule = parent.epoch_schedule().clone();
@@ -1591,6 +1591,7 @@ impl Bank {
         slot: Slot,
         data_source: CalcAccountsHashDataSource,
     ) -> Self {
+        parent.vote_only_freeze();
         parent.freeze();
         parent
             .rc
@@ -2972,6 +2973,7 @@ impl Bank {
     /// by multiple threads, the end result could be inconsistent.
     /// Calling code does not currently call this concurrently.
     pub fn squash(&self) -> SquashTiming {
+        self.vote_only_freeze();
         self.freeze();
 
         //this bank and all its parents are now on the rooted path
