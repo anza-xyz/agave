@@ -304,7 +304,7 @@ where
             weak_self: weak_self.clone(),
             next_scheduler_id: AtomicSchedulerId::default(),
             max_usage_queue_count,
-            exit: exit.clone,
+            exit: exit.clone(),
             _phantom: PhantomData,
         });
 
