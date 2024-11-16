@@ -376,7 +376,7 @@ where
                                     info!("trashed sch {} IS Exited", trashed_inner.id());
                                     let id = trashed_inner.id();
                                     info!("dropping trashed sch {id}");
-                                    std::mem::forget(trashed_inner);
+                                    drop(trashed_inner);
                                     info!("dropped trashed sch {id}");
                                     exiting = true;
                                 }
@@ -479,7 +479,7 @@ where
                             drop(g);
                             let id = pooled.id();
                             info!("dropping sch {id} after proper exit");
-                            std::mem::forget(pooled);
+                            drop(pooled);
                             info!("dropped sch {id} after proper exit");
                         }
                         break;
