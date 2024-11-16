@@ -258,6 +258,7 @@ where
             replay_vote_sender,
             prioritization_fee_cache,
             TransactionRecorder::new_dummy(),
+            Arc::default(),
             pool_cleaner_interval,
             max_pooling_duration,
             max_usage_queue_count,
