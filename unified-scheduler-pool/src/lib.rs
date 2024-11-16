@@ -104,10 +104,7 @@ impl SupportedSchedulingMode {
 pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     supported_scheduling_mode: SupportedSchedulingMode,
     scheduler_inners: Mutex<Vec<(S::Inner, Instant)>>,
-    block_production_scheduler_inner: Mutex<(
-        Option<SchedulerId>,
-        Option<S::Inner>,
-    )>,
+    block_production_scheduler_inner: Mutex<(Option<SchedulerId>, Option<S::Inner>)>,
     block_production_scheduler_condvar: Condvar,
     block_production_scheduler_respawner: Mutex<Option<BlockProductionSchedulerRespawner>>,
     trashed_scheduler_inners: Mutex<Vec<S::Inner>>,
@@ -258,7 +255,8 @@ where
     }
 
     pub fn block_production_enabled(&self) -> bool {
-        self.supported_scheduling_mode.is_supported(SchedulingMode::BlockProduction)
+        self.supported_scheduling_mode
+            .is_supported(SchedulingMode::BlockProduction)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -678,10 +676,7 @@ where
         &self,
         g: &mut std::sync::MutexGuard<
             '_,
-            (
-                Option<u64>,
-                Option<<S as SpawnableScheduler<TH>>::Inner>,
-            ),
+            (Option<u64>, Option<<S as SpawnableScheduler<TH>>::Inner>),
         >,
     ) {
         info!("flash session: start!");
@@ -708,10 +703,7 @@ where
             .lock()
             .expect("not poisoned");
             */
-        let context = SchedulingContext::new(
-            SchedulingMode::BlockProduction,
-            None,
-        );
+        let context = SchedulingContext::new(SchedulingMode::BlockProduction, None);
         info!("flash session: start!3");
         let s = S::spawn(
             self.self_arc(),
