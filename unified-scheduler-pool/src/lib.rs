@@ -308,6 +308,7 @@ where
             _phantom: PhantomData,
         });
 
+        let exit = self.pool.exit.clone();
         let cleaner_main_loop = {
             let weak_scheduler_pool = Arc::downgrade(&scheduler_pool);
             let strong_scheduler_pool = if bp_is_supported {
@@ -322,6 +323,10 @@ where
                 loop {
                     sleep(pool_cleaner_interval);
                     info!("Scheduler pool cleaner: start!!!",);
+
+                    if exit.load(Relaxed) {
+                        break;
+                    }
 
                     let Some(scheduler_pool) = strong_scheduler_pool
                         .clone()
