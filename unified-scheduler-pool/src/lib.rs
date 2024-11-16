@@ -429,9 +429,9 @@ where
                                         scheduler_pool.spawn_block_production_scheduler(&mut g);
                                         drop(g);
                                         let id = pooled.id();
-                                        info!("dropping sch {id}");
+                                        info!("dropping overgrown sch {id}");
                                         drop(pooled);
-                                        info!("dropped sch {id}");
+                                        info!("dropped overgrown sch {id}");
                                     } else {
                                         info!("sch {} isn't overgrown", pooled.id());
                                         pooled.reset();
@@ -478,9 +478,9 @@ where
                             assert_eq!(Some(pooled.id()), g.0.take());
                             drop(g);
                             let id = pooled.id();
-                            info!("dropping sch {id}");
+                            info!("dropping sch {id} after proper exit");
                             std::mem::forget(pooled);
-                            info!("dropped sch {id}");
+                            info!("dropped sch {id} after proper exit");
                         }
                         break;
                     }
