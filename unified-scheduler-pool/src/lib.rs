@@ -59,6 +59,7 @@ use {
     },
     vec_extract_if_polyfill::MakeExtractIf,
 };
+use crate::crossbeam_channel::TryRecvError;
 use std::sync::atomic::AtomicBool;
 
 mod sleepless_testing;
