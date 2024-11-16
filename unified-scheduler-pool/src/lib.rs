@@ -304,11 +304,10 @@ where
             weak_self: weak_self.clone(),
             next_scheduler_id: AtomicSchedulerId::default(),
             max_usage_queue_count,
-            exit,
+            exit: exit.clone,
             _phantom: PhantomData,
         });
 
-        let exit = self.pool.exit.clone();
         let cleaner_main_loop = {
             let weak_scheduler_pool = Arc::downgrade(&scheduler_pool);
             let strong_scheduler_pool = if bp_is_supported {
