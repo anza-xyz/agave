@@ -1875,7 +1875,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             },
                             */
                             default => {
-                                if self.pool.exit.load(Relaxed) {
+                                if exit.load(Relaxed) {
                                     break 'nonaborted_main_loop;
                                 }
                                 if let Some(task) = (!session_pausing).then(|| state_machine.scan_and_schedule_next_task()).flatten() {
@@ -1948,7 +1948,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             error_count = 0;
                             session_resetting = false;
                         }
-                        match new_task_receiver.recv().map(|a| a.into()) {
+                        match new_task_receiver.try_recv().map(|a| a.into()) {
                             Ok(NewTaskPayload::OpenSubchannel(context_and_result_with_timings)) => {
                                 let (new_context, new_result_with_timings) =
                                     *context_and_result_with_timings;
