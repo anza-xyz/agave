@@ -1625,6 +1625,7 @@ impl Bank {
         });
         new.transaction_processor
             .fill_missing_sysvar_cache_entries(&new);
+        new.vote_only_freeze();
         new.freeze();
         new
     }
