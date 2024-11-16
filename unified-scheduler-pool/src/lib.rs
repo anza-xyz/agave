@@ -2080,6 +2080,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             // 2. Subsequent contexts are propagated explicitly inside `.after_select()` as part of
             //    `select_biased!`, which are sent from `.send_chained_channel()` in the scheduler
             //    thread for all-but-initial sessions.
+            let exit = self.pool.exit.clone();
             move || loop {
                 let (task, sender) = select_biased! {
                     recv(runnable_task_receiver.for_select()) -> message => {
@@ -2127,6 +2128,13 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         }
                     },
                     */
+                    default(Duration::from_millis(100)) => {
+                        if exit.load(Relaxed) {
+                            break;
+                        } else {
+                            continue;
+                        }
+                    }
                 };
                 defer! {
                     if !thread::panicking() {
