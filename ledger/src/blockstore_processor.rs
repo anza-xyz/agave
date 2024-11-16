@@ -2267,7 +2267,6 @@ pub mod tests {
             native_token::LAMPORTS_PER_SOL,
             pubkey::Pubkey,
             rent_debits::RentDebits,
-            scheduling::SchedulingMode,
             signature::{Keypair, Signer},
             system_instruction::SystemError,
             system_transaction,
