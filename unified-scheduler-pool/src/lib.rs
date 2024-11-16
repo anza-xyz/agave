@@ -232,7 +232,7 @@ where
             replay_vote_sender,
             prioritization_fee_cache,
             TransactionRecorder::new_dummy(),
-            exit: Arc::default(),
+            Arc::default(),
         )
     }
 
