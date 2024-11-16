@@ -2023,6 +2023,16 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 break 'nonaborted_main_loop;
                             }
                             Ok(_) => unreachable!(),
+                            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                                if exit.load(Relaxed) {
+                                    result_with_timings = initialized_result_with_timings();
+                                    session_ending = false;
+                                    session_pausing = false;
+                                    break 'nonaborted_main_loop;
+                                } else {
+                                    continue;
+                                }
+                            }
                         }
                     }
                 }
