@@ -198,6 +198,7 @@ where
         replay_vote_sender: Option<ReplayVoteSender>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
         transaction_recorder: TransactionRecorder,
+        exit: Arc<AtomicBool>,
     ) -> Arc<Self> {
         Self::do_new(
             supported_scheduling_mode,
@@ -207,6 +208,7 @@ where
             replay_vote_sender,
             prioritization_fee_cache,
             transaction_recorder,
+            exit,
             DEFAULT_POOL_CLEANER_INTERVAL,
             DEFAULT_MAX_POOLING_DURATION,
             DEFAULT_MAX_USAGE_QUEUE_COUNT,
@@ -229,6 +231,7 @@ where
             replay_vote_sender,
             prioritization_fee_cache,
             TransactionRecorder::new_dummy(),
+            exit: Arc::default(),
         )
     }
 
