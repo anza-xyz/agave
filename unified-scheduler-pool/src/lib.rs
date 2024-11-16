@@ -2014,7 +2014,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     log_scheduler!(trace, "rebuffer");
                                 }
                             }
-                            Ok(NewTaskPayload::Disconnect(_)) | Err(TryRecvError::Disconnected) => {
+                            Ok(NewTaskPayload::Disconnect(_)) | Err(RecvTimeoutError::Disconnected) => {
                                 // This unusual condition must be triggered by ThreadManager::drop().
                                 // Initialize result_with_timings with a harmless value...
                                 result_with_timings = initialized_result_with_timings();
