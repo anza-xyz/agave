@@ -513,6 +513,7 @@ where
         replay_vote_sender: Option<ReplayVoteSender>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
         transaction_recorder: TransactionRecorder,
+        exit: Arc<AtomicBool>,
     ) -> InstalledSchedulerPoolArc {
         Self::new(
             supported_scheduling_mode,
@@ -522,6 +523,7 @@ where
             replay_vote_sender,
             prioritization_fee_cache,
             transaction_recorder,
+            exit,
         )
     }
 
