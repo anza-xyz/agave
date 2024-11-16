@@ -1875,7 +1875,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             },
                             */
                             default => {
-                                if self.exit.load(Relaxed) {
+                                if self.pool.exit.load(Relaxed) {
                                     break 'nonaborted_main_loop;
                                 }
                                 if let Some(task) = (!session_pausing).then(|| state_machine.scan_and_schedule_next_task()).flatten() {
