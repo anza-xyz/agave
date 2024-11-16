@@ -200,16 +200,16 @@ impl Tpu {
         )
         .unwrap();
 
-        let (tpu_vote_sender, tpu_vote_receiver) = if unified_scheduler_pool.is_none() {
-            banking_tracer.create_channel_tpu_vote()
-        } else {
+        let (tpu_vote_sender, tpu_vote_receiver) = if unified_scheduler_pool.as_ref().map(|pool| pool.block_production_enabled()).unwrap_or_default() {
             banking_tracer.create_unified_channel_tpu_vote(&non_vote_sender, &non_vote_receiver)
+        } else {
+            banking_tracer.create_channel_tpu_vote()
         };
 
-        let (gossip_vote_sender, gossip_vote_receiver) = if unified_scheduler_pool.is_none() {
-            banking_tracer.create_channel_gossip_vote()
-        } else {
+        let (gossip_vote_sender, gossip_vote_receiver) = if unified_scheduler_pool.as_ref().map(|pool| pool.block_production_enabled()).unwrap_or_default() {
             banking_tracer.create_unified_channel_gossip_vote(&non_vote_sender, &non_vote_receiver)
+        } else {
+            banking_tracer.create_channel_gossip_vote()
         };
 
         let sigverify_stage = {

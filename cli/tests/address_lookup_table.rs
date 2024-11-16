@@ -20,6 +20,8 @@ use {
 
 #[test]
 fn test_cli_create_extend_and_freeze_address_lookup_table() {
+    solana_logger::setup();
+
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);

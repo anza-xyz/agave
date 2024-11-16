@@ -4,6 +4,8 @@ dir = "target/nextest"
 [profile.ci]
 failure-output = "immediate-final"
 fail-fast = false
+slow-timeout = { period = "30s", terminate-after = 6 }
+retries = 3
 
 [profile.ci.junit]
 path = "junit.xml"

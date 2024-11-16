@@ -52,7 +52,7 @@ use {
         mem,
         sync::{
             atomic::{AtomicU64, Ordering::Relaxed},
-            Arc, Condvar, Mutex, OnceLock, RwLock, Weak,
+            Arc, Condvar, Mutex, OnceLock, Weak,
         },
         thread::{self, sleep, JoinHandle},
         time::{Duration, Instant},
@@ -107,7 +107,6 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     block_production_scheduler_inner: Mutex<(
         Option<SchedulerId>,
         Option<S::Inner>,
-        Option<SchedulingContext>,
     )>,
     block_production_scheduler_condvar: Condvar,
     block_production_scheduler_respawner: Mutex<Option<BlockProductionSchedulerRespawner>>,
@@ -172,7 +171,6 @@ type Bbb = Box<dyn (FnMut(Arc<BankingStageAdapter>) -> Box<dyn AAA>) + Send>;
 
 struct BlockProductionSchedulerRespawner {
     on_spawn_block_production_scheduler: Bbb,
-    bank_forks: Arc<RwLock<BankForks>>,
     banking_packet_receiver: BankingPacketReceiver,
 }
 
@@ -259,6 +257,10 @@ where
         )
     }
 
+    pub fn block_production_enabled(&self) -> bool {
+        self.supported_scheduling_mode.is_supported(SchedulingMode::BlockProduction)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn do_new(
         supported_scheduling_mode: SupportedSchedulingMode,
@@ -267,7 +269,7 @@ where
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: Option<ReplayVoteSender>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
-        transaction_recorder: TransactionRecorder,
+        mut transaction_recorder: TransactionRecorder,
         pool_cleaner_interval: Duration,
         max_pooling_duration: Duration,
         max_usage_queue_count: usize,
@@ -277,6 +279,10 @@ where
         assert!(handler_count >= 1);
         let bp_is_supported =
             supported_scheduling_mode.is_supported(SchedulingMode::BlockProduction);
+
+        if !bp_is_supported {
+            transaction_recorder = TransactionRecorder::new_dummy();
+        }
 
         let scheduler_pool = Arc::new_cyclic(|weak_self| Self {
             supported_scheduling_mode,
@@ -637,7 +643,6 @@ where
                             context.slot(),
                             context.mode()
                         );
-                        g.2 = Some(context.clone());
                     }
                     not_yet
                 })
@@ -652,13 +657,11 @@ where
 
     pub fn prepare_to_spawn_block_production_scheduler(
         &self,
-        bank_forks: Arc<RwLock<BankForks>>,
         banking_packet_receiver: BankingPacketReceiver,
         on_spawn_block_production_scheduler: Bbb,
     ) {
         *self.block_production_scheduler_respawner.lock().unwrap() =
             Some(BlockProductionSchedulerRespawner {
-                bank_forks,
                 banking_packet_receiver,
                 on_spawn_block_production_scheduler,
             });
@@ -678,14 +681,12 @@ where
             (
                 Option<u64>,
                 Option<<S as SpawnableScheduler<TH>>::Inner>,
-                Option<SchedulingContext>,
             ),
         >,
     ) {
         info!("flash session: start!");
         let mut respawner_write = self.block_production_scheduler_respawner.lock().unwrap();
         let BlockProductionSchedulerRespawner {
-            bank_forks,
             banking_packet_receiver,
             on_spawn_block_production_scheduler,
         } = &mut *respawner_write.as_mut().unwrap();
@@ -697,25 +698,21 @@ where
             id_generator: MonotonicIdGenerator::new(),
         });
 
+        info!("flash session: start!2");
         let on_banking_packet_receive = on_spawn_block_production_scheduler(adapter.clone());
         let banking_stage_context = (banking_packet_receiver.clone(), on_banking_packet_receive);
+        info!("flash session: start!2.5");
         /*
         let mut g = self
             .block_production_scheduler_inner
             .lock()
             .expect("not poisoned");
             */
-        let context =
-            g.2.take()
-                .inspect(|context| {
-                    assert_matches!(context.mode(), SchedulingMode::BlockProduction);
-                })
-                .unwrap_or_else(|| {
-                    SchedulingContext::new(
-                        SchedulingMode::BlockProduction,
-                        bank_forks.read().unwrap().root_bank(),
-                    )
-                });
+        let context = SchedulingContext::new(
+            SchedulingMode::BlockProduction,
+            None,
+        );
+        info!("flash session: start!3");
         let s = S::spawn(
             self.self_arc(),
             context,
@@ -766,8 +763,6 @@ where
         })
     }
 }
-
-use solana_runtime::bank_forks::BankForks;
 
 impl<S, TH> InstalledSchedulerPool for SchedulerPool<S, TH>
 where
@@ -862,7 +857,7 @@ impl TaskHandler for DefaultTaskHandler {
                 SchedulingMode::BlockVerification => None,
                 SchedulingMode::BlockProduction => Some(|| {
                     let summary = handler_context.transaction_recorder.record_transactions(
-                        scheduling_context.bank().slot(),
+                        scheduling_context.slot(),
                         vec![transaction.to_versioned_transaction()],
                     );
                     summary.result.is_ok()
@@ -1437,7 +1432,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         adapter: Option<Arc<BankingStageAdapter>>,
     ) {
         let scheduler_id = self.scheduler_id;
-        let mut slot = context.bank().slot();
+        let mut slot = context.slot();
 
         let postfix = match context.mode() {
             SchedulingMode::BlockVerification => "V",
@@ -1943,7 +1938,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 // enter into the preceding `while(!is_finished) {...}` loop again.
                                 // Before that, propagate new SchedulingContext to handler threads
                                 assert_eq!(state_machine.mode(), new_context.mode());
-                                slot = new_context.bank().slot();
+                                slot = new_context.slot();
                                 session_started_at = Instant::now();
                                 cpu_session_started_at = cpu_time::ThreadTime::now();
 
@@ -2341,7 +2336,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
         )>,
         banking_stage_adapter: Option<Arc<BankingStageAdapter>>,
     ) -> Self {
-        info!("spawning new scheduler for slot: {}", context.bank().slot());
+        info!("spawning new scheduler for slot: {}", context.slot());
         let task_creator = match context.mode() {
             SchedulingMode::BlockVerification => TaskCreator::BlockVerification {
                 usage_queue_loader: UsageQueueLoader::default(),

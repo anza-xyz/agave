@@ -231,16 +231,16 @@ pub type SchedulerId = u64;
 #[derive(Clone, Debug)]
 pub struct SchedulingContext {
     mode: SchedulingMode,
-    bank: Arc<Bank>,
+    bank: Option<Arc<Bank>>,
 }
 
 impl SchedulingContext {
-    pub fn new(mode: SchedulingMode, bank: Arc<Bank>) -> Self {
+    pub fn new(mode: SchedulingMode, bank: Option<Arc<Bank>>) -> Self {
         Self { mode, bank }
     }
 
     pub fn for_verification(bank: Arc<Bank>) -> Self {
-        Self::new(SchedulingMode::BlockVerification, bank)
+        Self::new(SchedulingMode::BlockVerification, Some(bank))
     }
 
     pub fn mode(&self) -> SchedulingMode {
@@ -248,11 +248,11 @@ impl SchedulingContext {
     }
 
     pub fn bank(&self) -> &Arc<Bank> {
-        &self.bank
+        self.bank.as_ref().unwrap()
     }
 
     pub fn slot(&self) -> Slot {
-        self.bank().slot()
+        self.bank.as_ref().map(|b| b.slot()).unwrap_or_default()
     }
 }
 
@@ -577,7 +577,7 @@ impl BankWithSchedulerInner {
                 let pool = pool.clone();
                 drop(scheduler);
 
-                let context = SchedulingContext::new(mode, self.bank.clone());
+                let context = SchedulingContext::new(mode, Some(self.bank.clone()));
                 let mut scheduler = self.scheduler.write().unwrap();
                 trace!("with_active_scheduler: {:?}", scheduler);
                 scheduler.transition_from_stale_to_active(|pool, result_with_timings| {
