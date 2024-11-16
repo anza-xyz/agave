@@ -129,6 +129,7 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     weak_self: Weak<Self>,
     next_scheduler_id: AtomicSchedulerId,
     max_usage_queue_count: usize,
+    exit: Arc<AtomicBool>,
     _phantom: PhantomData<TH>,
 }
 
@@ -302,6 +303,7 @@ where
             weak_self: weak_self.clone(),
             next_scheduler_id: AtomicSchedulerId::default(),
             max_usage_queue_count,
+            exit,
             _phantom: PhantomData,
         });
 
