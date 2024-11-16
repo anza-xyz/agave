@@ -1620,8 +1620,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             // cycles out of the scheduler thread. Thus, any kinds of unessential overhead sources
             // like syscalls, VDSO, and even memory (de)allocation should be avoided at all costs
             // by design or by means of offloading at the last resort.
+            let exit = self.pool.exit.clone();
             move || {
-                let exit = self.pool.exit.clone();
                 let (do_now, dont_now) = (&disconnected::<()>(), &never::<()>());
                 let dummy_receiver = |trigger| {
                     if trigger {
