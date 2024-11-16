@@ -775,7 +775,7 @@ mod tests {
             .in_sequence(&mut seq.lock().unwrap())
             .return_const(SchedulingContext::new(
                 SchedulingMode::BlockVerification,
-                bank,
+                Some(bank),
             ));
 
         for wait_reason in is_dropped_flags {
