@@ -1607,7 +1607,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     mut reported_executed_task_total,
                 ) = (session_started_at, 0, 0);
                 let mut cpu_log_reported_at = cpu_session_started_at;
-                let mut error_count: u32 = 0;
+                let mut error_count = ShortCounter::zero();
 
                 let (banking_packet_receiver, _on_recv) = banking_stage_context.unzip();
                 let banking_packet_receiver = banking_packet_receiver.unwrap_or_else(never);
