@@ -1717,7 +1717,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         // consistent. Note that unified scheduler will go
                         // into busy looping to seek lowest latency eventually. However, not now,
                         // to measure _actual_ cpu usage easily with the select approach.
-                        let step_type = select! {
+                        let step_type = select_biased! {
                             recv(finished_blocked_task_receiver) -> executed_task => {
                                 let Ok(executed_task) = executed_task else {
                                     error!("all handlers gone!!!");
@@ -2350,8 +2350,7 @@ pub struct BankingStageAdapter {
 
 impl BankingStageAdapter {
     pub fn bulk_assign_task_ids(&self, count: u64) -> u64 {
-        self.next_task_id
-            .fetch_add(count, std::sync::atomic::Ordering::AcqRel)
+        self.next_task_id.fetch_add(count, Relaxed)
     }
 
     pub fn create_task(
