@@ -57,6 +57,7 @@ use {
     },
     vec_extract_if_polyfill::MakeExtractIf,
 };
+use solana_unified_scheduler_logic::ShortCounter;
 
 mod sleepless_testing;
 use crate::sleepless_testing::BuilderTracked;
