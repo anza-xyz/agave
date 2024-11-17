@@ -1743,9 +1743,9 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     let task = adapter.as_ref().unwrap().recreate_task(task);
                                     error!("requeued tx!!!!");
                                     state_machine.do_schedule_task(task, true);
-                                    std::mem::forget(result_with_timings);
+                                    drop(result_with_timings);
                                 } else {
-                                    std::mem::forget(executed_task);
+                                    drop(executed_task);
                                 }
                                 if should_pause && !session_pausing && slot != 282254387 {
                                     session_pausing = true;
@@ -1898,7 +1898,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 } else {
                                     log_scheduler!(trace, "drained_desc");
                                 }
-                                std::mem::forget(task);
+                                drop(task);
                             }
                             log_scheduler!(info, "drained");
                             session_started_at = Instant::now();
