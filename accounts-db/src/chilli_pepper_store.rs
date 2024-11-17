@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 use {
-    redb::{Database, Error, Key, ReadableTableMetadata, TableDefinition, TypeName, Value},
+    redb::{
+        Database, Error, Key, ReadableTableMetadata, TableDefinition, TableStats, TypeName, Value,
+    },
     solana_sdk::{clock::Slot, pubkey::Pubkey},
     std::{borrow::Borrow, cmp::Ordering, fmt::Debug},
 };
@@ -71,6 +73,12 @@ impl ChilliPepperStore {
 
     pub fn get_db(&self) -> &Database {
         &self.db
+    }
+
+    pub fn stat(&self) -> Result<TableStats, Error> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(TABLE)?;
+        table.stats().map_err(Error::from)
     }
 
     pub fn len(&self) -> Result<u64, Error> {
@@ -408,5 +416,40 @@ pub mod tests {
         assert_eq!(store2.get(some_key2).unwrap().unwrap(), some_value2);
         assert_eq!(store2.get(some_key3).unwrap().unwrap(), some_value3);
         std::fs::remove_file(snapshot_path).expect("delete snapshot file success");
+    }
+
+    #[test]
+    fn test_stat() {
+        let pk1 = Pubkey::from([1_u8; 32]);
+        let pk2 = Pubkey::from([2_u8; 32]);
+        let pk3 = Pubkey::from([3_u8; 32]);
+
+        let some_key = PubkeySlot(&pk1, 42);
+        let some_key2 = PubkeySlot(&pk2, 43);
+        let some_key3 = PubkeySlot(&pk3, 44);
+
+        let some_value = 163;
+        let some_value2 = 164;
+        let some_value3 = 165;
+
+        let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
+
+        // default cache size is 1024 * 1024 * 1024 (1GB)
+        // 90% of the cache is used for the read cache, and 10% is used for the write cache.
+        let db = Database::create(tmpfile.path()).expect("create db success");
+        let store = ChilliPepperStore::new(db);
+
+        store.insert(some_key, some_value).unwrap();
+        store.insert(some_key2, some_value2).unwrap();
+        store.insert(some_key3, some_value3).unwrap();
+        assert_eq!(store.len().unwrap(), 3);
+
+        let stat = store.stat().unwrap();
+        assert_eq!(stat.tree_height(), 1);
+        assert_eq!(stat.leaf_pages(), 1);
+        assert_eq!(stat.branch_pages(), 0);
+        assert_eq!(stat.stored_bytes(), 144);
+        assert_eq!(stat.metadata_bytes(), 4);
+        assert_eq!(stat.fragmented_bytes(), 3948);
     }
 }
