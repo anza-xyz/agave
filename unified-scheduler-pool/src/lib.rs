@@ -662,7 +662,7 @@ where
 
     pub fn spawn_block_production_scheduler(
         &self,
-        g: &mut std::sync::MutexGuard<'_, (Option<SchedulerId>, Option<S::Inner>)>,
+        g: &mut MutexGuard<'_, (Option<SchedulerId>, Option<S::Inner>)>,
     ) {
         info!("flash session: start!");
         let mut respawner_write = self.block_production_scheduler_respawner.lock().unwrap();
