@@ -312,10 +312,11 @@ where
                 None
             };
 
-            move || {
-                let mut exiting = false;
-
-                loop {
+            let mut exiting = false;
+            move || loop {
+                    defer! {
+                        warn!("solScCleaner exited!");
+                    }
                     sleep(pool_cleaner_interval);
                     info!("Scheduler pool cleaner: start!!!",);
 
@@ -488,8 +489,6 @@ where
                         }
                         break;
                     }
-                }
-                warn!("solScCleaner exited!");
             }
         };
 
@@ -676,7 +675,7 @@ where
         &self,
         g: &mut std::sync::MutexGuard<
             '_,
-            (Option<u64>, Option<<S as SpawnableScheduler<TH>>::Inner>),
+            (Option<SchedulerId>, Option<<S as SpawnableScheduler<TH>>::Inner>),
         >,
     ) {
         info!("flash session: start!");
@@ -693,18 +692,9 @@ where
             id_generator: MonotonicIdGenerator::new(),
         });
 
-        info!("flash session: start!2");
         let on_banking_packet_receive = on_spawn_block_production_scheduler(adapter.clone());
         let banking_stage_context = (banking_packet_receiver.clone(), on_banking_packet_receive);
-        info!("flash session: start!2.5");
-        /*
-        let mut g = self
-            .block_production_scheduler_inner
-            .lock()
-            .expect("not poisoned");
-            */
         let context = SchedulingContext::new(SchedulingMode::BlockProduction, None);
-        info!("flash session: start!3");
         let s = S::spawn(
             self.self_arc(),
             context,
@@ -2177,15 +2167,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 let result_with_timings = self.session_result_receiver.recv().unwrap();
                 debug!("ensure_join_threads(): err: {:?}", result_with_timings.0);
                 self.put_session_result_with_timings(result_with_timings);
-            } else {
-                #[allow(clippy::collapsible_else_if)]
-                if let Ok(result_with_timings) =
-                    self.session_result_receiver.try_recv().inspect_err(|err| {
-                        error!("ensure_join_threads(): would be blocked....: {:?}", err);
-                    })
-                {
-                    self.put_session_result_with_timings(result_with_timings);
-                }
             }
         } else {
             warn!("ensure_join_threads(): skipping; already joined...");
