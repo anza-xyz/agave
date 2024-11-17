@@ -314,9 +314,6 @@ where
 
             let mut exiting = false;
             move || loop {
-                defer! {
-                    warn!("solScCleaner exited!");
-                }
                 sleep(pool_cleaner_interval);
                 info!("Scheduler pool cleaner: start!!!",);
 
@@ -335,7 +332,6 @@ where
                     let mut idle_inners = Vec::with_capacity(128);
 
                     let Ok(mut scheduler_inners) = scheduler_pool.scheduler_inners.lock() else {
-                        error!("poison1!");
                         break;
                     };
                     // Use the still-unstable Vec::extract_if() even on stable rust toolchain by
@@ -361,7 +357,6 @@ where
                     let Ok(mut trashed_scheduler_inners) =
                         scheduler_pool.trashed_scheduler_inners.lock()
                     else {
-                        error!("poison2!");
                         break;
                     };
                     let trashed_inners: Vec<_> = mem::take(&mut *trashed_scheduler_inners);
