@@ -1933,7 +1933,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     state_machine.reset_executed_task_total();
                                     reported_task_total = 0;
                                     reported_executed_task_total = 0;
-                                    error_count = 0;
+                                    error_count.reset_to_zero();
                                     session_pausing = false;
                                     log_scheduler!(info, "unpaused");
                                 }
