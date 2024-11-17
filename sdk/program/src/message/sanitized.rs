@@ -185,6 +185,14 @@ impl SanitizedMessage {
         })
     }
 
+    /// Return the list of statically included account keys.
+    pub fn static_account_keys(&self) -> &[Pubkey] {
+        match self {
+            Self::Legacy(legacy_message) => &legacy_message.message.account_keys,
+            Self::V0(loaded_msg) => &loaded_msg.message.account_keys,
+        }
+    }
+
     /// Returns the list of account keys that are loaded for this message.
     pub fn account_keys(&self) -> AccountKeys {
         match self {
@@ -702,5 +710,57 @@ mod tests {
         assert_eq!(2, signature_details.num_secp256k1_instruction_signatures);
         // expect 5 ed25519 instruction signatures from mock_ed25519_instr
         assert_eq!(5, signature_details.num_ed25519_instruction_signatures);
+    }
+
+    #[test]
+    fn test_static_account_keys() {
+        let key0 = Pubkey::new_unique();
+        let key1 = Pubkey::new_unique();
+        let key2 = Pubkey::new_unique();
+
+        let header = MessageHeader {
+            num_required_signatures: 2,
+            num_readonly_signed_accounts: 1,
+            num_readonly_unsigned_accounts: 1,
+        };
+
+        let legacy_message = SanitizedMessage::try_from_legacy_message(
+            legacy::Message {
+                header: header.clone(),
+                account_keys: vec![key0, key1, key2],
+                ..legacy::Message::default()
+            },
+            &HashSet::default(),
+        )
+        .unwrap();
+        assert_eq!(legacy_message.static_account_keys(), &[key0, key1, key2]);
+
+        let v0_message = SanitizedMessage::V0(v0::LoadedMessage::new(
+            v0::Message {
+                header: header.clone(),
+                account_keys: vec![key0, key1, key2],
+                ..v0::Message::default()
+            },
+            LoadedAddresses {
+                writable: vec![],
+                readonly: vec![],
+            },
+            &HashSet::default(),
+        ));
+        assert_eq!(v0_message.static_account_keys(), &[key0, key1, key2]);
+
+        let v0_message = SanitizedMessage::V0(v0::LoadedMessage::new(
+            v0::Message {
+                header: header.clone(),
+                account_keys: vec![key0, key1, key2],
+                ..v0::Message::default()
+            },
+            LoadedAddresses {
+                writable: vec![Pubkey::new_unique()],
+                readonly: vec![Pubkey::new_unique()],
+            },
+            &HashSet::default(),
+        ));
+        assert_eq!(v0_message.static_account_keys(), &[key0, key1, key2]);
     }
 }
