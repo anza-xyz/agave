@@ -14,7 +14,7 @@ use qualifier_attr::qualifiers;
 use {
     assert_matches::assert_matches,
     crossbeam_channel::{
-        self, never, select, select_biased, Receiver, RecvError, SendError, Sender,
+        self, never, select_biased, Receiver, RecvError, SendError, Sender,
     },
     dashmap::{DashMap, DashSet},
     derivative::Derivative,
@@ -932,6 +932,7 @@ mod chained_channel {
 
     #[derive(EnumPtr)]
     #[repr(C, usize)]
+    #[allow(clippy::type_complexity)]
     pub(super) enum ChainedChannel<P: Aligned, C> {
         Payload(P),
         ContextAndChannels(Box<(C, Receiver<Compact<ChainedChannel<P, C>>>, Receiver<P>)>),
