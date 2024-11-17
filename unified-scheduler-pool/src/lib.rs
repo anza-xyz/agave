@@ -314,181 +314,179 @@ where
 
             let mut exiting = false;
             move || loop {
-                    defer! {
-                        warn!("solScCleaner exited!");
-                    }
-                    sleep(pool_cleaner_interval);
-                    info!("Scheduler pool cleaner: start!!!",);
+                defer! {
+                    warn!("solScCleaner exited!");
+                }
+                sleep(pool_cleaner_interval);
+                info!("Scheduler pool cleaner: start!!!",);
 
-                    let Some(scheduler_pool) = strong_scheduler_pool
-                        .clone()
-                        .or_else(|| weak_scheduler_pool.upgrade())
-                    else {
-                        error!("weak pool!");
+                let Some(scheduler_pool) = strong_scheduler_pool
+                    .clone()
+                    .or_else(|| weak_scheduler_pool.upgrade())
+                else {
+                    error!("weak pool!");
+                    break;
+                };
+
+                let now = Instant::now();
+
+                let (idle_inner_count, active_inner_count) = {
+                    // Pre-allocate rather large capacity to avoid reallocation inside the lock.
+                    let mut idle_inners = Vec::with_capacity(128);
+
+                    let Ok(mut scheduler_inners) = scheduler_pool.scheduler_inners.lock() else {
+                        error!("poison1!");
                         break;
                     };
+                    // Use the still-unstable Vec::extract_if() even on stable rust toolchain by
+                    // using a polyfill and allowing unstable_name_collisions, because it's
+                    // simplest to code and fastest to run (= O(n); single linear pass and no
+                    // reallocation).
+                    //
+                    // Note that this critical section could block the latency-sensitive replay
+                    // code-path via ::take_scheduler().
+                    #[allow(unstable_name_collisions)]
+                    idle_inners.extend(scheduler_inners.extract_if(|(_inner, pooled_at)| {
+                        now.duration_since(*pooled_at) > max_pooling_duration
+                    }));
+                    let r = scheduler_inners.len();
+                    drop(scheduler_inners);
 
-                    let now = Instant::now();
+                    let idle_inner_count = idle_inners.len();
+                    drop(idle_inners);
+                    (idle_inner_count, r)
+                };
 
-                    let (idle_inner_count, active_inner_count) = {
-                        // Pre-allocate rather large capacity to avoid reallocation inside the lock.
-                        let mut idle_inners = Vec::with_capacity(128);
-
-                        let Ok(mut scheduler_inners) = scheduler_pool.scheduler_inners.lock()
-                        else {
-                            error!("poison1!");
-                            break;
-                        };
-                        // Use the still-unstable Vec::extract_if() even on stable rust toolchain by
-                        // using a polyfill and allowing unstable_name_collisions, because it's
-                        // simplest to code and fastest to run (= O(n); single linear pass and no
-                        // reallocation).
-                        //
-                        // Note that this critical section could block the latency-sensitive replay
-                        // code-path via ::take_scheduler().
-                        #[allow(unstable_name_collisions)]
-                        idle_inners.extend(scheduler_inners.extract_if(|(_inner, pooled_at)| {
-                            now.duration_since(*pooled_at) > max_pooling_duration
-                        }));
-                        let r = scheduler_inners.len();
-                        drop(scheduler_inners);
-
-                        let idle_inner_count = idle_inners.len();
-                        drop(idle_inners);
-                        (idle_inner_count, r)
+                let trashed_inner_count = {
+                    let Ok(mut trashed_scheduler_inners) =
+                        scheduler_pool.trashed_scheduler_inners.lock()
+                    else {
+                        error!("poison2!");
+                        break;
                     };
+                    let trashed_inners: Vec<_> = mem::take(&mut *trashed_scheduler_inners);
+                    drop(trashed_scheduler_inners);
 
-                    let trashed_inner_count = {
-                        let Ok(mut trashed_scheduler_inners) =
-                            scheduler_pool.trashed_scheduler_inners.lock()
-                        else {
-                            error!("poison2!");
-                            break;
-                        };
-                        let trashed_inners: Vec<_> = mem::take(&mut *trashed_scheduler_inners);
-                        drop(trashed_scheduler_inners);
-
-                        let trashed_inner_count = trashed_inners.len();
-                        for trashed_inner in trashed_inners {
-                            match trashed_inner.banking_stage_status() {
-                                BankingStageStatus::Active
-                                | BankingStageStatus::NotBanking
-                                | BankingStageStatus::Inactive => {
-                                    drop(trashed_inner);
-                                }
-                                BankingStageStatus::Exited => {
-                                    scheduler_pool.reset_respawner();
-                                    info!("trashed sch {} IS Exited", trashed_inner.id());
-                                    let id = trashed_inner.id();
-                                    info!("dropping trashed sch {id}");
-                                    drop(trashed_inner);
-                                    info!("dropped trashed sch {id}");
-                                    exiting = true;
-                                }
+                    let trashed_inner_count = trashed_inners.len();
+                    for trashed_inner in trashed_inners {
+                        match trashed_inner.banking_stage_status() {
+                            BankingStageStatus::Active
+                            | BankingStageStatus::NotBanking
+                            | BankingStageStatus::Inactive => {
+                                drop(trashed_inner);
+                            }
+                            BankingStageStatus::Exited => {
+                                scheduler_pool.reset_respawner();
+                                info!("trashed sch {} IS Exited", trashed_inner.id());
+                                let id = trashed_inner.id();
+                                info!("dropping trashed sch {id}");
+                                drop(trashed_inner);
+                                info!("dropped trashed sch {id}");
+                                exiting = true;
                             }
                         }
-                        trashed_inner_count
+                    }
+                    trashed_inner_count
+                };
+
+                let (triggered_timeout_listener_count, active_timeout_listener_count) = {
+                    // Pre-allocate rather large capacity to avoid reallocation inside the lock.
+                    let mut expired_listeners = Vec::with_capacity(128);
+                    let Ok(mut timeout_listeners) = scheduler_pool.timeout_listeners.lock() else {
+                        error!("poison3!");
+                        break;
                     };
+                    #[allow(unstable_name_collisions)]
+                    expired_listeners.extend(timeout_listeners.extract_if(
+                        |(_callback, registered_at)| {
+                            now.duration_since(*registered_at) > timeout_duration
+                        },
+                    ));
+                    let r = timeout_listeners.len();
+                    drop(timeout_listeners);
 
-                    let (triggered_timeout_listener_count, active_timeout_listener_count) = {
-                        // Pre-allocate rather large capacity to avoid reallocation inside the lock.
-                        let mut expired_listeners = Vec::with_capacity(128);
-                        let Ok(mut timeout_listeners) = scheduler_pool.timeout_listeners.lock()
-                        else {
-                            error!("poison3!");
-                            break;
-                        };
-                        #[allow(unstable_name_collisions)]
-                        expired_listeners.extend(timeout_listeners.extract_if(
-                            |(_callback, registered_at)| {
-                                now.duration_since(*registered_at) > timeout_duration
-                            },
-                        ));
-                        let r = timeout_listeners.len();
-                        drop(timeout_listeners);
+                    let count = expired_listeners.len();
+                    for (timeout_listener, _registered_at) in expired_listeners {
+                        timeout_listener.trigger(scheduler_pool.clone());
+                    }
+                    (count, r)
+                };
 
-                        let count = expired_listeners.len();
-                        for (timeout_listener, _registered_at) in expired_listeners {
-                            timeout_listener.trigger(scheduler_pool.clone());
-                        }
-                        (count, r)
-                    };
+                info!("Scheduler pool cleaner: block_production_scheduler_inner!!!",);
 
-                    info!("Scheduler pool cleaner: block_production_scheduler_inner!!!",);
-
-                    let bpsi = {
-                        let mut g = scheduler_pool
-                            .block_production_scheduler_inner
-                            .lock()
-                            .unwrap();
-                        if let Some(pooled) = &g.1 {
-                            match pooled.banking_stage_status() {
-                                BankingStageStatus::NotBanking => unreachable!(),
-                                BankingStageStatus::Active => false,
-                                BankingStageStatus::Inactive => {
-                                    info!("sch {} IS idle", pooled.id());
-                                    if pooled.is_overgrown(false) {
-                                        info!("sch {} is overgrown!", pooled.id());
-                                        let pooled = g.1.take().unwrap();
-                                        assert_eq!(Some(pooled.id()), g.0.take());
-                                        scheduler_pool.spawn_block_production_scheduler(&mut g);
-                                        drop(g);
-                                        let id = pooled.id();
-                                        info!("dropping overgrown sch {id}");
-                                        drop(pooled);
-                                        info!("dropped overgrown sch {id}");
-                                    } else {
-                                        info!("sch {} isn't overgrown", pooled.id());
-                                        pooled.reset();
-                                    }
-                                    false
+                let bpsi = {
+                    let mut g = scheduler_pool
+                        .block_production_scheduler_inner
+                        .lock()
+                        .unwrap();
+                    if let Some(pooled) = &g.1 {
+                        match pooled.banking_stage_status() {
+                            BankingStageStatus::NotBanking => unreachable!(),
+                            BankingStageStatus::Active => false,
+                            BankingStageStatus::Inactive => {
+                                info!("sch {} IS idle", pooled.id());
+                                if pooled.is_overgrown(false) {
+                                    info!("sch {} is overgrown!", pooled.id());
+                                    let pooled = g.1.take().unwrap();
+                                    assert_eq!(Some(pooled.id()), g.0.take());
+                                    scheduler_pool.spawn_block_production_scheduler(&mut g);
+                                    drop(g);
+                                    let id = pooled.id();
+                                    info!("dropping overgrown sch {id}");
+                                    drop(pooled);
+                                    info!("dropped overgrown sch {id}");
+                                } else {
+                                    info!("sch {} isn't overgrown", pooled.id());
+                                    pooled.reset();
                                 }
-                                BankingStageStatus::Exited => {
-                                    scheduler_pool.reset_respawner();
-                                    info!("sch {} IS Exited", pooled.id());
-                                    exiting = true;
-                                    true
-                                }
+                                false
                             }
-                        } else {
-                            g.0.is_none()
+                            BankingStageStatus::Exited => {
+                                scheduler_pool.reset_respawner();
+                                info!("sch {} IS Exited", pooled.id());
+                                exiting = true;
+                                true
+                            }
                         }
-                    };
+                    } else {
+                        g.0.is_none()
+                    }
+                };
 
-                    info!(
+                info!(
                     "Scheduler pool cleaner: dropped {} idle inners, {} trashed inners, triggered {} timeout listeners {} {} {:?} {:?}",
                     idle_inner_count, trashed_inner_count, triggered_timeout_listener_count,
                     active_inner_count, active_timeout_listener_count, exiting, bpsi
                 );
-                    sleepless_testing::at(CheckPoint::IdleSchedulerCleaned(idle_inner_count));
-                    sleepless_testing::at(CheckPoint::TrashedSchedulerCleaned(trashed_inner_count));
-                    sleepless_testing::at(CheckPoint::TimeoutListenerTriggered(
-                        triggered_timeout_listener_count,
-                    ));
-                    if exiting
+                sleepless_testing::at(CheckPoint::IdleSchedulerCleaned(idle_inner_count));
+                sleepless_testing::at(CheckPoint::TrashedSchedulerCleaned(trashed_inner_count));
+                sleepless_testing::at(CheckPoint::TimeoutListenerTriggered(
+                    triggered_timeout_listener_count,
+                ));
+                if exiting
                         && idle_inner_count == 0
                         //&& active_inner_count == 0
                         && trashed_inner_count == 0
                         && triggered_timeout_listener_count == 0
                         && active_timeout_listener_count == 0
                         && bpsi
-                    {
-                        error!("proper exit!");
-                        sleep(Duration::from_secs(1));
-                        let mut g = scheduler_pool
-                            .block_production_scheduler_inner
-                            .lock()
-                            .unwrap();
-                        if let Some(pooled) = g.1.take() {
-                            assert_eq!(Some(pooled.id()), g.0.take());
-                            drop(g);
-                            let id = pooled.id();
-                            info!("dropping sch {id} after proper exit");
-                            drop(pooled);
-                            info!("dropped sch {id} after proper exit");
-                        }
-                        break;
+                {
+                    error!("proper exit!");
+                    sleep(Duration::from_secs(1));
+                    let mut g = scheduler_pool
+                        .block_production_scheduler_inner
+                        .lock()
+                        .unwrap();
+                    if let Some(pooled) = g.1.take() {
+                        assert_eq!(Some(pooled.id()), g.0.take());
+                        drop(g);
+                        let id = pooled.id();
+                        info!("dropping sch {id} after proper exit");
+                        drop(pooled);
+                        info!("dropped sch {id} after proper exit");
                     }
+                    break;
+                }
             }
         };
 
@@ -675,7 +673,10 @@ where
         &self,
         g: &mut std::sync::MutexGuard<
             '_,
-            (Option<SchedulerId>, Option<<S as SpawnableScheduler<TH>>::Inner>),
+            (
+                Option<SchedulerId>,
+                Option<<S as SpawnableScheduler<TH>>::Inner>,
+            ),
         >,
     ) {
         info!("flash session: start!");
