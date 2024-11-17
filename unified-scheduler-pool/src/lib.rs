@@ -669,7 +669,7 @@ where
             '_,
             (
                 Option<SchedulerId>,
-                Option<<S as SpawnableScheduler<TH>>::Inner>,
+                Option<S::Inner>,
             ),
         >,
     ) {
