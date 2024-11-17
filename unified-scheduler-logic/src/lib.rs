@@ -128,7 +128,7 @@ mod utils {
     ///
     /// It's caller's reponsibility to ensure this (backed by [`u32`]) never overflow.
     #[derive(Debug, Clone, Copy)]
-    pub(super) struct ShortCounter(u32);
+    pub struct ShortCounter(u32);
 
     impl ShortCounter {
         pub(super) fn zero() -> Self {
