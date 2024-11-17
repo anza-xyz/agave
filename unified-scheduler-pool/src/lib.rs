@@ -1908,7 +1908,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             cpu_session_started_at = cpu_time::ThreadTime::now();
                             reported_task_total = 0;
                             reported_executed_task_total = 0;
-                            error_count = 0;
+                            error_count.reset_to_zero();
                             session_resetting = false;
                         }
                         match new_task_receiver.recv().map(|a| a.into()) {
