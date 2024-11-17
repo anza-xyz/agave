@@ -155,8 +155,7 @@ impl ChilliPepperStore {
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table::<PubkeySlot, u64>(TABLE)?;
-            // TODO: Implement clean
-            todo!()
+            table.retain(|_k, v| v >= threshold)?;
         }
         write_txn.commit().map_err(Error::from)
     }
@@ -451,5 +450,31 @@ pub mod tests {
         assert_eq!(stat.stored_bytes(), 144);
         assert_eq!(stat.metadata_bytes(), 4);
         assert_eq!(stat.fragmented_bytes(), 3948);
+    }
+
+    #[test]
+    fn test_clean() {
+        let mut pks = vec![];
+        for i in 0..10 {
+            pks.push(Pubkey::from([i; 32]));
+        }
+
+        let data: Vec<_> = pks
+            .iter()
+            .zip(100..110)
+            .map(|(pk, v)| (PubkeySlot(pk, 42), v))
+            .collect();
+        let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
+
+        // default cache size is 1024 * 1024 * 1024 (1GB)
+        // 90% of the cache is used for the read cache, and 10% is used for the write cache.
+        let db = Database::create(tmpfile.path()).expect("create db success");
+        let store = ChilliPepperStore::new(db);
+
+        store.bulk_insert(data).unwrap();
+        assert_eq!(store.len().unwrap(), 10);
+
+        store.clean(105).unwrap();
+        assert_eq!(store.len().unwrap(), 5);
     }
 }
