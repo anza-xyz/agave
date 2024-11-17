@@ -194,7 +194,7 @@ mod tests {
         solana_sdk::{
             address_lookup_table::AddressLookupTableAccount,
             hash::Hash,
-            message::v0,
+            message::{v0, SimpleAddressLoader},
             reserved_account_keys::ReservedAccountKeys,
             signature::{Keypair, Signature},
             system_instruction, system_transaction,
@@ -266,6 +266,8 @@ mod tests {
             assert_eq!(original_transaction, versioned_transaction);
         }
 
+        let reserved_key_set = ReservedAccountKeys::empty_key_set();
+
         // Simple transfer.
         let original_transaction = VersionedTransaction::from(system_transaction::transfer(
             &Keypair::new(),
@@ -273,11 +275,7 @@ mod tests {
             1,
             Hash::new_unique(),
         ));
-        assert_translation(
-            original_transaction,
-            None,
-            &ReservedAccountKeys::empty_key_set(),
-        );
+        assert_translation(original_transaction, None, &reserved_key_set);
 
         // Simple transfer with loaded addresses.
         let payer = Pubkey::new_unique();
@@ -303,7 +301,93 @@ mod tests {
                 writable: vec![to],
                 readonly: vec![],
             }),
-            &ReservedAccountKeys::empty_key_set(),
+            &reserved_key_set,
+        );
+    }
+
+    #[test]
+    fn test_as_sanitized_transaction() {
+        fn assert_translation(
+            original_transaction: SanitizedTransaction,
+            loaded_addresses: Option<LoadedAddresses>,
+            reserved_account_keys: &HashSet<Pubkey>,
+        ) {
+            let bytes =
+                bincode::serialize(&original_transaction.to_versioned_transaction()).unwrap();
+            let transaction_view = SanitizedTransactionView::try_new_sanitized(&bytes[..]).unwrap();
+            let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
+                transaction_view,
+                MessageHash::Compute,
+                None,
+            )
+            .unwrap();
+            let runtime_transaction = RuntimeTransaction::<ResolvedTransactionView<_>>::try_from(
+                runtime_transaction,
+                loaded_addresses,
+                reserved_account_keys,
+            )
+            .unwrap();
+
+            let sanitized_transaction = runtime_transaction.as_sanitized_transaction();
+            assert_eq!(
+                sanitized_transaction.message_hash(),
+                original_transaction.message_hash()
+            );
+        }
+
+        let reserved_key_set = ReservedAccountKeys::empty_key_set();
+
+        // Simple transfer.
+        let original_transaction = VersionedTransaction::from(system_transaction::transfer(
+            &Keypair::new(),
+            &Pubkey::new_unique(),
+            1,
+            Hash::new_unique(),
+        ));
+        let sanitized_transaction = SanitizedTransaction::try_create(
+            original_transaction,
+            MessageHash::Compute,
+            None,
+            SimpleAddressLoader::Disabled,
+            &reserved_key_set,
+        )
+        .unwrap();
+        assert_translation(sanitized_transaction, None, &reserved_key_set);
+
+        // Simple transfer with loaded addresses.
+        let payer = Pubkey::new_unique();
+        let to = Pubkey::new_unique();
+        let original_transaction = VersionedTransaction {
+            signatures: vec![Signature::default()], // 1 signature to be valid.
+            message: VersionedMessage::V0(
+                v0::Message::try_compile(
+                    &payer,
+                    &[system_instruction::transfer(&payer, &to, 1)],
+                    &[AddressLookupTableAccount {
+                        key: Pubkey::new_unique(),
+                        addresses: vec![to],
+                    }],
+                    Hash::default(),
+                )
+                .unwrap(),
+            ),
+        };
+        let loaded_addresses = LoadedAddresses {
+            writable: vec![to],
+            readonly: vec![],
+        };
+        let sanitized_transaction = SanitizedTransaction::try_create(
+            original_transaction,
+            MessageHash::Compute,
+            None,
+            SimpleAddressLoader::Enabled(loaded_addresses.clone()),
+            &reserved_key_set,
+        )
+        .unwrap();
+        assert_translation(
+            sanitized_transaction,
+            Some(loaded_addresses),
+            &reserved_key_set,
         );
     }
 }
