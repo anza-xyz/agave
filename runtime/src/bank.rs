@@ -1613,6 +1613,7 @@ impl Bank {
         new.apply_feature_activations(ApplyFeatureActivationsCaller::WarpFromParent, false);
         new.update_epoch_stakes(new.epoch_schedule().get_epoch(slot));
         new.tick_height.store(new.max_tick_height(), Relaxed);
+        new.tick_height_for_vote_only.store(new.max_tick_height(), Relaxed);
 
         let mut clock = new.clock();
         clock.epoch_start_timestamp = parent_timestamp;
