@@ -1,4 +1,3 @@
-#![allow(clippy::arithmetic_side_effects)]
 //! Transaction scheduling code.
 //!
 //! This crate implements 3 solana-runtime traits (`InstalledScheduler`, `UninstalledScheduler` and
