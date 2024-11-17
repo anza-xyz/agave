@@ -1878,7 +1878,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         SchedulingMode::BlockVerification => {
                             reported_task_total = 0;
                             reported_executed_task_total = 0;
-                            assert_eq!(error_count, 0);
+                            assert_eq!(error_count.current(), 0);
                         }
                         SchedulingMode::BlockProduction => {
                             session_started_at = Instant::now();
