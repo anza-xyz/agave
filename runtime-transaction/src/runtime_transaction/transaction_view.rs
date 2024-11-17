@@ -190,18 +190,14 @@ impl<D: TransactionData> TransactionWithMeta for RuntimeTransaction<ResolvedTran
 #[cfg(test)]
 mod tests {
     use {
-        crate::{runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta},
-        agave_transaction_view::{
-            resolved_transaction_view::ResolvedTransactionView,
-            transaction_view::SanitizedTransactionView,
-        },
-        solana_pubkey::Pubkey,
+        super::*,
         solana_sdk::{
+            address_lookup_table::AddressLookupTableAccount,
             hash::Hash,
+            message::v0,
             reserved_account_keys::ReservedAccountKeys,
-            signature::Keypair,
-            system_transaction,
-            transaction::{MessageHash, VersionedTransaction},
+            signature::{Keypair, Signature},
+            system_instruction, system_transaction,
         },
     };
 
@@ -242,5 +238,72 @@ mod tests {
 
         assert_eq!(hash, *dynamic_runtime_transaction.message_hash());
         assert!(!dynamic_runtime_transaction.is_simple_vote_transaction());
+    }
+
+    #[test]
+    fn test_to_versioned_transaction() {
+        fn assert_translation(
+            original_transaction: VersionedTransaction,
+            loaded_addresses: Option<LoadedAddresses>,
+            reserved_account_keys: &HashSet<Pubkey>,
+        ) {
+            let bytes = bincode::serialize(&original_transaction).unwrap();
+            let transaction_view = SanitizedTransactionView::try_new_sanitized(&bytes[..]).unwrap();
+            let runtime_transaction = RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
+                transaction_view,
+                MessageHash::Compute,
+                None,
+            )
+            .unwrap();
+            let runtime_transaction = RuntimeTransaction::<ResolvedTransactionView<_>>::try_from(
+                runtime_transaction,
+                loaded_addresses,
+                reserved_account_keys,
+            )
+            .unwrap();
+
+            let versioned_transaction = runtime_transaction.to_versioned_transaction();
+            assert_eq!(original_transaction, versioned_transaction);
+        }
+
+        // Simple transfer.
+        let original_transaction = VersionedTransaction::from(system_transaction::transfer(
+            &Keypair::new(),
+            &Pubkey::new_unique(),
+            1,
+            Hash::new_unique(),
+        ));
+        assert_translation(
+            original_transaction,
+            None,
+            &ReservedAccountKeys::empty_key_set(),
+        );
+
+        // Simple transfer with loaded addresses.
+        let payer = Pubkey::new_unique();
+        let to = Pubkey::new_unique();
+        let original_transaction = VersionedTransaction {
+            signatures: vec![Signature::default()], // 1 signature to be valid.
+            message: VersionedMessage::V0(
+                v0::Message::try_compile(
+                    &payer,
+                    &[system_instruction::transfer(&payer, &to, 1)],
+                    &[AddressLookupTableAccount {
+                        key: Pubkey::new_unique(),
+                        addresses: vec![to],
+                    }],
+                    Hash::default(),
+                )
+                .unwrap(),
+            ),
+        };
+        assert_translation(
+            original_transaction,
+            Some(LoadedAddresses {
+                writable: vec![to],
+                readonly: vec![],
+            }),
+            &ReservedAccountKeys::empty_key_set(),
+        );
     }
 }
