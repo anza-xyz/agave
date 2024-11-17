@@ -1628,7 +1628,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             (if session_pausing {"P"} else {"-"}),
                             state_machine.alive_task_count(),
                             state_machine.blocked_task_count(), state_machine.buffered_task_queue_count(), state_machine.eager_lock_total(),
-                            state_machine.executed_task_total(), state_machine.executed_task_total() - error_count, error_count,
+                            state_machine.executed_task_total(), state_machine.executed_task_total() - error_count.current(), error_count.current(),
                             state_machine.task_total(),
                             state_machine.buffered_task_total(),
                             state_machine.reblocked_lock_total(),
