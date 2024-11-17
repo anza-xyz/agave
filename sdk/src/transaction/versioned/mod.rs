@@ -352,4 +352,24 @@ mod tests {
         let tx = VersionedTransaction::from(tx);
         assert!(!tx.uses_durable_nonce());
     }
+
+    #[test]
+    fn test_sanitize_signatures_inner() {
+        assert_eq!(
+            VersionedTransaction::sanitize_signatures_inner(1, 1, 0),
+            Err(SanitizeError::IndexOutOfBounds)
+        );
+        assert_eq!(
+            VersionedTransaction::sanitize_signatures_inner(1, 1, 2),
+            Err(SanitizeError::InvalidValue)
+        );
+        assert_eq!(
+            VersionedTransaction::sanitize_signatures_inner(2, 1, 2),
+            Err(SanitizeError::IndexOutOfBounds)
+        );
+        assert_eq!(
+            VersionedTransaction::sanitize_signatures_inner(1, 1, 1),
+            Ok(())
+        );
+    }
 }
