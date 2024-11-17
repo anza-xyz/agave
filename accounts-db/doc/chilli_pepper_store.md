@@ -55,6 +55,9 @@ TODO
 
 ## On Insert
 
+The account's chilli pepper are inserted at account's load time. 
+
+TODO
 
 ## Clean
 
@@ -63,7 +66,13 @@ Remove entry's whose chilli peppers is below a threshold to keep only the hot ac
 ## Snapshot
 
 * Create savepoint at Snapshot time (SavePoint Manager)
-* Generate backup snapshot database file from the savepoints
-* Archive the snapshot database in the snapshot tar ball.
+* Generate backup snapshot db file from the savepoints
+* Archive the snapshot db in the snapshot tar ball.
 
 ## On Restart
+
+* When restart from a downloaded snapshot, the chilli pepper store are reopend
+from the snapshot db file in tar bar.
+
+* When restarted from load snapshot, the chilli pepper store are reopend from the
+local db file.
