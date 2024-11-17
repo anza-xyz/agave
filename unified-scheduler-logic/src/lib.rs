@@ -97,7 +97,7 @@
 //! by the mentioned benchmark above. Thus, this should be solved elsewhere, specifically at the
 //! scheduler pool.
 use {
-    crate::utils::{ShortCounter, Token, TokenCell},
+    crate::utils::{Token, TokenCell},
     assert_matches::assert_matches,
     by_address::ByAddress,
     more_asserts::assert_gt,
