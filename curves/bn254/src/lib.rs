@@ -14,7 +14,7 @@ mod consts {
     pub const ALT_BN128_ADDITION_INPUT_LEN: usize = 128;
 
     /// Input length for the multiplication operation.
-    pub const ALT_BN128_MULTIPLICATION_INPUT_LEN: usize = 128;
+    pub const ALT_BN128_MULTIPLICATION_INPUT_LEN: usize = 96;
 
     /// Pair element length.
     pub const ALT_BN128_PAIRING_ELEMENT_LEN: usize = 192;
