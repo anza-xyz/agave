@@ -6337,7 +6337,6 @@ dependencies = [
  "rolling-file",
  "rustc_version 0.4.1",
  "rustls",
- "scopeguard",
  "serde",
  "serde_bytes",
  "serde_derive",
