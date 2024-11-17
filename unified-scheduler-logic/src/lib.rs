@@ -113,6 +113,7 @@ use {
         sync::Arc,
     },
 };
+pub use utils::ShortCounter;
 
 /// Internal utilities. Namely this contains [`ShortCounter`] and [`TokenCell`].
 mod utils {
