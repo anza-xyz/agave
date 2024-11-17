@@ -48,7 +48,7 @@ use {
         mem,
         sync::{
             atomic::{AtomicU64, Ordering::Relaxed},
-            Arc, Condvar, Mutex, OnceLock, Weak,
+            Arc, Condvar, Mutex, MutexGuard, OnceLock, Weak,
         },
         thread::{self, sleep, JoinHandle},
         time::{Duration, Instant},
