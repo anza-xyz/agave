@@ -2346,36 +2346,13 @@ pub struct BankingStageAdapter {
     transaction_deduper: DashSet<Hash>,
     pub idling_detector: Mutex<Option<Box<dyn BankingStageMonitor>>>,
     id_generator: MonotonicIdGenerator,
-}
-
-#[derive(Debug)]
-struct MonotonicIdGenerator {
     next_task_id: AtomicU64,
 }
 
-impl MonotonicIdGenerator {
-    fn new() -> Self {
-        Self {
-            next_task_id: AtomicU64::default(),
-        }
-    }
-
-    fn bulk_assign_task_ids(&self, count: u64) -> u64 {
-        self.next_task_id
-            .fetch_add(count, std::sync::atomic::Ordering::AcqRel)
-    }
-}
-
-/*
-impl BankingStageAdapter {
-    fn clean() {
-    }
-}
-*/
-
 impl BankingStageAdapter {
     pub fn bulk_assign_task_ids(&self, count: u64) -> u64 {
-        self.id_generator.bulk_assign_task_ids(count)
+        self.next_task_id
+            .fetch_add(count, std::sync::atomic::Ordering::AcqRel)
     }
 
     pub fn create_task(
