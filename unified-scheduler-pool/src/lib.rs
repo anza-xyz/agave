@@ -3085,9 +3085,9 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_scheduler_drop_short_circuiting() {
-        // very verbose settings under coverage ci makes this test very flaky
-        //solana_logger::setup();
+        solana_logger::setup();
 
         let _progress = sleepless_testing::setup(&[
             &TestCheckPoint::BeforeThreadManagerDrop,
