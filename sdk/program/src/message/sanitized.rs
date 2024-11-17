@@ -714,9 +714,11 @@ mod tests {
 
     #[test]
     fn test_static_account_keys() {
-        let key0 = Pubkey::new_unique();
-        let key1 = Pubkey::new_unique();
-        let key2 = Pubkey::new_unique();
+        let keys = vec![
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+        ];
 
         let header = MessageHeader {
             num_required_signatures: 2,
@@ -726,19 +728,19 @@ mod tests {
 
         let legacy_message = SanitizedMessage::try_from_legacy_message(
             legacy::Message {
-                header: header.clone(),
-                account_keys: vec![key0, key1, key2],
+                header,
+                account_keys: keys.clone(),
                 ..legacy::Message::default()
             },
             &HashSet::default(),
         )
         .unwrap();
-        assert_eq!(legacy_message.static_account_keys(), &[key0, key1, key2]);
+        assert_eq!(legacy_message.static_account_keys(), &keys);
 
         let v0_message = SanitizedMessage::V0(v0::LoadedMessage::new(
             v0::Message {
-                header: header.clone(),
-                account_keys: vec![key0, key1, key2],
+                header,
+                account_keys: keys.clone(),
                 ..v0::Message::default()
             },
             LoadedAddresses {
@@ -747,12 +749,12 @@ mod tests {
             },
             &HashSet::default(),
         ));
-        assert_eq!(v0_message.static_account_keys(), &[key0, key1, key2]);
+        assert_eq!(v0_message.static_account_keys(), &keys);
 
         let v0_message = SanitizedMessage::V0(v0::LoadedMessage::new(
             v0::Message {
-                header: header.clone(),
-                account_keys: vec![key0, key1, key2],
+                header,
+                account_keys: keys.clone(),
                 ..v0::Message::default()
             },
             LoadedAddresses {
@@ -761,6 +763,6 @@ mod tests {
             },
             &HashSet::default(),
         ));
-        assert_eq!(v0_message.static_account_keys(), &[key0, key1, key2]);
+        assert_eq!(v0_message.static_account_keys(), &keys);
     }
 }
