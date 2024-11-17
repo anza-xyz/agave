@@ -1338,7 +1338,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         context: &SchedulingContext,
         (result, timings): &mut ResultWithTimings,
         executed_task: HandlerResult,
-        error_count: &mut u32,
+        error_count: &mut ShortCounter,
         already_finishing: bool,
     ) -> Option<(Box<ExecutedTask>, bool)> {
         let Ok(executed_task) = executed_task else {
@@ -1360,7 +1360,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     if !already_finishing {
                         info!("maybe reached max tick height...");
                     }
-                    *error_count += 1;
+                    error_count.increment_self();
                     Some((executed_task, true))
                 }
                 Err(ref e @ TransactionError::WouldExceedMaxBlockCostLimit)
@@ -1370,12 +1370,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     if !already_finishing {
                         info!("hit block cost: {e:?}");
                     }
-                    *error_count += 1;
+                    error_count.increment_self();
                     Some((executed_task, true))
                 }
                 Err(ref error) => {
                     debug!("error is detected while accumulating....: {error:?}");
-                    *error_count += 1;
+                    error_count.increment_self();
                     Some((executed_task, false))
                 }
             },
