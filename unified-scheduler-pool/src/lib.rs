@@ -2345,7 +2345,6 @@ pub struct BankingStageAdapter {
     usage_queue_loader: UsageQueueLoader,
     transaction_deduper: DashSet<Hash>,
     pub idling_detector: Mutex<Option<Box<dyn BankingStageMonitor>>>,
-    id_generator: MonotonicIdGenerator,
     next_task_id: AtomicU64,
 }
 
