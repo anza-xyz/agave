@@ -1613,6 +1613,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
                 macro_rules! log_scheduler {
                     ($level:ident, $prefix:tt) => {
+                        #[allow(clippy::arithmetic_side_effects)]
                         $level! {
                             "sch: {}: slot: {}({})[{:12}]({}{}): state_machine(({}({}b{}B{}F)=>{}({}+{}))/{}|{}TB|{}Lr) channels(<{} >{}+{} <{}+{} <B{}) {}",
                             scheduler_id, slot,
