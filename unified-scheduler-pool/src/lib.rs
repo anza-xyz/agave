@@ -1246,8 +1246,8 @@ where
         // current new_task_sender with a random one...
         self.new_task_sender = Arc::new(crossbeam_channel::unbounded().0);
 
-        self.ensure_join_threads(false /*true*/);
-        //assert_matches!(self.session_result_with_timings, Some((Ok(_), _)));
+        self.ensure_join_threads(true);
+        assert_matches!(self.session_result_with_timings, Some((Ok(_), _)));
     }
 }
 
@@ -3120,7 +3120,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     #[should_panic(expected = "does not match `Some((Ok(_), _))")]
     fn test_scheduler_drop_abort_unhandled() {
         do_test_scheduler_drop_abort(AbortCase::Unhandled);
