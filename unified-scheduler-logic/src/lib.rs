@@ -96,6 +96,7 @@
 //! susceptible to the buffer bloat problem by itself as explained by the description and validated
 //! by the mentioned benchmark above. Thus, this should be solved elsewhere, specifically at the
 //! scheduler pool.
+pub use utils::ShortCounter;
 use {
     crate::utils::{Token, TokenCell},
     assert_matches::assert_matches,
@@ -113,7 +114,6 @@ use {
         sync::Arc,
     },
 };
-pub use utils::ShortCounter;
 
 /// Internal utilities. Namely this contains [`ShortCounter`] and [`TokenCell`].
 mod utils {

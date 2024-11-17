@@ -12,9 +12,7 @@
 use qualifier_attr::qualifiers;
 use {
     assert_matches::assert_matches,
-    crossbeam_channel::{
-        self, never, select_biased, Receiver, RecvError, SendError, Sender,
-    },
+    crossbeam_channel::{self, never, select_biased, Receiver, RecvError, SendError, Sender},
     dashmap::{DashMap, DashSet},
     derivative::Derivative,
     dyn_clone::{clone_trait_object, DynClone},
@@ -42,7 +40,7 @@ use {
         transaction::{Result, SanitizedTransaction, TransactionError},
     },
     solana_timings::ExecuteTimings,
-    solana_unified_scheduler_logic::{SchedulingStateMachine, Task, UsageQueue},
+    solana_unified_scheduler_logic::{SchedulingStateMachine, ShortCounter, Task, UsageQueue},
     static_assertions::const_assert_eq,
     std::{
         fmt::Debug,
@@ -57,7 +55,6 @@ use {
     },
     vec_extract_if_polyfill::MakeExtractIf,
 };
-use solana_unified_scheduler_logic::ShortCounter;
 
 mod sleepless_testing;
 use crate::sleepless_testing::BuilderTracked;
@@ -665,13 +662,7 @@ where
 
     pub fn spawn_block_production_scheduler(
         &self,
-        g: &mut std::sync::MutexGuard<
-            '_,
-            (
-                Option<SchedulerId>,
-                Option<S::Inner>,
-            ),
-        >,
+        g: &mut std::sync::MutexGuard<'_, (Option<SchedulerId>, Option<S::Inner>)>,
     ) {
         info!("flash session: start!");
         let mut respawner_write = self.block_production_scheduler_respawner.lock().unwrap();
