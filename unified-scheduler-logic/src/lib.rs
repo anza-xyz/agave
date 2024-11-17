@@ -132,47 +132,47 @@ mod utils {
     pub struct ShortCounter(u32);
 
     impl ShortCounter {
-        pub(super) fn zero() -> Self {
+        pub fn zero() -> Self {
             Self(0)
         }
 
-        pub(super) fn one() -> Self {
+        pub fn one() -> Self {
             Self(1)
         }
 
-        pub(super) fn is_zero(&self) -> bool {
+        pub fn is_zero(&self) -> bool {
             self.0 == 0
         }
 
-        pub(super) fn current(&self) -> u32 {
+        pub fn current(&self) -> u32 {
             self.0
         }
 
         #[must_use]
         #[track_caller]
-        pub(super) fn increment(self) -> Self {
+        pub fn increment(self) -> Self {
             Self(self.0.checked_add(1).unwrap())
         }
 
         #[must_use]
         #[track_caller]
-        pub(super) fn decrement(self) -> Self {
+        pub fn decrement(self) -> Self {
             Self(self.0.checked_sub(1).unwrap())
         }
 
         #[track_caller]
-        pub(super) fn increment_self(&mut self) -> &mut Self {
+        pub fn increment_self(&mut self) -> &mut Self {
             *self = self.increment();
             self
         }
 
         #[track_caller]
-        pub(super) fn decrement_self(&mut self) -> &mut Self {
+        pub fn decrement_self(&mut self) -> &mut Self {
             *self = self.decrement();
             self
         }
 
-        pub(super) fn reset_to_zero(&mut self) -> &mut Self {
+        pub fn reset_to_zero(&mut self) -> &mut Self {
             self.0 = 0;
             self
         }
