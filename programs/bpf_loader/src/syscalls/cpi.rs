@@ -106,6 +106,7 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
         memory_mapping: &'b MemoryMapping<'a>,
         _vm_addr: u64,
         account_info: &AccountInfo,
+        check_aligned: bool,
         account_metadata: &SerializedAccountMetadata,
     ) -> Result<CallerAccount<'a, 'b>, Error> {
         let direct_mapping = invoke_context
@@ -134,7 +135,7 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
             let ptr = translate_type::<u64>(
                 memory_mapping,
                 account_info.lamports.as_ptr() as u64,
-                invoke_context.get_check_aligned(),
+                check_aligned,
             )?;
             if direct_mapping {
                 check_account_info_pointer(
@@ -144,13 +145,13 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
                     "lamports",
                 )?;
             }
-            translate_type_mut::<u64>(memory_mapping, *ptr, invoke_context.get_check_aligned())?
+            translate_type_mut::<u64>(memory_mapping, *ptr, check_aligned)?
         };
 
         let owner = translate_type_mut::<Pubkey>(
             memory_mapping,
             account_info.owner as *const _ as u64,
-            invoke_context.get_check_aligned(),
+            check_aligned,
         )?;
 
         let (serialized_data, vm_data_addr, ref_to_len_in_vm) = {
@@ -158,7 +159,7 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
             let data = *translate_type::<&[u8]>(
                 memory_mapping,
                 account_info.data.as_ptr() as *const _ as u64,
-                invoke_context.get_check_aligned(),
+                check_aligned,
             )?;
             if direct_mapping {
                 check_account_info_pointer(
@@ -188,7 +189,7 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
                 VmValue::VmAddress {
                     vm_addr,
                     memory_mapping,
-                    check_aligned: invoke_context.get_check_aligned(),
+                    check_aligned,
                 }
             } else {
                 let translated = translate(
@@ -221,7 +222,7 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
                     memory_mapping,
                     vm_data_addr,
                     data.len() as u64,
-                    invoke_context.get_check_aligned(),
+                    check_aligned,
                 )?
             };
             (serialized_data, vm_data_addr, ref_to_len_in_vm)
@@ -243,6 +244,7 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
         memory_mapping: &'b MemoryMapping<'a>,
         vm_addr: u64,
         account_info: &SolAccountInfo,
+        check_aligned: bool,
         account_metadata: &SerializedAccountMetadata,
     ) -> Result<CallerAccount<'a, 'b>, Error> {
         let direct_mapping = invoke_context
@@ -281,16 +283,10 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
 
         // account_info points to host memory. The addresses used internally are
         // in vm space so they need to be translated.
-        let lamports = translate_type_mut::<u64>(
-            memory_mapping,
-            account_info.lamports_addr,
-            invoke_context.get_check_aligned(),
-        )?;
-        let owner = translate_type_mut::<Pubkey>(
-            memory_mapping,
-            account_info.owner_addr,
-            invoke_context.get_check_aligned(),
-        )?;
+        let lamports =
+            translate_type_mut::<u64>(memory_mapping, account_info.lamports_addr, check_aligned)?;
+        let owner =
+            translate_type_mut::<Pubkey>(memory_mapping, account_info.owner_addr, check_aligned)?;
 
         consume_compute_meter(
             invoke_context,
@@ -308,7 +304,7 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
                 memory_mapping,
                 account_info.data_addr,
                 account_info.data_len,
-                invoke_context.get_check_aligned(),
+                check_aligned,
             )?
         };
 
@@ -324,7 +320,7 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
             VmValue::VmAddress {
                 vm_addr: data_len_vm_addr,
                 memory_mapping,
-                check_aligned: invoke_context.get_check_aligned(),
+                check_aligned,
             }
         } else {
             let data_len_addr = translate(
@@ -360,7 +356,7 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
     }
 }
 
-type TranslatedAccounts<'a, 'b> = Vec<(IndexOfAccount, Option<CallerAccount<'a, 'b>>)>;
+type TranslatedAccounts<'a, 'b> = Vec<(IndexOfAccount, CallerAccount<'a, 'b>)>;
 
 /// Implemented by language specific data structure translators
 trait SyscallInvokeSigned {
@@ -848,6 +844,7 @@ where
         &'b MemoryMapping<'a>,
         u64,
         &T,
+        bool,
         &SerializedAccountMetadata,
     ) -> Result<CallerAccount<'a, 'b>, Error>,
 {
@@ -855,10 +852,9 @@ where
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let mut accounts = Vec::with_capacity(instruction_accounts.len().saturating_add(1));
 
-    let program_account_index = program_indices
-        .last()
-        .ok_or_else(|| Box::new(InstructionError::MissingAccount))?;
-    accounts.push((*program_account_index, None));
+    if program_indices.is_empty() {
+        return Err(Box::new(InstructionError::MissingAccount));
+    }
 
     // unwrapping here is fine: we're in a syscall and the method below fails
     // only outside syscalls
@@ -870,6 +866,8 @@ where
     let direct_mapping = invoke_context
         .get_feature_set()
         .is_active(&feature_set::bpf_account_data_direct_mapping::id());
+
+    let check_aligned = invoke_context.get_check_aligned();
 
     for (instruction_account_index, instruction_account) in instruction_accounts.iter().enumerate()
     {
@@ -886,7 +884,7 @@ where
             .get_key_of_account_at_index(instruction_account.index_in_transaction)?;
 
         #[allow(deprecated)]
-        if callee_account.is_executable() {
+        if !direct_mapping && callee_account.is_executable() {
             // Use the known account
             consume_compute_meter(
                 invoke_context,
@@ -894,8 +892,6 @@ where
                     .checked_div(invoke_context.get_compute_budget().cpi_bytes_per_unit)
                     .unwrap_or(u64::MAX),
             )?;
-
-            accounts.push((instruction_account.index_in_caller, None));
         } else if let Some(caller_account_index) =
             account_info_keys.iter().position(|key| *key == account_key)
         {
@@ -923,6 +919,7 @@ where
                         caller_account_index.saturating_mul(mem::size_of::<T>()) as u64,
                     ),
                     &account_infos[caller_account_index],
+                    check_aligned,
                     serialized_metadata,
                 )?;
 
@@ -939,13 +936,10 @@ where
                 direct_mapping,
             )?;
 
-            let caller_account = if instruction_account.is_writable || update_caller {
-                Some(caller_account)
-            } else {
-                None
-            };
-            accounts.push((instruction_account.index_in_caller, caller_account));
-        } else {
+            if instruction_account.is_writable || update_caller {
+                accounts.push((instruction_account.index_in_caller, caller_account));
+            }
+        } else if !direct_mapping || instruction_account.is_writable {
             ic_msg!(
                 invoke_context,
                 "Instruction references an unknown account {}",
@@ -1138,32 +1132,28 @@ fn cpi_common<S: SyscallInvokeSigned>(
         // other accounts, but since we did have bugs around this in the past,
         // it's better to be safe than sorry.
         for (index_in_caller, caller_account) in accounts.iter() {
-            if let Some(caller_account) = caller_account {
-                let callee_account = instruction_context
-                    .try_borrow_instruction_account(transaction_context, *index_in_caller)?;
-                update_caller_account_perms(
-                    memory_mapping,
-                    caller_account,
-                    &callee_account,
-                    is_loader_deprecated,
-                )?;
-            }
+            let callee_account = instruction_context
+                .try_borrow_instruction_account(transaction_context, *index_in_caller)?;
+            update_caller_account_perms(
+                memory_mapping,
+                caller_account,
+                &callee_account,
+                is_loader_deprecated,
+            )?;
         }
     }
 
     for (index_in_caller, caller_account) in accounts.iter_mut() {
-        if let Some(caller_account) = caller_account {
-            let mut callee_account = instruction_context
-                .try_borrow_instruction_account(transaction_context, *index_in_caller)?;
-            update_caller_account(
-                invoke_context,
-                memory_mapping,
-                is_loader_deprecated,
-                caller_account,
-                &mut callee_account,
-                direct_mapping,
-            )?;
-        }
+        let mut callee_account = instruction_context
+            .try_borrow_instruction_account(transaction_context, *index_in_caller)?;
+        update_caller_account(
+            invoke_context,
+            memory_mapping,
+            is_loader_deprecated,
+            caller_account,
+            &mut callee_account,
+            direct_mapping,
+        )?;
     }
 
     invoke_context.execute_time = Some(Measure::start("execute"));
@@ -1784,6 +1774,7 @@ mod tests {
             &memory_mapping,
             vm_addr,
             account_info,
+            true,
             &account_metadata,
         )
         .unwrap();
@@ -2589,9 +2580,8 @@ mod tests {
             &mut invoke_context,
         )
         .unwrap();
-        assert_eq!(accounts.len(), 2);
-        assert!(accounts[0].1.is_none());
-        let caller_account = accounts[1].1.as_ref().unwrap();
+        assert_eq!(accounts.len(), 1);
+        let caller_account = &accounts[1].1;
         assert_eq!(caller_account.serialized_data, account.data());
         assert_eq!(caller_account.original_data_len, original_data_len);
     }
