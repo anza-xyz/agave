@@ -420,7 +420,7 @@ impl SimulatorLoop {
         self,
         base_simulation_time: SystemTime,
         sender_thread: EventSenderThread,
-        warmed_up_bank: Arc<Bank>,
+        warmed_up_bank: Bank,
     ) -> (EventSenderThread, Sender<Slot>) {
         info!("warmup hack!");
         sleep(Duration::from_millis(330));
@@ -445,7 +445,7 @@ impl SimulatorLoop {
         self,
         base_simulation_time: SystemTime,
         sender_thread: EventSenderThread,
-        warmed_up_bank: Arc<Bank>,
+        warmed_up_bank: Bank,
     ) -> (EventSenderThread, Sender<Slot>) {
         let logger = SimulatorLoopLogger {
             simulated_leader: self.simulated_leader,
