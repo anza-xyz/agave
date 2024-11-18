@@ -454,6 +454,7 @@ impl SimulatorLoop {
             freeze_time_by_slot: self.freeze_time_by_slot,
         };
         let (mut bank, mut bank_created) = (self.bank, Instant::now());
+        let mut warmed_up_bank = Some(warmed_up_bank);
         loop {
             if self.poh_recorder.read().unwrap().bank().is_none() {
                 let next_leader_slot = self.leader_schedule_cache.next_leader_slot(
