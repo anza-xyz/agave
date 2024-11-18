@@ -2581,7 +2581,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(accounts.len(), 1);
-        let caller_account = &accounts[1].1;
+        let caller_account = &accounts[0].1;
         assert_eq!(caller_account.serialized_data, account.data());
         assert_eq!(caller_account.original_data_len, original_data_len);
     }
