@@ -976,7 +976,7 @@ impl BankingSimulator {
         info!("warmed up bank: creating....");
         let warmed_up_bank = Bank::new_from_parent(
             simulator_loop.bank.clone_without_scheduler(),
-            &self.simulated_leader,
+            &simulator_loop.simulated_leader,
             self.first_simulated_slot,
         );
         info!("warmed up bank: done!!!");
