@@ -452,6 +452,11 @@ impl SimulatorLoop {
             freeze_time_by_slot: self.freeze_time_by_slot,
         };
         let (mut bank, mut bank_created) = (self.bank, Instant::now());
+        let mut warmed_up_bank = Some(Bank::new_from_parent(
+            bank.clone_without_scheduler(),
+            &self.simulated_leader,
+            self.first_simulated_slot,
+        ));
         loop {
             if self.poh_recorder.read().unwrap().bank().is_none() {
                 let next_leader_slot = self.leader_schedule_cache.next_leader_slot(
@@ -498,11 +503,11 @@ impl SimulatorLoop {
                 } else {
                     info!("new leader bank slot: {new_slot}");
                 }
-                let new_bank = Bank::new_from_parent(
+                let new_bank = warmed_up_bank.take().unwrap_or_else(|| Bank::new_from_parent(
                     bank.clone_without_scheduler(),
                     &self.simulated_leader,
                     new_slot,
-                );
+                ));
                 // make sure parent is frozen for finalized hashes via the above
                 // new()-ing of its child bank
                 self.retracer
