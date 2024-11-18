@@ -7539,11 +7539,9 @@ pub mod tests {
         );
 
         for (erasure_set, working_merkle_root_meta) in merkle_root_metas {
-            write_batch
-                .put::<cf::MerkleRootMeta>(
-                    erasure_set.store_key(),
-                    working_merkle_root_meta.as_ref(),
-                )
+            blockstore
+                .merkle_root_meta_cf
+                .put(erasure_set.store_key(), working_merkle_root_meta.as_ref())
                 .unwrap();
         }
         blockstore.db.write(write_batch).unwrap();
@@ -7738,11 +7736,9 @@ pub mod tests {
         );
 
         for (erasure_set, working_merkle_root_meta) in merkle_root_metas {
-            write_batch
-                .put::<cf::MerkleRootMeta>(
-                    erasure_set.store_key(),
-                    working_merkle_root_meta.as_ref(),
-                )
+            blockstore
+                .merkle_root_meta_cf
+                .put(erasure_set.store_key(), working_merkle_root_meta.as_ref())
                 .unwrap();
         }
         blockstore.db.write(write_batch).unwrap();
@@ -11930,8 +11926,8 @@ pub mod tests {
             .unwrap();
         let mut write_batch = blockstore.db.batch().unwrap();
         blockstore
-            .db
-            .delete_range_cf::<cf::MerkleRootMeta>(&mut write_batch, slot, slot)
+            .merkle_root_meta_cf
+            .delete_range_in_batch(&mut write_batch, slot, slot)
             .unwrap();
         blockstore.db.write(write_batch).unwrap();
         assert!(blockstore
@@ -11996,8 +11992,8 @@ pub mod tests {
         // an older version.
         let mut write_batch = blockstore.db.batch().unwrap();
         blockstore
-            .db
-            .delete_range_cf::<cf::MerkleRootMeta>(&mut write_batch, slot, slot)
+            .merkle_root_meta_cf
+            .delete_range_in_batch(&mut write_batch, slot, slot)
             .unwrap();
         blockstore.db.write(write_batch).unwrap();
         assert!(blockstore
