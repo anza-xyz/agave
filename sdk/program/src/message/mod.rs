@@ -110,3 +110,12 @@ pub struct MessageHeader {
     /// read-only accounts.
     pub num_readonly_unsigned_accounts: u8,
 }
+
+/// The definition of address lookup table accounts.
+///
+/// As used by the `crate::message::v0` message format.
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct AddressLookupTableAccount {
+    pub key: solana_pubkey::Pubkey,
+    pub addresses: Vec<solana_pubkey::Pubkey>,
+}
