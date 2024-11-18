@@ -372,6 +372,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             let program_cache_for_tx_batch = self.replenish_program_cache(
                 callbacks,
                 &program_accounts_map,
+                &mut execute_timings,
                 config.check_program_modification_slot,
                 config.limit_to_load_programs,
             );
@@ -726,6 +727,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         &self,
         callback: &CB,
         program_accounts_map: &HashMap<Pubkey, (&Pubkey, u64)>,
+        execute_timings: &mut ExecuteTimings,
         check_program_modification_slot: bool,
         limit_to_load_programs: bool,
     ) -> ProgramCacheForTxBatch {
@@ -773,6 +775,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         &program_cache.get_environments_for_epoch(self.epoch),
                         &key,
                         self.slot,
+                        execute_timings,
                         false,
                     )
                     .expect("called load_program_with_pubkey() with nonexistent account");
@@ -845,6 +848,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     &environments_for_epoch,
                     &key,
                     self.slot,
+                    &mut ExecuteTimings::default(),
                     false,
                 ) {
                     recompiled.tx_usage_counter.fetch_add(
@@ -1559,7 +1563,13 @@ mod tests {
         let mut account_maps: HashMap<Pubkey, (&Pubkey, u64)> = HashMap::new();
         account_maps.insert(key, (&owner, 4));
 
-        batch_processor.replenish_program_cache(&mock_bank, &account_maps, false, true);
+        batch_processor.replenish_program_cache(
+            &mock_bank,
+            &account_maps,
+            &mut ExecuteTimings::default(),
+            false,
+            true,
+        );
     }
 
     #[test]
@@ -1587,6 +1597,7 @@ mod tests {
             let result = batch_processor.replenish_program_cache(
                 &mock_bank,
                 &account_maps,
+                &mut ExecuteTimings::default(),
                 false,
                 limit_to_load_programs,
             );
