@@ -1,7 +1,6 @@
 #[cfg(not(target_os = "solana"))]
 use crate::{
-    address_lookup_table::AddressLookupTableAccount,
-    message::v0::{LoadedAddresses, MessageAddressTableLookup},
+    message::{AddressLookupTableAccount, v0::{LoadedAddresses, MessageAddressTableLookup}},
 };
 use {
     crate::message::MessageHeader, solana_instruction::Instruction, solana_pubkey::Pubkey,
