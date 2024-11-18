@@ -1181,8 +1181,9 @@ impl TaskCreator {
                     let current_transaction_count = banking_stage_adapter.transaction_deduper.len();
                     info!("bsa: {current_usage_queue_count} {current_transaction_count}");
 
-                    current_usage_queue_count > max_usage_queue_count
-                        || current_transaction_count > 1_000_000
+                    //current_usage_queue_count > max_usage_queue_count
+                    //    || current_transaction_count > 1_000_000
+                    current_usage_queue_count > 100 || current_transaction_count > 1_000_000
                 }
             }
         }
@@ -1743,7 +1744,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 } else {
                                     drop(executed_task);
                                 }
-                                if should_pause && !session_pausing && slot != 282254387 {
+                                if should_pause && !session_pausing && slot != 282254387/*00*/ {
                                     session_pausing = true;
                                     "pausing"
                                 } else {
@@ -1783,7 +1784,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                                 "ending"
                                             },
                                             SchedulingMode::BlockProduction => {
-                                                if slot == 282254387 {
+                                                if slot == 282254387/*00*/ {
                                                     // can't assert pause signal may have been emitted..
                                                     session_ending = true;
                                                     "ending"

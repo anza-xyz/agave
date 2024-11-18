@@ -736,6 +736,8 @@ impl BankingStage {
                         return vec![];
                     }
                     let bank = bank_forks.read().unwrap().working_bank();
+                    let mut m =
+                        solana_svm::transaction_error_metrics::TransactionErrorMetrics::new();
                     let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
                     let mut tasks = vec![];
                     for pp in &aaa.0 {
@@ -783,7 +785,18 @@ impl BankingStage {
 
                         for (a, b) in ppp {
                             if let Some(task) = adapter.create_task(&(&a, b)) {
-                                tasks.push(task);
+                                if bank.check_transactions(
+                                    &[&a],
+                                    &[Ok(())],
+                                    solana_sdk::clock::MAX_PROCESSING_AGE,
+                                    &mut m,
+                                )[0]
+                                .is_ok()
+                                {
+                                    tasks.push(task);
+                                } else {
+                                    //info!("failed check");
+                                }
                             }
                         }
                     }
