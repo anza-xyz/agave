@@ -11,20 +11,21 @@
 
 #![allow(clippy::arithmetic_side_effects)]
 
-#[cfg(target_arch = "wasm32")]
-use crate::wasm_bindgen;
 #[allow(deprecated)]
 pub use builtins::{BUILTIN_PROGRAMS_KEYS, MAYBE_BUILTIN_KEY_OR_SYSVAR};
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::wasm_bindgen;
 use {
     crate::{
-        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
-        hash::Hash,
-        instruction::{CompiledInstruction, Instruction},
+        instruction::CompiledInstruction,
         message::{compiled_keys::CompiledKeys, MessageHeader},
-        pubkey::Pubkey,
-        system_instruction, system_program, sysvar,
+        system_instruction, sysvar,
     },
+    solana_hash::Hash,
+    solana_instruction::Instruction,
+    solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
+    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, system_program},
     solana_short_vec as short_vec,
     std::{collections::HashSet, convert::TryFrom, str::FromStr},
 };
@@ -699,9 +700,8 @@ impl Message {
 mod tests {
     #![allow(deprecated)]
     use {
-        super::*,
-        crate::{hash, instruction::AccountMeta, message::MESSAGE_HEADER_LENGTH},
-        std::collections::HashSet,
+        super::*, crate::message::MESSAGE_HEADER_LENGTH, solana_instruction::AccountMeta,
+        solana_sha256_hasher::hash, std::collections::HashSet,
     };
 
     #[test]
@@ -720,7 +720,7 @@ mod tests {
         // BUILTIN_PROGRAMS_KEYS without the risk of breaking consensus.
         let builtins = format!("{:?}", *BUILTIN_PROGRAMS_KEYS);
         assert_eq!(
-            format!("{}", hash::hash(builtins.as_bytes())),
+            format!("{}", hash(builtins.as_bytes())),
             "ACqmMkYbo9eqK6QrRSrB3HLyR6uHhLf31SCfGUAJjiWj"
         );
     }

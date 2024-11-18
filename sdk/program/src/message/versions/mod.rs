@@ -1,16 +1,15 @@
 use {
     crate::{
-        hash::Hash,
         instruction::CompiledInstruction,
         message::{legacy::Message as LegacyMessage, v0::MessageAddressTableLookup, MessageHeader},
-        pubkey::Pubkey,
     },
     serde::{
         de::{self, Deserializer, SeqAccess, Unexpected, Visitor},
         ser::{SerializeTuple, Serializer},
     },
     serde_derive::{Deserialize, Serialize},
-    solana_hash::HASH_BYTES,
+    solana_hash::{Hash, HASH_BYTES},
+    solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
     solana_short_vec as short_vec,
     std::{collections::HashSet, fmt},
@@ -324,10 +323,8 @@ impl<'de> serde::Deserialize<'de> for VersionedMessage {
 mod tests {
     use {
         super::*,
-        crate::{
-            instruction::{AccountMeta, Instruction},
-            message::v0::MessageAddressTableLookup,
-        },
+        crate::message::v0::MessageAddressTableLookup,
+        solana_instruction::{AccountMeta, Instruction},
     };
 
     #[test]

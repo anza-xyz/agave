@@ -1,9 +1,7 @@
 use {
-    crate::{
-        bpf_loader_upgradeable,
-        message::{v0, AccountKeys},
-        pubkey::Pubkey,
-    },
+    crate::message::{v0, AccountKeys},
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::bpf_loader_upgradeable,
     std::{borrow::Cow, collections::HashSet},
 };
 
@@ -187,8 +185,9 @@ impl<'a> LoadedMessage<'a> {
 mod tests {
     use {
         super::*,
-        crate::{instruction::CompiledInstruction, message::MessageHeader, system_program, sysvar},
+        crate::{instruction::CompiledInstruction, message::MessageHeader},
         itertools::Itertools,
+        solana_sdk_ids::{system_program, sysvar},
     };
 
     fn check_test_loaded_message() -> (LoadedMessage<'static>, [Pubkey; 6]) {

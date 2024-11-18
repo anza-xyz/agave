@@ -13,16 +13,17 @@ pub use loaded::*;
 use {
     crate::{
         address_lookup_table::AddressLookupTableAccount,
-        bpf_loader_upgradeable,
-        hash::Hash,
-        instruction::{CompiledInstruction, Instruction},
+        instruction::CompiledInstruction,
         message::{
             compiled_keys::{CompileError, CompiledKeys},
             AccountKeys, MessageHeader, MESSAGE_VERSION_PREFIX,
         },
-        pubkey::Pubkey,
     },
+    solana_hash::Hash,
+    solana_instruction::Instruction,
+    solana_pubkey::Pubkey,
     solana_sanitize::SanitizeError,
+    solana_sdk_ids::bpf_loader_upgradeable,
     solana_short_vec as short_vec,
     std::collections::HashSet,
 };
@@ -377,10 +378,7 @@ impl Message {
 
 #[cfg(test)]
 mod tests {
-    use {
-        super::*,
-        crate::{instruction::AccountMeta, message::VersionedMessage},
-    };
+    use {super::*, crate::message::VersionedMessage, solana_instruction::AccountMeta};
 
     #[test]
     fn test_sanitize() {
