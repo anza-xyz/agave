@@ -501,11 +501,13 @@ impl SimulatorLoop {
                 } else {
                     info!("new leader bank slot: {new_slot}");
                 }
-                let new_bank = warmed_up_bank.take().unwrap_or_else(|| Bank::new_from_parent(
-                    bank.clone_without_scheduler(),
-                    &self.simulated_leader,
-                    new_slot,
-                ));
+                let new_bank = warmed_up_bank.take().unwrap_or_else(|| {
+                    Bank::new_from_parent(
+                        bank.clone_without_scheduler(),
+                        &self.simulated_leader,
+                        new_slot,
+                    )
+                });
                 // make sure parent is frozen for finalized hashes via the above
                 // new()-ing of its child bank
                 self.retracer
