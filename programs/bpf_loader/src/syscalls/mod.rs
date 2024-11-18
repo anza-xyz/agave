@@ -2071,7 +2071,7 @@ declare_builtin_function!(
             //     - Compute budget is exceeded.
             // - Otherwise, the syscall returns a `u64` integer representing the total active
             //   stake on the cluster for the current epoch.
-            Ok(invoke_context.get_epoch_total_stake().unwrap_or(0))
+            Ok(invoke_context.get_epoch_total_stake())
         } else {
             // As specified by SIMD-0133: If `var_addr` is _not_ a null pointer:
             //
@@ -4796,7 +4796,7 @@ mod tests {
         invoke_context.environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            Some(expected_total_stake),
+            expected_total_stake,
             &epoch_vote_stake, // Vote accounts are not needed for this test.
             Arc::<FeatureSet>::default(),
             &sysvar_cache,
@@ -4847,7 +4847,7 @@ mod tests {
         invoke_context.environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            None, // Total stake is not needed for this test.
+            0, // Total stake is not needed for this test.
             &vote_accounts_map,
             Arc::<FeatureSet>::default(),
             &sysvar_cache,

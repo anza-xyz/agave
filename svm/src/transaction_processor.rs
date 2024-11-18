@@ -138,10 +138,6 @@ pub struct TransactionProcessingEnvironment<'a> {
     /// change transaction fees. For this reason, it is recommended to use the
     /// `fee_per_signature` field to adjust transaction fees.
     pub blockhash_lamports_per_signature: u64,
-    /// The total stake for the current epoch.
-    pub epoch_total_stake: Option<u64>,
-    /// The stake for vote accounts for the current epoch.
-    pub epoch_vote_stake: HashMap<Pubkey, u64>,
     /// Runtime feature set to use for the transaction batch.
     pub feature_set: Arc<FeatureSet>,
     /// Transaction fee to charge per signature, in lamports.
@@ -155,8 +151,6 @@ impl Default for TransactionProcessingEnvironment<'_> {
         Self {
             blockhash: Hash::default(),
             blockhash_lamports_per_signature: 0,
-            epoch_total_stake: None,
-            epoch_vote_stake: HashMap::default(),
             feature_set: Arc::<FeatureSet>::default(),
             fee_lamports_per_signature: FeeStructure::default().lamports_per_signature, // <-- Default fee.
             rent_collector: None,
@@ -186,6 +180,12 @@ pub struct TransactionBatchProcessor<FG: ForkGraph> {
 
     /// Builtin program ids
     pub builtin_program_ids: RwLock<HashSet<Pubkey>>,
+
+    /// The total stake for the current epoch.
+    pub epoch_total_stake: u64,
+
+    /// The stake for vote accounts for the current epoch.
+    pub epoch_vote_stake: Arc<HashMap<Pubkey, u64>>,
 }
 
 impl<FG: ForkGraph> Debug for TransactionBatchProcessor<FG> {
@@ -210,6 +210,8 @@ impl<FG: ForkGraph> Default for TransactionBatchProcessor<FG> {
                 Epoch::default(),
             ))),
             builtin_program_ids: RwLock::new(HashSet::new()),
+            epoch_total_stake: 0,
+            epoch_vote_stake: Arc::new(HashMap::default()),
         }
     }
 }
@@ -274,7 +276,18 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             sysvar_cache: RwLock::<SysvarCache>::default(),
             program_cache: self.program_cache.clone(),
             builtin_program_ids: RwLock::new(self.builtin_program_ids.read().unwrap().clone()),
+            epoch_total_stake: self.epoch_total_stake,
+            epoch_vote_stake: self.epoch_vote_stake.clone(),
         }
+    }
+
+    pub fn set_epoch_stake_information(
+        &mut self,
+        epoch_total_stake: u64,
+        epoch_vote_stake: Arc<HashMap<Pubkey, u64>>,
+    ) {
+        self.epoch_total_stake = epoch_total_stake;
+        self.epoch_vote_stake = epoch_vote_stake;
     }
 
     fn configure_program_runtime_environments_inner(
@@ -976,8 +989,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             EnvironmentConfig::new(
                 environment.blockhash,
                 environment.blockhash_lamports_per_signature,
-                environment.epoch_total_stake,
-                &environment.epoch_vote_stake,
+                self.epoch_total_stake,
+                &self.epoch_vote_stake,
                 Arc::clone(&environment.feature_set),
                 sysvar_cache,
             ),

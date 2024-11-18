@@ -204,7 +204,7 @@ impl Bank {
                 EnvironmentConfig::new(
                     Hash::default(),
                     0,
-                    None,
+                    0,
                     &epoch_vote_stake,
                     self.feature_set.clone(),
                     &sysvar_cache,

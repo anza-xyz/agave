@@ -94,6 +94,8 @@ a `TransactionBatchProcessor` object the client need to specify the
 - `program_cache: Arc<RwLock<ProgramCache<FG>>>` is a reference to
     a ProgramCache instance. All on chain programs used in transaction
     batch execution are loaded from the program cache.
+- `epoch_total_stake`: The total stake for the current epoch.
+- `epoch_vote_stake`: The stake for vote accounts for the current epoch.
 
 In addition, `TransactionBatchProcessor` needs an instance of
 `SysvarCache` and a set of pubkeys of builtin program IDs.
@@ -171,8 +173,6 @@ The transaction processor requires consumers to provide values describing
 the runtime environment to use for processing transactions.
 
 - `blockhash`: The blockhash to use for the transaction batch.
-- `epoch_total_stake`: The total stake for the current epoch.
-- `epoch_vote_stake`: The stake for vote accounts for the current epoch.
 - `feature_set`: Runtime feature set to use for the transaction batch.
 - `fee_structure`: Fee structure to use for assessing transaction fees.
 - `lamports_per_signature`: Lamports per signature to charge per transaction.

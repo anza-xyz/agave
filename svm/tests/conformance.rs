@@ -445,7 +445,7 @@ fn execute_fixture_as_instr(
     let env_config = EnvironmentConfig::new(
         Hash::default(),
         0,
-        None,
+        0,
         &epoch_vote_stake,
         mock_bank.feature_set.clone(),
         sysvar_cache,

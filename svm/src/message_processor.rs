@@ -259,7 +259,7 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            None,
+            0,
             &epoch_vote_stake,
             Arc::new(FeatureSet::all_enabled()),
             &sysvar_cache,
@@ -313,7 +313,7 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            None,
+            0,
             &epoch_vote_stake,
             Arc::new(FeatureSet::all_enabled()),
             &sysvar_cache,
@@ -357,7 +357,7 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            None,
+            0,
             &epoch_vote_stake,
             Arc::new(FeatureSet::all_enabled()),
             &sysvar_cache,
@@ -493,7 +493,7 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            None,
+            0,
             &epoch_vote_stake,
             Arc::new(FeatureSet::all_enabled()),
             &sysvar_cache,
@@ -532,7 +532,7 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            None,
+            0,
             &epoch_vote_stake,
             Arc::new(FeatureSet::all_enabled()),
             &sysvar_cache,
@@ -568,7 +568,7 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            None,
+            0,
             &epoch_vote_stake,
             Arc::new(FeatureSet::all_enabled()),
             &sysvar_cache,
@@ -666,7 +666,7 @@ mod tests {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            None,
+            0,
             &epoch_vote_stake,
             Arc::new(FeatureSet::all_enabled()),
             &sysvar_cache,

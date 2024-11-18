@@ -7843,7 +7843,6 @@ dependencies = [
  "solana-sdk",
  "solana-timings",
  "solana-type-overrides",
- "solana-vote",
  "solana_rbpf",
  "test-case",
  "thiserror 2.0.3",

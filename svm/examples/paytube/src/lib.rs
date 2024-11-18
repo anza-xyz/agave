@@ -75,10 +75,7 @@ use {
     solana_svm::transaction_processor::{
         TransactionProcessingConfig, TransactionProcessingEnvironment,
     },
-    std::{
-        collections::HashMap,
-        sync::{Arc, RwLock},
-    },
+    std::sync::{Arc, RwLock},
     transaction::create_svm_transactions,
 };
 
@@ -151,8 +148,6 @@ impl PayTubeChannel {
         let processing_environment = TransactionProcessingEnvironment {
             blockhash: Hash::default(),
             blockhash_lamports_per_signature: fee_structure.lamports_per_signature,
-            epoch_total_stake: None,
-            epoch_vote_stake: HashMap::default(),
             feature_set: Arc::new(feature_set),
             fee_lamports_per_signature: fee_structure.lamports_per_signature,
             rent_collector: Some(&rent_collector),

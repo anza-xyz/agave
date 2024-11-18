@@ -151,7 +151,7 @@ impl BpfAllocator {
 pub struct EnvironmentConfig<'a> {
     pub blockhash: Hash,
     pub blockhash_lamports_per_signature: u64,
-    epoch_total_stake: Option<u64>,
+    epoch_total_stake: u64,
     epoch_vote_stake: &'a HashMap<Pubkey, u64>,
     pub feature_set: Arc<FeatureSet>,
     sysvar_cache: &'a SysvarCache,
@@ -160,7 +160,7 @@ impl<'a> EnvironmentConfig<'a> {
     pub fn new(
         blockhash: Hash,
         blockhash_lamports_per_signature: u64,
-        epoch_total_stake: Option<u64>,
+        epoch_total_stake: u64,
         epoch_vote_stake: &'a HashMap<Pubkey, u64>,
         feature_set: Arc<FeatureSet>,
         sysvar_cache: &'a SysvarCache,
@@ -658,7 +658,7 @@ impl<'a> InvokeContext<'a> {
     }
 
     /// Get cached epoch total stake.
-    pub fn get_epoch_total_stake(&self) -> Option<u64> {
+    pub fn get_epoch_total_stake(&self) -> u64 {
         self.environment_config.epoch_total_stake
     }
 
@@ -766,7 +766,7 @@ macro_rules! with_mock_invoke_context {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            None,
+            0,
             &epoch_vote_stake,
             Arc::new(FeatureSet::all_enabled()),
             &sysvar_cache,
