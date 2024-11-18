@@ -2083,7 +2083,7 @@ impl ReplayStage {
             return false;
         };
 
-        assert!(parent.is_frozen());
+        assert!(parent.is_vote_only_frozen());
 
         if !parent.is_startup_verification_complete() {
             info!("startup verification incomplete, so skipping my leader slot");

@@ -237,7 +237,7 @@ impl FinalReplayStage {
                             false,
                             log_messages_bytes_limit,
                             prioritization_fee_cache,
-                            true,
+                            false,
                         ) {
                             warn!("All errors should have been handled during replay stage {bank_slot}: {error:?}");
                             replay_result.replay_error = Some(error);
