@@ -1,7 +1,7 @@
 use {
-    crate::{
-        instruction::CompiledInstruction,
-        message::{legacy::Message as LegacyMessage, v0::MessageAddressTableLookup, MessageHeader},
+    crate::message::{
+        compiled_instruction::CompiledInstruction, legacy::Message as LegacyMessage,
+        v0::MessageAddressTableLookup, MessageHeader,
     },
     serde::{
         de::{self, Deserializer, SeqAccess, Unexpected, Visitor},

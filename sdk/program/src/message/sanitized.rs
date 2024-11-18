@@ -5,8 +5,8 @@
 pub use solana_transaction_error::SanitizeMessageError;
 use {
     crate::{
-        instruction::CompiledInstruction,
         message::{
+            compiled_instruction::CompiledInstruction,
             legacy,
             v0::{self, LoadedAddresses},
             AccountKeys, AddressLoader, MessageHeader, SanitizedVersionedMessage, VersionedMessage,

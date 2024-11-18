@@ -185,7 +185,7 @@ impl<'a> LoadedMessage<'a> {
 mod tests {
     use {
         super::*,
-        crate::{instruction::CompiledInstruction, message::MessageHeader},
+        crate::message::{compiled_instruction::CompiledInstruction, MessageHeader},
         itertools::Itertools,
         solana_sdk_ids::{system_program, sysvar},
     };

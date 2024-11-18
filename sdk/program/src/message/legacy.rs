@@ -17,8 +17,9 @@ pub use builtins::{BUILTIN_PROGRAMS_KEYS, MAYBE_BUILTIN_KEY_OR_SYSVAR};
 use wasm_bindgen::prelude::wasm_bindgen;
 use {
     crate::{
-        instruction::CompiledInstruction,
-        message::{compiled_keys::CompiledKeys, MessageHeader},
+        message::{
+            compiled_instruction::CompiledInstruction, compiled_keys::CompiledKeys, MessageHeader,
+        },
         system_instruction, sysvar,
     },
     solana_hash::Hash,

@@ -1,7 +1,6 @@
 use {
-    crate::{
-        instruction::CompiledInstruction,
-        message::{v0::LoadedAddresses, CompileError},
+    crate::message::{
+        compiled_instruction::CompiledInstruction, v0::LoadedAddresses, CompileError,
     },
     solana_instruction::Instruction,
     solana_pubkey::Pubkey,

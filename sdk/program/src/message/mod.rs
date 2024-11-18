@@ -37,6 +37,7 @@
 //! types continue to be exposed to Solana programs, for backwards compatibility
 //! reasons.
 
+pub mod compiled_instruction;
 mod compiled_keys;
 pub mod legacy;
 
@@ -74,7 +75,7 @@ pub const MESSAGE_HEADER_LENGTH: usize = 3;
 /// the single shared account list.
 ///
 /// [`Instruction`]: crate::instruction::Instruction
-/// [`CompiledInstruction`]: crate::instruction::CompiledInstruction
+/// [`CompiledInstruction`]: crate::message::compiled_instruction::CompiledInstruction
 ///
 /// The shared account list is ordered by the permissions required of the accounts:
 ///

@@ -13,8 +13,8 @@ pub use loaded::*;
 use {
     crate::{
         address_lookup_table::AddressLookupTableAccount,
-        instruction::CompiledInstruction,
         message::{
+            compiled_instruction::CompiledInstruction,
             compiled_keys::{CompileError, CompiledKeys},
             AccountKeys, MessageHeader, MESSAGE_VERSION_PREFIX,
         },
