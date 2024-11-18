@@ -7,6 +7,7 @@ use {
     serde::{de::DeserializeOwned, Deserialize, Serialize},
     std::{
         io::Read,
+        mem::MaybeUninit,
         net::SocketAddr,
         ops::{Index, IndexMut},
         slice::{Iter, IterMut, SliceIndex},
@@ -150,6 +151,10 @@ impl PacketBatch {
 
     pub fn iter_mut(&mut self) -> IterMut<'_, Packet> {
         self.packets.iter_mut()
+    }
+
+    pub fn spare_capacity_mut(&mut self) -> &mut [MaybeUninit<Packet>] {
+        self.packets.spare_capacity_mut()
     }
 
     /// See Vector::set_len() for more details

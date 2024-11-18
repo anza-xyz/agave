@@ -14,6 +14,7 @@ use {
     rayon::prelude::*,
     serde::{Deserialize, Serialize},
     std::{
+        mem::MaybeUninit,
         ops::{Index, IndexMut},
         os::raw::c_int,
         slice::{Iter, IterMut, SliceIndex},
@@ -127,6 +128,10 @@ impl<T: Clone + Default + Sized> PinnedVec<T> {
 
     pub fn iter_mut(&mut self) -> IterMut<'_, T> {
         self.x.iter_mut()
+    }
+
+    pub fn spare_capacity_mut(&mut self) -> &mut [MaybeUninit<T>] {
+        self.x.spare_capacity_mut()
     }
 
     pub fn capacity(&self) -> usize {
