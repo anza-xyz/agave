@@ -1414,12 +1414,7 @@ impl WriteBatch {
         Ok(())
     }
 
-    fn delete_range_cf(
-        &mut self,
-        cf: &ColumnFamily,
-        from: &[u8],
-        to: &[u8],
-    ) -> Result<()> {
+    fn delete_range_cf(&mut self, cf: &ColumnFamily, from: &[u8], to: &[u8]) -> Result<()> {
         self.write_batch.delete_range_cf(cf, from, to);
         Ok(())
     }
