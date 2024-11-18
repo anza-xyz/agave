@@ -1150,6 +1150,10 @@ impl Bank {
         bank.update_last_restart_slot();
         bank.transaction_processor
             .fill_missing_sysvar_cache_entries(&bank);
+        bank.transaction_processor.set_epoch_stake_information(
+            bank.get_current_epoch_total_stake(),
+            Arc::new(bank.get_epoch_vote_stake()),
+        );
         bank
     }
 
@@ -1464,7 +1468,7 @@ impl Bank {
             .stats
             .reset();
 
-        if new.epoch != parent.epoch {
+        if parent.epoch() < new.epoch() {
             new.transaction_processor.set_epoch_stake_information(
                 new.get_current_epoch_total_stake(),
                 Arc::new(new.get_epoch_vote_stake()),
@@ -1855,6 +1859,11 @@ impl Bank {
         );
         assert_eq!(bank.epoch_schedule, genesis_config.epoch_schedule);
         assert_eq!(bank.epoch, bank.epoch_schedule.get_epoch(bank.slot));
+
+        bank.transaction_processor.set_epoch_stake_information(
+            bank.get_current_epoch_total_stake(),
+            Arc::new(bank.get_epoch_vote_stake()),
+        );
 
         datapoint_info!(
             "bank-new-from-fields",
@@ -5216,11 +5225,6 @@ impl Bank {
                     false, /* debugging_features */
                 ))),
             );
-
-        self.transaction_processor.set_epoch_stake_information(
-            self.get_current_epoch_total_stake(),
-            Arc::new(self.get_epoch_vote_stake()),
-        );
     }
 
     fn get_epoch_vote_stake(&self) -> HashMap<Pubkey, u64> {
