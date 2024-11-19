@@ -27,6 +27,15 @@ solana-system-interface = { git = "https://github.com/solana-program/system.git"
 solana-transaction-error = { workspace = true }
 thiserror = { workspace = true }
 
+[dev-dependencies]
+anyhow = { workspace = true }
+borsh = { workspace = true }
+bitflags = { workspace = true }
+itertools = { workspace = true }
+serde_json = { workspace = true }
+solana-program = { path = "../program" }
+solana-sha256-hasher = { workspace = true }
+
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 

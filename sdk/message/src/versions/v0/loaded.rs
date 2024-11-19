@@ -270,8 +270,6 @@ mod tests {
 
     #[test]
     fn test_is_writable() {
-        solana_logger::setup();
-
         let reserved_account_keys = HashSet::from_iter([sysvar::clock::id(), system_program::id()]);
         let create_message_with_keys = |keys: Vec<Pubkey>| {
             LoadedMessage::new(
