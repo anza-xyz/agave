@@ -45,7 +45,7 @@ pub fn is_simple_vote_transaction_impl<'a>(
         && is_legacy_message
         && instruction_programs
             .next()
-            .xor(instruction_programs.next())
             .map(|program_id| program_id == &solana_sdk::vote::program::ID)
             .unwrap_or(false)
+        && instruction_programs.next().is_none()
 }
