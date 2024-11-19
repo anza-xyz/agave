@@ -1,3 +1,4 @@
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
 //! Sequences of [`Instruction`]s executed within a single transaction.
 //!
 //! [`Instruction`]: https://docs.rs/solana-instruction/latest/solana_instruction/struct.Instruction.html
