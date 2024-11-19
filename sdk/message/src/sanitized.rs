@@ -10,14 +10,11 @@ use {
         v0::{self, LoadedAddresses},
         AccountKeys, AddressLoader, MessageHeader, SanitizedVersionedMessage, VersionedMessage,
     },
-    solana_bincode::limited_deserialize,
     solana_hash::Hash,
     solana_instruction::{BorrowedAccountMeta, BorrowedInstruction},
-    solana_nonce::NONCED_TX_MARKER_IX_INDEX,
     solana_pubkey::Pubkey,
     solana_sanitize::Sanitize,
-    solana_sdk_ids::{ed25519_program, secp256k1_program, system_program},
-    solana_system_interface::instruction::SystemInstruction,
+    solana_sdk_ids::{ed25519_program, secp256k1_program},
     std::{borrow::Cow, collections::HashSet, convert::TryFrom},
 };
 
@@ -328,20 +325,23 @@ impl SanitizedMessage {
             })
     }
 
+    #[cfg(feature = "bincode")]
     /// If the message uses a durable nonce, return the pubkey of the nonce account
     pub fn get_durable_nonce(&self) -> Option<&Pubkey> {
         self.instructions()
-            .get(NONCED_TX_MARKER_IX_INDEX as usize)
+            .get(solana_nonce::NONCED_TX_MARKER_IX_INDEX as usize)
             .filter(
                 |ix| match self.account_keys().get(ix.program_id_index as usize) {
-                    Some(program_id) => system_program::check_id(program_id),
+                    Some(program_id) => solana_sdk_ids::system_program::check_id(program_id),
                     _ => false,
                 },
             )
             .filter(|ix| {
                 matches!(
-                    limited_deserialize(&ix.data, 4 /* serialized size of AdvanceNonceAccount */),
-                    Ok(SystemInstruction::AdvanceNonceAccount)
+                    solana_bincode::limited_deserialize(
+                        &ix.data, 4 /* serialized size of AdvanceNonceAccount */
+                    ),
+                    Ok(solana_system_interface::instruction::SystemInstruction::AdvanceNonceAccount)
                 )
             })
             .and_then(|ix| {

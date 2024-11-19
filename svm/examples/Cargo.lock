@@ -5771,19 +5771,14 @@ dependencies = [
 name = "solana-message"
 version = "2.2.0"
 dependencies = [
- "bincode",
  "blake3",
  "lazy_static",
- "serde",
- "serde_derive",
- "solana-bincode",
  "solana-hash",
  "solana-instruction",
  "solana-nonce",
  "solana-pubkey",
  "solana-sanitize",
  "solana-sdk-ids",
- "solana-short-vec",
  "solana-system-interface",
  "solana-transaction-error",
  "thiserror 2.0.3",

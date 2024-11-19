@@ -1,6 +1,7 @@
+#[cfg(feature = "serde")]
+use serde_derive::{Deserialize, Serialize};
 use {
     crate::{v0, AccountKeys},
-    serde_derive::{Deserialize, Serialize},
     solana_pubkey::Pubkey,
     solana_sdk_ids::bpf_loader_upgradeable,
     std::{borrow::Cow, collections::HashSet},
@@ -20,7 +21,8 @@ pub struct LoadedMessage<'a> {
 
 /// Collection of addresses loaded from on-chain lookup tables, split
 /// by readonly and writable.
-#[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct LoadedAddresses {
     /// List of addresses for writable loaded accounts
     pub writable: Vec<Pubkey>,

@@ -1,10 +1,6 @@
-use {
-    bincode::serialize,
-    serde_derive::{Deserialize, Serialize},
-    solana_pubkey::Pubkey,
-    solana_sanitize::Sanitize,
-    solana_short_vec as short_vec,
-};
+#[cfg(feature = "serde")]
+use serde_derive::{Deserialize, Serialize};
+use {solana_pubkey::Pubkey, solana_sanitize::Sanitize};
 
 /// A compact encoding of an instruction.
 ///
@@ -14,24 +10,29 @@ use {
 ///
 /// [`Message`]: crate::Message
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(
+    feature = "serde",
+    derive(Deserialize, Serialize),
+    serde(rename_all = "camelCase")
+)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct CompiledInstruction {
     /// Index into the transaction keys array indicating the program account that executes this instruction.
     pub program_id_index: u8,
     /// Ordered indices into the transaction keys array indicating which accounts to pass to the program.
-    #[serde(with = "short_vec")]
+    #[cfg_attr(feature = "serde", serde(with = "solana_short_vec"))]
     pub accounts: Vec<u8>,
     /// The program input data.
-    #[serde(with = "short_vec")]
+    #[cfg_attr(feature = "serde", serde(with = "solana_short_vec"))]
     pub data: Vec<u8>,
 }
 
 impl Sanitize for CompiledInstruction {}
 
 impl CompiledInstruction {
+    #[cfg(feature = "bincode")]
     pub fn new<T: serde::Serialize>(program_ids_index: u8, data: &T, accounts: Vec<u8>) -> Self {
-        let data = serialize(data).unwrap();
+        let data = bincode::serialize(data).unwrap();
         Self {
             program_id_index: program_ids_index,
             accounts,

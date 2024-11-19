@@ -10,20 +10,20 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
-bincode = { workspace = true }
+bincode = { workspace = true, optional = true }
 blake3 = { workspace = true, features = ["traits-preview"] }
 lazy_static = { workspace = true }
-serde = { workspace = true }
-serde_derive = { workspace = true }
-solana-bincode = { workspace = true }
-solana-hash = { workspace = true, features = ["serde"] }
+serde = { workspace = true, optional = true }
+serde_derive = { workspace = true, optional = true }
+solana-bincode = { workspace = true, optional = true }
+solana-hash = { workspace = true }
 solana-instruction = { workspace = true, features = ["std"] }
 solana-nonce = { workspace = true }
-solana-pubkey = { workspace = true, features = ["serde"] }
+solana-pubkey = { workspace = true }
 solana-sanitize = { workspace = true }
 solana-sdk-ids = { workspace = true }
-solana-short-vec = { workspace = true }
-solana-system-interface = { git = "https://github.com/solana-program/system.git" }
+solana-short-vec = { workspace = true, optional = true }
+solana-system-interface = { git = "https://github.com/solana-program/system.git", optional = true }
 solana-transaction-error = { workspace = true }
 thiserror = { workspace = true }
 
@@ -33,8 +33,25 @@ borsh = { workspace = true }
 bitflags = { workspace = true }
 itertools = { workspace = true }
 serde_json = { workspace = true }
+solana-message = { path = ".", features = ["dev-context-only-utils"] }
 solana-program = { path = "../program" }
 solana-sha256-hasher = { workspace = true }
+
+[features]
+bincode = [
+    "dep:bincode",
+    "dep:solana-bincode",
+    "dep:solana-system-interface",
+    "serde",
+]
+dev-context-only-utils = ["bincode"]
+serde = [
+    "dep:serde",
+    "dep:serde_derive",
+    "dep:solana-short-vec",
+    "solana-hash/serde",
+    "solana-pubkey/serde",
+]
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

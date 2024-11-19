@@ -3,16 +3,19 @@ use {
         compiled_instruction::CompiledInstruction, legacy::Message as LegacyMessage,
         v0::MessageAddressTableLookup, MessageHeader,
     },
+    solana_hash::{Hash, HASH_BYTES},
+    solana_pubkey::Pubkey,
+    solana_sanitize::{Sanitize, SanitizeError},
+    std::collections::HashSet,
+};
+#[cfg(feature = "serde")]
+use {
     serde::{
         de::{self, Deserializer, SeqAccess, Unexpected, Visitor},
         ser::{SerializeTuple, Serializer},
     },
     serde_derive::{Deserialize, Serialize},
-    solana_hash::{Hash, HASH_BYTES},
-    solana_pubkey::Pubkey,
-    solana_sanitize::{Sanitize, SanitizeError},
-    solana_short_vec as short_vec,
-    std::{collections::HashSet, fmt},
+    std::fmt,
 };
 
 mod sanitized;
@@ -145,10 +148,12 @@ impl VersionedMessage {
         }
     }
 
+    #[cfg(feature = "bincode")]
     pub fn serialize(&self) -> Vec<u8> {
         bincode::serialize(self).unwrap()
     }
 
+    #[cfg(feature = "bincode")]
     /// Compute the blake3 hash of this transaction's message
     pub fn hash(&self) -> Hash {
         let message_bytes = self.serialize();
@@ -172,6 +177,7 @@ impl Default for VersionedMessage {
     }
 }
 
+#[cfg(feature = "serde")]
 impl serde::Serialize for VersionedMessage {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -193,11 +199,13 @@ impl serde::Serialize for VersionedMessage {
     }
 }
 
+#[cfg(feature = "serde")]
 enum MessagePrefix {
     Legacy(u8),
     Versioned(u8),
 }
 
+#[cfg(feature = "serde")]
 impl<'de> serde::Deserialize<'de> for MessagePrefix {
     fn deserialize<D>(deserializer: D) -> Result<MessagePrefix, D::Error>
     where
@@ -234,6 +242,7 @@ impl<'de> serde::Deserialize<'de> for MessagePrefix {
     }
 }
 
+#[cfg(feature = "serde")]
 impl<'de> serde::Deserialize<'de> for VersionedMessage {
     fn deserialize<D>(deserializer: D) -> Result<VersionedMessage, D::Error>
     where
@@ -263,10 +272,10 @@ impl<'de> serde::Deserialize<'de> for VersionedMessage {
                         struct RemainingLegacyMessage {
                             pub num_readonly_signed_accounts: u8,
                             pub num_readonly_unsigned_accounts: u8,
-                            #[serde(with = "short_vec")]
+                            #[cfg_attr(feature = "serde", serde(with = "solana_short_vec"))]
                             pub account_keys: Vec<Pubkey>,
                             pub recent_blockhash: Hash,
-                            #[serde(with = "short_vec")]
+                            #[cfg_attr(feature = "serde", serde(with = "solana_short_vec"))]
                             pub instructions: Vec<CompiledInstruction>,
                         }
 

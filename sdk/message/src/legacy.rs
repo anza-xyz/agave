@@ -13,13 +13,14 @@
 
 #[allow(deprecated)]
 pub use builtins::{BUILTIN_PROGRAMS_KEYS, MAYBE_BUILTIN_KEY_OR_SYSVAR};
+#[cfg(feature = "serde")]
+use serde_derive::{Deserialize, Serialize};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
 use {
     crate::{
         compiled_instruction::CompiledInstruction, compiled_keys::CompiledKeys, MessageHeader,
     },
-    serde_derive::{Deserialize, Serialize},
     solana_hash::Hash,
     solana_instruction::Instruction,
     solana_pubkey::Pubkey,
@@ -27,8 +28,6 @@ use {
     solana_sdk_ids::{
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, system_program, sysvar,
     },
-    solana_short_vec as short_vec,
-    solana_system_interface::instruction as system_instruction,
     std::{collections::HashSet, convert::TryFrom, str::FromStr},
 };
 
@@ -151,15 +150,19 @@ fn compile_instructions(ixs: &[Instruction], keys: &[Pubkey]) -> Vec<CompiledIns
     frozen_abi(digest = "4kL6EbLGU25m5eMk4H1cW9YGhA5LejHSgj2w2fhY1NGp"),
     derive(AbiExample)
 )]
-#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(
+    feature = "serde",
+    derive(Deserialize, Serialize),
+    serde(rename_all = "camelCase")
+)]
+#[derive(Default, Debug, PartialEq, Eq, Clone)]
 pub struct Message {
     /// The message header, identifying signed and read-only `account_keys`.
     // NOTE: Serialization-related changes must be paired with the direct read at sigverify.
     pub header: MessageHeader,
 
     /// All the account keys used by this transaction.
-    #[serde(with = "short_vec")]
+    #[cfg_attr(feature = "serde", serde(with = "solana_short_vec"))]
     pub account_keys: Vec<Pubkey>,
 
     /// The id of a recent ledger entry.
@@ -167,7 +170,7 @@ pub struct Message {
 
     /// Programs that will be executed in sequence and committed in one atomic transaction if all
     /// succeed.
-    #[serde(with = "short_vec")]
+    #[cfg_attr(feature = "serde", serde(with = "solana_short_vec"))]
     pub instructions: Vec<CompiledInstruction>,
 }
 
@@ -181,21 +184,25 @@ pub struct Message {
     frozen_abi(digest = "4kL6EbLGU25m5eMk4H1cW9YGhA5LejHSgj2w2fhY1NGp"),
     derive(AbiExample)
 )]
-#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(
+    feature = "serde",
+    derive(Deserialize, Serialize),
+    serde(rename_all = "camelCase")
+)]
+#[derive(Default, Debug, PartialEq, Eq, Clone)]
 pub struct Message {
     #[wasm_bindgen(skip)]
     pub header: MessageHeader,
 
     #[wasm_bindgen(skip)]
-    #[serde(with = "short_vec")]
+    #[cfg_attr(feature = "serde", serde(with = "solana_short_vec"))]
     pub account_keys: Vec<Pubkey>,
 
     /// The id of a recent ledger entry.
     pub recent_blockhash: Hash,
 
     #[wasm_bindgen(skip)]
-    #[serde(with = "short_vec")]
+    #[cfg_attr(feature = "serde", serde(with = "solana_short_vec"))]
     pub instructions: Vec<CompiledInstruction>,
 }
 
@@ -506,14 +513,17 @@ impl Message {
     /// # create_offline_initialize_tx(&client, program_id, &payer)?;
     /// # Ok::<(), anyhow::Error>(())
     /// ```
+    #[cfg(feature = "bincode")]
     pub fn new_with_nonce(
         mut instructions: Vec<Instruction>,
         payer: Option<&Pubkey>,
         nonce_account_pubkey: &Pubkey,
         nonce_authority_pubkey: &Pubkey,
     ) -> Self {
-        let nonce_ix =
-            system_instruction::advance_nonce_account(nonce_account_pubkey, nonce_authority_pubkey);
+        let nonce_ix = solana_system_interface::instruction::advance_nonce_account(
+            nonce_account_pubkey,
+            nonce_authority_pubkey,
+        );
         instructions.insert(0, nonce_ix);
         Self::new(&instructions, payer)
     }
@@ -539,7 +549,7 @@ impl Message {
     }
 
     /// Compute the blake3 hash of this transaction's message.
-    #[cfg(not(target_os = "solana"))]
+    #[cfg(all(not(target_os = "solana"), feature = "bincode"))]
     pub fn hash(&self) -> Hash {
         let message_bytes = self.serialize();
         Self::hash_raw_message(&message_bytes)
@@ -560,6 +570,7 @@ impl Message {
         compile_instruction(ix, &self.account_keys)
     }
 
+    #[cfg(feature = "bincode")]
     pub fn serialize(&self) -> Vec<u8> {
         bincode::serialize(self).unwrap()
     }

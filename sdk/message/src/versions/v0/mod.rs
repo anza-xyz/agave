@@ -10,19 +10,19 @@
 //! [future message format]: https://docs.solanalabs.com/proposals/versioned-transactions
 
 pub use loaded::*;
+#[cfg(feature = "serde")]
+use serde_derive::{Deserialize, Serialize};
 use {
     crate::{
         compiled_instruction::CompiledInstruction,
         compiled_keys::{CompileError, CompiledKeys},
-        AccountKeys, AddressLookupTableAccount, MessageHeader, MESSAGE_VERSION_PREFIX,
+        AccountKeys, AddressLookupTableAccount, MessageHeader,
     },
-    serde_derive::{Deserialize, Serialize},
     solana_hash::Hash,
     solana_instruction::Instruction,
     solana_pubkey::Pubkey,
     solana_sanitize::SanitizeError,
     solana_sdk_ids::bpf_loader_upgradeable,
-    solana_short_vec as short_vec,
     std::collections::HashSet,
 };
 
@@ -31,16 +31,20 @@ mod loaded;
 /// Address table lookups describe an on-chain address lookup table to use
 /// for loading more readonly and writable accounts in a single tx.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(
+    feature = "serde",
+    derive(Deserialize, Serialize),
+    serde(rename_all = "camelCase")
+)]
+#[derive(Default, Debug, PartialEq, Eq, Clone)]
 pub struct MessageAddressTableLookup {
     /// Address lookup table account key
     pub account_key: Pubkey,
     /// List of indexes used to load writable account addresses
-    #[serde(with = "short_vec")]
+    #[cfg_attr(feature = "serde", serde(with = "solana_short_vec"))]
     pub writable_indexes: Vec<u8>,
     /// List of indexes used to load readonly account addresses
-    #[serde(with = "short_vec")]
+    #[cfg_attr(feature = "serde", serde(with = "solana_short_vec"))]
     pub readonly_indexes: Vec<u8>,
 }
 
@@ -52,8 +56,12 @@ pub struct MessageAddressTableLookup {
 /// See the crate documentation for further description.
 ///
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(
+    feature = "serde",
+    derive(Deserialize, Serialize),
+    serde(rename_all = "camelCase")
+)]
+#[derive(Default, Debug, PartialEq, Eq, Clone)]
 pub struct Message {
     /// The message header, identifying signed and read-only `account_keys`.
     /// Header values only describe static `account_keys`, they do not describe
@@ -61,7 +69,7 @@ pub struct Message {
     pub header: MessageHeader,
 
     /// List of accounts loaded by this transaction.
-    #[serde(with = "short_vec")]
+    #[cfg_attr(feature = "serde", serde(with = "solana_short_vec"))]
     pub account_keys: Vec<Pubkey>,
 
     /// The blockhash of a recent block.
@@ -80,12 +88,12 @@ pub struct Message {
     ///   1) message `account_keys`
     ///   2) ordered list of keys loaded from `writable` lookup table indexes
     ///   3) ordered list of keys loaded from `readable` lookup table indexes
-    #[serde(with = "short_vec")]
+    #[cfg_attr(feature = "serde", serde(with = "solana_short_vec"))]
     pub instructions: Vec<CompiledInstruction>,
 
     /// List of address table lookups used to load additional accounts
     /// for this transaction.
-    #[serde(with = "short_vec")]
+    #[cfg_attr(feature = "serde", serde(with = "solana_short_vec"))]
     pub address_table_lookups: Vec<MessageAddressTableLookup>,
 }
 
@@ -286,9 +294,10 @@ impl Message {
         })
     }
 
+    #[cfg(feature = "bincode")]
     /// Serialize this message with a version #0 prefix using bincode encoding.
     pub fn serialize(&self) -> Vec<u8> {
-        bincode::serialize(&(MESSAGE_VERSION_PREFIX, self)).unwrap()
+        bincode::serialize(&(crate::MESSAGE_VERSION_PREFIX, self)).unwrap()
     }
 
     /// Returns true if the account at the specified index is called as a program by an instruction
