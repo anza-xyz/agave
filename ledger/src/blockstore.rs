@@ -4529,8 +4529,6 @@ impl Blockstore {
     /// Arguments:
     /// - `slot_meta_working_set`: a map that maintains slot-id to its `SlotMeta`
     ///   mapping.
-    /// - `completed_slot_senders`: the units which are responsible for sending
-    ///   signals for completed slots.
     /// - `write_batch`: the write batch which includes all the updates of the
     ///   the current write and ensures their atomicity.
     ///
