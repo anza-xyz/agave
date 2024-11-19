@@ -131,6 +131,7 @@ members = [
     "sdk/keypair",
     "sdk/logger",
     "sdk/macro",
+    "sdk/message",
     "sdk/msg",
     "sdk/native-token",
     "sdk/nonce",
@@ -488,6 +489,7 @@ solana-log-collector = { path = "log-collector", version = "=2.2.0" }
 solana-logger = { path = "sdk/logger", version = "=2.2.0" }
 solana-measure = { path = "measure", version = "=2.2.0" }
 solana-merkle-tree = { path = "merkle-tree", version = "=2.2.0" }
+solana-message = { path = "sdk/message", version = "=2.2.0" }
 solana-metrics = { path = "metrics", version = "=2.2.0" }
 solana-msg = { path = "sdk/msg", version = "=2.2.0" }
 solana-native-token = { path = "sdk/native-token", version = "=2.2.0" }

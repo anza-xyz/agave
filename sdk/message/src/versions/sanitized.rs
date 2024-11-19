@@ -1,5 +1,5 @@
 use {
-    super::VersionedMessage, crate::message::compiled_instruction::CompiledInstruction,
+    super::VersionedMessage, crate::compiled_instruction::CompiledInstruction,
     solana_pubkey::Pubkey, solana_sanitize::SanitizeError,
 };
 

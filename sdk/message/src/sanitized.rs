@@ -5,18 +5,16 @@
 pub use solana_transaction_error::SanitizeMessageError;
 use {
     crate::{
-        message::{
-            compiled_instruction::CompiledInstruction,
-            legacy,
-            v0::{self, LoadedAddresses},
-            AccountKeys, AddressLoader, MessageHeader, SanitizedVersionedMessage, VersionedMessage,
-        },
-        solana_program::system_instruction::SystemInstruction,
+        compiled_instruction::CompiledInstruction,
+        legacy,
+        v0::{self, LoadedAddresses},
+        AccountKeys, AddressLoader, MessageHeader, SanitizedVersionedMessage, VersionedMessage,
     },
     solana_bincode::limited_deserialize,
     solana_hash::Hash,
     solana_instruction::{BorrowedAccountMeta, BorrowedInstruction},
     solana_nonce::NONCED_TX_MARKER_IX_INDEX,
+    solana_program::system_instruction::SystemInstruction,
     solana_pubkey::Pubkey,
     solana_sanitize::Sanitize,
     solana_sdk_ids::{ed25519_program, secp256k1_program, system_program},
@@ -458,7 +456,7 @@ impl TransactionSignatureDetails {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::message::v0, std::collections::HashSet};
+    use {super::*, crate::v0, std::collections::HashSet};
 
     #[test]
     fn test_try_from_legacy_message() {

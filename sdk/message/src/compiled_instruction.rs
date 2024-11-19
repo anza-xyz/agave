@@ -12,7 +12,7 @@ use {
 /// which is the core of a Solana transaction. It is created during the
 /// construction of `Message`. Most users will not interact with it directly.
 ///
-/// [`Message`]: crate::message::Message
+/// [`Message`]: crate::Message
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
 #[serde(rename_all = "camelCase")]

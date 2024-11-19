@@ -1,5 +1,6 @@
 use {
-    crate::message::{v0, AccountKeys},
+    crate::{v0, AccountKeys},
+    serde_derive::{Deserialize, Serialize},
     solana_pubkey::Pubkey,
     solana_sdk_ids::bpf_loader_upgradeable,
     std::{borrow::Cow, collections::HashSet},
@@ -185,7 +186,7 @@ impl<'a> LoadedMessage<'a> {
 mod tests {
     use {
         super::*,
-        crate::message::{compiled_instruction::CompiledInstruction, MessageHeader},
+        crate::{compiled_instruction::CompiledInstruction, MessageHeader},
         itertools::Itertools,
         solana_sdk_ids::{system_program, sysvar},
     };

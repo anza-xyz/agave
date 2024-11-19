@@ -40,6 +40,7 @@
 pub mod compiled_instruction;
 mod compiled_keys;
 pub mod legacy;
+use serde_derive::{Deserialize, Serialize};
 
 #[cfg(not(target_os = "solana"))]
 #[path = ""]
@@ -75,7 +76,7 @@ pub const MESSAGE_HEADER_LENGTH: usize = 3;
 /// the single shared account list.
 ///
 /// [`Instruction`]: crate::instruction::Instruction
-/// [`CompiledInstruction`]: crate::message::compiled_instruction::CompiledInstruction
+/// [`CompiledInstruction`]: crate::compiled_instruction::CompiledInstruction
 ///
 /// The shared account list is ordered by the permissions required of the accounts:
 ///
@@ -113,7 +114,7 @@ pub struct MessageHeader {
 
 /// The definition of address lookup table accounts.
 ///
-/// As used by the `crate::message::v0` message format.
+/// As used by the `crate::v0` message format.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct AddressLookupTableAccount {
     pub key: solana_pubkey::Pubkey,

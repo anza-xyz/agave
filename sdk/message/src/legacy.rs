@@ -5,8 +5,8 @@
 //! `v0` is a [future message format] that encodes more account keys into a
 //! transaction than the legacy format.
 //!
-//! [`legacy`]: crate::message::legacy
-//! [`v0`]: crate::message::v0
+//! [`legacy`]: crate::legacy
+//! [`v0`]: crate::v0
 //! [future message format]: https://docs.solanalabs.com/proposals/versioned-transactions
 
 #![allow(clippy::arithmetic_side_effects)]
@@ -17,11 +17,9 @@ pub use builtins::{BUILTIN_PROGRAMS_KEYS, MAYBE_BUILTIN_KEY_OR_SYSVAR};
 use wasm_bindgen::prelude::wasm_bindgen;
 use {
     crate::{
-        message::{
-            compiled_instruction::CompiledInstruction, compiled_keys::CompiledKeys, MessageHeader,
-        },
-        system_instruction, sysvar,
+        compiled_instruction::CompiledInstruction, compiled_keys::CompiledKeys, MessageHeader,
     },
+    serde_derive::{Deserialize, Serialize},
     solana_hash::Hash,
     solana_instruction::Instruction,
     solana_pubkey::Pubkey,
@@ -29,6 +27,7 @@ use {
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, system_program},
     solana_short_vec as short_vec,
     std::{collections::HashSet, convert::TryFrom, str::FromStr},
+    system_instruction, sysvar,
 };
 
 #[deprecated(
@@ -110,7 +109,7 @@ fn compile_instructions(ixs: &[Instruction], keys: &[Pubkey]) -> Vec<CompiledIns
 ///
 /// See the [`message`] module documentation for further description.
 ///
-/// [`message`]: crate::message
+/// [`message`]: crate::
 ///
 /// Some constructors accept an optional `payer`, the account responsible for
 /// paying the cost of executing a transaction. In most cases, callers should
@@ -701,7 +700,7 @@ impl Message {
 mod tests {
     #![allow(deprecated)]
     use {
-        super::*, crate::message::MESSAGE_HEADER_LENGTH, solana_instruction::AccountMeta,
+        super::*, crate::MESSAGE_HEADER_LENGTH, solana_instruction::AccountMeta,
         solana_sha256_hasher::hash, std::collections::HashSet,
     };
 

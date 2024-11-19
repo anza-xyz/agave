@@ -1,5 +1,5 @@
 use {
-    crate::message::{
+    crate::{
         compiled_instruction::CompiledInstruction, legacy::Message as LegacyMessage,
         v0::MessageAddressTableLookup, MessageHeader,
     },
@@ -323,7 +323,7 @@ impl<'de> serde::Deserialize<'de> for VersionedMessage {
 mod tests {
     use {
         super::*,
-        crate::message::v0::MessageAddressTableLookup,
+        crate::v0::MessageAddressTableLookup,
         solana_instruction::{AccountMeta, Instruction},
     };
 

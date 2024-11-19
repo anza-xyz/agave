@@ -5,20 +5,18 @@
 //! `v0` is a [future message format] that encodes more account keys into a
 //! transaction than the legacy format.
 //!
-//! [`legacy`]: crate::message::legacy
-//! [`v0`]: crate::message::v0
+//! [`legacy`]: crate::legacy
+//! [`v0`]: crate::v0
 //! [future message format]: https://docs.solanalabs.com/proposals/versioned-transactions
 
 pub use loaded::*;
 use {
     crate::{
-        address_lookup_table::AddressLookupTableAccount,
-        message::{
-            compiled_instruction::CompiledInstruction,
-            compiled_keys::{CompileError, CompiledKeys},
-            AccountKeys, MessageHeader, MESSAGE_VERSION_PREFIX,
-        },
+        compiled_instruction::CompiledInstruction,
+        compiled_keys::{CompileError, CompiledKeys},
+        AccountKeys, AddressLookupTableAccount, MessageHeader, MESSAGE_VERSION_PREFIX,
     },
+    serde_derive::{Deserialize, Serialize},
     solana_hash::Hash,
     solana_instruction::Instruction,
     solana_pubkey::Pubkey,
@@ -53,7 +51,7 @@ pub struct MessageAddressTableLookup {
 ///
 /// See the [`message`] module documentation for further description.
 ///
-/// [`message`]: crate::message
+/// [`message`]: crate::
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -378,7 +376,7 @@ impl Message {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::message::VersionedMessage, solana_instruction::AccountMeta};
+    use {super::*, crate::VersionedMessage, solana_instruction::AccountMeta};
 
     #[test]
     fn test_sanitize() {

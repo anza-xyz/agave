@@ -7525,6 +7525,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-message"
+version = "2.2.0"
+dependencies = [
+ "bincode",
+ "blake3",
+ "lazy_static",
+ "serde",
+ "serde_derive",
+ "solana-bincode",
+ "solana-hash",
+ "solana-instruction",
+ "solana-nonce",
+ "solana-pubkey",
+ "solana-sanitize",
+ "solana-sdk-ids",
+ "solana-short-vec",
+ "solana-transaction-error",
+ "thiserror 2.0.3",
+]
+
+[[package]]
 name = "solana-metrics"
 version = "2.2.0"
 dependencies = [
@@ -7829,6 +7850,7 @@ dependencies = [
  "solana-keccak-hasher",
  "solana-last-restart-slot",
  "solana-logger",
+ "solana-message",
  "solana-msg",
  "solana-native-token",
  "solana-nonce",
