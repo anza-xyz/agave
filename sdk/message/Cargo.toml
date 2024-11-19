@@ -18,7 +18,6 @@ serde_derive = { workspace = true, optional = true }
 solana-bincode = { workspace = true, optional = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true, features = ["std"] }
-solana-nonce = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sanitize = { workspace = true }
 solana-sdk-ids = { workspace = true }
@@ -34,8 +33,10 @@ bitflags = { workspace = true }
 itertools = { workspace = true }
 serde_json = { workspace = true }
 solana-message = { path = ".", features = ["dev-context-only-utils"] }
+solana-nonce = { workspace = true }
 solana-program = { path = "../program" }
 solana-sha256-hasher = { workspace = true }
+static_assertions = { workspace = true }
 
 [features]
 bincode = [

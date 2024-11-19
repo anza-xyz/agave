@@ -7551,6 +7551,7 @@ dependencies = [
  "solana-short-vec",
  "solana-system-interface",
  "solana-transaction-error",
+ "static_assertions",
  "thiserror 2.0.3",
 ]
 
