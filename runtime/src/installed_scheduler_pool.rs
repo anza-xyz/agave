@@ -162,8 +162,11 @@ pub trait InstalledScheduler: Send + Sync + Debug + 'static {
     /// optimize the fast code-path of normal transaction scheduling to be multi-threaded at the
     /// cost of far slower error code-path while giving implementors increased flexibility by
     /// having &mut.
-    fn schedule_execution(&self, transaction: SanitizedTransaction, index: TaskKey)
-        -> ScheduleResult;
+    fn schedule_execution(
+        &self,
+        transaction: SanitizedTransaction,
+        index: TaskKey,
+    ) -> ScheduleResult;
 
     /// Return the error which caused the scheduler to abort.
     ///
