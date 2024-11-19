@@ -24,11 +24,35 @@ use {
     solana_instruction::Instruction,
     solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
-    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, system_program},
+    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, system_program, sysvar},
     solana_short_vec as short_vec,
     std::{collections::HashSet, convert::TryFrom, str::FromStr},
-    system_instruction, sysvar,
+    system_instruction,
 };
+
+// copied from deprecated code in solana_sysvar to avoid a dependency.
+// This should be removed when the items that depend on it are removed.
+lazy_static::lazy_static! {
+    // This will be deprecated and so this list shouldn't be modified
+    static ref ALL_IDS: Vec<Pubkey> = vec![
+        sysvar::clock::id(),
+        sysvar::epoch_schedule::id(),
+        sysvar::fees::id(),
+        sysvar::recent_blockhashes::id(),
+        sysvar::rent::id(),
+        sysvar::rewards::id(),
+        sysvar::slot_hashes::id(),
+        sysvar::slot_history::id(),
+        sysvar::stake_history::id(),
+        sysvar::instructions::id(),
+    ];
+}
+
+// copied from deprecated code in solana_sysvar to avoid a dependency.
+// This should be removed when the items that depend on it are removed.
+fn is_sysvar_id(id: &Pubkey) -> bool {
+    ALL_IDS.iter().any(|key| key == id)
+}
 
 #[deprecated(
     since = "2.0.0",
@@ -65,7 +89,7 @@ mod builtins {
         pub static ref MAYBE_BUILTIN_KEY_OR_SYSVAR: [bool; 256] = {
             let mut temp_table: [bool; 256] = [false; 256];
             BUILTIN_PROGRAMS_KEYS.iter().for_each(|key| temp_table[key.as_ref()[0] as usize] = true);
-            sysvar::ALL_IDS.iter().for_each(|key| temp_table[key.as_ref()[0] as usize] = true);
+            ALL_IDS.iter().for_each(|key| temp_table[key.as_ref()[0] as usize] = true);
             temp_table
         };
     }
@@ -78,7 +102,7 @@ mod builtins {
 #[allow(deprecated)]
 pub fn is_builtin_key_or_sysvar(key: &Pubkey) -> bool {
     if MAYBE_BUILTIN_KEY_OR_SYSVAR[key.as_ref()[0] as usize] {
-        return sysvar::is_sysvar_id(key) || BUILTIN_PROGRAMS_KEYS.contains(key);
+        return is_sysvar_id(key) || BUILTIN_PROGRAMS_KEYS.contains(key);
     }
     false
 }
