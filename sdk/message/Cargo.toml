@@ -47,7 +47,12 @@ bincode = [
     "serde",
 ]
 dev-context-only-utils = ["bincode"]
-frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
+frozen-abi = [
+    "dep:solana-frozen-abi",
+    "dep:solana-frozen-abi-macro",
+    "solana-hash/frozen-abi",
+    "solana-pubkey/frozen-abi",
+]
 serde = [
     "dep:serde",
     "dep:serde_derive",

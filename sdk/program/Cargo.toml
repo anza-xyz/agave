@@ -154,6 +154,7 @@ frozen-abi = [
     "solana-fee-calculator/frozen-abi",
     "solana-hash/frozen-abi",
     "solana-instruction/frozen-abi",
+    "solana-message/frozen-abi",
     "solana-pubkey/frozen-abi",
     "solana-rent/frozen-abi",
     "solana-short-vec/frozen-abi",
