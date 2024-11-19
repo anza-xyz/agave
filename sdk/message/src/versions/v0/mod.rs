@@ -12,6 +12,8 @@
 pub use loaded::*;
 #[cfg(feature = "serde")]
 use serde_derive::{Deserialize, Serialize};
+#[cfg(feature = "frozen-abi")]
+use solana_frozen_abi_macro::AbiExample;
 use {
     crate::{
         compiled_instruction::CompiledInstruction,

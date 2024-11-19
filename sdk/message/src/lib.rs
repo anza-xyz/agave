@@ -1,4 +1,5 @@
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 //! Sequences of [`Instruction`]s executed within a single transaction.
 //!
 //! [`Instruction`]: https://docs.rs/solana-instruction/latest/solana_instruction/struct.Instruction.html
@@ -43,6 +44,8 @@ mod compiled_keys;
 pub mod legacy;
 #[cfg(feature = "serde")]
 use serde_derive::{Deserialize, Serialize};
+#[cfg(feature = "frozen-abi")]
+use solana_frozen_abi_macro::AbiExample;
 
 #[cfg(not(target_os = "solana"))]
 #[path = ""]

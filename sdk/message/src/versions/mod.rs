@@ -1,3 +1,5 @@
+#[cfg(feature = "frozen-abi")]
+use solana_frozen_abi_macro::{frozen_abi, AbiEnumVisitor, AbiExample};
 use {
     crate::{
         compiled_instruction::CompiledInstruction, legacy::Message as LegacyMessage,

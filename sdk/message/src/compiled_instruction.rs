@@ -1,5 +1,7 @@
 #[cfg(feature = "serde")]
 use serde_derive::{Deserialize, Serialize};
+#[cfg(feature = "frozen-abi")]
+use solana_frozen_abi_macro::AbiExample;
 use {solana_pubkey::Pubkey, solana_sanitize::Sanitize};
 
 /// A compact encoding of an instruction.

@@ -7539,6 +7539,8 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "solana-bincode",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
  "solana-hash",
  "solana-instruction",
  "solana-message",
