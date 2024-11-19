@@ -39,14 +39,21 @@ Internally, the database keep a copy of the key and value.
 More specifically, when inserting, which takes a ref of key and value/value,
 copy the data slice into the page.
 
-The key and data are stored separately, in key sections and data sections within the page.
+The key and data are stored separately in key sections and data sections within
+the page. Keys are stored in sorted order. Lookup will be a binary tree look
+up.
 
-For fixed size,
+* Data layout for fixed size
 
-k1, k2, ..., kn | v1, v2, ... vn
+```
+num_pairs | k1, k2, ..., kn | v1, v2, ... vn
+```
 
-For variable size
+* Data layout for variable size
+
+```
 num_pairs | start_k1, start_k2, ..., start_kn | k1, k2, ..., kn | start_v1, start_v2, ..., start_vn | v1, v2, ..., vn 
+```
 
 https://github.com/cberner/redb/blob/b879f353218454fd2e806439a43d0c3aae315d06/src/tree_store/btree_base.rs#L778
 
