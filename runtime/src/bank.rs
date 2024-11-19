@@ -4840,7 +4840,7 @@ impl Bank {
     #[must_use]
     pub fn do_load_execute_and_commit_transactions(
         &self,
-        batch: &TransactionBatch,
+        batch: &TransactionBatch<SanitizedTransaction>,
         max_age: usize,
         collect_balances: bool,
         recording_config: ExecutionRecordingConfig,
