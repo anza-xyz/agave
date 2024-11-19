@@ -5959,7 +5959,6 @@ dependencies = [
  "solana-sanitize",
  "solana-sdk-ids",
  "solana-transaction-error",
- "thiserror 2.0.3",
 ]
 
 [[package]]

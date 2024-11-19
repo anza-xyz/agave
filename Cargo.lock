@@ -7552,7 +7552,6 @@ dependencies = [
  "solana-system-interface",
  "solana-transaction-error",
  "static_assertions",
- "thiserror 2.0.3",
 ]
 
 [[package]]
