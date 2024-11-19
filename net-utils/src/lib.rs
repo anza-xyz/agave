@@ -12,6 +12,7 @@ use {
         sync::{Arc, RwLock},
         time::{Duration, Instant},
     },
+    tokio::net::UdpSocket as TokioUdpSocket,
     url::Url,
 };
 
@@ -545,6 +546,16 @@ pub fn bind_to(ip_addr: IpAddr, port: u16, reuseport: bool) -> io::Result<UdpSoc
     bind_to_with_config(ip_addr, port, config)
 }
 
+pub async fn bind_to_async(
+    ip_addr: IpAddr,
+    port: u16,
+    reuseport: bool,
+) -> io::Result<TokioUdpSocket> {
+    let config = SocketConfig { reuseport };
+    let socket = bind_to_with_config_non_blocking(ip_addr, port, config)?;
+    TokioUdpSocket::from_std(socket)
+}
+
 pub fn bind_to_with_config(
     ip_addr: IpAddr,
     port: u16,
@@ -555,6 +566,20 @@ pub fn bind_to_with_config(
     let addr = SocketAddr::new(ip_addr, port);
 
     sock.bind(&SockAddr::from(addr)).map(|_| sock.into())
+}
+
+pub fn bind_to_with_config_non_blocking(
+    ip_addr: IpAddr,
+    port: u16,
+    config: SocketConfig,
+) -> io::Result<UdpSocket> {
+    let sock = udp_socket_with_config(config)?;
+
+    let addr = SocketAddr::new(ip_addr, port);
+
+    sock.bind(&SockAddr::from(addr))?;
+    sock.set_nonblocking(true)?;
+    Ok(sock.into())
 }
 
 // binds both a UdpSocket and a TcpListener

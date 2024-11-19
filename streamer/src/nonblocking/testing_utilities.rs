@@ -19,10 +19,11 @@ use {
         TokioRuntime, TransportConfig,
     },
     solana_keypair::Keypair,
+    solana_net_utils::bind_to,
     solana_perf::packet::PacketBatch,
     solana_quic_definitions::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT},
     std::{
-        net::{SocketAddr, UdpSocket},
+        net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
         sync::{atomic::AtomicBool, Arc, RwLock},
     },
     tokio::task::JoinHandle,
@@ -141,28 +142,13 @@ pub fn setup_quic_server(
     let sockets = {
         #[cfg(not(target_os = "windows"))]
         {
-            use std::{
-                os::fd::{FromRawFd, IntoRawFd},
-                str::FromStr as _,
-            };
             (0..10)
-                .map(|_| {
-                    let sock = socket2::Socket::new(
-                        socket2::Domain::IPV4,
-                        socket2::Type::DGRAM,
-                        Some(socket2::Protocol::UDP),
-                    )
-                    .unwrap();
-                    sock.set_reuse_port(true).unwrap();
-                    sock.bind(&SocketAddr::from_str("127.0.0.1:0").unwrap().into())
-                        .unwrap();
-                    unsafe { UdpSocket::from_raw_fd(sock.into_raw_fd()) }
-                })
+                .map(|_| bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, true).unwrap())
                 .collect::<Vec<_>>()
         }
         #[cfg(target_os = "windows")]
         {
-            vec![UdpSocket::bind("127.0.0.1:0").unwrap()]
+            vec![bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false).unwrap()]
         }
     };
     setup_quic_server_with_sockets(sockets, option_staked_nodes, config)
@@ -221,7 +207,7 @@ pub async fn make_client_endpoint(
     addr: &SocketAddr,
     client_keypair: Option<&Keypair>,
 ) -> Connection {
-    let client_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let client_socket = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false).unwrap();
     let mut endpoint = quinn::Endpoint::new(
         EndpointConfig::default(),
         None,

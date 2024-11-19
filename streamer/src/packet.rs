@@ -81,10 +81,11 @@ pub fn send_to(
 mod tests {
     use {
         super::*,
+        solana_net_utils::bind_to,
         std::{
             io,
             io::Write,
-            net::{SocketAddr, UdpSocket},
+            net::{IpAddr, Ipv4Addr, SocketAddr},
         },
     };
 
@@ -101,9 +102,9 @@ mod tests {
     #[test]
     pub fn packet_send_recv() {
         solana_logger::setup();
-        let recv_socket = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let recv_socket = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false).expect("bind");
         let addr = recv_socket.local_addr().unwrap();
-        let send_socket = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let send_socket = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false).expect("bind");
         let saddr = send_socket.local_addr().unwrap();
 
         let packet_batch_size = 10;
@@ -159,9 +160,9 @@ mod tests {
     #[test]
     fn test_packet_resize() {
         solana_logger::setup();
-        let recv_socket = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let recv_socket = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false).expect("bind");
         let addr = recv_socket.local_addr().unwrap();
-        let send_socket = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let send_socket = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false).expect("bind");
         let mut batch = PacketBatch::with_capacity(PACKETS_PER_BATCH);
         batch.resize(PACKETS_PER_BATCH, Packet::default());
 

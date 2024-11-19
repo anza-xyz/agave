@@ -56,7 +56,7 @@ use {
     solana_measure::measure::Measure,
     solana_net_utils::{
         bind_common, bind_common_in_range, bind_in_range, bind_in_range_with_config,
-        bind_more_with_config, bind_two_in_range_with_offset_and_config,
+        bind_more_with_config, bind_to, bind_two_in_range_with_offset_and_config,
         find_available_port_in_range, multi_bind_in_range, PortRange, SocketConfig,
         VALIDATOR_PORT_RANGE,
     },
@@ -224,7 +224,7 @@ impl ClusterInfo {
                 GOSSIP_PING_CACHE_CAPACITY,
             )),
             stats: GossipStats::default(),
-            socket: UdpSocket::bind("0.0.0.0:0").unwrap(),
+            socket: bind_to(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, false).unwrap(),
             local_message_pending_push_queue: Mutex::default(),
             contact_debug_interval: DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS,
             instance: RwLock::new(NodeInstance::new(&mut thread_rng(), id, timestamp())),
@@ -2626,8 +2626,6 @@ impl Node {
         num_quic_endpoints: usize,
     ) -> Self {
         let localhost_ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        let localhost_bind_addr = format!("{localhost_ip_addr:?}:0");
-        let unspecified_bind_addr = format!("{:?}:0", IpAddr::V4(Ipv4Addr::UNSPECIFIED));
         let port_range = (1024, 65535);
 
         let udp_config = SocketConfig { reuseport: false };
@@ -2646,8 +2644,8 @@ impl Node {
         let (gossip_port, (gossip, ip_echo)) =
             bind_common_in_range(localhost_ip_addr, port_range).unwrap();
         let gossip_addr = SocketAddr::new(localhost_ip_addr, gossip_port);
-        let tvu = UdpSocket::bind(&localhost_bind_addr).unwrap();
-        let tvu_quic = UdpSocket::bind(&localhost_bind_addr).unwrap();
+        let tvu = bind_to(localhost_ip_addr, 0, false).unwrap();
+        let tvu_quic = bind_to(localhost_ip_addr, 0, false).unwrap();
         let ((_tpu_forwards_port, tpu_forwards), (_tpu_forwards_quic_port, tpu_forwards_quic)) =
             bind_two_in_range_with_offset_and_config(
                 localhost_ip_addr,
@@ -2660,24 +2658,23 @@ impl Node {
         let tpu_forwards_quic =
             bind_more_with_config(tpu_forwards_quic, num_quic_endpoints, quic_config.clone())
                 .unwrap();
-        let tpu_vote = UdpSocket::bind(&localhost_bind_addr).unwrap();
-        let tpu_vote_quic = UdpSocket::bind(&localhost_bind_addr).unwrap();
-
+        let tpu_vote = bind_to(localhost_ip_addr, 0, false).unwrap();
+        let tpu_vote_quic = bind_to(localhost_ip_addr, 0, false).unwrap();
         let tpu_vote_quic =
             bind_more_with_config(tpu_vote_quic, num_quic_endpoints, quic_config).unwrap();
 
-        let repair = UdpSocket::bind(&localhost_bind_addr).unwrap();
-        let repair_quic = UdpSocket::bind(&localhost_bind_addr).unwrap();
+        let repair = bind_to(localhost_ip_addr, 0, false).unwrap();
+        let repair_quic = bind_to(localhost_ip_addr, 0, false).unwrap();
         let rpc_port = find_available_port_in_range(localhost_ip_addr, port_range).unwrap();
         let rpc_addr = SocketAddr::new(localhost_ip_addr, rpc_port);
         let rpc_pubsub_port = find_available_port_in_range(localhost_ip_addr, port_range).unwrap();
         let rpc_pubsub_addr = SocketAddr::new(localhost_ip_addr, rpc_pubsub_port);
-        let broadcast = vec![UdpSocket::bind(&unspecified_bind_addr).unwrap()];
-        let retransmit_socket = UdpSocket::bind(&unspecified_bind_addr).unwrap();
-        let serve_repair = UdpSocket::bind(&localhost_bind_addr).unwrap();
-        let serve_repair_quic = UdpSocket::bind(&localhost_bind_addr).unwrap();
-        let ancestor_hashes_requests = UdpSocket::bind(&unspecified_bind_addr).unwrap();
-        let ancestor_hashes_requests_quic = UdpSocket::bind(&unspecified_bind_addr).unwrap();
+        let broadcast = vec![bind_to(localhost_ip_addr, 0, false).unwrap()];
+        let retransmit_socket = bind_to(localhost_ip_addr, 0, false).unwrap();
+        let serve_repair = bind_to(localhost_ip_addr, 0, false).unwrap();
+        let serve_repair_quic = bind_to(localhost_ip_addr, 0, false).unwrap();
+        let ancestor_hashes_requests = bind_to(localhost_ip_addr, 0, false).unwrap();
+        let ancestor_hashes_requests_quic = bind_to(localhost_ip_addr, 0, false).unwrap();
 
         let mut info = ContactInfo::new(
             *pubkey,
@@ -3019,7 +3016,7 @@ pub fn push_messages_to_peer(
         "push_messages_to_peer",
         &reqs,
     );
-    let sock = UdpSocket::bind("0.0.0.0:0").unwrap();
+    let sock = bind_to(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, false).unwrap();
     packet::send_to(&packet_batch, &sock, socket_addr_space)?;
     Ok(())
 }
@@ -4395,7 +4392,7 @@ mod tests {
 
         let cluster_info44 = Arc::new({
             let mut node = Node::new_localhost_with_pubkey(&keypair44.pubkey());
-            node.sockets.gossip = UdpSocket::bind("127.0.0.1:65534").unwrap();
+            node.sockets.gossip = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), 65534, false).unwrap();
             info!("{:?}", node);
             ClusterInfo::new(node.info, keypair44.clone(), SocketAddrSpace::Unspecified)
         });

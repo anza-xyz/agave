@@ -1536,8 +1536,12 @@ pub mod test {
         crossbeam_channel::{unbounded, Receiver},
         quinn::{ApplicationClose, ConnectionError},
         solana_keypair::Keypair,
+        solana_net_utils::bind_to,
         solana_signer::Signer,
-        std::collections::HashMap,
+        std::{
+            collections::HashMap,
+            net::{IpAddr, Ipv4Addr},
+        },
         tokio::time::sleep,
     };
 
@@ -1827,7 +1831,7 @@ pub mod test {
             },
         );
 
-        let client_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let client_socket = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false).unwrap();
         let mut endpoint = quinn::Endpoint::new(
             EndpointConfig::default(),
             None,
@@ -1990,7 +1994,7 @@ pub mod test {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_quic_server_unstaked_node_connect_failure() {
         solana_logger::setup();
-        let s = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let s = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false).unwrap();
         let exit = Arc::new(AtomicBool::new(false));
         let (sender, _) = unbounded();
         let keypair = Keypair::new();
@@ -2023,7 +2027,7 @@ pub mod test {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_quic_server_multiple_streams() {
         solana_logger::setup();
-        let s = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let s = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false).unwrap();
         let exit = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = unbounded();
         let keypair = Keypair::new();

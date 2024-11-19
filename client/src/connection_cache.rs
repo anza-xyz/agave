@@ -201,6 +201,7 @@ mod tests {
         super::*,
         crate::connection_cache::ConnectionCache,
         crossbeam_channel::unbounded,
+        solana_net_utils::bind_to,
         solana_sdk::signature::Keypair,
         solana_streamer::{
             quic::{QuicServerParams, SpawnServerResult},
@@ -217,7 +218,7 @@ mod tests {
 
     fn server_args() -> (UdpSocket, Arc<AtomicBool>, Keypair) {
         (
-            UdpSocket::bind("127.0.0.1:0").unwrap(),
+            bind_to(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, false).unwrap(),
             Arc::new(AtomicBool::new(false)),
             Keypair::new(),
         )

@@ -445,11 +445,12 @@ mod test {
             streamer::{receiver, responder},
         },
         crossbeam_channel::unbounded,
+        solana_net_utils::bind_to,
         solana_perf::recycler::Recycler,
         std::{
             io,
             io::Write,
-            net::UdpSocket,
+            net::{IpAddr, Ipv4Addr},
             sync::{
                 atomic::{AtomicBool, Ordering},
                 Arc,
@@ -480,11 +481,11 @@ mod test {
     }
     #[test]
     fn streamer_send_test() {
-        let read = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let read = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false).expect("bind");
         read.set_read_timeout(Some(Duration::new(1, 0))).unwrap();
 
         let addr = read.local_addr().unwrap();
-        let send = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let send = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false).expect("bind");
         let exit = Arc::new(AtomicBool::new(false));
         let (s_reader, r_reader) = unbounded();
         let stats = Arc::new(StreamerReceiveStats::new("test"));

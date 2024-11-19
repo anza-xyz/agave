@@ -16,6 +16,7 @@ use {
     solana_connection_cache::client_connection::ClientConnection as TpuConnection,
     solana_feature_set::FeatureSet,
     solana_measure::measure_us,
+    solana_net_utils::bind_to,
     solana_perf::{data_budget::DataBudget, packet::Packet},
     solana_poh::poh_recorder::PohRecorder,
     solana_runtime::bank_forks::BankForks,
@@ -24,7 +25,7 @@ use {
     solana_streamer::sendmmsg::batch_send,
     std::{
         iter::repeat,
-        net::{SocketAddr, UdpSocket},
+        net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
         sync::{atomic::Ordering, Arc, RwLock},
     },
 };
@@ -50,7 +51,7 @@ impl<T: LikeClusterInfo> Forwarder<T> {
         Self {
             poh_recorder,
             bank_forks,
-            socket: UdpSocket::bind("0.0.0.0:0").unwrap(),
+            socket: bind_to(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, false).unwrap(),
             cluster_info,
             connection_cache,
             data_budget,

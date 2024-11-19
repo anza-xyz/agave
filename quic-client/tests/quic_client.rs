@@ -4,6 +4,7 @@ mod tests {
         crossbeam_channel::{unbounded, Receiver},
         log::*,
         solana_connection_cache::connection_cache_stats::ConnectionCacheStats,
+        solana_net_utils::bind_to,
         solana_perf::packet::PacketBatch,
         solana_quic_client::nonblocking::quic_client::{
             QuicClientCertificate, QuicLazyInitializedEndpoint,
@@ -15,7 +16,7 @@ mod tests {
             tls_certificates::new_dummy_x509_certificate,
         },
         std::{
-            net::{SocketAddr, UdpSocket},
+            net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
             sync::{
                 atomic::{AtomicBool, Ordering},
                 Arc, RwLock,
@@ -52,7 +53,7 @@ mod tests {
 
     fn server_args() -> (UdpSocket, Arc<AtomicBool>, Keypair) {
         (
-            UdpSocket::bind("127.0.0.1:0").unwrap(),
+            bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false).unwrap(),
             Arc::new(AtomicBool::new(false)),
             Keypair::new(),
         )

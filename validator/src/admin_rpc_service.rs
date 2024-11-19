@@ -873,6 +873,7 @@ mod tests {
         solana_gossip::cluster_info::ClusterInfo,
         solana_inline_spl::token,
         solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
+        solana_net_utils::bind_to,
         solana_rpc::rpc::create_validator_exit,
         solana_runtime::{
             bank::{Bank, BankTestConfig},
@@ -888,7 +889,11 @@ mod tests {
             solana_program::{program_option::COption, program_pack::Pack},
             state::{Account as TokenAccount, AccountState as TokenAccountState, Mint},
         },
-        std::{collections::HashSet, sync::atomic::AtomicBool},
+        std::{
+            collections::HashSet,
+            net::{IpAddr, Ipv4Addr},
+            sync::atomic::AtomicBool,
+        },
     };
 
     #[derive(Default)]
@@ -942,7 +947,9 @@ mod tests {
                     vote_account,
                     repair_whitelist,
                     notifies: Vec::new(),
-                    repair_socket: Arc::new(std::net::UdpSocket::bind("0.0.0.0:0").unwrap()),
+                    repair_socket: Arc::new(
+                        bind_to(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, false).unwrap(),
+                    ),
                     outstanding_repair_requests: Arc::<
                         RwLock<repair_service::OutstandingShredRepairs>,
                     >::default(),

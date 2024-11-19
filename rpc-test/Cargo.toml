@@ -21,6 +21,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 solana-account-decoder = { workspace = true }
 solana-client = { workspace = true }
+solana-net-utils = { workspace = true }
 solana-pubsub-client = { workspace = true }
 solana-rpc = { workspace = true }
 solana-rpc-client = { workspace = true }

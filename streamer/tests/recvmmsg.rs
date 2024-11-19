@@ -1,18 +1,22 @@
 #![cfg(target_os = "linux")]
 
 use {
+    solana_net_utils::bind_to,
     solana_streamer::{
         packet::{Meta, Packet, PACKET_DATA_SIZE},
         recvmmsg::*,
     },
-    std::{net::UdpSocket, time::Instant},
+    std::{
+        net::{IpAddr, Ipv4Addr},
+        time::Instant,
+    },
 };
 
 #[test]
 pub fn test_recv_mmsg_batch_size() {
-    let reader = UdpSocket::bind("127.0.0.1:0").expect("bind");
+    let reader = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false).expect("bind");
     let addr = reader.local_addr().unwrap();
-    let sender = UdpSocket::bind("127.0.0.1:0").expect("bind");
+    let sender = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false).expect("bind");
 
     const TEST_BATCH_SIZE: usize = 64;
     let sent = TEST_BATCH_SIZE;

@@ -1,11 +1,11 @@
 use {
-    crate::{HEADER_LENGTH, IP_ECHO_SERVER_RESPONSE_LENGTH},
+    crate::{bind_to, HEADER_LENGTH, IP_ECHO_SERVER_RESPONSE_LENGTH},
     log::*,
     serde_derive::{Deserialize, Serialize},
     solana_sdk::deserialize_utils::default_on_eof,
     std::{
         io,
-        net::{IpAddr, SocketAddr},
+        net::{IpAddr, Ipv4Addr, SocketAddr},
         num::NonZeroUsize,
         time::Duration,
     },
@@ -111,7 +111,7 @@ async fn process_connection(
     trace!("request: {:?}", msg);
 
     // Fire a datagram at each non-zero UDP port
-    match std::net::UdpSocket::bind("0.0.0.0:0") {
+    match bind_to(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, false) {
         Ok(udp_socket) => {
             for udp_port in &msg.udp_ports {
                 if *udp_port != 0 {
