@@ -15,15 +15,15 @@ Chili pepper is a number to indicate how "hot" the account is.
 * support fork-aware update
 * read is critical for block production so it can't be blocked
 
-The choice made is use a key-value store to support multiple parallel read and
-single write. And the write won't block the read with transaction memory
+The choice we made is use a key-value store to support multiple parallel read
+and single write. And the write won't block the read with transaction memory
 semantics.
 
 
-## Key-Value store
+## Key-Value dbß
 
 Underlying store is a key-value db. The db use B-tree to store the data. The
-data is stored at the leaf node. 
+data is stored at the leaf node in pages. 
 
 With B-tree to store the record in key sorted order, we can support both single key and
 key range look up.
@@ -32,6 +32,34 @@ It is important to support key range look up, which would enable query for
 multiple slot list result for one pubkey. This is required to handle replay when
 in fork and don't break consensus.
 
+The db stores zero copy pubkey look up and zero copy value return.
+
+Internally, the database keep a copy of the key and value. 
+
+More specifically, when inserting, which takes a ref of key and value/value,
+copy the data slice into the page.
+
+The key and data are stored separately, in key sections and data sections within the page.
+
+For fixed size,
+
+k1, k2, ..., kn | v1, v2, ... vn
+
+For variable size
+num_pairs | start_k1, start_k2, ..., start_kn | k1, k2, ..., kn | start_v1, start_v2, ..., start_vn | v1, v2, ..., vn 
+
+https://github.com/cberner/redb/blob/b879f353218454fd2e806439a43d0c3aae315d06/src/tree_store/btree_base.rs#L778
+
+```
+        self.page[key_offset..(key_offset + key.len())].copy_from_slice(key);
+        ...
+        self.page[offset..(offset + size_of::<u32>())].copy_from_slice(
+                &u32::try_from(value_offset + value.len())
+                    .unwrap()
+                    .to_le_bytes(),
+            );
+```
+    
 ### Key
 
 pubkey + slot : total 40 bytes
