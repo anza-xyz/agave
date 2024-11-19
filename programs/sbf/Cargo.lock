@@ -5955,11 +5955,9 @@ dependencies = [
  "lazy_static",
  "solana-hash",
  "solana-instruction",
- "solana-nonce",
  "solana-pubkey",
  "solana-sanitize",
  "solana-sdk-ids",
- "solana-system-interface",
  "solana-transaction-error",
  "thiserror 2.0.3",
 ]
