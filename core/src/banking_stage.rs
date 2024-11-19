@@ -748,7 +748,7 @@ impl BankingStage {
                                 }
                                 let (tx, _) = p.build_sanitized_transaction(
                                     bank.vote_only_bank(),
-                                    &*bank,
+                                    &bank,
                                     bank.get_reserved_account_keys(),
                                 )?;
 
