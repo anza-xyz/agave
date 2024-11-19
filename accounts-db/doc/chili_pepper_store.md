@@ -1,15 +1,16 @@
-# Chilli Peppers Store Design
+# Chili Peppers Store Design
 
-This document describe the design of chilli peppers store for accounts in Agave client.
+This document describe the design of chili peppers store for accounts in Agave client.
 
 ## Goal
 
-A persistent storage for account's chilli peppers. 
+A persistent storage for account's chili peppers. 
 
-Chilli pepper is a number to indicate how "hot" the account is.
+Chili pepper is a number to indicate how "hot" the account is.
 
 * support parallel reads from multiple banking threads. 
 * support look up by pubkey
+* support zero copy pubkey lookup
 * support fork-aware lookup
 * support fork-aware update
 * read is critical for block production so it can't be blocked
@@ -32,7 +33,7 @@ pubkey + slot : total 40 bytes
 
 ### Value
 
-Chilli pepper number : 8 bytes
+chili pepper number : 8 bytes
 
 ### Look up
 
@@ -55,13 +56,13 @@ TODO
 
 ## On Insert
 
-The account's chilli pepper are inserted at account's load time. 
+The account's chili pepper are inserted at account's load time. 
 
 TODO
 
 ## Clean
 
-Remove entry's whose chilli peppers is below a threshold to keep only the hot accounts.
+Remove entry's whose chili peppers is below a threshold to keep only the hot accounts.
 
 ## Snapshot
 
@@ -71,8 +72,8 @@ Remove entry's whose chilli peppers is below a threshold to keep only the hot ac
 
 ## On Restart
 
-* When restart from a downloaded snapshot, the chilli pepper store are reopend
+* When restart from a downloaded snapshot, the chili pepper store are reopend
 from the snapshot db file in tar bar.
 
-* When restarted from load snapshot, the chilli pepper store are reopend from the
+* When restarted from load snapshot, the chili pepper store are reopend from the
 local db file.

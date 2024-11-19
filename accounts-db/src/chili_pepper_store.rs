@@ -54,7 +54,7 @@ impl<'a> Key for PubkeySlot<'a> {
 }
 
 const TABLE: TableDefinition<PubkeySlot, u64> = TableDefinition::new("my_data");
-pub struct ChilliPepperStore {
+pub struct ChiliPepperStore {
     db: Database,
 }
 
@@ -66,7 +66,7 @@ pub struct ChilliPepperStore {
 //             .create(&path)
 //             .unwrap();
 
-impl ChilliPepperStore {
+impl ChiliPepperStore {
     pub fn new(db: Database) -> Self {
         Self { db }
     }
@@ -203,7 +203,7 @@ pub mod tests {
         // default cache size is 1024 * 1024 * 1024 (1GB)
         // 90% of the cache is used for the read cache, and 10% is used for the write cache.
         let db = Database::create(tmpfile.path()).expect("create db success");
-        let store = ChilliPepperStore::new(db);
+        let store = ChiliPepperStore::new(db);
 
         store.insert(some_key, some_value).unwrap();
         store.insert(some_key2, some_value2).unwrap();
@@ -241,7 +241,7 @@ pub mod tests {
 
         let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
         let db = Database::create(tmpfile.path()).expect("create db success");
-        let store = ChilliPepperStore::new(db);
+        let store = ChiliPepperStore::new(db);
 
         store.insert(some_key, some_value).unwrap();
         store.insert(some_key2, some_value2).unwrap();
@@ -279,7 +279,7 @@ pub mod tests {
         let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
 
         let db = Database::create(tmpfile.path()).expect("create db success");
-        let store = ChilliPepperStore::new(db);
+        let store = ChiliPepperStore::new(db);
 
         store.bulk_insert(to_insert).unwrap();
 
@@ -337,8 +337,8 @@ pub mod tests {
                 assert_eq!(len, 1);
             }
             {
-                let tabe = read_txn.open_table::<PubkeySlot, u64>(TABLE).unwrap();
-                let iter = tabe.get(&some_key).unwrap();
+                let table = read_txn.open_table::<PubkeySlot, u64>(TABLE).unwrap();
+                let iter = table.get(&some_key).unwrap();
                 assert_eq!(iter.unwrap().value(), some_value);
             }
         }
@@ -352,8 +352,8 @@ pub mod tests {
         }
 
         {
-            let tabel = read_txn.open_table::<PubkeySlot, u64>(TABLE).unwrap();
-            let iter = tabel.get(&some_key).unwrap();
+            let table = read_txn.open_table::<PubkeySlot, u64>(TABLE).unwrap();
+            let iter = table.get(&some_key).unwrap();
             assert_eq!(iter.unwrap().value(), some_value);
         }
 
@@ -366,8 +366,8 @@ pub mod tests {
         }
 
         {
-            let tabel = read_txn.open_table::<PubkeySlot, u64>(TABLE).unwrap();
-            let iter = tabel.get(&some_key).unwrap();
+            let table = read_txn.open_table::<PubkeySlot, u64>(TABLE).unwrap();
+            let iter = table.get(&some_key).unwrap();
             assert!(iter.is_none());
         }
     }
@@ -395,7 +395,7 @@ pub mod tests {
         let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
 
         let db = Database::create(tmpfile.path()).expect("create db success");
-        let store = ChilliPepperStore::new(db);
+        let store = ChiliPepperStore::new(db);
 
         store.bulk_insert(to_insert).unwrap();
 
@@ -408,7 +408,7 @@ pub mod tests {
         let snapshot_path = path.with_extension("snapshot");
         std::fs::copy(&path, &snapshot_path).expect("copy db file success");
         let db2 = Database::open(&snapshot_path).expect("open db success");
-        let store2 = ChilliPepperStore::new(db2);
+        let store2 = ChiliPepperStore::new(db2);
 
         assert_eq!(store2.len().unwrap(), 3);
         assert_eq!(store2.get(some_key).unwrap().unwrap(), some_value);
@@ -436,7 +436,7 @@ pub mod tests {
         // default cache size is 1024 * 1024 * 1024 (1GB)
         // 90% of the cache is used for the read cache, and 10% is used for the write cache.
         let db = Database::create(tmpfile.path()).expect("create db success");
-        let store = ChilliPepperStore::new(db);
+        let store = ChiliPepperStore::new(db);
 
         store.insert(some_key, some_value).unwrap();
         store.insert(some_key2, some_value2).unwrap();
@@ -469,7 +469,7 @@ pub mod tests {
         // default cache size is 1024 * 1024 * 1024 (1GB)
         // 90% of the cache is used for the read cache, and 10% is used for the write cache.
         let db = Database::create(tmpfile.path()).expect("create db success");
-        let store = ChilliPepperStore::new(db);
+        let store = ChiliPepperStore::new(db);
 
         store.bulk_insert(data).unwrap();
         assert_eq!(store.len().unwrap(), 10);
