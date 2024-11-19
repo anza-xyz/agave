@@ -22,10 +22,15 @@ semantics.
 
 ## Key-Value store
 
-Underlying store is a key-value store. 
+Underlying store is a key-value db. The db use B-tree to store the data. The
+data is stored at the leaf node. 
 
-B-tree to store the record in key sorted order to support pubkey based look up.
-It also support return multiple slot list result for one pubkey.
+With B-tree to store the record in key sorted order, we can support both single key and
+key range look up.
+
+It is important to support key range look up, which would enable query for  
+multiple slot list result for one pubkey. This is required to handle replay when
+in fork and don't break consensus.
 
 ### Key
 
