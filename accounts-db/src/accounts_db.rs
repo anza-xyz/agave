@@ -3050,32 +3050,11 @@ impl AccountsDb {
         last_full_snapshot_slot: Option<Slot>,
         timings: &mut CleanKeyTimings,
         epoch_schedule: &EpochSchedule,
-<<<<<<< HEAD
     ) -> (Vec<Pubkey>, Option<Slot>) {
-=======
-        old_storages_policy: OldStoragesPolicy,
-    ) -> CleaningCandidates {
->>>>>>> bf33b8c4d8 (Marks old storages as dirty in clean_accounts() (#3702))
         let oldest_non_ancient_slot = self.get_oldest_non_ancient_slot(epoch_schedule);
         let mut dirty_store_processing_time = Measure::start("dirty_store_processing");
-        let max_root_inclusive = self.accounts_index.max_root_inclusive();
-        let max_slot_inclusive = max_clean_root_inclusive.unwrap_or(max_root_inclusive);
-
-        if old_storages_policy == OldStoragesPolicy::Clean {
-            let slot_one_epoch_old =
-                max_root_inclusive.saturating_sub(epoch_schedule.slots_per_epoch);
-            // do nothing special for these 100 old storages that will likely get cleaned up shortly
-            let acceptable_straggler_slot_count = 100;
-            let old_slot_cutoff =
-                slot_one_epoch_old.saturating_sub(acceptable_straggler_slot_count);
-            let (old_storages, old_slots) = self.get_snapshot_storages(..old_slot_cutoff);
-            let num_old_storages = old_storages.len();
-            for (old_slot, old_storage) in std::iter::zip(old_slots, old_storages) {
-                self.dirty_stores.entry(old_slot).or_insert(old_storage);
-            }
-            info!("Marked {num_old_storages} old storages as dirty");
-        }
-
+        let max_slot_inclusive =
+            max_clean_root_inclusive.unwrap_or_else(|| self.accounts_index.max_root_inclusive());
         let mut dirty_stores = Vec::with_capacity(self.dirty_stores.len());
         // find the oldest dirty slot
         // we'll add logging if that append vec cannot be marked dead
@@ -3181,20 +3160,7 @@ impl AccountsDb {
 
     /// Call clean_accounts() with the common parameters that tests/benches use.
     pub fn clean_accounts_for_tests(&self) {
-<<<<<<< HEAD
         self.clean_accounts(None, false, None, &EpochSchedule::default())
-=======
-        self.clean_accounts(
-            None,
-            false,
-            &EpochSchedule::default(),
-            if self.ancient_append_vec_offset.is_some() {
-                OldStoragesPolicy::Leave
-            } else {
-                OldStoragesPolicy::Clean
-            },
-        )
->>>>>>> bf33b8c4d8 (Marks old storages as dirty in clean_accounts() (#3702))
     }
 
     /// called with cli argument to verify refcounts are correct on all accounts
@@ -3278,7 +3244,6 @@ impl AccountsDb {
         is_startup: bool,
         last_full_snapshot_slot: Option<Slot>,
         epoch_schedule: &EpochSchedule,
-        old_storages_policy: OldStoragesPolicy,
     ) {
         if self.exhaustively_verify_refcounts {
             self.exhaustively_verify_refcounts(max_clean_root_inclusive);
@@ -3300,7 +3265,6 @@ impl AccountsDb {
             last_full_snapshot_slot,
             &mut key_timings,
             epoch_schedule,
-            old_storages_policy,
         );
 
         let mut sort = Measure::start("sort");
@@ -4918,39 +4882,6 @@ impl AccountsDb {
         let _guard = self.active_stats.activate(ActiveStatItem::Shrink);
         const DIRTY_STORES_CLEANING_THRESHOLD: usize = 10_000;
         const OUTER_CHUNK_SIZE: usize = 2000;
-<<<<<<< HEAD
-=======
-        let mut slots = self.all_slots_in_storage();
-        if let Some(newest_slot_skip_shrink_inclusive) = newest_slot_skip_shrink_inclusive {
-            // at startup, we cannot shrink the slot that we're about to replay and recalculate bank hash for.
-            // That storage's contents are used to verify the bank hash (and accounts delta hash) of the startup slot.
-            slots.retain(|slot| slot < &newest_slot_skip_shrink_inclusive);
-        }
-
-        // if we are restoring from incremental + full snapshot, then we cannot clean past latest_full_snapshot_slot.
-        // If we were to clean past that, then we could mark accounts prior to latest_full_snapshot_slot as dead.
-        // If we mark accounts prior to latest_full_snapshot_slot as dead, then we could shrink those accounts away.
-        // If we shrink accounts away, then when we run the full hash of all accounts calculation up to latest_full_snapshot_slot,
-        // then we will get the wrong answer, because some accounts may be GONE from the slot range up to latest_full_snapshot_slot.
-        // So, we can only clean UP TO and including latest_full_snapshot_slot.
-        // As long as we don't mark anything as dead at slots > latest_full_snapshot_slot, then shrink will have nothing to do for
-        // slots > latest_full_snapshot_slot.
-        let maybe_clean = || {
-            if self.dirty_stores.len() > DIRTY_STORES_CLEANING_THRESHOLD {
-                let latest_full_snapshot_slot = self.latest_full_snapshot_slot();
-                self.clean_accounts(
-                    latest_full_snapshot_slot,
-                    is_startup,
-                    epoch_schedule,
-                    // Leave any old storages alone for now.  Once the validator is running
-                    // normal, calls to clean_accounts() will have the correct policy based
-                    // on if ancient storages are enabled or not.
-                    OldStoragesPolicy::Leave,
-                );
-            }
-        };
-
->>>>>>> bf33b8c4d8 (Marks old storages as dirty in clean_accounts() (#3702))
         if is_startup {
             let slots = self.all_slots_in_storage();
             let threads = num_cpus::get();
@@ -7074,7 +7005,6 @@ impl AccountsDb {
         true
     }
 
-<<<<<<< HEAD
     /// Scan through all the account storage in parallel.
     /// Returns a Vec of opened files.
     /// Each file has serialized hash info, sorted by pubkey and then slot, from scanning the append vecs.
@@ -7281,8 +7211,6 @@ impl AccountsDb {
         stats.num_dirty_slots = num_dirty_slots;
     }
 
-=======
->>>>>>> bf33b8c4d8 (Marks old storages as dirty in clean_accounts() (#3702))
     pub fn calculate_accounts_hash_from(
         &self,
         data_source: CalcAccountsHashDataSource,
@@ -7654,6 +7582,8 @@ impl AccountsDb {
         let _guard = self.active_stats.activate(ActiveStatItem::Hash);
         let storages_start_slot = storages.range().start;
         stats.oldest_root = storages_start_slot;
+
+        self.mark_old_slots_as_dirty(storages, config.epoch_schedule.slots_per_epoch, &mut stats);
 
         let slot = storages.max_slot_inclusive();
         let use_bg_thread_pool = config.use_bg_thread_pool;
@@ -9503,20 +9433,6 @@ pub(crate) enum UpdateIndexThreadSelection {
     Inline,
     /// Use a thread-pool if the number of updates exceeds a threshold
     PoolWithThreshold,
-}
-
-/// How should old storages be handled in clean_accounts()?
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum OldStoragesPolicy {
-    /// Clean all old storages, even if they were not explictly marked as dirty.
-    ///
-    /// This is the default behavior when not skipping rewrites.
-    Clean,
-    /// Leave all old storages.
-    ///
-    /// When skipping rewrites, we intentionally will have ancient storages.
-    /// Do not clean them up automatically in clean_accounts().
-    Leave,
 }
 
 // These functions/fields are only usable from a dev context (i.e. tests and benches)
