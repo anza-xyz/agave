@@ -20,6 +20,7 @@ solana-frozen-abi = { workspace = true, optional = true }
 solana-frozen-abi-macro = { workspace = true, optional = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true, features = ["std"] }
+solana-logger = { workspace = true, optional = true }
 solana-pubkey = { workspace = true }
 solana-sanitize = { workspace = true }
 solana-sdk-ids = { workspace = true }
@@ -50,6 +51,7 @@ dev-context-only-utils = ["bincode"]
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
+    "dep:solana-logger",
     "solana-hash/frozen-abi",
     "solana-pubkey/frozen-abi",
 ]
