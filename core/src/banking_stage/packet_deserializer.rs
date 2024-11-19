@@ -8,7 +8,6 @@ use {
     crate::banking_trace::{BankingPacketBatch, BankingPacketReceiver},
     crossbeam_channel::RecvTimeoutError,
     solana_perf::packet::{PacketBatch, SigverifyTracerPacketStats},
-    solana_runtime::bank_forks::BankForks,
     solana_sdk::saturating_add_assign,
     std::time::{Duration, Instant},
 };
