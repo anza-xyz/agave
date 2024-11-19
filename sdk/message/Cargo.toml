@@ -30,8 +30,8 @@ solana-transaction-error = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
-borsh = { workspace = true }
 bitflags = { workspace = true }
+borsh = { workspace = true }
 itertools = { workspace = true }
 serde_json = { workspace = true }
 solana-message = { path = ".", features = ["dev-context-only-utils"] }
@@ -45,7 +45,7 @@ bincode = [
     "dep:bincode",
     "dep:solana-bincode",
     "dep:solana-system-interface",
-    "serde",
+    "serde"
 ]
 dev-context-only-utils = ["bincode"]
 frozen-abi = [
@@ -53,14 +53,14 @@ frozen-abi = [
     "dep:solana-frozen-abi-macro",
     "dep:solana-logger",
     "solana-hash/frozen-abi",
-    "solana-pubkey/frozen-abi",
+    "solana-pubkey/frozen-abi"
 ]
 serde = [
     "dep:serde",
     "dep:serde_derive",
     "dep:solana-short-vec",
     "solana-hash/serde",
-    "solana-pubkey/serde",
+    "solana-pubkey/serde"
 ]
 
 [package.metadata.docs.rs]
