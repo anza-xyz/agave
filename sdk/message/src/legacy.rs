@@ -24,10 +24,12 @@ use {
     solana_instruction::Instruction,
     solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
-    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, system_program, sysvar},
+    solana_sdk_ids::{
+        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, system_program, sysvar,
+    },
     solana_short_vec as short_vec,
+    solana_system_interface::instruction as system_instruction,
     std::{collections::HashSet, convert::TryFrom, str::FromStr},
-    system_instruction,
 };
 
 // copied from deprecated code in solana_program::sysvar to avoid a dependency.

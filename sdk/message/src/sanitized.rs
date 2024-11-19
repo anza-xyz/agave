@@ -14,10 +14,10 @@ use {
     solana_hash::Hash,
     solana_instruction::{BorrowedAccountMeta, BorrowedInstruction},
     solana_nonce::NONCED_TX_MARKER_IX_INDEX,
-    solana_program::system_instruction::SystemInstruction,
     solana_pubkey::Pubkey,
     solana_sanitize::Sanitize,
     solana_sdk_ids::{ed25519_program, secp256k1_program, system_program},
+    solana_system_interface::instruction::SystemInstruction,
     std::{borrow::Cow, collections::HashSet, convert::TryFrom},
 };
 

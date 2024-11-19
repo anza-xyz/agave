@@ -5964,6 +5964,7 @@ dependencies = [
  "solana-sanitize",
  "solana-sdk-ids",
  "solana-short-vec",
+ "solana-system-interface",
  "solana-transaction-error",
  "thiserror 2.0.3",
 ]

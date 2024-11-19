@@ -11,7 +11,7 @@ edition = { workspace = true }
 
 [dependencies]
 bincode = { workspace = true }
-blake3 = { workspace = true, features = ["traits-preview"]}
+blake3 = { workspace = true, features = ["traits-preview"] }
 lazy_static = { workspace = true }
 serde = { workspace = true }
 serde_derive = { workspace = true }
@@ -23,6 +23,7 @@ solana-pubkey = { workspace = true, features = ["serde"] }
 solana-sanitize = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-short-vec = { workspace = true }
+solana-system-interface = { git = "https://github.com/solana-program/system.git" }
 solana-transaction-error = { workspace = true }
 thiserror = { workspace = true }
 
