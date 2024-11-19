@@ -1,6 +1,6 @@
 //! Sequences of [`Instruction`]s executed within a single transaction.
 //!
-//! [`Instruction`]: crate::instruction::Instruction
+//! [`Instruction`]: https://docs.rs/solana-instruction/latest/solana_instruction/struct.Instruction.html
 //!
 //! In Solana, programs execute instructions, and clients submit sequences
 //! of instructions to the network to be atomically executed as [`Transaction`]s.
@@ -75,7 +75,7 @@ pub const MESSAGE_HEADER_LENGTH: usize = 3;
 /// `CompiledInstruction`s then reference by index the accounts they require in
 /// the single shared account list.
 ///
-/// [`Instruction`]: crate::instruction::Instruction
+/// [`Instruction`]: https://docs.rs/solana-instruction/latest/solana_instruction/struct.Instruction.html
 /// [`CompiledInstruction`]: crate::compiled_instruction::CompiledInstruction
 ///
 /// The shared account list is ordered by the permissions required of the accounts:

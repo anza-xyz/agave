@@ -133,9 +133,7 @@ fn compile_instructions(ixs: &[Instruction], keys: &[Pubkey]) -> Vec<CompiledIns
 
 /// A Solana transaction message (legacy).
 ///
-/// See the [`message`] module documentation for further description.
-///
-/// [`message`]: crate::
+/// See the crate documentation for further description.
 ///
 /// Some constructors accept an optional `payer`, the account responsible for
 /// paying the cost of executing a transaction. In most cases, callers should

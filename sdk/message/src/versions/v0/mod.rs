@@ -49,9 +49,8 @@ pub struct MessageAddressTableLookup {
 /// This message format supports succinct account loading with
 /// on-chain address lookup tables.
 ///
-/// See the [`message`] module documentation for further description.
+/// See the crate documentation for further description.
 ///
-/// [`message`]: crate::
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone)]
 #[serde(rename_all = "camelCase")]
