@@ -1761,8 +1761,8 @@ impl JsonRpcRequestProcessor {
                             bigtable_before = None;
                         }
                         Err(err) => {
-                            warn!("{:?}", err);
-                            return Ok(map_results(results));
+                            warn!("Failed to query Bigtable: {:?}", err);
+                            return Err(RpcCustomError::LongTermStorageUnreachable.into());
                         }
                         Ok(_) => {}
                     }
@@ -1791,8 +1791,10 @@ impl JsonRpcRequestProcessor {
                             }
                         }
                     }
+                    Err(StorageError::SignatureNotFound) => {}
                     Err(err) => {
-                        warn!("{:?}", err);
+                        warn!("Failed to query Bigtable: {:?}", err);
+                        return Err(RpcCustomError::LongTermStorageUnreachable.into());
                     }
                 }
             }
