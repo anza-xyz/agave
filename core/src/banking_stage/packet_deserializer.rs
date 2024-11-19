@@ -222,7 +222,7 @@ impl PacketDeserializer {
         packet_indexes: &'a [usize],
     ) -> impl Iterator<Item = (&'a usize, ImmutableDeserializedPacket)> + 'a {
         packet_indexes.iter().filter_map(move |packet_index| {
-            let mut packet_clone = packet_batch[*packet_index].clone();
+            let packet_clone = packet_batch[*packet_index].clone();
             ImmutableDeserializedPacket::new(packet_clone)
                 .ok()
                 .map(|p| (packet_index, p))
