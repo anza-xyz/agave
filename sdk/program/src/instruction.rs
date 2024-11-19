@@ -1,5 +1,3 @@
-#[cfg(feature = "frozen-abi")]
-use solana_frozen_abi_macro::AbiExample;
 pub use {
     crate::message::compiled_instruction::CompiledInstruction,
     solana_instruction::{
