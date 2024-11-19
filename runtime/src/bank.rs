@@ -428,6 +428,7 @@ pub struct BankFieldsToDeserialize {
     pub(crate) ancestors: AncestorsForSerialization,
     pub(crate) hash: Hash,
     pub(crate) vote_states: BTreeMap<Pubkey, VoteState>,
+    pub(crate) slot_hashes: SlotHashes,
     pub(crate) vote_only_hash: Hash,
     pub(crate) parent_hash: Hash,
     pub(crate) parent_vote_only_hash: Hash,
@@ -476,6 +477,7 @@ pub struct BankFieldsToSerialize {
     pub ancestors: AncestorsForSerialization,
     pub hash: Hash,
     pub vote_states: BTreeMap<Pubkey, VoteState>,
+    pub slot_hashes: SlotHashes,
     pub vote_only_hash: Hash,
     pub parent_hash: Hash,
     pub parent_vote_only_hash: Hash,
@@ -526,6 +528,7 @@ impl PartialEq for Bank {
             ancestors,
             hash,
             vote_states,
+            slot_hashes,
             vote_only_hash,
             parent_hash,
             parent_vote_only_hash,
@@ -595,6 +598,7 @@ impl PartialEq for Bank {
             && ancestors == &other.ancestors
             && *hash.read().unwrap() == *other.hash.read().unwrap()
             && *vote_states.read().unwrap() == *other.vote_states.read().unwrap()
+            && *slot_hashes.read().unwrap() == *other.slot_hashes.read().unwrap()
             && *vote_only_hash.read().unwrap() == *other.vote_only_hash.read().unwrap()
             && parent_hash == &other.parent_hash
             && parent_vote_only_hash == &other.parent_vote_only_hash
@@ -641,6 +645,7 @@ impl BankFieldsToSerialize {
             ancestors: AncestorsForSerialization::default(),
             hash: Hash::default(),
             vote_states: BTreeMap::default(),
+            slot_hashes: SlotHashes::default(),
             vote_only_hash: Hash::default(),
             parent_hash: Hash::default(),
             parent_vote_only_hash: Hash::default(),
@@ -764,6 +769,9 @@ pub struct Bank {
 
     // Keep vote_states in the bank to calculate vote_only_hash.
     vote_states: RwLock<BTreeMap<Pubkey, VoteState>>,
+
+    // Keep slothashes in the bank to calculate vote_only_hash.
+    slot_hashes: RwLock<SlotHashes>,
 
     /// Vote only hash which is result of all votes and block-id.
     /// Only meaningful after vote-only-freezing.
@@ -1003,6 +1011,7 @@ impl Bank {
             ancestors: Ancestors::default(),
             hash: RwLock::<Hash>::default(),
             vote_states: RwLock::<BTreeMap<Pubkey, VoteState>>::default(),
+            slot_hashes: RwLock::<SlotHashes>::default(),
             vote_only_hash: RwLock::<Hash>::default(),
             parent_hash: Hash::default(),
             parent_vote_only_hash: Hash::default(),
@@ -1284,6 +1293,7 @@ impl Bank {
             ancestors: Ancestors::default(),
             hash: RwLock::new(Hash::default()),
             vote_states: RwLock::new(parent.vote_states.read().unwrap().clone()),
+            slot_hashes: RwLock::new(SlotHashes::new(&parent.slot_hashes.read().unwrap())),
             vote_only_hash: RwLock::new(Hash::default()),
             is_delta: AtomicBool::new(false),
             tick_height: AtomicU64::new(parent.tick_height.load(Relaxed)),
@@ -1613,7 +1623,8 @@ impl Bank {
         new.apply_feature_activations(ApplyFeatureActivationsCaller::WarpFromParent, false);
         new.update_epoch_stakes(new.epoch_schedule().get_epoch(slot));
         new.tick_height.store(new.max_tick_height(), Relaxed);
-        new.tick_height_for_vote_only.store(new.max_tick_height(), Relaxed);
+        new.tick_height_for_vote_only
+            .store(new.max_tick_height(), Relaxed);
 
         let mut clock = new.clock();
         clock.epoch_start_timestamp = parent_timestamp;
@@ -1674,6 +1685,7 @@ impl Bank {
             ancestors,
             hash: RwLock::new(fields.hash),
             vote_states: RwLock::new(fields.vote_states),
+            slot_hashes: RwLock::new(fields.slot_hashes),
             vote_only_hash: RwLock::new(fields.vote_only_hash),
             parent_hash: fields.parent_hash,
             parent_vote_only_hash: fields.parent_vote_only_hash,
@@ -1813,6 +1825,7 @@ impl Bank {
             ancestors: AncestorsForSerialization::from(&self.ancestors),
             hash: *self.hash.read().unwrap(),
             vote_states: self.vote_states.read().unwrap().clone(),
+            slot_hashes: self.slot_hashes.read().unwrap().clone(),
             vote_only_hash: *self.vote_only_hash.read().unwrap(),
             parent_hash: self.parent_hash,
             parent_vote_only_hash: self.parent_vote_only_hash,
@@ -4854,11 +4867,7 @@ impl Bank {
         timings.saturating_add_in_place(ExecuteTimingType::CheckUs, check_us);
 
         let mut current_vote_states = self.vote_states.write().unwrap();
-
-        let sysvar_cache = self.transaction_processor.sysvar_cache();
-        let slot_hashes = sysvar_cache
-            .get_slot_hashes()
-            .expect("SlotHashes must exist");
+        let slot_hashes = self.slot_hashes.read().unwrap();
 
         let results = sanitized_txs
             .iter()
@@ -5669,7 +5678,7 @@ impl Bank {
             warn!("hard fork at slot {slot} by hashing {buf:?}: {hash} => {hard_forked_hash}");
             hash = hard_forked_hash;
         }
-
+        self.slot_hashes.write().unwrap().add(slot, hash);
         info!("bank vote_only_frozen: {slot} vote_only_hash: {hash}");
         hash
     }
