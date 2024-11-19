@@ -1275,7 +1275,8 @@ mod tests {
                                 record.transactions,
                             );
                             poh_recorder.write().unwrap().tick();
-                            if record.sender.send(record_response).is_err() {
+                            // TODO: Where should we send the starting transaction index now?
+                            if record_response.is_err() {
                                 panic!("Error returning mixin hash");
                             }
                         }

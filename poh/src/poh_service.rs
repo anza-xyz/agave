@@ -7,7 +7,7 @@ use {
     },
     log::*,
     solana_entry::poh::Poh,
-    solana_measure::{measure::Measure, measure_us},
+    solana_measure::measure::Measure,
     solana_sdk::poh_config::PohConfig,
     std::{
         sync::{
@@ -187,13 +187,11 @@ impl PohService {
     ) {
         let record = record_receiver.pop();
         if let Some(record) = record {
-            if record
-                .sender
-                .send(poh_recorder.write().unwrap().record(
-                    record.slot,
-                    record.mixin,
-                    record.transactions,
-                ))
+            // TODO: Where should we send the starting transaction index now?
+            if poh_recorder
+                .write()
+                .unwrap()
+                .record(record.slot, record.mixin, record.transactions)
                 .is_err()
             {
                 panic!("Error returning mixin hash");
@@ -253,10 +251,7 @@ impl PohService {
                         record.mixin,
                         std::mem::take(&mut record.transactions),
                     );
-                    let (send_res, send_record_result_us) = measure_us!(record.sender.send(res));
-                    debug_assert!(send_res.is_ok(), "Record wasn't sent.");
-
-                    timing.total_send_record_result_us += send_record_result_us;
+                    debug_assert!(res.is_ok(), "Slot {0} wasn't recorded.", record.slot);
                     timing.num_hashes += 1; // note: may have also ticked inside record
                     if let Some(new_record) = record_receiver.pop() {
                         // we already have second request to record, so record again while we still have the mutex

@@ -18,9 +18,7 @@ use {
         mpsc::{self, Consumer, Producer},
         poh_service::PohService,
     },
-    crossbeam_channel::{
-        bounded, unbounded, Receiver, RecvTimeoutError, SendError, Sender, TrySendError,
-    },
+    crossbeam_channel::{unbounded, Receiver, SendError, Sender, TrySendError},
     log::*,
     solana_entry::{
         entry::{hash_transactions, Entry},
@@ -40,11 +38,8 @@ use {
     },
     std::{
         cmp,
-        sync::{
-            atomic::{AtomicBool, Ordering},
-            Arc, Mutex, RwLock,
-        },
-        time::{Duration, Instant},
+        sync::{atomic::AtomicBool, Arc, Mutex, RwLock},
+        time::Instant,
     },
     thiserror::Error,
 };
@@ -96,28 +91,17 @@ impl BankStart {
     }
 }
 
-// Sends the Result of the record operation, including the index in the slot of the first
-// transaction, if being tracked by WorkingBank
-type RecordResultSender = Sender<Result<Option<usize>>>;
-
 pub struct Record {
     pub mixin: Hash,
     pub transactions: Vec<VersionedTransaction>,
     pub slot: Slot,
-    pub sender: RecordResultSender,
 }
 impl Record {
-    pub fn new(
-        mixin: Hash,
-        transactions: Vec<VersionedTransaction>,
-        slot: Slot,
-        sender: RecordResultSender,
-    ) -> Self {
+    pub fn new(mixin: Hash, transactions: Vec<VersionedTransaction>, slot: Slot) -> Self {
         Self {
             mixin,
             transactions,
             slot,
-            sender,
         }
     }
 }
@@ -217,38 +201,16 @@ impl TransactionRecorder {
         mixin: Hash,
         transactions: Vec<VersionedTransaction>,
     ) -> Result<Option<usize>> {
-        // create a new channel so that there is only 1 sender and when it goes out of scope, the receiver fails
-        let (result_sender, result_receiver) = bounded(1);
-        let res =
-            self.record_sender
-                .try_push(Record::new(mixin, transactions, bank_slot, result_sender));
-        if res.is_err() {
+        let rec_send_res = self
+            .record_sender
+            .try_push(Record::new(mixin, transactions, bank_slot));
+        if rec_send_res.is_err() {
             // If the channel is dropped, then the validator is shutting down so return that we are hitting
             //  the max tick height to stop transaction processing and flush any transactions in the pipeline.
             return Err(PohRecorderError::MaxHeightReached);
         }
-        // Besides validator exit, this timeout should primarily be seen to affect test execution environments where the various pieces can be shutdown abruptly
-        let mut is_exited = false;
-        loop {
-            let res = result_receiver.recv_timeout(Duration::from_millis(1000));
-            match res {
-                Err(RecvTimeoutError::Timeout) => {
-                    if is_exited {
-                        return Err(PohRecorderError::MaxHeightReached);
-                    } else {
-                        // A result may have come in between when we timed out checking this
-                        // bool, so check the channel again, even if is_exited == true
-                        is_exited = self.is_exited.load(Ordering::SeqCst);
-                    }
-                }
-                Err(RecvTimeoutError::Disconnected) => {
-                    return Err(PohRecorderError::MaxHeightReached);
-                }
-                Ok(result) => {
-                    return result;
-                }
-            }
-        }
+        // Send the transaction index from poh.record call in read_record_receiver_and_process.
+        Ok(Some(0))
     }
 }
 
@@ -1211,6 +1173,7 @@ mod tests {
         solana_perf::test_tx::test_tx,
         solana_poh::mpsc,
         solana_sdk::{clock::DEFAULT_TICKS_PER_SLOT, hash::hash},
+        std::sync::atomic::Ordering,
     };
 
     #[test]
