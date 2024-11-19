@@ -1108,7 +1108,7 @@ lazy_static! {
         (disable_account_loader_special_case::id(), "Disable account loader special case #3513"),
         (accounts_lt_hash::id(), "enables lattice-based accounts hash #3333"),
         (enable_secp256r1_precompile::id(), "Enable secp256r1 precompile SIMD-0075"),
-        (migrate_stake_program_to_core_bpf::id(), "Migrate Stake program to Core BPF #XXXX"),
+        (migrate_stake_program_to_core_bpf::id(), "Migrate Stake program to Core BPF SIMD-0196 #3655"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
