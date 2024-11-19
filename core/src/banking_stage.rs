@@ -746,7 +746,7 @@ impl BankingStage {
                                 if p.original_packet().meta().is_tracer_packet() {
                                     //warn!("pipeline_tracer: unified_scheduler submit receiver_len: {} {:?} {:?}", packet_deserializer.packet_batch_receiver.len(), std::thread::current(), std::backtrace::Backtrace::force_capture());
                                 }
-                                let tx = p.build_sanitized_transaction(
+                                let (tx, _) = p.build_sanitized_transaction(
                                     bank.vote_only_bank(),
                                     &*bank,
                                     bank.get_reserved_account_keys(),
