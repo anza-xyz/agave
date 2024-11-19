@@ -4,7 +4,7 @@ use {
         Database, Error, Key, ReadableTableMetadata, TableDefinition, TableStats, TypeName, Value,
     },
     solana_sdk::{clock::Slot, pubkey::Pubkey},
-    std::{borrow::Borrow, cmp::Ordering, fmt::Debug},
+    std::{borrow::Borrow, cmp::Ordering, fmt::Debug, path::Path},
 };
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -67,6 +67,16 @@ pub struct ChiliPepperStore {
 //             .unwrap();
 
 impl ChiliPepperStore {
+    pub fn new_with_path(path: impl AsRef<Path>) -> Result<Self, Error> {
+        let db = Database::create(path.as_ref())?;
+        Ok(Self { db })
+    }
+
+    pub fn open_with_path(path: impl AsRef<Path>) -> Result<Self, Error> {
+        let db = Database::open(path.as_ref())?;
+        Ok(Self { db })
+    }
+
     pub fn new(db: Database) -> Self {
         Self { db }
     }
