@@ -457,7 +457,10 @@ fn schedule_batches_for_execution(
         // scheduling is skipped if we have already detected an error in this loop
         let indexes = starting_index..starting_index + transactions.len();
         first_err = first_err.and_then(|()| {
-            let indexes2 = indexes.into_iter().map(|i| i as TaskKey).collect::<Vec<_>>();
+            let indexes2 = indexes
+                .into_iter()
+                .map(|i| i as TaskKey)
+                .collect::<Vec<_>>();
             bank.schedule_transaction_executions(transactions.into_iter().zip_eq(indexes2))
         });
     }
