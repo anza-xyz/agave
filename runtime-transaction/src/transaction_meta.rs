@@ -14,14 +14,18 @@
 use {
     crate::compute_budget_instruction_details::ComputeBudgetInstructionDetails,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
-    solana_sdk::{feature_set::FeatureSet, hash::Hash, transaction::Result},
+    solana_sdk::{
+        feature_set::FeatureSet, hash::Hash, message::TransactionSignatureDetails,
+        transaction::Result,
+    },
 };
 
 /// metadata can be extracted statically from sanitized transaction,
 /// for example: message hash, simple-vote-tx flag, limits set by instructions
 pub trait StaticMeta {
     fn message_hash(&self) -> &Hash;
-    fn is_simple_vote_tx(&self) -> bool;
+    fn is_simple_vote_transaction(&self) -> bool;
+    fn signature_details(&self) -> &TransactionSignatureDetails;
     fn compute_budget_limits(&self, feature_set: &FeatureSet) -> Result<ComputeBudgetLimits>;
 }
 
@@ -32,10 +36,10 @@ pub trait StaticMeta {
 /// on-chain ALT, examples are: transaction usage costs, nonce account.
 pub trait DynamicMeta: StaticMeta {}
 
-#[cfg_attr(test, derive(Eq, PartialEq))]
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct TransactionMeta {
     pub(crate) message_hash: Hash,
-    pub(crate) is_simple_vote_tx: bool,
+    pub(crate) is_simple_vote_transaction: bool,
+    pub(crate) signature_details: TransactionSignatureDetails,
     pub(crate) compute_budget_instruction_details: ComputeBudgetInstructionDetails,
 }

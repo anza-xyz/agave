@@ -76,7 +76,7 @@ use {
         transaction::{MessageHash, SanitizedTransaction, SimpleAddressLoader},
     },
     solana_stake_program::{points::PointValue, stake_state},
-    solana_transaction_status::UiInstruction,
+    solana_transaction_status::parse_ui_instruction,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_vote_program::{
         self,
@@ -759,7 +759,7 @@ fn record_transactions(
                     let instructions = message
                         .instructions()
                         .iter()
-                        .map(|ix| UiInstruction::parse(ix, &message.account_keys(), None))
+                        .map(|ix| parse_ui_instruction(ix, &message.account_keys(), None))
                         .collect();
 
                     let is_simple_vote_tx = tx.is_simple_vote_transaction();
@@ -1919,11 +1919,11 @@ fn main() {
                     let is_minimized = arg_matches.is_present("minimized");
                     let output_directory = value_t!(arg_matches, "output_directory", PathBuf)
                         .unwrap_or_else(|_| {
-                            let snapshot_archive_path = value_t!(matches, "snapshots", String)
+                            let snapshot_archive_path = value_t!(arg_matches, "snapshots", String)
                                 .ok()
                                 .map(PathBuf::from);
                             let incremental_snapshot_archive_path =
-                                value_t!(matches, "incremental_snapshot_archive_path", String)
+                                value_t!(arg_matches, "incremental_snapshot_archive_path", String)
                                     .ok()
                                     .map(PathBuf::from);
                             match (

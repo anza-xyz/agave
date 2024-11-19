@@ -54,6 +54,7 @@ use {
     solana_rpc::{
         optimistically_confirmed_bank_tracker::{BankNotification, BankNotificationSenderConfig},
         rpc_subscriptions::RpcSubscriptions,
+        slot_status_notifier::SlotStatusNotifier,
     },
     solana_rpc_client_api::response::SlotUpdate,
     solana_runtime::{
@@ -252,6 +253,7 @@ pub struct ReplayStageConfig {
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
     pub exit: Arc<AtomicBool>,
     pub rpc_subscriptions: Arc<RpcSubscriptions>,
+    pub slot_status_notifier: Option<SlotStatusNotifier>,
     pub leader_schedule_cache: Arc<LeaderScheduleCache>,
     pub accounts_background_request_sender: AbsRequestSender,
     pub block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
@@ -538,6 +540,7 @@ impl ReplayStage {
             authorized_voter_keypairs,
             exit,
             rpc_subscriptions,
+            slot_status_notifier,
             leader_schedule_cache,
             accounts_background_request_sender,
             block_commitment_cache,
@@ -669,6 +672,7 @@ impl ReplayStage {
                     &bank_forks,
                     &leader_schedule_cache,
                     &rpc_subscriptions,
+                    &slot_status_notifier,
                     &mut progress,
                     &mut replay_timing,
                 );
@@ -1123,6 +1127,7 @@ impl ReplayStage {
                         &poh_recorder,
                         &leader_schedule_cache,
                         &rpc_subscriptions,
+                        &slot_status_notifier,
                         &mut progress,
                         &retransmit_slots_sender,
                         &mut skipped_slots_info,
@@ -1686,22 +1691,11 @@ impl ReplayStage {
         // from BankForks
         let (slots_to_purge, removed_banks): (Vec<(Slot, BankId)>, Vec<BankWithScheduler>) = {
             let mut w_bank_forks = bank_forks.write().unwrap();
-            slot_descendants
-                .iter()
-                .chain(std::iter::once(&duplicate_slot))
-                .map(|slot| {
-                    // Clear the banks from BankForks
-                    let bank = w_bank_forks
-                        .remove(*slot)
-                        .expect("BankForks should not have been purged yet");
-                    bank_hash_details::write_bank_hash_details_file(&bank)
-                        .map_err(|err| {
-                            warn!("Unable to write bank hash details file: {err}");
-                        })
-                        .ok();
-                    ((*slot, bank.bank_id()), bank)
-                })
-                .unzip()
+            w_bank_forks.dump_slots(
+                slot_descendants
+                    .iter()
+                    .chain(std::iter::once(&duplicate_slot)),
+            )
         };
 
         // Clear the accounts for these slots so that any ongoing RPC scans fail.
@@ -2053,6 +2047,7 @@ impl ReplayStage {
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
         rpc_subscriptions: &Arc<RpcSubscriptions>,
+        slot_status_notifier: &Option<SlotStatusNotifier>,
         progress_map: &mut ProgressMap,
         retransmit_slots_sender: &Sender<Slot>,
         skipped_slots_info: &mut SkippedSlotsInfo,
@@ -2182,6 +2177,7 @@ impl ReplayStage {
                 root_slot,
                 my_pubkey,
                 rpc_subscriptions,
+                slot_status_notifier,
                 NewBankOptions { vote_only_bank },
             );
             // make sure parent is frozen for finalized hashes via the above
@@ -3127,7 +3123,7 @@ impl ReplayStage {
                     }
                 }
 
-                let _block_id = if bank.collector_id() != my_pubkey {
+                let block_id = if bank.collector_id() != my_pubkey {
                     // If the block does not have at least DATA_SHREDS_PER_FEC_BLOCK correctly retransmitted
                     // shreds in the last FEC set, mark it dead. No reason to perform this check on our leader block.
                     match blockstore.check_last_fec_set_and_get_block_id(
@@ -3159,6 +3155,7 @@ impl ReplayStage {
                 } else {
                     None
                 };
+                bank.set_block_id(block_id);
 
                 let r_replay_stats = replay_stats.read().unwrap();
                 let replay_progress = bank_progress.replay_progress.clone();
@@ -3453,6 +3450,7 @@ impl ReplayStage {
                         tower,
                         progress,
                         bank,
+                        bank_forks,
                     );
                     let computed_bank_state = Tower::collect_vote_lockouts(
                         my_vote_pubkey,
@@ -3525,6 +3523,7 @@ impl ReplayStage {
         tower: &mut Tower,
         progress: &mut ProgressMap,
         bank: &Arc<Bank>,
+        bank_forks: &RwLock<BankForks>,
     ) {
         let Some(vote_account) = bank.get_vote_account(my_vote_pubkey) else {
             return;
@@ -3605,13 +3604,27 @@ impl ReplayStage {
         // Finally if both `bank` and `bank_vote_state.last_voted_slot()` are duplicate,
         // we must have the compatible versions of both duplicates in order to replay `bank`
         // successfully, so we are once again guaranteed that `bank_vote_state.last_voted_slot()`
-        // is present in progress map.
+        // is present in bank forks and progress map.
+        let block_id = {
+            // The block_id here will only be relevant if we need to refresh this last vote.
+            let bank = bank_forks
+                .read()
+                .unwrap()
+                .get(last_voted_slot)
+                .expect("Last voted slot that we are adopting must exist in bank forks");
+            // Here we don't have to check if this is our leader bank, as since we are adopting this bank,
+            // that means that it was created from a different instance (hot spare setup or a previous restart),
+            // and thus we must have replayed and set the block_id from the shreds.
+            // Note: since the new shred format is not rolled out everywhere, we have to provide a default
+            bank.block_id().unwrap_or_default()
+        };
         tower.update_last_vote_from_vote_state(
             progress
                 .get_hash(last_voted_slot)
                 .expect("Must exist for us to have frozen descendant"),
             bank.feature_set
                 .is_active(&solana_feature_set::enable_tower_sync_ix::id()),
+            block_id,
         );
         // Since we are updating our tower we need to update associated caches for previously computed
         // slots as well.
@@ -3987,6 +4000,7 @@ impl ReplayStage {
         bank_forks: &RwLock<BankForks>,
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
         rpc_subscriptions: &Arc<RpcSubscriptions>,
+        slot_status_notifier: &Option<SlotStatusNotifier>,
         progress: &mut ProgressMap,
         replay_timing: &mut ReplayLoopTiming,
     ) {
@@ -4041,6 +4055,7 @@ impl ReplayStage {
                     forks.root(),
                     &leader,
                     rpc_subscriptions,
+                    slot_status_notifier,
                     NewBankOptions::default(),
                 );
                 let empty: Vec<Pubkey> = vec![];
@@ -4088,9 +4103,16 @@ impl ReplayStage {
         root_slot: u64,
         leader: &Pubkey,
         rpc_subscriptions: &Arc<RpcSubscriptions>,
+        slot_status_notifier: &Option<SlotStatusNotifier>,
         new_bank_options: NewBankOptions,
     ) -> Bank {
         rpc_subscriptions.notify_slot(slot, parent.slot(), root_slot);
+        if let Some(slot_status_notifier) = slot_status_notifier {
+            slot_status_notifier
+                .read()
+                .unwrap()
+                .notify_created_bank(slot, parent.slot());
+        }
         Bank::new_from_parent_with_options(parent, leader, slot, new_bank_options)
     }
 
@@ -4245,6 +4267,7 @@ pub(crate) mod tests {
         slot: Slot,
     ) -> Arc<Bank> {
         let bank = Bank::new_from_parent(parent, collector_id, slot);
+        bank.set_block_id(Some(Hash::new_unique()));
         bank_forks
             .write()
             .unwrap()
@@ -4437,6 +4460,7 @@ pub(crate) mod tests {
             &bank_forks,
             &leader_schedule_cache,
             &rpc_subscriptions,
+            &None,
             &mut progress,
             &mut replay_timing,
         );
@@ -4465,6 +4489,7 @@ pub(crate) mod tests {
             &bank_forks,
             &leader_schedule_cache,
             &rpc_subscriptions,
+            &None,
             &mut progress,
             &mut replay_timing,
         );
@@ -6334,6 +6359,7 @@ pub(crate) mod tests {
             &bank_forks,
             &leader_schedule_cache,
             &rpc_subscriptions,
+            &None,
             &mut progress,
             &mut replay_timing,
         );
@@ -6363,6 +6389,7 @@ pub(crate) mod tests {
             &bank_forks,
             &leader_schedule_cache,
             &rpc_subscriptions,
+            &None,
             &mut progress,
             &mut replay_timing,
         );
@@ -6393,6 +6420,7 @@ pub(crate) mod tests {
             &bank_forks,
             &leader_schedule_cache,
             &rpc_subscriptions,
+            &None,
             &mut progress,
             &mut replay_timing,
         );
@@ -6422,6 +6450,7 @@ pub(crate) mod tests {
             &bank_forks,
             &leader_schedule_cache,
             &rpc_subscriptions,
+            &None,
             &mut progress,
             &mut replay_timing,
         );
@@ -8356,6 +8385,7 @@ pub(crate) mod tests {
             &poh_recorder,
             &leader_schedule_cache,
             &rpc_subscriptions,
+            &None,
             &mut progress,
             &retransmit_slots_sender,
             &mut SkippedSlotsInfo::default(),
@@ -8750,6 +8780,7 @@ pub(crate) mod tests {
             &mut tower,
             &mut progress,
             bank_6,
+            &bank_forks,
         );
 
         // slot 3 should now pass the threshold check but be locked out.
@@ -9024,6 +9055,7 @@ pub(crate) mod tests {
             &poh_recorder,
             &leader_schedule_cache,
             &rpc_subscriptions,
+            &None,
             &mut progress,
             &retransmit_slots_sender,
             &mut SkippedSlotsInfo::default(),
@@ -9050,6 +9082,7 @@ pub(crate) mod tests {
             &poh_recorder,
             &leader_schedule_cache,
             &rpc_subscriptions,
+            &None,
             &mut progress,
             &retransmit_slots_sender,
             &mut SkippedSlotsInfo::default(),

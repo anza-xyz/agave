@@ -14,6 +14,7 @@ agave-transaction-view = { workspace = true }
 log = { workspace = true }
 solana-builtins-default-costs = { workspace = true }
 solana-compute-budget = { workspace = true }
+solana-pubkey = { workspace = true }
 solana-sdk = { workspace = true }
 solana-svm-transaction = { workspace = true }
 thiserror = { workspace = true }
@@ -31,11 +32,12 @@ solana-program = { workspace = true }
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
-[build-dependencies]
-rustc_version = { workspace = true, optional = true }
-
 [[bench]]
 name = "process_compute_budget_instructions"
+harness = false
+
+[[bench]]
+name = "get_signature_details"
 harness = false
 
 [lints]

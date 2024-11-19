@@ -12,22 +12,27 @@
 use {
     crate::{
         compute_budget_instruction_details::*,
+        signature_details::get_precompile_signature_details,
         transaction_meta::{DynamicMeta, StaticMeta, TransactionMeta},
     },
+    core::ops::Deref,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_sdk::{
         feature_set::FeatureSet,
         hash::Hash,
-        message::AddressLoader,
+        message::{AccountKeys, AddressLoader, TransactionSignatureDetails},
         pubkey::Pubkey,
+        signature::Signature,
         simple_vote_transaction_checker::is_simple_vote_transaction,
         transaction::{Result, SanitizedTransaction, SanitizedVersionedTransaction},
     },
-    solana_svm_transaction::instruction::SVMInstruction,
+    solana_svm_transaction::{
+        instruction::SVMInstruction, message_address_table_lookup::SVMMessageAddressTableLookup,
+        svm_message::SVMMessage, svm_transaction::SVMTransaction,
+    },
     std::collections::HashSet,
 };
 
-#[cfg_attr(test, derive(Eq, PartialEq))]
 #[derive(Debug)]
 pub struct RuntimeTransaction<T> {
     transaction: T,
@@ -36,24 +41,15 @@ pub struct RuntimeTransaction<T> {
     meta: TransactionMeta,
 }
 
-// These traits gate access to static and dynamic metadata
-// so that only transactions with supporting message types
-// can access them.
-trait StaticMetaAccess {}
-trait DynamicMetaAccess: StaticMetaAccess {}
-
-// Implement the gate traits for the message types that should
-// have access to the static and dynamic metadata.
-impl StaticMetaAccess for SanitizedVersionedTransaction {}
-impl StaticMetaAccess for SanitizedTransaction {}
-impl DynamicMetaAccess for SanitizedTransaction {}
-
-impl<T: StaticMetaAccess> StaticMeta for RuntimeTransaction<T> {
+impl<T> StaticMeta for RuntimeTransaction<T> {
     fn message_hash(&self) -> &Hash {
         &self.meta.message_hash
     }
-    fn is_simple_vote_tx(&self) -> bool {
-        self.meta.is_simple_vote_tx
+    fn is_simple_vote_transaction(&self) -> bool {
+        self.meta.is_simple_vote_transaction
+    }
+    fn signature_details(&self) -> &TransactionSignatureDetails {
+        &self.meta.signature_details
     }
     fn compute_budget_limits(&self, _feature_set: &FeatureSet) -> Result<ComputeBudgetLimits> {
         self.meta
@@ -62,7 +58,15 @@ impl<T: StaticMetaAccess> StaticMeta for RuntimeTransaction<T> {
     }
 }
 
-impl<M: DynamicMetaAccess> DynamicMeta for RuntimeTransaction<M> {}
+impl<T: SVMMessage> DynamicMeta for RuntimeTransaction<T> {}
+
+impl<T> Deref for RuntimeTransaction<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.transaction
+    }
+}
 
 impl RuntimeTransaction<SanitizedVersionedTransaction> {
     pub fn try_from(
@@ -74,6 +78,24 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
             .unwrap_or_else(|| is_simple_vote_transaction(&sanitized_versioned_tx));
         let message_hash =
             message_hash.unwrap_or_else(|| sanitized_versioned_tx.get_message().message.hash());
+
+        let precompile_signature_details = get_precompile_signature_details(
+            sanitized_versioned_tx
+                .get_message()
+                .program_instructions_iter()
+                .map(|(program_id, ix)| (program_id, SVMInstruction::from(ix))),
+        );
+        let signature_details = TransactionSignatureDetails::new(
+            u64::from(
+                sanitized_versioned_tx
+                    .get_message()
+                    .message
+                    .header()
+                    .num_required_signatures,
+            ),
+            precompile_signature_details.num_secp256k1_instruction_signatures,
+            precompile_signature_details.num_ed25519_instruction_signatures,
+        );
         let compute_budget_instruction_details = ComputeBudgetInstructionDetails::try_from(
             sanitized_versioned_tx
                 .get_message()
@@ -85,7 +107,8 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
             transaction: sanitized_versioned_tx,
             meta: TransactionMeta {
                 message_hash,
-                is_simple_vote_tx,
+                is_simple_vote_transaction: is_simple_vote_tx,
+                signature_details,
                 compute_budget_instruction_details,
             },
         })
@@ -99,7 +122,7 @@ impl RuntimeTransaction<SanitizedTransaction> {
         reserved_account_keys: &HashSet<Pubkey>,
     ) -> Result<Self> {
         let hash = *statically_loaded_runtime_tx.message_hash();
-        let is_simple_vote_tx = statically_loaded_runtime_tx.is_simple_vote_tx();
+        let is_simple_vote_tx = statically_loaded_runtime_tx.is_simple_vote_transaction();
         let sanitized_transaction = SanitizedTransaction::try_new(
             statically_loaded_runtime_tx.transaction,
             hash,
@@ -119,6 +142,71 @@ impl RuntimeTransaction<SanitizedTransaction> {
 
     fn load_dynamic_metadata(&mut self) -> Result<()> {
         Ok(())
+    }
+}
+
+impl<T: SVMMessage> SVMMessage for RuntimeTransaction<T> {
+    // override to access from the cached meta instead of re-calculating
+    fn num_total_signatures(&self) -> u64 {
+        self.meta.signature_details.total_signatures()
+    }
+
+    fn num_write_locks(&self) -> u64 {
+        self.transaction.num_write_locks()
+    }
+
+    fn recent_blockhash(&self) -> &Hash {
+        self.transaction.recent_blockhash()
+    }
+
+    fn num_instructions(&self) -> usize {
+        self.transaction.num_instructions()
+    }
+
+    fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction> {
+        self.transaction.instructions_iter()
+    }
+
+    fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> {
+        self.transaction.program_instructions_iter()
+    }
+
+    fn account_keys(&self) -> AccountKeys {
+        self.transaction.account_keys()
+    }
+
+    fn fee_payer(&self) -> &Pubkey {
+        self.transaction.fee_payer()
+    }
+
+    fn is_writable(&self, index: usize) -> bool {
+        self.transaction.is_writable(index)
+    }
+
+    fn is_signer(&self, index: usize) -> bool {
+        self.transaction.is_signer(index)
+    }
+
+    fn is_invoked(&self, key_index: usize) -> bool {
+        self.transaction.is_invoked(key_index)
+    }
+
+    fn num_lookup_tables(&self) -> usize {
+        self.transaction.num_lookup_tables()
+    }
+
+    fn message_address_table_lookups(&self) -> impl Iterator<Item = SVMMessageAddressTableLookup> {
+        self.transaction.message_address_table_lookups()
+    }
+}
+
+impl<T: SVMTransaction> SVMTransaction for RuntimeTransaction<T> {
+    fn signature(&self) -> &Signature {
+        self.transaction.signature()
+    }
+
+    fn signatures(&self) -> &[Signature] {
+        self.transaction.signatures()
     }
 }
 
@@ -217,7 +305,7 @@ mod tests {
             RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(svt, None, is_simple_vote)
                 .unwrap()
                 .meta
-                .is_simple_vote_tx
+                .is_simple_vote_transaction
         }
 
         assert!(!get_is_simple_vote(
@@ -254,7 +342,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(hash, *statically_loaded_transaction.message_hash());
-        assert!(!statically_loaded_transaction.is_simple_vote_tx());
+        assert!(!statically_loaded_transaction.is_simple_vote_transaction());
 
         let dynamically_loaded_transaction = RuntimeTransaction::<SanitizedTransaction>::try_from(
             statically_loaded_transaction,
@@ -265,7 +353,7 @@ mod tests {
             dynamically_loaded_transaction.expect("created from statically loaded tx");
 
         assert_eq!(hash, *dynamically_loaded_transaction.message_hash());
-        assert!(!dynamically_loaded_transaction.is_simple_vote_tx());
+        assert!(!dynamically_loaded_transaction.is_simple_vote_transaction());
     }
 
     #[test]
@@ -289,7 +377,13 @@ mod tests {
             .unwrap();
 
         assert_eq!(&hash, runtime_transaction_static.message_hash());
-        assert!(!runtime_transaction_static.is_simple_vote_tx());
+        assert!(!runtime_transaction_static.is_simple_vote_transaction());
+
+        let signature_details = &runtime_transaction_static.meta.signature_details;
+        assert_eq!(1, signature_details.num_transaction_signatures());
+        assert_eq!(0, signature_details.num_secp256k1_instruction_signatures());
+        assert_eq!(0, signature_details.num_ed25519_instruction_signatures());
+
         let compute_budget_limits = runtime_transaction_static
             .compute_budget_limits(&FeatureSet::default())
             .unwrap();

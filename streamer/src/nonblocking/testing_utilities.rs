@@ -3,6 +3,7 @@ use {
     super::quic::{
         spawn_server_multi, SpawnNonBlockingServerResult, ALPN_TPU_PROTOCOL_ID,
         DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_STREAMS_PER_MS,
+        DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
     },
     crate::{
         quic::{StreamerStats, MAX_STAKED_CONNECTIONS, MAX_UNSTAKED_CONNECTIONS},
@@ -10,7 +11,10 @@ use {
         tls_certificates::new_dummy_x509_certificate,
     },
     crossbeam_channel::unbounded,
-    quinn::{ClientConfig, Connection, EndpointConfig, IdleTimeout, TokioRuntime, TransportConfig},
+    quinn::{
+        crypto::rustls::QuicClientConfig, ClientConfig, Connection, EndpointConfig, IdleTimeout,
+        TokioRuntime, TransportConfig,
+    },
     solana_perf::packet::PacketBatch,
     solana_sdk::{
         net::DEFAULT_TPU_COALESCE,
@@ -20,30 +24,61 @@ use {
     std::{
         net::{SocketAddr, UdpSocket},
         sync::{atomic::AtomicBool, Arc, RwLock},
-        time::Duration,
     },
     tokio::task::JoinHandle,
 };
 
-struct SkipServerVerification;
+#[derive(Debug)]
+pub struct SkipServerVerification(Arc<rustls::crypto::CryptoProvider>);
 
 impl SkipServerVerification {
-    fn new() -> Arc<Self> {
-        Arc::new(Self)
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self(Arc::new(rustls::crypto::ring::default_provider())))
     }
 }
 
-impl rustls::client::ServerCertVerifier for SkipServerVerification {
+impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.0.signature_verification_algorithms.supported_schemes()
+    }
+
     fn verify_server_cert(
         &self,
-        _end_entity: &rustls::Certificate,
-        _intermediates: &[rustls::Certificate],
-        _server_name: &rustls::ServerName,
-        _scts: &mut dyn Iterator<Item = &[u8]>,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
         _ocsp_response: &[u8],
-        _now: std::time::SystemTime,
-    ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::ServerCertVerified::assertion())
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
     }
 }
 
@@ -51,15 +86,15 @@ pub fn get_client_config(keypair: &Keypair) -> ClientConfig {
     let (cert, key) = new_dummy_x509_certificate(keypair);
 
     let mut crypto = rustls::ClientConfig::builder()
-        .with_safe_defaults()
+        .dangerous()
         .with_custom_certificate_verifier(SkipServerVerification::new())
         .with_client_auth_cert(vec![cert], key)
-        .expect("Provided key should be correctly set.");
+        .expect("Failed to use client certificate");
 
     crypto.enable_early_data = true;
     crypto.alpn_protocols = vec![ALPN_TPU_PROTOCOL_ID.to_vec()];
 
-    let mut config = ClientConfig::new(Arc::new(crypto));
+    let mut config = ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto).unwrap()));
 
     let mut transport_config = TransportConfig::default();
     let timeout = IdleTimeout::try_from(QUIC_MAX_TIMEOUT).unwrap();
@@ -101,13 +136,7 @@ pub struct SpawnTestServerResult {
 
 pub fn setup_quic_server(
     option_staked_nodes: Option<StakedNodes>,
-    TestServerConfig {
-        max_connections_per_peer,
-        max_staked_connections,
-        max_unstaked_connections,
-        max_streams_per_ms,
-        max_connections_per_ipaddr_per_minute,
-    }: TestServerConfig,
+    config: TestServerConfig,
 ) -> SpawnTestServerResult {
     let sockets = {
         #[cfg(not(target_os = "windows"))]
@@ -136,7 +165,20 @@ pub fn setup_quic_server(
             vec![UdpSocket::bind("127.0.0.1:0").unwrap()]
         }
     };
+    setup_quic_server_with_sockets(sockets, option_staked_nodes, config)
+}
 
+pub fn setup_quic_server_with_sockets(
+    sockets: Vec<UdpSocket>,
+    option_staked_nodes: Option<StakedNodes>,
+    TestServerConfig {
+        max_connections_per_peer,
+        max_staked_connections,
+        max_unstaked_connections,
+        max_streams_per_ms,
+        max_connections_per_ipaddr_per_minute,
+    }: TestServerConfig,
+) -> SpawnTestServerResult {
     let exit = Arc::new(AtomicBool::new(false));
     let (sender, receiver) = unbounded();
     let keypair = Keypair::new();
@@ -159,7 +201,7 @@ pub fn setup_quic_server(
         max_unstaked_connections,
         max_streams_per_ms,
         max_connections_per_ipaddr_per_minute,
-        Duration::from_secs(2),
+        DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
         DEFAULT_TPU_COALESCE,
     )
     .unwrap();

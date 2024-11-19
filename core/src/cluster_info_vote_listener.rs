@@ -22,8 +22,13 @@ use {
         rpc_subscriptions::RpcSubscriptions,
     },
     solana_runtime::{
-        bank::Bank, bank_forks::BankForks, commitment::VOTE_THRESHOLD_SIZE,
-        epoch_stakes::EpochStakes, vote_sender_types::ReplayVoteReceiver,
+        bank::Bank,
+        bank_forks::BankForks,
+        bank_hash_cache::{BankHashCache, DumpedSlotSubscription},
+        commitment::VOTE_THRESHOLD_SIZE,
+        epoch_stakes::EpochStakes,
+        root_bank_cache::RootBankCache,
+        vote_sender_types::ReplayVoteReceiver,
     },
     solana_sdk::{
         clock::{Slot, DEFAULT_MS_PER_SLOT},
@@ -43,7 +48,7 @@ use {
         iter::repeat,
         sync::{
             atomic::{AtomicBool, Ordering},
-            Arc, RwLock,
+            Arc, Mutex, RwLock,
         },
         thread::{self, sleep, Builder, JoinHandle},
         time::{Duration, Instant},
@@ -200,14 +205,14 @@ impl ClusterInfoVoteListener {
         let (verified_vote_transactions_sender, verified_vote_transactions_receiver) = unbounded();
         let listen_thread = {
             let exit = exit.clone();
-            let bank_forks = bank_forks.clone();
+            let mut root_bank_cache = RootBankCache::new(bank_forks.clone());
             Builder::new()
                 .name("solCiVoteLstnr".to_string())
                 .spawn(move || {
                     let _ = Self::recv_loop(
                         exit,
                         &cluster_info,
-                        &bank_forks,
+                        &mut root_bank_cache,
                         verified_packets_sender,
                         verified_vote_transactions_sender,
                     );
@@ -218,11 +223,14 @@ impl ClusterInfoVoteListener {
         let process_thread = Builder::new()
             .name("solCiProcVotes".to_string())
             .spawn(move || {
+                let mut bank_hash_cache = BankHashCache::new(bank_forks);
+                let dumped_slot_subscription = bank_hash_cache.dumped_slot_subscription();
                 let _ = Self::process_votes_loop(
                     exit,
                     verified_vote_transactions_receiver,
                     vote_tracker,
-                    bank_forks,
+                    &mut bank_hash_cache,
+                    dumped_slot_subscription,
                     subscriptions,
                     gossip_verified_vote_hash_sender,
                     verified_vote_sender,
@@ -246,7 +254,7 @@ impl ClusterInfoVoteListener {
     fn recv_loop(
         exit: Arc<AtomicBool>,
         cluster_info: &ClusterInfo,
-        bank_forks: &RwLock<BankForks>,
+        root_bank_cache: &mut RootBankCache,
         verified_packets_sender: BankingPacketSender,
         verified_vote_transactions_sender: VerifiedVoteTransactionsSender,
     ) -> Result<()> {
@@ -255,7 +263,7 @@ impl ClusterInfoVoteListener {
             let votes = cluster_info.get_votes(&mut cursor);
             inc_new_counter_debug!("cluster_info_vote_listener-recv_count", votes.len());
             if !votes.is_empty() {
-                let (vote_txs, packets) = Self::verify_votes(votes, bank_forks);
+                let (vote_txs, packets) = Self::verify_votes(votes, root_bank_cache);
                 verified_vote_transactions_sender.send(vote_txs)?;
                 verified_packets_sender.send(BankingPacketBatch::new((packets, None)))?;
             }
@@ -267,7 +275,7 @@ impl ClusterInfoVoteListener {
     #[allow(clippy::type_complexity)]
     fn verify_votes(
         votes: Vec<Transaction>,
-        bank_forks: &RwLock<BankForks>,
+        root_bank_cache: &mut RootBankCache,
     ) -> (Vec<Transaction>, Vec<PacketBatch>) {
         let mut packet_batches = packet::to_packet_batches(&votes, 1);
 
@@ -277,7 +285,7 @@ impl ClusterInfoVoteListener {
             /*reject_non_vote=*/ false,
             votes.len(),
         );
-        let root_bank = bank_forks.read().unwrap().root_bank();
+        let root_bank = root_bank_cache.root_bank();
         let epoch_schedule = root_bank.epoch_schedule();
         votes
             .into_iter()
@@ -309,7 +317,8 @@ impl ClusterInfoVoteListener {
         exit: Arc<AtomicBool>,
         gossip_vote_txs_receiver: VerifiedVoteTransactionsReceiver,
         vote_tracker: Arc<VoteTracker>,
-        bank_forks: Arc<RwLock<BankForks>>,
+        bank_hash_cache: &mut BankHashCache,
+        dumped_slot_subscription: DumpedSlotSubscription,
         subscriptions: Arc<RpcSubscriptions>,
         gossip_verified_vote_hash_sender: GossipVerifiedVoteHashSender,
         verified_vote_sender: VerifiedVoteSender,
@@ -318,8 +327,7 @@ impl ClusterInfoVoteListener {
         bank_notification_sender: Option<BankNotificationSender>,
         duplicate_confirmed_slot_sender: DuplicateConfirmedSlotsSender,
     ) -> Result<()> {
-        let mut confirmation_verifier =
-            OptimisticConfirmationVerifier::new(bank_forks.read().unwrap().root());
+        let mut confirmation_verifier = OptimisticConfirmationVerifier::new(bank_hash_cache.root());
         let mut latest_vote_slot_per_validator = HashMap::new();
         let mut last_process_root = Instant::now();
         let duplicate_confirmed_slot_sender = Some(duplicate_confirmed_slot_sender);
@@ -329,7 +337,7 @@ impl ClusterInfoVoteListener {
                 return Ok(());
             }
 
-            let root_bank = bank_forks.read().unwrap().root_bank();
+            let root_bank = bank_hash_cache.get_root_bank_and_prune_cache();
             if last_process_root.elapsed().as_millis() > DEFAULT_MS_PER_SLOT as u128 {
                 let unrooted_optimistic_slots = confirmation_verifier
                     .verify_for_unrooted_optimistic_slots(&root_bank, &blockstore);
@@ -356,6 +364,8 @@ impl ClusterInfoVoteListener {
                 &duplicate_confirmed_slot_sender,
                 &mut vote_processing_time,
                 &mut latest_vote_slot_per_validator,
+                bank_hash_cache,
+                &dumped_slot_subscription,
             );
             match confirmed_slots {
                 Ok(confirmed_slots) => {
@@ -375,31 +385,6 @@ impl ClusterInfoVoteListener {
         }
     }
 
-    #[cfg(test)]
-    pub fn get_and_process_votes_for_tests(
-        gossip_vote_txs_receiver: &VerifiedVoteTransactionsReceiver,
-        vote_tracker: &VoteTracker,
-        root_bank: &Bank,
-        subscriptions: &RpcSubscriptions,
-        gossip_verified_vote_hash_sender: &GossipVerifiedVoteHashSender,
-        verified_vote_sender: &VerifiedVoteSender,
-        replay_votes_receiver: &ReplayVoteReceiver,
-    ) -> Result<ThresholdConfirmedSlots> {
-        Self::listen_and_confirm_votes(
-            gossip_vote_txs_receiver,
-            vote_tracker,
-            root_bank,
-            subscriptions,
-            gossip_verified_vote_hash_sender,
-            verified_vote_sender,
-            replay_votes_receiver,
-            &None,
-            &None,
-            &mut None,
-            &mut HashMap::new(),
-        )
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn listen_and_confirm_votes(
         gossip_vote_txs_receiver: &VerifiedVoteTransactionsReceiver,
@@ -413,6 +398,8 @@ impl ClusterInfoVoteListener {
         duplicate_confirmed_slot_sender: &Option<DuplicateConfirmedSlotsSender>,
         vote_processing_time: &mut Option<VoteProcessingTiming>,
         latest_vote_slot_per_validator: &mut HashMap<Pubkey, Slot>,
+        bank_hash_cache: &mut BankHashCache,
+        dumped_slot_subscription: &Mutex<bool>,
     ) -> Result<ThresholdConfirmedSlots> {
         let mut sel = Select::new();
         sel.recv(gossip_vote_txs_receiver);
@@ -443,6 +430,8 @@ impl ClusterInfoVoteListener {
                     duplicate_confirmed_slot_sender,
                     vote_processing_time,
                     latest_vote_slot_per_validator,
+                    bank_hash_cache,
+                    dumped_slot_subscription,
                 ));
             }
             remaining_wait_time = remaining_wait_time.saturating_sub(start.elapsed());
@@ -466,11 +455,15 @@ impl ClusterInfoVoteListener {
         bank_notification_sender: &Option<BankNotificationSender>,
         duplicate_confirmed_slot_sender: &Option<DuplicateConfirmedSlotsSender>,
         latest_vote_slot_per_validator: &mut HashMap<Pubkey, Slot>,
+        bank_hash_cache: &mut BankHashCache,
+        dumped_slot_subscription: &Mutex<bool>,
     ) {
         if vote.is_empty() {
             return;
         }
 
+        // Hold lock for whole function to ensure hash consistency with bank_forks
+        let mut slots_dumped = dumped_slot_subscription.lock().unwrap();
         let (last_vote_slot, last_vote_hash) = vote.last_voted_slot_hash().unwrap();
 
         let latest_vote_slot = latest_vote_slot_per_validator
@@ -480,7 +473,26 @@ impl ClusterInfoVoteListener {
         let root = root_bank.slot();
         let mut is_new_vote = false;
         let vote_slots = vote.slots();
-        // If slot is before the root, ignore it
+
+        let accumulate_intermediate_votes =
+            if let Some(hash) = bank_hash_cache.hash(last_vote_slot, &mut slots_dumped) {
+                // Only accumulate intermediates if we have replayed the same version being voted on, as
+                // otherwise we cannot verify the ancestry or the hashes.
+                // Note: this can only be performed on full tower votes, until deprecate_legacy_vote_ixs feature
+                // is active we must check the transaction type.
+                hash == last_vote_hash && vote.is_full_tower_vote()
+            } else {
+                // If we have not frozen the bank do not accumulate intermediate slots as we cannot verify
+                // the hashes
+                false
+            };
+        let mut get_hash = |slot: Slot| {
+            (slot == last_vote_slot)
+                .then_some(last_vote_hash)
+                .or(bank_hash_cache.hash(slot, &mut slots_dumped))
+        };
+
+        // If slot is before the root, ignore it. Iterates from most recent vote slot to oldest.
         for slot in vote_slots.iter().filter(|slot| **slot > root).rev() {
             let slot = *slot;
 
@@ -492,47 +504,47 @@ impl ClusterInfoVoteListener {
             }
             let epoch_stakes = epoch_stakes.unwrap();
 
-            // The last vote slot, which is the greatest slot in the stack
-            // of votes in a vote transaction, qualifies for optimistic confirmation.
-            // We cannot count any other slots in this vote toward optimistic confirmation because:
-            // 1) There may have been a switch between the earlier vote and the last vote
-            // 2) We do not know the hash of the earlier slot
-            if slot == last_vote_slot {
+            // We always track the last vote slot for optimistic confirmation. If we have replayed
+            // the same version of last vote slot that is being voted on, then we also track the
+            // other votes in the proposed tower.
+            if slot == last_vote_slot || accumulate_intermediate_votes {
                 let vote_accounts = epoch_stakes.stakes().vote_accounts();
                 let stake = vote_accounts.get_delegated_stake(vote_pubkey);
                 let total_stake = epoch_stakes.total_stake();
+                let Some(hash) = get_hash(slot) else {
+                    // In this case the supposed ancestor of this vote is missing. This can happen
+                    // if the ancestor has been pruned, or if this is a malformed vote. In either case
+                    // we do not track this slot for optimistic confirmation.
+                    continue;
+                };
 
                 // Fast track processing of the last slot in a vote transactions
                 // so that notifications for optimistic confirmation can be sent
                 // as soon as possible.
                 let (reached_threshold_results, is_new) = Self::track_optimistic_confirmation_vote(
                     vote_tracker,
-                    last_vote_slot,
-                    last_vote_hash,
+                    slot,
+                    hash,
                     *vote_pubkey,
                     stake,
                     total_stake,
                 );
 
                 if is_gossip_vote && is_new && stake > 0 {
-                    let _ = gossip_verified_vote_hash_sender.send((
-                        *vote_pubkey,
-                        last_vote_slot,
-                        last_vote_hash,
-                    ));
+                    let _ = gossip_verified_vote_hash_sender.send((*vote_pubkey, slot, hash));
                 }
 
                 if reached_threshold_results[0] {
                     if let Some(sender) = duplicate_confirmed_slot_sender {
-                        let _ = sender.send(vec![(last_vote_slot, last_vote_hash)]);
+                        let _ = sender.send(vec![(slot, hash)]);
                     }
                 }
                 if reached_threshold_results[1] {
-                    new_optimistic_confirmed_slots.push((last_vote_slot, last_vote_hash));
+                    new_optimistic_confirmed_slots.push((slot, hash));
                     // Notify subscribers about new optimistic confirmation
                     if let Some(sender) = bank_notification_sender {
                         sender
-                            .send(BankNotification::OptimisticallyConfirmed(last_vote_slot))
+                            .send(BankNotification::OptimisticallyConfirmed(slot))
                             .unwrap_or_else(|err| {
                                 warn!("bank_notification_sender failed: {:?}", err)
                             });
@@ -593,6 +605,8 @@ impl ClusterInfoVoteListener {
         duplicate_confirmed_slot_sender: &Option<DuplicateConfirmedSlotsSender>,
         vote_processing_time: &mut Option<VoteProcessingTiming>,
         latest_vote_slot_per_validator: &mut HashMap<Pubkey, Slot>,
+        bank_hash_cache: &mut BankHashCache,
+        dumped_slot_subscription: &Mutex<bool>,
     ) -> ThresholdConfirmedSlots {
         let mut diff: HashMap<Slot, HashMap<Pubkey, bool>> = HashMap::new();
         let mut new_optimistic_confirmed_slots = vec![];
@@ -620,6 +634,8 @@ impl ClusterInfoVoteListener {
                 bank_notification_sender,
                 duplicate_confirmed_slot_sender,
                 latest_vote_slot_per_validator,
+                bank_hash_cache,
+                dumped_slot_subscription,
             );
         }
         gossip_vote_txn_processing_time.stop();
@@ -677,12 +693,11 @@ impl ClusterInfoVoteListener {
         gossip_vote_slot_confirming_time.stop();
         let gossip_vote_slot_confirming_time_us = gossip_vote_slot_confirming_time.as_us();
 
-        match vote_processing_time {
-            Some(ref mut vote_processing_time) => vote_processing_time.update(
+        if let Some(ref mut vote_processing_time) = vote_processing_time {
+            vote_processing_time.update(
                 gossip_vote_txn_processing_time_us,
                 gossip_vote_slot_confirming_time_us,
-            ),
-            None => {}
+            )
         }
         new_optimistic_confirmed_slots
     }
@@ -769,7 +784,9 @@ mod tests {
 
     #[test]
     fn test_update_new_root() {
-        let (vote_tracker, bank, _, _) = setup();
+        let SetupComponents {
+            vote_tracker, bank, ..
+        } = setup();
 
         // Check outdated slots are purged with new root
         let new_voter = solana_sdk::pubkey::new_rand();
@@ -802,7 +819,7 @@ mod tests {
 
     #[test]
     fn test_update_new_leader_schedule_epoch() {
-        let (_, bank, _, _) = setup();
+        let SetupComponents { bank, .. } = setup();
 
         // Check outdated slots are purged with new root
         let leader_schedule_epoch = bank.get_leader_schedule_epoch(bank.slot());
@@ -826,12 +843,19 @@ mod tests {
     fn test_votes_in_range() {
         // Create some voters at genesis
         let stake_per_validator = 100;
-        let (vote_tracker, _, validator_voting_keypairs, subscriptions) = setup();
+        let SetupComponents {
+            vote_tracker,
+            validator_voting_keypairs,
+            subscriptions,
+            bank_forks,
+            ..
+        } = setup();
         let (votes_sender, votes_receiver) = unbounded();
         let (verified_vote_sender, _verified_vote_receiver) = unbounded();
         let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = unbounded();
         let (replay_votes_sender, replay_votes_receiver) = unbounded();
         let mut latest_vote_slot_per_validator = HashMap::new();
+        let mut bank_hash_cache = BankHashCache::new(bank_forks);
 
         let GenesisConfigInfo { genesis_config, .. } =
             genesis_utils::create_genesis_config_with_vote_accounts(
@@ -868,6 +892,8 @@ mod tests {
             &None,
             &mut None,
             &mut latest_vote_slot_per_validator,
+            &mut bank_hash_cache,
+            &Mutex::new(false),
         )
         .unwrap();
 
@@ -901,6 +927,8 @@ mod tests {
             &None,
             &mut None,
             &mut latest_vote_slot_per_validator,
+            &mut bank_hash_cache,
+            &Mutex::new(false),
         )
         .unwrap();
 
@@ -947,12 +975,19 @@ mod tests {
     fn run_test_process_votes(hash: Option<Hash>) {
         // Create some voters at genesis
         let stake_per_validator = 100;
-        let (vote_tracker, _, validator_voting_keypairs, subscriptions) = setup();
+        let SetupComponents {
+            vote_tracker,
+            validator_voting_keypairs,
+            subscriptions,
+            bank_forks,
+            ..
+        } = setup();
         let (votes_txs_sender, votes_txs_receiver) = unbounded();
         let (replay_votes_sender, replay_votes_receiver) = unbounded();
         let (gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = unbounded();
         let (verified_vote_sender, verified_vote_receiver) = unbounded();
         let mut latest_vote_slot_per_validator = HashMap::new();
+        let mut bank_hash_cache = BankHashCache::new(bank_forks);
 
         let GenesisConfigInfo { genesis_config, .. } =
             genesis_utils::create_genesis_config_with_vote_accounts(
@@ -986,6 +1021,8 @@ mod tests {
             &None,
             &mut None,
             &mut latest_vote_slot_per_validator,
+            &mut bank_hash_cache,
+            &Mutex::new(false),
         )
         .unwrap();
 
@@ -1087,7 +1124,13 @@ mod tests {
     #[test]
     fn test_process_votes2() {
         // Create some voters at genesis
-        let (vote_tracker, _, validator_voting_keypairs, subscriptions) = setup();
+        let SetupComponents {
+            vote_tracker,
+            validator_voting_keypairs,
+            subscriptions,
+            bank_forks,
+            ..
+        } = setup();
 
         // Create bank with the voters
         let stake_per_validator = 100;
@@ -1105,6 +1148,7 @@ mod tests {
         let (verified_vote_sender, verified_vote_receiver) = unbounded();
         let (_replay_votes_sender, replay_votes_receiver) = unbounded();
         let mut latest_vote_slot_per_validator = HashMap::new();
+        let mut bank_hash_cache = BankHashCache::new(bank_forks);
 
         let mut expected_votes = vec![];
         let num_voters_per_slot = 2;
@@ -1147,6 +1191,8 @@ mod tests {
             &None,
             &mut None,
             &mut latest_vote_slot_per_validator,
+            &mut bank_hash_cache,
+            &Mutex::new(false),
         )
         .unwrap();
 
@@ -1211,7 +1257,14 @@ mod tests {
             vec![0, 1, 2, 0, 1, 2],
         ];
         for events in ordered_events {
-            let (vote_tracker, bank, validator_voting_keypairs, subscriptions) = setup();
+            let SetupComponents {
+                vote_tracker,
+                bank,
+                validator_voting_keypairs,
+                subscriptions,
+                bank_forks,
+            } = setup();
+            let mut bank_hash_cache = BankHashCache::new(bank_forks);
             let node_keypair = &validator_voting_keypairs[0].node_keypair;
             let vote_keypair = &validator_voting_keypairs[0].vote_keypair;
             for &e in &events {
@@ -1251,6 +1304,8 @@ mod tests {
                     &None,
                     &mut None,
                     &mut latest_vote_slot_per_validator,
+                    &mut bank_hash_cache,
+                    &Mutex::new(false),
                 );
             }
             let slot_vote_tracker = vote_tracker.get_slot_vote_tracker(vote_slot).unwrap();
@@ -1305,11 +1360,12 @@ mod tests {
             exit,
             max_complete_transaction_status_slot,
             max_complete_rewards_slot,
-            bank_forks,
+            bank_forks.clone(),
             Arc::new(RwLock::new(BlockCommitmentCache::default())),
             optimistically_confirmed_bank,
         ));
         let mut latest_vote_slot_per_validator = HashMap::new();
+        let mut bank_hash_cache = BankHashCache::new(bank_forks);
 
         // Send a vote to process, should add a reference to the pubkey for that voter
         // in the tracker
@@ -1345,6 +1401,8 @@ mod tests {
             &None,
             &mut None,
             &mut latest_vote_slot_per_validator,
+            &mut bank_hash_cache,
+            &Mutex::new(false),
         );
 
         // Setup next epoch
@@ -1392,15 +1450,20 @@ mod tests {
             &None,
             &mut None,
             &mut latest_vote_slot_per_validator,
+            &mut bank_hash_cache,
+            &Mutex::new(false),
         );
     }
 
-    fn setup() -> (
-        Arc<VoteTracker>,
-        Arc<Bank>,
-        Vec<ValidatorVoteKeypairs>,
-        Arc<RpcSubscriptions>,
-    ) {
+    struct SetupComponents {
+        vote_tracker: Arc<VoteTracker>,
+        bank: Arc<Bank>,
+        validator_voting_keypairs: Vec<ValidatorVoteKeypairs>,
+        subscriptions: Arc<RpcSubscriptions>,
+        bank_forks: Arc<RwLock<BankForks>>,
+    }
+
+    fn setup() -> SetupComponents {
         let validator_voting_keypairs: Vec<_> =
             (0..10).map(|_| ValidatorVoteKeypairs::new_rand()).collect();
         let GenesisConfigInfo { genesis_config, .. } =
@@ -1422,17 +1485,18 @@ mod tests {
             exit,
             max_complete_transaction_status_slot,
             max_complete_rewards_slot,
-            bank_forks,
+            bank_forks.clone(),
             Arc::new(RwLock::new(BlockCommitmentCache::default())),
             optimistically_confirmed_bank,
         ));
 
-        (
-            Arc::new(vote_tracker),
+        SetupComponents {
+            vote_tracker: Arc::new(vote_tracker),
             bank,
             validator_voting_keypairs,
             subscriptions,
-        )
+            bank_forks,
+        }
     }
 
     #[test]
@@ -1441,8 +1505,10 @@ mod tests {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
+        let mut root_bank_cache = RootBankCache::new(bank_forks);
         let votes = vec![];
-        let (vote_txs, packets) = ClusterInfoVoteListener::verify_votes(votes, &bank_forks);
+        let (vote_txs, packets) =
+            ClusterInfoVoteListener::verify_votes(votes, &mut root_bank_cache);
         assert!(vote_txs.is_empty());
         assert!(packets.is_empty());
     }
@@ -1482,9 +1548,11 @@ mod tests {
             );
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
+        let mut root_bank_cache = RootBankCache::new(bank_forks);
         let vote_tx = test_vote_tx(voting_keypairs.first(), hash);
         let votes = vec![vote_tx];
-        let (vote_txs, packets) = ClusterInfoVoteListener::verify_votes(votes, &bank_forks);
+        let (vote_txs, packets) =
+            ClusterInfoVoteListener::verify_votes(votes, &mut root_bank_cache);
         assert_eq!(vote_txs.len(), 1);
         verify_packets_len(&packets, 1);
     }
@@ -1507,18 +1575,24 @@ mod tests {
             );
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
+        let mut root_bank_cache = RootBankCache::new(bank_forks);
         let vote_tx = test_vote_tx(voting_keypairs.first(), hash);
         let mut bad_vote = vote_tx.clone();
         bad_vote.signatures[0] = Signature::default();
         let votes = vec![vote_tx.clone(), bad_vote, vote_tx];
-        let (vote_txs, packets) = ClusterInfoVoteListener::verify_votes(votes, &bank_forks);
+        let (vote_txs, packets) =
+            ClusterInfoVoteListener::verify_votes(votes, &mut root_bank_cache);
         assert_eq!(vote_txs.len(), 2);
         verify_packets_len(&packets, 2);
     }
 
     #[test]
     fn test_sum_stake() {
-        let (_, bank, validator_voting_keypairs, _) = setup();
+        let SetupComponents {
+            bank,
+            validator_voting_keypairs,
+            ..
+        } = setup();
         let vote_keypair = &validator_voting_keypairs[0].vote_keypair;
         let epoch_stakes = bank.epoch_stakes(bank.epoch()).unwrap();
         let mut gossip_only_stake = 0;
@@ -1561,11 +1635,12 @@ mod tests {
             exit,
             max_complete_transaction_status_slot,
             max_complete_rewards_slot,
-            bank_forks,
+            bank_forks.clone(),
             Arc::new(RwLock::new(BlockCommitmentCache::default())),
             optimistically_confirmed_bank,
         ));
         let mut latest_vote_slot_per_validator = HashMap::new();
+        let mut bank_hash_cache = BankHashCache::new(bank_forks);
 
         let (verified_vote_sender, _verified_vote_receiver) = unbounded();
         let (gossip_verified_vote_hash_sender, _gossip_verified_vote_hash_receiver) = unbounded();
@@ -1599,6 +1674,8 @@ mod tests {
             &None,
             &None,
             &mut latest_vote_slot_per_validator,
+            &mut bank_hash_cache,
+            &Mutex::new(false),
         );
         assert_eq!(diff.keys().copied().sorted().collect_vec(), vec![1, 2, 6]);
 
@@ -1630,6 +1707,8 @@ mod tests {
             &None,
             &None,
             &mut latest_vote_slot_per_validator,
+            &mut bank_hash_cache,
+            &Mutex::new(false),
         );
         assert_eq!(diff.keys().copied().sorted().collect_vec(), vec![7, 8]);
     }

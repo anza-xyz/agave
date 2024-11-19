@@ -29,10 +29,8 @@ bitflags! {
         const REPAIR         = 0b0000_0100;
         const SIMPLE_VOTE_TX = 0b0000_1000;
         const TRACER_PACKET  = 0b0001_0000;
-        /// to be set by bank.feature_set.is_active(round_compute_unit_price::id()) at the moment
-        /// the packet is built.
-        /// This field can be removed when the above feature gate is adopted by mainnet-beta.
-        const ROUND_COMPUTE_UNIT_PRICE = 0b0010_0000;
+        // Previously used - this can now be re-used for something else.
+        const UNUSED = 0b0010_0000;
         /// For tracking performance
         const PERF_TRACK_PACKET  = 0b0100_0000;
         /// For marking packets from staked nodes
@@ -50,17 +48,17 @@ pub struct Meta {
     pub flags: PacketFlags,
 }
 
-#[cfg(all(RUSTC_WITH_SPECIALIZATION, feature = "frozen-abi"))]
+#[cfg(feature = "frozen-abi")]
 impl ::solana_frozen_abi::abi_example::AbiExample for PacketFlags {
     fn example() -> Self {
         Self::empty()
     }
 }
 
-#[cfg(all(RUSTC_WITH_SPECIALIZATION, feature = "frozen-abi"))]
+#[cfg(feature = "frozen-abi")]
 impl ::solana_frozen_abi::abi_example::TransparentAsHelper for PacketFlags {}
 
-#[cfg(all(RUSTC_WITH_SPECIALIZATION, feature = "frozen-abi"))]
+#[cfg(feature = "frozen-abi")]
 impl ::solana_frozen_abi::abi_example::EvenAsOpaque for PacketFlags {
     const TYPE_NAME_MATCHER: &'static str = "::_::InternalBitFlags";
 }
@@ -251,14 +249,6 @@ impl Meta {
     }
 
     #[inline]
-    pub fn set_round_compute_unit_price(&mut self, round_compute_unit_price: bool) {
-        self.flags.set(
-            PacketFlags::ROUND_COMPUTE_UNIT_PRICE,
-            round_compute_unit_price,
-        );
-    }
-
-    #[inline]
     pub fn forwarded(&self) -> bool {
         self.flags.contains(PacketFlags::FORWARDED)
     }
@@ -281,11 +271,6 @@ impl Meta {
     #[inline]
     pub fn is_perf_track_packet(&self) -> bool {
         self.flags.contains(PacketFlags::PERF_TRACK_PACKET)
-    }
-
-    #[inline]
-    pub fn round_compute_unit_price(&self) -> bool {
-        self.flags.contains(PacketFlags::ROUND_COMPUTE_UNIT_PRICE)
     }
 
     #[inline]

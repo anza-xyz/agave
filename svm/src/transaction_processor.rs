@@ -189,16 +189,30 @@ impl<FG: ForkGraph> Default for TransactionBatchProcessor<FG> {
 }
 
 impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
-    pub fn new(slot: Slot, epoch: Epoch, builtin_program_ids: HashSet<Pubkey>) -> Self {
+    /// Create a new, uninitialized `TransactionBatchProcessor`.
+    ///
+    /// In this context, uninitialized means that the `TransactionBatchProcessor`
+    /// has been initialized with an empty program cache. The cache contains no
+    /// programs (including builtins) and has not been configured with a valid
+    /// fork graph.
+    ///
+    /// When using this method, it's advisable to call `set_fork_graph_in_program_cache`
+    /// as well as `add_builtin` to configure the cache before using the processor.
+    pub fn new_uninitialized(slot: Slot, epoch: Epoch) -> Self {
         Self {
             slot,
             epoch,
-            sysvar_cache: RwLock::<SysvarCache>::default(),
             program_cache: Arc::new(RwLock::new(ProgramCache::new(slot, epoch))),
-            builtin_program_ids: RwLock::new(builtin_program_ids),
+            ..Self::default()
         }
     }
 
+    /// Create a new `TransactionBatchProcessor` from the current instance, but
+    /// with the provided slot and epoch.
+    ///
+    /// * Inherits the program cache and builtin program ids from the current
+    ///   instance.
+    /// * Resets the sysvar cache.
     pub fn new_from(&self, slot: Slot, epoch: Epoch) -> Self {
         Self {
             slot,
@@ -235,6 +249,16 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         environment: &TransactionProcessingEnvironment,
         config: &TransactionProcessingConfig,
     ) -> LoadAndExecuteSanitizedTransactionsOutput {
+        // If `check_results` does not have the same length as `sanitized_txs`,
+        // transactions could be truncated as a result of `.iter().zip()` in
+        // many of the below methods.
+        // See <https://doc.rust-lang.org/std/iter/trait.Iterator.html#method.zip>.
+        debug_assert_eq!(
+            sanitized_txs.len(),
+            check_results.len(),
+            "Length of check_results does not match length of sanitized_txs"
+        );
+
         // Initialize metrics.
         let mut error_metrics = TransactionErrorMetrics::default();
         let mut execute_timings = ExecuteTimings::default();
@@ -426,21 +450,23 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         })?;
 
         let fee_payer_address = message.fee_payer();
+        let mut fee_payer_account = if let Some(fee_payer_account) =
+            account_overrides.and_then(|overrides| overrides.get(fee_payer_address).cloned())
+        {
+            fee_payer_account
+        } else if let Some(fee_payer_account) = callbacks.get_account_shared_data(fee_payer_address)
+        {
+            callbacks.inspect_account(
+                fee_payer_address,
+                AccountState::Alive(&fee_payer_account),
+                true, // <-- is_writable
+            );
 
-        let fee_payer_account = account_overrides
-            .and_then(|overrides| overrides.get(fee_payer_address).cloned())
-            .or_else(|| callbacks.get_account_shared_data(fee_payer_address));
-
-        let Some(mut fee_payer_account) = fee_payer_account else {
+            fee_payer_account
+        } else {
             error_counters.account_not_found += 1;
             return Err(TransactionError::AccountNotFound);
         };
-
-        callbacks.inspect_account(
-            fee_payer_address,
-            AccountState::Alive(&fee_payer_account),
-            true, // <-- is_writable
-        );
 
         let fee_payer_loaded_rent_epoch = fee_payer_account.rent_epoch();
         let fee_payer_rent_debit = collect_rent_from_account(
@@ -453,13 +479,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         let CheckedTransactionDetails {
             nonce,
-            lamports_per_signature,
+            lamports_per_signature: _,
         } = checked_details;
 
         let fee_budget_limits = FeeBudgetLimits::from(compute_budget_limits);
         let fee_details = solana_fee::calculate_fee_details(
             message,
-            lamports_per_signature == 0,
             fee_structure.lamports_per_signature,
             fee_budget_limits.prioritization_fee,
             feature_set.is_active(&remove_rounding_in_fee_calculation::id()),
@@ -1022,6 +1047,7 @@ mod tests {
             transaction::{SanitizedTransaction, Transaction, TransactionError},
             transaction_context::TransactionContext,
         },
+        test_case::test_case,
     };
 
     fn new_unchecked_sanitized_message(message: Message) -> SanitizedMessage {
@@ -1094,6 +1120,51 @@ mod tests {
                 .or_default()
                 .push((account, is_writable));
         }
+    }
+
+    #[test_case(1; "Check results too small")]
+    #[test_case(3; "Check results too large")]
+    #[should_panic(expected = "Length of check_results does not match length of sanitized_txs")]
+    fn test_check_results_txs_length_mismatch(check_results_len: usize) {
+        let sanitized_message = new_unchecked_sanitized_message(Message {
+            account_keys: vec![Pubkey::new_from_array([0; 32])],
+            header: MessageHeader::default(),
+            instructions: vec![CompiledInstruction {
+                program_id_index: 0,
+                accounts: vec![],
+                data: vec![],
+            }],
+            recent_blockhash: Hash::default(),
+        });
+
+        // Transactions, length 2.
+        let sanitized_txs = vec![
+            SanitizedTransaction::new_for_tests(
+                sanitized_message,
+                vec![Signature::new_unique()],
+                false,
+            );
+            2
+        ];
+
+        let check_results = vec![
+            TransactionCheckResult::Ok(CheckedTransactionDetails {
+                nonce: None,
+                lamports_per_signature: 0
+            });
+            check_results_len
+        ];
+
+        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+        let callback = MockBankCallback::default();
+
+        batch_processor.load_and_execute_sanitized_transactions(
+            &callback,
+            &sanitized_txs,
+            check_results,
+            &TransactionProcessingEnvironment::default(),
+            &TransactionProcessingConfig::default(),
+        );
     }
 
     #[test]

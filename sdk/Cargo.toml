@@ -33,17 +33,21 @@ full = [
     "libsecp256k1",
     "sha3",
     "digest",
+    "solana-pubkey/rand",
+    "dep:solana-precompile-error",
+    "dep:solana-transaction-error"
 ]
 borsh = ["dep:borsh", "solana-program/borsh", "solana-secp256k1-recover/borsh"]
-dev-context-only-utils = ["qualifier_attr"]
+dev-context-only-utils = ["qualifier_attr", "solana-account/dev-context-only-utils"]
 frozen-abi = [
-    "dep:rustc_version",
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-feature-set/frozen-abi",
+    "solana-account/frozen-abi",
     "solana-program/frozen-abi",
     "solana-short-vec/frozen-abi",
-    "solana-signature/frozen-abi"
+    "solana-signature/frozen-abi",
+    "solana-transaction-error/frozen-abi"
 ]
 
 [dependencies]
@@ -84,20 +88,35 @@ serde_with = { workspace = true, features = ["macros"] }
 sha2 = { workspace = true }
 sha3 = { workspace = true, optional = true }
 siphasher = { workspace = true }
+solana-account = { workspace = true, features = ["bincode"] }
 solana-bn254 = { workspace = true }
 solana-decode-error = { workspace = true }
 solana-derivation-path = { workspace = true }
 solana-feature-set = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true }
-solana-frozen-abi-macro = { workspace = true, optional = true }
+solana-frozen-abi = { workspace = true, optional = true, features = [
+    "frozen-abi",
+] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = [
+    "frozen-abi",
+] }
+solana-instruction = { workspace = true }
+solana-native-token = { workspace = true }
+solana-precompile-error = { workspace = true, optional = true }
 solana-program = { workspace = true }
 solana-program-memory = { workspace = true }
+solana-pubkey = { workspace = true, default-features = false, features = ["std"] }
 solana-sanitize = { workspace = true }
 solana-sdk-macro = { workspace = true }
 solana-secp256k1-recover = { workspace = true }
 solana-serde-varint = { workspace = true }
 solana-short-vec = { workspace = true }
-solana-signature = { workspace = true, features = ["rand", "serde", "verify"], optional = true }
+solana-signature = { workspace = true, features = [
+    "rand",
+    "serde",
+    "std",
+    "verify",
+], optional = true }
+solana-transaction-error = { workspace = true, features = ["serde"], optional = true }
 thiserror = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -115,9 +134,6 @@ solana-program = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sdk = { path = ".", features = ["dev-context-only-utils"] }
 static_assertions = { workspace = true }
 tiny-bip39 = { workspace = true }
-
-[build-dependencies]
-rustc_version = { workspace = true, optional = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

@@ -14,6 +14,7 @@ assert_matches = { workspace = true }
 bincode = { workspace = true }
 bitflags = { workspace = true, features = ["serde"] }
 byteorder = { workspace = true }
+bzip2 = { workspace = true }
 chrono = { workspace = true, features = ["default", "serde"] }
 chrono-humanize = { workspace = true }
 crossbeam-channel = { workspace = true }
@@ -46,8 +47,12 @@ solana-bpf-loader-program = { workspace = true }
 solana-cost-model = { workspace = true }
 solana-entry = { workspace = true }
 solana-feature-set = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true }
-solana-frozen-abi-macro = { workspace = true, optional = true }
+solana-frozen-abi = { workspace = true, optional = true, features = [
+    "frozen-abi",
+] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = [
+    "frozen-abi",
+] }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-perf = { workspace = true }
@@ -59,6 +64,7 @@ solana-stake-program = { workspace = true }
 solana-storage-bigtable = { workspace = true }
 solana-storage-proto = { workspace = true }
 solana-svm = { workspace = true }
+solana-svm-transaction = { workspace = true }
 solana-timings = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-vote = { workspace = true }
@@ -68,6 +74,7 @@ spl-token-2022 = { workspace = true, features = ["no-entrypoint"] }
 static_assertions = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
 strum_macros = { workspace = true }
+tar = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
@@ -89,13 +96,9 @@ solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 spl-pod = { workspace = true }
 test-case = { workspace = true }
 
-[build-dependencies]
-rustc_version = { workspace = true, optional = true }
-
 [features]
 dev-context-only-utils = []
 frozen-abi = [
-    "dep:rustc_version",
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-runtime/frozen-abi",

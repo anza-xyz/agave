@@ -2,7 +2,7 @@
 
 #[cfg(not(target_os = "solana"))]
 use solana_program::message::SanitizedMessage;
-use {crate::native_token::sol_to_lamports, std::num::NonZeroU32};
+use {solana_native_token::sol_to_lamports, std::num::NonZeroU32};
 
 /// A fee and its associated compute unit limit
 #[derive(Debug, Default, Clone, Eq, PartialEq)]
@@ -82,6 +82,17 @@ impl FeeDetails {
 pub const ACCOUNT_DATA_COST_PAGE_SIZE: u64 = 32_u64.saturating_mul(1024);
 
 impl FeeStructure {
+    pub fn zero_fees() -> Self {
+        Self {
+            lamports_per_signature: 0,
+            lamports_per_write_lock: 0,
+            compute_fee_bins: vec![FeeBin {
+                limit: u64::MAX,
+                fee: 0,
+            }],
+        }
+    }
+
     pub fn new(
         sol_per_signature: f64,
         sol_per_write_lock: f64,
@@ -215,7 +226,7 @@ impl Default for FeeStructure {
     }
 }
 
-#[cfg(all(RUSTC_WITH_SPECIALIZATION, feature = "frozen-abi"))]
+#[cfg(feature = "frozen-abi")]
 impl ::solana_frozen_abi::abi_example::AbiExample for FeeStructure {
     fn example() -> Self {
         FeeStructure::default()

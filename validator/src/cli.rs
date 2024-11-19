@@ -1406,6 +1406,12 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .hidden(hidden_unless_forced()),
         )
         .arg(
+            Arg::with_name("accounts_db_experimental_accumulator_hash")
+                .long("accounts-db-experimental-accumulator-hash")
+                .help("Enables the experimental accumulator hash")
+                .hidden(hidden_unless_forced()),
+        )
+        .arg(
             Arg::with_name("accounts_index_scan_results_limit_mb")
                 .long("accounts-index-scan-results-limit-mb")
                 .value_name("MEGABYTES")
@@ -1582,8 +1588,11 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .takes_value(true)
                 .required(false)
                 .conflicts_with("wait_for_supermajority")
+                .requires("wen_restart_coordinator")
                 .help(
                     "Only used during coordinated cluster restarts.\
+                    \n\n\
+                    Need to also specify the leader's pubkey in --wen-restart-leader.\
                     \n\n\
                     When specified, the validator will enter Wen Restart mode which \
                     pauses normal activity. Validators in this mode will gossip their last \
@@ -1602,6 +1611,19 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                     \n\n\
                     If wen_restart fails, refer to the progress file (in proto3 format) for \
                     further debugging and watch the discord channel for instructions.",
+                ),
+        )
+        .arg(
+            Arg::with_name("wen_restart_coordinator")
+                .long("wen-restart-coordinator")
+                .hidden(hidden_unless_forced())
+                .value_name("PUBKEY")
+                .takes_value(true)
+                .required(false)
+                .requires("wen_restart")
+                .help(
+                    "Specifies the pubkey of the leader used in wen restart. \
+                    May get stuck if the leader used is different from others.",
                 ),
         )
         .args(&thread_args(&default_args.thread_args))

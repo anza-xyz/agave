@@ -17,8 +17,8 @@ use {
     serde::{Deserialize, Serialize},
     serde_json::{Map, Value},
     solana_account_decoder::{
-        parse_account_data::AccountAdditionalDataV2, parse_token::UiTokenAccount, UiAccount,
-        UiAccountEncoding, UiDataSliceConfig,
+        encode_ui_account, parse_account_data::AccountAdditionalDataV2,
+        parse_token::UiTokenAccount, UiAccountEncoding, UiDataSliceConfig,
     },
     solana_clap_utils::keypair::SignOnly,
     solana_rpc_client_api::response::{
@@ -201,7 +201,7 @@ impl CliAccount {
         Self {
             keyed_account: RpcKeyedAccount {
                 pubkey: address.to_string(),
-                account: UiAccount::encode(
+                account: encode_ui_account(
                     address,
                     account,
                     data_encoding,
@@ -1311,6 +1311,84 @@ impl VerboseDisplay for CliStakeState {
     }
 }
 
+fn show_inactive_stake(
+    me: &CliStakeState,
+    f: &mut fmt::Formatter,
+    delegated_stake: u64,
+) -> fmt::Result {
+    if let Some(deactivation_epoch) = me.deactivation_epoch {
+        if me.current_epoch > deactivation_epoch {
+            let deactivating_stake = me.deactivating_stake.or(me.active_stake);
+            if let Some(deactivating_stake) = deactivating_stake {
+                writeln!(
+                    f,
+                    "Inactive Stake: {}",
+                    build_balance_message(
+                        delegated_stake - deactivating_stake,
+                        me.use_lamports_unit,
+                        true
+                    ),
+                )?;
+                writeln!(
+                    f,
+                    "Deactivating Stake: {}",
+                    build_balance_message(deactivating_stake, me.use_lamports_unit, true),
+                )?;
+            }
+        }
+        writeln!(
+            f,
+            "Stake deactivates starting from epoch: {deactivation_epoch}"
+        )?;
+    }
+    if let Some(delegated_vote_account_address) = &me.delegated_vote_account_address {
+        writeln!(
+            f,
+            "Delegated Vote Account Address: {delegated_vote_account_address}"
+        )?;
+    }
+    Ok(())
+}
+
+fn show_active_stake(
+    me: &CliStakeState,
+    f: &mut fmt::Formatter,
+    delegated_stake: u64,
+) -> fmt::Result {
+    if me
+        .deactivation_epoch
+        .map(|d| me.current_epoch <= d)
+        .unwrap_or(true)
+    {
+        let active_stake = me.active_stake.unwrap_or(0);
+        writeln!(
+            f,
+            "Active Stake: {}",
+            build_balance_message(active_stake, me.use_lamports_unit, true),
+        )?;
+        let activating_stake = me.activating_stake.or_else(|| {
+            if me.active_stake.is_none() {
+                Some(delegated_stake)
+            } else {
+                None
+            }
+        });
+        if let Some(activating_stake) = activating_stake {
+            writeln!(
+                f,
+                "Activating Stake: {}",
+                build_balance_message(activating_stake, me.use_lamports_unit, true),
+            )?;
+            writeln!(
+                f,
+                "Stake activates starting from epoch: {}",
+                me.activation_epoch.unwrap()
+            )?;
+        }
+    }
+    Ok(())
+}
+
 impl fmt::Display for CliStakeState {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fn show_authorized(f: &mut fmt::Formatter, authorized: &CliAuthorized) -> fmt::Result {
@@ -1374,79 +1452,8 @@ impl fmt::Display for CliStakeState {
                         "Delegated Stake: {}",
                         build_balance_message(delegated_stake, self.use_lamports_unit, true)
                     )?;
-                    if self
-                        .deactivation_epoch
-                        .map(|d| self.current_epoch <= d)
-                        .unwrap_or(true)
-                    {
-                        let active_stake = self.active_stake.unwrap_or(0);
-                        writeln!(
-                            f,
-                            "Active Stake: {}",
-                            build_balance_message(active_stake, self.use_lamports_unit, true),
-                        )?;
-                        let activating_stake = self.activating_stake.or_else(|| {
-                            if self.active_stake.is_none() {
-                                Some(delegated_stake)
-                            } else {
-                                None
-                            }
-                        });
-                        if let Some(activating_stake) = activating_stake {
-                            writeln!(
-                                f,
-                                "Activating Stake: {}",
-                                build_balance_message(
-                                    activating_stake,
-                                    self.use_lamports_unit,
-                                    true
-                                ),
-                            )?;
-                            writeln!(
-                                f,
-                                "Stake activates starting from epoch: {}",
-                                self.activation_epoch.unwrap()
-                            )?;
-                        }
-                    }
-
-                    if let Some(deactivation_epoch) = self.deactivation_epoch {
-                        if self.current_epoch > deactivation_epoch {
-                            let deactivating_stake = self.deactivating_stake.or(self.active_stake);
-                            if let Some(deactivating_stake) = deactivating_stake {
-                                writeln!(
-                                    f,
-                                    "Inactive Stake: {}",
-                                    build_balance_message(
-                                        delegated_stake - deactivating_stake,
-                                        self.use_lamports_unit,
-                                        true
-                                    ),
-                                )?;
-                                writeln!(
-                                    f,
-                                    "Deactivating Stake: {}",
-                                    build_balance_message(
-                                        deactivating_stake,
-                                        self.use_lamports_unit,
-                                        true
-                                    ),
-                                )?;
-                            }
-                        }
-                        writeln!(
-                            f,
-                            "Stake deactivates starting from epoch: {deactivation_epoch}"
-                        )?;
-                    }
-                    if let Some(delegated_vote_account_address) =
-                        &self.delegated_vote_account_address
-                    {
-                        writeln!(
-                            f,
-                            "Delegated Vote Account Address: {delegated_vote_account_address}"
-                        )?;
-                    }
+                    show_active_stake(self, f, delegated_stake)?;
+                    show_inactive_stake(self, f, delegated_stake)?;
                 } else {
                     writeln!(f, "Stake account is undelegated")?;
                 }

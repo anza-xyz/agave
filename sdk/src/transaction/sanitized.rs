@@ -15,11 +15,12 @@ use {
         reserved_account_keys::ReservedAccountKeys,
         signature::Signature,
         simple_vote_transaction_checker::is_simple_vote_transaction,
-        transaction::{Result, Transaction, TransactionError, VersionedTransaction},
+        transaction::{Result, Transaction, VersionedTransaction},
     },
     solana_feature_set as feature_set,
-    solana_program::message::SanitizedVersionedMessage,
+    solana_program::{instruction::InstructionError, message::SanitizedVersionedMessage},
     solana_sanitize::Sanitize,
+    solana_transaction_error::TransactionError,
     std::collections::HashSet,
 };
 
@@ -262,14 +263,21 @@ impl SanitizedTransaction {
 
     /// Verify the precompiled programs in this transaction
     pub fn verify_precompiles(&self, feature_set: &feature_set::FeatureSet) -> Result<()> {
-        for (program_id, instruction) in self.message.program_instructions_iter() {
+        for (index, (program_id, instruction)) in
+            self.message.program_instructions_iter().enumerate()
+        {
             verify_if_precompile(
                 program_id,
                 instruction,
                 self.message().instructions(),
                 feature_set,
             )
-            .map_err(|_| TransactionError::InvalidAccountIndex)?;
+            .map_err(|err| {
+                TransactionError::InstructionError(
+                    index as u8,
+                    InstructionError::Custom(err as u32),
+                )
+            })?;
         }
         Ok(())
     }

@@ -154,13 +154,15 @@ fn consume_scan_should_process_packet(
         return ProcessingDecision::Now;
     }
 
-    // Try to sanitize the packet
+    // Try to sanitize the packet. Ignore deactivation slot since we are
+    // immediately attempting to process the transaction.
     let (maybe_sanitized_transaction, sanitization_time_us) = measure_us!(packet
         .build_sanitized_transaction(
             bank.vote_only_bank(),
             bank,
             bank.get_reserved_account_keys(),
-        ));
+        )
+        .map(|(tx, _deactivation_slot)| tx));
 
     payload
         .slot_metrics_tracker
@@ -799,7 +801,7 @@ impl ThreadLocalUnprocessedPackets {
                             bank,
                             bank.get_reserved_account_keys(),
                         )
-                        .map(|transaction| (transaction, packet_index))
+                        .map(|(transaction, _deactivation_slot)| (transaction, packet_index))
                 })
                 .unzip();
 
@@ -1017,6 +1019,7 @@ impl ThreadLocalUnprocessedPackets {
 mod tests {
     use {
         super::*,
+        itertools::iproduct,
         solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
         solana_perf::packet::{Packet, PacketFlags},
         solana_runtime::genesis_utils,
@@ -1273,14 +1276,16 @@ mod tests {
             assert!(deserialized_packets.contains(&big_transfer));
         }
 
-        for (vote_source, staked) in [VoteSource::Gossip, VoteSource::Tpu]
-            .into_iter()
-            .flat_map(|vs| [(vs, true), (vs, false)])
-        {
-            let latest_unprocessed_votes = LatestUnprocessedVotes::default();
-            if staked {
-                latest_unprocessed_votes.set_staked_nodes(&[keypair.pubkey()]);
-            }
+        for (vote_source, staked) in iproduct!(
+            [VoteSource::Gossip, VoteSource::Tpu].into_iter(),
+            [true, false].into_iter()
+        ) {
+            let staked_keys = if staked {
+                vec![vote_keypair.pubkey()]
+            } else {
+                vec![]
+            };
+            let latest_unprocessed_votes = LatestUnprocessedVotes::new_for_tests(&staked_keys);
             let mut transaction_storage = UnprocessedTransactionStorage::new_vote_storage(
                 Arc::new(latest_unprocessed_votes),
                 vote_source,
@@ -1316,8 +1321,8 @@ mod tests {
         )?;
         vote.meta_mut().flags.set(PacketFlags::SIMPLE_VOTE_TX, true);
 
-        let latest_unprocessed_votes = LatestUnprocessedVotes::default();
-        latest_unprocessed_votes.set_staked_nodes(&[node_keypair.pubkey()]);
+        let latest_unprocessed_votes =
+            LatestUnprocessedVotes::new_for_tests(&[vote_keypair.pubkey()]);
         let mut transaction_storage = UnprocessedTransactionStorage::new_vote_storage(
             Arc::new(latest_unprocessed_votes),
             VoteSource::Tpu,

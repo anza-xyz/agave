@@ -906,6 +906,18 @@ pub fn main() {
         _ => unreachable!(),
     };
 
+    let cli::thread_args::NumThreadConfig {
+        accounts_db_clean_threads,
+        accounts_db_foreground_threads,
+        accounts_db_hash_threads,
+        accounts_index_flush_threads,
+        ip_echo_server_threads,
+        replay_forks_threads,
+        replay_transactions_threads,
+        tvu_receive_threads,
+        tvu_sigverify_threads,
+    } = cli::thread_args::parse_num_threads_args(&matches);
+
     let identity_keypair = keypair_of(&matches, "identity").unwrap_or_else(|| {
         clap::Error::with_description(
             "The --identity <KEYPAIR> argument is required",
@@ -1169,6 +1181,7 @@ pub fn main() {
 
     let mut accounts_index_config = AccountsIndexConfig {
         started_from_validator: true, // this is the only place this is set
+        num_flush_threads: Some(accounts_index_flush_threads),
         ..AccountsIndexConfig::default()
     };
     if let Ok(bins) = value_t!(matches, "accounts_index_bins", usize) {
@@ -1298,6 +1311,11 @@ pub fn main() {
             .is_present("accounts_db_test_skip_rewrites"),
         storage_access,
         scan_filter_for_shrinking,
+        enable_experimental_accumulator_hash: matches
+            .is_present("accounts_db_experimental_accumulator_hash"),
+        num_clean_threads: Some(accounts_db_clean_threads),
+        num_foreground_threads: Some(accounts_db_foreground_threads),
+        num_hash_threads: Some(accounts_db_hash_threads),
         ..AccountsDbConfig::default()
     };
 
@@ -1381,13 +1399,6 @@ pub fn main() {
         };
 
     let full_api = matches.is_present("full_rpc_api");
-
-    let cli::thread_args::NumThreadConfig {
-        ip_echo_server_threads,
-        replay_forks_threads,
-        replay_transactions_threads,
-        tvu_receive_threads,
-    } = cli::thread_args::parse_num_threads_args(&matches);
 
     let mut validator_config = ValidatorConfig {
         require_tower: matches.is_present("require_tower"),
@@ -1530,9 +1541,11 @@ pub fn main() {
         ip_echo_server_threads,
         replay_forks_threads,
         replay_transactions_threads,
+        tvu_shred_sigverify_threads: tvu_sigverify_threads,
         delay_leader_block_for_pending_fork: matches
             .is_present("delay_leader_block_for_pending_fork"),
         wen_restart_proto_path: value_t!(matches, "wen_restart", PathBuf).ok(),
+        wen_restart_coordinator: value_t!(matches, "wen_restart_coordinator", Pubkey).ok(),
         ..ValidatorConfig::default()
     };
 

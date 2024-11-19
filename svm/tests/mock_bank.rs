@@ -21,7 +21,7 @@ use {
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         bpf_loader_upgradeable::{self, UpgradeableLoaderState},
         clock::{Clock, UnixTimestamp},
-        native_loader,
+        compute_budget, native_loader,
         pubkey::Pubkey,
         rent::Rent,
         slot_hashes::Slot,
@@ -41,6 +41,8 @@ use {
     },
 };
 
+pub const EXECUTION_SLOT: u64 = 5; // The execution slot must be greater than the deployment slot
+pub const EXECUTION_EPOCH: u64 = 2; // The execution epoch must be greater than the deployment epoch
 pub const WALLCLOCK_TIME: i64 = 1704067200; // Arbitrarily Jan 1, 2024
 
 pub struct MockForkGraph {}
@@ -137,7 +139,23 @@ pub fn program_address(program_name: &str) -> Pubkey {
 }
 
 #[allow(unused)]
+pub fn program_data_size(program_name: &str) -> usize {
+    load_program(program_name.to_string()).len()
+}
+
+#[allow(unused)]
 pub fn deploy_program(name: String, deployment_slot: Slot, mock_bank: &MockBankCallback) -> Pubkey {
+    deploy_program_with_upgrade_authority(name, deployment_slot, mock_bank, None)
+}
+
+#[allow(unused)]
+pub fn deploy_program_with_upgrade_authority(
+    name: String,
+    deployment_slot: Slot,
+    mock_bank: &MockBankCallback,
+    upgrade_authority_address: Option<Pubkey>,
+) -> Pubkey {
+    let rent = Rent::default();
     let program_account = program_address(&name);
     let program_data_account = bpf_loader_upgradeable::get_program_data_address(&program_account);
 
@@ -147,10 +165,11 @@ pub fn deploy_program(name: String, deployment_slot: Slot, mock_bank: &MockBankC
 
     // The program account must have funds and hold the executable binary
     let mut account_data = AccountSharedData::default();
-    account_data.set_data(bincode::serialize(&state).unwrap());
-    account_data.set_lamports(25);
+    let buffer = bincode::serialize(&state).unwrap();
+    account_data.set_lamports(rent.minimum_balance(buffer.len()));
     account_data.set_owner(bpf_loader_upgradeable::id());
     account_data.set_executable(true);
+    account_data.set_data(buffer);
     mock_bank
         .account_shared_data
         .write()
@@ -173,6 +192,8 @@ pub fn deploy_program(name: String, deployment_slot: Slot, mock_bank: &MockBankC
     let mut buffer = load_program(name);
     header.append(&mut complement);
     header.append(&mut buffer);
+    account_data.set_lamports(rent.minimum_balance(header.len()));
+    account_data.set_owner(bpf_loader_upgradeable::id());
     account_data.set_data(header);
     mock_bank
         .account_shared_data
@@ -189,9 +210,6 @@ pub fn create_executable_environment(
     mock_bank: &MockBankCallback,
     program_cache: &mut ProgramCache<MockForkGraph>,
 ) {
-    const DEPLOYMENT_EPOCH: u64 = 0;
-    const DEPLOYMENT_SLOT: u64 = 0;
-
     program_cache.environments = ProgramRuntimeEnvironments {
         program_runtime_v1: Arc::new(create_custom_environment()),
         // We are not using program runtime v2
@@ -207,10 +225,10 @@ pub fn create_executable_environment(
 
     // clock contents are important because we use them for a sysvar loading test
     let clock = Clock {
-        slot: DEPLOYMENT_SLOT,
+        slot: EXECUTION_SLOT,
         epoch_start_timestamp: WALLCLOCK_TIME.saturating_sub(10) as UnixTimestamp,
-        epoch: DEPLOYMENT_EPOCH,
-        leader_schedule_epoch: DEPLOYMENT_EPOCH,
+        epoch: EXECUTION_EPOCH,
+        leader_schedule_epoch: EXECUTION_EPOCH,
         unix_timestamp: WALLCLOCK_TIME as UnixTimestamp,
     };
 
@@ -281,6 +299,19 @@ pub fn register_builtins(
             solana_system_program::system_processor::Entrypoint::vm,
         ),
     );
+
+    // For testing realloc, we need the compute budget program
+    let compute_budget_program_name = "compute_budget_program";
+    batch_processor.add_builtin(
+        mock_bank,
+        compute_budget::id(),
+        compute_budget_program_name,
+        ProgramCacheEntry::new_builtin(
+            DEPLOYMENT_SLOT,
+            compute_budget_program_name.len(),
+            solana_compute_budget_program::Entrypoint::vm,
+        ),
+    );
 }
 
 #[allow(unused)]
@@ -299,7 +330,7 @@ fn create_custom_environment<'a>() -> BuiltinProgram<InvokeContext<'a>> {
         noop_instruction_rate: 256,
         sanitize_user_provided_values: true,
         external_internal_function_hash_collision: false,
-        reject_callx_r10: false,
+        reject_callx_r10: true,
         enable_sbpf_v1: true,
         enable_sbpf_v2: false,
         optimize_rodata: false,

@@ -73,7 +73,6 @@ pub mod unprocessed_transaction_storage;
 mod consume_worker;
 mod decision_maker;
 mod forward_packet_batches_by_accounts;
-mod forward_worker;
 mod immutable_deserialized_packet;
 mod latest_unprocessed_votes;
 mod leader_slot_timing_metrics;
@@ -82,14 +81,13 @@ mod packet_deserializer;
 mod packet_filter;
 mod packet_receiver;
 mod read_write_account_set;
-#[allow(dead_code)]
 mod scheduler_messages;
 mod transaction_scheduler;
 
 // Fixed thread size seems to be fastest on GCP setup
 pub const NUM_THREADS: u32 = 6;
 
-const TOTAL_BUFFERED_PACKETS: usize = 700_000;
+const TOTAL_BUFFERED_PACKETS: usize = 100_000;
 
 const NUM_VOTE_PROCESSING_THREADS: u32 = 2;
 const MIN_THREADS_BANKING: u32 = 1;
@@ -527,7 +525,6 @@ impl BankingStage {
                 Self::spawn_thread_local_multi_iterator_thread(
                     id,
                     packet_receiver,
-                    bank_forks.clone(),
                     decision_maker.clone(),
                     committer.clone(),
                     transaction_recorder.clone(),
@@ -586,7 +583,6 @@ impl BankingStage {
             bank_thread_hdls.push(Self::spawn_thread_local_multi_iterator_thread(
                 id,
                 packet_receiver,
-                bank_forks.clone(),
                 decision_maker.clone(),
                 committer.clone(),
                 transaction_recorder.clone(),
@@ -651,8 +647,7 @@ impl BankingStage {
 
         // Spawn the central scheduler thread
         bank_thread_hdls.push({
-            let packet_deserializer =
-                PacketDeserializer::new(non_vote_receiver, bank_forks.clone());
+            let packet_deserializer = PacketDeserializer::new(non_vote_receiver);
             let scheduler = PrioGraphScheduler::new(work_senders, finished_work_receiver);
             let scheduler_controller = SchedulerController::new(
                 decision_maker.clone(),
@@ -815,7 +810,6 @@ impl BankingStage {
     fn spawn_thread_local_multi_iterator_thread<T: LikeClusterInfo>(
         id: u32,
         packet_receiver: BankingPacketReceiver,
-        bank_forks: Arc<RwLock<BankForks>>,
         decision_maker: DecisionMaker,
         committer: Committer,
         transaction_recorder: TransactionRecorder,
@@ -823,7 +817,7 @@ impl BankingStage {
         mut forwarder: Forwarder<T>,
         unprocessed_transaction_storage: UnprocessedTransactionStorage,
     ) -> JoinHandle<()> {
-        let mut packet_receiver = PacketReceiver::new(id, packet_receiver, bank_forks);
+        let mut packet_receiver = PacketReceiver::new(id, packet_receiver);
         let consumer = Consumer::new(
             committer,
             transaction_recorder,
@@ -1600,7 +1594,7 @@ mod tests {
                         &vote_keypairs[i],
                         &vote_keypairs[i],
                         None,
-                    );
+                    )
                 })
                 .collect_vec();
             let gossip_votes = (0..100_usize)
@@ -1617,7 +1611,7 @@ mod tests {
                         &vote_keypairs[i],
                         &vote_keypairs[i],
                         None,
-                    );
+                    )
                 })
                 .collect_vec();
             let txs = (0..100_usize)
