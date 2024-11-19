@@ -30,7 +30,7 @@ use {
     system_instruction,
 };
 
-// copied from deprecated code in solana_sysvar to avoid a dependency.
+// copied from deprecated code in solana_program::sysvar to avoid a dependency.
 // This should be removed when the items that depend on it are removed.
 lazy_static::lazy_static! {
     // This will be deprecated and so this list shouldn't be modified
@@ -48,7 +48,7 @@ lazy_static::lazy_static! {
     ];
 }
 
-// copied from deprecated code in solana_sysvar to avoid a dependency.
+// copied from deprecated code in solana_program::sysvar to avoid a dependency.
 // This should be removed when the items that depend on it are removed.
 fn is_sysvar_id(id: &Pubkey) -> bool {
     ALL_IDS.iter().any(|key| key == id)
