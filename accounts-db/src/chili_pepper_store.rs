@@ -4,7 +4,12 @@ use {
         Database, Error, Key, ReadableTableMetadata, TableDefinition, TableStats, TypeName, Value,
     },
     solana_sdk::{clock::Slot, pubkey::Pubkey},
-    std::{borrow::Borrow, cmp::Ordering, fmt::Debug, path::Path},
+    std::{
+        borrow::Borrow,
+        cmp::Ordering,
+        fmt::Debug,
+        path::{Path, PathBuf},
+    },
 };
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -53,9 +58,10 @@ impl<'a> Key for PubkeySlot<'a> {
     }
 }
 
-const TABLE: TableDefinition<PubkeySlot, u64> = TableDefinition::new("my_data");
+const TABLE: TableDefinition<PubkeySlot, u64> = TableDefinition::new("chili_pepper");
 pub struct ChiliPepperStore {
     db: Database,
+    path: PathBuf,
 }
 
 /// The amount of memory to use for the cache, in bytes.
@@ -73,16 +79,25 @@ impl ChiliPepperStore {
             .create(path.as_ref())
             .unwrap();
 
-        Ok(Self { db })
+        Ok(Self {
+            db,
+            path: path.as_ref().to_path_buf(),
+        })
     }
 
     pub fn open_with_path(path: impl AsRef<Path>) -> Result<Self, Error> {
         let db = Database::open(path.as_ref())?;
-        Ok(Self { db })
+        Ok(Self {
+            db,
+            path: path.as_ref().to_path_buf(),
+        })
     }
 
     pub fn new(db: Database) -> Self {
-        Self { db }
+        Self {
+            db,
+            path: PathBuf::new(),
+        }
     }
 
     pub fn get_db(&self) -> &Database {
@@ -174,23 +189,46 @@ impl ChiliPepperStore {
         write_txn.commit().map_err(Error::from)
     }
 
-    pub fn snapshot(&self) -> Result<(), Error> {
-        let read_txn = self.db.begin_read()?;
-        // TODO: Implement snapshot
-        // pub fn persistent_savepoint(&self) -> Result<u64, SavepointError>
-        // pub fn delete_persistent_savepoint(&self, id: u64) -> Result<bool, SavepointError>
-        // pub fn list_persistent_savepoints(&self) -> Result<impl Iterator<Item = u64>>
-        todo!()
-        // let savepoint = txn.get_persistent_savepoint(*savepoint_id)?;
-        //  txn.restore_savepoint(&savepoint)?;
-        // read_txn.snapshot().map_err(Error::from)
-        // copy the file
-        // open the copy
-        // restore to the savepoint
-        // delete all the save point
-        // compact
-        // close the new file
-        // drop the save point on current db
+    pub fn create_savepoint(&self) -> Result<u64, Error> {
+        let txn = self.db.begin_write()?;
+        let savepoint_id = txn.persistent_savepoint()?;
+        txn.commit()?;
+        Ok(savepoint_id)
+    }
+
+    pub fn remove_savepoint(&self, savepoint_id: u64) -> Result<bool, Error> {
+        let txn = self.db.begin_write()?;
+        let result = txn.delete_persistent_savepoint(savepoint_id)?;
+        txn.commit()?;
+        Ok(result)
+    }
+
+    pub fn restore_savepoint(&self, savepoint_id: u64) -> Result<(), Error> {
+        let mut txn = self.db.begin_write()?;
+        let savepoint = txn.get_persistent_savepoint(savepoint_id)?;
+        txn.restore_savepoint(&savepoint)?;
+        txn.commit()?;
+        Ok(())
+    }
+
+    pub fn snapshot(
+        &self,
+        savepoint_id: u64,
+        snapshot_path: impl AsRef<Path>,
+    ) -> Result<(), Error> {
+        assert!(self.path.exists(), "db file not exists");
+        std::fs::copy(&self.path, &snapshot_path).expect("copy db file success");
+        let db = Database::open(snapshot_path.as_ref()).expect("open db success");
+        let mut txn = db.begin_write()?;
+        let savepoint = txn.get_persistent_savepoint(savepoint_id)?;
+        txn.restore_savepoint(&savepoint)?;
+        txn.commit()?;
+
+        let txn = self.db.begin_write()?;
+        txn.delete_persistent_savepoint(savepoint_id)?;
+        txn.commit()?;
+
+        Ok(())
     }
 }
 
@@ -233,8 +271,6 @@ pub mod tests {
 
         let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
 
-        // default cache size is 1024 * 1024 * 1024 (1GB)
-        // 90% of the cache is used for the read cache, and 10% is used for the write cache.
         let db = Database::create(tmpfile.path()).expect("create db success");
         let store = ChiliPepperStore::new(db);
 
@@ -466,8 +502,6 @@ pub mod tests {
 
         let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
 
-        // default cache size is 1024 * 1024 * 1024 (1GB)
-        // 90% of the cache is used for the read cache, and 10% is used for the write cache.
         let db = Database::create(tmpfile.path()).expect("create db success");
         let store = ChiliPepperStore::new(db);
 
@@ -499,8 +533,6 @@ pub mod tests {
             .collect();
         let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
 
-        // default cache size is 1024 * 1024 * 1024 (1GB)
-        // 90% of the cache is used for the read cache, and 10% is used for the write cache.
         let db = Database::create(tmpfile.path()).expect("create db success");
         let store = ChiliPepperStore::new(db);
 
@@ -509,5 +541,76 @@ pub mod tests {
 
         store.clean(105).unwrap();
         assert_eq!(store.len().unwrap(), 5);
+    }
+
+    #[test]
+    fn test_savepoint() {
+        let pk1 = Pubkey::from([1_u8; 32]);
+        let pk2 = Pubkey::from([2_u8; 32]);
+        let pk3 = Pubkey::from([3_u8; 32]);
+
+        let some_key = PubkeySlot(&pk1, 42);
+        let some_key2 = PubkeySlot(&pk2, 43);
+        let some_key3 = PubkeySlot(&pk3, 44);
+
+        let some_value = 163;
+        let some_value2 = 164;
+        let some_value3 = 165;
+
+        let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
+
+        let db = Database::create(tmpfile.path()).expect("create db success");
+        let store = ChiliPepperStore::new(db);
+
+        store.insert(some_key, some_value).unwrap();
+        let savepoint_id = store.create_savepoint().unwrap();
+
+        store.insert(some_key2, some_value2).unwrap();
+        store.insert(some_key3, some_value3).unwrap();
+        assert_eq!(store.len().unwrap(), 3);
+
+        store.restore_savepoint(savepoint_id).unwrap();
+        assert_eq!(store.len().unwrap(), 1);
+        assert_eq!(store.get(some_key).unwrap().unwrap(), some_value);
+        assert!(store.get(some_key2).unwrap().is_none());
+        assert!(store.get(some_key3).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_snapshot() {
+        let pk1 = Pubkey::from([1_u8; 32]);
+        let pk2 = Pubkey::from([2_u8; 32]);
+        let pk3 = Pubkey::from([3_u8; 32]);
+
+        let some_key = PubkeySlot(&pk1, 42);
+        let some_key2 = PubkeySlot(&pk2, 43);
+        let some_key3 = PubkeySlot(&pk3, 44);
+
+        let some_value = 163;
+        let some_value2 = 164;
+        let some_value3 = 165;
+
+        let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
+
+        let store = ChiliPepperStore::new_with_path(tmpfile.path()).expect("create db success");
+        store.insert(some_key, some_value).unwrap();
+        let savepoint_id = store.create_savepoint().unwrap();
+
+        store.insert(some_key2, some_value2).unwrap();
+        store.insert(some_key3, some_value3).unwrap();
+        assert_eq!(store.len().unwrap(), 3);
+
+        let snapshot_path = tmpfile.path().with_extension("snapshot");
+        store.snapshot(savepoint_id, &snapshot_path).unwrap();
+
+        let db2 = Database::open(&snapshot_path).expect("open db success");
+        let store2 = ChiliPepperStore::new(db2);
+
+        assert_eq!(store2.len().unwrap(), 1);
+        assert_eq!(store2.get(some_key).unwrap().unwrap(), some_value);
+        assert!(store2.get(some_key2).unwrap().is_none());
+        assert!(store2.get(some_key3).unwrap().is_none());
+
+        std::fs::remove_file(snapshot_path).expect("delete snapshot file success");
     }
 }

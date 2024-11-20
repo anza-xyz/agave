@@ -119,7 +119,7 @@ pub trait ChiliPepperStore {
 
     pub fn clean(&self, threshold: u64) -> Result<(), Error>;
 
-    pub fn snapshot(&self) -> Result<(), Error>;
+    pub fn snapshot(&self, savepoint_id: u64, snapshot_path: imp AsRef<Path>) -> Result<(), Error>;
 }
 
 ```
