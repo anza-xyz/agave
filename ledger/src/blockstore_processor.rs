@@ -455,9 +455,12 @@ fn schedule_batches_for_execution(
         // give ownership to scheduler. capture the first error, but continue the loop
         // to unlock.
         // scheduling is skipped if we have already detected an error in this loop
-        let indexes = (starting_index as TaskKey)..(starting_index as TaskKey + transactions.len() as TaskKey);
+        let indexes = starting_index..starting_index + transactions.len();
         first_err = first_err.and_then(|()| {
-            bank.schedule_transaction_executions(transactions.into_iter().zip_eq(indexes))
+            let indexes2 = indexes
+                .into_iter()
+                .map(|i| i as TaskKey);
+            bank.schedule_transaction_executions(transactions.into_iter().zip_eq(indexes2))
         });
     }
     first_err
