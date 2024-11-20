@@ -232,7 +232,7 @@ pub fn execute_batch(
             commit_results,
             balances,
             token_balances,
-            transaction_indexes.to_vec(),
+            transaction_indexes,
         );
     }
 
