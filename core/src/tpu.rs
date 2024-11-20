@@ -98,6 +98,7 @@ impl Tpu {
         shred_version: u16,
         vote_tracker: Arc<VoteTracker>,
         bank_forks: Arc<RwLock<BankForks>>,
+        root_bank_cache: RootBankCache,
         verified_vote_sender: VerifiedVoteSender,
         gossip_verified_vote_hash_sender: GossipVerifiedVoteHashSender,
         replay_vote_receiver: ReplayVoteReceiver,
@@ -236,7 +237,6 @@ impl Tpu {
             )
         };
 
-        let root_bank_cache = RootBankCache::new(bank_forks.clone());
         let cluster_info_vote_listener = ClusterInfoVoteListener::new(
             exit.clone(),
             cluster_info.clone(),
