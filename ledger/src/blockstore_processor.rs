@@ -146,7 +146,7 @@ fn create_thread_pool(num_threads: usize) -> ThreadPool {
 }
 
 pub fn execute_batch(
-    batch: &TransactionBatchWithIndexes<SanitizedTransaction>,
+    batch: TransactionBatchWithIndexes<SanitizedTransaction>,
     bank: &Arc<Bank>,
     transaction_status_sender: Option<&TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
@@ -232,7 +232,7 @@ pub fn execute_batch(
             commit_results,
             balances,
             token_balances,
-            transaction_indexes,
+            transaction_indexes.to_vec(),
         );
     }
 
