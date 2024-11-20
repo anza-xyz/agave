@@ -459,8 +459,7 @@ fn schedule_batches_for_execution(
         first_err = first_err.and_then(|()| {
             let indexes2 = indexes
                 .into_iter()
-                .map(|i| i as TaskKey)
-                .collect::<Vec<_>>();
+                .map(|i| i as TaskKey);
             bank.schedule_transaction_executions(transactions.into_iter().zip_eq(indexes2))
         });
     }
