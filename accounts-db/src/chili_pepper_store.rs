@@ -58,17 +58,21 @@ pub struct ChiliPepperStore {
     db: Database,
 }
 
-// TODO: use builder patten to create the store
-// Database::builder()
-//             .set_cache_size(1024 * 1024)
-//             .set_page_size(8 * 1024)
-//             .set_region_size(32 * 4096)
-//             .create(&path)
-//             .unwrap();
+/// The amount of memory to use for the cache, in bytes.
+/// 90% is used for the read cache, and 10% is used for the write cache.
+#[cfg(not(test))]
+const DEFAULT_CACHE_SIZE: usize = 1024 * 1024 * 1024; // 1GB for validator
+
+#[cfg(test)]
+const DEFAULT_CACHE_SIZE: usize = 1024 * 1024; // 1MB for test
 
 impl ChiliPepperStore {
     pub fn new_with_path(path: impl AsRef<Path>) -> Result<Self, Error> {
-        let db = Database::create(path.as_ref())?;
+        let db = Database::builder()
+            .set_cache_size(1024 * 1024)
+            .create(path.as_ref())
+            .unwrap();
+
         Ok(Self { db })
     }
 
@@ -193,6 +197,25 @@ impl ChiliPepperStore {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+
+    #[test]
+    fn test_with_path() {
+        let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
+        let path = tmpfile.path().to_path_buf();
+        let store = ChiliPepperStore::new_with_path(&path).expect("create db success");
+
+        let pk = Pubkey::from([1_u8; 32]);
+        let some_key = PubkeySlot(&pk, 42);
+        let some_value = 163;
+        store.insert(some_key, some_value).unwrap();
+        assert_eq!(store.len().unwrap(), 1);
+
+        drop(store);
+
+        let store = ChiliPepperStore::open_with_path(&path).expect("open db success");
+        assert_eq!(store.len().unwrap(), 1);
+        assert_eq!(store.get(some_key).unwrap().unwrap(), some_value);
+    }
 
     #[test]
     fn test_multi_keys() {
