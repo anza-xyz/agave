@@ -257,40 +257,40 @@ pub mod tests {
 
     #[test]
     fn test_multi_keys() {
-        let pk1 = Pubkey::from([1_u8; 32]);
-        let pk2 = Pubkey::from([2_u8; 32]);
-        let pk3 = Pubkey::from([3_u8; 32]);
+        let mut pks = vec![];
+        for i in 1..=3 {
+            pks.push(Pubkey::from([i; 32]));
+        }
+        let keys: Vec<_> = pks
+            .iter()
+            .zip(42..=44)
+            .map(|(pk, v)| (PubkeySlot(pk, v)))
+            .collect();
 
-        let some_key = PubkeySlot(&pk1, 42);
-        let some_key2 = PubkeySlot(&pk2, 43);
-        let some_key3 = PubkeySlot(&pk3, 44);
-
-        let some_value = 163;
-        let some_value2 = 164;
-        let some_value3 = 165;
+        let vals = vec![163, 164, 165];
 
         let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
 
         let db = Database::create(tmpfile.path()).expect("create db success");
         let store = ChiliPepperStore::new(db);
 
-        store.insert(some_key, some_value).unwrap();
-        store.insert(some_key2, some_value2).unwrap();
-        store.insert(some_key3, some_value3).unwrap();
+        for (key, value) in keys.iter().zip(vals.iter()) {
+            store.insert(*key, *value).unwrap();
+        }
         assert_eq!(store.len().unwrap(), 3);
 
-        assert_eq!(store.get(some_key).unwrap().unwrap(), some_value);
-        assert_eq!(store.get(some_key2).unwrap().unwrap(), some_value2);
-        assert_eq!(store.get(some_key3).unwrap().unwrap(), some_value3);
+        for (key, value) in keys.iter().zip(vals.iter()) {
+            assert_eq!(store.get(*key).unwrap().unwrap(), *value);
+        }
 
-        store.remove(some_key).unwrap();
-        store.remove(some_key2).unwrap();
-        store.remove(some_key3).unwrap();
+        for key in keys.iter() {
+            store.remove(*key).unwrap();
+        }
         assert_eq!(store.len().unwrap(), 0);
 
-        assert!(store.get(some_key).unwrap().is_none());
-        assert!(store.get(some_key2).unwrap().is_none());
-        assert!(store.get(some_key3).unwrap().is_none());
+        for key in keys.iter() {
+            assert!(store.get(*key).unwrap().is_none());
+        }
     }
 
     #[test]
