@@ -4,10 +4,6 @@
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #[cfg(any(test, feature = "verify"))]
 use core::convert::TryInto;
-#[cfg(feature = "serde")]
-mod de;
-#[cfg(feature = "serde")]
-mod ser;
 use core::{
     fmt,
     str::{from_utf8, FromStr},
@@ -16,6 +12,11 @@ use core::{
 extern crate std;
 #[cfg(feature = "std")]
 use std::{error::Error, vec::Vec};
+#[cfg(feature = "serde")]
+use {
+    serde_big_array::BigArray,
+    serde_derive::{Deserialize, Serialize},
+};
 
 /// Number of bytes in a signature
 pub const SIGNATURE_BYTES: usize = 64;
@@ -25,7 +26,10 @@ const MAX_BASE58_SIGNATURE_LEN: usize = 88;
 #[repr(transparent)]
 #[cfg_attr(feature = "frozen-abi", derive(solana_frozen_abi_macro::AbiExample))]
 #[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct Signature([u8; SIGNATURE_BYTES]);
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+pub struct Signature(
+    #[cfg_attr(feature = "serde", serde(with = "BigArray"))] [u8; SIGNATURE_BYTES],
+);
 
 impl Default for Signature {
     fn default() -> Self {

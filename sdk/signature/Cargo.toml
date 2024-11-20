@@ -14,6 +14,7 @@ bs58 = { workspace = true }
 ed25519-dalek = { workspace = true, optional = true }
 rand = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
+serde-big-array = { workspace = true, optional = true }
 serde_derive = { workspace = true, optional = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
@@ -41,7 +42,7 @@ frozen-abi = [
     "std"
 ]
 rand = ["dep:rand"]
-serde = ["dep:serde"]
+serde = ["dep:serde", "dep:serde_derive", "dep:serde-big-array"]
 std = []
 verify = ["dep:ed25519-dalek"]
 
