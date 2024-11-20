@@ -235,12 +235,14 @@ impl Tpu {
             )
         };
 
+        let root_bank_cache = RootBankCache::new(bank_forks.clone());
         let cluster_info_vote_listener = ClusterInfoVoteListener::new(
             exit.clone(),
             cluster_info.clone(),
             gossip_vote_sender,
             vote_tracker,
             bank_forks.clone(),
+            root_bank_cache,
             subscriptions.clone(),
             verified_vote_sender,
             gossip_verified_vote_hash_sender,
