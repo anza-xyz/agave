@@ -106,6 +106,7 @@ use {
         bank_forks::BankForks,
         commitment::BlockCommitmentCache,
         prioritization_fee_cache::PrioritizationFeeCache,
+        root_bank_cache::RootBankCache,
         runtime_config::RuntimeConfig,
         snapshot_archive_info::SnapshotArchiveInfoGetter,
         snapshot_bank_utils::{self, DISABLED_SNAPSHOT_ARCHIVE_INTERVAL},
@@ -149,7 +150,6 @@ use {
     thiserror::Error,
     tokio::runtime::Runtime as TokioRuntime,
 };
-use solana_runtime::root_bank_cache::RootBankCache;
 
 const MAX_COMPLETED_DATA_SETS_IN_CHANNEL: usize = 100_000;
 const WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT: u64 = 80;

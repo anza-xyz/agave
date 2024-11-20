@@ -33,6 +33,7 @@ use {
     solana_runtime::{
         bank_forks::BankForks,
         prioritization_fee_cache::PrioritizationFeeCache,
+        root_bank_cache::RootBankCache,
         vote_sender_types::{ReplayVoteReceiver, ReplayVoteSender},
     },
     solana_sdk::{clock::Slot, pubkey::Pubkey, quic::NotifyKeyUpdate, signature::Keypair},
@@ -53,7 +54,6 @@ use {
     },
     tokio::sync::mpsc::Sender as AsyncSender,
 };
-use solana_runtime::root_bank_cache::RootBankCache;
 
 // allow multiple connections for NAT and any open/close overlap
 pub const MAX_QUIC_CONNECTIONS_PER_PEER: usize = 8;
