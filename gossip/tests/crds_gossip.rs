@@ -14,7 +14,6 @@ use {
         crds_gossip_pull::{CrdsTimeouts, ProcessPullStats, CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS},
         crds_gossip_push::CRDS_GOSSIP_PUSH_MSG_TIMEOUT_MS,
         crds_value::{CrdsValue, CrdsValueLabel},
-        ping_pong::PingCache,
     },
     solana_rayon_threadlimit::get_thread_count,
     solana_sdk::{
@@ -32,6 +31,8 @@ use {
         time::{Duration, Instant},
     },
 };
+
+type PingCache = solana_gossip::ping_pong::PingCache<32>;
 
 #[derive(Clone)]
 struct Node {
@@ -650,6 +651,8 @@ fn build_gossip_thread_pool() -> ThreadPool {
 
 fn new_ping_cache() -> Mutex<PingCache> {
     let ping_cache = PingCache::new(
+        &mut rand::thread_rng(),
+        Instant::now(),
         Duration::from_secs(20 * 60),      // ttl
         Duration::from_secs(20 * 60) / 64, // rate_limit_delay
         2048,                              // capacity

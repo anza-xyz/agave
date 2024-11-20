@@ -63,7 +63,8 @@ pub(crate) enum Protocol {
     // Update count_packets_received if new variants are added here.
 }
 
-pub(crate) type Ping = ping_pong::Ping<[u8; GOSSIP_PING_TOKEN_SIZE]>;
+pub(crate) type Ping = ping_pong::Ping<GOSSIP_PING_TOKEN_SIZE>;
+pub(crate) type PingCache = ping_pong::PingCache<GOSSIP_PING_TOKEN_SIZE>;
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
