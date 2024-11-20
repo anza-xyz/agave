@@ -473,25 +473,24 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     }
 
     let program_indices = message
-        .instructions_iter()
-        .map(|instruction| {
+        .program_instructions_iter()
+        .map(|(program_id, instruction)| {
             let mut account_indices = Vec::with_capacity(2);
-            let program_index = instruction.program_id_index as usize;
-            // This command may never return error, because the transaction is sanitized
-            let (program_id, program_account) = accounts
-                .get(program_index)
-                .ok_or(TransactionError::ProgramAccountNotFound)?;
             if native_loader::check_id(program_id) {
                 return Ok(account_indices);
             }
 
-            let account_found = account_loader
-                .load_account(program_id, AccountUsagePattern::ReadOnlyInvisible)
-                .is_some();
-            if !account_found {
+            let program_index = instruction.program_id_index as usize;
+            let program_usage_pattern = AccountUsagePattern::new(message, program_index);
+
+            let Some(LoadedTransactionAccount {
+                account: program_account,
+                ..
+            }) = account_loader.load_account(program_id, program_usage_pattern)
+            else {
                 error_metrics.account_not_found += 1;
                 return Err(TransactionError::ProgramAccountNotFound);
-            }
+            };
 
             if !account_loader
                 .feature_set
@@ -502,10 +501,12 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                 return Err(TransactionError::InvalidProgramForExecution);
             }
             account_indices.insert(0, program_index as IndexOfAccount);
+
             let owner_id = program_account.owner();
             if native_loader::check_id(owner_id) {
                 return Ok(account_indices);
             }
+
             if !validated_loaders.contains(owner_id) {
                 // NOTE we load the program owner as `ReadOnlyInstruction` to bypass the program cache
                 // since the program cache would incorrectly mark a user-created native-owned account as executable
