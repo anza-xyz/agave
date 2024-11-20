@@ -538,6 +538,7 @@ impl JsonRpcRequestProcessor {
         let processing_environment = TransactionProcessingEnvironment {
             blockhash,
             blockhash_lamports_per_signature: lamports_per_signature,
+            epoch_total_stake: 0,
             feature_set: Arc::clone(&bank.feature_set),
             fee_lamports_per_signature: lamports_per_signature,
             rent_collector: None,

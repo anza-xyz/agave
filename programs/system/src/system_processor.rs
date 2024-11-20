@@ -570,7 +570,7 @@ mod tests {
         solana_program_runtime::{
             invoke_context::mock_process_instruction, with_mock_invoke_context,
         },
-        std::collections::{BinaryHeap, HashMap},
+        std::collections::BinaryHeap,
     };
 
     impl From<Pubkey> for Address {

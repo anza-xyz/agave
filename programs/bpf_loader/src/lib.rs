@@ -1642,7 +1642,7 @@ mod tests {
             rent::Rent,
             system_program, sysvar,
         },
-        std::{collections::HashMap, fs::File, io::Read, ops::Range, sync::atomic::AtomicU64},
+        std::{fs::File, io::Read, ops::Range, sync::atomic::AtomicU64},
     };
 
     fn process_instruction(

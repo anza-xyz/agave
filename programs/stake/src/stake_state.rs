@@ -1455,7 +1455,6 @@ mod tests {
             stake::state::warmup_cooldown_rate,
             sysvar::{epoch_schedule, SysvarId},
         },
-        std::collections::HashMap,
         test_case::test_case,
     };
 

@@ -1150,10 +1150,6 @@ impl Bank {
         bank.update_last_restart_slot();
         bank.transaction_processor
             .fill_missing_sysvar_cache_entries(&bank);
-        bank.transaction_processor.set_epoch_stake_information(
-            bank.get_current_epoch_total_stake(),
-            Arc::new(bank.get_epoch_vote_stake()),
-        );
         bank
     }
 
@@ -1467,13 +1463,6 @@ impl Bank {
             .unwrap()
             .stats
             .reset();
-
-        if parent.epoch() < new.epoch() {
-            new.transaction_processor.set_epoch_stake_information(
-                new.get_current_epoch_total_stake(),
-                Arc::new(new.get_epoch_vote_stake()),
-            )
-        }
 
         new
     }
@@ -1859,11 +1848,6 @@ impl Bank {
         );
         assert_eq!(bank.epoch_schedule, genesis_config.epoch_schedule);
         assert_eq!(bank.epoch, bank.epoch_schedule.get_epoch(bank.slot));
-
-        bank.transaction_processor.set_epoch_stake_information(
-            bank.get_current_epoch_total_stake(),
-            Arc::new(bank.get_epoch_vote_stake()),
-        );
 
         datapoint_info!(
             "bank-new-from-fields",
@@ -3784,6 +3768,7 @@ impl Bank {
         let processing_environment = TransactionProcessingEnvironment {
             blockhash,
             blockhash_lamports_per_signature,
+            epoch_total_stake: self.get_current_epoch_total_stake(),
             feature_set: Arc::clone(&self.feature_set),
             fee_lamports_per_signature: self.fee_structure.lamports_per_signature,
             rent_collector: Some(&rent_collector_with_metrics),
@@ -5225,13 +5210,6 @@ impl Bank {
                     false, /* debugging_features */
                 ))),
             );
-    }
-
-    fn get_epoch_vote_stake(&self) -> HashMap<Pubkey, u64> {
-        self.get_current_epoch_vote_accounts()
-            .iter()
-            .map(|(address, (stake, _))| (*address, *stake))
-            .collect()
     }
 
     pub fn set_inflation(&self, inflation: Inflation) {
@@ -7150,6 +7128,13 @@ impl TransactionProcessingCallback for Bank {
         if self.is_accounts_lt_hash_enabled() {
             self.inspect_account_for_accounts_lt_hash(address, &account_state, is_writable);
         }
+    }
+
+    fn get_epoch_stake(&self, vote_address: &Pubkey) -> u64 {
+        self.get_current_epoch_vote_accounts()
+            .get(vote_address)
+            .map(|(stake, _)| (*stake))
+            .unwrap_or(0)
     }
 }
 

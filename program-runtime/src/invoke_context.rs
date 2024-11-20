@@ -43,7 +43,6 @@ use {
     std::{
         alloc::Layout,
         cell::RefCell,
-        collections::HashMap,
         fmt::{self, Debug},
         rc::Rc,
     },
@@ -152,7 +151,7 @@ pub struct EnvironmentConfig<'a> {
     pub blockhash: Hash,
     pub blockhash_lamports_per_signature: u64,
     epoch_total_stake: u64,
-    epoch_vote_stake: &'a HashMap<Pubkey, u64>,
+    get_epoch_stake_callback: &'a dyn Fn(&'a Pubkey) -> u64,
     pub feature_set: Arc<FeatureSet>,
     sysvar_cache: &'a SysvarCache,
 }
@@ -161,7 +160,7 @@ impl<'a> EnvironmentConfig<'a> {
         blockhash: Hash,
         blockhash_lamports_per_signature: u64,
         epoch_total_stake: u64,
-        epoch_vote_stake: &'a HashMap<Pubkey, u64>,
+        get_epoch_stake_callback: &'a dyn Fn(&'a Pubkey) -> u64,
         feature_set: Arc<FeatureSet>,
         sysvar_cache: &'a SysvarCache,
     ) -> Self {
@@ -169,7 +168,7 @@ impl<'a> EnvironmentConfig<'a> {
             blockhash,
             blockhash_lamports_per_signature,
             epoch_total_stake,
-            epoch_vote_stake,
+            get_epoch_stake_callback,
             feature_set,
             sysvar_cache,
         }
@@ -662,9 +661,9 @@ impl<'a> InvokeContext<'a> {
         self.environment_config.epoch_total_stake
     }
 
-    /// Get cached stake for epoch vote accounts.
-    pub fn get_epoch_vote_stake(&self) -> &HashMap<Pubkey, u64> {
-        self.environment_config.epoch_vote_stake
+    /// Get cached stake for the epoch vote account.
+    pub fn get_epoch_vote_stake(&self, pubkey: &'a Pubkey) -> u64 {
+        (self.environment_config.get_epoch_stake_callback)(pubkey)
     }
 
     // Should alignment be enforced during user pointer translation
@@ -762,12 +761,11 @@ macro_rules! with_mock_invoke_context {
                 }
             }
         });
-        let epoch_vote_stake = HashMap::default();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             0,
-            &epoch_vote_stake,
+            &|_| 0,
             Arc::new(FeatureSet::all_enabled()),
             &sysvar_cache,
         );

@@ -46,7 +46,7 @@ use {
         signature::Signer,
         transaction_context::InstructionAccount,
     },
-    std::{collections::HashMap, mem, sync::Arc},
+    std::{mem, sync::Arc},
     test::Bencher,
 };
 
