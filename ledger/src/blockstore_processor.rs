@@ -1008,6 +1008,11 @@ pub fn process_blockstore_from_root(
         "process_blockstore_from_root",
         ("total_time_us", processing_time.as_micros(), i64),
         (
+            "vote_only_frozen_banks",
+            bank_forks.read().unwrap().vote_only_frozen_banks().len(),
+            i64
+        ),
+        (
             "frozen_banks",
             bank_forks.read().unwrap().frozen_banks().len(),
             i64

@@ -236,7 +236,7 @@ impl HeaviestSubtreeForkChoice {
         let mut heaviest_subtree_fork_choice = HeaviestSubtreeForkChoice::new(root);
         let mut prev_slot = root.0;
         for bank in frozen_banks.iter() {
-            assert!(bank.is_frozen());
+            assert!(bank.is_vote_only_frozen());
             if bank.slot() > root.0 {
                 // Make sure the list is sorted
                 assert!(bank.slot() > prev_slot);
@@ -257,7 +257,11 @@ impl HeaviestSubtreeForkChoice {
 
     pub fn new_from_bank_forks(bank_forks: Arc<RwLock<BankForks>>) -> Self {
         let bank_forks = bank_forks.read().unwrap();
-        let mut frozen_banks: Vec<_> = bank_forks.frozen_banks().values().cloned().collect();
+        let mut frozen_banks: Vec<_> = bank_forks
+            .vote_only_frozen_banks()
+            .values()
+            .cloned()
+            .collect();
 
         frozen_banks.sort_by_key(|bank| bank.slot());
         let root_bank = bank_forks.root_bank();

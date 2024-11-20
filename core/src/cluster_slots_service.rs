@@ -168,7 +168,7 @@ impl ClusterSlotsService {
         // TODO: Should probably incorporate slots that were replayed on startup,
         // and maybe some that were frozen < snapshot root in case validators restart
         // from newer snapshots and lose history.
-        let frozen_banks = bank_forks.read().unwrap().frozen_banks();
+        let frozen_banks = bank_forks.read().unwrap().vote_only_frozen_banks();
         let mut frozen_bank_slots: Vec<Slot> = frozen_banks.keys().cloned().collect();
         frozen_bank_slots.sort_unstable();
 

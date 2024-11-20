@@ -183,7 +183,7 @@ impl VoteSimulator {
             .bank_forks
             .read()
             .unwrap()
-            .frozen_banks()
+            .vote_only_frozen_banks()
             .values()
             .cloned()
             .collect();

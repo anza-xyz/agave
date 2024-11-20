@@ -806,7 +806,7 @@ impl ReplayStage {
                 let mut frozen_banks: Vec<_> = bank_forks
                     .read()
                     .unwrap()
-                    .frozen_banks()
+                    .vote_only_frozen_banks()
                     .into_iter()
                     .filter(|(slot, _)| *slot >= forks_root)
                     .map(|(_, bank)| bank)
