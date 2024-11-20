@@ -134,7 +134,7 @@ pub trait TransactionProcessingCallback {
 
     fn add_builtin_account(&self, _name: &str, _program_id: &Pubkey) {}
 
-    fn get_epoch_stake(&self, _vote_address: &Pubkey) -> u64;
+    fn get_current_epoch_vote_account_stake(&self, _vote_address: &Pubkey) -> u64;
 }
 ```
 

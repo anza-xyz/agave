@@ -151,7 +151,7 @@ pub struct EnvironmentConfig<'a> {
     pub blockhash: Hash,
     pub blockhash_lamports_per_signature: u64,
     epoch_total_stake: u64,
-    get_epoch_stake_callback: &'a dyn Fn(&'a Pubkey) -> u64,
+    get_epoch_vote_account_stake_callback: &'a dyn Fn(&'a Pubkey) -> u64,
     pub feature_set: Arc<FeatureSet>,
     sysvar_cache: &'a SysvarCache,
 }
@@ -160,7 +160,7 @@ impl<'a> EnvironmentConfig<'a> {
         blockhash: Hash,
         blockhash_lamports_per_signature: u64,
         epoch_total_stake: u64,
-        get_epoch_stake_callback: &'a dyn Fn(&'a Pubkey) -> u64,
+        get_epoch_vote_account_stake_callback: &'a dyn Fn(&'a Pubkey) -> u64,
         feature_set: Arc<FeatureSet>,
         sysvar_cache: &'a SysvarCache,
     ) -> Self {
@@ -168,7 +168,7 @@ impl<'a> EnvironmentConfig<'a> {
             blockhash,
             blockhash_lamports_per_signature,
             epoch_total_stake,
-            get_epoch_stake_callback,
+            get_epoch_vote_account_stake_callback,
             feature_set,
             sysvar_cache,
         }
@@ -662,8 +662,10 @@ impl<'a> InvokeContext<'a> {
     }
 
     /// Get cached stake for the epoch vote account.
-    pub fn get_epoch_vote_stake(&self, pubkey: &'a Pubkey) -> u64 {
-        (self.environment_config.get_epoch_stake_callback)(pubkey)
+    pub fn get_epoch_vote_account_stake(&self, pubkey: &'a Pubkey) -> u64 {
+        (self
+            .environment_config
+            .get_epoch_vote_account_stake_callback)(pubkey)
     }
 
     // Should alignment be enforced during user pointer translation

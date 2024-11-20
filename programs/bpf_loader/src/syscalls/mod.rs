@@ -2103,7 +2103,7 @@ declare_builtin_function!(
             let check_aligned = invoke_context.get_check_aligned();
             let vote_address = translate_type::<Pubkey>(memory_mapping, var_addr, check_aligned)?;
 
-            Ok(invoke_context.get_epoch_vote_stake(vote_address))
+            Ok(invoke_context.get_epoch_vote_account_stake(vote_address))
         }
     }
 );

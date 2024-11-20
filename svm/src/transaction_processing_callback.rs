@@ -11,7 +11,7 @@ pub trait TransactionProcessingCallback {
     fn inspect_account(&self, _address: &Pubkey, _account_state: AccountState, _is_writable: bool) {
     }
 
-    fn get_epoch_stake(&self, _vote_address: &Pubkey) -> u64 {
+    fn get_current_epoch_vote_account_stake(&self, _vote_address: &Pubkey) -> u64 {
         0
     }
 }

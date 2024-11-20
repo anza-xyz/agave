@@ -7130,7 +7130,7 @@ impl TransactionProcessingCallback for Bank {
         }
     }
 
-    fn get_epoch_stake(&self, vote_address: &Pubkey) -> u64 {
+    fn get_current_epoch_vote_account_stake(&self, vote_address: &Pubkey) -> u64 {
         self.get_current_epoch_vote_accounts()
             .get(vote_address)
             .map(|(stake, _)| (*stake))
