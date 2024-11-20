@@ -7,7 +7,7 @@ use {
         transaction_execution_result::ExecutedTransaction,
         transaction_processing_callback::{AccountState, TransactionProcessingCallback},
     },
-    ahash::AHashMap,
+    ahash::{AHashMap, AHashSet},
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_feature_set::{self as feature_set, FeatureSet},
     solana_program_runtime::loaded_programs::ProgramCacheForTxBatch,
@@ -32,11 +32,7 @@ use {
     solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_system_program::{get_system_account_kind, SystemAccountKind},
-    std::{
-        collections::{HashMap, HashSet},
-        num::NonZeroU32,
-        sync::Arc,
-    },
+    std::{collections::HashMap, num::NonZeroU32, sync::Arc},
 };
 
 // for the load instructions
@@ -252,7 +248,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         message: &impl SVMMessage,
         transaction_accounts: &[TransactionAccount],
     ) {
-        for (i, (address, account)) in (0..message.account_keys().len()).zip(transaction_accounts) {
+        for (i, (address, account)) in transaction_accounts.iter().enumerate() {
             if !message.is_writable(i) {
                 continue;
             }
@@ -435,7 +431,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     let mut tx_rent: TransactionRent = 0;
     let account_keys = message.account_keys();
     let mut accounts = Vec::with_capacity(account_keys.len());
-    let mut validated_loaders = HashSet::with_capacity(PROGRAM_OWNERS.len()); // TODO AHashSet
+    let mut validated_loaders = AHashSet::with_capacity(PROGRAM_OWNERS.len());
     let mut rent_debits = RentDebits::default();
     let mut accumulated_accounts_data_size: u32 = 0;
 
@@ -511,9 +507,9 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                 return Ok(account_indices);
             }
             if !validated_loaders.contains(owner_id) {
-                // NOTE we load as `ReadOnlyInstruction` to bypass the program cache
+                // NOTE we load the program owner as `ReadOnlyInstruction` to bypass the program cache
                 // since the program cache would incorrectly mark a user-created native-owned account as executable
-                // this is just to be careful; an account owned by a native-owned non-program cannot be set executable
+                // this preserves consensus until `disable_account_loader_special_case` is active, after which it doesnt matter
                 //
                 // there are a panopoly of fetaure gate activations that affect this code, in generally benign ways:
                 // * `remove_accounts_executable_flag_checks`: incorrect executable flag from program cache no longer matters
@@ -521,14 +517,10 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                 //   albeit in a consensus-safe manner because it would result from feature activation
                 // * `disable_account_loader_special_case`: program cache codepath goes away entirely
                 //   at this point the instruction vs invisible distinction ceases to affect loading
-                //   however we might not remove it, because...
-                // * SIMD-163: allows non-instruction account keys to be used for CPI
-                //   the instruction/invisible distinction may be useful again, to optimize loading, but maybe not
+                //   keeping the distinction may be useful for SIMD-163 (cpi caller restriction), but maybe not
                 // * `enable_transaction_loading_failure_fees`: loading failures behave the same as execution failures
                 //   at this point we can restrict valid loaders to those contained in `PROGRAM_OWNERS`
                 //   since any other pseudo-loader owner is destined to fail at execution
-                //   in theory we could do this now with no change in behavior
-                //   but then the behavior _would_ change when `remove_accounts_executable_flag_checks` activates
                 // * SIMD-186: explicitly defines a sensible transaction data size algorithm
                 //   at this point we stop counting loaders toward transaction data size entirely
                 //
@@ -1770,6 +1762,7 @@ mod tests {
         let mut mock_bank = TestCallbacks::default();
         let mut account_data = AccountSharedData::default();
         account_data.set_owner(native_loader::id());
+        account_data.set_lamports(1);
         account_data.set_executable(true);
         mock_bank.accounts_map.insert(key1.pubkey(), account_data);
 
@@ -1883,6 +1876,7 @@ mod tests {
         let sanitized_message = new_unchecked_sanitized_message(message);
         let mut mock_bank = TestCallbacks::default();
         let mut account_data = AccountSharedData::default();
+        account_data.set_lamports(1);
         account_data.set_executable(true);
         account_data.set_owner(key3.pubkey());
         mock_bank.accounts_map.insert(key1.pubkey(), account_data);
@@ -1937,6 +1931,7 @@ mod tests {
         let sanitized_message = new_unchecked_sanitized_message(message);
         let mut mock_bank = TestCallbacks::default();
         let mut account_data = AccountSharedData::default();
+        account_data.set_lamports(1);
         account_data.set_executable(true);
         account_data.set_owner(key3.pubkey());
         mock_bank.accounts_map.insert(key1.pubkey(), account_data);
@@ -1948,6 +1943,7 @@ mod tests {
             .insert(key2.pubkey(), fee_payer_account.clone());
 
         let mut account_data = AccountSharedData::default();
+        account_data.set_lamports(1);
         account_data.set_executable(true);
         account_data.set_owner(native_loader::id());
         mock_bank.accounts_map.insert(key3.pubkey(), account_data);
@@ -2018,6 +2014,7 @@ mod tests {
         let sanitized_message = new_unchecked_sanitized_message(message);
         let mut mock_bank = TestCallbacks::default();
         let mut account_data = AccountSharedData::default();
+        account_data.set_lamports(1);
         account_data.set_executable(true);
         account_data.set_owner(key3.pubkey());
         mock_bank.accounts_map.insert(key1.pubkey(), account_data);
@@ -2029,6 +2026,7 @@ mod tests {
             .insert(key2.pubkey(), fee_payer_account.clone());
 
         let mut account_data = AccountSharedData::default();
+        account_data.set_lamports(1);
         account_data.set_executable(true);
         account_data.set_owner(native_loader::id());
         mock_bank.accounts_map.insert(key3.pubkey(), account_data);
@@ -2082,6 +2080,7 @@ mod tests {
         let last_block_hash = Hash::new_unique();
 
         let mut system_data = AccountSharedData::default();
+        system_data.set_lamports(1);
         system_data.set_executable(true);
         system_data.set_owner(native_loader::id());
         bank.accounts_map
@@ -2165,6 +2164,7 @@ mod tests {
         let sanitized_message = new_unchecked_sanitized_message(message);
         let mut mock_bank = TestCallbacks::default();
         let mut account_data = AccountSharedData::default();
+        account_data.set_lamports(1);
         account_data.set_executable(true);
         account_data.set_owner(key3.pubkey());
         mock_bank.accounts_map.insert(key1.pubkey(), account_data);
@@ -2176,6 +2176,7 @@ mod tests {
             .insert(key2.pubkey(), fee_payer_account.clone());
 
         let mut account_data = AccountSharedData::default();
+        account_data.set_lamports(1);
         account_data.set_executable(true);
         account_data.set_owner(native_loader::id());
         mock_bank.accounts_map.insert(key3.pubkey(), account_data);
@@ -2443,8 +2444,6 @@ mod tests {
             .collect();
         actual_inspected_accounts.sort_unstable_by(|a, b| a.0.cmp(&b.0));
 
-        // TODO i think this goes back to normal once account cache is in
-        // remember i changed owner above
         let mut expected_inspected_accounts = vec![
             // *not* key0, since it is loaded during fee payer validation
             (address1, vec![(Some(account1), true)]),
