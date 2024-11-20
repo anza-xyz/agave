@@ -218,7 +218,7 @@ pub fn execute_batch(
     if let Some(transaction_status_sender) = transaction_status_sender {
         let transactions = batch.sanitized_transactions().to_vec();
         let post_token_balances = if record_token_balances {
-            collect_token_balances(bank, batch, &mut mint_decimals)
+            collect_token_balances(bank, &batch, &mut mint_decimals)
         } else {
             vec![]
         };
