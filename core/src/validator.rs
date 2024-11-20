@@ -149,6 +149,7 @@ use {
     thiserror::Error,
     tokio::runtime::Runtime as TokioRuntime,
 };
+use solana_runtime::root_bank_cache::RootBankCache;
 
 const MAX_COMPLETED_DATA_SETS_IN_CHANNEL: usize = 100_000;
 const WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT: u64 = 80;
