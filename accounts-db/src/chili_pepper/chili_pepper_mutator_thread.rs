@@ -19,6 +19,7 @@ pub enum ChiliPepperMutatorThreadCommand {
     Delete(Vec<Pubkey>, Slot),
     Clean(u64),
     CreateSavePoint(Sender<u64>),
+    DeleteSavePoint(u64),
     Snapshot(u64, PathBuf),
 }
 
@@ -35,14 +36,13 @@ impl ChiliPepperMutatorThread {
         let thread = thread::Builder::new()
             .name("solChiliPepperMutatorThread".to_string())
             .spawn(move || {
-                //let mut store = ChiliPepperStore::new();
                 loop {
                     info!("ChiliPepperMutatorThread: started");
-
                     if exit.load(Ordering::Relaxed) {
                         break;
                     }
 
+                    // sleep wait on the channel for 200ms half of the block time
                     match receiver.recv_timeout(Duration::from_millis(200)) {
                         Ok(command) => match command {
                             ChiliPepperMutatorThreadCommand::Insert(
@@ -78,6 +78,12 @@ impl ChiliPepperMutatorThread {
                                     .create_savepoint()
                                     .expect("chiili pepper store create savepoint failed");
                                 sender.send(savepoint_id).unwrap();
+                            }
+                            ChiliPepperMutatorThreadCommand::DeleteSavePoint(savepoint_id) => {
+                                // TODO handle delete savepoint error
+                                store
+                                    .remove_savepoint(savepoint_id)
+                                    .expect("chili pepper store delete savepoint failed");
                             }
                             ChiliPepperMutatorThreadCommand::Snapshot(savepoin_id, ref path) => {
                                 // TODO handle snapshot error
@@ -173,6 +179,15 @@ mod test {
         let store2 = Arc::new(ChiliPepperStore::new_with_path(snapshot_path.clone()).unwrap());
         assert_eq!(store2.len().unwrap(), 10);
         std::fs::remove_file(&snapshot_path).unwrap();
+
+        let (reply_sender, reply_receiver) = bounded(1);
+        let savepoint_cmd = ChiliPepperMutatorThreadCommand::CreateSavePoint(reply_sender);
+        sender.send(savepoint_cmd).unwrap();
+        let savepoint = reply_receiver.recv().unwrap();
+
+        let delete_savepoint_cmd = ChiliPepperMutatorThreadCommand::DeleteSavePoint(savepoint);
+        sender.send(delete_savepoint_cmd).unwrap();
+        thread::sleep(Duration::from_millis(100));
 
         exit.store(true, Ordering::Relaxed);
         mutator_thread.join().unwrap();
