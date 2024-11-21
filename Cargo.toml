@@ -535,6 +535,7 @@ solana-signature = { path = "sdk/signature", version = "=2.2.0", default-feature
 solana-signer = { path = "sdk/signer", version = "=2.2.0" }
 solana-slot-hashes = { path = "sdk/slot-hashes", version = "=2.2.0" }
 solana-slot-history = { path = "sdk/slot-history", version = "=2.2.0" }
+solana-system-interface = "1.0.0"
 solana-time-utils = { path = "sdk/time-utils", version = "=2.2.0" }
 solana-timings = { path = "timings", version = "=2.2.0" }
 solana-unified-scheduler-logic = { path = "unified-scheduler-logic", version = "=2.2.0" }
