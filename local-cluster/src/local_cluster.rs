@@ -63,7 +63,8 @@ use {
         net::{IpAddr, Ipv4Addr, UdpSocket},
         path::{Path, PathBuf},
         sync::{Arc, RwLock},
-        time::Instant,
+        thread,
+        time::{Duration, Instant},
     },
 };
 
@@ -723,6 +724,67 @@ impl LocalCluster {
         .into())
     }
 
+    pub fn send_transaction_confirm_success_with_retries<T: Signers + ?Sized>(
+        client: &QuicTpuClient,
+        keypairs: &T,
+        transaction: &mut Transaction,
+        attempts: usize,
+    ) -> std::result::Result<Signature, TransportError> {
+        for attempt in 0..attempts {
+            // Send the transaction to the upcoming leaders.
+            client.send_transaction_to_upcoming_leaders(transaction)?;
+
+            // Check for successful transaction confirmation.
+            let signature = &transaction.signatures[0];
+            let now = Instant::now();
+            loop {
+                // Get the transaction signature status.
+                let Ok(signature_status) = client.rpc_client().get_signature_status(signature)
+                else {
+                    error!("failed to get tx signature status");
+                    if now.elapsed().as_secs() > MAX_PROCESSING_AGE as u64 {
+                        warn!("attempt {attempt} timed out waiting for tx signature");
+                        break;
+                    }
+                    continue;
+                };
+
+                // Check if transaction has landed in a block.
+                let Some(tx_status) = signature_status else {
+                    trace!("tx signature not found");
+                    if now.elapsed().as_secs() > MAX_PROCESSING_AGE as u64 {
+                        warn!("attempt {attempt} timed out waiting for tx signature");
+                        break;
+                    }
+                    // Wait a little to give the tx a chance to get included.
+                    thread::sleep(Duration::from_millis(100));
+                    continue;
+                };
+
+                // Check if the transaction was successful.
+                match tx_status {
+                    Ok(_) => {
+                        info!("tx signature confirmed");
+                        return Ok(*signature);
+                    }
+                    Err(err) => {
+                        error!("attempt {attempt} tx signature error: {err}");
+                        break;
+                    }
+                }
+            }
+
+            // Resend the transaction with updated blockhash
+            let blockhash = client.rpc_client().get_latest_blockhash()?;
+            transaction.sign(keypairs, blockhash);
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "failed to confirm transaction with success".to_string(),
+        )
+        .into())
+    }
+
     fn transfer_with_client(
         client: &QuicTpuClient,
         source_keypair: &Keypair,
@@ -802,12 +864,11 @@ impl LocalCluster {
                     .unwrap()
                     .0,
             );
-            LocalCluster::send_transaction_with_retries(
+            LocalCluster::send_transaction_confirm_success_with_retries(
                 client,
                 &[from_account],
                 &mut transaction,
                 10,
-                0,
             )
             .expect("should fund vote");
             client
@@ -838,12 +899,11 @@ impl LocalCluster {
                     .0,
             );
 
-            LocalCluster::send_transaction_with_retries(
+            LocalCluster::send_transaction_confirm_success_with_retries(
                 client,
                 &[from_account.as_ref(), &stake_account_keypair],
                 &mut transaction,
                 5,
-                0,
             )
             .expect("should delegate stake");
             client
