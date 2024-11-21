@@ -817,7 +817,7 @@ pub mod migrate_config_program_to_core_bpf {
 }
 
 pub mod enable_get_epoch_stake_syscall {
-    solana_pubkey::declare_id!("7mScTYkJXsbdrcwTQRs7oeCSXoJm4WjzBsRyf8bCU3Np");
+    solana_pubkey::declare_id!("FKe75t4LXxGaQnVHdUKM6DSFifVVraGZ8LyNo7oPwy1Z");
 }
 
 pub mod migrate_address_lookup_table_program_to_core_bpf {
@@ -885,6 +885,10 @@ pub mod enable_secp256r1_precompile {
 }
 pub mod accounts_lt_hash {
     solana_pubkey::declare_id!("LtHaSHHsUge7EWTPVrmpuexKz6uVHZXZL6cgJa7W7Zn");
+}
+
+pub mod migrate_stake_program_to_core_bpf {
+    solana_pubkey::declare_id!("6M4oQ6eXneVhtLoiAr4yRYQY43eVLjrKbiDZDJc892yk");
 }
 
 lazy_static! {
@@ -1104,6 +1108,7 @@ lazy_static! {
         (disable_account_loader_special_case::id(), "Disable account loader special case #3513"),
         (accounts_lt_hash::id(), "enables lattice-based accounts hash #3333"),
         (enable_secp256r1_precompile::id(), "Enable secp256r1 precompile SIMD-0075"),
+        (migrate_stake_program_to_core_bpf::id(), "Migrate Stake program to Core BPF SIMD-0196 #3655"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()

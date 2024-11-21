@@ -1154,9 +1154,9 @@ checksum = "5ce89b21cab1437276d2650d57e971f9d548a2d9037cc231abdc0562b97498ce"
 
 [[package]]
 name = "bytemuck"
-version = "1.19.0"
+version = "1.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8334215b81e418a0a7bdb8ef0849474f40bb10c8b71f1c4ed315cff49f32494d"
+checksum = "8b37c88a63ffd85d15b406896cc343916d7cf57838a847b3a6f2ca5d39a5695a"
 dependencies = [
  "bytemuck_derive",
 ]
@@ -2571,7 +2571,6 @@ version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a"
 dependencies = [
- "serde",
  "typenum",
  "version_check",
 ]
@@ -3486,9 +3485,9 @@ checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
 name = "libc"
-version = "0.2.162"
+version = "0.2.164"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18d287de67fe55fd7e1581fe933d965a5a9477b38e949cfa9f8574ef01506398"
+checksum = "433bfe06b8c75da9b2e3fbea6e5329ff87748f0b144ef75306e674c3f6f7c13f"
 
 [[package]]
 name = "libloading"
@@ -4691,7 +4690,7 @@ dependencies = [
  "quinn-proto",
  "quinn-udp",
  "rustc-hash 2.0.0",
- "rustls 0.23.16",
+ "rustls 0.23.17",
  "socket2 0.5.7",
  "thiserror 2.0.3",
  "tokio",
@@ -4709,7 +4708,7 @@ dependencies = [
  "rand 0.8.5",
  "ring 0.17.3",
  "rustc-hash 2.0.0",
- "rustls 0.23.16",
+ "rustls 0.23.17",
  "rustls-pki-types",
  "rustls-platform-verifier",
  "slab",
@@ -5196,9 +5195,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.16"
+version = "0.23.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eee87ff5d9b36712a58574e12e9f0ea80f915a5b0ac518d322b24a465617925e"
+checksum = "7f1a745511c54ba6d4465e8d5dfbd81b45791756de28d4981af70d6dca128f1e"
 dependencies = [
  "once_cell",
  "ring 0.17.3",
@@ -5260,7 +5259,7 @@ dependencies = [
  "jni",
  "log",
  "once_cell",
- "rustls 0.23.16",
+ "rustls 0.23.17",
  "rustls-native-certs",
  "rustls-platform-verifier-android",
  "rustls-webpki 0.102.8",
@@ -5438,6 +5437,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-big-array"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11fc7cc2c76d73e0f27ee52abbd64eec84d46f370c88371120433196934e4b7f"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serde_bytes"
 version = "0.11.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5459,9 +5467,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.132"
+version = "1.0.133"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d726bfaff4b320266d395898905d0eba0345aae23b54aee3a737e260fd46db03"
+checksum = "c7fceb2473b9166b2294ef05efcb65a3db80803f0b03ef86a5fc88a2b85ee377"
 dependencies = [
  "itoa",
  "memchr",
@@ -6161,8 +6169,11 @@ dependencies = [
  "serde_derive",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
+ "solana-hash",
  "solana-sanitize",
- "solana-sdk",
+ "solana-sha256-hasher",
+ "solana-signature",
+ "solana-time-utils",
 ]
 
 [[package]]
@@ -6214,7 +6225,6 @@ dependencies = [
  "solana-sdk",
  "solana-timings",
  "solana-type-overrides",
- "solana-vote",
  "solana_rbpf",
  "test-case",
  "thiserror 2.0.3",
@@ -6577,6 +6587,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-compute-budget-program-bench"
+version = "2.2.0"
+dependencies = [
+ "criterion",
+ "solana-compute-budget",
+ "solana-compute-budget-program",
+ "solana-runtime-transaction",
+ "solana-sdk",
+ "solana-svm-transaction",
+]
+
+[[package]]
 name = "solana-config-program"
 version = "2.2.0"
 dependencies = [
@@ -6648,7 +6670,7 @@ dependencies = [
  "rand_chacha 0.3.1",
  "rayon",
  "rolling-file",
- "rustls 0.23.16",
+ "rustls 0.23.17",
  "serde",
  "serde_bytes",
  "serde_derive",
@@ -6885,6 +6907,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-epoch-info"
+version = "2.2.0"
+dependencies = [
+ "serde",
+ "serde_derive",
+]
+
+[[package]]
 name = "solana-epoch-rewards"
 version = "2.2.0"
 dependencies = [
@@ -7000,7 +7030,6 @@ dependencies = [
  "bitflags 2.6.0",
  "bs58",
  "bv",
- "generic-array 0.14.7",
  "im",
  "log",
  "memmap2",
@@ -7092,6 +7121,7 @@ version = "2.2.0"
 dependencies = [
  "assert_matches",
  "bincode",
+ "bs58",
  "bv",
  "clap 2.33.3",
  "crossbeam-channel",
@@ -7102,7 +7132,9 @@ dependencies = [
  "lru",
  "num-traits",
  "num_cpus",
+ "rand 0.7.3",
  "rand 0.8.5",
+ "rand_chacha 0.2.2",
  "rand_chacha 0.3.1",
  "rayon",
  "serde",
@@ -7194,6 +7226,21 @@ dependencies = [
  "solana-instruction",
  "solana-pubkey",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "solana-keccak-hasher"
+version = "2.2.0"
+dependencies = [
+ "borsh 1.5.3",
+ "serde",
+ "serde_derive",
+ "sha3",
+ "solana-define-syscall",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
+ "solana-hash",
+ "solana-sanitize",
 ]
 
 [[package]]
@@ -7742,6 +7789,7 @@ dependencies = [
  "solana-frozen-abi-macro",
  "solana-hash",
  "solana-instruction",
+ "solana-keccak-hasher",
  "solana-last-restart-slot",
  "solana-logger",
  "solana-msg",
@@ -7765,6 +7813,7 @@ dependencies = [
  "solana-slot-hashes",
  "solana-slot-history",
  "solana-stable-layout",
+ "solana-sysvar",
  "solana-sysvar-id",
  "solana-transaction-error",
  "static_assertions",
@@ -7843,7 +7892,6 @@ dependencies = [
  "solana-sdk",
  "solana-timings",
  "solana-type-overrides",
- "solana-vote",
  "solana_rbpf",
  "test-case",
  "thiserror 2.0.3",
@@ -7931,9 +7979,12 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
- "solana-account-decoder",
+ "solana-account-decoder-client-types",
+ "solana-clock",
+ "solana-commitment-config",
+ "solana-pubkey",
  "solana-rpc-client-api",
- "solana-sdk",
+ "solana-signature",
  "thiserror 2.0.3",
  "tokio",
  "tokio-stream",
@@ -7955,7 +8006,7 @@ dependencies = [
  "log",
  "quinn",
  "quinn-proto",
- "rustls 0.23.16",
+ "rustls 0.23.17",
  "solana-connection-cache",
  "solana-keypair",
  "solana-logger",
@@ -8347,7 +8398,6 @@ dependencies = [
  "curve25519-dalek 4.1.3",
  "digest 0.10.7",
  "ed25519-dalek",
- "generic-array 0.14.7",
  "getrandom 0.1.16",
  "hex",
  "itertools 0.12.1",
@@ -8377,6 +8427,7 @@ dependencies = [
  "solana-decode-error",
  "solana-derivation-path",
  "solana-ed25519-program",
+ "solana-epoch-info",
  "solana-feature-set",
  "solana-fee-structure",
  "solana-frozen-abi",
@@ -8399,6 +8450,7 @@ dependencies = [
  "solana-sdk",
  "solana-sdk-ids",
  "solana-sdk-macro",
+ "solana-secp256k1-program",
  "solana-secp256k1-recover",
  "solana-secp256r1-program",
  "solana-seed-derivable",
@@ -8408,7 +8460,9 @@ dependencies = [
  "solana-short-vec",
  "solana-signature",
  "solana-signer",
+ "solana-sysvar",
  "solana-time-utils",
+ "solana-transaction-context",
  "solana-transaction-error",
  "static_assertions",
  "thiserror 2.0.3",
@@ -8431,6 +8485,36 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.87",
+]
+
+[[package]]
+name = "solana-secp256k1-program"
+version = "2.2.0"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "digest 0.10.7",
+ "hex",
+ "libsecp256k1",
+ "rand 0.7.3",
+ "serde",
+ "serde_derive",
+ "sha3",
+ "solana-account-info",
+ "solana-feature-set",
+ "solana-hash",
+ "solana-instruction",
+ "solana-keccak-hasher",
+ "solana-keypair",
+ "solana-logger",
+ "solana-msg",
+ "solana-precompile-error",
+ "solana-program-error",
+ "solana-sdk",
+ "solana-sdk-ids",
+ "solana-secp256k1-program",
+ "solana-signer",
+ "solana-sysvar",
 ]
 
 [[package]]
@@ -8558,17 +8642,21 @@ dependencies = [
 name = "solana-signature"
 version = "2.2.0"
 dependencies = [
+ "bincode",
  "bs58",
  "curve25519-dalek 4.1.3",
  "ed25519-dalek",
- "generic-array 0.14.7",
  "rand 0.8.5",
  "serde",
+ "serde-big-array",
  "serde_derive",
+ "serde_json",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-program",
  "solana-sanitize",
+ "solana-short-vec",
+ "solana-signature",
 ]
 
 [[package]]
@@ -8732,7 +8820,7 @@ dependencies = [
  "quinn",
  "quinn-proto",
  "rand 0.8.5",
- "rustls 0.23.16",
+ "rustls 0.23.17",
  "smallvec",
  "socket2 0.5.7",
  "solana-keypair",
@@ -8760,6 +8848,7 @@ dependencies = [
 name = "solana-svm"
 version = "2.2.0"
 dependencies = [
+ "ahash 0.8.11",
  "assert_matches",
  "bincode",
  "itertools 0.12.1",
@@ -8794,7 +8883,6 @@ dependencies = [
  "solana-system-program",
  "solana-timings",
  "solana-type-overrides",
- "solana-vote",
  "solana_rbpf",
  "test-case",
  "thiserror 2.0.3",
@@ -8840,6 +8928,52 @@ dependencies = [
  "solana-program-runtime",
  "solana-sdk",
  "solana-type-overrides",
+]
+
+[[package]]
+name = "solana-sysvar"
+version = "2.2.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "bincode",
+ "bitflags 2.6.0",
+ "bytemuck",
+ "bytemuck_derive",
+ "lazy_static",
+ "qualifier_attr",
+ "serde",
+ "serde_derive",
+ "serial_test",
+ "solana-account-info",
+ "solana-clock",
+ "solana-define-syscall",
+ "solana-epoch-rewards",
+ "solana-epoch-schedule",
+ "solana-fee-calculator",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
+ "solana-hash",
+ "solana-instruction",
+ "solana-last-restart-slot",
+ "solana-msg",
+ "solana-program",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-program-memory",
+ "solana-pubkey",
+ "solana-rent",
+ "solana-sanitize",
+ "solana-sdk",
+ "solana-sdk-ids",
+ "solana-sdk-macro",
+ "solana-serialize-utils",
+ "solana-sha256-hasher",
+ "solana-slot-hashes",
+ "solana-slot-history",
+ "solana-sysvar",
+ "solana-sysvar-id",
+ "test-case",
 ]
 
 [[package]]
@@ -8994,7 +9128,7 @@ dependencies = [
  "log",
  "lru",
  "quinn",
- "rustls 0.23.16",
+ "rustls 0.23.17",
  "solana-cli-config",
  "solana-connection-cache",
  "solana-logger",
@@ -9006,6 +9140,24 @@ dependencies = [
  "thiserror 2.0.3",
  "tokio",
  "tokio-util 0.7.12",
+]
+
+[[package]]
+name = "solana-transaction-context"
+version = "2.2.0"
+dependencies = [
+ "bincode",
+ "serde",
+ "serde_derive",
+ "solana-account",
+ "solana-account-info",
+ "solana-instruction",
+ "solana-program",
+ "solana-pubkey",
+ "solana-rent",
+ "solana-signature",
+ "solana-transaction-context",
+ "static_assertions",
 ]
 
 [[package]]
@@ -9122,7 +9274,7 @@ dependencies = [
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rayon",
- "rustls 0.23.16",
+ "rustls 0.23.17",
  "solana-entry",
  "solana-feature-set",
  "solana-geyser-plugin-manager",

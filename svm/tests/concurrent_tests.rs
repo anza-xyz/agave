@@ -30,6 +30,7 @@ use {
             TransactionProcessingEnvironment,
         },
     },
+    solana_timings::ExecuteTimings,
     std::collections::HashMap,
 };
 
@@ -67,7 +68,13 @@ fn program_cache_execution(threads: usize) {
             let maps = account_maps.clone();
             let programs = programs.clone();
             thread::spawn(move || {
-                let result = processor.replenish_program_cache(&local_bank, &maps, false, true);
+                let result = processor.replenish_program_cache(
+                    &local_bank,
+                    &maps,
+                    &mut ExecuteTimings::default(),
+                    false,
+                    true,
+                );
                 for key in &programs {
                     let cache_entry = result.find(key);
                     assert!(matches!(
@@ -153,6 +160,8 @@ fn svm_concurrent() {
     let read_account = Pubkey::new_unique();
     let mut account_data = AccountSharedData::default();
     account_data.set_data(AMOUNT.to_le_bytes().to_vec());
+    account_data.set_rent_epoch(u64::MAX);
+    account_data.set_lamports(1);
     mock_bank
         .account_shared_data
         .write()

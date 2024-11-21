@@ -28,6 +28,7 @@ full = [
     "rand0-7",
     "serde_json",
     "solana-signature",
+    "solana-transaction-context/debug-signature",
     "ed25519-dalek",
     "libsecp256k1",
     "sha3",
@@ -40,13 +41,18 @@ full = [
     "dep:solana-precompile-error",
     "dep:solana-presigner",
     "dep:solana-quic-definitions",
+    "dep:solana-secp256k1-program",
     "dep:solana-seed-derivable",
     "dep:solana-seed-phrase",
     "dep:solana-signer",
     "dep:solana-transaction-error"
 ]
 borsh = ["dep:borsh", "solana-program/borsh", "solana-secp256k1-recover/borsh"]
-dev-context-only-utils = ["qualifier_attr", "solana-account/dev-context-only-utils"]
+dev-context-only-utils = [
+    "qualifier_attr",
+    "solana-account/dev-context-only-utils",
+    "solana-transaction-context/dev-context-only-utils",
+]
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
@@ -76,10 +82,6 @@ chrono = { workspace = true, features = ["alloc"], optional = true }
 curve25519-dalek = { workspace = true, optional = true }
 digest = { workspace = true, optional = true }
 ed25519-dalek = { workspace = true, optional = true }
-generic-array = { workspace = true, features = [
-    "serde",
-    "more_lengths",
-], optional = true }
 itertools = { workspace = true }
 lazy_static = { workspace = true }
 libsecp256k1 = { workspace = true, optional = true, features = ["hmac"] }
@@ -108,6 +110,7 @@ solana-commitment-config = { workspace = true, optional = true, features = ["ser
 solana-decode-error = { workspace = true }
 solana-derivation-path = { workspace = true }
 solana-ed25519-program = { workspace = true, optional = true }
+solana-epoch-info = { workspace = true, features = ["serde"] }
 solana-feature-set = { workspace = true }
 solana-fee-structure = { workspace = true, features = ["serde"] }
 solana-frozen-abi = { workspace = true, optional = true, features = [
@@ -132,6 +135,7 @@ solana-reward-info = { workspace = true, features = ["serde"] }
 solana-sanitize = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-sdk-macro = { workspace = true }
+solana-secp256k1-program = { workspace = true, optional = true, features = ["bincode"] }
 solana-secp256k1-recover = { workspace = true }
 solana-secp256r1-program = { workspace = true, default-features = false }
 solana-seed-derivable = { workspace = true, optional = true }
@@ -147,6 +151,9 @@ solana-signature = { workspace = true, features = [
 ], optional = true }
 solana-signer = { workspace = true, optional = true }
 solana-time-utils = { workspace = true }
+solana-transaction-context = { workspace = true, features = [
+    "bincode",
+] }
 solana-transaction-error = { workspace = true, features = ["serde"], optional = true }
 thiserror = { workspace = true }
 
@@ -163,6 +170,7 @@ hex = { workspace = true }
 solana-logger = { workspace = true }
 solana-program = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sdk = { path = ".", features = ["dev-context-only-utils"] }
+solana-sysvar = { workspace = true, features = ["dev-context-only-utils"] }
 static_assertions = { workspace = true }
 tiny-bip39 = { workspace = true }
 
