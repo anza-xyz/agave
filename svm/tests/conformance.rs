@@ -424,6 +424,7 @@ fn execute_fixture_as_instr(
         &batch_processor.get_environments_for_epoch(2).unwrap(),
         &program_id,
         42,
+        &mut ExecuteTimings::default(),
         false,
     )
     .unwrap();
@@ -444,8 +445,8 @@ fn execute_fixture_as_instr(
     let env_config = EnvironmentConfig::new(
         Hash::default(),
         0,
-        None,
-        None,
+        0,
+        &|_| 0,
         mock_bank.feature_set.clone(),
         sysvar_cache,
     );

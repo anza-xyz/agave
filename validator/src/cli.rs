@@ -675,20 +675,6 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 ),
         )
         .arg(
-            Arg::with_name("rocksdb_fifo_shred_storage_size")
-                .long("rocksdb-fifo-shred-storage-size")
-                .value_name("SHRED_STORAGE_SIZE_BYTES")
-                .takes_value(true)
-                .validator(is_parsable::<u64>)
-                .help(
-                    "The shred storage size in bytes. The suggested value is at least 50% of your \
-                     ledger storage size. If this argument is unspecified, we will assign a \
-                     proper value based on --limit-ledger-size. If --limit-ledger-size is not \
-                     presented, it means there is no limitation on the ledger size and thus \
-                     rocksdb_fifo_shred_storage_size will also be unbounded.",
-                ),
-        )
-        .arg(
             Arg::with_name("rocksdb_ledger_compression")
                 .hidden(hidden_unless_forced())
                 .long("rocksdb-ledger-compression")
@@ -1204,8 +1190,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
             Arg::with_name("geyser_plugin_always_enabled")
                 .long("geyser-plugin-always-enabled")
                 .value_name("BOOLEAN")
-                .takes_value(true)
-                .default_value("false")
+                .takes_value(false)
                 .help("Еnable Geyser interface even if no Geyser configs are specified."),
         )
         .arg(
@@ -1358,8 +1343,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .value_name("METHOD")
                 .takes_value(true)
                 .possible_values(&["mmap", "file"])
-                .help("Access account storage using this method")
-                .hidden(hidden_unless_forced()),
+                .help("Access account storages using this method")
         )
         .arg(
             Arg::with_name("accounts_db_ancient_append_vecs")
@@ -2153,6 +2137,19 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         .value_name("ROCKSDB_COMPACTION_INTERVAL_SLOTS")
         .takes_value(true)
         .help("Number of slots between compacting ledger"));
+    // Deprecated in v2.2
+    add_arg!(Arg::with_name("rocksdb_fifo_shred_storage_size")
+        .long("rocksdb-fifo-shred-storage-size")
+        .value_name("SHRED_STORAGE_SIZE_BYTES")
+        .takes_value(true)
+        .validator(is_parsable::<u64>)
+        .help(
+            "The shred storage size in bytes. The suggested value is at least 50% of your ledger \
+             storage size. If this argument is unspecified, we will assign a proper value based \
+             on --limit-ledger-size. If --limit-ledger-size is not presented, it means there is \
+             no limitation on the ledger size and thus rocksdb_fifo_shred_storage_size will also \
+             be unbounded.",
+        ));
     add_arg!(Arg::with_name("rocksdb_max_compaction_jitter")
         .long("rocksdb-max-compaction-jitter-slots")
         .value_name("ROCKSDB_MAX_COMPACTION_JITTER_SLOTS")

@@ -484,7 +484,6 @@ pub mod feature;
 pub mod hash;
 pub mod incinerator;
 pub mod instruction;
-pub mod keccak;
 pub mod lamports;
 pub mod loader_instruction;
 pub mod loader_upgradeable_instruction;
@@ -495,7 +494,6 @@ pub mod message;
 pub mod nonce;
 pub mod program;
 pub mod program_error;
-pub mod program_stubs;
 pub mod program_utils;
 pub mod secp256k1_program;
 pub mod slot_hashes;
@@ -522,6 +520,8 @@ pub use solana_borsh::v1 as borsh1;
 pub use solana_epoch_rewards as epoch_rewards;
 #[deprecated(since = "2.1.0", note = "Use `solana-fee-calculator` crate instead")]
 pub use solana_fee_calculator as fee_calculator;
+#[deprecated(since = "2.2.0", note = "Use `solana-keccak-hasher` crate instead")]
+pub use solana_keccak_hasher as keccak;
 #[deprecated(since = "2.1.0", note = "Use `solana-last-restart-slot` crate instead")]
 pub use solana_last_restart_slot as last_restart_slot;
 #[deprecated(since = "2.1.0", note = "Use `solana-program-memory` crate instead")]
@@ -540,6 +540,8 @@ pub use solana_serialize_utils as serialize_utils;
 pub use solana_short_vec as short_vec;
 #[deprecated(since = "2.1.0", note = "Use `solana-stable-layout` crate instead")]
 pub use solana_stable_layout as stable_layout;
+#[cfg(not(target_os = "solana"))]
+pub use solana_sysvar::program_stubs;
 #[cfg(target_arch = "wasm32")]
 pub use wasm_bindgen::prelude::wasm_bindgen;
 pub use {
@@ -552,6 +554,7 @@ pub use {
         entrypoint_no_alloc,
     },
     solana_program_option as program_option, solana_pubkey as pubkey, solana_rent as rent,
+    solana_sysvar::impl_sysvar_get,
 };
 /// The [config native program][np].
 ///

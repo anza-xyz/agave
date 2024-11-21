@@ -10,8 +10,8 @@ use {
     solana_sdk_ids::{
         address_lookup_table, bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
         compute_budget, config, ed25519_program, feature, loader_v4, native_loader,
-        secp256k1_program, stake, system_program, sysvar, vote, zk_elgamal_proof_program,
-        zk_token_proof_program,
+        secp256k1_program, secp256r1_program, stake, system_program, sysvar, vote,
+        zk_elgamal_proof_program, zk_token_proof_program,
     },
     std::collections::{HashMap, HashSet},
 };
@@ -151,6 +151,7 @@ lazy_static! {
         ReservedAccount::new_active(feature::id()),
         ReservedAccount::new_pending(loader_v4::id(), feature_set::add_new_reserved_account_keys::id()),
         ReservedAccount::new_pending(secp256k1_program::id(), feature_set::add_new_reserved_account_keys::id()),
+        ReservedAccount::new_pending(secp256r1_program::id(), feature_set::enable_secp256r1_precompile::id()),
         #[allow(deprecated)]
         ReservedAccount::new_active(stake::config::id()),
         ReservedAccount::new_active(stake::id()),

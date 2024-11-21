@@ -28,29 +28,38 @@ full = [
     "rand0-7",
     "serde_json",
     "solana-signature",
+    "solana-transaction-context/debug-signature",
     "ed25519-dalek",
     "libsecp256k1",
     "sha3",
     "solana-commitment-config",
     "digest",
     "solana-pubkey/rand",
+    "dep:solana-cluster-type",
+    "dep:solana-ed25519-program",
     "dep:solana-keypair",
     "dep:solana-precompile-error",
     "dep:solana-presigner",
     "dep:solana-quic-definitions",
+    "dep:solana-secp256k1-program",
     "dep:solana-seed-derivable",
     "dep:solana-seed-phrase",
     "dep:solana-signer",
     "dep:solana-transaction-error"
 ]
 borsh = ["dep:borsh", "solana-program/borsh", "solana-secp256k1-recover/borsh"]
-dev-context-only-utils = ["qualifier_attr", "solana-account/dev-context-only-utils"]
+dev-context-only-utils = [
+    "qualifier_attr",
+    "solana-account/dev-context-only-utils",
+    "solana-transaction-context/dev-context-only-utils",
+]
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-feature-set/frozen-abi",
     "solana-fee-structure/frozen-abi",
     "solana-account/frozen-abi",
+    "solana-cluster-type/frozen-abi",
     "solana-inflation/frozen-abi",
     "solana-program/frozen-abi",
     "solana-reward-info/frozen-abi",
@@ -58,6 +67,8 @@ frozen-abi = [
     "solana-signature/frozen-abi",
     "solana-transaction-error/frozen-abi"
 ]
+# Enables the "vendored" feature of openssl inside of secp256r1-program
+openssl-vendored = ["solana-secp256r1-program/openssl-vendored"]
 
 [dependencies]
 bincode = { workspace = true }
@@ -71,10 +82,6 @@ chrono = { workspace = true, features = ["alloc"], optional = true }
 curve25519-dalek = { workspace = true, optional = true }
 digest = { workspace = true, optional = true }
 ed25519-dalek = { workspace = true, optional = true }
-generic-array = { workspace = true, features = [
-    "serde",
-    "more_lengths",
-], optional = true }
 itertools = { workspace = true }
 lazy_static = { workspace = true }
 libsecp256k1 = { workspace = true, optional = true, features = ["hmac"] }
@@ -96,9 +103,14 @@ sha3 = { workspace = true, optional = true }
 siphasher = { workspace = true }
 solana-account = { workspace = true, features = ["bincode"] }
 solana-bn254 = { workspace = true }
+solana-cluster-type = { workspace = true, features = [
+    "serde",
+], optional = true }
 solana-commitment-config = { workspace = true, optional = true, features = ["serde"] }
 solana-decode-error = { workspace = true }
 solana-derivation-path = { workspace = true }
+solana-ed25519-program = { workspace = true, optional = true }
+solana-epoch-info = { workspace = true, features = ["serde"] }
 solana-feature-set = { workspace = true }
 solana-fee-structure = { workspace = true, features = ["serde"] }
 solana-frozen-abi = { workspace = true, optional = true, features = [
@@ -123,9 +135,12 @@ solana-reward-info = { workspace = true, features = ["serde"] }
 solana-sanitize = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-sdk-macro = { workspace = true }
+solana-secp256k1-program = { workspace = true, optional = true, features = ["bincode"] }
 solana-secp256k1-recover = { workspace = true }
+solana-secp256r1-program = { workspace = true, default-features = false }
 solana-seed-derivable = { workspace = true, optional = true }
 solana-seed-phrase = { workspace = true, optional = true }
+solana-serde = { workspace = true }
 solana-serde-varint = { workspace = true }
 solana-short-vec = { workspace = true }
 solana-signature = { workspace = true, features = [
@@ -136,6 +151,9 @@ solana-signature = { workspace = true, features = [
 ], optional = true }
 solana-signer = { workspace = true, optional = true }
 solana-time-utils = { workspace = true }
+solana-transaction-context = { workspace = true, features = [
+    "bincode",
+] }
 solana-transaction-error = { workspace = true, features = ["serde"], optional = true }
 thiserror = { workspace = true }
 
@@ -152,6 +170,7 @@ hex = { workspace = true }
 solana-logger = { workspace = true }
 solana-program = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sdk = { path = ".", features = ["dev-context-only-utils"] }
+solana-sysvar = { workspace = true, features = ["dev-context-only-utils"] }
 static_assertions = { workspace = true }
 tiny-bip39 = { workspace = true }
 

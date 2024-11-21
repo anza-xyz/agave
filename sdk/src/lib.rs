@@ -63,11 +63,8 @@ pub use solana_program::{borsh, borsh0_10, borsh1};
 pub use solana_signer::signers;
 pub mod client;
 pub mod compute_budget;
-pub mod deserialize_utils;
-pub mod ed25519_instruction;
 pub mod entrypoint;
 pub mod entrypoint_deprecated;
-pub mod epoch_info;
 pub mod epoch_rewards_hasher;
 pub mod example_mocks;
 pub mod exit;
@@ -96,14 +93,12 @@ pub mod reward_type {
     pub use solana_reward_info::RewardType;
 }
 pub mod rpc_port;
-pub mod secp256k1_instruction;
 pub mod shred_version;
 pub mod signature;
 pub mod signer;
 pub mod simple_vote_transaction_checker;
 pub mod system_transaction;
 pub mod transaction;
-pub mod transaction_context;
 pub mod transport;
 pub mod wasm;
 
@@ -120,6 +115,11 @@ pub use solana_bn254 as alt_bn128;
 pub use solana_decode_error as decode_error;
 #[deprecated(since = "2.1.0", note = "Use `solana-derivation-path` crate instead")]
 pub use solana_derivation_path as derivation_path;
+#[cfg(feature = "full")]
+#[deprecated(since = "2.2.0", note = "Use `solana-ed25519-program` crate instead")]
+pub use solana_ed25519_program as ed25519_instruction;
+#[deprecated(since = "2.2.0", note = "Use `solana-epoch-info` crate instead")]
+pub use solana_epoch_info as epoch_info;
 #[deprecated(since = "2.1.0", note = "Use `solana-feature-set` crate instead")]
 pub use solana_feature_set as feature_set;
 #[deprecated(since = "2.2.0", note = "Use `solana-fee-structure` crate instead")]
@@ -184,14 +184,24 @@ pub use solana_sdk_macro::declare_deprecated_id;
 pub use solana_sdk_macro::declare_id;
 /// Convenience macro to define multiple static public keys.
 pub use solana_sdk_macro::pubkeys;
+#[deprecated(since = "2.2.0", note = "Use `solana-secp256k1-program` crate instead")]
+#[cfg(feature = "full")]
+pub use solana_secp256k1_program as secp256k1_instruction;
 #[deprecated(since = "2.1.0", note = "Use `solana-secp256k1-recover` crate instead")]
 pub use solana_secp256k1_recover as secp256k1_recover;
+#[deprecated(since = "2.2.0", note = "Use `solana-serde` crate instead")]
+pub use solana_serde as deserialize_utils;
 #[deprecated(since = "2.1.0", note = "Use `solana-serde-varint` crate instead")]
 pub use solana_serde_varint as serde_varint;
 #[deprecated(since = "2.1.0", note = "Use `solana-short-vec` crate instead")]
 pub use solana_short_vec as short_vec;
 #[deprecated(since = "2.2.0", note = "Use `solana-time-utils` crate instead")]
 pub use solana_time_utils as timing;
+#[deprecated(
+    since = "2.2.0",
+    note = "Use `solana-transaction-context` crate instead"
+)]
+pub use solana_transaction_context as transaction_context;
 
 /// Convenience macro for `AddAssign` with saturating arithmetic.
 /// Replace by `std::num::Saturating` once stable

@@ -7,8 +7,10 @@ use {
     },
     bincode::serialize,
     rand::Rng,
+    serde::de::{Deserialize, Deserializer},
     solana_sanitize::{Sanitize, SanitizeError},
     solana_sdk::{
+        hash::Hash,
         pubkey::Pubkey,
         signature::{Keypair, Signable, Signature, Signer},
     },
@@ -17,10 +19,12 @@ use {
 
 /// CrdsValue that is replicated across the cluster
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct CrdsValue {
     signature: Signature,
     data: CrdsData,
+    #[serde(skip_serializing)]
+    hash: Hash, // Sha256 hash of [signature, data].
 }
 
 impl Sanitize for CrdsValue {
@@ -98,14 +102,23 @@ impl CrdsValue {
     pub fn new(data: CrdsData, keypair: &Keypair) -> Self {
         let bincode_serialized_data = bincode::serialize(&data).unwrap();
         let signature = keypair.sign_message(&bincode_serialized_data);
-        Self { signature, data }
+        let hash = solana_sdk::hash::hashv(&[signature.as_ref(), &bincode_serialized_data]);
+        Self {
+            signature,
+            data,
+            hash,
+        }
     }
 
     #[cfg(test)]
     pub(crate) fn new_unsigned(data: CrdsData) -> Self {
+        let bincode_serialized_data = bincode::serialize(&data).unwrap();
+        let signature = Signature::default();
+        let hash = solana_sdk::hash::hashv(&[signature.as_ref(), &bincode_serialized_data]);
         Self {
-            signature: Signature::default(),
+            signature,
             data,
+            hash,
         }
     }
 
@@ -132,6 +145,11 @@ impl CrdsValue {
     #[inline]
     pub(crate) fn data(&self) -> &CrdsData {
         &self.data
+    }
+
+    #[inline]
+    pub(crate) fn hash(&self) -> &Hash {
+        &self.hash
     }
 
     /// Totally unsecure unverifiable wallclock of the node that generated this message
@@ -181,10 +199,12 @@ impl CrdsValue {
         Some(epoch_slots)
     }
 
-    /// Returns the size (in bytes) of a CrdsValue
-    #[cfg(test)]
-    pub(crate) fn size(&self) -> u64 {
-        bincode::serialized_size(&self).expect("unable to serialize contact info")
+    /// Returns the bincode serialized size (in bytes) of the CrdsValue.
+    pub fn bincode_serialized_size(&self) -> usize {
+        bincode::serialized_size(&self)
+            .map(usize::try_from)
+            .unwrap()
+            .unwrap()
     }
 
     /// Returns true if, regardless of prunes, this crds-value
@@ -194,17 +214,45 @@ impl CrdsValue {
     }
 }
 
+// Manual implementation of Deserialize for CrdsValue in order to populate
+// CrdsValue.hash which is skipped in serialization.
+impl<'de> Deserialize<'de> for CrdsValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct CrdsValue {
+            signature: Signature,
+            data: CrdsData,
+        }
+        let CrdsValue { signature, data } = CrdsValue::deserialize(deserializer)?;
+        let bincode_serialized_data = bincode::serialize(&data).unwrap();
+        let hash = solana_sdk::hash::hashv(&[signature.as_ref(), &bincode_serialized_data]);
+        Ok(Self {
+            signature,
+            data,
+            hash,
+        })
+    }
+}
+
 #[cfg(test)]
 mod test {
     use {
         super::*,
         crate::crds_data::{LowestSlot, NodeInstance, Vote},
         bincode::deserialize,
+        rand0_7::{Rng, SeedableRng},
+        rand_chacha0_2::ChaChaRng,
         solana_perf::test_tx::new_test_vote_tx,
         solana_sdk::{
             signature::{Keypair, Signer},
             timing::timestamp,
+            vote::state::TowerSync,
         },
+        solana_vote_program::{vote_state::Lockout, vote_transaction::new_tower_sync_transaction},
+        std::str::FromStr,
     };
 
     #[test]
@@ -304,5 +352,90 @@ mod test {
         )));
         assert!(node.should_force_push(&pubkey));
         assert!(!node.should_force_push(&Pubkey::new_unique()));
+    }
+
+    #[test]
+    fn test_serialize_round_trip() {
+        let mut rng = ChaChaRng::from_seed(
+            bs58::decode("4nHgVgCvVaHnsrg4dYggtvWYYgV3JbeyiRBWupPMt3EG")
+                .into_vec()
+                .map(<[u8; 32]>::try_from)
+                .unwrap()
+                .unwrap(),
+        );
+        let values: Vec<CrdsValue> = vec![
+            {
+                let keypair = Keypair::generate(&mut rng);
+                let lockouts: [Lockout; 4] = [
+                    Lockout::new_with_confirmation_count(302_388_991, 11),
+                    Lockout::new_with_confirmation_count(302_388_995, 7),
+                    Lockout::new_with_confirmation_count(302_389_001, 3),
+                    Lockout::new_with_confirmation_count(302_389_005, 1),
+                ];
+                let tower_sync = TowerSync {
+                    lockouts: lockouts.into_iter().collect(),
+                    root: Some(302_388_989),
+                    hash: Hash::new_from_array(rng.gen()),
+                    timestamp: Some(1_732_044_716_167),
+                    block_id: Hash::new_from_array(rng.gen()),
+                };
+                let vote = new_tower_sync_transaction(
+                    tower_sync,
+                    Hash::new_from_array(rng.gen()), // blockhash
+                    &keypair,                        // node_keypair
+                    &Keypair::generate(&mut rng),    // vote_keypair
+                    &Keypair::generate(&mut rng),    // authorized_voter_keypair
+                    None,                            // switch_proof_hash
+                );
+                let vote = Vote::new(
+                    keypair.pubkey(),
+                    vote,
+                    1_732_045_236_371, // wallclock
+                )
+                .unwrap();
+                CrdsValue::new(CrdsData::Vote(5, vote), &keypair)
+            },
+            {
+                let keypair = Keypair::generate(&mut rng);
+                let lockouts: [Lockout; 3] = [
+                    Lockout::new_with_confirmation_count(302_410_500, 9),
+                    Lockout::new_with_confirmation_count(302_410_505, 5),
+                    Lockout::new_with_confirmation_count(302_410_517, 1),
+                ];
+                let tower_sync = TowerSync {
+                    lockouts: lockouts.into_iter().collect(),
+                    root: Some(302_410_499),
+                    hash: Hash::new_from_array(rng.gen()),
+                    timestamp: Some(1_732_053_615_237),
+                    block_id: Hash::new_from_array(rng.gen()),
+                };
+                let vote = new_tower_sync_transaction(
+                    tower_sync,
+                    Hash::new_from_array(rng.gen()), // blockhash
+                    &keypair,                        // node_keypair
+                    &Keypair::generate(&mut rng),    // vote_keypair
+                    &Keypair::generate(&mut rng),    // authorized_voter_keypair
+                    None,                            // switch_proof_hash
+                );
+                let vote = Vote::new(
+                    keypair.pubkey(),
+                    vote,
+                    1_732_053_639_350, // wallclock
+                )
+                .unwrap();
+                CrdsValue::new(CrdsData::Vote(5, vote), &keypair)
+            },
+        ];
+        let bytes = bincode::serialize(&values).unwrap();
+        // Serialized bytes are fixed and should never change.
+        assert_eq!(
+            solana_sdk::hash::hash(&bytes),
+            Hash::from_str("7gtcoafccWE964njbs2bA1QuVFeV34RaoY781yLx2A8N").unwrap()
+        );
+        // serialize -> deserialize should round trip.
+        assert_eq!(
+            bincode::deserialize::<Vec<CrdsValue>>(&bytes).unwrap(),
+            values
+        );
     }
 }
