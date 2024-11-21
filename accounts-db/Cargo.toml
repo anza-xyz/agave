@@ -120,5 +120,9 @@ harness = false
 name = "bench_lock_accounts"
 harness = false
 
+[[bench]]
+name = "bench_chili_pepper_store"
+harness = false
+
 [lints]
 workspace = true

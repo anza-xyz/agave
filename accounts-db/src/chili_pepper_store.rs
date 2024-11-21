@@ -15,6 +15,20 @@ use {
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct PubkeySlot<'a>(&'a Pubkey, Slot);
 
+impl PubkeySlot<'_> {
+    pub fn pubkey(&self) -> &Pubkey {
+        self.0
+    }
+
+    pub fn slot(&self) -> Slot {
+        self.1
+    }
+
+    pub fn new<'a>(pubkey: &'a Pubkey, slot: Slot) -> PubkeySlot<'a> {
+        PubkeySlot(pubkey, slot)
+    }
+}
+
 impl<'a> Value for PubkeySlot<'a> {
     type SelfType<'b> = PubkeySlot<'b>
     where
@@ -158,12 +172,12 @@ impl ChiliPepperStore {
         write_txn.commit().map_err(Error::from)
     }
 
-    pub fn bulk_insert(&self, data: Vec<(PubkeySlot, u64)>) -> Result<(), Error> {
+    pub fn bulk_insert(&self, data: &[(PubkeySlot, u64)]) -> Result<(), Error> {
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table::<PubkeySlot, u64>(TABLE)?;
-            for (key, value) in data {
-                table.insert(key, value.borrow())?;
+            for (key, value) in data.iter() {
+                table.insert(key, value)?;
             }
         }
         write_txn.commit().map_err(Error::from)
@@ -350,7 +364,7 @@ pub mod tests {
         let db = Database::create(tmpfile.path()).expect("create db success");
         let store = ChiliPepperStore::new(db);
 
-        store.bulk_insert(to_insert).unwrap();
+        store.bulk_insert(&to_insert).unwrap();
 
         assert_eq!(store.len().unwrap(), 3);
         assert_eq!(store.get(some_key).unwrap().unwrap(), some_value);
@@ -466,7 +480,7 @@ pub mod tests {
         let db = Database::create(tmpfile.path()).expect("create db success");
         let store = ChiliPepperStore::new(db);
 
-        store.bulk_insert(to_insert).unwrap();
+        store.bulk_insert(&to_insert).unwrap();
 
         assert_eq!(store.len().unwrap(), 3);
         assert_eq!(store.get(some_key).unwrap().unwrap(), some_value);
@@ -536,7 +550,7 @@ pub mod tests {
         let db = Database::create(tmpfile.path()).expect("create db success");
         let store = ChiliPepperStore::new(db);
 
-        store.bulk_insert(data).unwrap();
+        store.bulk_insert(&data).unwrap();
         assert_eq!(store.len().unwrap(), 10);
 
         store.clean(105).unwrap();
