@@ -112,14 +112,20 @@ impl ConnectionWorkersScheduler {
         mut leader_updater: Box<dyn LeaderUpdater>,
         mut transaction_receiver: mpsc::Receiver<TransactionBatch>,
         cancel: CancellationToken,
-    ) -> Result<SendTransactionStatsPerAddr, ConnectionWorkersSchedulerError> {
+    ) -> Result<
+        (
+            SendTransactionStatsPerAddr,
+            mpsc::Receiver<TransactionBatch>,
+        ),
+        ConnectionWorkersSchedulerError,
+    > {
         let endpoint = Self::setup_endpoint(bind, client_certificate)?;
         debug!("Client endpoint bind address: {:?}", endpoint.local_addr());
         let mut workers = WorkersCache::new(num_connections, cancel.clone());
         let mut send_stats_per_addr = SendTransactionStatsPerAddr::new();
 
         loop {
-            let transaction_batch = tokio::select! {
+            let transaction_batch: TransactionBatch = tokio::select! {
                 recv_res = transaction_receiver.recv() => match recv_res {
                     Some(txs) => txs,
                     None => {
@@ -183,7 +189,7 @@ impl ConnectionWorkersScheduler {
 
         endpoint.close(0u32.into(), b"Closing connection");
         leader_updater.stop().await;
-        Ok(send_stats_per_addr)
+        Ok((send_stats_per_addr, transaction_receiver))
     }
 
     /// Sets up the QUIC endpoint for the scheduler to handle connections.
