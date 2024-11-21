@@ -25,7 +25,7 @@ solana-pubkey = { workspace = true }
 solana-sanitize = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-short-vec = { workspace = true, optional = true }
-solana-system-interface = { git = "https://github.com/solana-program/system.git", optional = true, features = [
+solana-system-interface = {git = "https://github.com/solana-program/system.git", rev = "1d1f1c4", optional = true, features = [
     "bincode",
 ] }
 solana-transaction-error = { workspace = true }
