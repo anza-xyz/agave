@@ -8,7 +8,7 @@ use {
     solana_sdk::{quic::NotifyKeyUpdate, signature::Keypair},
     solana_tpu_client_next::{
         connection_workers_scheduler::{ConnectionWorkersSchedulerConfig, Fanout},
-        leader_updater::{self, LeaderUpdater},
+        leader_updater::LeaderUpdater,
         transaction_batch::TransactionBatch,
         ConnectionWorkersScheduler, ConnectionWorkersSchedulerError, QuicClientCertificate,
         SendTransactionStats,
@@ -22,7 +22,7 @@ use {
     tokio::{
         runtime::Handle,
         sync::{
-            mpsc::{self, Sender},
+            mpsc::{self},
             Mutex as TokioMutex,
         },
         task::JoinHandle,
@@ -203,6 +203,7 @@ where
     async fn stop(&mut self) {}
 }
 
+/*
 #[derive(Clone)]
 pub struct TpuClientNextClient {
     runtime_handle: Handle,
@@ -242,6 +243,7 @@ impl TransactionClient for TpuClientNextClient {
         Protocol::QUIC
     }
 }
+    */
 
 type TpuClientJoinHandle = JoinHandle<
     Result<
@@ -309,7 +311,7 @@ where
 /// transactions can be updated when the validator changes identity keypair. It
 /// implements the same interface as TpuClientNext plus [`NotifyKeyUpdate`]
 #[derive(Clone)]
-pub struct TpuClientNextClientUpdater<T>
+pub struct TpuClientNextClient<T>
 where
     T: TpuInfoWithSendStatic + Clone,
 {
@@ -321,7 +323,7 @@ where
     leader_forward_count: u64,
 }
 
-impl<T> TpuClientNextClientUpdater<T>
+impl<T> TpuClientNextClient<T>
 where
     T: TpuInfoWithSendStatic + Clone,
 {
@@ -424,7 +426,7 @@ where
     }
 }
 
-impl<T> Cancelable for TpuClientNextClientUpdater<T>
+impl<T> Cancelable for TpuClientNextClient<T>
 where
     T: TpuInfoWithSendStatic + Clone,
 {
@@ -434,7 +436,7 @@ where
     }
 }
 
-impl<T> NotifyKeyUpdate for TpuClientNextClientUpdater<T>
+impl<T> NotifyKeyUpdate for TpuClientNextClient<T>
 where
     T: TpuInfoWithSendStatic + Clone,
 {
@@ -444,7 +446,7 @@ where
     }
 }
 
-impl<T> TransactionClient for TpuClientNextClientUpdater<T>
+impl<T> TransactionClient for TpuClientNextClient<T>
 where
     T: TpuInfoWithSendStatic + Clone,
 {

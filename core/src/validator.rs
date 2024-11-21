@@ -128,7 +128,7 @@ use {
     },
     solana_send_transaction_service::{
         send_transaction_service,
-        transaction_client::{ConnectionCacheClient, TpuClientNextClientUpdater},
+        transaction_client::{ConnectionCacheClient, TpuClientNextClient},
     },
     solana_streamer::{socket::SocketAddrSpace, streamer::StakedNodes},
     solana_turbine::{self, broadcast_stage::BroadcastStageType},
@@ -1070,7 +1070,7 @@ impl Validator {
                     .tpu(Protocol::QUIC)
                     .map_err(|err| ValidatorError::Other(format!("{err}")))?;
 
-                let client = TpuClientNextClientUpdater::new(
+                let client = TpuClientNextClient::new(
                     get_runtime_handle(),
                     my_tpu_address,
                     config.send_transaction_service_config.tpu_peers.clone(),
