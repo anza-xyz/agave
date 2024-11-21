@@ -169,14 +169,22 @@ accesses per block, which should be fine for current mainnet load.
 
 In future, we can sharded the chili pepper store to increase the performance.
 
-## Chili pepper mutator
+## Chili pepper mutator thread
 
-1. insert buffer to keep "to insert" data.
+The single threads that handle all mutation for the chili pepper store. Note
+this thread won't block readers.
 
-1. single thread mutator loop around a queue of operations
-    - operation
-        - insert buffer
-        - delete
-        - create savepoint
-        - snapshot
-        - delete savepoint
+The thread listening on the channel for mutation request and process them.
+
+```rust
+pub enum ChiliPepperMutatorThreadCommand {
+    Insert((Vec<Pubkey>, Slot, u64), Sender<()>),
+    Delete(Vec<Pubkey>, Slot),
+    Clean(u64),
+    CreateSavePoint(Sender<u64>),
+    Snapshot(u64, PathBuf),
+}
+```
+
+InsertCommand command takes a `Sender` and reply to the calling threads. This
+ensures that later blocks sees the updated results.
