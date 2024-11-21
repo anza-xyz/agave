@@ -721,6 +721,10 @@ impl VoteState {
         }
     }
 
+    pub fn update_replay_tip(&mut self, slot: Slot) {
+        self.replay_tip_slot = slot;
+    }
+
     pub fn process_next_vote_slot(
         &mut self,
         next_vote_slot: Slot,

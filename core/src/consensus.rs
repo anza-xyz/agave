@@ -609,9 +609,11 @@ impl Tower {
     pub(crate) fn update_last_vote_from_vote_state(
         &mut self,
         vote_hash: Hash,
+        replay_tip_slot: Slot,
         replay_tip_hash: Hash,
         enable_tower_sync_ix: bool,
     ) {
+        self.vote_state.update_replay_tip(replay_tip_slot);
         let mut new_vote = if enable_tower_sync_ix {
             VoteTransaction::from(TowerSync::new(
                 self.vote_state
@@ -621,7 +623,7 @@ impl Tower {
                     .collect(),
                 self.vote_state.root_slot,
                 vote_hash,
-                self.vote_state.replay_tip_slot,
+                replay_tip_slot,
                 replay_tip_hash,
                 Hash::default(), // TODO: block_id will fill in upcoming pr
             ))
@@ -656,11 +658,16 @@ impl Tower {
         let result = process_vote_unchecked(&mut self.vote_state, vote);
         if result.is_err() {
             panic!(
-                "Error while recording vote {} {} in local tower {:?}",
-                vote_slot, vote_hash, result
+                "Error while recording vote {} {} {} {} in local tower {:?}",
+                vote_slot, vote_hash, replay_tip_slot, replay_tip_hash, result
             );
         }
-        self.update_last_vote_from_vote_state(vote_hash, replay_tip_hash, enable_tower_sync_ix);
+        self.update_last_vote_from_vote_state(
+            vote_hash,
+            replay_tip_slot,
+            replay_tip_hash,
+            enable_tower_sync_ix,
+        );
 
         let new_root = self.root();
 

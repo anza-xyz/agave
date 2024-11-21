@@ -760,6 +760,7 @@ pub fn process_vote_unfiltered(
             vote.replay_tip_slot,
         )
     });
+    vote_state.update_replay_tip(vote.replay_tip_slot);
     Ok(())
 }
 
