@@ -138,6 +138,9 @@ impl ChiliPepperStore {
         Ok(result)
     }
 
+    /// Get all the (slot, chili_pepper_value) for a given pubkey.
+    /// The result is sorted by slot.
+    /// Returns an empty vector if the pubkey is not found.
     pub fn get_all_for_pubkey(&self, pubkey: &Pubkey) -> Result<Vec<(Slot, u64)>, Error> {
         let read_txn = self.db.begin_read()?;
         let table = read_txn.open_table::<PubkeySlot, u64>(TABLE)?;
@@ -152,6 +155,33 @@ impl ChiliPepperStore {
             v.push((slot, value));
         }
         Ok(v)
+    }
+
+    /// Get all the (slot, chili_pepper_value) for a given list of pubkeys.
+    pub fn bulk_get_for_pubkeys<'a, I>(&self, pubkeys: I) -> Result<Vec<Vec<(Slot, u64)>>, Error>
+    where
+        I: IntoIterator<Item = &'a Pubkey>,
+    {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table::<PubkeySlot, u64>(TABLE)?;
+
+        let mut result = vec![];
+
+        for pubkey in pubkeys {
+            let pubkey_slot = PubkeySlot(pubkey, 0);
+            let iter = table.range(pubkey_slot..PubkeySlot(pubkey, u64::MAX))?;
+
+            let mut v = Vec::new();
+
+            for iter in iter {
+                let (key, value) = iter?;
+                let slot = key.value().1;
+                let value = value.value();
+                v.push((slot, value));
+            }
+            result.push(v);
+        }
+        Ok(result)
     }
 
     pub fn insert(&self, key: PubkeySlot, value: u64) -> Result<(), Error> {
@@ -172,18 +202,24 @@ impl ChiliPepperStore {
         write_txn.commit().map_err(Error::from)
     }
 
-    pub fn bulk_insert(&self, data: &[(PubkeySlot, u64)]) -> Result<(), Error> {
+    pub fn bulk_insert<'a, I>(&self, data: I) -> Result<(), Error>
+    where
+        I: IntoIterator<Item = (PubkeySlot<'a>, u64)>,
+    {
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table::<PubkeySlot, u64>(TABLE)?;
-            for (key, value) in data.iter() {
-                table.insert(key, value)?;
+            for (key, value) in data {
+                table.insert(key, value.borrow())?;
             }
         }
         write_txn.commit().map_err(Error::from)
     }
 
-    pub fn bulk_remove(&self, keys: Vec<PubkeySlot>) -> Result<(), Error> {
+    pub fn bulk_remove<'a, I>(&self, keys: I) -> Result<(), Error>
+    where
+        I: IntoIterator<Item = PubkeySlot<'a>>,
+    {
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table::<PubkeySlot, u64>(TABLE)?;
@@ -340,45 +376,55 @@ pub mod tests {
     }
 
     #[test]
-    fn test_bulk_insert_remove() {
-        let pk1 = Pubkey::from([1_u8; 32]);
-        let pk2 = Pubkey::from([2_u8; 32]);
-        let pk3 = Pubkey::from([3_u8; 32]);
+    fn test_bulk_insert_remove_get() {
+        let mut pks = vec![];
+        for i in 1..=3 {
+            pks.push(Pubkey::from([i; 32]));
+        }
+        let keys: Vec<_> = pks
+            .iter()
+            .zip(42..=44)
+            .map(|(pk, v)| (PubkeySlot(pk, v)))
+            .collect();
 
-        let some_key = PubkeySlot(&pk1, 42);
-        let some_key2 = PubkeySlot(&pk2, 43);
-        let some_key3 = PubkeySlot(&pk3, 44);
+        let vals = vec![163, 164, 165];
 
-        let some_value = 163;
-        let some_value2 = 164;
-        let some_value3 = 165;
-
-        let to_insert = vec![
-            (some_key, some_value),
-            (some_key2, some_value2),
-            (some_key3, some_value3),
-        ];
+        let to_insert = keys
+            .iter()
+            .copied()
+            .zip(vals.iter().copied())
+            .collect::<Vec<_>>();
 
         let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
 
         let db = Database::create(tmpfile.path()).expect("create db success");
         let store = ChiliPepperStore::new(db);
 
-        store.bulk_insert(&to_insert).unwrap();
+        store.bulk_insert(to_insert.into_iter()).unwrap();
 
         assert_eq!(store.len().unwrap(), 3);
-        assert_eq!(store.get(some_key).unwrap().unwrap(), some_value);
-        assert_eq!(store.get(some_key2).unwrap().unwrap(), some_value2);
-        assert_eq!(store.get(some_key3).unwrap().unwrap(), some_value3);
+        for i in 0..3 {
+            assert_eq!(store.get(keys[i]).unwrap().unwrap(), vals[i]);
+        }
 
-        let to_remove = vec![some_key, some_key2, some_key3];
-        store.bulk_remove(to_remove).unwrap();
+        let result = store.bulk_get_for_pubkeys(&pks).unwrap();
+        assert_eq!(result.len(), 3);
+        let expected = (42..=44).zip(vals.iter().copied()).collect::<Vec<_>>();
+        for i in 0..3 {
+            assert_eq!(result[i].len(), 1);
+            assert_eq!(result[i][0], expected[i]);
+        }
 
+        store.bulk_remove(keys.iter().copied()).unwrap();
         assert_eq!(store.len().unwrap(), 0);
-
-        assert!(store.get(some_key).unwrap().is_none());
-        assert!(store.get(some_key2).unwrap().is_none());
-        assert!(store.get(some_key3).unwrap().is_none());
+        for i in 0..3 {
+            assert!(store.get(keys[i]).unwrap().is_none());
+        }
+        let result = store.bulk_get_for_pubkeys(&pks).unwrap();
+        assert_eq!(result.len(), 3);
+        for i in 0..3 {
+            assert_eq!(result[i].len(), 0);
+        }
     }
 
     #[test]
@@ -480,7 +526,7 @@ pub mod tests {
         let db = Database::create(tmpfile.path()).expect("create db success");
         let store = ChiliPepperStore::new(db);
 
-        store.bulk_insert(&to_insert).unwrap();
+        store.bulk_insert(to_insert.into_iter()).unwrap();
 
         assert_eq!(store.len().unwrap(), 3);
         assert_eq!(store.get(some_key).unwrap().unwrap(), some_value);
@@ -550,7 +596,7 @@ pub mod tests {
         let db = Database::create(tmpfile.path()).expect("create db success");
         let store = ChiliPepperStore::new(db);
 
-        store.bulk_insert(&data).unwrap();
+        store.bulk_insert(data.into_iter()).unwrap();
         assert_eq!(store.len().unwrap(), 10);
 
         store.clean(105).unwrap();

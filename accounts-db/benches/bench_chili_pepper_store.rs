@@ -3,7 +3,8 @@
 /// > ../cargo nightly bench -- chili_pepper_store
 use {
     criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput},
-    solana_accounts_db::chili_pepper_store::{ChiliPepperStore, PubkeySlot},
+    itertools::assert_equal,
+    solana_accounts_db::chili_pepper::chili_pepper_store::{ChiliPepperStore, PubkeySlot},
     solana_sdk::pubkey::Pubkey,
     std::env::current_dir,
     tempfile::NamedTempFile,
@@ -43,6 +44,13 @@ fn bench_chili_pepper_store(c: &mut Criterion) {
                     let result = store.get(*key).unwrap();
                     assert_eq!(result, Some(*value));
                 }
+            });
+        });
+
+        group.bench_function(BenchmarkId::new("bulk_get", size), |b| {
+            b.iter(|| {
+                let v = store.bulk_get_for_pubkeys(&pubkeys).unwrap();
+                assert_eq!(v.len(), size as usize);
             });
         });
     }

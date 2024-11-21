@@ -26,7 +26,7 @@ mod bucket_map_holder_stats;
 mod buffered_reader;
 mod cache_hash_data;
 mod cache_hash_data_stats;
-pub mod chili_pepper_store;
+pub mod chili_pepper;
 pub mod contains;
 pub mod epoch_accounts_hash;
 mod file_io;

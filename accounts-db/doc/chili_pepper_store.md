@@ -150,18 +150,6 @@ from the snapshot db file in tar bar.
 * When restarted from local snapshot, the local chili pepper store are reopend from the
 local db file and roll back the savepoint of the snapshot.
 
-## Chili pepper mutator
-
-1. insert buffer to keep "to insert" data.
-
-1. single thread mutator loop around a queue of operations
-    - operation
-        - insert buffer
-        - delete
-        - create savepoint
-        - snapshot
-        - delete savepoint
-
 ## Benchmark
 
 Benchmark result for inserting and reading 1k, 10k, 100k, 1M accounts access for
@@ -176,4 +164,19 @@ one block.
 | 500k | 763ms  | 593ms   |
 | 1M | 1.5s  | 1.4s   |
 
-The limits for chili pepper store is about 200K account's chili pepper accesses per block.
+The limits for single chili pepper store is around 200K account's chili pepper
+accesses per block, which should be fine for current mainnet load.
+
+In future, we can sharded the chili pepper store to increase the performance.
+
+## Chili pepper mutator
+
+1. insert buffer to keep "to insert" data.
+
+1. single thread mutator loop around a queue of operations
+    - operation
+        - insert buffer
+        - delete
+        - create savepoint
+        - snapshot
+        - delete savepoint
