@@ -225,7 +225,7 @@ impl<D: TransactionData> SVMMessage for ResolvedTransactionView<D> {
             &solana_sdk::pubkey::Pubkey,
             solana_svm_transaction::instruction::SVMInstruction,
         ),
-    > {
+    > + Clone {
         self.view.program_instructions_iter()
     }
 

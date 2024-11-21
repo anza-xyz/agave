@@ -209,7 +209,7 @@ impl PrioritizationFeeCache {
 
                 let compute_budget_limits = sanitized_transaction
                     .compute_budget_instruction_details()
-                    .sanitize_and_convert_to_compute_budget_limits();
+                    .sanitize_and_convert_to_compute_budget_limits(&bank.feature_set);
 
                 let lock_result = validate_account_locks(
                     sanitized_transaction.account_keys(),

@@ -34,7 +34,7 @@ impl SVMMessage for SanitizedMessage {
             .map(SVMInstruction::from)
     }
 
-    fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> {
+    fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> + Clone {
         SanitizedMessage::program_instructions_iter(self)
             .map(|(pubkey, ix)| (pubkey, SVMInstruction::from(ix)))
     }
