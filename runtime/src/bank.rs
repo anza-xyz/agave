@@ -6232,6 +6232,12 @@ impl Bank {
         self.slots_per_year
     }
 
+    pub fn update_tick_height_from_parent(&self) {
+        if let Some(parent) = self.parent() {
+            self.tick_height.store(parent.tick_height(), Relaxed);
+        }
+    }
+
     /// Return the number of ticks since genesis.
     pub fn tick_height(&self) -> u64 {
         self.tick_height.load(Relaxed)
