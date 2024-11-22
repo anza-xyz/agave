@@ -636,7 +636,7 @@ where
             .lock()
             .unwrap()
             .as_ref()
-            .map(|a| a.banking_stage_monitor.status())
+            .map(|respawner| respawner.banking_stage_monitor.status())
     }
 
     pub fn spawn_block_production_scheduler(
