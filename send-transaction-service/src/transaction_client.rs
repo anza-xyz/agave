@@ -21,10 +21,7 @@ use {
     },
     tokio::{
         runtime::Handle,
-        sync::{
-            mpsc::{self},
-            Mutex as TokioMutex,
-        },
+        sync::mpsc::{self},
         task::JoinHandle,
     },
     tokio_util::sync::CancellationToken,
@@ -316,7 +313,9 @@ where
     T: TpuInfoWithSendStatic + Clone,
 {
     runtime_handle: Handle,
-    handle: Arc<TokioMutex<(Option<TpuClientJoinHandle>, CancellationToken)>>,
+    // This handle is needed to implement `NotifyKeyUpdate` trait. It's only
+    // method takes &self and thus we need to wrap with Mutex
+    handle: Arc<Mutex<(Option<TpuClientJoinHandle>, CancellationToken)>>,
     sender: mpsc::Sender<TransactionBatch>,
     // all what needed to setup client
     leader_updater: SendTransactionServiceLeaderUpdater<T>,
@@ -359,7 +358,7 @@ where
 
         Self {
             runtime_handle,
-            handle: Arc::new(TokioMutex::new((Some(handle), cancel))),
+            handle: Arc::new(Mutex::new((Some(handle), cancel))),
             sender,
             leader_updater,
             leader_forward_count,
@@ -386,7 +385,7 @@ where
         }
     }
 
-    async fn update_key_async(
+    async fn do_update_key(
         &self,
         validator_identity: &Keypair,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -396,7 +395,9 @@ where
         let leader_updater = self.leader_updater.clone();
         let handle = self.handle.clone();
 
-        let mut lock = handle.lock().await;
+        let Ok(mut lock) = handle.lock() else {
+            return Err("TpuClientNext task panicked.".into());
+        };
         lock.1.cancel();
 
         if let Some(join_handle) = lock.0.take() {
@@ -426,12 +427,14 @@ where
     }
 }
 
+// TODO(klykov): mark it to be for tests only or move to
+// create_client_for_tests.rs
 impl<T> Cancelable for TpuClientNextClient<T>
 where
     T: TpuInfoWithSendStatic + Clone,
 {
     fn cancel(&self) {
-        let lock = self.handle.blocking_lock();
+        let lock = self.handle.lock().unwrap();
         lock.1.cancel();
     }
 }
@@ -442,7 +445,7 @@ where
 {
     fn update_key(&self, validator_identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
         self.runtime_handle
-            .block_on(self.update_key_async(validator_identity))
+            .block_on(self.do_update_key(validator_identity))
     }
 }
 
