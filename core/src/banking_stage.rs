@@ -767,7 +767,7 @@ impl BankingStage {
                             let (priority, _cost) = SchedulerController::<
                                 Arc<ClusterInfo>,
                             >::calculate_priority_and_cost(
-                                &transaction, &compute_budget_limits.into(), &bank
+                                &transaction, &compute_budget_limits.into(), &bank,
                             );
                             let index = ((u64::MAX - priority) as TaskKey) << 64
                                 | task_ids[*packet_index] as TaskKey;
