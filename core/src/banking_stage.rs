@@ -706,10 +706,11 @@ impl BankingStage {
                 }
             }
         }
+        let banking_stage_monitor = Box::new(decision_maker.clone());
 
         unified_scheduler_pool.register_banking_stage(
             unified_receiver,
-            Box::new(decision_maker.clone()),
+            banking_stage_monitor,
             Box::new(move |adapter: Arc<BankingStageAdapter>| {
                 let decision_maker = decision_maker.clone();
                 let bank_forks = bank_forks.clone();
