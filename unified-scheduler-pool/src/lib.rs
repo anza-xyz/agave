@@ -528,7 +528,7 @@ where
                 .expect("not poisoned")
                 .push(scheduler);
 
-            if is_block_production_scheduler_returned && !matches(self.banking_stage_status(), Some(BankingStageStatus::Exited)) {
+            if is_block_production_scheduler_returned && !matches!(self.banking_stage_status(), Some(BankingStageStatus::Exited)) {
                 info!("respawning on trashd scheduler...");
                 id_and_inner.0.take();
                 self.spawn_block_production_scheduler(&mut id_and_inner);
