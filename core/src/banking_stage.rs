@@ -693,7 +693,7 @@ impl BankingStage {
         let decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
 
         impl BankingStageMonitor for DecisionMaker {
-            fn banking_stage_status(&self) -> BankingStageStatus {
+            fn status(&self) -> BankingStageStatus {
                 if self.should_exit() {
                     BankingStageStatus::Exited
                 } else if matches!(

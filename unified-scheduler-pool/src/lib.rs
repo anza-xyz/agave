@@ -345,7 +345,7 @@ where
                     (idle_inner_count, r)
                 };
 
-                let banking_stage_status = scheduler_pool.banking_stage_status();
+                let banking_stage_status = scheduler_pool.status();
                 if let Some(BankingStageStatus::Exited) = &banking_stage_status {
                     scheduler_pool.unregister_banking_stage();
                     exiting = true;
@@ -632,8 +632,8 @@ where
         *self.block_production_scheduler_respawner.lock().unwrap() = None;
     }
 
-    fn banking_stage_status(&self) -> Option<BankingStageStatus> {
-        self.block_production_scheduler_respawner.lock().unwrap().as_ref().map(|a| a.banking_stage_monitor.banking_stage_status())
+    fn status(&self) -> Option<BankingStageStatus> {
+        self.block_production_scheduler_respawner.lock().unwrap().as_ref().map(|a| a.banking_stage_monitor.status())
     }
 
     pub fn spawn_block_production_scheduler(
@@ -2295,7 +2295,7 @@ pub enum BankingStageStatus {
 }
 
 pub trait BankingStageMonitor: Send + Debug {
-    fn banking_stage_status(&self) -> BankingStageStatus;
+    fn status(&self) -> BankingStageStatus;
 }
 
 #[derive(Debug)]
