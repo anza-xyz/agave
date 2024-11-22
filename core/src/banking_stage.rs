@@ -792,7 +792,7 @@ impl BankingStage {
                                 //}
                             }
                         }
-                    }).collect<Vec<_>>();
+                    }).collect::<Vec<_>>();
                     tasks
                 });
                 info!("on_block_production_scheduler_spawn: end!");
