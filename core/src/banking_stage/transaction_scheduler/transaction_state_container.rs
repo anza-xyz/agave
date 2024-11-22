@@ -249,13 +249,7 @@ mod tests {
         for id in 0..num as u64 {
             let priority = id;
             let (transaction_ttl, packet, priority, cost) = test_transaction(priority);
-            container.insert_new_transaction(
-                TransactionId::new(id),
-                transaction_ttl,
-                packet,
-                priority,
-                cost,
-            );
+            container.insert_new_transaction(id as usize, transaction_ttl, packet, priority, cost);
         }
     }
 
@@ -291,8 +285,8 @@ mod tests {
         let mut container = TransactionStateContainer::with_capacity(5);
         push_to_container(&mut container, 5);
 
-        let existing_id = TransactionId::new(3);
-        let non_existing_id = TransactionId::new(7);
+        let existing_id = 3;
+        let non_existing_id = 7;
         assert!(container.get_mut_transaction_state(&existing_id).is_some());
         assert!(container.get_mut_transaction_state(&existing_id).is_some());
         assert!(container

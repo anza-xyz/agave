@@ -19,21 +19,7 @@ impl Display for TransactionBatchId {
     }
 }
 
-/// A unique identifier for a transaction.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct TransactionId(u64);
-
-impl TransactionId {
-    pub fn new(index: u64) -> Self {
-        Self(index)
-    }
-}
-
-impl Display for TransactionId {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
+pub type TransactionId = usize;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct MaxAge {

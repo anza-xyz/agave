@@ -37,8 +37,8 @@ mod tests {
     fn test_transaction_priority_id_ordering() {
         // Higher priority first
         {
-            let id1 = TransactionPriorityId::new(1, TransactionId::new(1));
-            let id2 = TransactionPriorityId::new(2, TransactionId::new(1));
+            let id1 = TransactionPriorityId::new(1, 1);
+            let id2 = TransactionPriorityId::new(2, 1);
             assert!(id1 < id2);
             assert!(id1 <= id2);
             assert!(id2 > id1);
@@ -47,8 +47,8 @@ mod tests {
 
         // Equal priority then compare by id
         {
-            let id1 = TransactionPriorityId::new(1, TransactionId::new(1));
-            let id2 = TransactionPriorityId::new(1, TransactionId::new(2));
+            let id1 = TransactionPriorityId::new(1, 1);
+            let id2 = TransactionPriorityId::new(1, 2);
             assert!(id1 < id2);
             assert!(id1 <= id2);
             assert!(id2 > id1);
@@ -57,8 +57,8 @@ mod tests {
 
         // Equal priority and id
         {
-            let id1 = TransactionPriorityId::new(1, TransactionId::new(1));
-            let id2 = TransactionPriorityId::new(1, TransactionId::new(1));
+            let id1 = TransactionPriorityId::new(1, 1);
+            let id2 = TransactionPriorityId::new(1, 1);
             assert_eq!(id1, id2);
             assert!(id1 >= id2);
             assert!(id1 <= id2);
