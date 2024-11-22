@@ -716,8 +716,9 @@ impl BankingStage {
         }
         let poh_recorder = poh_recorder.clone();
 
-        use solana_unified_scheduler_pool::AAA; 
-        let b: Box<dyn AAA> = Box::new(move |adapter: Arc<BankingStageAdapter>| {
+        unified_scheduler_pool.prepare_to_spawn_block_production_scheduler(
+            non_vote_receiver,
+            Box::new(move |adapter: Arc<BankingStageAdapter>| {
                 let decision_maker = decision_maker.clone();
                 let bank_forks = bank_forks.clone();
                 *adapter.idling_detector.lock().unwrap() = Some(Box::new(S(
@@ -737,12 +738,12 @@ impl BankingStage {
                         .iter()
                         .flat_map(|batch| {
                             // over-provision nevertheless some of packets could be invalid.
-                            let starting_task_id = adapter.bulk_assign_task_ids(batch.len() as u64);
+                            let first_id = adapter.bulk_assign_task_ids(batch.len() as u64);
                             let indexes = PacketDeserializer::generate_packet_indexes(batch);
 
                             PacketDeserializer::deserialize_packets_with_indexes(batch, indexes)
-                                .zip(iter::repeat(starting_task_id))
-                                .filter_map(|((packet, packet_index), starting_task_id)| {
+                                .zip(iter::repeat(first_id))
+                                .filter_map(|((packet, packet_index), first_id)| {
                                     let (transaction, _) = packet.build_sanitized_transaction(
                                         bank.vote_only_bank(),
                                         &bank,
@@ -772,7 +773,7 @@ impl BankingStage {
                                         );
                                     let reversed_priority = (u64::MAX - priority) as TaskKey;
                                     let task_id =
-                                        (starting_task_id + packet_index as u64) as TaskKey;
+                                        (first_id + packet_index as u64) as TaskKey;
                                     let index = reversed_priority << 64 | task_id;
 
                                     adapter.create_task(transaction, index)
@@ -780,11 +781,7 @@ impl BankingStage {
                         })
                         .collect()
                 })
-            });
-
-        unified_scheduler_pool.prepare_to_spawn_block_production_scheduler(
-            non_vote_receiver,
-            b,
+            }),
         );
 
         Self {
