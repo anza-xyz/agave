@@ -738,9 +738,7 @@ impl BankingStage {
                     let mut tasks = vec![];
                     for batch in &batches.0 {
                         // over-provision
-                        let task_id = adapter.bulk_assign_task_ids(batch.len() as u64);
-                        let task_ids =
-                            (task_id..(task_id + batch.len() as u64)).collect::<Vec<_>>();
+                        let starting_task_id = adapter.bulk_assign_task_ids(batch.len() as u64);
 
                         let indexes = PacketDeserializer::generate_packet_indexes(batch);
                         let transactions = PacketDeserializer::deserialize_packets_with_indexes(
@@ -769,8 +767,9 @@ impl BankingStage {
                             >::calculate_priority_and_cost(
                                 &transaction, &compute_budget_limits.into(), &bank,
                             );
-                            let index = ((u64::MAX - priority) as TaskKey) << 64
-                                | task_ids[packet_index] as TaskKey;
+                            let reversed_priority = ((u64::MAX - priority) as TaskKey);
+                            let task_id = starting_task_id + packet_index as TaskKey;
+                            let index = reversed_priority << 64 | task_id;
 
                             Some((transaction, index))
                         });
