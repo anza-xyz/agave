@@ -741,38 +741,41 @@ impl BankingStage {
                         let starting_task_id = adapter.bulk_assign_task_ids(batch.len() as u64);
 
                         let indexes = PacketDeserializer::generate_packet_indexes(batch);
-                        let transactions = PacketDeserializer::deserialize_packets_with_indexes(
-                            batch, &indexes,
-                        )
-                        .filter_map(|(packet, packet_index)| {
-                            let (transaction, _) = packet.build_sanitized_transaction(
-                                bank.vote_only_bank(),
-                                &bank,
-                                bank.get_reserved_account_keys(),
-                            )?;
+                        let transactions =
+                            PacketDeserializer::deserialize_packets_with_indexes(batch, &indexes)
+                                .filter_map(|(packet, packet_index)| {
+                                    let (transaction, _) = packet.build_sanitized_transaction(
+                                        bank.vote_only_bank(),
+                                        &bank,
+                                        bank.get_reserved_account_keys(),
+                                    )?;
 
-                            SanitizedTransaction::validate_account_locks(
-                                transaction.message(),
-                                transaction_account_lock_limit,
-                            )
-                            .ok()?;
+                                    SanitizedTransaction::validate_account_locks(
+                                        transaction.message(),
+                                        transaction_account_lock_limit,
+                                    )
+                                    .ok()?;
 
-                            let compute_budget_limits = process_compute_budget_instructions(
-                                SVMMessage::program_instructions_iter(transaction.message()),
-                            )
-                            .ok()?;
+                                    let compute_budget_limits =
+                                        process_compute_budget_instructions(
+                                            SVMMessage::program_instructions_iter(
+                                                transaction.message(),
+                                            ),
+                                        )
+                                        .ok()?;
 
-                            let (priority, _cost) = SchedulerController::<
+                                    let (priority, _cost) = SchedulerController::<
                                 Arc<ClusterInfo>,
                             >::calculate_priority_and_cost(
                                 &transaction, &compute_budget_limits.into(), &bank,
                             );
-                            let reversed_priority = (u64::MAX - priority) as TaskKey;
-                            let task_id = (starting_task_id + packet_index as u64) as TaskKey;
-                            let index = reversed_priority << 64 | task_id;
+                                    let reversed_priority = (u64::MAX - priority) as TaskKey;
+                                    let task_id =
+                                        (starting_task_id + packet_index as u64) as TaskKey;
+                                    let index = reversed_priority << 64 | task_id;
 
-                            Some((transaction, index))
-                        });
+                                    Some((transaction, index))
+                                });
 
                         for (transaction, index) in transactions {
                             if let Some(task) = adapter.create_task(&(&transaction, index)) {
