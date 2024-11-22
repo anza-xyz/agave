@@ -688,7 +688,7 @@ impl BankingStage {
         assert!(non_vote_receiver.same_channel(&gossip_vote_receiver));
         drop((tpu_vote_receiver, gossip_vote_receiver));
 
-        // todo: forwarding, vote only blocks...
+        // todo: forwarding
         let decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
 
         struct S(DecisionMaker, Arc<AtomicBool>);
