@@ -741,23 +741,23 @@ impl BankingStage {
                         let task_ids = (task_id..(task_id + batch.len() as u64)).collect::<Vec<_>>();
 
                         let indexes = PacketDeserializer::generate_packet_indexes(batch);
-                        let ppp = PacketDeserializer::deserialize_packets2(batch, &indexes)
+                        let transactions = PacketDeserializer::deserialize_packets2(batch, &indexes)
                             .filter_map(|(i, p)| {
-                                let (tx, _) = p.build_sanitized_transaction(
+                                let (transaction, _) = p.build_sanitized_transaction(
                                     bank.vote_only_bank(),
                                     &bank,
                                     bank.get_reserved_account_keys(),
                                 )?;
 
                                 SanitizedTransaction::validate_account_locks(
-                                    tx.message(),
+                                    transaction.message(),
                                     transaction_account_lock_limit,
                                 )
                                 .ok()?;
 
                                 use solana_svm_transaction::svm_message::SVMMessage;
                                 let Ok(fb) = process_compute_budget_instructions(
-                                    SVMMessage::program_instructions_iter(tx.message()),
+                                    SVMMessage::program_instructions_iter(transaction.message()),
                                 ) else {
                                     return None;
                                 };
@@ -765,17 +765,16 @@ impl BankingStage {
                                 let (priority, _cost) = SchedulerController::<
                                     std::sync::Arc<solana_gossip::cluster_info::ClusterInfo>,
                                 >::calculate_priority_and_cost(
-                                    &tx, &fb.into(), &bank
+                                    &transaction, &fb.into(), &bank
                                 );
-                                //let i = ((u32::MAX - TryInto::<u32>::try_into(priority).unwrap()) as u64) << 32
                                 let i =
                                     ((u64::MAX - priority) as u128) << 64 | task_ids[*i] as TaskKey;
 
-                                Some((tx, i))
+                                Some((transaction, index))
                             });
 
-                        for (a, b) in ppp {
-                            if let Some(task) = adapter.create_task(&(&a, b)) {
+                        for (transaction, index) in transactions {
+                            if let Some(task) = adapter.create_task(&(&transaction, index)) {
                                 //if bank.check_transactions(
                                 //    &[&a],
                                 //    &[Ok(())],
