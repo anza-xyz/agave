@@ -361,12 +361,12 @@ where
                     let trashed_inner_count = trashed_inners.len();
                     for trashed_inner in trashed_inners {
                         match trashed_inner.banking_stage_status() {
-                            BankingStageStatus::Active
-                            | BankingStageStatus::NotBanking
-                            | BankingStageStatus::Inactive => {
+                            Some(BankingStageStatus::Active)
+                            | None
+                            | Some(BankingStageStatus::Inactive) => {
                                 drop(trashed_inner);
                             }
-                            BankingStageStatus::Exited => {
+                            Some(BankingStageStatus::Exited) => {
                                 scheduler_pool.reset_respawner();
                                 info!("trashed sch {} IS Exited", trashed_inner.id());
                                 let id = trashed_inner.id();
