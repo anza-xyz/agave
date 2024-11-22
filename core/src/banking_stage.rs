@@ -735,7 +735,7 @@ impl BankingStage {
                     //let mut m =
                     //    solana_svm::transaction_error_metrics::TransactionErrorMetrics::new();
                     let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
-                    let mut tasks = batches.0.iter().map(|batch| {
+                    let tasks = batches.0.iter().map(|batch| {
                         (
                             batch,
                             // over-provision
