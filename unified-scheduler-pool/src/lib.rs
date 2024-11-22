@@ -160,7 +160,8 @@ impl<T> BatchConverter for T where T: DynClone + (FnMut(BankingPacketBatch) -> V
 
 clone_trait_object!(BatchConverter);
 
-type BatchConverterCreator = Box<dyn (FnMut(Arc<BankingStageAdapter>) -> Box<dyn BatchConverter>) + Send>;
+type BatchConverterCreator =
+    Box<dyn (FnMut(Arc<BankingStageAdapter>) -> Box<dyn BatchConverter>) + Send>;
 
 #[derive(derive_more::Debug)]
 struct BlockProductionSchedulerRespawner {
@@ -633,7 +634,11 @@ where
     }
 
     fn banking_stage_status(&self) -> Option<BankingStageStatus> {
-        self.block_production_scheduler_respawner.lock().unwrap().as_ref().map(|a| a.banking_stage_monitor.status())
+        self.block_production_scheduler_respawner
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|a| a.banking_stage_monitor.status())
     }
 
     pub fn spawn_block_production_scheduler(
