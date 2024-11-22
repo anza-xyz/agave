@@ -738,7 +738,7 @@ impl BankingStage {
                     let tasks = batches
                         .0
                         .iter()
-                        .flat_map(batch| {
+                        .flat_map(|batch| {
                                 // over-provision
                             let starting_task_id = 
                                 adapter.bulk_assign_task_ids(batch.len() as u64);
