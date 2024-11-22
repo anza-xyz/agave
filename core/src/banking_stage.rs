@@ -56,7 +56,7 @@ use {
         cmp, env, iter,
         ops::Deref,
         sync::{
-            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+            atomic::{AtomicU64, AtomicUsize, Ordering},
             Arc, RwLock,
         },
         thread::{self, Builder, JoinHandle},
@@ -693,7 +693,7 @@ impl BankingStage {
 
         impl BankingStageMonitor for DecisionMaker {
             fn banking_stage_status(&self) -> BankingStageStatus {
-                let r = if self.should_exit() {
+                if self.should_exit() {
                     BankingStageStatus::Exited
                 } else if matches!(
                     self.make_consume_or_forward_decision(),
@@ -702,9 +702,7 @@ impl BankingStage {
                     BankingStageStatus::Inactive
                 } else {
                     BankingStageStatus::Active
-                };
-                info!("BankingStageStatus::banking_stage_status() -> {r:?}...");
-                r
+                }
             }
         }
 
