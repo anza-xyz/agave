@@ -62,6 +62,7 @@ use {
     },
 };
 use std::iter;
+use solana_unified_scheduler_logic::Task;
 
 // Below modules are pub to allow use by banking_stage bench
 pub mod committer;
