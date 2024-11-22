@@ -760,7 +760,7 @@ impl BankingStage {
                         })
                     });
 
-                    transactions.collect()
+                    transactions
                 })
             }),
         );
