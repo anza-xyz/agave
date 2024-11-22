@@ -767,8 +767,8 @@ impl BankingStage {
                             >::calculate_priority_and_cost(
                                 &transaction, &compute_budget_limits.into(), &bank,
                             );
-                            let reversed_priority = ((u64::MAX - priority) as TaskKey);
-                            let task_id = starting_task_id + packet_index as TaskKey;
+                            let reversed_priority = (u64::MAX - priority) as TaskKey;
+                            let task_id = (starting_task_id + packet_index) as TaskKey;
                             let index = reversed_priority << 64 | task_id;
 
                             Some((transaction, index))
