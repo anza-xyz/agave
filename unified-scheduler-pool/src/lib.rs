@@ -361,8 +361,8 @@ where
                     let trashed_inner_count = trashed_inners.len();
                     for trashed_inner in trashed_inners {
                         match trashed_inner.banking_stage_status() {
-                            Some(BankingStageStatus::Active)
-                            | None
+                            None
+                            | Some(BankingStageStatus::Active)
                             | Some(BankingStageStatus::Inactive) => {
                                 drop(trashed_inner);
                             }
