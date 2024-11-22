@@ -2330,7 +2330,6 @@ pub enum BankingStageStatus {
     Active,
     Inactive,
     Exited,
-    NotBanking,
 }
 
 pub trait BankingStageMonitor: Send + Debug {
