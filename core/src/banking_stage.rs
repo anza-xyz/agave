@@ -720,7 +720,7 @@ impl BankingStage {
                         &[]
                     } else {
                         batches
-                    }
+                    };
                     let bank = bank_forks.read().unwrap().working_bank();
                     let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
                     let batches = batches.0.iter();
