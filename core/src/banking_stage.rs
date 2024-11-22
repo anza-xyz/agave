@@ -733,8 +733,8 @@ impl BankingStage {
                     }
                     let bank = bank_forks.read().unwrap().working_bank();
                     let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
-                    let batches = batches .0 .iter();
-                    batches.flat_map(|batch| {
+                    let batches = batches.0.iter();
+                    let transactions = batches.flat_map(|batch| {
                             // over-provision nevertheless some of packets could be invalid.
                             let first_id = adapter.bulk_assign_task_ids(batch.len() as u64);
                             let packets =
@@ -773,8 +773,9 @@ impl BankingStage {
 
                                 adapter.create_task(transaction, index)
                             })
-                        })
-                        .collect()
+                        });
+
+                    transactions.collect()
                 })
             }),
         );
