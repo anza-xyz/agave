@@ -711,7 +711,6 @@ impl BankingStage {
             unified_receiver,
             Box::new(decision_maker.clone()),
             Box::new(move |adapter: Arc<BankingStageAdapter>| {
-                let decision_maker = decision_maker.clone();
                 let bank_forks = bank_forks.clone();
 
                 Box::new(move |batches: BankingPacketBatch| -> Vec<Task> {
