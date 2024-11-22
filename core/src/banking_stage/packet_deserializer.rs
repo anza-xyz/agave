@@ -219,7 +219,7 @@ impl PacketDeserializer {
 
     pub(crate) fn deserialize_packets_with_indexes<'a>(
         packet_batch: &'a PacketBatch,
-        packet_indexes: &'a [usize],
+        packet_indexes: Vec<usize>,
     ) -> impl Iterator<Item = (ImmutableDeserializedPacket, usize)> + 'a {
         packet_indexes.iter().filter_map(move |&index| {
             let packet = packet_batch[index].clone();
