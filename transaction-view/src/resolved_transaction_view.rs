@@ -32,7 +32,7 @@ pub struct ResolvedTransactionView<D: TransactionData> {
     /// The resolved address lookups.
     resolved_addresses: Option<LoadedAddresses>,
     /// A cache for whether an address is writable.
-    writable_cache: Vec<bool>, // TODO: should this be a vec, bitset, or array[256].
+    writable_cache: [bool; 256],
 }
 
 impl<D: TransactionData> Deref for ResolvedTransactionView<D> {
@@ -91,12 +91,12 @@ impl<D: TransactionData> ResolvedTransactionView<D> {
         view: &TransactionView<true, D>,
         resolved_addresses: Option<&LoadedAddresses>,
         reserved_account_keys: &HashSet<Pubkey>,
-    ) -> Vec<bool> {
+    ) -> [bool; 256] {
         // Build account keys so that we can iterate over and check if
         // an address is writable.
         let account_keys = AccountKeys::new(view.static_account_keys(), resolved_addresses);
 
-        let mut is_writable_cache = Vec::with_capacity(account_keys.len());
+        let mut is_writable_cache = [false; 256];
         let num_static_account_keys = usize::from(view.num_static_account_keys());
         let num_writable_lookup_accounts = usize::from(view.total_writable_lookup_accounts());
         let num_signed_accounts = usize::from(view.num_required_signatures());
@@ -120,7 +120,7 @@ impl<D: TransactionData> ResolvedTransactionView<D> {
             };
 
             // If the key is reserved it cannot be writable.
-            is_writable_cache.push(is_requested_write && !reserved_account_keys.contains(key));
+            is_writable_cache[index] = is_requested_write && !reserved_account_keys.contains(key);
         }
 
         // If a program account is locked, it cannot be writable unless the
