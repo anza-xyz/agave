@@ -716,7 +716,7 @@ impl BankingStage {
         }
         let poh_recorder = poh_recorder.clone();
         
-        let b = Box::new(move |adapter: Arc<BankingStageAdapter>| {
+        let b: Box<dyn AAA> = Box::new(move |adapter: Arc<BankingStageAdapter>| {
                 let decision_maker = decision_maker.clone();
                 let bank_forks = bank_forks.clone();
                 *adapter.idling_detector.lock().unwrap() = Some(Box::new(S(
