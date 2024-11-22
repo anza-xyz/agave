@@ -391,18 +391,18 @@ where
                 info!("Scheduler pool cleaner: block_production_scheduler_inner!!!",);
 
                 if let Some(BankingStageStatus::Inactive) = banking_stage_status {
-                    let mut g = scheduler_pool
+                    let mut id_and_inner = scheduler_pool
                         .block_production_scheduler_inner
                         .lock()
                         .unwrap();
-                    if let Some(pooled) = &g.1 {
+                    if let Some(pooled) = &id_and_inner.1 {
                         info!("sch {} IS idle", pooled.id());
                         if pooled.is_overgrown(false) {
                             info!("sch {} is overgrown!", pooled.id());
-                            let pooled = g.1.take().unwrap();
-                            assert_eq!(Some(pooled.id()), g.0.take());
-                            scheduler_pool.spawn_block_production_scheduler(&mut g);
-                            drop(g);
+                            let pooled = id_and_inner.1.take().unwrap();
+                            assert_eq!(Some(pooled.id()), id_and_inner.0.take());
+                            scheduler_pool.spawn_block_production_scheduler(&mut id_and_inner);
+                            drop(id_and_inner);
                             let id = pooled.id();
                             info!("dropping overgrown sch {id}");
                             drop(pooled);
@@ -433,13 +433,13 @@ where
                 {
                     error!("proper exit!");
                     sleep(Duration::from_secs(1));
-                    let mut g = scheduler_pool
+                    let mut id_and_inner = scheduler_pool
                         .block_production_scheduler_inner
                         .lock()
                         .unwrap();
-                    if let Some(pooled) = g.1.take() {
-                        assert_eq!(Some(pooled.id()), g.0.take());
-                        drop(g);
+                    if let Some(pooled) = id_and_inner.1.take() {
+                        assert_eq!(Some(pooled.id()), id_and_inner.0.take());
+                        drop(id_and_inner);
                         let id = pooled.id();
                         info!("dropping sch {id} after proper exit");
                         drop(pooled);
@@ -515,8 +515,8 @@ where
     fn return_scheduler(&self, scheduler: S::Inner, should_trash: bool) {
         let id = scheduler.id();
         debug!("return_scheduler(): id: {id} should_trash: {should_trash}");
-        let mut g = self.block_production_scheduler_inner.lock().unwrap();
-        let bp_id: Option<SchedulerId> = g.0.as_ref().copied();
+        let mut id_and_inner = self.block_production_scheduler_inner.lock().unwrap();
+        let bp_id: Option<SchedulerId> = id_and_inner.0.as_ref().copied();
         let is_block_production_scheduler_returned = Some(id) == bp_id;
 
         if should_trash {
@@ -531,13 +531,13 @@ where
 
             if is_block_production_scheduler_returned {
                 info!("respawning on trashd scheduler...");
-                g.0.take();
-                self.spawn_block_production_scheduler(&mut g);
+                id_and_inner.0.take();
+                self.spawn_block_production_scheduler(&mut id_and_inner);
                 info!("respawned on trashd scheduler...");
-                drop(g);
+                drop(id_and_inner);
             }
         } else {
-            drop(g);
+            drop(id_and_inner);
             if !is_block_production_scheduler_returned {
                 self.scheduler_inners
                     .lock()
@@ -584,14 +584,14 @@ where
                 )
             }
         } else {
-            let mut g = self
+            let mut id_and_inner = self
                 .block_production_scheduler_inner
                 .lock()
                 .expect("not poisoned");
-            g = self
+            id_and_inner = self
                 .block_production_scheduler_condvar
-                .wait_while(g, |g| {
-                    let not_yet = g.0.is_none();
+                .wait_while(id_and_inner, |id_and_inner| {
+                    let not_yet = id_and_inner.0.is_none();
                     if not_yet {
                         error!(
                             "will wait for bps..., slot: {}, mode: {:?}",
@@ -602,7 +602,7 @@ where
                     not_yet
                 })
                 .unwrap();
-            if let Some(inner) = g.1.take() {
+            if let Some(inner) = id_and_inner.1.take() {
                 S::from_inner(inner, context, result_with_timings)
             } else {
                 panic!("double take: {}", context.slot());
@@ -641,7 +641,7 @@ where
 
     pub fn spawn_block_production_scheduler(
         &self,
-        g: &mut MutexGuard<'_, (Option<SchedulerId>, Option<S::Inner>)>,
+        id_and_inner: &mut MutexGuard<'_, (Option<SchedulerId>, Option<S::Inner>)>,
     ) {
         info!("flash session: start!");
         let mut respawner_write = self.block_production_scheduler_respawner.lock().unwrap();
@@ -668,8 +668,8 @@ where
             Some(adapter),
         );
         let s = s.into_inner().1;
-        assert!(g.0.replace(s.id()).is_none());
-        assert!(g.1.replace(s).is_none());
+        assert!(id_and_inner.0.replace(s.id()).is_none());
+        assert!(id_and_inner.1.replace(s).is_none());
         self.block_production_scheduler_condvar.notify_all();
         info!("flash session: end!");
     }
