@@ -735,9 +735,14 @@ impl BankingStage {
                     //let mut m =
                     //    solana_svm::transaction_error_metrics::TransactionErrorMetrics::new();
                     let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
-                    let mut tasks = batches.0.iter().flat_map(|batch| {
-                        // over-provision
-                        let starting_task_id = adapter.bulk_assign_task_ids(batch.len() as u64);
+                    let mut tasks = batches.0.iter().map(|batch| {
+                        (
+                            batch,
+                            // over-provision
+                            adapter.bulk_assign_task_ids(batch.len() as u64),
+                        )
+                    })
+                        .flat_map(|(batch, starting_task_id)| {
 
                         let indexes = PacketDeserializer::generate_packet_indexes(batch);
                         let transactions =
