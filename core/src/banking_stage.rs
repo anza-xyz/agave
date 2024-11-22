@@ -766,7 +766,7 @@ impl BankingStage {
                             };
 
                             let (priority, _cost) = SchedulerController::<
-                                Arc<solana_gossip::cluster_info::ClusterInfo>,
+                                Arc<ClusterInfo>,
                             >::calculate_priority_and_cost(
                                 &transaction, &compute_budget_limits.into(), &bank
                             );
