@@ -739,10 +739,9 @@ impl BankingStage {
                         .flat_map(|batch| {
                             // over-provision nevertheless some of packets could be invalid.
                             let first_id = adapter.bulk_assign_task_ids(batch.len() as u64);
-                            let packets = PacketDeserializer::deserialize_packets_with_indexes(
-                                batch,
-                            )
-                            .zip(iter::repeat(first_id));
+                            let packets =
+                                PacketDeserializer::deserialize_packets_with_indexes(batch)
+                                    .zip(iter::repeat(first_id));
 
                             packets.filter_map(|((packet, packet_index), first_id)| {
                                 let (transaction, _) = packet.build_sanitized_transaction(
