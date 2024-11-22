@@ -747,7 +747,7 @@ impl BankingStage {
                             batch, &indexes,
                         )
                         .filter_map(|(packet_index, packet)| {
-                            let (transaction, _) = (&packet).build_sanitized_transaction(
+                            let transaction = packet.build_sanitized_transaction(
                                 bank.vote_only_bank(),
                                 &bank,
                                 bank.get_reserved_account_keys(),
