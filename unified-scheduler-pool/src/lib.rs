@@ -362,7 +362,7 @@ where
                                 drop(trashed_inner);
                             }
                             Some(BankingStageStatus::Exited) => {
-                                scheduler_pool.reset_respawner();
+                                scheduler_pool.unregister_banking_stage();
                                 info!("trashed sch {} IS Exited", trashed_inner.id());
                                 let id = trashed_inner.id();
                                 info!("dropping trashed sch {id}");
@@ -427,7 +427,7 @@ where
                                 false
                             }
                             Some(BankingStageStatus::Exited) => {
-                                scheduler_pool.reset_respawner();
+                                scheduler_pool.unregister_banking_stage();
                                 info!("sch {} IS Exited", pooled.id());
                                 exiting = true;
                                 true
@@ -650,7 +650,7 @@ where
         );
     }
 
-    fn reset_respawner(&self) {
+    fn unregister_banking_stage(&self) {
         *self.block_production_scheduler_respawner.lock().unwrap() = None;
     }
 
