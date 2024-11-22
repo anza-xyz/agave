@@ -705,7 +705,7 @@ impl BankingStage {
                     BankingStageStatus::Exited
                 } else if matches!(
                     self.0.make_consume_or_forward_decision(),
-                    BufferedPacketsDecision::Forward
+                    BufferedPacketsDecision::Forward,
                 ) {
                     BankingStageStatus::Inactive
                 } else {
