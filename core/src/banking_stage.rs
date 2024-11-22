@@ -727,7 +727,7 @@ impl BankingStage {
                     poh_recorder.read().unwrap().is_exited.clone(),
                 )));
 
-                let b = Box::new(move |batches: BankingPacketBatch| {
+                let b = Box::new(move |batches: BankingPacketBatch| -> Vec<Task> {
                     let decision = decision_maker.make_consume_or_forward_decision();
                     if matches!(decision, BufferedPacketsDecision::Forward) {
                         return vec![];
