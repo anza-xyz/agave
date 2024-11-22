@@ -2488,7 +2488,7 @@ where
             .is_overgrown(self.thread_manager.pool.max_usage_queue_count, on_hot_path)
     }
 
-    fn banking_stage_status(&self) -> BankingStageStatus {
+    fn banking_stage_status(&self) -> Option<BankingStageStatus> {
         self.task_creator.banking_stage_status()
     }
 
