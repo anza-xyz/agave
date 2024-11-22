@@ -691,7 +691,7 @@ impl BankingStage {
         // todo: forwarding
         let decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
 
-        struct S(DecisionMaker, Arc<AtomicBool>);
+        struct S(DecisionMaker);
 
         impl std::fmt::Debug for S {
             fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -701,7 +701,7 @@ impl BankingStage {
 
         impl BankingStageMonitor for S {
             fn banking_stage_status(&self) -> BankingStageStatus {
-                let r = if self.1.load(Ordering::Relaxed) {
+                let r = if self.0.should_exit() {
                     BankingStageStatus::Exited
                 } else if matches!(
                     self.0.make_consume_or_forward_decision(),
