@@ -345,6 +345,11 @@ where
                     (idle_inner_count, r)
                 };
 
+                if Some(BankingStageStatus::Exited) = scheduler_pool.banking_stage_status {
+                    scheduler_pool.unregister_banking_stage();
+                    exiting = true;
+                }
+
                 let trashed_inner_count = {
                     let Ok(mut trashed_scheduler_inners) =
                         scheduler_pool.trashed_scheduler_inners.lock()
@@ -355,24 +360,7 @@ where
                     drop(trashed_scheduler_inners);
 
                     let trashed_inner_count = trashed_inners.len();
-                    for trashed_inner in trashed_inners {
-                        match trashed_inner.banking_stage_status() {
-                            None
-                            | Some(BankingStageStatus::Active)
-                            | Some(BankingStageStatus::Inactive) => {
-                                drop(trashed_inner);
-                            }
-                            Some(BankingStageStatus::Exited) => {
-                                scheduler_pool.unregister_banking_stage();
-                                info!("trashed sch {} IS Exited", trashed_inner.id());
-                                let id = trashed_inner.id();
-                                info!("dropping trashed sch {id}");
-                                drop(trashed_inner);
-                                info!("dropped trashed sch {id}");
-                                exiting = true;
-                            }
-                        }
-                    }
+                    drop(trashed_inners);
                     trashed_inner_count
                 };
 
