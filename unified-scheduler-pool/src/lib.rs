@@ -2239,7 +2239,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
 pub trait SchedulerInner {
     fn id(&self) -> SchedulerId;
-    fn banking_stage_status(&self) -> BankingStageStatus;
+    fn banking_stage_status(&self) -> Option<BankingStageStatus>;
     fn is_overgrown(&self, on_hot_path: bool) -> bool;
     fn reset(&self);
 }
