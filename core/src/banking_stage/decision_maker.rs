@@ -7,7 +7,7 @@ use {
         },
         pubkey::Pubkey,
     },
-    std::sync::{atomic::Ordering, Arc, RwLock},
+    std::sync::{atomic::Ordering::Relaxed, Arc, RwLock},
 };
 
 #[derive(Debug, Clone)]
@@ -113,11 +113,7 @@ impl DecisionMaker {
     }
 
     pub(crate) fn should_exit(&self) -> bool {
-        self.poh_recorder
-            .read()
-            .unwrap()
-            .is_exited
-            .load(Ordering::Relaxed)
+        self.poh_recorder .read() .unwrap() .is_exited .load(Relaxed)
     }
 }
 
