@@ -632,7 +632,7 @@ where
         *self.block_production_scheduler_respawner.lock().unwrap() = None;
     }
 
-    fn status(&self) -> Option<BankingStageStatus> {
+    fn banking_stage_status(&self) -> Option<BankingStageStatus> {
         self.block_production_scheduler_respawner.lock().unwrap().as_ref().map(|a| a.banking_stage_monitor.status())
     }
 
