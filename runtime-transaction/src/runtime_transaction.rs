@@ -11,6 +11,8 @@
 //!    with its dynamic metadata loaded.
 use {
     crate::{
+        allocation_instruction_details::AllocationInstructionDetails,
+        builtin_instruction_details::BuiltinInstructionDetails,
         compute_budget_instruction_details::*,
         transaction_meta::{DynamicMeta, StaticMeta, TransactionMeta},
     },
@@ -56,6 +58,17 @@ impl<T> StaticMeta for RuntimeTransaction<T> {
         self.meta
             .compute_budget_instruction_details
             .sanitize_and_convert_to_compute_budget_limits()
+    }
+    fn is_compute_budget_limit_set(&self) -> bool {
+        self.meta
+            .compute_budget_instruction_details
+            .is_compute_budget_limit_set()
+    }
+    fn builtin_instruction_details(&self) -> &BuiltinInstructionDetails {
+        &self.meta.builtin_instruction_details
+    }
+    fn allocation_instruction_details(&self) -> &AllocationInstructionDetails {
+        &self.meta.allocation_instruction_details
     }
 }
 

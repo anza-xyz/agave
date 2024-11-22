@@ -47,6 +47,10 @@ impl ComputeBudgetInstructionDetails {
         Ok(compute_budget_instruction_details)
     }
 
+    pub fn is_compute_budget_limit_set(&self) -> bool {
+        self.requested_compute_unit_limit.is_some()
+    }
+
     pub fn sanitize_and_convert_to_compute_budget_limits(&self) -> Result<ComputeBudgetLimits> {
         // Sanitize requested heap size
         let updated_heap_bytes =

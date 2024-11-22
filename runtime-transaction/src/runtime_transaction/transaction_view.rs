@@ -1,6 +1,8 @@
 use {
     super::{ComputeBudgetInstructionDetails, RuntimeTransaction},
     crate::{
+        allocation_instruction_details::AllocationInstructionDetails,
+        builtin_instruction_details::BuiltinInstructionDetails,
         signature_details::get_precompile_signature_details, transaction_meta::TransactionMeta,
     },
     agave_transaction_view::{
@@ -50,6 +52,13 @@ impl<D: TransactionData> RuntimeTransaction<SanitizedTransactionView<D>> {
         );
         let compute_budget_instruction_details =
             ComputeBudgetInstructionDetails::try_from(transaction.program_instructions_iter())?;
+        let builtin_instruction_details = BuiltinInstructionDetails::process_instructions(
+            transaction.program_instructions_iter(),
+        );
+        let allocation_instruction_details = AllocationInstructionDetails::process_instructions(
+            transaction.program_instructions_iter(),
+        )
+        .unwrap_or_default();
 
         Ok(Self {
             transaction,
@@ -58,6 +67,8 @@ impl<D: TransactionData> RuntimeTransaction<SanitizedTransactionView<D>> {
                 is_simple_vote_transaction: is_simple_vote_tx,
                 signature_details,
                 compute_budget_instruction_details,
+                builtin_instruction_details,
+                allocation_instruction_details,
             },
         })
     }

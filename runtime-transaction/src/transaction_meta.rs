@@ -12,7 +12,11 @@
 //! RuntimeTransaction types, not the TransactionMeta itself.
 //!
 use {
-    crate::compute_budget_instruction_details::ComputeBudgetInstructionDetails,
+    crate::{
+        allocation_instruction_details::AllocationInstructionDetails,
+        builtin_instruction_details::BuiltinInstructionDetails,
+        compute_budget_instruction_details::ComputeBudgetInstructionDetails,
+    },
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_sdk::{
         feature_set::FeatureSet, hash::Hash, message::TransactionSignatureDetails,
@@ -27,6 +31,9 @@ pub trait StaticMeta {
     fn is_simple_vote_transaction(&self) -> bool;
     fn signature_details(&self) -> &TransactionSignatureDetails;
     fn compute_budget_limits(&self, feature_set: &FeatureSet) -> Result<ComputeBudgetLimits>;
+    fn is_compute_budget_limit_set(&self) -> bool;
+    fn builtin_instruction_details(&self) -> &BuiltinInstructionDetails;
+    fn allocation_instruction_details(&self) -> &AllocationInstructionDetails;
 }
 
 /// Statically loaded meta is a supertrait of Dynamically loaded meta, when
@@ -43,4 +50,6 @@ pub struct TransactionMeta {
     pub(crate) is_simple_vote_transaction: bool,
     pub(crate) signature_details: TransactionSignatureDetails,
     pub(crate) compute_budget_instruction_details: ComputeBudgetInstructionDetails,
+    pub(crate) builtin_instruction_details: BuiltinInstructionDetails,
+    pub(crate) allocation_instruction_details: AllocationInstructionDetails,
 }
