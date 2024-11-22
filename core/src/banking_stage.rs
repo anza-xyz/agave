@@ -777,7 +777,7 @@ impl BankingStage {
                                 });
 
                         for (transaction, index) in transactions {
-                            /*if let Some(task) = */adapter.create_task(&(&transaction, index)) /* {
+                            /*if let Some(task) = */adapter.create_task(&(&transaction, index)) /* { */
                                 //if bank.check_transactions(
                                 //    &[&a],
                                 //    &[Ok(())],
