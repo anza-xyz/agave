@@ -767,7 +767,7 @@ impl BankingStage {
                                 >::calculate_priority_and_cost(
                                     &transaction, &fb.into(), &bank
                                 );
-                                let i =
+                                let index =
                                     ((u64::MAX - priority) as u128) << 64 | task_ids[*i] as TaskKey;
 
                                 Some((transaction, index))
