@@ -638,7 +638,7 @@ where
     pub fn prepare_to_spawn_block_production_scheduler(
         &self,
         banking_packet_receiver: BankingPacketReceiver,
-        on_spawn_block_production_scheduler: Bbb,
+        on_spawn_block_production_scheduler: BatchConverterCreator,
     ) {
         *self.block_production_scheduler_respawner.lock().unwrap() =
             Some(BlockProductionSchedulerRespawner {
