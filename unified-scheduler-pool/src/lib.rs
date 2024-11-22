@@ -317,7 +317,6 @@ where
                     .clone()
                     .or_else(|| weak_scheduler_pool.upgrade())
                 else {
-                    error!("weak pool!");
                     break;
                 };
 
@@ -384,7 +383,6 @@ where
                     // Pre-allocate rather large capacity to avoid reallocation inside the lock.
                     let mut expired_listeners = Vec::with_capacity(128);
                     let Ok(mut timeout_listeners) = scheduler_pool.timeout_listeners.lock() else {
-                        error!("poison3!");
                         break;
                     };
                     #[allow(unstable_name_collisions)]
