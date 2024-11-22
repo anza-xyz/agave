@@ -221,7 +221,7 @@ impl PacketDeserializer {
         packet_batch: &'a PacketBatch,
         packet_indexes: Vec<usize>,
     ) -> impl Iterator<Item = (ImmutableDeserializedPacket, usize)> + 'a {
-        packet_indexes.iter().filter_map(move |&index| {
+        packet_indexes.into_iter().filter_map(move |&index| {
             let packet = packet_batch[index].clone();
             ImmutableDeserializedPacket::new(packet)
                 .ok()
