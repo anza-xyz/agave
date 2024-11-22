@@ -516,8 +516,7 @@ where
         let id = scheduler.id();
         debug!("return_scheduler(): id: {id} should_trash: {should_trash}");
         let mut id_and_inner = self.block_production_scheduler_inner.lock().unwrap();
-        let bp_id: Option<SchedulerId> = id_and_inner.0.as_ref().copied();
-        let is_block_production_scheduler_returned = Some(id) == bp_id;
+        let is_block_production_scheduler_returned = Some(id) == id_and_inner.0.as_ref().copied();
 
         if should_trash {
             // Delay drop()-ing this trashed returned scheduler inner by stashing it in
