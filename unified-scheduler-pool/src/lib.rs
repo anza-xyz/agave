@@ -154,18 +154,18 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(3);
 // because UsageQueueLoader won't grow that much to begin with.
 const DEFAULT_MAX_USAGE_QUEUE_COUNT: usize = 262_144;
 
-pub trait AAA: DynClone + (FnMut(BankingPacketBatch) -> Vec<Task>) + Send {}
+pub trait BatchConverter: DynClone + (FnMut(BankingPacketBatch) -> Vec<Task>) + Send {}
 
-impl<T> AAA for T where T: DynClone + (FnMut(BankingPacketBatch) -> Vec<Task>) + Send {}
+impl<T> BatchConverter for T where T: DynClone + (FnMut(BankingPacketBatch) -> Vec<Task>) + Send {}
 
-clone_trait_object!(AAA);
+clone_trait_object!(BatchConverter);
 
-type Bbb = Box<dyn (FnMut(Arc<BankingStageAdapter>) -> Box<dyn AAA>) + Send>;
+type BatchConverterCreator = Box<dyn (FnMut(Arc<BankingStageAdapter>) -> Box<dyn BatchConverter>) + Send>;
 
 #[derive(derive_more::Debug)]
 struct BlockProductionSchedulerRespawner {
     #[debug("{on_spawn_block_production_scheduler:p}")]
-    on_spawn_block_production_scheduler: Bbb,
+    on_spawn_block_production_scheduler: BatchConverterCreator,
     banking_packet_receiver: BankingPacketReceiver,
 }
 
