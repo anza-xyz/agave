@@ -735,14 +735,13 @@ impl BankingStage {
                     //let mut m =
                     //    solana_svm::transaction_error_metrics::TransactionErrorMetrics::new();
                     let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
-                    let tasks = batches
+                    batches
                         .0
                         .iter()
                         .flat_map(|batch| {
                             // over-provision
                             let starting_task_id = adapter.bulk_assign_task_ids(batch.len() as u64);
                             let indexes = PacketDeserializer::generate_packet_indexes(batch);
-                            let transactions =
                                 PacketDeserializer::deserialize_packets_with_indexes(
                                     batch, indexes,
                                 )
@@ -783,30 +782,9 @@ impl BankingStage {
 
                                         adapter.create_task(transaction, index)
                                     },
-                                );
-
-                            /*
-                            for (transaction, index) in transactions {
-                                if let Some(task) = adapter.create_task(&(&transaction, index)) {
-                                    //if bank.check_transactions(
-                                    //    &[&a],
-                                    //    &[Ok(())],
-                                    //    solana_sdk::clock::MAX_PROCESSING_AGE,
-                                    //    &mut m,
-                                    //)[0]
-                                    //.is_ok()
-                                    //{
-                                    tasks.push(task);
-                                    //} else {
-                                    ////info!("failed check");
-                                    //}
-                                }
-                            }
-                            */
-                            transactions
+                                )
                         })
-                        .collect::<Vec<_>>();
-                    tasks
+                        .collect()
                 });
                 info!("on_block_production_scheduler_spawn: end!");
                 b
