@@ -716,8 +716,10 @@ impl BankingStage {
 
                 Box::new(move |batches: BankingPacketBatch| -> Box<dyn Iterator<Item = Task>> {
                     let decision = decision_maker.make_consume_or_forward_decision();
-                    if matches!(decision, BufferedPacketsDecision::Forward) {
-                        return vec![];
+                    let batches = if matches!(decision, BufferedPacketsDecision::Forward) {
+                        &[]
+                    } else {
+                        batches
                     }
                     let bank = bank_forks.read().unwrap().working_bank();
                     let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
