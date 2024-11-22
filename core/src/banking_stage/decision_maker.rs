@@ -113,8 +113,8 @@ impl DecisionMaker {
     }
 }
 
-use crate::banking_stage::BankingStageStatus;
 use solana_unified_scheduler_pool::BankingStageStatus;
+use solana_unified_scheduler_pool::BankingStageMonitor;
 
 impl BankingStageMonitor for DecisionMaker {
     fn status(&self) -> BankingStageStatus {
