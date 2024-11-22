@@ -758,8 +758,7 @@ impl BankingStage {
                             )
                             .ok()?;
 
-                            type SchedulerController = SchedulerController::<Arc<ClusterInfo>>;
-                            let (priority, _cost) = SchedulerController::calculate_priority_and_cost(
+                            let (priority, _cost) = calculate_priority_and_cost(
                                 &transaction,
                                 &compute_budget_limits.into(),
                                 &bank,
