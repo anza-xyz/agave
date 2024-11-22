@@ -1131,16 +1131,16 @@ impl TaskCreator {
         }
     }
 
-    fn banking_stage_status(&self) -> BankingStageStatus {
+    fn banking_stage_status(&self) -> Option<BankingStageStatus> {
         use TaskCreator::*;
 
         match self {
             BlockVerification {
                 usage_queue_loader: _,
-            } => BankingStageStatus::NotBanking,
+            } => None,
             BlockProduction {
                 banking_stage_adapter,
-            } => banking_stage_adapter.banking_stage_status(),
+            } => Some(banking_stage_adapter.banking_stage_status(),)
         }
     }
 
