@@ -772,8 +772,7 @@ impl BankingStage {
                                     ((u64::MAX - priority) as u128) << 64 | task_ids[*i] as TaskKey;
 
                                 Some((tx, i))
-                            })
-                            .collect::<Vec<_>>();
+                            });
 
                         for (a, b) in ppp {
                             if let Some(task) = adapter.create_task(&(&a, b)) {
