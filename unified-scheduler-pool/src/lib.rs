@@ -390,7 +390,7 @@ where
 
                 info!("Scheduler pool cleaner: block_production_scheduler_inner!!!",);
 
-                if let Some(BankingStageStatus::Inactive) = (!exiting).then_some(banking_stage_status) {
+                if let Some(BankingStageStatus::Inactive) = banking_stage_status {
                     let mut id_and_inner = scheduler_pool
                         .block_production_scheduler_inner
                         .lock()
@@ -528,7 +528,7 @@ where
                 .expect("not poisoned")
                 .push(scheduler);
 
-            if is_block_production_scheduler_returned {
+            if is_block_production_scheduler_returned && !matches(self.banking_stage_status(), Some(BankingStageStatus::Exited)) {
                 info!("respawning on trashd scheduler...");
                 id_and_inner.0.take();
                 self.spawn_block_production_scheduler(&mut id_and_inner);
