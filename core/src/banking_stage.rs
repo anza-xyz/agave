@@ -720,7 +720,6 @@ impl BankingStage {
         unified_scheduler_pool.prepare_to_spawn_block_production_scheduler(
             non_vote_receiver,
             Box::new(move |adapter: Arc<BankingStageAdapter>| {
-                info!("on_block_production_scheduler_spawn: start!");
                 let decision_maker = decision_maker.clone();
                 let bank_forks = bank_forks.clone();
                 *adapter.idling_detector.lock().unwrap() = Some(Box::new(S(
@@ -728,7 +727,7 @@ impl BankingStage {
                     poh_recorder.read().unwrap().is_exited.clone(),
                 )));
 
-                let b = Box::new(move |batches: BankingPacketBatch| -> Vec<Task> {
+                Box::new(move |batches: BankingPacketBatch| -> Vec<Task> {
                     let decision = decision_maker.make_consume_or_forward_decision();
                     if matches!(decision, BufferedPacketsDecision::Forward) {
                         return vec![];
@@ -786,9 +785,7 @@ impl BankingStage {
                                 )
                         })
                         .collect()
-                });
-                info!("on_block_production_scheduler_spawn: end!");
-                b
+                })
             }),
         );
 
