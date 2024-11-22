@@ -3875,7 +3875,7 @@ mod tests {
             42
         }
 
-        fn banking_stage_status(&self) -> BankingStageStatus {
+        fn banking_stage_status(&self) -> Option<BankingStageStatus> {
             todo!()
         }
 
