@@ -666,7 +666,7 @@ where
         let BlockProductionSchedulerRespawner {
             banking_packet_receiver,
             on_spawn_block_production_scheduler,
-            baking_stage_monitor: _,
+            banking_stage_monitor: _,
         } = &mut *respawner_write.as_mut().unwrap();
 
         let adapter = Arc::new(BankingStageAdapter {
