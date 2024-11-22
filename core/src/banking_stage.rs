@@ -740,31 +740,30 @@ impl BankingStage {
                             // over-provision nevertheless some of packets could be invalid.
                             let first_id = adapter.bulk_assign_task_ids(batch.len() as u64);
                             let indexes = PacketDeserializer::generate_packet_indexes(batch);
-                            let packets = PacketDeserializer::deserialize_packets_with_indexes(batch, indexes).zip(iter::repeat(first_id));
+                            let packets = PacketDeserializer::deserialize_packets_with_indexes(
+                                batch, indexes,
+                            )
+                            .zip(iter::repeat(first_id));
 
-                            
                             packets.filter_map(|((packet, packet_index), first_id)| {
-                                    let (transaction, _) = packet.build_sanitized_transaction(
-                                        bank.vote_only_bank(),
-                                        &bank,
-                                        bank.get_reserved_account_keys(),
-                                    )?;
+                                let (transaction, _) = packet.build_sanitized_transaction(
+                                    bank.vote_only_bank(),
+                                    &bank,
+                                    bank.get_reserved_account_keys(),
+                                )?;
 
-                                    SanitizedTransaction::validate_account_locks(
-                                        transaction.message(),
-                                        transaction_account_lock_limit,
-                                    )
-                                    .ok()?;
+                                SanitizedTransaction::validate_account_locks(
+                                    transaction.message(),
+                                    transaction_account_lock_limit,
+                                )
+                                .ok()?;
 
-                                    let compute_budget_limits =
-                                        process_compute_budget_instructions(
-                                            SVMMessage::program_instructions_iter(
-                                                transaction.message(),
-                                            ),
-                                        )
-                                        .ok()?;
+                                let compute_budget_limits = process_compute_budget_instructions(
+                                    SVMMessage::program_instructions_iter(transaction.message()),
+                                )
+                                .ok()?;
 
-                                    let (priority, _cost) = SchedulerController::<
+                                let (priority, _cost) = SchedulerController::<
                                             Arc<ClusterInfo>,
                                         >::calculate_priority_and_cost(
                                             &transaction,
@@ -772,12 +771,12 @@ impl BankingStage {
                                             &bank,
                                         );
 
-                                    let reversed_priority = (u64::MAX - priority) as TaskKey;
-                                    let task_id = (first_id + packet_index as u64) as TaskKey;
-                                    let index = reversed_priority << 64 | task_id;
+                                let reversed_priority = (u64::MAX - priority) as TaskKey;
+                                let task_id = (first_id + packet_index as u64) as TaskKey;
+                                let index = reversed_priority << 64 | task_id;
 
-                                    adapter.create_task(transaction, index)
-                                })
+                                adapter.create_task(transaction, index)
+                            })
                         })
                         .collect()
                 })
