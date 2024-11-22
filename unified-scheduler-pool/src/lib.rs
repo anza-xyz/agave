@@ -638,6 +638,7 @@ where
     pub fn register_banking_stage(
         &self,
         banking_packet_receiver: BankingPacketReceiver,
+        banking_stage_monitor: Box<dyn BankingStageMonitor>,
         on_spawn_block_production_scheduler: BatchConverterCreator,
     ) {
         *self.block_production_scheduler_respawner.lock().unwrap() =
