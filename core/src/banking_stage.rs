@@ -770,7 +770,7 @@ impl BankingStage {
                                 &transaction, &compute_budget_limits.into(), &bank,
                             );
                             let index = ((u64::MAX - priority) as TaskKey) << 64
-                                | task_ids[*packet_index] as TaskKey;
+                                | task_ids[packet_index] as TaskKey;
 
                             Some((transaction, index))
                         });
