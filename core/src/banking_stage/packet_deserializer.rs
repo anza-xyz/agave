@@ -217,7 +217,7 @@ impl PacketDeserializer {
         })
     }
 
-    pub(crate) fn deserialize_packets2<'a>(
+    pub(crate) fn deserialize_packets_with_indexes<'a>(
         packet_batch: &'a PacketBatch,
         packet_indexes: &'a [usize],
     ) -> impl Iterator<Item = (&'a usize, ImmutableDeserializedPacket)> + 'a {

@@ -743,7 +743,7 @@ impl BankingStage {
                             (task_id..(task_id + batch.len() as u64)).collect::<Vec<_>>();
 
                         let indexes = PacketDeserializer::generate_packet_indexes(batch);
-                        let transactions = PacketDeserializer::deserialize_packets2(
+                        let transactions = PacketDeserializer::deserialize_packets_with_indexes(
                             batch, &indexes,
                         )
                         .filter_map(|(packet_index, packet)| {
