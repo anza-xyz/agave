@@ -712,11 +712,8 @@ impl BankingStage {
             unified_receiver,
             Box::new(decision_maker.clone()),
             Box::new(move |adapter: Arc<BankingStageAdapter>| {
-                let decision_maker = decision_maker.clone();
-                let bank_forks = bank_forks.clone();
-
                 Box::new(move |batches: BankingPacketBatch| -> Box<dyn Iterator<Item = Task> + 'static> {
-                    let bank = bank_forks.read().unwrap().working_bank();
+                    let bank = panic!();
                     let transactions = [].iter().zip(iter::repeat(bank)).flat_map(|(batch, bank): (&PacketBatch, _)| {
                         // over-provision nevertheless some of packets could be invalid.
                         let task_id_base = adapter.bulk_assign_task_ids(batch.len() as u64);
