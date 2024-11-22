@@ -715,7 +715,6 @@ impl BankingStage {
                 r
             }
         }
-        let poh_recorder = poh_recorder.clone();
 
         unified_scheduler_pool.prepare_to_spawn_block_production_scheduler(
             non_vote_receiver,
