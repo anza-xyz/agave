@@ -49,9 +49,10 @@ use {
         transaction::SanitizedTransaction,
     },
     solana_svm_transaction::svm_message::SVMMessage,
+    solana_unified_scheduler_logic::Task,
     solana_unified_scheduler_pool::{BankingStageAdapter, BankingStageMonitor, BankingStageStatus},
     std::{
-        cmp, env,
+        cmp, env, iter,
         ops::Deref,
         sync::{
             atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -61,8 +62,6 @@ use {
         time::{Duration, Instant},
     },
 };
-use std::iter;
-use solana_unified_scheduler_logic::Task;
 
 // Below modules are pub to allow use by banking_stage bench
 pub mod committer;
@@ -742,47 +741,43 @@ impl BankingStage {
                             let starting_task_id = adapter.bulk_assign_task_ids(batch.len() as u64);
                             let indexes = PacketDeserializer::generate_packet_indexes(batch);
 
-                                PacketDeserializer::deserialize_packets_with_indexes(
-                                    batch, indexes,
-                                )
+                            PacketDeserializer::deserialize_packets_with_indexes(batch, indexes)
                                 .zip(iter::repeat(starting_task_id))
-                                .filter_map(
-                                    |((packet, packet_index), starting_task_id)| {
-                                        let (transaction, _) = packet.build_sanitized_transaction(
-                                            bank.vote_only_bank(),
-                                            &bank,
-                                            bank.get_reserved_account_keys(),
-                                        )?;
+                                .filter_map(|((packet, packet_index), starting_task_id)| {
+                                    let (transaction, _) = packet.build_sanitized_transaction(
+                                        bank.vote_only_bank(),
+                                        &bank,
+                                        bank.get_reserved_account_keys(),
+                                    )?;
 
-                                        SanitizedTransaction::validate_account_locks(
-                                            transaction.message(),
-                                            transaction_account_lock_limit,
+                                    SanitizedTransaction::validate_account_locks(
+                                        transaction.message(),
+                                        transaction_account_lock_limit,
+                                    )
+                                    .ok()?;
+
+                                    let compute_budget_limits =
+                                        process_compute_budget_instructions(
+                                            SVMMessage::program_instructions_iter(
+                                                transaction.message(),
+                                            ),
                                         )
                                         .ok()?;
 
-                                        let compute_budget_limits =
-                                            process_compute_budget_instructions(
-                                                SVMMessage::program_instructions_iter(
-                                                    transaction.message(),
-                                                ),
-                                            )
-                                            .ok()?;
-
-                                        let (priority, _cost) = SchedulerController::<
+                                    let (priority, _cost) = SchedulerController::<
                                             Arc<ClusterInfo>,
                                         >::calculate_priority_and_cost(
                                             &transaction,
                                             &compute_budget_limits.into(),
                                             &bank,
                                         );
-                                        let reversed_priority = (u64::MAX - priority) as TaskKey;
-                                        let task_id =
-                                            (starting_task_id + packet_index as u64) as TaskKey;
-                                        let index = reversed_priority << 64 | task_id;
+                                    let reversed_priority = (u64::MAX - priority) as TaskKey;
+                                    let task_id =
+                                        (starting_task_id + packet_index as u64) as TaskKey;
+                                    let index = reversed_priority << 64 | task_id;
 
-                                        adapter.create_task(transaction, index)
-                                    },
-                                )
+                                    adapter.create_task(transaction, index)
+                                })
                         })
                         .collect()
                 })
