@@ -713,7 +713,7 @@ impl BankingStage {
             Box::new(decision_maker.clone()),
             Box::new(move |adapter: Arc<BankingStageAdapter>| {
                 let decision_maker = decision_maker.clone();
-                let bank_forks = bank_forks.clone();
+                let bank_forks = panic!(); //bank_forks.clone();
 
                 Box::new(move |batches: BankingPacketBatch| -> Box<dyn Iterator<Item = Task>> {
                     let decision = decision_maker.make_consume_or_forward_decision();
@@ -722,7 +722,7 @@ impl BankingStage {
                     } else {
                         &batches.0
                     };
-                    let bank: Arc<solana_runtime::bank::Bank> = panic!(); //bank_forks.read().unwrap().working_bank();
+                    let bank: Arc<solana_runtime::bank::Bank> = bank_forks.read().unwrap().working_bank();
                     let transactions = [].iter().zip(iter::repeat(bank)).flat_map(|(batch, bank): (&PacketBatch, _)| {
                         // over-provision nevertheless some of packets could be invalid.
                         let task_id_base = adapter.bulk_assign_task_ids(batch.len() as u64);
