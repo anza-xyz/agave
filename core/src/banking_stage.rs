@@ -722,7 +722,7 @@ impl BankingStage {
                     } else {
                         &batches.0
                     };
-                    let bank: usize = bank_forks.read().unwrap().working_bank();
+                    let bank: Arc<Bank> = bank_forks.read().unwrap().working_bank();
                     let transactions = [].iter().zip(iter::repeat(bank)).flat_map(|(batch, bank): (&PacketBatch, _)| {
                         // over-provision nevertheless some of packets could be invalid.
                         let task_id_base = adapter.bulk_assign_task_ids(batch.len() as u64);
