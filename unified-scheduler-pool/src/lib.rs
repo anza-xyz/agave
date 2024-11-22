@@ -160,7 +160,7 @@ impl<T> BatchConverter for T where T: DynClone + (FnMut(BankingPacketBatch) -> B
 
 clone_trait_object!(BatchConverter);
 
-type BatchConverterCreator = Box<dyn (FnMut(Arc<BankingStageAdapter>) -> Box<dyn BatchConverter>) + Send>;
+type BatchConverterCreator = Box<dyn (FnMut(Arc<BankingStageAdapter>) -> Box<dyn BatchConverter>) + Send + 'static>;
 
 #[derive(derive_more::Debug)]
 struct BlockProductionSchedulerRespawner {
