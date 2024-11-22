@@ -40,6 +40,7 @@ solana-message = { path = ".", features = ["dev-context-only-utils"] }
 solana-nonce = { workspace = true }
 solana-program = { path = "../program" }
 solana-sha256-hasher = { workspace = true }
+solana-sysvar = { workspace = true }
 static_assertions = { workspace = true }
 
 [features]

@@ -1019,4 +1019,9 @@ mod tests {
             Hash::from_str("7VWCF4quo2CcWQFNUayZiorxpiR5ix8YzLebrXKf3fMF").unwrap()
         )
     }
+
+    #[test]
+    fn test_inline_all_ids() {
+        assert_eq!(solana_sysvar::ALL_IDS.to_vec(), ALL_IDS.to_vec());
+    }
 }

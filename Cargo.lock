@@ -7553,6 +7553,7 @@ dependencies = [
  "solana-sha256-hasher",
  "solana-short-vec",
  "solana-system-interface",
+ "solana-sysvar",
  "solana-transaction-error",
  "static_assertions",
 ]
