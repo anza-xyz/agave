@@ -154,13 +154,13 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(3);
 // because UsageQueueLoader won't grow that much to begin with.
 const DEFAULT_MAX_USAGE_QUEUE_COUNT: usize = 262_144;
 
-pub trait BatchConverter: DynClone + (FnMut(BankingPacketBatch) -> Box<dyn Iterator<Item = Task>>) + Send {}
+pub trait BatchConverter: DynClone + (FnMut(BankingPacketBatch) -> Vec<Task>) + Send {}
 
-impl<T> BatchConverter for T where T: DynClone + (FnMut(BankingPacketBatch) -> Box<dyn Iterator<Item = Task>>) + Send {}
+impl<T> BatchConverter for T where T: DynClone + (FnMut(BankingPacketBatch) -> Vec<Task>) + Send {}
 
 clone_trait_object!(BatchConverter);
 
-type BatchConverterCreator = Box<dyn (FnMut(Arc<BankingStageAdapter>) -> Box<dyn BatchConverter>) + Send + 'static>;
+type BatchConverterCreator = Box<dyn (FnMut(Arc<BankingStageAdapter>) -> Box<dyn BatchConverter>) + Send>;
 
 #[derive(derive_more::Debug)]
 struct BlockProductionSchedulerRespawner {
@@ -605,7 +605,7 @@ where
                     self.self_arc(),
                     context,
                     result_with_timings,
-                    None::<(_, fn(BankingPacketBatch) -> Box<dyn Iterator<Item = Task>>)>,
+                    None::<(_, fn(BankingPacketBatch) -> Vec<Task>)>,
                     None,
                 )
             }
@@ -1397,7 +1397,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         mut result_with_timings: ResultWithTimings,
         banking_stage_context: Option<(
             BankingPacketReceiver,
-            impl FnMut(BankingPacketBatch) -> Box<dyn Iterator<Item = Task>> + Clone + Send + 'static,
+            impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static,
         )>,
         adapter: Option<Arc<BankingStageAdapter>>,
     ) {
@@ -2259,7 +2259,7 @@ pub trait SpawnableScheduler<TH: TaskHandler>: InstalledScheduler {
         result_with_timings: ResultWithTimings,
         banking_stage_context: Option<(
             BankingPacketReceiver,
-            impl FnMut(BankingPacketBatch) -> Box<dyn Iterator<Item = Task>> + Clone + Send + 'static,
+            impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static,
         )>,
         banking_stage_adapter: Option<Arc<BankingStageAdapter>>,
     ) -> Self
@@ -2296,7 +2296,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
         result_with_timings: ResultWithTimings,
         banking_stage_context: Option<(
             BankingPacketReceiver,
-            impl FnMut(BankingPacketBatch) -> Box<dyn Iterator<Item = Task>> + Clone + Send + 'static,
+            impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static,
         )>,
         banking_stage_adapter: Option<Arc<BankingStageAdapter>>,
     ) -> Self {
@@ -3906,7 +3906,7 @@ mod tests {
             _result_with_timings: ResultWithTimings,
             _banking_stage_context: Option<(
                 BankingPacketReceiver,
-                impl FnMut(BankingPacketBatch) -> Box<dyn Iterator<Item = Task>> + Clone + Send + 'static,
+                impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static,
             )>,
             _banking_stage_adapter: Option<Arc<BankingStageAdapter>>,
         ) -> Self {

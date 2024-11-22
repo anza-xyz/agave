@@ -63,7 +63,6 @@ use {
         time::{Duration, Instant},
     },
 };
-use solana_perf::packet::PacketBatch;
 
 // Below modules are pub to allow use by banking_stage bench
 pub mod committer;
@@ -713,24 +712,23 @@ impl BankingStage {
             Box::new(decision_maker.clone()),
             Box::new(move |adapter: Arc<BankingStageAdapter>| {
                 let decision_maker = decision_maker.clone();
+                let bank_forks = bank_forks.clone();
 
-                Box::new(move |batches: BankingPacketBatch| -> Box<dyn Iterator<Item = Task>> {
-                let bank_forks: Arc<RwLock<BankForks>> = panic!(); //bank_forks.clone();
+                Box::new(move |batches: BankingPacketBatch| -> Vec<Task> {
                     let decision = decision_maker.make_consume_or_forward_decision();
-                    let batches = if matches!(decision, BufferedPacketsDecision::Forward) {
-                        &Vec::new()
-                    } else {
-                        &batches.0
-                    };
-                    let bank: Arc<solana_runtime::bank::Bank> = bank_forks.read().unwrap().working_bank();
-                    let transactions = [].iter().zip(iter::repeat(bank)).flat_map(|(batch, bank): (&PacketBatch, _)| {
+                    if matches!(decision, BufferedPacketsDecision::Forward) {
+                        return vec![];
+                    }
+                    let bank = bank_forks.read().unwrap().working_bank();
+                    let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
+                    let batches = batches.0.iter();
+                    let transactions = batches.flat_map(|batch| {
                         // over-provision nevertheless some of packets could be invalid.
                         let task_id_base = adapter.bulk_assign_task_ids(batch.len() as u64);
-                        let packets = PacketDeserializer::deserialize_packets_with_indexes(&batch)
-                            .zip(iter::repeat::<(_, Arc<solana_runtime::bank::Bank>)>((task_id_base, bank)));
+                        let packets = PacketDeserializer::deserialize_packets_with_indexes(batch)
+                            .zip(iter::repeat(task_id_base));
 
-                        packets.filter_map(|((packet, packet_index), (task_id_base, bank))| {
-                            let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
+                        packets.filter_map(|((packet, packet_index), task_id_base)| {
                             let (transaction, _) = packet.build_sanitized_transaction(
                                 bank.vote_only_bank(),
                                 &bank,
@@ -762,7 +760,7 @@ impl BankingStage {
                         })
                     });
 
-                    Box::new(transactions)
+                    transactions.collect()
                 })
             }),
         );
