@@ -724,8 +724,8 @@ impl BankingStage {
                         &batches.0
                     };
                     let bank = bank_forks.read().unwrap().working_bank();
-                    let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
                     let transactions = batches.iter().zip(iter::repeat(bank)).flat_map(|(batch, bank)| {
+                        let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
                         // over-provision nevertheless some of packets could be invalid.
                         let task_id_base = adapter.bulk_assign_task_ids(batch.len() as u64);
                         let packets = PacketDeserializer::deserialize_packets_with_indexes(batch)
