@@ -773,7 +773,7 @@ impl BankingStage {
                                         (starting_task_id + packet_index as u64) as TaskKey;
                                     let index = reversed_priority << 64 | task_id;
 
-                                    Some((transaction, index))
+                                    adapter.create_task(transaction, index)
                                 });
 
                         /*
