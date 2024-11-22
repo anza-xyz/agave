@@ -10,6 +10,7 @@ use {
         net::{IpAddr, SocketAddr},
         path::PathBuf,
     },
+    url::Url,
 };
 
 pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER: usize = 8;

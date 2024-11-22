@@ -5,17 +5,20 @@ use {
     solana_core::banking_trace::BankingTracer,
     solana_logger::redirect_stderr_to_file,
     solana_net_utils::{bind_in_range_with_config, SocketConfig},
-    solana_sdk::{signature::read_keypair_file, signer::Signer},
+    solana_sdk::{signature::read_keypair_file, pubkey::Pubkey, signer::Signer},
     solana_streamer::streamer::StakedNodes,
     solana_vortexor::{
         cli::Cli,
+        load_balancer::LoadBalancer,
         sender::{
             PacketBatchSender, DEFAULT_BATCH_SIZE, DEFAULT_RECV_TIMEOUT,
             DEFAULT_SENDER_THREADS_COUNT,
         },
+        stake_updater::StakeUpdater,
         vortexor::Vortexor,
     },
     std::{
+        collections::{HashMap, HashSet},
         env,
         net::IpAddr,
         sync::{atomic::AtomicBool, Arc, RwLock},
@@ -98,6 +101,22 @@ pub fn main() {
 
     let destinations = args.destination;
 
+    let rpc_servers = values_t!(matches, "rpc_server", String)
+        .unwrap_or_default()
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    let websocket_servers = values_t!(matches, "websocket_server", String)
+        .unwrap_or_default()
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    let servers = rpc_servers
+        .iter()
+        .zip(websocket_servers.iter())
+        .map(|(rpc, ws)| (rpc.clone(), ws.clone()))
+        .collect::<Vec<_>>();
+
     info!("Creating the PacketBatchSender: at address: {:?} for the following initial destinations: {destinations:?}",
         sender_socket.1.local_addr());
 
@@ -116,6 +135,17 @@ pub fn main() {
 
     // To be linked with StakedNodes service.
     let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
+    let staked_nodes_overrides: HashMap<Pubkey, u64> = HashMap::new();
+
+    let (rpc_load_balancer, _slot_receiver) = LoadBalancer::new(&servers, &exit);
+    let rpc_load_balancer = Arc::new(rpc_load_balancer);
+
+    let staked_nodes_updater_service = StakeUpdater::new(
+        exit.clone(),
+        rpc_load_balancer.clone(),
+        staked_nodes.clone(),
+        staked_nodes_overrides,
+    );
 
     info!(
         "Creating the Vortexor. The tpu socket is: {:?}, tpu_fwd: {:?}",
@@ -142,4 +172,5 @@ pub fn main() {
     vortexor.join().unwrap();
     sigverify_stage.join().unwrap();
     packet_sender.join().unwrap();
+    staked_nodes_updater_service.join().unwrap();
 }
