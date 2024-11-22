@@ -97,7 +97,7 @@ use {
         FeatureSet,
     },
     solana_measure::{measure::Measure, measure_time, measure_us},
-    solana_program::{instruction::InstructionError, vote::instruction::VoteInstruction},
+    solana_program::instruction::InstructionError,
     solana_program_runtime::{
         invoke_context::BuiltinFunctionWithContext, loaded_programs::ProgramCacheEntry,
     },
@@ -131,7 +131,6 @@ use {
         native_token::LAMPORTS_PER_SOL,
         packet::PACKET_DATA_SIZE,
         precompiles::get_precompiles,
-        program_utils::limited_deserialize,
         pubkey::Pubkey,
         rent_collector::{CollectedInfo, RentCollector},
         rent_debits::RentDebits,
@@ -175,8 +174,12 @@ use {
     },
     solana_svm_transaction::svm_message::SVMMessage,
     solana_timings::{ExecuteTimingType, ExecuteTimings},
-    solana_vote::vote_account::{VoteAccount, VoteAccountsHashMap},
-    solana_vote_program::{vote_state, vote_state::VoteState},
+    solana_vote::{
+        vote_account::{VoteAccount, VoteAccountsHashMap},
+        vote_parser::parse_sanitized_vote_transaction,
+        vote_transaction::VoteTransaction,
+    },
+    solana_vote_program::vote_state::{self, VoteState},
     std::{
         collections::{BTreeMap, HashMap, HashSet},
         convert::TryFrom,
@@ -4873,49 +4876,42 @@ impl Bank {
             .iter()
             .zip(check_results)
             .map(|(tx, check_result)| {
-                let vote_account_id = &tx.message().account_keys()[0];
                 if check_result.is_err() {
                     return Err(check_result.err().unwrap());
                 }
-                // Return error if get_mut fails, otherwise assign to vote_state
-
-                if let Some(vote_state) = current_vote_states.get_mut(vote_account_id) {
-                    if let Some(tower_sync) = tx.message().instructions().iter().find_map(|ix| {
-                        if let Ok(VoteInstruction::TowerSync(tower_sync)) =
-                            limited_deserialize(&ix.data)
-                        {
-                            Some(tower_sync)
-                        } else {
-                            None
-                        }
-                    }) {
-                        vote_state::do_process_tower_sync(
-                            vote_state,
-                            &slot_hashes,
-                            self.epoch(),
-                            self.slot(),
-                            tower_sync,
-                            Some(&self.feature_set),
-                        )
-                        .map_err(|e| {
-                            TransactionError::InstructionError(
-                                0,
-                                InstructionError::Custom(e as u32),
+                if let Some((vote_account_id, vote, ..)) = parse_sanitized_vote_transaction(tx) {
+                    if let Some(vote_state) = current_vote_states.get_mut(&vote_account_id) {
+                        if let VoteTransaction::TowerSync(tower_sync) = vote {
+                            vote_state::do_process_tower_sync(
+                                vote_state,
+                                &slot_hashes,
+                                self.epoch(),
+                                self.slot(),
+                                tower_sync,
+                                Some(&self.feature_set),
                             )
-                        })?;
-                        Ok(CommittedTransaction {
-                            log_messages: None,
-                            inner_instructions: None,
-                            status: Ok(()),
-                            rent_debits: RentDebits::default(),
-                            fee_details: FeeDetails::default(),
-                            loaded_account_stats: TransactionLoadedAccountsStats {
-                                loaded_accounts_count: 0,
-                                loaded_accounts_data_size: 0,
-                            },
-                            return_data: None,
-                            executed_units: 0,
-                        })
+                            .map_err(|e| {
+                                TransactionError::InstructionError(
+                                    0,
+                                    InstructionError::Custom(e as u32),
+                                )
+                            })?;
+                            Ok(CommittedTransaction {
+                                log_messages: None,
+                                inner_instructions: None,
+                                status: Ok(()),
+                                rent_debits: RentDebits::default(),
+                                fee_details: FeeDetails::default(),
+                                loaded_account_stats: TransactionLoadedAccountsStats {
+                                    loaded_accounts_count: 0,
+                                    loaded_accounts_data_size: 0,
+                                },
+                                return_data: None,
+                                executed_units: 0,
+                            })
+                        } else {
+                            Err(TransactionError::InvalidAccountForVoteOnly)
+                        }
                     } else {
                         Err(TransactionError::InvalidAccountForVoteOnly)
                     }
