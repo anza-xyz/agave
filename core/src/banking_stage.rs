@@ -725,7 +725,7 @@ impl BankingStage {
                     poh_recorder.read().unwrap().is_exited.clone(),
                 )));
 
-                let b = Box::new(move |aaa: BankingPacketBatch| {
+                let b = Box::new(move |batches: BankingPacketBatch| {
                     let decision = decision_maker.make_consume_or_forward_decision();
                     if matches!(decision, BufferedPacketsDecision::Forward) {
                         return vec![];
@@ -735,13 +735,13 @@ impl BankingStage {
                     //    solana_svm::transaction_error_metrics::TransactionErrorMetrics::new();
                     let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
                     let mut tasks = vec![];
-                    for pp in &aaa.0 {
+                    for (batch, _) in batches {
                         // over-provision
                         let task_id = adapter.bulk_assign_task_ids(pp.len() as u64);
                         let task_ids = (task_id..(task_id + pp.len() as u64)).collect::<Vec<_>>();
 
-                        let indexes = PacketDeserializer::generate_packet_indexes(pp);
-                        let ppp = PacketDeserializer::deserialize_packets2(pp, &indexes)
+                        let indexes = PacketDeserializer::generate_packet_indexes(batch);
+                        let ppp = PacketDeserializer::deserialize_packets2(batch, &indexes)
                             .filter_map(|(i, p)| {
                                 let (tx, _) = p.build_sanitized_transaction(
                                     bank.vote_only_bank(),
