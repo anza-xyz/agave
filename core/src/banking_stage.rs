@@ -692,20 +692,6 @@ impl BankingStage {
         // todo: forwarding
         let decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
 
-        impl BankingStageMonitor for DecisionMaker {
-            fn status(&self) -> BankingStageStatus {
-                if self.should_exit() {
-                    BankingStageStatus::Exited
-                } else if matches!(
-                    self.make_consume_or_forward_decision(),
-                    BufferedPacketsDecision::Forward,
-                ) {
-                    BankingStageStatus::Inactive
-                } else {
-                    BankingStageStatus::Active
-                }
-            }
-        }
         let banking_stage_monitor = Box::new(decision_maker.clone());
 
         unified_scheduler_pool.register_banking_stage(

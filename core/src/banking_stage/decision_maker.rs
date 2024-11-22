@@ -111,9 +111,20 @@ impl DecisionMaker {
     fn leader_pubkey(poh_recorder: &PohRecorder) -> Option<Pubkey> {
         poh_recorder.leader_after_n_slots(FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET)
     }
+}
 
-    pub(crate) fn should_exit(&self) -> bool {
-        self.poh_recorder.read().unwrap().is_exited.load(Relaxed)
+impl BankingStageMonitor for DecisionMaker {
+    fn status(&self) -> BankingStageStatus {
+        if self.poh_recorder.read().unwrap().is_exited.load(Relaxed) {
+            BankingStageStatus::Exited
+        } else if matches!(
+            self.make_consume_or_forward_decision(),
+            BufferedPacketsDecision::Forward,
+        ) {
+            BankingStageStatus::Inactive
+        } else {
+            BankingStageStatus::Active
+        }
     }
 }
 
