@@ -713,7 +713,7 @@ impl BankingStage {
             Box::new(decision_maker.clone()),
             Box::new(move |adapter: Arc<BankingStageAdapter>| {
                 let decision_maker = decision_maker.clone();
-                let bank_forks: BankForks = panic!(); //bank_forks.clone();
+                let bank_forks: RwLock<BankForks> = panic!(); //bank_forks.clone();
 
                 Box::new(move |batches: BankingPacketBatch| -> Box<dyn Iterator<Item = Task>> {
                     let decision = decision_maker.make_consume_or_forward_decision();
