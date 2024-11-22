@@ -167,12 +167,6 @@ struct BlockProductionSchedulerRespawner {
     banking_packet_receiver: BankingPacketReceiver,
 }
 
-impl std::fmt::Debug for BlockProductionSchedulerRespawner {
-    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        todo!();
-    }
-}
-
 impl<S, TH> SchedulerPool<S, TH>
 where
     S: SpawnableScheduler<TH>,
