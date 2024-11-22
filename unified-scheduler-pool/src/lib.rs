@@ -167,6 +167,7 @@ struct BlockProductionSchedulerRespawner {
     #[debug("{on_spawn_block_production_scheduler:p}")]
     on_spawn_block_production_scheduler: BatchConverterCreator,
     banking_packet_receiver: BankingPacketReceiver,
+    banking_stage_monitor: Box<dyn BankingStageMonitor>,
 }
 
 impl<S, TH> SchedulerPool<S, TH>
