@@ -693,10 +693,10 @@ impl BankingStage {
 
         impl BankingStageMonitor for DecisionMaker {
             fn banking_stage_status(&self) -> BankingStageStatus {
-                let r = if self.0.should_exit() {
+                let r = if self.should_exit() {
                     BankingStageStatus::Exited
                 } else if matches!(
-                    self.0.make_consume_or_forward_decision(),
+                    self.make_consume_or_forward_decision(),
                     BufferedPacketsDecision::Forward,
                 ) {
                     BankingStageStatus::Inactive
