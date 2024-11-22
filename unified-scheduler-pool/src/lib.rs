@@ -390,31 +390,29 @@ where
 
                 info!("Scheduler pool cleaner: block_production_scheduler_inner!!!",);
 
-                {
+                if let Some(BankingStageStatus::Inactive) = banking_stage_status {
                     let mut g = scheduler_pool
                         .block_production_scheduler_inner
                         .lock()
                         .unwrap();
                     if let Some(pooled) = &g.1 {
-                        if let Some(BankingStageStatus::Inactive) = banking_stage_status {
-                            info!("sch {} IS idle", pooled.id());
-                            if pooled.is_overgrown(false) {
-                                info!("sch {} is overgrown!", pooled.id());
-                                let pooled = g.1.take().unwrap();
-                                assert_eq!(Some(pooled.id()), g.0.take());
-                                scheduler_pool.spawn_block_production_scheduler(&mut g);
-                                drop(g);
-                                let id = pooled.id();
-                                info!("dropping overgrown sch {id}");
-                                drop(pooled);
-                                info!("dropped overgrown sch {id}");
-                            } else {
-                                info!("sch {} isn't overgrown", pooled.id());
-                                pooled.reset();
-                            }
+                        info!("sch {} IS idle", pooled.id());
+                        if pooled.is_overgrown(false) {
+                            info!("sch {} is overgrown!", pooled.id());
+                            let pooled = g.1.take().unwrap();
+                            assert_eq!(Some(pooled.id()), g.0.take());
+                            scheduler_pool.spawn_block_production_scheduler(&mut g);
+                            drop(g);
+                            let id = pooled.id();
+                            info!("dropping overgrown sch {id}");
+                            drop(pooled);
+                            info!("dropped overgrown sch {id}");
+                        } else {
+                            info!("sch {} isn't overgrown", pooled.id());
+                            pooled.reset();
                         }
                     }
-                };
+                }
 
                 info!(
                     "Scheduler pool cleaner: dropped {} idle inners, {} trashed inners, triggered {} timeout listeners {} {} {:?}",
