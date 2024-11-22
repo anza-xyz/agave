@@ -646,6 +646,7 @@ where
             Some(BlockProductionSchedulerRespawner {
                 banking_packet_receiver,
                 on_spawn_block_production_scheduler,
+                banking_stage_monitor,
             });
         self.spawn_block_production_scheduler(
             &mut self.block_production_scheduler_inner.lock().unwrap(),
