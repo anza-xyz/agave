@@ -741,7 +741,7 @@ impl BankingStage {
 
                         let indexes = PacketDeserializer::generate_packet_indexes(batch);
                         let transactions =
-                            PacketDeserializer::deserialize_packets_with_indexes(batch, &indexes)
+                            PacketDeserializer::deserialize_packets_with_indexes(batch, indexes)
                                 .filter_map(|(packet, packet_index)| {
                                     let (transaction, _) = packet.build_sanitized_transaction(
                                         bank.vote_only_bank(),
