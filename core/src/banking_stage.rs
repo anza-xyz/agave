@@ -759,11 +759,9 @@ impl BankingStage {
                             )
                             .ok()?;
 
-                            let Ok(compute_budget_limits) = process_compute_budget_instructions(
+                            let Some(compute_budget_limits) = process_compute_budget_instructions(
                                 SVMMessage::program_instructions_iter(transaction.message()),
-                            ) else {
-                                return None;
-                            };
+                            ).ok()?;
 
                             let (priority, _cost) = SchedulerController::<
                                 Arc<ClusterInfo>,
