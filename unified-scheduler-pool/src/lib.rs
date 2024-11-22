@@ -635,7 +635,7 @@ where
         }
     }
 
-    pub fn prepare_to_spawn_block_production_scheduler(
+    pub fn register_banking_stage(
         &self,
         banking_packet_receiver: BankingPacketReceiver,
         on_spawn_block_production_scheduler: BatchConverterCreator,

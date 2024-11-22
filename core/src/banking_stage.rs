@@ -706,7 +706,7 @@ impl BankingStage {
             }
         }
 
-        unified_scheduler_pool.prepare_to_spawn_block_production_scheduler(
+        unified_scheduler_pool.register_banking_stage(
             non_vote_receiver,
             Box::new(move |adapter: Arc<BankingStageAdapter>| {
                 let decision_maker = decision_maker.clone();
