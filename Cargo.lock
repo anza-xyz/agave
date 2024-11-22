@@ -10762,6 +10762,7 @@ dependencies = [
  "smallvec",
  "socket2",
  "solana-clap-utils",
+ "solana-client",
  "solana-core",
  "solana-log-utils",
  "solana-logger",
@@ -10775,6 +10776,7 @@ dependencies = [
  "solana-version",
  "thiserror 2.0.11",
  "tokio",
+ "url 2.5.4",
  "x509-parser",
 ]
 

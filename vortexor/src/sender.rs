@@ -73,7 +73,7 @@ impl PacketBatchSender {
         destinations: Arc<RwLock<Vec<SocketAddr>>>,
     ) {
         loop {
-            let destinations = destinations.read().unwrap();
+            let destinations = destinations.read().expect("Expected to get destinations");
             match Self::receive_until(packet_batch_receiver.clone(), recv_timeout, batch_size) {
                 Ok((packet_count, packet_batches)) => {
                     trace!("Received packet counts: {}", packet_count);
@@ -100,6 +100,7 @@ impl PacketBatchSender {
                         continue;
                     }
                     RecvTimeoutError::Disconnected => {
+                        info!("Exiting the recv_sender as channel is disconnected.");
                         break;
                     }
                 },
