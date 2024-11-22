@@ -79,6 +79,8 @@ pub enum SupportedSchedulingMode {
     Both,
 }
 
+type A = Box<dyn Iterator<Item = usize>>;
+
 impl SupportedSchedulingMode {
     fn is_supported(&self, requested_mode: SchedulingMode) -> bool {
         match (self, requested_mode) {
