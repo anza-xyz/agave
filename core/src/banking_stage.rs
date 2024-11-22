@@ -739,9 +739,8 @@ impl BankingStage {
                         .0
                         .iter()
                         .flat_map(|batch| {
-                                // over-provision
-                            let starting_task_id = 
-                                adapter.bulk_assign_task_ids(batch.len() as u64);
+                            // over-provision
+                            let starting_task_id = adapter.bulk_assign_task_ids(batch.len() as u64);
                             let indexes = PacketDeserializer::generate_packet_indexes(batch);
                             let transactions =
                                 PacketDeserializer::deserialize_packets_with_indexes(
