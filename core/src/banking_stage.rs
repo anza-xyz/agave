@@ -687,6 +687,7 @@ impl BankingStage {
         assert!(non_vote_receiver.same_channel(&tpu_vote_receiver));
         assert!(non_vote_receiver.same_channel(&gossip_vote_receiver));
         drop((tpu_vote_receiver, gossip_vote_receiver));
+        let unified_receiver = non_vote_receiver;
 
         // todo: forwarding
         let decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
@@ -707,7 +708,7 @@ impl BankingStage {
         }
 
         unified_scheduler_pool.register_banking_stage(
-            non_vote_receiver,
+            unified_receiver,
             Box::new(move |adapter: Arc<BankingStageAdapter>| {
                 let decision_maker = decision_maker.clone();
                 let bank_forks = bank_forks.clone();
