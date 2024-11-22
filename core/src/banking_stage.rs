@@ -715,7 +715,7 @@ impl BankingStage {
                 let decision_maker = decision_maker.clone();
                 let bank_forks = bank_forks.clone();
 
-                let a= move |batches: BankingPacketBatch| -> Box<dyn Iterator<Item = Task>> {
+                let a: _ = move |batches: BankingPacketBatch| -> Box<dyn Iterator<Item = Task>> {
                     let decision = decision_maker.make_consume_or_forward_decision();
                     let batches = if matches!(decision, BufferedPacketsDecision::Forward) {
                         &Vec::new()
