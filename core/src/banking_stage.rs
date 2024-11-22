@@ -768,7 +768,7 @@ impl BankingStage {
                                     &transaction, &fb.into(), &bank
                                 );
                                 let index =
-                                    ((u64::MAX - priority) as u128) << 64 | task_ids[*packet_index] as TaskKey;
+                                    ((u64::MAX - priority) as TaskKey) << 64 | task_ids[*packet_index] as TaskKey;
 
                                 Some((transaction, index))
                             });
