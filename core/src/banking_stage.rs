@@ -62,7 +62,6 @@ use {
         time::{Duration, Instant},
     },
 };
-use solana_perf::packet::PacketBatch;
 
 // Below modules are pub to allow use by banking_stage bench
 pub mod committer;
@@ -716,10 +715,8 @@ impl BankingStage {
             }
         }
         let poh_recorder = poh_recorder.clone();
-
-        unified_scheduler_pool.prepare_to_spawn_block_production_scheduler(
-            non_vote_receiver,
-            Box::new(move |adapter: Arc<BankingStageAdapter>| {
+        
+        let b = Box::new(move |adapter: Arc<BankingStageAdapter>| {
                 let decision_maker = decision_maker.clone();
                 let bank_forks = bank_forks.clone();
                 *adapter.idling_detector.lock().unwrap() = Some(Box::new(S(
@@ -734,7 +731,10 @@ impl BankingStage {
                     }
                     let bank = bank_forks.read().unwrap().working_bank();
                     let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
-                    let c = |batch: &PacketBatch| {
+                    batches
+                        .0
+                        .iter()
+                        .flat_map(|batch| {
                             // over-provision nevertheless some of packets could be invalid.
                             let starting_task_id = adapter.bulk_assign_task_ids(batch.len() as u64);
                             let indexes = PacketDeserializer::generate_packet_indexes(batch);
@@ -776,14 +776,14 @@ impl BankingStage {
 
                                     adapter.create_task(transaction, index)
                                 })
-                        };
-                    batches
-                        .0
-                        .iter()
-                        .flat_map(c)
+                        })
                         .collect()
                 })
-            }),
+            });
+
+        unified_scheduler_pool.prepare_to_spawn_block_production_scheduler(
+            non_vote_receiver,
+            b,
         );
 
         Self {
