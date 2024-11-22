@@ -47,7 +47,7 @@ pub(crate) trait ReceiveAndBuffer {
     ) -> bool;
 }
 
-pub struct SanitizedTransactionReceiveAndBuffer {
+pub(crate) struct SanitizedTransactionReceiveAndBuffer {
     /// Packet/Transaction ingress.
     packet_receiver: PacketDeserializer,
     bank_forks: Arc<RwLock<BankForks>>,
