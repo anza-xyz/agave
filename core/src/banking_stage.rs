@@ -691,15 +691,7 @@ impl BankingStage {
         // todo: forwarding
         let decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
 
-        struct S(DecisionMaker);
-
-        impl std::fmt::Debug for S {
-            fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                todo!();
-            }
-        }
-
-        impl BankingStageMonitor for S {
+        impl BankingStageMonitor for DecisionMaker {
             fn banking_stage_status(&self) -> BankingStageStatus {
                 let r = if self.0.should_exit() {
                     BankingStageStatus::Exited
@@ -721,9 +713,7 @@ impl BankingStage {
             Box::new(move |adapter: Arc<BankingStageAdapter>| {
                 let decision_maker = decision_maker.clone();
                 let bank_forks = bank_forks.clone();
-                *adapter.idling_detector.lock().unwrap() = Some(Box::new(S(
-                    decision_maker.clone(),
-                )));
+                *adapter.idling_detector.lock().unwrap() = Some(Box::new(decision_maker.clone()));
 
                 Box::new(move |batches: BankingPacketBatch| -> Vec<Task> {
                     let decision = decision_maker.make_consume_or_forward_decision();
