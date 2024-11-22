@@ -390,7 +390,7 @@ where
 
                 info!("Scheduler pool cleaner: block_production_scheduler_inner!!!",);
 
-                if let Some(BankingStageStatus::Inactive) if !exiting = banking_stage_status {
+                if let Some(BankingStageStatus::Inactive) = (!exiting).then_some(banking_stage_status) {
                     let mut id_and_inner = scheduler_pool
                         .block_production_scheduler_inner
                         .lock()
