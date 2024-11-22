@@ -758,7 +758,7 @@ impl BankingStage {
                             )
                             .ok()?;
 
-                            type SS = SchedulerController::<
+                            type SchedulerController = SchedulerController::<
                                             Arc<ClusterInfo>,
                                         >;
                             let (priority, _cost) = SS::calculate_priority_and_cost(
