@@ -736,14 +736,14 @@ impl BankingStage {
                     batches
                         .0
                         .iter()
-                        .flat_map(|batch| -> Option<Task> {
+                        .flat_map(|batch| {
                             // over-provision
                             let starting_task_id = adapter.bulk_assign_task_ids(batch.len() as u64);
                             let indexes = PacketDeserializer::generate_packet_indexes(batch);
                                 PacketDeserializer::deserialize_packets_with_indexes(
                                     batch, indexes,
                                 )
-                                .zip(std::iter::repeat(starting_task_id))
+                                .zip(iter::repeat(starting_task_id))
                                 .filter_map(
                                     |((packet, packet_index), starting_task_id)| {
                                         let (transaction, _) = packet.build_sanitized_transaction(
