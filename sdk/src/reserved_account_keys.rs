@@ -12,6 +12,7 @@ use {
     },
     lazy_static::lazy_static,
     solana_feature_set::{self as feature_set, FeatureSet},
+    solana_secp256r1_program as secp256r1_program,
     std::collections::{HashMap, HashSet},
 };
 
@@ -160,6 +161,7 @@ lazy_static! {
         ReservedAccount::new_active(feature::id()),
         ReservedAccount::new_pending(loader_v4::id(), feature_set::add_new_reserved_account_keys::id()),
         ReservedAccount::new_pending(secp256k1_program::id(), feature_set::add_new_reserved_account_keys::id()),
+        ReservedAccount::new_pending(secp256r1_program::id(), feature_set::enable_secp256r1_precompile::id()),
         #[allow(deprecated)]
         ReservedAccount::new_active(stake::config::id()),
         ReservedAccount::new_active(stake::program::id()),

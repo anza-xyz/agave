@@ -873,6 +873,14 @@ pub mod disable_account_loader_special_case {
     solana_pubkey::declare_id!("EQUMpNFr7Nacb1sva56xn1aLfBxppEoSBH8RRVdkcD1x");
 }
 
+pub mod enable_secp256r1_precompile {
+    solana_pubkey::declare_id!("sr11RdZWgbHTHxSroPALe6zgaT5A1K9LcE4nfsZS4gi");
+}
+
+pub mod migrate_stake_program_to_core_bpf {
+    solana_pubkey::declare_id!("6M4oQ6eXneVhtLoiAr4yRYQY43eVLjrKbiDZDJc892yk");
+}
+
 lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
@@ -1086,6 +1094,8 @@ lazy_static! {
         (disable_sbpf_v1_execution::id(), "Disables execution of SBPFv1 programs"),
         (reenable_sbpf_v1_execution::id(), "Re-enables execution of SBPFv1 programs"),
         (disable_account_loader_special_case::id(), "Disable account loader special case #3513"),
+        (enable_secp256r1_precompile::id(), "Enable secp256r1 precompile SIMD-0075"),
+        (migrate_stake_program_to_core_bpf::id(), "Migrate Stake program to Core BPF SIMD-0196 #3655"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
