@@ -79,8 +79,6 @@ pub enum SupportedSchedulingMode {
     Both,
 }
 
-type A = Box<dyn Iterator<Item = usize>>;
-
 impl SupportedSchedulingMode {
     fn is_supported(&self, requested_mode: SchedulingMode) -> bool {
         match (self, requested_mode) {
@@ -156,7 +154,7 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(3);
 // because UsageQueueLoader won't grow that much to begin with.
 const DEFAULT_MAX_USAGE_QUEUE_COUNT: usize = 262_144;
 
-pub trait BatchConverter: DynClone + (FnMut(BankingPacketBatch) -> Vec<Task>) + Send {}
+pub trait BatchConverter: DynClone + (FnMut(BankingPacketBatch) -> Box<dyn Iterator<Item = Task>>) + Send {}
 
 impl<T> BatchConverter for T where T: DynClone + (FnMut(BankingPacketBatch) -> Vec<Task>) + Send {}
 
