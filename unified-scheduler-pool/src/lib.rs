@@ -2349,7 +2349,8 @@ impl BankingStageAdapter {
 
     pub fn create_task(
         &self,
-        &(transaction, index): &(&SanitizedTransaction, TaskKey),
+        transaction: SanitizedTransaction,
+        index: TaskKey,
     ) -> Option<Task> {
         /*
         if self
@@ -2363,7 +2364,7 @@ impl BankingStageAdapter {
         */
 
         Some(SchedulingStateMachine::create_task(
-            transaction.clone(),
+            transaction,
             index,
             &mut |pubkey| self.usage_queue_loader.load(pubkey),
         ))
