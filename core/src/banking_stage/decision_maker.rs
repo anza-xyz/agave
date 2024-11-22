@@ -110,6 +110,10 @@ impl DecisionMaker {
     fn leader_pubkey(poh_recorder: &PohRecorder) -> Option<Pubkey> {
         poh_recorder.leader_after_n_slots(FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET)
     }
+
+    fn should_exit(&self) -> bool {
+        self.poh_recorder.read().unwrap().is_exited().load(Ordering::Relaxed)
+    }
 }
 
 #[cfg(test)]
