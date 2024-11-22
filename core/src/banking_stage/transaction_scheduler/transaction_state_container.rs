@@ -109,7 +109,9 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
 
     /// Returns the remaining capacity of the container
     fn remaining_capacity(&self) -> usize {
-        self.priority_queue.capacity() - self.id_to_transaction_state.len()
+        self.priority_queue
+            .capacity()
+            .saturating_sub(self.id_to_transaction_state.len())
     }
 
     fn pop(&mut self) -> Option<TransactionPriorityId> {
@@ -138,6 +140,9 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
         priority: u64,
         cost: u64,
     ) -> bool {
+        // cache the remaining capacity **before** we take ownership of
+        // the next vacant entry. i.e. get the size before we insert.
+        let remaining_capacity = self.remaining_capacity();
         let priority_id = {
             let entry = self.id_to_transaction_state.vacant_entry();
             let transaction_id = entry.key();
@@ -149,7 +154,8 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
             ));
             TransactionPriorityId::new(priority, transaction_id)
         };
-        self.push_id_into_queue(priority_id)
+
+        self.push_id_into_queue_with_remaining_capacity(priority_id, remaining_capacity)
     }
 
     fn retry_transaction(
@@ -166,14 +172,7 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
     }
 
     fn push_id_into_queue(&mut self, priority_id: TransactionPriorityId) -> bool {
-        if self.remaining_capacity() == 0 {
-            let popped_id = self.priority_queue.push_pop_min(priority_id);
-            self.remove_by_id(popped_id.id);
-            true
-        } else {
-            self.priority_queue.push(priority_id);
-            false
-        }
+        self.push_id_into_queue_with_remaining_capacity(priority_id, self.remaining_capacity())
     }
 
     /// Remove transaction by id.
@@ -188,6 +187,23 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
                 None => MinMaxResult::OneElement(min.priority),
             },
             None => MinMaxResult::NoElements,
+        }
+    }
+}
+
+impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
+    fn push_id_into_queue_with_remaining_capacity(
+        &mut self,
+        priority_id: TransactionPriorityId,
+        remaining_capacity: usize,
+    ) -> bool {
+        if remaining_capacity == 0 {
+            let popped_id = self.priority_queue.push_pop_min(priority_id);
+            self.remove_by_id(popped_id.id);
+            true
+        } else {
+            self.priority_queue.push(priority_id);
+            false
         }
     }
 }
@@ -252,8 +268,7 @@ mod tests {
         container: &mut TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>>,
         num: usize,
     ) {
-        for id in 0..num as u64 {
-            let priority = id;
+        for priority in 0..num as u64 {
             let (transaction_ttl, packet, priority, cost) = test_transaction(priority);
             container.insert_new_transaction(transaction_ttl, packet, priority, cost);
         }
