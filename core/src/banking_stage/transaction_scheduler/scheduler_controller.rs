@@ -591,11 +591,8 @@ impl<T: LikeClusterInfo> SchedulerController<T> {
                 saturating_add_assign!(post_transaction_check_count, 1);
                 let transaction_id = self.transaction_id_generator.next();
 
-                let (priority, cost) = calculate_priority_and_cost(
-                    &transaction,
-                    &fee_budget_limits,
-                    &working_bank,
-                );
+                let (priority, cost) =
+                    calculate_priority_and_cost(&transaction, &fee_budget_limits, &working_bank);
                 let transaction_ttl = SanitizedTransactionTTL {
                     transaction,
                     max_age,
