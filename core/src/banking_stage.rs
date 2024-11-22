@@ -758,14 +758,12 @@ impl BankingStage {
                             )
                             .ok()?;
 
-                            type SchedulerController = SchedulerController::<
-                                            Arc<ClusterInfo>,
-                                        >;
-                            let (priority, _cost) = SS::calculate_priority_and_cost(
-                                            &transaction,
-                                            &compute_budget_limits.into(),
-                                            &bank,
-                                        );
+                            type SchedulerController = SchedulerController::<Arc<ClusterInfo>>;
+                            let (priority, _cost) = SchedulerController::calculate_priority_and_cost(
+                                &transaction,
+                                &compute_budget_limits.into(),
+                                &bank,
+                            );
 
                             let reversed_priority = (u64::MAX - priority) as TaskKey;
                             let task_id = (first_id + packet_index as u64) as TaskKey;

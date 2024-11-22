@@ -591,7 +591,7 @@ impl<T: LikeClusterInfo> SchedulerController<T> {
                 saturating_add_assign!(post_transaction_check_count, 1);
                 let transaction_id = self.transaction_id_generator.next();
 
-                let (priority, cost) = utils::calculate_priority_and_cost(
+                let (priority, cost) = Self::calculate_priority_and_cost(
                     &transaction,
                     &fee_budget_limits,
                     &working_bank,
@@ -641,10 +641,6 @@ impl<T: LikeClusterInfo> SchedulerController<T> {
             });
         }
     }
-}
-
-pub(crate) mod utils {
-    use super::*;
 
     /// Calculate priority and cost for a transaction:
     ///
