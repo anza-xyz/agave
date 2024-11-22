@@ -1397,7 +1397,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         mut result_with_timings: ResultWithTimings,
         banking_stage_context: Option<(
             BankingPacketReceiver,
-            impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static,
+            impl FnMut(BankingPacketBatch) -> Vec<dyn Iterator<Item = Task>> + Clone + Send + 'static,
         )>,
         adapter: Option<Arc<BankingStageAdapter>>,
     ) {
