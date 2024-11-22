@@ -51,7 +51,7 @@ use {
     },
     solana_svm_transaction::svm_message::SVMMessage,
     solana_unified_scheduler_logic::Task,
-    solana_unified_scheduler_pool::{BankingStageAdapter, BankingStageMonitor, BankingStageStatus},
+    solana_unified_scheduler_pool::BankingStageAdapter,
     std::{
         cmp, env, iter,
         ops::Deref,
