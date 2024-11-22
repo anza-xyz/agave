@@ -759,16 +759,16 @@ impl BankingStage {
                             .ok()?;
 
                             use solana_svm_transaction::svm_message::SVMMessage;
-                            let Ok(fee_budget_limits) = process_compute_budget_instructions(
+                            let Ok(compute_budget_limits) = process_compute_budget_instructions(
                                 SVMMessage::program_instructions_iter(transaction.message()),
-                            ).into() else {
+                            ) else {
                                 return None;
                             };
 
                             let (priority, _cost) = SchedulerController::<
                                 std::sync::Arc<solana_gossip::cluster_info::ClusterInfo>,
                             >::calculate_priority_and_cost(
-                                &transaction, &fee_budget_limits, &bank
+                                &transaction, &copute_budget_limits.into(), &bank
                             );
                             let index = ((u64::MAX - priority) as TaskKey) << 64
                                 | task_ids[*packet_index] as TaskKey;
