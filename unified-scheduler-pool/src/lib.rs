@@ -162,7 +162,9 @@ clone_trait_object!(AAA);
 
 type Bbb = Box<dyn (FnMut(Arc<BankingStageAdapter>) -> Box<dyn AAA>) + Send>;
 
+#[derive(derive_more::Debug)]
 struct BlockProductionSchedulerRespawner {
+    #[debug("{on_spawn_block_production_scheduler:p}")]
     on_spawn_block_production_scheduler: Bbb,
     banking_packet_receiver: BankingPacketReceiver,
 }
