@@ -7,6 +7,7 @@ use {
         DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS,
     },
     std::path::PathBuf,
+    url::Url,
 };
 
 pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER: usize = 8;
@@ -60,6 +61,50 @@ fn port_range_validator(port_range: &str) -> Result<(u16, u16), String> {
         }
     } else {
         Err("Invalid port range".to_string())
+    }
+}
+
+fn validate_http_url(input: String) -> Result<(), String> {
+    // Attempt to parse the input as a URL
+    let parsed_url = Url::parse(&input).map_err(|e| format!("Invalid URL: {}", e))?;
+
+    // Check the scheme of the URL
+    match parsed_url.scheme() {
+        "http" | "https" => Ok(()),
+        scheme => Err(format!("Invalid scheme: {}. Must be http, https.", scheme)),
+    }
+}
+
+fn validate_websocket_url(input: String) -> Result<(), String> {
+    // Attempt to parse the input as a URL
+    let parsed_url = Url::parse(&input).map_err(|e| format!("Invalid URL: {}", e))?;
+
+    // Check the scheme of the URL
+    match parsed_url.scheme() {
+        "ws" | "wss" => Ok(()),
+        scheme => Err(format!("Invalid scheme: {}. Must be ws, or wss.", scheme)),
+    }
+}
+
+fn validate_http_url(input: String) -> Result<(), String> {
+    // Attempt to parse the input as a URL
+    let parsed_url = Url::parse(&input).map_err(|e| format!("Invalid URL: {}", e))?;
+
+    // Check the scheme of the URL
+    match parsed_url.scheme() {
+        "http" | "https" => Ok(()),
+        scheme => Err(format!("Invalid scheme: {}. Must be http, https.", scheme)),
+    }
+}
+
+fn validate_websocket_url(input: String) -> Result<(), String> {
+    // Attempt to parse the input as a URL
+    let parsed_url = Url::parse(&input).map_err(|e| format!("Invalid URL: {}", e))?;
+
+    // Check the scheme of the URL
+    match parsed_url.scheme() {
+        "ws" | "wss" => Ok(()),
+        scheme => Err(format!("Invalid scheme: {}. Must be ws, or wss.", scheme)),
     }
 }
 
@@ -213,5 +258,47 @@ pub fn command(version: &str, default_args: DefaultArgs) -> Command {
                 .num_args(1)
                 .value_parser(solana_net_utils::parse_host_port)
                 .help("The destination validator address to which the vortexor will forward transactions."),
+        )
+        .arg(
+            Arg::with_name("rpc_server")
+                .short("r")
+                .long("rpc-server")
+                .value_name("HOST:PORT")
+                .takes_value(true)
+                .multiple(true)
+                .validator(validate_http_url)
+                .help("The address of RPC server to which the vortexor will forward transaction"),
+        )
+        .arg(
+            Arg::with_name("websocket_server")
+                .short("w")
+                .long("websocket-server")
+                .value_name("HOST:PORT")
+                .takes_value(true)
+                .multiple(true)
+                .validator(validate_websocket_url)
+                .help("The address of websocket server to which the vortexor will forward transaction.  \
+                 If multiple rpc servers are set, the count of websocket servers must match that of the rpc servers."),
+        )
+        .arg(
+            Arg::with_name("rpc_server")
+                .short("r")
+                .long("rpc-server")
+                .value_name("HOST:PORT")
+                .takes_value(true)
+                .multiple(true)
+                .validator(validate_http_url)
+                .help("The address of RPC server to which the vortexor will forward transaction"),
+        )
+        .arg(
+            Arg::with_name("websocket_server")
+                .short("w")
+                .long("websocket-server")
+                .value_name("HOST:PORT")
+                .takes_value(true)
+                .multiple(true)
+                .validator(validate_websocket_url)
+                .help("The address of websocket server to which the vortexor will forward transaction.  \
+                 If multiple rpc servers are set, the count of websocket servers must match that of the rpc servers."),
         )
 }
