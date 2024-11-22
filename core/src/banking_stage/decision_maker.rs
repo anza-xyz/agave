@@ -7,9 +7,8 @@ use {
         },
         pubkey::Pubkey,
     },
-    std::sync::{Arc, RwLock},
+    std::sync::{atomic::Ordering, Arc, RwLock},
 };
-use std::sync::atomic::Ordering;
 
 #[derive(Debug, Clone)]
 pub enum BufferedPacketsDecision {
@@ -114,7 +113,11 @@ impl DecisionMaker {
     }
 
     pub(crate) fn should_exit(&self) -> bool {
-        self.poh_recorder.read().unwrap().is_exited.load(Ordering::Relaxed)
+        self.poh_recorder
+            .read()
+            .unwrap()
+            .is_exited
+            .load(Ordering::Relaxed)
     }
 }
 
