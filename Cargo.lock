@@ -6693,6 +6693,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "serial_test",
+ "slab",
  "solana-accounts-db",
  "solana-bloom",
  "solana-builtins-default-costs",
