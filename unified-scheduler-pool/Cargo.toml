@@ -16,6 +16,7 @@ cpu-time = "1.0.0"
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true }
 derivative = { workspace = true }
+deriee_more = { workspace = true }
 dyn-clone = "1.0.17"
 enum-ptr = "0.2.0"
 log = { workspace = true }
