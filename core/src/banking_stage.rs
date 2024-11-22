@@ -738,40 +738,43 @@ impl BankingStage {
                     for batch in &batches.0 {
                         // over-provision
                         let task_id = adapter.bulk_assign_task_ids(batch.len() as u64);
-                        let task_ids = (task_id..(task_id + batch.len() as u64)).collect::<Vec<_>>();
+                        let task_ids =
+                            (task_id..(task_id + batch.len() as u64)).collect::<Vec<_>>();
 
                         let indexes = PacketDeserializer::generate_packet_indexes(batch);
-                        let transactions = PacketDeserializer::deserialize_packets2(batch, &indexes)
-                            .filter_map(|(packet_index, packet)| {
-                                let (transaction, _) = packet.build_sanitized_transaction(
-                                    bank.vote_only_bank(),
-                                    &bank,
-                                    bank.get_reserved_account_keys(),
-                                )?;
+                        let transactions = PacketDeserializer::deserialize_packets2(
+                            batch, &indexes,
+                        )
+                        .filter_map(|(packet_index, packet)| {
+                            let (transaction, _) = packet.build_sanitized_transaction(
+                                bank.vote_only_bank(),
+                                &bank,
+                                bank.get_reserved_account_keys(),
+                            )?;
 
-                                SanitizedTransaction::validate_account_locks(
-                                    transaction.message(),
-                                    transaction_account_lock_limit,
-                                )
-                                .ok()?;
+                            SanitizedTransaction::validate_account_locks(
+                                transaction.message(),
+                                transaction_account_lock_limit,
+                            )
+                            .ok()?;
 
-                                use solana_svm_transaction::svm_message::SVMMessage;
-                                let Ok(fb) = process_compute_budget_instructions(
-                                    SVMMessage::program_instructions_iter(transaction.message()),
-                                ) else {
-                                    return None;
-                                };
+                            use solana_svm_transaction::svm_message::SVMMessage;
+                            let Ok(fb) = process_compute_budget_instructions(
+                                SVMMessage::program_instructions_iter(transaction.message()),
+                            ) else {
+                                return None;
+                            };
 
-                                let (priority, _cost) = SchedulerController::<
-                                    std::sync::Arc<solana_gossip::cluster_info::ClusterInfo>,
-                                >::calculate_priority_and_cost(
-                                    &transaction, &fb.into(), &bank
-                                );
-                                let index =
-                                    ((u64::MAX - priority) as TaskKey) << 64 | task_ids[*packet_index] as TaskKey;
+                            let (priority, _cost) = SchedulerController::<
+                                std::sync::Arc<solana_gossip::cluster_info::ClusterInfo>,
+                            >::calculate_priority_and_cost(
+                                &transaction, &fb.into(), &bank
+                            );
+                            let index = ((u64::MAX - priority) as TaskKey) << 64
+                                | task_ids[*packet_index] as TaskKey;
 
-                                Some((transaction, index))
-                            });
+                            Some((transaction, index))
+                        });
 
                         for (transaction, index) in transactions {
                             if let Some(task) = adapter.create_task(&(&transaction, index)) {
