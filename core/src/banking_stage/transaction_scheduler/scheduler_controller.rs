@@ -644,6 +644,8 @@ impl<T: LikeClusterInfo> SchedulerController<T> {
 }
 
 pub(crate) mod utils {
+    use super::*;
+
     /// Calculate priority and cost for a transaction:
     ///
     /// Cost is calculated through the `CostModel`,
