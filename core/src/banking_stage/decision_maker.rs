@@ -9,6 +9,7 @@ use {
     },
     std::sync::{Arc, RwLock},
 };
+use std::sync::atomic::Ordering;
 
 #[derive(Debug, Clone)]
 pub enum BufferedPacketsDecision {
@@ -111,7 +112,7 @@ impl DecisionMaker {
         poh_recorder.leader_after_n_slots(FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET)
     }
 
-    fn should_exit(&self) -> bool {
+    pub(crate) fn should_exit(&self) -> bool {
         self.poh_recorder.read().unwrap().is_exited().load(Ordering::Relaxed)
     }
 }
