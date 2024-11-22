@@ -2347,11 +2347,7 @@ impl BankingStageAdapter {
         self.next_task_id.fetch_add(count, Relaxed)
     }
 
-    pub fn create_task(
-        &self,
-        transaction: SanitizedTransaction,
-        index: TaskKey,
-    ) -> Option<Task> {
+    pub fn create_task(&self, transaction: SanitizedTransaction, index: TaskKey) -> Option<Task> {
         /*
         if self
             .transaction_deduper

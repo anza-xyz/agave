@@ -735,73 +735,78 @@ impl BankingStage {
                     //let mut m =
                     //    solana_svm::transaction_error_metrics::TransactionErrorMetrics::new();
                     let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
-                    let tasks = batches.0.iter().map(|batch| {
-                        (
-                            batch,
-                            // over-provision
-                            adapter.bulk_assign_task_ids(batch.len() as u64),
-                        )
-                    })
-                        .flat_map(|(batch, starting_task_id)| {
-
-                        let indexes = PacketDeserializer::generate_packet_indexes(batch);
-                        let transactions =
-                            PacketDeserializer::deserialize_packets_with_indexes(batch, indexes)
+                    let tasks = batches
+                        .0
+                        .iter()
+                        .flat_map(batch| {
+                                // over-provision
+                            let starting_task_id = 
+                                adapter.bulk_assign_task_ids(batch.len() as u64);
+                            let indexes = PacketDeserializer::generate_packet_indexes(batch);
+                            let transactions =
+                                PacketDeserializer::deserialize_packets_with_indexes(
+                                    batch, indexes,
+                                )
                                 .zip(std::iter::repeat(starting_task_id))
-                                .filter_map(|((packet, packet_index), starting_task_id)| {
-                                    let (transaction, _) = packet.build_sanitized_transaction(
-                                        bank.vote_only_bank(),
-                                        &bank,
-                                        bank.get_reserved_account_keys(),
-                                    )?;
+                                .filter_map(
+                                    |((packet, packet_index), starting_task_id)| {
+                                        let (transaction, _) = packet.build_sanitized_transaction(
+                                            bank.vote_only_bank(),
+                                            &bank,
+                                            bank.get_reserved_account_keys(),
+                                        )?;
 
-                                    SanitizedTransaction::validate_account_locks(
-                                        transaction.message(),
-                                        transaction_account_lock_limit,
-                                    )
-                                    .ok()?;
-
-                                    let compute_budget_limits =
-                                        process_compute_budget_instructions(
-                                            SVMMessage::program_instructions_iter(
-                                                transaction.message(),
-                                            ),
+                                        SanitizedTransaction::validate_account_locks(
+                                            transaction.message(),
+                                            transaction_account_lock_limit,
                                         )
                                         .ok()?;
 
-                                    let (priority, _cost) = SchedulerController::<
-                                Arc<ClusterInfo>,
-                            >::calculate_priority_and_cost(
-                                &transaction, &compute_budget_limits.into(), &bank,
-                            );
-                                    let reversed_priority = (u64::MAX - priority) as TaskKey;
-                                    let task_id =
-                                        (starting_task_id + packet_index as u64) as TaskKey;
-                                    let index = reversed_priority << 64 | task_id;
+                                        let compute_budget_limits =
+                                            process_compute_budget_instructions(
+                                                SVMMessage::program_instructions_iter(
+                                                    transaction.message(),
+                                                ),
+                                            )
+                                            .ok()?;
 
-                                    adapter.create_task(transaction, index)
-                                });
+                                        let (priority, _cost) = SchedulerController::<
+                                            Arc<ClusterInfo>,
+                                        >::calculate_priority_and_cost(
+                                            &transaction,
+                                            &compute_budget_limits.into(),
+                                            &bank,
+                                        );
+                                        let reversed_priority = (u64::MAX - priority) as TaskKey;
+                                        let task_id =
+                                            (starting_task_id + packet_index as u64) as TaskKey;
+                                        let index = reversed_priority << 64 | task_id;
 
-                        /*
-                        for (transaction, index) in transactions {
-                            if let Some(task) = adapter.create_task(&(&transaction, index)) {
-                                //if bank.check_transactions(
-                                //    &[&a],
-                                //    &[Ok(())],
-                                //    solana_sdk::clock::MAX_PROCESSING_AGE,
-                                //    &mut m,
-                                //)[0]
-                                //.is_ok()
-                                //{
-                                tasks.push(task);
-                                //} else {
-                                ////info!("failed check");
-                                //}
+                                        adapter.create_task(transaction, index)
+                                    },
+                                );
+
+                            /*
+                            for (transaction, index) in transactions {
+                                if let Some(task) = adapter.create_task(&(&transaction, index)) {
+                                    //if bank.check_transactions(
+                                    //    &[&a],
+                                    //    &[Ok(())],
+                                    //    solana_sdk::clock::MAX_PROCESSING_AGE,
+                                    //    &mut m,
+                                    //)[0]
+                                    //.is_ok()
+                                    //{
+                                    tasks.push(task);
+                                    //} else {
+                                    ////info!("failed check");
+                                    //}
+                                }
                             }
-                        }
-                        */
-                        transactions
-                    }).collect::<Vec<_>>();
+                            */
+                            transactions
+                        })
+                        .collect::<Vec<_>>();
                     tasks
                 });
                 info!("on_block_production_scheduler_spawn: end!");
