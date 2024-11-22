@@ -113,7 +113,7 @@ impl DecisionMaker {
     }
 
     pub(crate) fn should_exit(&self) -> bool {
-        self.poh_recorder.read().unwrap().is_exited().load(Ordering::Relaxed)
+        self.poh_recorder.read().unwrap().is_exited.load(Ordering::Relaxed)
     }
 }
 
