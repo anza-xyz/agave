@@ -7368,6 +7368,7 @@ dependencies = [
  "crossbeam-channel",
  "dashmap",
  "derivative",
+ "derive_more 1.0.0",
  "dyn-clone",
  "enum-ptr",
  "log",
