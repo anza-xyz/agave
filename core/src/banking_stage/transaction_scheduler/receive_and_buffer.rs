@@ -1,7 +1,6 @@
 use {
     super::{
         scheduler_metrics::{SchedulerCountMetrics, SchedulerTimingMetrics},
-        transaction_id_generator::TransactionIdGenerator,
         transaction_state_container::StateContainer,
     },
     crate::banking_stage::{
@@ -51,8 +50,6 @@ pub(crate) struct SanitizedTransactionReceiveAndBuffer {
     /// Packet/Transaction ingress.
     packet_receiver: PacketDeserializer,
     bank_forks: Arc<RwLock<BankForks>>,
-    /// Generates unique IDs for incoming transactions.
-    transaction_id_generator: TransactionIdGenerator,
 
     forwarding_enabled: bool,
 }
@@ -69,7 +66,7 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
         count_metrics: &mut SchedulerCountMetrics,
         decision: &BufferedPacketsDecision,
     ) -> bool {
-        let remaining_queue_capacity = container.remaining_queue_capacity();
+        let remaining_queue_capacity = container.remaining_capacity();
 
         const MAX_PACKET_RECEIVE_TIME: Duration = Duration::from_millis(10);
         let (recv_timeout, should_buffer) = match decision {
@@ -142,7 +139,6 @@ impl SanitizedTransactionReceiveAndBuffer {
         Self {
             packet_receiver,
             bank_forks,
-            transaction_id_generator: TransactionIdGenerator::default(),
             forwarding_enabled,
         }
     }
@@ -237,7 +233,6 @@ impl SanitizedTransactionReceiveAndBuffer {
                     .filter(|(_, check_result)| check_result.is_ok())
             {
                 saturating_add_assign!(post_transaction_check_count, 1);
-                let transaction_id = self.transaction_id_generator.next();
 
                 let (priority, cost) =
                     calculate_priority_and_cost(&transaction, &fee_budget_limits, &working_bank);
@@ -246,13 +241,7 @@ impl SanitizedTransactionReceiveAndBuffer {
                     max_age,
                 };
 
-                if container.insert_new_transaction(
-                    transaction_id,
-                    transaction_ttl,
-                    packet,
-                    priority,
-                    cost,
-                ) {
+                if container.insert_new_transaction(transaction_ttl, packet, priority, cost) {
                     saturating_add_assign!(num_dropped_on_capacity, 1);
                 }
                 saturating_add_assign!(num_buffered, 1);

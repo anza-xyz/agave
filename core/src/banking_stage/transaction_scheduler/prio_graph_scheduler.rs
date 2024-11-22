@@ -139,7 +139,7 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
                 *window_budget = window_budget.saturating_sub(chunk_size);
 
                 ids.iter().for_each(|id| {
-                    let transaction = container.get_transaction_ttl(&id.id).unwrap();
+                    let transaction = container.get_transaction_ttl(id.id).unwrap();
                     txs.push(&transaction.transaction);
                 });
 
@@ -149,14 +149,14 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
 
                 for (id, filter_result) in ids.iter().zip(&filter_array[..chunk_size]) {
                     if *filter_result {
-                        let transaction = container.get_transaction_ttl(&id.id).unwrap();
+                        let transaction = container.get_transaction_ttl(id.id).unwrap();
                         prio_graph.insert_transaction(
                             *id,
                             Self::get_transaction_account_access(transaction),
                         );
                     } else {
                         saturating_add_assign!(num_filtered_out, 1);
-                        container.remove_by_id(&id.id);
+                        container.remove_by_id(id.id);
                     }
                 }
 
@@ -187,7 +187,7 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
 
                 // Should always be in the container, during initial testing phase panic.
                 // Later, we can replace with a continue in case this does happen.
-                let Some(transaction_state) = container.get_mut_transaction_state(&id.id) else {
+                let Some(transaction_state) = container.get_mut_transaction_state(id.id) else {
                     panic!("transaction state must exist")
                 };
 
@@ -210,7 +210,7 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
 
                 match maybe_schedule_info {
                     Err(TransactionSchedulingError::Filtered) => {
-                        container.remove_by_id(&id.id);
+                        container.remove_by_id(id.id);
                     }
                     Err(TransactionSchedulingError::UnschedulableConflicts) => {
                         unschedulable_ids.push(id);
@@ -358,7 +358,7 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
                             continue;
                         }
                     }
-                    container.remove_by_id(&id);
+                    container.remove_by_id(id);
                 }
 
                 Ok((num_transactions, num_retryable))
@@ -677,10 +677,7 @@ mod tests {
         >,
     ) -> TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>> {
         let mut container = TransactionStateContainer::with_capacity(10 * 1024);
-        for (index, (from_keypair, to_pubkeys, lamports, compute_unit_price)) in
-            tx_infos.into_iter().enumerate()
-        {
-            let id = index;
+        for (from_keypair, to_pubkeys, lamports, compute_unit_price) in tx_infos.into_iter() {
             let transaction = prioritized_tranfers(
                 from_keypair.borrow(),
                 to_pubkeys,
@@ -699,7 +696,6 @@ mod tests {
             };
             const TEST_TRANSACTION_COST: u64 = 5000;
             container.insert_new_transaction(
-                id,
                 transaction_ttl,
                 packet,
                 compute_unit_price,
