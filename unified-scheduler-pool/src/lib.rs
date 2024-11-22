@@ -605,7 +605,7 @@ where
                     self.self_arc(),
                     context,
                     result_with_timings,
-                    None::<(_, fn(BankingPacketBatch) -> Vec<Task>)>,
+                    None::<(_, fn(BankingPacketBatch) -> Box<dyn Iterator<Item = Task>>)>,
                     None,
                 )
             }
