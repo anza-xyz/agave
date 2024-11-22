@@ -69,14 +69,9 @@ use {
     solana_accounts_db::{
         accounts::{AccountAddressFilter, Accounts, PubkeyAccountSlot},
         accounts_db::{
-<<<<<<< HEAD
             AccountShrinkThreshold, AccountStorageEntry, AccountsDb, AccountsDbConfig,
-            CalcAccountsHashDataSource, PubkeyHashAccount, VerifyAccountsHashAndLamportsConfig,
-=======
-            AccountStorageEntry, AccountsDb, AccountsDbConfig, CalcAccountsHashDataSource,
-            DuplicatesLtHash, OldStoragesPolicy, PubkeyHashAccount,
+            CalcAccountsHashDataSource, OldStoragesPolicy, PubkeyHashAccount,
             VerifyAccountsHashAndLamportsConfig,
->>>>>>> 31742ca61e (Marks old storages as dirty and uncleaned in clean_accounts() (#3737))
         },
         accounts_hash::{
             AccountHash, AccountsHash, CalcAccountsHashConfig, HashStats, IncrementalAccountsHash,
@@ -5941,7 +5936,7 @@ impl Bank {
             let should_clean = force_clean || (!skip_shrink && self.slot() > 0);
             if should_clean {
                 info!("Cleaning...");
-                // We cannot clean past the latest full snapshot's slot because we are about to
+                // We cannot clean past the last full snapshot's slot because we are about to
                 // perform an accounts hash calculation *up to that slot*.  If we cleaned *past*
                 // that slot, then accounts could be removed from older storages, which would
                 // change the accounts hash.
