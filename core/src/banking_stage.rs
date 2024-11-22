@@ -716,7 +716,7 @@ impl BankingStage {
                 let bank_forks = bank_forks.clone();
 
                 use solana_unified_scheduler_pool::BatchConverter;
-                let a: impl FnMut(Arc<BankingStageAdapter>) -> Box<dyn BatchConverter> + 'static = move |batches: BankingPacketBatch| -> Box<dyn Iterator<Item = Task>> {
+                let a: Box<dyn FnMut(Arc<BankingStageAdapter>) -> Box<dyn BatchConverter> + 'static> = move |batches: BankingPacketBatch| -> Box<dyn Iterator<Item = Task>> {
                     let decision = decision_maker.make_consume_or_forward_decision();
                     let batches = if matches!(decision, BufferedPacketsDecision::Forward) {
                         &Vec::new()
