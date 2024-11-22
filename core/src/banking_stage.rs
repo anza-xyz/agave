@@ -716,12 +716,6 @@ impl BankingStage {
                 let bank_forks = bank_forks.clone();
 
                 Box::new(move |batches: BankingPacketBatch| -> Box<dyn Iterator<Item = Task> + 'static> {
-                    let decision = decision_maker.make_consume_or_forward_decision();
-                    let batches = if matches!(decision, BufferedPacketsDecision::Forward) {
-                        &Vec::new()
-                    } else {
-                        &batches.0
-                    };
                     let bank = bank_forks.read().unwrap().working_bank();
                     let transactions = [].iter().zip(iter::repeat(bank)).flat_map(|(batch, bank): (&PacketBatch, _)| {
                         // over-provision nevertheless some of packets could be invalid.
