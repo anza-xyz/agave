@@ -60,6 +60,7 @@ use {
         time::{Duration, Instant},
     },
 };
+use solana_svm_transaction::svm_message::SVMMessage;
 
 // Below modules are pub to allow use by banking_stage bench
 pub mod committer;
@@ -758,7 +759,6 @@ impl BankingStage {
                             )
                             .ok()?;
 
-                            use solana_svm_transaction::svm_message::SVMMessage;
                             let Ok(compute_budget_limits) = process_compute_budget_instructions(
                                 SVMMessage::program_instructions_iter(transaction.message()),
                             ) else {
