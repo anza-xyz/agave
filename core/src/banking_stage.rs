@@ -724,7 +724,6 @@ impl BankingStage {
                 let bank_forks = bank_forks.clone();
                 *adapter.idling_detector.lock().unwrap() = Some(Box::new(S(
                     decision_maker.clone(),
-                    poh_recorder.read().unwrap().is_exited.clone(),
                 )));
 
                 Box::new(move |batches: BankingPacketBatch| -> Vec<Task> {
