@@ -48,6 +48,7 @@ use {
         pubkey::Pubkey, scheduling::TaskKey, timing::AtomicInterval,
         transaction::SanitizedTransaction,
     },
+    solana_svm_transaction::svm_message::SVMMessage,
     solana_unified_scheduler_pool::{BankingStageAdapter, BankingStageMonitor, BankingStageStatus},
     std::{
         cmp, env,
@@ -60,7 +61,6 @@ use {
         time::{Duration, Instant},
     },
 };
-use solana_svm_transaction::svm_message::SVMMessage;
 
 // Below modules are pub to allow use by banking_stage bench
 pub mod committer;
@@ -761,7 +761,8 @@ impl BankingStage {
 
                             let compute_budget_limits = process_compute_budget_instructions(
                                 SVMMessage::program_instructions_iter(transaction.message()),
-                            ).ok()?;
+                            )
+                            .ok()?;
 
                             let (priority, _cost) = SchedulerController::<
                                 Arc<ClusterInfo>,
