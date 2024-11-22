@@ -719,11 +719,10 @@ impl BankingStage {
                     let batches = if matches!(decision, BufferedPacketsDecision::Forward) {
                         &(const { Vec::new() })
                     } else {
-                        &(batches.0)
+                        &batches.0
                     };
                     let bank = bank_forks.read().unwrap().working_bank();
                     let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
-                    let batches = batches.0.iter();
                     let transactions = batches.flat_map(|batch| {
                         // over-provision nevertheless some of packets could be invalid.
                         let task_id_base = adapter.bulk_assign_task_ids(batch.len() as u64);
