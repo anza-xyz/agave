@@ -62,6 +62,7 @@ use {
         time::{Duration, Instant},
     },
 };
+use crate::banking_stage::transaction_scheduler::scheduler_controller::calculate_priority_and_cost;
 
 // Below modules are pub to allow use by banking_stage bench
 pub mod committer;
