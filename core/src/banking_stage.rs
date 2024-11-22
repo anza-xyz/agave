@@ -717,7 +717,7 @@ impl BankingStage {
                 Box::new(move |batches: BankingPacketBatch| -> Box<dyn Iterator<Item = Task>> {
                     let decision = decision_maker.make_consume_or_forward_decision();
                     let batches = if matches!(decision, BufferedPacketsDecision::Forward) {
-                        const E: Vec<usize> = Vec::new();
+                        const E: Vec<PacketBatch>a = Vec::new();
                         &E
                     } else {
                         &batches.0
