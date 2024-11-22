@@ -412,9 +412,9 @@ where
                         .unwrap();
                     if let Some(pooled) = &g.1 {
                         match pooled.banking_stage_status() {
-                            BankingStageStatus::NotBanking => unreachable!(),
-                            BankingStageStatus::Active => false,
-                            BankingStageStatus::Inactive => {
+                            None => unreachable!(),
+                            Some(BankingStageStatus::Active) => false,
+                            Some(BankingStageStatus::Inactive) => {
                                 info!("sch {} IS idle", pooled.id());
                                 if pooled.is_overgrown(false) {
                                     info!("sch {} is overgrown!", pooled.id());
@@ -432,7 +432,7 @@ where
                                 }
                                 false
                             }
-                            BankingStageStatus::Exited => {
+                            Some(BankingStageStatus::Exited) => {
                                 scheduler_pool.reset_respawner();
                                 info!("sch {} IS Exited", pooled.id());
                                 exiting = true;
