@@ -9,6 +9,8 @@ use {
     },
     std::sync::{atomic::Ordering::Relaxed, Arc, RwLock},
 };
+use solana_unified_scheduler_pool::BankingStageStatus;
+use solana_unified_scheduler_pool::BankingStageMonitor;
 
 #[derive(Debug, Clone)]
 pub enum BufferedPacketsDecision {
@@ -112,9 +114,6 @@ impl DecisionMaker {
         poh_recorder.leader_after_n_slots(FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET)
     }
 }
-
-use solana_unified_scheduler_pool::BankingStageStatus;
-use solana_unified_scheduler_pool::BankingStageMonitor;
 
 impl BankingStageMonitor for DecisionMaker {
     fn status(&self) -> BankingStageStatus {
