@@ -735,8 +735,7 @@ impl BankingStage {
                     //let mut m =
                     //    solana_svm::transaction_error_metrics::TransactionErrorMetrics::new();
                     let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
-                    let mut tasks = vec![];
-                    for batch in &batches.0 {
+                    let mut tasks = batches.0.iter().flat_map(|batch| {
                         // over-provision
                         let starting_task_id = adapter.bulk_assign_task_ids(batch.len() as u64);
 
@@ -793,7 +792,7 @@ impl BankingStage {
                                 //}
                             }
                         }
-                    }
+                    }).collect<Vec<_>>();
                     tasks
                 });
                 info!("on_block_production_scheduler_spawn: end!");
