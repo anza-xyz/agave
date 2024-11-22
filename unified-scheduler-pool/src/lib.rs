@@ -345,7 +345,8 @@ where
                     (idle_inner_count, r)
                 };
 
-                if let Some(BankingStageStatus::Exited) = scheduler_pool.banking_stage_status() {
+                let banking_stage_status = scheduler_pool.banking_stage_status();
+                if let Some(BankingStageStatus::Exited) = &banking_stage_status {
                     scheduler_pool.unregister_banking_stage();
                     exiting = true;
                 }
@@ -388,42 +389,29 @@ where
 
                 info!("Scheduler pool cleaner: block_production_scheduler_inner!!!",);
 
-                let bpsi = {
+                {
                     let mut g = scheduler_pool
                         .block_production_scheduler_inner
                         .lock()
                         .unwrap();
                     if let Some(pooled) = &g.1 {
-                        match pooled.banking_stage_status() {
-                            None => unreachable!(),
-                            Some(BankingStageStatus::Active) => false,
-                            Some(BankingStageStatus::Inactive) => {
-                                info!("sch {} IS idle", pooled.id());
-                                if pooled.is_overgrown(false) {
-                                    info!("sch {} is overgrown!", pooled.id());
-                                    let pooled = g.1.take().unwrap();
-                                    assert_eq!(Some(pooled.id()), g.0.take());
-                                    scheduler_pool.spawn_block_production_scheduler(&mut g);
-                                    drop(g);
-                                    let id = pooled.id();
-                                    info!("dropping overgrown sch {id}");
-                                    drop(pooled);
-                                    info!("dropped overgrown sch {id}");
-                                } else {
-                                    info!("sch {} isn't overgrown", pooled.id());
-                                    pooled.reset();
-                                }
-                                false
-                            }
-                            Some(BankingStageStatus::Exited) => {
-                                scheduler_pool.unregister_banking_stage();
-                                info!("sch {} IS Exited", pooled.id());
-                                exiting = true;
-                                true
+                        if let Some(BankingStageStatus::Inactive) = banking_stage_status {
+                            info!("sch {} IS idle", pooled.id());
+                            if pooled.is_overgrown(false) {
+                                info!("sch {} is overgrown!", pooled.id());
+                                let pooled = g.1.take().unwrap();
+                                assert_eq!(Some(pooled.id()), g.0.take());
+                                scheduler_pool.spawn_block_production_scheduler(&mut g);
+                                drop(g);
+                                let id = pooled.id();
+                                info!("dropping overgrown sch {id}");
+                                drop(pooled);
+                                info!("dropped overgrown sch {id}");
+                            } else {
+                                info!("sch {} isn't overgrown", pooled.id());
+                                pooled.reset();
                             }
                         }
-                    } else {
-                        g.0.is_none()
                     }
                 };
 
@@ -443,7 +431,6 @@ where
                         && trashed_inner_count == 0
                         && triggered_timeout_listener_count == 0
                         && active_timeout_listener_count == 0
-                        && bpsi
                 {
                     error!("proper exit!");
                     sleep(Duration::from_secs(1));
