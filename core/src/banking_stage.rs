@@ -719,7 +719,7 @@ impl BankingStage {
                     let batches = if matches!(decision, BufferedPacketsDecision::Forward) {
                         &(const { Vec::new() })
                     } else {
-                        batches
+                        batches.0
                     };
                     let bank = bank_forks.read().unwrap().working_bank();
                     let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
