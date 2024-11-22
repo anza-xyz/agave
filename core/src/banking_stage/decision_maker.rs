@@ -32,7 +32,7 @@ impl BufferedPacketsDecision {
 #[derive(Clone, derive_more::Debug)]
 pub struct DecisionMaker {
     my_pubkey: Pubkey,
-    #[debug("poh_recorder")]
+    #[debug("{poh_recorder:p}", poh_recorder)]
     poh_recorder: Arc<RwLock<PohRecorder>>,
 }
 
