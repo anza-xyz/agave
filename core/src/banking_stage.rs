@@ -712,6 +712,7 @@ impl BankingStage {
             Box::new(decision_maker.clone()),
             Box::new(move |adapter: Arc<BankingStageAdapter>| {
                 let decision_maker = decision_maker.clone();
+                let bank_forks = bank_forks.clone();
 
                 Box::new(move |batches: BankingPacketBatch| -> Vec<Task> {
                     let decision = decision_maker.make_consume_or_forward_decision();
