@@ -657,6 +657,10 @@ where
         *self.block_production_scheduler_respawner.lock().unwrap() = None;
     }
 
+    fn banking_stage_status(&self) -> Option<BankingStageStatus> {
+        self.block_production_scheduler_respawner.lock().unwrap().as_ref().map(|a| a.banking_stage_monitor.banking_stage_status())
+    }
+
     pub fn spawn_block_production_scheduler(
         &self,
         g: &mut MutexGuard<'_, (Option<SchedulerId>, Option<S::Inner>)>,
@@ -672,7 +676,6 @@ where
         let adapter = Arc::new(BankingStageAdapter {
             usage_queue_loader: UsageQueueLoader::default(),
             transaction_deduper: DashSet::with_capacity(1_000_000),
-            idling_detector: Mutex::default(),
             next_task_id: AtomicU64::default(),
         });
 
@@ -1126,19 +1129,6 @@ impl TaskCreator {
             BlockProduction {
                 banking_stage_adapter,
             } => &banking_stage_adapter.usage_queue_loader,
-        }
-    }
-
-    fn banking_stage_status(&self) -> Option<BankingStageStatus> {
-        use TaskCreator::*;
-
-        match self {
-            BlockVerification {
-                usage_queue_loader: _,
-            } => None,
-            BlockProduction {
-                banking_stage_adapter,
-            } => Some(banking_stage_adapter.banking_stage_status()),
         }
     }
 
@@ -2237,7 +2227,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
 pub trait SchedulerInner {
     fn id(&self) -> SchedulerId;
-    fn banking_stage_status(&self) -> Option<BankingStageStatus>;
     fn is_overgrown(&self, on_hot_path: bool) -> bool;
     fn reset(&self);
 }
@@ -2338,7 +2327,6 @@ pub trait BankingStageMonitor: Send + Debug {
 pub struct BankingStageAdapter {
     usage_queue_loader: UsageQueueLoader,
     transaction_deduper: DashSet<Hash>,
-    pub idling_detector: Mutex<Option<Box<dyn BankingStageMonitor>>>,
     next_task_id: AtomicU64,
 }
 
@@ -2374,15 +2362,6 @@ impl BankingStageAdapter {
         SchedulingStateMachine::create_task(transaction, new_index, &mut |pubkey| {
             self.usage_queue_loader.load(pubkey)
         })
-    }
-
-    fn banking_stage_status(&self) -> BankingStageStatus {
-        self.idling_detector
-            .lock()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .banking_stage_status()
     }
 
     fn reset(&self) {
@@ -2480,10 +2459,6 @@ where
     fn is_overgrown(&self, on_hot_path: bool) -> bool {
         self.task_creator
             .is_overgrown(self.thread_manager.pool.max_usage_queue_count, on_hot_path)
-    }
-
-    fn banking_stage_status(&self) -> Option<BankingStageStatus> {
-        self.task_creator.banking_stage_status()
     }
 
     fn reset(&self) {
@@ -3867,10 +3842,6 @@ mod tests {
     impl<const TRIGGER_RACE_CONDITION: bool> SchedulerInner for AsyncScheduler<TRIGGER_RACE_CONDITION> {
         fn id(&self) -> SchedulerId {
             42
-        }
-
-        fn banking_stage_status(&self) -> Option<BankingStageStatus> {
-            todo!()
         }
 
         fn is_overgrown(&self, _on_hot_path: bool) -> bool {
