@@ -748,7 +748,7 @@ impl BankingStage {
                         let transactions =
                             PacketDeserializer::deserialize_packets_with_indexes(batch, indexes)
                                 .zip(std::iter::repeat(starting_task_id))
-                                .filter_map(|(packet, packet_index)| {
+                                .filter_map(|((packet, packet_index), starting_task_id)| {
                                     let (transaction, _) = packet.build_sanitized_transaction(
                                         bank.vote_only_bank(),
                                         &bank,
