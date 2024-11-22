@@ -742,8 +742,8 @@ impl BankingStage {
 
                         let indexes = PacketDeserializer::generate_packet_indexes(batch);
                         let transactions = PacketDeserializer::deserialize_packets2(batch, &indexes)
-                            .filter_map(|(i, p)| {
-                                let (transaction, _) = p.build_sanitized_transaction(
+                            .filter_map(|(packet_index, packet)| {
+                                let (transaction, _) = packet.build_sanitized_transaction(
                                     bank.vote_only_bank(),
                                     &bank,
                                     bank.get_reserved_account_keys(),
@@ -768,7 +768,7 @@ impl BankingStage {
                                     &transaction, &fb.into(), &bank
                                 );
                                 let index =
-                                    ((u64::MAX - priority) as u128) << 64 | task_ids[*i] as TaskKey;
+                                    ((u64::MAX - priority) as u128) << 64 | task_ids[*packet_index] as TaskKey;
 
                                 Some((transaction, index))
                             });
