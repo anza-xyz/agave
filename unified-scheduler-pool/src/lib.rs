@@ -1140,7 +1140,7 @@ impl TaskCreator {
             } => None,
             BlockProduction {
                 banking_stage_adapter,
-            } => Some(banking_stage_adapter.banking_stage_status(),)
+            } => Some(banking_stage_adapter.banking_stage_status()),
         }
     }
 
