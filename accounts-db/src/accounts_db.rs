@@ -8474,44 +8474,21 @@ impl AccountsDb {
         &self,
         requested_slots: impl RangeBounds<Slot> + Sync,
     ) -> (Vec<Arc<AccountStorageEntry>>, Vec<Slot>) {
-        let mut m = Measure::start("get slots");
-        let mut slots_and_storages = self
-            .storage
-            .iter()
-            .filter_map(|(slot, store)| {
-                requested_slots
-                    .contains(&slot)
-                    .then_some((slot, Some(store)))
-            })
-            .collect::<Vec<_>>();
-        m.stop();
-        let mut m2 = Measure::start("filter");
-        let chunk_size = 5_000;
-        let (result, slots): (Vec<_>, Vec<_>) = self.thread_pool_clean.install(|| {
+        let (slots_and_storages, get_storages_time) = meas_dur!({
+            self.storage
+                .get_if(|slot, storage| requested_slots.contains(slot) && storage.has_accounts())
+        });
+        let ((slots, storages), filter_time) = meas_dur!({
             slots_and_storages
-                .par_chunks_mut(chunk_size)
-                .map(|slots_and_storages| {
-                    slots_and_storages
-                        .iter_mut()
-                        .filter(|(slot, _)| self.accounts_index.is_alive_root(*slot))
-                        .filter_map(|(slot, store)| {
-                            let store = std::mem::take(store).unwrap();
-                            store.has_accounts().then_some((store, *slot))
-                        })
-                        .collect::<Vec<(Arc<AccountStorageEntry>, Slot)>>()
-                })
-                .flatten()
+                .into_vec()
+                .into_iter()
+                .filter(|(slot, _)| self.accounts_index.is_alive_root(*slot))
                 .unzip()
         });
-
-        m2.stop();
-
         debug!(
-            "hash_total: get slots: {}, filter: {}",
-            m.as_us(),
-            m2.as_us(),
+            "get_snapshot_storages: get storages: {get_storages_time:?}, filter: {filter_time:?}",
         );
-        (result, slots)
+        (storages, slots)
     }
 
     /// Returns the latest full snapshot slot
