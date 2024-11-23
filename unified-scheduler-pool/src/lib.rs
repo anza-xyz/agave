@@ -524,7 +524,7 @@ where
             // thread. Dropping it could take long time (in fact,
             // PooledSchedulerInner::block_verification_usage_queue_loader can contain many entries to drop).
             if is_block_production_scheduler_returned {
-                scheduler.thread_manager.new_task_sender = Arc::new(crossbeam_channel::unbounded().0);
+                scheduler.disconnect_new_task_sender();
             }
             self.trashed_scheduler_inners
                 .lock()
