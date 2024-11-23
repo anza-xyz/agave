@@ -318,7 +318,7 @@ pub fn load_and_process_ledger(
         BlockProductionMethod
     )
     .inspect(|method| {
-        if !matches.is_present("enable_experimental_block_production_method")
+        if !arg_matches.is_present("enable_experimental_block_production_method")
             && matches!(method, BlockProductionMethod::UnifiedScheduler)
         {
             eprintln!(
