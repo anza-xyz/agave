@@ -3840,7 +3840,7 @@ mod tests {
             todo!()
         }
 
-        fn disconnect_new_task_sender(&self) {
+        fn disconnect_new_task_sender(&mut self) {
             todo!()
         }
     }
