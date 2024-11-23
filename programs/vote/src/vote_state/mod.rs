@@ -760,7 +760,23 @@ pub fn process_vote_unfiltered(
             vote.replay_tip_slot,
         )
     });
-    vote_state.update_replay_tip(vote.replay_tip_slot);
+    // It's possible we copy replay tip from on chain, in that case the replay_tip
+    // in vote_state is newer, then do not update replay tip here.
+    if vote_state.replay_tip_slot > vote.replay_tip_slot {
+        warn!(
+            "replay tip {} newer in vote state compared to vote {}, not updated.",
+            vote_state.replay_tip_slot, vote.replay_tip_slot
+        );
+    } else if vote_state.replay_tip_slot == vote.replay_tip_slot
+        && vote_state.replay_tip_hash != vote.replay_tip_hash
+    {
+        panic!(
+            "New replay tip hash for {} is different {} vs {}",
+            vote_state.replay_tip_slot, vote_state.replay_tip_hash, vote.replay_tip_hash
+        );
+    } else {
+        vote_state.update_replay_tip(vote.replay_tip_slot, vote.replay_tip_hash);
+    }
     Ok(())
 }
 

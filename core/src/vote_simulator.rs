@@ -120,7 +120,7 @@ impl VoteSimulator {
                             vote_state.root_slot,
                             parent_bank.hash(),
                             vote_state.replay_tip_slot,
-                            parent_bank.hash(),
+                            vote_state.replay_tip_hash,
                             Hash::default(),
                         )
                     } else {

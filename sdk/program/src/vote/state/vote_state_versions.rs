@@ -40,6 +40,7 @@ impl VoteStateVersions {
                     last_timestamp: state.last_timestamp.clone(),
 
                     replay_tip_slot: 0,
+                    replay_tip_hash: Hash::default(),
                 }
             }
 
@@ -61,6 +62,7 @@ impl VoteStateVersions {
                 last_timestamp: state.last_timestamp,
 
                 replay_tip_slot: 0,
+                replay_tip_hash: Hash::default(),
             },
 
             VoteStateVersions::Current(state) => *state,

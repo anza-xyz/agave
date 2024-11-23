@@ -613,7 +613,8 @@ impl Tower {
         replay_tip_hash: Hash,
         enable_tower_sync_ix: bool,
     ) {
-        self.vote_state.update_replay_tip(replay_tip_slot);
+        self.vote_state
+            .update_replay_tip(replay_tip_slot, replay_tip_hash);
         let mut new_vote = if enable_tower_sync_ix {
             VoteTransaction::from(TowerSync::new(
                 self.vote_state

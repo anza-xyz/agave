@@ -470,6 +470,8 @@ pub struct VoteState {
     pub last_timestamp: BlockTimestamp,
 
     pub replay_tip_slot: Slot,
+
+    pub replay_tip_hash: Hash,
 }
 
 impl VoteState {
@@ -721,8 +723,9 @@ impl VoteState {
         }
     }
 
-    pub fn update_replay_tip(&mut self, slot: Slot) {
+    pub fn update_replay_tip(&mut self, slot: Slot, hash: Hash) {
         self.replay_tip_slot = slot;
+        self.replay_tip_hash = hash;
     }
 
     pub fn process_next_vote_slot(

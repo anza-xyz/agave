@@ -3528,13 +3528,13 @@ impl ReplayStage {
                 .expect("root_slot cannot be None here"),
         );
 
-        // TODO(wen): should do away with the assert.
-        assert!(tower.vote_state.replay_tip_slot >= bank_vote_state.replay_tip_slot);
-        let replay_tip_bank = frozen_banks
-            .iter()
-            .find(|b| b.slot() == tower.vote_state.replay_tip_slot)
-            .expect("Bank must exist in frozen banks");
-        assert!(replay_tip_bank.is_frozen());
+        if tower.vote_state.replay_tip_slot < bank_vote_state.replay_tip_slot {
+            // We used to play the fork further than what we have in the ledger right now
+            // should not vote until we catch up on the replay_tip_slot, so that we don't
+            // roll back our replay_tip_slot vote.
+            tower.vote_state.replay_tip_slot = bank_vote_state.replay_tip_slot;
+            tower.vote_state.replay_tip_hash = bank_vote_state.replay_tip_hash;
+        }
         // This is safe because `last_voted_slot` is now equal to
         // `bank_vote_state.last_voted_slot()` or `local_root`.
         // Since this vote state is contained in `bank`, which we have frozen,
@@ -3553,8 +3553,8 @@ impl ReplayStage {
             progress
                 .get_hash(last_voted_slot)
                 .expect("Must exist for us to have frozen descendant"),
-            replay_tip_bank.slot(),
-            replay_tip_bank.hash(),
+            tower.vote_state.replay_tip_slot,
+            tower.vote_state.replay_tip_hash,
             bank.feature_set
                 .is_active(&solana_feature_set::enable_tower_sync_ix::id()),
         );
