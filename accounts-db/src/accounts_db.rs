@@ -9048,8 +9048,8 @@ impl AccountsDb {
                     all_zero_slots_to_clean.len()
                 );
                 for (slot, storage) in all_zero_slots_to_clean {
-                    self.dirty_stores.insert(slot, storage);
                     self.accounts_index.add_uncleaned_roots([slot]);
+                    self.dirty_stores.insert(slot, storage);
                 }
             }
 
