@@ -63,6 +63,7 @@ use {
         time::{Duration, Instant},
     },
 };
+use solana_unified_scheduler_pool::DefaultSchedulerPool;
 
 // Below modules are pub to allow use by banking_stage bench
 pub mod committer;
