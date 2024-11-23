@@ -1143,21 +1143,17 @@ impl TaskCreator {
             BlockProduction {
                 banking_stage_adapter,
             } => {
-                if on_hot_path {
-                    // the slow path can be ensured to be called periodically.
-                    // well, not so for single validator cluster....
-                    false
-                } else {
-                    // should check next_task_id as well for ShortCounter::MAX/2 ?
-                    let current_usage_queue_count =
-                        banking_stage_adapter.usage_queue_loader.count();
-                    let current_transaction_count = banking_stage_adapter.transaction_deduper.len();
-                    info!("bsa: {current_usage_queue_count} {current_transaction_count}");
+                // the slow path can be ensured to be called periodically.
+                // well, not so for single validator cluster....
+                // should check next_task_id as well for ShortCounter::MAX/2 ?
+                let current_usage_queue_count =
+                    banking_stage_adapter.usage_queue_loader.count();
+                let current_transaction_count = banking_stage_adapter.transaction_deduper.len();
+                info!("bsa: {current_usage_queue_count} {current_transaction_count}");
 
-                    current_usage_queue_count > max_usage_queue_count
-                        || current_transaction_count > 1_000_000
-                    //current_usage_queue_count > 7000 || current_transaction_count > 100_000
-                }
+                //current_usage_queue_count > max_usage_queue_count
+                //    || current_transaction_count > 1_000_000
+                current_usage_queue_count > 300_000 || current_transaction_count > 200_000
             }
         }
     }
