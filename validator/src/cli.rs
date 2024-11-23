@@ -1584,8 +1584,9 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
             Arg::with_name("enable_experimental_block_production_method")
                 .long("enable-experimental-block-production-method")
                 .takes_value(false)
-                .help("Accept unified-scheduler to be used as an experimental block \
-                       production method"
+                .help(
+                    "Accept unified-scheduler to be used as an experimental block \
+                     production method",
                 ),
         )
         .arg(
