@@ -3839,6 +3839,10 @@ mod tests {
         fn reset(&self) {
             todo!()
         }
+
+        fn disconnect_new_task_sender(&self) {
+            todo!()
+        }
     }
 
     impl<const TRIGGER_RACE_CONDITION: bool> SpawnableScheduler<DefaultTaskHandler>
