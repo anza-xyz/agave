@@ -524,7 +524,7 @@ where
             // thread. Dropping it could take long time (in fact,
             // PooledSchedulerInner::block_verification_usage_queue_loader can contain many entries to drop).
             if is_block_production_scheduler_returned {
-                scheduler.disconnect_new_task_sender();
+                scheduler.abort();
             }
             self.trashed_scheduler_inners
                 .lock()
