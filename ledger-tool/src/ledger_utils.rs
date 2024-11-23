@@ -321,8 +321,9 @@ pub fn load_and_process_ledger(
         if !arg_matches.is_present("enable_experimental_block_production_method")
             && matches!(method, BlockProductionMethod::UnifiedScheduler)
         {
-            warn!(
-                "Currently, the unified-scheduler method is experimental for block-production.",
+            error!(
+                "Currently, the unified-scheduler method is experimental for block-production. \
+                 Explicitly pass --enable-experimental-block-production-method to supress this error"
             );
         }
     })
