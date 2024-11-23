@@ -3,13 +3,17 @@ use {
     solana_bpf_loader_program::Entrypoint,
     solana_program_runtime::invoke_context::mock_process_instruction,
     solana_sdk::{
-        account::AccountSharedData,
+        account::{create_account_shared_data_for_test, AccountSharedData, WritableAccount},
         account_utils::StateMut,
         bpf_loader_upgradeable::{self, UpgradeableLoaderState},
+        clock::Clock,
         instruction::AccountMeta,
         loader_upgradeable_instruction::UpgradeableLoaderInstruction,
         pubkey::Pubkey,
+        rent::Rent,
+        sysvar,
     },
+    std::{fs::File, io::Read},
 };
 
 #[derive(Default)]
@@ -25,6 +29,7 @@ struct TestSetup {
 
 const ACCOUNT_BALANCE: u64 = u64::MAX / 4;
 const PROGRAM_BUFFER_SIZE: usize = 1024;
+const SLOT: u64 = 42;
 
 impl TestSetup {
     fn new() -> Self {
@@ -102,7 +107,7 @@ impl TestSetup {
     }
 
     fn run(&self) {
-        let accounts = mock_process_instruction(
+        mock_process_instruction(
             &self.loader_address,
             Vec::new(),
             &self.instruction_data,
@@ -112,13 +117,6 @@ impl TestSetup {
             Entrypoint::vm,
             |_invoke_context| {},
             |_invoke_context| {},
-        );
-        let state: UpgradeableLoaderState = accounts.first().unwrap().state().unwrap();
-        assert_eq!(
-            state,
-            UpgradeableLoaderState::Buffer {
-                authority_address: Some(self.authority_address)
-            }
         );
     }
 }
@@ -143,7 +141,120 @@ fn bench_write(c: &mut Criterion) {
     });
 }
 
+fn get_accounts_for_bpf_loader_upgradeable_upgrade(
+    buffer_address: &Pubkey,
+    buffer_authority: &Pubkey,
+    upgrade_authority_address: &Pubkey,
+    elf_orig: &[u8],
+    elf_new: &[u8],
+) -> (Vec<(Pubkey, AccountSharedData)>, Vec<AccountMeta>) {
+    let loader_id = bpf_loader_upgradeable::id();
+    let program_address = Pubkey::new_unique();
+    let spill_address = Pubkey::new_unique();
+    let rent = Rent::default();
+    let min_program_balance =
+        1.max(rent.minimum_balance(UpgradeableLoaderState::size_of_program()));
+    let min_programdata_balance = 1.max(rent.minimum_balance(
+        UpgradeableLoaderState::size_of_programdata(elf_orig.len().max(elf_new.len())),
+    ));
+    let (programdata_address, _) =
+        Pubkey::find_program_address(&[program_address.as_ref()], &loader_id);
+    let mut buffer_account = AccountSharedData::new(
+        1,
+        UpgradeableLoaderState::size_of_buffer(elf_new.len()),
+        &bpf_loader_upgradeable::id(),
+    );
+    buffer_account
+        .set_state(&UpgradeableLoaderState::Buffer {
+            authority_address: Some(*buffer_authority),
+        })
+        .unwrap();
+    buffer_account
+        .data_as_mut_slice()
+        .get_mut(UpgradeableLoaderState::size_of_buffer_metadata()..)
+        .unwrap()
+        .copy_from_slice(elf_new);
+    let mut programdata_account = AccountSharedData::new(
+        min_programdata_balance,
+        UpgradeableLoaderState::size_of_programdata(elf_orig.len().max(elf_new.len())),
+        &bpf_loader_upgradeable::id(),
+    );
+    programdata_account
+        .set_state(&UpgradeableLoaderState::ProgramData {
+            slot: SLOT,
+            upgrade_authority_address: Some(*upgrade_authority_address),
+        })
+        .unwrap();
+    let mut program_account = AccountSharedData::new(
+        min_program_balance,
+        UpgradeableLoaderState::size_of_program(),
+        &bpf_loader_upgradeable::id(),
+    );
+    program_account.set_executable(true);
+    program_account
+        .set_state(&UpgradeableLoaderState::Program {
+            programdata_address,
+        })
+        .unwrap();
+    let spill_account = AccountSharedData::new(0, 0, &Pubkey::new_unique());
+    let rent_account = create_account_shared_data_for_test(&rent);
+    let clock_account = create_account_shared_data_for_test(&Clock {
+        slot: SLOT.saturating_add(1),
+        ..Clock::default()
+    });
+
+    let upgrade_authority_account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
+    let transaction_accounts = vec![
+        (programdata_address, programdata_account),
+        (program_address, program_account),
+        (*buffer_address, buffer_account),
+        (spill_address, spill_account),
+        (sysvar::rent::id(), rent_account),
+        (sysvar::clock::id(), clock_account),
+        (*upgrade_authority_address, upgrade_authority_account),
+    ];
+    let instruction_accounts = vec![
+        AccountMeta {
+            pubkey: programdata_address,
+            is_signer: false,
+            is_writable: true,
+        },
+        AccountMeta {
+            pubkey: program_address,
+            is_signer: false,
+            is_writable: true,
+        },
+        AccountMeta {
+            pubkey: *buffer_address,
+            is_signer: false,
+            is_writable: true,
+        },
+        AccountMeta {
+            pubkey: spill_address,
+            is_signer: false,
+            is_writable: true,
+        },
+        AccountMeta {
+            pubkey: sysvar::rent::id(),
+            is_signer: false,
+            is_writable: false,
+        },
+        AccountMeta {
+            pubkey: sysvar::clock::id(),
+            is_signer: false,
+            is_writable: false,
+        },
+        AccountMeta {
+            pubkey: *upgrade_authority_address,
+            is_signer: true,
+            is_writable: false,
+        },
+    ];
+    (transaction_accounts, instruction_accounts)
+}
+
 fn bench_upgradeable_upgrade(c: &mut Criterion) {
+    // For now load programs that are available, but need to create some custom programs for this case.
     let mut file = File::open("test_elfs/out/noop_aligned.so").expect("file open failed");
     let mut elf_orig = Vec::new();
     file.read_to_end(&mut elf_orig).unwrap();
@@ -160,18 +271,18 @@ fn bench_upgradeable_upgrade(c: &mut Criterion) {
             &upgrade_authority_address,
             &elf_orig,
             &elf_new,
-            SLOT,
         );
 
-    c.bench_function("write", |bencher| {
+    let instruction_data = bincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
+    c.bench_function("upgradeable_upgrade", |bencher| {
         bencher.iter(|| {
             mock_process_instruction(
                 &bpf_loader_upgradeable::id(),
                 Vec::new(),
                 &instruction_data,
-                transaction_accounts,
-                instruction_accounts,
-                expected_result,
+                transaction_accounts.clone(),
+                instruction_accounts.clone(),
+                Ok(()),
                 Entrypoint::vm,
                 |_invoke_context| {},
                 |_invoke_context| {},
@@ -180,5 +291,10 @@ fn bench_upgradeable_upgrade(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_initialize_buffer, bench_write);
+criterion_group!(
+    benches,
+    bench_initialize_buffer,
+    bench_write,
+    bench_upgradeable_upgrade
+);
 criterion_main!(benches);
