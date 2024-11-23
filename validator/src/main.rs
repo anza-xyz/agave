@@ -1808,8 +1808,8 @@ pub fn main() {
     .inspect(|method| {
         if !matches.is_present("enable_experimental_block_production_method") && matches!(method, BlockProductionMethod::UnifiedScheduler) {
             eprintln!(
-                "Currently, unified-scheduler is experimental for block production. \
-                 Explicitly also pass --enable-experimental-block-production-method to use it"
+                "Currently, the unified-scheduler method is experimental for block-production. \
+                 Explicitly pass --enable-experimental-block-production-method to use it."
             );
             exit(1);
         }
