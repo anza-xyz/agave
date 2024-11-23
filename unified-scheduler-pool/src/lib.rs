@@ -1206,7 +1206,7 @@ where
     S: SpawnableScheduler<TH, Inner = Self>,
     TH: TaskHandler,
 {
-    fn is_trashed(&self, on_hot_path: bool) -> bool {
+    fn is_trashed(&mut self, on_hot_path: bool) -> bool {
         self.is_aborted() || self.is_overgrown(on_hot_path)
     }
 
@@ -2318,16 +2318,14 @@ impl BankingStageAdapter {
     }
 
     pub fn create_task(&self, transaction: SanitizedTransaction, index: TaskKey) -> Option<Task> {
-        /*
         if self
             .transaction_deduper
             .contains(transaction.message_hash())
         {
-            return None;
+            //return None;
         } else {
             self.transaction_deduper.insert(*transaction.message_hash());
         }
-        */
 
         Some(SchedulingStateMachine::create_task(
             transaction,
@@ -2415,11 +2413,12 @@ where
     S: SpawnableScheduler<TH, Inner = Self>,
     TH: TaskHandler,
 {
-    fn return_to_pool(self: Box<Self>) {
+    fn return_to_pool(mut self: Box<Self>) {
         // Refer to the comment in is_trashed() as to the exact definition of the concept of
         // _trashed_ and the interaction among different parts of unified scheduler.
         let should_trash = self.is_trashed(true);
         if should_trash {
+            self.thread_manager.new_task_sender = Arc::new(crossbeam_channel::unbounded().0);
             info!("trashing scheduler (id: {})...", self.id());
         }
         self.thread_manager
