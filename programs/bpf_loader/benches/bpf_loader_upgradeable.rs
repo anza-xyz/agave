@@ -24,7 +24,6 @@ struct TestSetup {
 }
 
 const ACCOUNT_BALANCE: u64 = u64::MAX / 4;
-// TODO(klykov) This parameter might be sensitive, try with different values
 const PROGRAM_BUFFER_SIZE: usize = 1024;
 
 impl TestSetup {
@@ -109,7 +108,7 @@ impl TestSetup {
             &self.instruction_data,
             self.transaction_accounts.clone(),
             self.instruction_accounts.clone(),
-            Ok(()), //expected_result,
+            Ok(()),
             Entrypoint::vm,
             |_invoke_context| {},
             |_invoke_context| {},
@@ -140,6 +139,43 @@ fn bench_write(c: &mut Criterion) {
     c.bench_function("write", |bencher| {
         bencher.iter(|| {
             test_setup.run();
+        })
+    });
+}
+
+fn bench_upgradeable_upgrade(c: &mut Criterion) {
+    let mut file = File::open("test_elfs/out/noop_aligned.so").expect("file open failed");
+    let mut elf_orig = Vec::new();
+    file.read_to_end(&mut elf_orig).unwrap();
+    let mut file = File::open("test_elfs/out/noop_unaligned.so").expect("file open failed");
+    let mut elf_new = Vec::new();
+    file.read_to_end(&mut elf_new).unwrap();
+    assert_ne!(elf_orig.len(), elf_new.len());
+    let buffer_address = Pubkey::new_unique();
+    let upgrade_authority_address = Pubkey::new_unique();
+    let (transaction_accounts, instruction_accounts) =
+        get_accounts_for_bpf_loader_upgradeable_upgrade(
+            &buffer_address,
+            &upgrade_authority_address,
+            &upgrade_authority_address,
+            &elf_orig,
+            &elf_new,
+            SLOT,
+        );
+
+    c.bench_function("write", |bencher| {
+        bencher.iter(|| {
+            mock_process_instruction(
+                &bpf_loader_upgradeable::id(),
+                Vec::new(),
+                &instruction_data,
+                transaction_accounts,
+                instruction_accounts,
+                expected_result,
+                Entrypoint::vm,
+                |_invoke_context| {},
+                |_invoke_context| {},
+            )
         })
     });
 }
