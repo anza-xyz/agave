@@ -987,6 +987,15 @@ fn main() {
                 .help(DefaultSchedulerPool::cli_message()),
         )
         .arg(
+            Arg::with_name("enable_experimental_block_production_method")
+                .long("enable-experimental-block-production-method")
+                .takes_value(false)
+                .help(
+                    "Accept unified-scheduler to be used as an experimental block \
+                     production method",
+                ),
+        )
+        .arg(
             Arg::with_name("output_format")
                 .long("output")
                 .value_name("FORMAT")
