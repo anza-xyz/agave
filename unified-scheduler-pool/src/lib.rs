@@ -523,6 +523,9 @@ where
             // self.trashed_scheduler_inners, which is periodically drained by the `solScCleaner`
             // thread. Dropping it could take long time (in fact,
             // PooledSchedulerInner::block_verification_usage_queue_loader can contain many entries to drop).
+            if is_block_production_scheduler_returned {
+                scheduler.thread_manager.new_task_sender = Arc::new(crossbeam_channel::unbounded().0);
+            }
             self.trashed_scheduler_inners
                 .lock()
                 .expect("not poisoned")
@@ -2418,7 +2421,6 @@ where
         // _trashed_ and the interaction among different parts of unified scheduler.
         let should_trash = self.is_trashed(true);
         if should_trash {
-            self.thread_manager.new_task_sender = Arc::new(crossbeam_channel::unbounded().0);
             info!("trashing scheduler (id: {})...", self.id());
         }
         self.thread_manager
