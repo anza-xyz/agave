@@ -1204,7 +1204,7 @@ where
     S: SpawnableScheduler<TH, Inner = Self>,
     TH: TaskHandler,
 {
-    fn is_trashed(&mut self, on_hot_path: bool) -> bool {
+    fn is_trashed(&self, on_hot_path: bool) -> bool {
         self.is_aborted() || self.is_overgrown(on_hot_path)
     }
 
