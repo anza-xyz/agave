@@ -2416,7 +2416,7 @@ where
     S: SpawnableScheduler<TH, Inner = Self>,
     TH: TaskHandler,
 {
-    fn return_to_pool(mut self: Box<Self>) {
+    fn return_to_pool(self: Box<Self>) {
         // Refer to the comment in is_trashed() as to the exact definition of the concept of
         // _trashed_ and the interaction among different parts of unified scheduler.
         let should_trash = self.is_trashed(true);
