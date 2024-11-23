@@ -618,6 +618,12 @@ impl Consumer {
             })
             .collect();
 
+        // Add vote_only execution here.
+        let _ = bank.load_execute_and_commit_for_vote_only_execution(
+            batch,
+            MAX_PROCESSING_AGE,
+            &mut execute_and_commit_timings.execute_vote_only_timings,
+        );
         let (load_and_execute_transactions_output, load_execute_us) = measure_us!(bank
             .load_and_execute_transactions(
                 batch,

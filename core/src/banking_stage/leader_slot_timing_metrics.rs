@@ -15,6 +15,7 @@ pub struct LeaderExecuteAndCommitTimings {
     pub find_and_send_votes_us: u64,
     pub record_transactions_timings: RecordTransactionsTimings,
     pub execute_timings: ExecuteTimings,
+    pub execute_vote_only_timings: ExecuteTimings,
 }
 
 impl LeaderExecuteAndCommitTimings {
@@ -28,6 +29,8 @@ impl LeaderExecuteAndCommitTimings {
         self.record_transactions_timings
             .accumulate(&other.record_transactions_timings);
         self.execute_timings.accumulate(&other.execute_timings);
+        self.execute_vote_only_timings
+            .accumulate(&other.execute_vote_only_timings);
     }
 
     pub fn report(&self, id: &str, slot: Slot) {

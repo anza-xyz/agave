@@ -4852,7 +4852,7 @@ impl Bank {
         self.cluster_type.unwrap()
     }
 
-    fn load_execute_and_commit_for_vote_only_execution(
+    pub fn load_execute_and_commit_for_vote_only_execution(
         &self,
         batch: &TransactionBatch<SanitizedTransaction>,
         max_age: usize,
