@@ -228,8 +228,13 @@ impl<T: LikeClusterInfo> SchedulerController<T> {
     ) {
         let lock_results = vec![Ok(()); transactions.len()];
         let mut error_counters = TransactionErrorMetrics::default();
-        let check_results =
-            bank.check_transactions(transactions, &lock_results, max_age, &mut error_counters);
+        let check_results = bank.check_transactions(
+            transactions,
+            &lock_results,
+            max_age,
+            &mut error_counters,
+            false,
+        );
 
         let fee_check_results: Vec<_> = check_results
             .into_iter()
@@ -395,6 +400,7 @@ impl<T: LikeClusterInfo> SchedulerController<T> {
                 &lock_results,
                 MAX_PROCESSING_AGE,
                 &mut error_counters,
+                false,
             );
 
             for (result, id) in check_results.into_iter().zip(chunk.iter()) {
@@ -550,6 +556,7 @@ impl<T: LikeClusterInfo> SchedulerController<T> {
                 &lock_results[..transactions.len()],
                 MAX_PROCESSING_AGE,
                 &mut error_counts,
+                false,
             );
             let post_lock_validation_count = transactions.len();
 

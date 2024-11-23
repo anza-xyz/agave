@@ -56,6 +56,7 @@ impl Bank {
                 .saturating_sub(max_tx_fwd_delay)
                 .saturating_sub(forward_transactions_to_leader_at_slot_offset as usize),
             &mut error_counters,
+            false,
         )
     }
 
@@ -65,9 +66,15 @@ impl Bank {
         lock_results: &[TransactionResult<()>],
         max_age: usize,
         error_counters: &mut TransactionErrorMetrics,
+        vote_only_execution: bool,
     ) -> Vec<TransactionCheckResult> {
         let lock_results = self.check_age(sanitized_txs, lock_results, max_age, error_counters);
-        self.check_status_cache(sanitized_txs, lock_results, error_counters)
+        self.check_status_cache(
+            sanitized_txs,
+            lock_results,
+            error_counters,
+            vote_only_execution,
+        )
     }
 
     pub fn check_age(
@@ -187,8 +194,13 @@ impl Bank {
         sanitized_txs: &[impl core::borrow::Borrow<SanitizedTransaction>],
         lock_results: Vec<TransactionCheckResult>,
         error_counters: &mut TransactionErrorMetrics,
+        vote_only_execution: bool,
     ) -> Vec<TransactionCheckResult> {
-        let rcache = self.status_cache.read().unwrap();
+        let rcache = if vote_only_execution {
+            self.vote_only_status_cache.read().unwrap()
+        } else {
+            self.status_cache.read().unwrap()
+        };
         sanitized_txs
             .iter()
             .zip(lock_results)

@@ -527,6 +527,7 @@ impl PartialEq for Bank {
             skipped_rewrites: _,
             rc: _,
             status_cache: _,
+            vote_only_status_cache: _,
             blockhash_queue,
             ancestors,
             hash,
@@ -760,6 +761,8 @@ pub struct Bank {
 
     /// A cache of signature statuses
     pub status_cache: Arc<RwLock<BankStatusCache>>,
+
+    pub vote_only_status_cache: Arc<RwLock<BankStatusCache>>,
 
     /// FIFO queue of `recent_blockhash` items
     blockhash_queue: RwLock<BlockhashQueue>,
@@ -1010,6 +1013,7 @@ impl Bank {
             skipped_rewrites: Mutex::default(),
             rc: BankRc::new(accounts),
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
+            vote_only_status_cache: Arc::<RwLock<BankStatusCache>>::default(),
             blockhash_queue: RwLock::<BlockhashQueue>::default(),
             ancestors: Ancestors::default(),
             hash: RwLock::<Hash>::default(),
@@ -1224,6 +1228,8 @@ impl Bank {
         });
 
         let (status_cache, status_cache_time_us) = measure_us!(Arc::clone(&parent.status_cache));
+        let (vote_only_status_cache, vote_only_status_cache_time_us) =
+            measure_us!(Arc::clone(&parent.vote_only_status_cache));
 
         let (fee_rate_governor, fee_components_time_us) = measure_us!(
             FeeRateGovernor::new_derived(&parent.fee_rate_governor, parent.signature_count())
@@ -1258,6 +1264,7 @@ impl Bank {
             skipped_rewrites: Mutex::default(),
             rc,
             status_cache,
+            vote_only_status_cache,
             slot,
             bank_id,
             epoch,
@@ -1428,6 +1435,7 @@ impl Bank {
                 bank_rc_creation_time_us,
                 total_elapsed_time_us: time.as_us(),
                 status_cache_time_us,
+                vote_only_status_cache_time_us,
                 fee_components_time_us,
                 blockhash_queue_time_us,
                 stakes_cache_time_us,
@@ -1684,6 +1692,7 @@ impl Bank {
             skipped_rewrites: Mutex::default(),
             rc: bank_rc,
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
+            vote_only_status_cache: Arc::<RwLock<BankStatusCache>>::default(),
             blockhash_queue: RwLock::new(fields.blockhash_queue),
             ancestors,
             hash: RwLock::new(fields.hash),
@@ -3722,6 +3731,7 @@ impl Bank {
             batch.lock_results(),
             max_age,
             error_counters,
+            false,
         ));
         timings.saturating_add_in_place(ExecuteTimingType::CheckUs, check_us);
 
@@ -4866,6 +4876,7 @@ impl Bank {
             batch.lock_results(),
             max_age,
             &mut error_counters,
+            true,
         ));
         timings.saturating_add_in_place(ExecuteTimingType::CheckUs, check_us);
 

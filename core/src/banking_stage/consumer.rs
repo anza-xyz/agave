@@ -389,8 +389,13 @@ impl Consumer {
     ) -> ProcessTransactionBatchOutput {
         let mut error_counters = TransactionErrorMetrics::default();
         let pre_results = vec![Ok(()); txs.len()];
-        let check_results =
-            bank.check_transactions(txs, &pre_results, MAX_PROCESSING_AGE, &mut error_counters);
+        let check_results = bank.check_transactions(
+            txs,
+            &pre_results,
+            MAX_PROCESSING_AGE,
+            &mut error_counters,
+            false,
+        );
         // If checks passed, verify pre-compiles and continue processing on success.
         let move_precompile_verification_to_svm = bank
             .feature_set
