@@ -2214,6 +2214,7 @@ pub trait SchedulerInner {
     fn id(&self) -> SchedulerId;
     fn is_overgrown(&self, on_hot_path: bool) -> bool;
     fn reset(&self);
+    fn disconnect_new_task_sender(&mut self);
 }
 
 pub trait SpawnableScheduler<TH: TaskHandler>: InstalledScheduler {
@@ -2453,6 +2454,10 @@ where
             warn!("failed to send a reset due to error: {a:?}");
         }
         self.task_creator.reset()
+    }
+
+    fn disconnect_new_task_sender(&mut self) {
+        self.thread_manager.new_task_sender = Arc::new(crossbeam_channel::unbounded().0);
     }
 }
 
