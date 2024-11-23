@@ -1197,7 +1197,7 @@ where
 
         // Ensure to initiate thread shutdown via disconnected new_task_receiver by replacing the
         // current new_task_sender with a random one...
-        self.new_task_sender = Arc::new(crossbeam_channel::unbounded().0);
+        self.disconnect_new_task_sender();
 
         self.ensure_join_threads(true);
         assert_matches!(self.session_result_with_timings, Some((Ok(_), _)));
@@ -2210,7 +2210,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
     }
 
     fn disconnect_new_task_sender(&mut self) {
-        self.thread_manager.new_task_sender = Arc::new(crossbeam_channel::unbounded().0);
+        self.new_task_sender = Arc::new(crossbeam_channel::unbounded().0);
     }
 }
 
