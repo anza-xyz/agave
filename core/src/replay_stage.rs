@@ -2085,6 +2085,11 @@ impl ReplayStage {
 
         assert!(parent.is_vote_only_frozen());
 
+        if !parent.is_frozen() {
+            info!("wait for parent {} to be frozen", parent.slot());
+            return false;
+        }
+
         if !parent.is_startup_verification_complete() {
             info!("startup verification incomplete, so skipping my leader slot");
             return false;
@@ -2778,7 +2783,8 @@ impl ReplayStage {
         leader_schedule_cache: &LeaderScheduleCache,
     ) {
         let slot = bank.slot();
-        let tick_height = bank.tick_height_for_vote_only();
+        // TODO(wen): change this when leader doesn't replay block any more.
+        let tick_height = bank.tick_height();
 
         let next_leader_slot = leader_schedule_cache.next_leader_slot(
             my_pubkey,
