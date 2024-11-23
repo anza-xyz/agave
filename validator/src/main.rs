@@ -1806,8 +1806,8 @@ pub fn main() {
         BlockProductionMethod
     )
     .inspect(|method| {
-        if !matches.is_present("enable_experimental_block_production_method")
-            && matches!(method, BlockProductionMethod::UnifiedScheduler)
+        if matches!(method, BlockProductionMethod::UnifiedScheduler)
+            && !matches.is_present("enable_experimental_block_production_method")
         {
             eprintln!(
                 "Currently, the unified-scheduler method is experimental for block-production. \
