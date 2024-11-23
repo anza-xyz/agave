@@ -1372,11 +1372,14 @@ impl Bank {
                 // Copy the vote authorities from epoch stake into vote states.
                 let new_epoch = new.epoch();
                 let mut vote_states = new.vote_states.write().unwrap();
-                let epoch_stakes = new.epoch_stakes.get(&new_epoch).unwrap();
+                let old_epoch_stakes = new.epoch_stakes.get(&parent.epoch()).unwrap();
+                let new_epoch_stakes = new.epoch_stakes.get(&new_epoch).unwrap();
+                let mut vote_account_to_remove =
+                    vote_states.keys().cloned().collect::<HashSet<Pubkey>>();
                 for (vote_account_pubkey, vote_authority) in
-                    epoch_stakes.epoch_authorized_voters().iter()
+                    new_epoch_stakes.epoch_authorized_voters().iter()
                 {
-                    if epoch_stakes.vote_account_stake(vote_account_pubkey) > 0 {
+                    if new_epoch_stakes.vote_account_stake(vote_account_pubkey) > 0 {
                         if let Some(vote_state) = vote_states.get_mut(vote_account_pubkey) {
                             vote_state.set_new_authorized_voter_checked(new_epoch, vote_authority);
                         } else {
@@ -1388,12 +1391,14 @@ impl Bank {
                                 .set_new_authorized_voter_checked(new_epoch, vote_authority);
                             vote_states.insert(*vote_account_pubkey, new_vote_state);
                         }
-                    } else {
-                        // If the vote account is not in the stakes, but it is in the vote_states, then
-                        // it is a vote account that was removed in the current epoch.  Remove it from the
-                        // vote_states.
-                        vote_states.remove(vote_account_pubkey);
                     }
+                    vote_account_to_remove.remove(vote_account_pubkey);
+                }
+                for vote_account_pubkey in old_epoch_stakes.epoch_authorized_voters().keys() {
+                    vote_account_to_remove.remove(vote_account_pubkey);
+                }
+                for vote_account_pubkey in vote_account_to_remove {
+                    vote_states.remove(&vote_account_pubkey);
                 }
             }
             if new.is_partitioned_rewards_code_enabled() {
