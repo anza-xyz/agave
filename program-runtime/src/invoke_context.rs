@@ -539,7 +539,7 @@ impl<'a> InvokeContext<'a> {
             .program_cache_for_tx_batch
             .find(&builtin_id)
             .ok_or_else(|| {
-                //panic!("AAAA {}", builtin_id);
+                panic!("AAAA {}", builtin_id);
                 InstructionError::UnsupportedProgramId
             })?;
         let function = match &entry.program {
