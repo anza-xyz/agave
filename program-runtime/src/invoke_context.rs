@@ -538,7 +538,10 @@ impl<'a> InvokeContext<'a> {
         let entry = self
             .program_cache_for_tx_batch
             .find(&builtin_id)
-            .ok_or(InstructionError::UnsupportedProgramId)?;
+            .ok_or_else(|| {
+                //panic!("AAAA {}", builtin_id);
+                InstructionError::UnsupportedProgramId
+            })?;
         let function = match &entry.program {
             ProgramCacheEntryType::Builtin(program) => program
                 .get_function_registry()
