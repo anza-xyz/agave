@@ -2208,13 +2208,17 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             .send(NewTaskPayload::OpenSubchannel(Box::new((context, result_with_timings))).into())
             .expect("no new session after aborted");
     }
+
+    fn disconnect_new_task_sender(&mut self) {
+        self.thread_manager.new_task_sender = Arc::new(crossbeam_channel::unbounded().0);
+    }
 }
 
 pub trait SchedulerInner {
     fn id(&self) -> SchedulerId;
     fn is_overgrown(&self, on_hot_path: bool) -> bool;
     fn reset(&self);
-    fn disconnect_new_task_sender(&mut self);
+    fn abort(&mut self);
 }
 
 pub trait SpawnableScheduler<TH: TaskHandler>: InstalledScheduler {
@@ -2456,8 +2460,8 @@ where
         self.task_creator.reset()
     }
 
-    fn disconnect_new_task_sender(&mut self) {
-        self.thread_manager.new_task_sender = Arc::new(crossbeam_channel::unbounded().0);
+    fn abort(&mut self) {
+        self.thread_manager.disconnect_new_task_sender()
     }
 }
 
@@ -3840,7 +3844,7 @@ mod tests {
             todo!()
         }
 
-        fn disconnect_new_task_sender(&mut self) {
+        fn abort(&mut self) {
             todo!()
         }
     }
