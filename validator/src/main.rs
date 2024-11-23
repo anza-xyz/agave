@@ -1805,6 +1805,15 @@ pub fn main() {
         "block_production_method",
         BlockProductionMethod
     )
+    .inspect(|method| {
+        if !matches.is_present("enable_experimental_block_production_method") && matches!(method, BlockProductionMethod::UnifiedScheduler) {
+            eprintln!(
+                "Currently, unified-scheduler is experimental for block production. \
+                 Explicitly also pass --enable-experimental-block-production-method to use it"
+            );
+            exit(1);
+        }
+    })
     .unwrap_or_default();
     validator_config.enable_block_production_forwarding = staked_nodes_overrides_path.is_some();
     validator_config.unified_scheduler_handler_threads =
