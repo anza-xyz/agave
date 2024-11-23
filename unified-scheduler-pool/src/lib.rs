@@ -512,7 +512,7 @@ where
 
     // This fn needs to return immediately due to being part of the blocking
     // `::wait_for_termination()` call.
-    fn return_scheduler(&self, scheduler: S::Inner, should_trash: bool) {
+    fn return_scheduler(&self, mut scheduler: S::Inner, should_trash: bool) {
         let id = scheduler.id();
         debug!("return_scheduler(): id: {id} should_trash: {should_trash}");
         let mut id_and_inner = self.block_production_scheduler_inner.lock().unwrap();
