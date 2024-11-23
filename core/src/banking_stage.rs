@@ -682,7 +682,7 @@ impl BankingStage {
         tpu_vote_receiver: BankingPacketReceiver,
         gossip_vote_receiver: BankingPacketReceiver,
         bank_forks: Arc<RwLock<BankForks>>,
-        unified_scheduler_pool: Arc<solana_unified_scheduler_pool::DefaultSchedulerPool>,
+        unified_scheduler_pool: Arc<DefaultSchedulerPool>,
     ) -> Self {
         assert!(non_vote_receiver.same_channel(&tpu_vote_receiver));
         assert!(non_vote_receiver.same_channel(&gossip_vote_receiver));
