@@ -8474,20 +8474,29 @@ impl AccountsDb {
         &self,
         requested_slots: impl RangeBounds<Slot> + Sync,
     ) -> (Vec<Arc<AccountStorageEntry>>, Vec<Slot>) {
-        let (slots_and_storages, get_storages_time) = meas_dur!({
-            self.storage
-                .get_if(|slot, storage| requested_slots.contains(slot) && storage.has_accounts())
-        });
-        let ((slots, storages), filter_time) = meas_dur!({
-            slots_and_storages
-                .into_vec()
-                .into_iter()
-                .filter(|(slot, _)| self.accounts_index.is_alive_root(*slot))
-                .unzip()
-        });
-        debug!(
-            "get_snapshot_storages: get storages: {get_storages_time:?}, filter: {filter_time:?}",
-        );
+        let start = Instant::now();
+        // Clone the alive roots RollingBitField from the index so we never need to grab the read
+        // lock again.  There should not be any excess slots (there would have to be more than
+        // 4 *million* alive roots!), so the total size here is under half a megabyte.
+        let alive_roots = self
+            .accounts_index
+            .roots_tracker
+            .read()
+            .unwrap()
+            .alive_roots
+            .clone();
+        let (slots, storages) = self
+            .storage
+            .get_if(|slot, storage| {
+                requested_slots.contains(slot)
+                    && storage.has_accounts()
+                    && alive_roots.contains(slot)
+            })
+            .into_vec()
+            .into_iter()
+            .unzip();
+        let duration = start.elapsed();
+        debug!("get_snapshot_storages: {duration:?}");
         (storages, slots)
     }
 
