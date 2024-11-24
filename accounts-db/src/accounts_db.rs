@@ -8475,22 +8475,19 @@ impl AccountsDb {
         requested_slots: impl RangeBounds<Slot> + Sync,
     ) -> (Vec<Arc<AccountStorageEntry>>, Vec<Slot>) {
         let start = Instant::now();
-        // Clone the alive roots RollingBitField from the index so we never need to grab the read
-        // lock again.  There should not be any excess slots (there would have to be more than
-        // 4 *million* alive roots!), so the total size here is under half a megabyte.
-        let alive_roots = self
+        let max_alive_root_exclusive = self
             .accounts_index
             .roots_tracker
             .read()
             .unwrap()
             .alive_roots
-            .clone();
+            .max_exclusive();
         let (slots, storages) = self
             .storage
             .get_if(|slot, storage| {
-                requested_slots.contains(slot)
+                (*slot < max_alive_root_exclusive)
+                    && requested_slots.contains(slot)
                     && storage.has_accounts()
-                    && alive_roots.contains(slot)
             })
             .into_vec()
             .into_iter()
