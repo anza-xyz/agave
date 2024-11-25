@@ -285,7 +285,7 @@ where
             block_production_scheduler_respawner: Mutex::default(),
             trashed_scheduler_inners: Mutex::default(),
             timeout_listeners: Mutex::default(),
-            handler_count,
+            block_verification_handler_count: handler_count,
             handler_context: HandlerContext {
                 log_messages_bytes_limit,
                 transaction_status_sender,
