@@ -8475,20 +8475,9 @@ impl AccountsDb {
         requested_slots: impl RangeBounds<Slot> + Sync,
     ) -> (Vec<Arc<AccountStorageEntry>>, Vec<Slot>) {
         let start = Instant::now();
-        let max_alive_root_exclusive = self
-            .accounts_index
-            .roots_tracker
-            .read()
-            .unwrap()
-            .alive_roots
-            .max_exclusive();
         let (slots, storages) = self
             .storage
-            .get_if(|slot, storage| {
-                (*slot < max_alive_root_exclusive)
-                    && requested_slots.contains(slot)
-                    && storage.has_accounts()
-            })
+            .get_if(|slot, storage| requested_slots.contains(slot) && storage.has_accounts())
             .into_vec()
             .into_iter()
             .unzip();
