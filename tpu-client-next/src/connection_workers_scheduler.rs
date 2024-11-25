@@ -89,6 +89,11 @@ pub struct ConnectionWorkersSchedulerConfig {
     pub leaders_fanout: Fanout,
 }
 
+pub type TransactionStatsAndReceiver = (
+    SendTransactionStatsPerAddr,
+    mpsc::Receiver<TransactionBatch>,
+);
+
 impl ConnectionWorkersScheduler {
     /// Starts the scheduler, which manages the distribution of transactions to
     /// the network's upcoming leaders.
@@ -112,13 +117,7 @@ impl ConnectionWorkersScheduler {
         mut leader_updater: Box<dyn LeaderUpdater>,
         mut transaction_receiver: mpsc::Receiver<TransactionBatch>,
         cancel: CancellationToken,
-    ) -> Result<
-        (
-            SendTransactionStatsPerAddr,
-            mpsc::Receiver<TransactionBatch>,
-        ),
-        ConnectionWorkersSchedulerError,
-    > {
+    ) -> Result<TransactionStatsAndReceiver, ConnectionWorkersSchedulerError> {
         let endpoint = Self::setup_endpoint(bind, client_certificate)?;
         debug!("Client endpoint bind address: {:?}", endpoint.local_addr());
         let mut workers = WorkersCache::new(num_connections, cancel.clone());

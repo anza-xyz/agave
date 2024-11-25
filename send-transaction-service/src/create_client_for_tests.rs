@@ -5,12 +5,10 @@ use {
     crate::{
         tpu_info::NullTpuInfo,
         transaction_client::{
-            spawn_tpu_client_send_txs, Cancelable, ConnectionCacheClient, TpuClientNextClient,
-            TransactionClient,
+            Cancelable, ConnectionCacheClient, TpuClientNextClient, TransactionClient,
         },
     },
     solana_client::connection_cache::ConnectionCache,
-    solana_tpu_client_next::QuicClientCertificate,
     std::{net::SocketAddr, sync::Arc},
     tokio::runtime::Handle,
 };
@@ -45,22 +43,22 @@ impl CreateClient for ConnectionCacheClient<NullTpuInfo> {
     }
 }
 
-impl CreateClient for TpuClientNextClient {
+impl CreateClient for TpuClientNextClient<NullTpuInfo> {
     fn create_client(
         maybe_runtime: Option<Handle>,
         my_tpu_address: SocketAddr,
         tpu_peers: Option<Vec<SocketAddr>>,
         leader_forward_count: u64,
     ) -> Self {
-        let runtime =
+        let runtime_handle =
             maybe_runtime.expect("Runtime should be provided for the TpuClientNextClient.");
-        spawn_tpu_client_send_txs::<NullTpuInfo>(
-            runtime,
+        Self::new(
+            runtime_handle,
             my_tpu_address,
             tpu_peers,
             None,
             leader_forward_count,
-            QuicClientCertificate::with_option(None),
+            None,
         )
     }
 }

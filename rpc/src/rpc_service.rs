@@ -678,7 +678,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_rpc_new_with_tpu_client_next() {
-        rpc_new::<TpuClientNextClient>(Some(Handle::current()));
+        rpc_new::<TpuClientNextClient<NullTpuInfo>>(Some(Handle::current()));
     }
 
     fn create_bank_forks() -> Arc<RwLock<BankForks>> {

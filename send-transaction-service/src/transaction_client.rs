@@ -315,6 +315,7 @@ where
     runtime_handle: Handle,
     // This handle is needed to implement `NotifyKeyUpdate` trait. It's only
     // method takes &self and thus we need to wrap with Mutex
+    //TODO rename handle
     handle: Arc<Mutex<(Option<TpuClientJoinHandle>, CancellationToken)>>,
     sender: mpsc::Sender<TransactionBatch>,
     // all what needed to setup client

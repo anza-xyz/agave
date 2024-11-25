@@ -520,7 +520,7 @@ mod test {
     #[tokio::test(flavor = "multi_thread")]
 
     async fn service_exit_with_tpu_client_next() {
-        service_exit::<TpuClientNextClient>(Some(Handle::current()));
+        service_exit::<TpuClientNextClient<NullTpuInfo>>(Some(Handle::current()));
     }
 
     fn validator_exit<C: ClientWithCreator>(maybe_runtime: Option<Handle>) {
@@ -563,7 +563,7 @@ mod test {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn validator_exit_with_tpu_client_next() {
-        validator_exit::<TpuClientNextClient>(Some(Handle::current()));
+        validator_exit::<TpuClientNextClient<NullTpuInfo>>(Some(Handle::current()));
     }
 
     fn process_transactions<C: ClientWithCreator>(maybe_runtime: Option<Handle>) {
@@ -859,7 +859,7 @@ mod test {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn process_transactions_with_tpu_client_next() {
-        process_transactions::<TpuClientNextClient>(Some(Handle::current()));
+        process_transactions::<TpuClientNextClient<NullTpuInfo>>(Some(Handle::current()));
     }
 
     fn retry_durable_nonce_transactions<C: ClientWithCreator>(maybe_runtime: Option<Handle>) {
@@ -1193,6 +1193,8 @@ mod test {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn retry_durable_nonce_transactions_with_tpu_client_next() {
-        retry_durable_nonce_transactions::<TpuClientNextClient>(Some(Handle::current()));
+        retry_durable_nonce_transactions::<TpuClientNextClient<NullTpuInfo>>(Some(
+            Handle::current(),
+        ));
     }
 }

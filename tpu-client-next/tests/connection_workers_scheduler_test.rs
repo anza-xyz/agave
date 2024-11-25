@@ -16,7 +16,9 @@ use {
         streamer::StakedNodes,
     },
     solana_tpu_client_next::{
-        connection_workers_scheduler::{ConnectionWorkersSchedulerConfig, Fanout},
+        connection_workers_scheduler::{
+            ConnectionWorkersSchedulerConfig, Fanout, TransactionStatsAndReceiver,
+        },
         leader_updater::create_leader_updater,
         send_transaction_stats::SendTransactionStatsNonAtomic,
         transaction_batch::TransactionBatch,
@@ -67,7 +69,7 @@ async fn setup_connection_worker_scheduler(
     transaction_receiver: Receiver<TransactionBatch>,
     validator_identity: Option<Keypair>,
 ) -> (
-    JoinHandle<Result<SendTransactionStatsPerAddr, ConnectionWorkersSchedulerError>>,
+    JoinHandle<Result<TransactionStatsAndReceiver, ConnectionWorkersSchedulerError>>,
     CancellationToken,
 ) {
     let json_rpc_url = "http://127.0.0.1:8899";
@@ -97,10 +99,10 @@ async fn setup_connection_worker_scheduler(
 
 async fn join_scheduler(
     scheduler_handle: JoinHandle<
-        Result<SendTransactionStatsPerAddr, ConnectionWorkersSchedulerError>,
+        Result<TransactionStatsAndReceiver, ConnectionWorkersSchedulerError>,
     >,
 ) -> SendTransactionStatsNonAtomic {
-    let stats_per_ip = scheduler_handle
+    let (stats_per_ip, _) = scheduler_handle
         .await
         .unwrap()
         .expect("Scheduler should stop successfully.");
@@ -535,7 +537,7 @@ async fn test_no_host() {
 
     // While attempting to establish a connection with a nonexistent host, we fill the worker's
     // channel.
-    let stats = scheduler_handle
+    let (stats, _) = scheduler_handle
         .await
         .expect("Scheduler should stop successfully")
         .expect("Scheduler execution was successful");

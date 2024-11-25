@@ -4790,7 +4790,7 @@ pub mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_rpc_request_processor_new_tpu_client_next() {
-        rpc_request_processor_new::<TpuClientNextClient>(Some(Handle::current()));
+        rpc_request_processor_new::<TpuClientNextClient<NullTpuInfo>>(Some(Handle::current()));
     }
 
     fn rpc_get_balance<C: ClientWithCreator>(maybe_runtime: Option<Handle>) {
@@ -4830,7 +4830,7 @@ pub mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_rpc_get_balance_new_tpu_client_next() {
-        rpc_get_balance::<TpuClientNextClient>(Some(Handle::current()));
+        rpc_get_balance::<TpuClientNextClient<NullTpuInfo>>(Some(Handle::current()));
     }
 
     fn rpc_get_balance_via_client<C: ClientWithCreator>(maybe_runtime: Option<Handle>) {
@@ -4872,7 +4872,7 @@ pub mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_rpc_get_balance_via_client_tpu_client_next() {
-        rpc_get_balance_via_client::<TpuClientNextClient>(Some(Handle::current()));
+        rpc_get_balance_via_client::<TpuClientNextClient<NullTpuInfo>>(Some(Handle::current()));
     }
 
     #[test]
@@ -5011,7 +5011,7 @@ pub mod tests {
     #[tokio::test(flavor = "multi_thread")]
 
     async fn test_rpc_get_tx_count_tpu_client_next() {
-        rpc_get_tx_count::<TpuClientNextClient>(Some(Handle::current()));
+        rpc_get_tx_count::<TpuClientNextClient<NullTpuInfo>>(Some(Handle::current()));
     }
 
     #[test]
@@ -6475,7 +6475,7 @@ pub mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_rpc_send_bad_tx_tpu_client_next() {
-        rpc_send_bad_tx::<TpuClientNextClient>(Some(Handle::current()));
+        rpc_send_bad_tx::<TpuClientNextClient<NullTpuInfo>>(Some(Handle::current()));
     }
 
     fn rpc_send_transaction_preflight<C: ClientWithCreator>(maybe_runtime: Option<Handle>) {
@@ -6635,7 +6635,7 @@ pub mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_rpc_send_transaction_preflight_with_tpu_client_next() {
-        rpc_send_transaction_preflight::<TpuClientNextClient>(Some(Handle::current()));
+        rpc_send_transaction_preflight::<TpuClientNextClient<NullTpuInfo>>(Some(Handle::current()));
     }
 
     #[test]
@@ -6828,7 +6828,9 @@ pub mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_rpc_processor_get_block_commitment_with_tpu_client_next() {
-        rpc_processor_get_block_commitment::<TpuClientNextClient>(Some(Handle::current()));
+        rpc_processor_get_block_commitment::<TpuClientNextClient<NullTpuInfo>>(Some(
+            Handle::current(),
+        ));
     }
 
     #[test]
