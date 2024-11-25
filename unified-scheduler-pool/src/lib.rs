@@ -156,7 +156,7 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(3);
 const DEFAULT_MAX_USAGE_QUEUE_COUNT: usize = 262_144;
 
 trait_set! {
-    pub trait BatchConverterBase = for<'a> DynClone + (FnMut(BankingPacketBatch, Box<dyn Fn(Task) + 'a>)) + Send + 'static;
+    pub trait BatchConverterBase = DynClone + (FnMut(BankingPacketBatch, Box<dyn for<'a> Fn(Task) + 'a>)) + Send + 'static;
     pub trait BatchConverter = Clone + BatchConverterBase;
 }
 
