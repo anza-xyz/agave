@@ -673,7 +673,7 @@ where
         let banking_stage_context = (banking_packet_receiver.clone(), on_banking_packet_receive);
         let context = SchedulingContext::new(SchedulingMode::BlockProduction, None);
         let s = S::spawn(
-            *handler_context,
+            *handler_count,
             self.self_arc(),
             context,
             initialized_result_with_timings(),
