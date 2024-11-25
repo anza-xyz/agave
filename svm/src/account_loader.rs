@@ -248,7 +248,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         message: &impl SVMMessage,
         transaction_accounts: &[TransactionAccount],
     ) {
-        for (i, (address, account)) in transaction_accounts.iter().enumerate() {
+        for (i, (address, account)) in (0..message.account_keys().len()).zip(transaction_accounts) {
             if !message.is_writable(i) {
                 continue;
             }

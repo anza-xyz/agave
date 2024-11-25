@@ -110,7 +110,7 @@ fn collect_accounts_for_successful_tx<'a, T: SVMMessage>(
     transaction_ref: Option<&'a SanitizedTransaction>,
     transaction_accounts: &'a [TransactionAccount],
 ) {
-    for (i, (address, account)) in transaction_accounts.iter().enumerate() {
+    for (i, (address, account)) in (0..transaction.account_keys().len()).zip(transaction_accounts) {
         if !transaction.is_writable(i) {
             continue;
         }
