@@ -704,10 +704,10 @@ impl BankingStage {
                 let decision_maker = decision_maker.clone();
                 let bank_forks = bank_forks.clone();
 
-                Box::new(move |batches: BankingPacketBatch| -> Vec<Task> {
+                Box::new(move |batches: BankingPacketBatch, f| {
                     let decision = decision_maker.make_consume_or_forward_decision();
                     if matches!(decision, BufferedPacketsDecision::Forward) {
-                        return vec![];
+                        return;
                     }
                     let bank = bank_forks.read().unwrap().working_bank();
                     let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
@@ -750,7 +750,7 @@ impl BankingStage {
                         })
                     });
 
-                    transactions.collect()
+                    transactions.for_each(|t| f(t));
                 })
             }),
         );
