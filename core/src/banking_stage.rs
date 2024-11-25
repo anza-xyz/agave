@@ -50,7 +50,6 @@ use {
         transaction::SanitizedTransaction,
     },
     solana_svm_transaction::svm_message::SVMMessage,
-    solana_unified_scheduler_logic::Task,
     solana_unified_scheduler_pool::{BankingStageAdapter, DefaultSchedulerPool},
     std::{
         cmp, env, iter,
