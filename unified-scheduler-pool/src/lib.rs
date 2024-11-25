@@ -1375,7 +1375,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         handler_count: usize,
         mut context: SchedulingContext,
         mut result_with_timings: ResultWithTimings,
-        banking_stage_context: Option<(BankingPacketReceiver, impl BatchConverter)>,
+        banking_stage_context: Option<(BankingPacketReceiver, Box<dyn BatchConverter>)>,
         adapter: Option<Arc<BankingStageAdapter>>,
     ) {
         assert!(handler_count >= 1);
