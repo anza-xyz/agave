@@ -7,15 +7,15 @@ use {
     solana_measure::measure::Measure,
     solana_sdk::{quic::NotifyKeyUpdate, signature::Keypair},
     solana_tpu_client_next::{
-        connection_workers_scheduler::{ConnectionWorkersSchedulerConfig, Fanout},
+        connection_workers_scheduler::{
+            ConnectionWorkersSchedulerConfig, Fanout, TransactionStatsAndReceiver,
+        },
         leader_updater::LeaderUpdater,
         transaction_batch::TransactionBatch,
         ConnectionWorkersScheduler, ConnectionWorkersSchedulerError, QuicClientCertificate,
-        SendTransactionStats,
     },
     std::{
-        collections::HashMap,
-        net::{IpAddr, Ipv4Addr, SocketAddr},
+        net::{Ipv4Addr, SocketAddr},
         sync::{atomic::Ordering, Arc, Mutex},
         time::{Duration, Instant},
     },
@@ -39,10 +39,6 @@ pub trait TransactionClient {
     );
 
     fn protocol(&self) -> Protocol;
-}
-
-pub trait Cancelable {
-    fn cancel(&self);
 }
 
 pub struct ConnectionCacheClient<T: TpuInfoWithSendStatic> {
@@ -156,13 +152,6 @@ where
     }
 }
 
-impl<T> Cancelable for ConnectionCacheClient<T>
-where
-    T: TpuInfoWithSendStatic,
-{
-    fn cancel(&self) {}
-}
-
 impl<T> NotifyKeyUpdate for ConnectionCacheClient<T>
 where
     T: TpuInfoWithSendStatic,
@@ -200,125 +189,24 @@ where
     async fn stop(&mut self) {}
 }
 
-/*
-#[derive(Clone)]
-pub struct TpuClientNextClient {
-    runtime_handle: Handle,
-    sender: Sender<TransactionBatch>,
-    cancel: CancellationToken,
-}
+type TpuClientJoinHandle =
+    JoinHandle<Result<TransactionStatsAndReceiver, ConnectionWorkersSchedulerError>>;
 
-impl Cancelable for TpuClientNextClient {
-    fn cancel(&self) {
-        self.cancel.cancel();
-    }
-}
-
-impl TransactionClient for TpuClientNextClient {
-    fn send_transactions_in_batch(
-        &self,
-        wire_transactions: Vec<Vec<u8>>,
-        stats: &SendTransactionServiceStats,
-    ) {
-        let mut measure = Measure::start("send-us");
-        self.runtime_handle.spawn({
-            let sender = self.sender.clone();
-            async move {
-                let res = sender.send(TransactionBatch::new(wire_transactions)).await;
-                if res.is_err() {
-                    warn!("Failed to send transaction to channel: it is closed.");
-                }
-            }
-        });
-
-        measure.stop();
-        stats.send_us.fetch_add(measure.as_us(), Ordering::Relaxed);
-        stats.send_attempt_count.fetch_add(1, Ordering::Relaxed);
-    }
-
-    fn protocol(&self) -> Protocol {
-        Protocol::QUIC
-    }
-}
-    */
-
-type TpuClientJoinHandle = JoinHandle<
-    Result<
-        (
-            HashMap<IpAddr, Arc<SendTransactionStats>>,
-            mpsc::Receiver<TransactionBatch>,
-        ),
-        ConnectionWorkersSchedulerError,
-    >,
->;
-
-/*
-pub fn spawn_tpu_client_send_txs<T>(
-    runtime_handle: Handle,
-    my_tpu_address: SocketAddr,
-    tpu_peers: Option<Vec<SocketAddr>>,
-    leader_info: Option<T>,
-    leader_forward_count: u64,
-    client_certificate: QuicClientCertificate,
-    sender: mpsc::Sender<TransactionBatch>,
-    receiver: mpsc::Receiver<TransactionBatch>,
-) -> (TpuClientNextClient, TpuClientJoinHandle)
-where
-    T: TpuInfoWithSendStatic,
-{
-    let leader_info_provider = CurrentLeaderInfo::new(leader_info);
-
-    let cancel = CancellationToken::new();
-    let handle = {
-        let cancel = cancel.clone();
-        let leader_updater: SendTransactionServiceLeaderUpdater<T> =
-            SendTransactionServiceLeaderUpdater {
-                leader_info_provider,
-                my_tpu_address,
-                tpu_peers,
-            };
-        let config = ConnectionWorkersSchedulerConfig {
-            bind: SocketAddr::new(Ipv4Addr::new(0, 0, 0, 0).into(), 0),
-            client_certificate,
-            // to match MAX_CONNECTIONS from ConnectionCache
-            num_connections: 1024,
-            skip_check_transaction_age: true,
-            worker_channel_size: 64,
-            max_reconnect_attempts: 4,
-            leaders_fanout: Fanout {
-                connect: leader_forward_count as usize,
-                send: leader_forward_count as usize,
-            },
-        };
-        runtime_handle.spawn(async move {
-            ConnectionWorkersScheduler::run(
-                config,
-                Box::new(leader_updater),
-                receiver,
-                cancel.clone(),
-            )
-            .await
-        })
-    };
-    (sender, cancel, handle)
-}
-*/
-
-/// This structure wraps [`TpuClientNext`] so that the underlying task sending
-/// transactions can be updated when the validator changes identity keypair. It
-/// implements the same interface as TpuClientNext plus [`NotifyKeyUpdate`]
+/// This structure allows to control [`ConnectionWorkersScheduler`]:
+/// * send transactions to scheduler
+/// * create scheduler
+/// * update validator identity keypair and update scheduler (implements [`NotifyKeyUpdate`]).
+///  so that the underlying task sending
 #[derive(Clone)]
 pub struct TpuClientNextClient<T>
 where
     T: TpuInfoWithSendStatic + Clone,
 {
     runtime_handle: Handle,
+    sender: mpsc::Sender<TransactionBatch>,
     // This handle is needed to implement `NotifyKeyUpdate` trait. It's only
     // method takes &self and thus we need to wrap with Mutex
-    //TODO rename handle
-    handle: Arc<Mutex<(Option<TpuClientJoinHandle>, CancellationToken)>>,
-    sender: mpsc::Sender<TransactionBatch>,
-    // all what needed to setup client
+    join_and_cancel: Arc<Mutex<(Option<TpuClientJoinHandle>, CancellationToken)>>,
     leader_updater: SendTransactionServiceLeaderUpdater<T>,
     leader_forward_count: u64,
 }
@@ -359,7 +247,7 @@ where
 
         Self {
             runtime_handle,
-            handle: Arc::new(Mutex::new((Some(handle), cancel))),
+            join_and_cancel: Arc::new(Mutex::new((Some(handle), cancel))),
             sender,
             leader_updater,
             leader_forward_count,
@@ -386,6 +274,15 @@ where
         }
     }
 
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    pub fn cancel(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let Ok(lock) = self.join_and_cancel.lock() else {
+            return Err("Failed to stop scheduler: TpuClientNext task panicked.".into());
+        };
+        lock.1.cancel();
+        Ok(())
+    }
+
     async fn do_update_key(
         &self,
         validator_identity: &Keypair,
@@ -394,7 +291,7 @@ where
         let config =
             Self::create_config(Some(validator_identity), self.leader_forward_count as usize);
         let leader_updater = self.leader_updater.clone();
-        let handle = self.handle.clone();
+        let handle = self.join_and_cancel.clone();
 
         let Ok(mut lock) = handle.lock() else {
             return Err("TpuClientNext task panicked.".into());
@@ -425,18 +322,6 @@ where
             }
         }
         Ok(())
-    }
-}
-
-// TODO(klykov): mark it to be for tests only or move to
-// create_client_for_tests.rs
-impl<T> Cancelable for TpuClientNextClient<T>
-where
-    T: TpuInfoWithSendStatic + Clone,
-{
-    fn cancel(&self) {
-        let lock = self.handle.lock().unwrap();
-        lock.1.cancel();
     }
 }
 

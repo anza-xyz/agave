@@ -23,7 +23,6 @@ use {
         send_transaction_stats::SendTransactionStatsNonAtomic,
         transaction_batch::TransactionBatch,
         ConnectionWorkersScheduler, ConnectionWorkersSchedulerError, QuicClientCertificate,
-        SendTransactionStatsPerAddr,
     },
     std::{
         collections::HashMap,

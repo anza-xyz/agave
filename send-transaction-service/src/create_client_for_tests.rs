@@ -5,7 +5,7 @@ use {
     crate::{
         tpu_info::NullTpuInfo,
         transaction_client::{
-            Cancelable, ConnectionCacheClient, TpuClientNextClient, TransactionClient,
+            ConnectionCacheClient, TpuClientNextClient, TpuInfoWithSendStatic, TransactionClient,
         },
     },
     solana_client::connection_cache::ConnectionCache,
@@ -60,6 +60,26 @@ impl CreateClient for TpuClientNextClient<NullTpuInfo> {
             leader_forward_count,
             None,
         )
+    }
+}
+
+pub trait Cancelable {
+    fn cancel(&self);
+}
+
+impl<T> Cancelable for ConnectionCacheClient<T>
+where
+    T: TpuInfoWithSendStatic,
+{
+    fn cancel(&self) {}
+}
+
+impl<T> Cancelable for TpuClientNextClient<T>
+where
+    T: TpuInfoWithSendStatic + Clone,
+{
+    fn cancel(&self) {
+        self.cancel().unwrap();
     }
 }
 
