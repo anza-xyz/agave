@@ -166,6 +166,10 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .takes_value(true)
             .help("The number of pubkey bins used for accounts hash calculation.")
             .hidden(hidden_unless_forced()),
+        Arg::with_name("accounts_db_enable_chili_pepper")
+            .long("accounts-db-enable-chili-pepper")
+            .help("Enables chili pepper")
+            .hidden(hidden_unless_forced()),
     ]
     .into_boxed_slice()
 }
@@ -394,6 +398,7 @@ pub fn get_accounts_db_config(
         snapshots_use_experimental_accumulator_hash: arg_matches
             .is_present("accounts_db_snapshots_use_experimental_accumulator_hash"),
         num_hash_threads,
+        enable_chili_pepper: arg_matches.is_present("accounts_db_enable_chili_pepper"),
         ..AccountsDbConfig::default()
     }
 }

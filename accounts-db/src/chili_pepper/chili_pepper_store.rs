@@ -73,6 +73,8 @@ impl<'a> Key for PubkeySlot<'a> {
 }
 
 const TABLE: TableDefinition<PubkeySlot, u64> = TableDefinition::new("chili_pepper");
+
+#[derive(Debug)]
 pub struct ChiliPepperStore {
     db: Database,
     path: PathBuf,

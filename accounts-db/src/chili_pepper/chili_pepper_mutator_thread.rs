@@ -23,6 +23,7 @@ pub enum ChiliPepperMutatorThreadCommand {
     Snapshot(u64, PathBuf),
 }
 
+#[derive(Debug)]
 pub struct ChiliPepperMutatorThread {
     pub thread: thread::JoinHandle<()>,
 }

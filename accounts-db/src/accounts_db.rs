@@ -64,6 +64,12 @@ use {
         },
         append_vec::{aligned_stored_size, STORE_META_OVERHEAD},
         cache_hash_data::{CacheHashData, DeletionPolicy as CacheHashDeletionPolicy},
+        chili_pepper::{
+            chili_pepper_mutator_thread::{
+                ChiliPepperMutatorThread, ChiliPepperMutatorThreadCommand,
+            },
+            chili_pepper_store::ChiliPepperStore,
+        },
         contains::Contains,
         epoch_accounts_hash::EpochAccountsHashManager,
         partitioned_rewards::{
@@ -520,6 +526,8 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     num_foreground_threads: None,
     num_hash_threads: None,
     hash_calculation_pubkey_bins: Some(4),
+    enable_chili_pepper: false,
+    chili_pepper_path: None,
 };
 pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig {
     index: Some(ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS),
@@ -547,6 +555,8 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     num_foreground_threads: None,
     num_hash_threads: None,
     hash_calculation_pubkey_bins: None,
+    enable_chili_pepper: false,
+    chili_pepper_path: None,
 };
 
 pub type BinnedHashData = Vec<Vec<CalculateHashIntermediate>>;
@@ -678,6 +688,9 @@ pub struct AccountsDbConfig {
     pub num_foreground_threads: Option<NonZeroUsize>,
     /// Number of threads for background accounts hashing (`thread_pool_hash`)
     pub num_hash_threads: Option<NonZeroUsize>,
+
+    pub enable_chili_pepper: bool,
+    pub chili_pepper_path: Option<PathBuf>,
 }
 
 #[cfg(not(test))]
@@ -1636,6 +1649,10 @@ pub struct AccountsDb {
     /// Members are Slot and capacity. If capacity is smaller, then
     /// that means the storage was already shrunk.
     pub(crate) best_ancient_slots_to_shrink: RwLock<VecDeque<(Slot, u64)>>,
+
+    /// Stores for accounts's chili pepper data
+    chili_pepper_store: Option<Arc<ChiliPepperStore>>,
+    chili_pepper_mutator_thread: Option<ChiliPepperMutatorThread>,
 }
 
 /// results from 'split_storages_ancient'
@@ -1891,6 +1908,8 @@ pub struct PubkeyHashAccount {
 impl AccountsDb {
     pub const DEFAULT_ACCOUNTS_HASH_CACHE_DIR: &'static str = "accounts_hash_cache";
 
+    pub const DEFAULT_CHILI_PEPPER_PATH: &'static str = "chili_pepper";
+
     // read only cache does not update lru on read of an entry unless it has been at least this many ms since the last lru update
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     const READ_ONLY_CACHE_MS_TO_SKIP_LRU_UPDATE: u32 = 100;
@@ -1926,6 +1945,7 @@ impl AccountsDb {
             paths,
             Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
             None,
+            None,
             Arc::default(),
         );
         db.accounts_file_provider = accounts_file_provider;
@@ -1936,10 +1956,11 @@ impl AccountsDb {
         paths: Vec<PathBuf>,
         accounts_db_config: Option<AccountsDbConfig>,
         accounts_update_notifier: Option<AccountsUpdateNotifier>,
+        chili_pepper_command_receiver: Option<Receiver<ChiliPepperMutatorThreadCommand>>,
         exit: Arc<AtomicBool>,
     ) -> Self {
         let accounts_db_config = accounts_db_config.unwrap_or_default();
-        let accounts_index = AccountsIndex::new(accounts_db_config.index.clone(), exit);
+        let accounts_index = AccountsIndex::new(accounts_db_config.index.clone(), exit.clone());
 
         let base_working_path = accounts_db_config.base_working_path.clone();
         let (base_working_path, base_working_temp_dir) =
@@ -2005,6 +2026,30 @@ impl AccountsDb {
             .expect("new rayon threadpool");
 
         let thread_pool_hash = make_hash_thread_pool(accounts_db_config.num_hash_threads);
+
+        let (chili_pepper_store, chili_pepper_mutator_thread) =
+            if accounts_db_config.enable_chili_pepper {
+                assert!(chili_pepper_command_receiver.is_some());
+
+                let chili_pepper_path = accounts_db_config.chili_pepper_path.clone();
+                let chili_pepper_path = chili_pepper_path
+                    .unwrap_or_else(|| base_working_path.join(Self::DEFAULT_CHILI_PEPPER_PATH));
+
+                let chili_pepper_store = if chili_pepper_path.exists() {
+                    Arc::new(ChiliPepperStore::open_with_path(&chili_pepper_path).unwrap())
+                } else {
+                    Arc::new(ChiliPepperStore::new_with_path(&chili_pepper_path).unwrap())
+                };
+
+                let chili_pepper_mutator_thread = ChiliPepperMutatorThread::new(
+                    chili_pepper_command_receiver.unwrap(),
+                    chili_pepper_store.clone(),
+                    exit.clone(),
+                );
+                (Some(chili_pepper_store), Some(chili_pepper_mutator_thread))
+            } else {
+                (None, None)
+            };
 
         let mut new = Self {
             accounts_index,
@@ -2085,6 +2130,8 @@ impl AccountsDb {
             epoch_accounts_hash_manager: EpochAccountsHashManager::new_invalid(),
             latest_full_snapshot_slot: SeqLock::new(None),
             best_ancient_slots_to_shrink: RwLock::default(),
+            chili_pepper_store,
+            chili_pepper_mutator_thread,
         };
 
         new.start_background_hasher();

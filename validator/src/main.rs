@@ -1369,6 +1369,7 @@ pub fn main() {
         num_clean_threads: Some(accounts_db_clean_threads),
         num_foreground_threads: Some(accounts_db_foreground_threads),
         num_hash_threads: Some(accounts_db_hash_threads),
+        enable_chili_pepper: matches.is_present("accounts_db_enable_chili_pepper"),
         ..AccountsDbConfig::default()
     };
 
