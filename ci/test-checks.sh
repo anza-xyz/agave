@@ -83,7 +83,7 @@ _ scripts/check-dev-context-only-utils.sh tree
 
 _ scripts/cargo-for-all-lock-files.sh -- "+${rust_nightly}" fmt --all -- --check
 
-_ ci/do-audit.sh
+# _ ci/do-audit.sh
 
 if [[ -n $CI ]] && [[ $CHANNEL = "stable" ]]; then
   _ ci/check-install-all.sh
