@@ -32,6 +32,8 @@ pub struct ResolvedTransactionView<D: TransactionData> {
     /// The resolved address lookups.
     resolved_addresses: Option<LoadedAddresses>,
     /// A cache for whether an address is writable.
+    // Sanitized transactions are guaranteed to have a maximum of 256 keys,
+    // because account indexing is done with a u8.
     writable_cache: [bool; 256],
 }
 
