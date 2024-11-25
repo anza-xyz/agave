@@ -55,6 +55,7 @@ use {
     },
     vec_extract_if_polyfill::MakeExtractIf,
 };
+use trait_set::trait_set;
 
 mod sleepless_testing;
 use crate::sleepless_testing::BuilderTracked;
@@ -154,9 +155,9 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(3);
 // because UsageQueueLoader won't grow that much to begin with.
 const DEFAULT_MAX_USAGE_QUEUE_COUNT: usize = 262_144;
 
-pub trait BatchConverter: DynClone + (FnMut(BankingPacketBatch) -> Vec<Task>) + Send {}
-
-impl<T> BatchConverter for T where T: DynClone + (FnMut(BankingPacketBatch) -> Vec<Task>) + Send {}
+trait_set! {
+    pub trait BatchConverter: DynClone + (FnMut(BankingPacketBatch) -> Vec<Task>) + Send;
+}
 
 clone_trait_object!(BatchConverter);
 
