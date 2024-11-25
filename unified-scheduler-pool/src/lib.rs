@@ -1374,7 +1374,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         mut result_with_timings: ResultWithTimings,
         banking_stage_context: Option<(
             BankingPacketReceiver,
-            impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static,
+            impl BatchConverter,
         )>,
         adapter: Option<Arc<BankingStageAdapter>>,
     ) {
@@ -2242,7 +2242,7 @@ pub trait SpawnableScheduler<TH: TaskHandler>: InstalledScheduler {
         result_with_timings: ResultWithTimings,
         banking_stage_context: Option<(
             BankingPacketReceiver,
-            impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static,
+            impl BatchConverter,
         )>,
         banking_stage_adapter: Option<Arc<BankingStageAdapter>>,
     ) -> Self
@@ -2280,7 +2280,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
         result_with_timings: ResultWithTimings,
         banking_stage_context: Option<(
             BankingPacketReceiver,
-            impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static,
+            impl BatchConverter,
         )>,
         banking_stage_adapter: Option<Arc<BankingStageAdapter>>,
     ) -> Self {
@@ -3880,7 +3880,7 @@ mod tests {
             _result_with_timings: ResultWithTimings,
             _banking_stage_context: Option<(
                 BankingPacketReceiver,
-                impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static,
+                impl BatchConverter,
             )>,
             _banking_stage_adapter: Option<Arc<BankingStageAdapter>>,
         ) -> Self {
