@@ -156,7 +156,7 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(3);
 const DEFAULT_MAX_USAGE_QUEUE_COUNT: usize = 262_144;
 
 trait_set! {
-    pub trait BatchConverterBase = DynClone + (FnMut(BankingPacketBatch, &dyn Fn(Task))) + Send + 'static;
+    pub trait BatchConverterBase = DynClone + (FnMut(BankingPacketBatch, Box<dyn Fn(Task)>)) + Send + 'static;
     pub trait BatchConverter = Clone + BatchConverterBase;
 }
 
@@ -569,7 +569,7 @@ where
         self.do_take_resumed_scheduler(context, initialized_result_with_timings())
     }
 
-    fn do_take_resumed_scheduler<'a>(
+    fn do_take_resumed_scheduler(
         &self,
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
@@ -589,7 +589,7 @@ where
                     self.self_arc(),
                     context,
                     result_with_timings,
-                    None::<(_, fn(_, &'a _) -> _)>,
+                    None::<(_, fn(_) -> _)>,
                     None,
                 )
             }
