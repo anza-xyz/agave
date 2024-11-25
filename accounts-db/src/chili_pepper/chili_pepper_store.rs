@@ -333,6 +333,10 @@ impl ChiliPepperStore {
             .send(command)
             .map_err(|e| Error::from(io::Error::new(io::ErrorKind::Other, e)))
     }
+
+    pub fn get_all_for_pubkey(&self, pubkey: &Pubkey) -> Result<Vec<(Slot, u64)>, Error> {
+        self.store.get_all_for_pubkey(pubkey)
+    }
 }
 
 #[cfg(test)]

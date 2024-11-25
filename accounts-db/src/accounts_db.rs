@@ -5399,6 +5399,27 @@ impl AccountsDb {
         )
     }
 
+    pub fn loaded_account_chili_peppers(
+        &self,
+        ancestors: &Ancestors,
+        pubkey: &Pubkey,
+    ) -> Option<u64> {
+        assert!(self.chili_pepper_store.is_some());
+        let result = self
+            .chili_pepper_store
+            .as_ref()
+            .unwrap()
+            .get_all_for_pubkey(pubkey)
+            .ok()?;
+
+        for (slot, chili_pepper) in result.iter().rev() {
+            if ancestors.contains_key(&slot) {
+                return Some(*chili_pepper);
+            }
+        }
+        return None;
+    }
+
     /// Load account with `pubkey` and maybe put into read cache.
     ///
     /// If the account is not already cached, invoke `should_put_in_read_cache_fn`.
@@ -9197,6 +9218,26 @@ impl AccountsDb {
         timings.storage_size_storages_us = storage_size_storages_time.as_us();
     }
 
+    pub fn is_accounts_chili_pepper_enabled(&self) -> bool {
+        self.chili_pepper_store.is_some()
+    }
+
+    pub fn insert_chili_peppers(
+        &self,
+        slot: Slot,
+        pubkeys: Vec<Pubkey>,
+        chili_pepper_clock: u64,
+        reply_sender: Sender<()>,
+    ) {
+        if let Some(ref chili_pepper_store) = self.chili_pepper_store {
+            let insert_cmd = ChiliPepperMutatorThreadCommand::Insert(
+                (pubkeys, slot, chili_pepper_clock),
+                reply_sender,
+            );
+            chili_pepper_store.send(insert_cmd).unwrap();
+        }
+    }
+
     pub fn print_accounts_stats(&self, label: &str) {
         self.print_index(label);
         self.print_count_and_status(label);
@@ -9508,26 +9549,6 @@ impl AccountsDb {
             None,
             config,
         )
-    }
-
-    pub fn is_accounts_chili_pepper_enabled(&self) -> bool {
-        self.chili_pepper_store.is_some()
-    }
-
-    pub fn insert_chili_peppers(
-        &self,
-        slot: Slot,
-        chili_pepper_clock: u64,
-        reply_sender: Sender<()>,
-    ) {
-        if let Some(ref chili_pepper_store) = self.chili_pepper_store {
-            let pubkeys = self.get_pubkeys_for_slot(slot);
-            let insert_cmd = ChiliPepperMutatorThreadCommand::Insert(
-                (pubkeys, slot, chili_pepper_clock),
-                reply_sender,
-            );
-            chili_pepper_store.send(insert_cmd).unwrap();
-        }
     }
 }
 

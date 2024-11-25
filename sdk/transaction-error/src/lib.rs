@@ -138,6 +138,9 @@ pub enum TransactionError {
     /// Program cache hit max limit.
     ProgramCacheHitMaxLimit,
 
+    /// Transaction would exceed the requested chili pepper
+    ChiliPepperLimitExceeded,
+
     /// Commit cancelled internally.
     CommitCancelled,
 }
@@ -223,6 +226,8 @@ impl fmt::Display for TransactionError {
              => f.write_str("Sum of account balances before and after transaction do not match"),
             Self::ProgramCacheHitMaxLimit
              => f.write_str("Program cache hit max limit"),
+            Self::ChiliPepperLimitExceeded
+            => f.write_str("Transaction would exceed the requested chili pepper limit"),
             Self::CommitCancelled
              => f.write_str("CommitCancelled"),
         }

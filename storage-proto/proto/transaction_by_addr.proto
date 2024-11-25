@@ -64,6 +64,7 @@ enum TransactionErrorType {
     UNBALANCED_TRANSACTION = 36;
     PROGRAM_CACHE_HIT_MAX_LIMIT = 37;
     COMMIT_CANCELLED = 38;
+    CHILI_PEPPER_LIMIT_EXCEEDED = 39;
 }
 
 message InstructionError {

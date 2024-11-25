@@ -25,7 +25,7 @@ pub enum ChiliPepperMutatorThreadCommand {
 
 #[derive(Debug)]
 pub(super) struct ChiliPepperMutatorThread {
-    pub thread: thread::JoinHandle<()>,
+    pub _thread: thread::JoinHandle<()>,
 }
 
 impl ChiliPepperMutatorThread {
@@ -86,10 +86,10 @@ impl ChiliPepperMutatorThread {
                                     .remove_savepoint(savepoint_id)
                                     .expect("chili pepper store delete savepoint failed");
                             }
-                            ChiliPepperMutatorThreadCommand::Snapshot(savepoin_id, ref path) => {
+                            ChiliPepperMutatorThreadCommand::Snapshot(savepoint_id, ref path) => {
                                 // TODO handle snapshot error
                                 store
-                                    .snapshot(savepoin_id, path)
+                                    .snapshot(savepoint_id, path)
                                     .expect("chili pepper store snapshot failed");
                             }
                         },
@@ -105,11 +105,12 @@ impl ChiliPepperMutatorThread {
             })
             .unwrap();
 
-        Self { thread }
+        Self { _thread: thread }
     }
 
+    #[cfg(test)]
     pub fn join(self) -> thread::Result<()> {
-        self.thread.join()
+        self._thread.join()
     }
 }
 
