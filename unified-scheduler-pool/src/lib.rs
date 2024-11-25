@@ -569,7 +569,7 @@ where
         self.do_take_resumed_scheduler(context, initialized_result_with_timings())
     }
 
-    fn do_take_resumed_scheduler<'a>(
+    fn do_take_resumed_scheduler(
         &self,
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
