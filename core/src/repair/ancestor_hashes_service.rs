@@ -917,17 +917,14 @@ mod test {
             blockstore::make_many_slot_entries, get_tmp_ledger_path,
             get_tmp_ledger_path_auto_delete, shred::Nonce,
         },
-        solana_net_utils::bind_to,
+        solana_net_utils::bind_to_unspecified,
         solana_runtime::{accounts_background_service::AbsRequestSender, bank_forks::BankForks},
         solana_sdk::{
             hash::Hash,
             signature::{Keypair, Signer},
         },
         solana_streamer::socket::SocketAddrSpace,
-        std::{
-            collections::HashMap,
-            net::{IpAddr, Ipv4Addr},
-        },
+        std::collections::HashMap,
         trees::tr,
     };
 
@@ -1349,8 +1346,7 @@ mod test {
     impl ManageAncestorHashesState {
         fn new(bank_forks: Arc<RwLock<BankForks>>) -> Self {
             let ancestor_hashes_request_statuses = Arc::new(DashMap::new());
-            let ancestor_hashes_request_socket =
-                Arc::new(bind_to(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, false).unwrap());
+            let ancestor_hashes_request_socket = Arc::new(bind_to_unspecified().unwrap());
             let epoch_schedule = bank_forks
                 .read()
                 .unwrap()

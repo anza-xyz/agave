@@ -19,7 +19,7 @@ use {
         TokioRuntime, TransportConfig,
     },
     solana_keypair::Keypair,
-    solana_net_utils::bind_to,
+    solana_net_utils::{bind_to, bind_to_localhost},
     solana_perf::packet::PacketBatch,
     solana_quic_definitions::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT},
     std::{
@@ -143,12 +143,19 @@ pub fn setup_quic_server(
         #[cfg(not(target_os = "windows"))]
         {
             (0..10)
-                .map(|_| bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, true).unwrap())
+                .map(|_| {
+                    bind_to(
+                        IpAddr::V4(Ipv4Addr::LOCALHOST),
+                        /*port*/ 0,
+                        /*reuseport:*/ true,
+                    )
+                    .unwrap()
+                })
                 .collect::<Vec<_>>()
         }
         #[cfg(target_os = "windows")]
         {
-            vec![bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false).unwrap()]
+            vec![bind_to_localhost().unwrap()]
         }
     };
     setup_quic_server_with_sockets(sockets, option_staked_nodes, config)
@@ -207,7 +214,7 @@ pub async fn make_client_endpoint(
     addr: &SocketAddr,
     client_keypair: Option<&Keypair>,
 ) -> Connection {
-    let client_socket = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false).unwrap();
+    let client_socket = bind_to_localhost().unwrap();
     let mut endpoint = quinn::Endpoint::new(
         EndpointConfig::default(),
         None,

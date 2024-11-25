@@ -61,7 +61,7 @@ mod tests {
             sendmmsg::SendPktsError,
         },
         assert_matches::assert_matches,
-        solana_net_utils::bind_to_async,
+        solana_net_utils::{bind_to_async, bind_to_localhost_async},
         solana_packet::PACKET_DATA_SIZE,
         std::{
             io::ErrorKind,
@@ -71,13 +71,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_mmsg_one_dest() {
-        let reader = bind_to_async(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false)
-            .await
-            .expect("bind");
+        let reader = bind_to_localhost_async().await.expect("bind");
         let addr = reader.local_addr().unwrap();
-        let sender = bind_to_async(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false)
-            .await
-            .expect("bind");
+        let sender = bind_to_localhost_async().await.expect("bind");
 
         let packets: Vec<_> = (0..32).map(|_| vec![0u8; PACKET_DATA_SIZE]).collect();
         let packet_refs: Vec<_> = packets.iter().map(|p| (&p[..], &addr)).collect();
@@ -92,19 +88,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_mmsg_multi_dest() {
-        let reader = bind_to_async(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false)
-            .await
-            .expect("bind");
+        let reader = bind_to_localhost_async().await.expect("bind");
         let addr = reader.local_addr().unwrap();
 
-        let reader2 = bind_to_async(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false)
-            .await
-            .expect("bind");
+        let reader2 = bind_to_localhost_async().await.expect("bind");
         let addr2 = reader2.local_addr().unwrap();
 
-        let sender = bind_to_async(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false)
-            .await
-            .expect("bind");
+        let sender = bind_to_localhost_async().await.expect("bind");
 
         let packets: Vec<_> = (0..32).map(|_| vec![0u8; PACKET_DATA_SIZE]).collect();
         let packet_refs: Vec<_> = packets
@@ -133,29 +123,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_multicast_msg() {
-        let reader = bind_to_async(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false)
-            .await
-            .expect("bind");
+        let reader = bind_to_localhost_async().await.expect("bind");
         let addr = reader.local_addr().unwrap();
 
-        let reader2 = bind_to_async(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false)
-            .await
-            .expect("bind");
+        let reader2 = bind_to_localhost_async().await.expect("bind");
         let addr2 = reader2.local_addr().unwrap();
 
-        let reader3 = bind_to_async(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false)
-            .await
-            .expect("bind");
+        let reader3 = bind_to_localhost_async().await.expect("bind");
         let addr3 = reader3.local_addr().unwrap();
 
-        let reader4 = bind_to_async(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false)
-            .await
-            .expect("bind");
+        let reader4 = bind_to_localhost_async().await.expect("bind");
         let addr4 = reader4.local_addr().unwrap();
 
-        let sender = bind_to_async(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false)
-            .await
-            .expect("bind");
+        let sender = bind_to_localhost_async().await.expect("bind");
 
         let packet = Packet::default();
 
@@ -197,9 +177,13 @@ mod tests {
         ];
         let dest_refs: Vec<_> = vec![&ip4, &ip6, &ip4];
 
-        let sender = bind_to_async(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, false)
-            .await
-            .expect("bind");
+        let sender = bind_to_async(
+            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            /*port*/ 0,
+            /*reuseport:*/ false,
+        )
+        .await
+        .expect("bind");
         let res = batch_send(&sender, &packet_refs[..]).await;
         assert_matches!(res, Err(SendPktsError::IoError(_, /*num_failed*/ 1)));
         let res = multi_target_send(&sender, &packets[0], &dest_refs).await;
@@ -211,9 +195,13 @@ mod tests {
         let packets: Vec<_> = (0..5).map(|_| vec![0u8; PACKET_DATA_SIZE]).collect();
         let ipv4local = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080);
         let ipv4broadcast = SocketAddr::new(IpAddr::V4(Ipv4Addr::BROADCAST), 8080);
-        let sender = bind_to_async(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, false)
-            .await
-            .expect("bind");
+        let sender = bind_to_async(
+            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            /*port*/ 0,
+            /*reuseport:*/ false,
+        )
+        .await
+        .expect("bind");
 
         // test intermediate failures for batch_send
         let packet_refs: Vec<_> = vec![

@@ -8,7 +8,7 @@ use {
     std::{
         collections::{BTreeMap, HashSet},
         io::{self, Read, Write},
-        net::{IpAddr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket},
+        net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket},
         sync::{Arc, RwLock},
         time::{Duration, Instant},
     },
@@ -554,6 +554,31 @@ pub async fn bind_to_async(
     let config = SocketConfig { reuseport };
     let socket = bind_to_with_config_non_blocking(ip_addr, port, config)?;
     TokioUdpSocket::from_std(socket)
+}
+
+pub fn bind_to_localhost() -> io::Result<UdpSocket> {
+    bind_to(
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        /*port:*/ 0,
+        /*reuseport:*/ false,
+    )
+}
+
+pub async fn bind_to_localhost_async() -> io::Result<TokioUdpSocket> {
+    bind_to_async(
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        /*port:*/ 0,
+        /*reuseport:*/ false,
+    )
+    .await
+}
+
+pub fn bind_to_unspecified() -> io::Result<UdpSocket> {
+    bind_to(
+        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+        /*port:*/ 0,
+        /*reuseport:*/ false,
+    )
 }
 
 pub fn bind_to_with_config(

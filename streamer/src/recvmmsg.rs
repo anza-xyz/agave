@@ -178,9 +178,9 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
 mod tests {
     use {
         crate::{packet::PACKET_DATA_SIZE, recvmmsg::*},
-        solana_net_utils::bind_to,
+        solana_net_utils::{bind_to, bind_to_localhost},
         std::{
-            net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
+            net::{SocketAddr, UdpSocket},
             time::{Duration, Instant},
         },
     };
@@ -191,9 +191,17 @@ mod tests {
         let sock_addr: SocketAddr = ip_str
             .parse()
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-        let reader = bind_to(sock_addr.ip(), sock_addr.port(), false)?;
+        let reader = bind_to(
+            sock_addr.ip(),
+            /*port:*/ sock_addr.port(),
+            /*reuseport:*/ false,
+        )?;
         let addr = reader.local_addr()?;
-        let sender = bind_to(sock_addr.ip(), sock_addr.port(), false)?;
+        let sender = bind_to(
+            sock_addr.ip(),
+            /*port:*/ sock_addr.port(),
+            /*reuseport:*/ false,
+        )?;
         let saddr = sender.local_addr()?;
         Ok((reader, addr, sender, saddr))
     }
@@ -263,11 +271,11 @@ mod tests {
 
     #[test]
     pub fn test_recv_mmsg_multi_iter_timeout() {
-        let reader = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false).expect("bind");
+        let reader = bind_to_localhost().expect("bind");
         let addr = reader.local_addr().unwrap();
         reader.set_read_timeout(Some(Duration::new(5, 0))).unwrap();
         reader.set_nonblocking(false).unwrap();
-        let sender = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false).expect("bind");
+        let sender = bind_to_localhost().expect("bind");
         let saddr = sender.local_addr().unwrap();
         let sent = TEST_NUM_MSGS;
         for _ in 0..sent {
@@ -294,14 +302,14 @@ mod tests {
 
     #[test]
     pub fn test_recv_mmsg_multi_addrs() {
-        let reader = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false).expect("bind");
+        let reader = bind_to_localhost().expect("bind");
         let addr = reader.local_addr().unwrap();
 
-        let sender1 = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false).expect("bind");
+        let sender1 = bind_to_localhost().expect("bind");
         let saddr1 = sender1.local_addr().unwrap();
         let sent1 = TEST_NUM_MSGS - 1;
 
-        let sender2 = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false).expect("bind");
+        let sender2 = bind_to_localhost().expect("bind");
         let saddr2 = sender2.local_addr().unwrap();
         let sent2 = TEST_NUM_MSGS + 1;
 

@@ -57,11 +57,8 @@ pub async fn recv_mmsg_exact(
 mod tests {
     use {
         crate::{nonblocking::recvmmsg::*, packet::PACKET_DATA_SIZE},
-        solana_net_utils::bind_to_async,
-        std::{
-            net::{IpAddr, Ipv4Addr, SocketAddr},
-            time::Instant,
-        },
+        solana_net_utils::{bind_to_async, bind_to_localhost_async},
+        std::{net::SocketAddr, time::Instant},
         tokio::net::UdpSocket,
     };
 
@@ -71,9 +68,19 @@ mod tests {
         let sock_addr: SocketAddr = ip_str
             .parse()
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-        let reader = bind_to_async(sock_addr.ip(), sock_addr.port(), false).await?;
+        let reader = bind_to_async(
+            sock_addr.ip(),
+            /*port*/ sock_addr.port(),
+            /*reuseport:*/ false,
+        )
+        .await?;
         let addr = reader.local_addr()?;
-        let sender = bind_to_async(sock_addr.ip(), sock_addr.port(), false).await?;
+        let sender = bind_to_async(
+            sock_addr.ip(),
+            /*port*/ sock_addr.port(),
+            /*reuseport:*/ false,
+        )
+        .await?;
         let saddr = sender.local_addr()?;
         Ok((reader, addr, sender, saddr))
     }
@@ -145,13 +152,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_recv_mmsg_exact_multi_iter_timeout() {
-        let reader = bind_to_async(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false)
-            .await
-            .expect("bind");
+        let reader = bind_to_localhost_async().await.expect("bind");
         let addr = reader.local_addr().unwrap();
-        let sender = bind_to_async(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false)
-            .await
-            .expect("bind");
+        let sender = bind_to_localhost_async().await.expect("bind");
         let saddr = sender.local_addr().unwrap();
         let sent = TEST_NUM_MSGS;
         for _ in 0..sent {
@@ -177,20 +180,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_recv_mmsg_multi_addrs() {
-        let reader = bind_to_async(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false)
-            .await
-            .expect("bind");
+        let reader = bind_to_localhost_async().await.expect("bind");
         let addr = reader.local_addr().unwrap();
 
-        let sender1 = bind_to_async(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false)
-            .await
-            .expect("bind");
+        let sender1 = bind_to_localhost_async().await.expect("bind");
         let saddr1 = sender1.local_addr().unwrap();
         let sent1 = TEST_NUM_MSGS - 1;
 
-        let sender2 = bind_to_async(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, false)
-            .await
-            .expect("bind");
+        let sender2 = bind_to_localhost_async().await.expect("bind");
         let saddr2 = sender2.local_addr().unwrap();
         let sent2 = TEST_NUM_MSGS + 1;
 

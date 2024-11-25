@@ -19,7 +19,7 @@ use {
         gossip_service::discover_cluster,
     },
     solana_ledger::{create_new_tmp_ledger_with_size, shred::Shred},
-    solana_net_utils::bind_to,
+    solana_net_utils::bind_to_unspecified,
     solana_rpc_client::rpc_client::RpcClient,
     solana_runtime::{
         genesis_utils::{
@@ -1106,7 +1106,7 @@ impl Cluster for LocalCluster {
     }
 
     fn send_shreds_to_validator(&self, dup_shreds: Vec<&Shred>, validator_key: &Pubkey) {
-        let send_socket = bind_to(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, false).unwrap();
+        let send_socket = bind_to_unspecified().unwrap();
         let validator_tvu = self
             .get_contact_info(validator_key)
             .unwrap()

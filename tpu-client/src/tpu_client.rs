@@ -8,7 +8,7 @@ use {
             ConnectionCache, ConnectionManager, ConnectionPool, NewConnectionConfig,
         },
     },
-    solana_net_utils::bind_to,
+    solana_net_utils::bind_to_unspecified,
     solana_rpc_client::rpc_client::RpcClient,
     solana_sdk::{
         client::AsyncClient,
@@ -19,7 +19,7 @@ use {
     },
     std::{
         collections::VecDeque,
-        net::{IpAddr, Ipv4Addr, UdpSocket},
+        net::UdpSocket,
         sync::{Arc, RwLock},
     },
 };
@@ -180,7 +180,7 @@ where
             tokio::task::block_in_place(|| rpc_client.runtime().block_on(create_tpu_client))?;
 
         Ok(Self {
-            _deprecated: bind_to(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, false).unwrap(),
+            _deprecated: bind_to_unspecified().unwrap(),
             rpc_client,
             tpu_client: Arc::new(tpu_client),
         })
@@ -203,7 +203,7 @@ where
             tokio::task::block_in_place(|| rpc_client.runtime().block_on(create_tpu_client))?;
 
         Ok(Self {
-            _deprecated: bind_to(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, false).unwrap(),
+            _deprecated: bind_to_unspecified().unwrap(),
             rpc_client,
             tpu_client: Arc::new(tpu_client),
         })

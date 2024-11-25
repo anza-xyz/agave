@@ -76,9 +76,13 @@ mod tests {
         let socket =
             solana_net_utils::bind_with_any_port(IpAddr::V4(Ipv4Addr::UNSPECIFIED)).unwrap();
         let connection = UdpClientConnection::new_from_addr(socket, addr);
-        let reader = bind_to_async(addr.ip(), addr.port(), false)
-            .await
-            .expect("bind");
+        let reader = bind_to_async(
+            addr.ip(),
+            /*port*/ addr.port(),
+            /*reuseport:*/ false,
+        )
+        .await
+        .expect("bind");
         check_send_one(&connection, &reader).await;
         check_send_batch(&connection, &reader).await;
     }
