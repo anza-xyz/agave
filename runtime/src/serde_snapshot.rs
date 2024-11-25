@@ -1059,7 +1059,6 @@ where
         account_paths.to_vec(),
         accounts_db_config,
         accounts_update_notifier,
-        None, // TODO
         exit,
     );
 

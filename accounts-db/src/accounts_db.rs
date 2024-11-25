@@ -64,12 +64,7 @@ use {
         },
         append_vec::{aligned_stored_size, STORE_META_OVERHEAD},
         cache_hash_data::{CacheHashData, DeletionPolicy as CacheHashDeletionPolicy},
-        chili_pepper::{
-            chili_pepper_mutator_thread::{
-                ChiliPepperMutatorThread, ChiliPepperMutatorThreadCommand,
-            },
-            chili_pepper_store::ChiliPepperStore,
-        },
+        chili_pepper::{self, ChiliPepperMutatorThreadCommand, ChiliPepperStore},
         contains::Contains,
         epoch_accounts_hash::EpochAccountsHashManager,
         partitioned_rewards::{
@@ -1652,7 +1647,6 @@ pub struct AccountsDb {
 
     /// Stores for accounts's chili pepper data
     chili_pepper_store: Option<Arc<ChiliPepperStore>>,
-    chili_pepper_mutator_thread: Option<ChiliPepperMutatorThread>,
 }
 
 /// results from 'split_storages_ancient'
@@ -1945,7 +1939,6 @@ impl AccountsDb {
             paths,
             Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
             None,
-            None,
             Arc::default(),
         );
         db.accounts_file_provider = accounts_file_provider;
@@ -1956,7 +1949,6 @@ impl AccountsDb {
         paths: Vec<PathBuf>,
         accounts_db_config: Option<AccountsDbConfig>,
         accounts_update_notifier: Option<AccountsUpdateNotifier>,
-        chili_pepper_command_receiver: Option<Receiver<ChiliPepperMutatorThreadCommand>>,
         exit: Arc<AtomicBool>,
     ) -> Self {
         let accounts_db_config = accounts_db_config.unwrap_or_default();
@@ -2027,29 +2019,23 @@ impl AccountsDb {
 
         let thread_pool_hash = make_hash_thread_pool(accounts_db_config.num_hash_threads);
 
-        let (chili_pepper_store, chili_pepper_mutator_thread) =
-            if accounts_db_config.enable_chili_pepper {
-                assert!(chili_pepper_command_receiver.is_some());
+        let chili_pepper_store = if accounts_db_config.enable_chili_pepper {
+            let chili_pepper_path = accounts_db_config.chili_pepper_path.clone();
+            let chili_pepper_path = chili_pepper_path
+                .unwrap_or_else(|| base_working_path.join(Self::DEFAULT_CHILI_PEPPER_PATH));
 
-                let chili_pepper_path = accounts_db_config.chili_pepper_path.clone();
-                let chili_pepper_path = chili_pepper_path
-                    .unwrap_or_else(|| base_working_path.join(Self::DEFAULT_CHILI_PEPPER_PATH));
-
-                let chili_pepper_store = if chili_pepper_path.exists() {
-                    Arc::new(ChiliPepperStore::open_with_path(&chili_pepper_path).unwrap())
-                } else {
-                    Arc::new(ChiliPepperStore::new_with_path(&chili_pepper_path).unwrap())
-                };
-
-                let chili_pepper_mutator_thread = ChiliPepperMutatorThread::new(
-                    chili_pepper_command_receiver.unwrap(),
-                    chili_pepper_store.clone(),
-                    exit.clone(),
-                );
-                (Some(chili_pepper_store), Some(chili_pepper_mutator_thread))
+            let chili_pepper_store = if chili_pepper_path.exists() {
+                Arc::new(
+                    ChiliPepperStore::open_with_path(&chili_pepper_path, exit.clone()).unwrap(),
+                )
             } else {
-                (None, None)
+                Arc::new(ChiliPepperStore::new_with_path(&chili_pepper_path, exit.clone()).unwrap())
             };
+
+            Some(chili_pepper_store)
+        } else {
+            None
+        };
 
         let mut new = Self {
             accounts_index,
@@ -2131,7 +2117,6 @@ impl AccountsDb {
             latest_full_snapshot_slot: SeqLock::new(None),
             best_ancient_slots_to_shrink: RwLock::default(),
             chili_pepper_store,
-            chili_pepper_mutator_thread,
         };
 
         new.start_background_hasher();
@@ -2838,6 +2823,16 @@ impl AccountsDb {
     ) {
         if self.exhaustively_verify_refcounts {
             self.exhaustively_verify_refcounts(max_clean_root_inclusive);
+        }
+
+        // Clean chili pepper store
+        if let Some(chili_pepper_store) = self.chili_pepper_store.as_ref() {
+            let max_slot_inclusive = self.accounts_index.max_root_inclusive();
+            let threshold = max_slot_inclusive * chili_pepper::BLOCK_CHILI_PEPPER_LIMIT
+                - chili_pepper::GLOBAL_CHILI_PEPPER_CACHE_LIMIT;
+
+            let clean_cmd = ChiliPepperMutatorThreadCommand::Clean(threshold);
+            chili_pepper_store.send(clean_cmd).unwrap();
         }
 
         let _guard = self.active_stats.activate(ActiveStatItem::Clean);
@@ -9513,6 +9508,26 @@ impl AccountsDb {
             None,
             config,
         )
+    }
+
+    pub fn is_accounts_chili_pepper_enabled(&self) -> bool {
+        self.chili_pepper_store.is_some()
+    }
+
+    pub fn insert_chili_peppers(
+        &self,
+        slot: Slot,
+        chili_pepper_clock: u64,
+        reply_sender: Sender<()>,
+    ) {
+        if let Some(ref chili_pepper_store) = self.chili_pepper_store {
+            let pubkeys = self.get_pubkeys_for_slot(slot);
+            let insert_cmd = ChiliPepperMutatorThreadCommand::Insert(
+                (pubkeys, slot, chili_pepper_clock),
+                reply_sender,
+            );
+            chili_pepper_store.send(insert_cmd).unwrap();
+        }
     }
 }
 

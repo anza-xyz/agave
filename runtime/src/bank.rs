@@ -84,6 +84,7 @@ use {
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         ancestors::{Ancestors, AncestorsForSerialization},
         blockhash_queue::BlockhashQueue,
+        chili_pepper::BLOCK_CHILI_PEPPER_LIMIT,
         epoch_accounts_hash::EpochAccountsHash,
         sorted_storages::SortedStorages,
         storable_accounts::StorableAccounts,
@@ -2606,36 +2607,42 @@ impl Bank {
                 // updating the accounts lt hash must happen *outside* of hash_internal_state() so
                 // that rehash() can be called and *not* modify self.accounts_lt_hash.
                 self.update_accounts_lt_hash();
+            }
 
-                // For lattice-hash R&D, we have a CLI arg to do extra verfication.  If set, we'll
-                // re-calculate the accounts lt hash every slot and compare it against the value
-                // already stored in the bank.
-                if self
-                    .rc
-                    .accounts
-                    .accounts_db
-                    .verify_experimental_accumulator_hash
-                {
-                    let slot = self.slot();
-                    info!("Verifying the accounts lt hash for slot {slot}...");
-                    let (calculated_accounts_lt_hash, duration) = meas_dur!({
-                        self.rc
-                            .accounts
-                            .accounts_db
-                            .calculate_accounts_lt_hash_at_startup_from_index(&self.ancestors, slot)
-                    });
-                    let actual_accounts_lt_hash = self.accounts_lt_hash.lock().unwrap();
-                    assert_eq!(
+            // For lattice-hash R&D, we have a CLI arg to do extra verfication.  If set, we'll
+            // re-calculate the accounts lt hash every slot and compare it against the value
+            // already stored in the bank.
+            if self
+                .rc
+                .accounts
+                .accounts_db
+                .verify_experimental_accumulator_hash
+            {
+                let slot = self.slot();
+                info!("Verifying the accounts lt hash for slot {slot}...");
+                let (calculated_accounts_lt_hash, duration) = meas_dur!({
+                    self.rc
+                        .accounts
+                        .accounts_db
+                        .calculate_accounts_lt_hash_at_startup_from_index(&self.ancestors, slot)
+                });
+                let actual_accounts_lt_hash = self.accounts_lt_hash.lock().unwrap();
+                assert_eq!(
                         calculated_accounts_lt_hash,
                         *actual_accounts_lt_hash,
                         "Verifying the accounts lt hash for slot {slot} failed! calculated checksum: {}, actual checksum: {}",
                         calculated_accounts_lt_hash.0.checksum(),
                         actual_accounts_lt_hash.0.checksum(),
                     );
-                    info!("Verifying the accounts lt hash for slot {slot}... Done successfully in {duration:?}");
-                }
+                info!("Verifying the accounts lt hash for slot {slot}... Done successfully in {duration:?}");
             }
+
             *hash = self.hash_internal_state();
+
+            if self.is_accounts_chili_pepper_enabled() {
+                self.update_accounts_chili_pepper();
+            }
+
             self.rc.accounts.accounts_db.mark_slot_frozen(self.slot());
         }
     }
@@ -6815,6 +6822,29 @@ impl Bank {
 
     pub fn get_bank_hash_stats(&self) -> BankHashStats {
         self.bank_hash_stats.load()
+    }
+
+    pub fn is_accounts_chili_pepper_enabled(&self) -> bool {
+        // TODO: feature gate this
+        self.rc
+            .accounts
+            .accounts_db
+            .is_accounts_chili_pepper_enabled()
+    }
+
+    pub fn update_accounts_chili_pepper(&self) {
+        debug_assert!(self.is_accounts_chili_pepper_enabled());
+        let slot = self.slot();
+
+        // Fake the current chili pepper clock for each pubkey for test
+        let current_chili_pepper_clock = slot * BLOCK_CHILI_PEPPER_LIMIT;
+        let (sender, receiver) = crossbeam_channel::bounded(1);
+
+        self.rc
+            .accounts
+            .accounts_db
+            .insert_chili_peppers(slot, current_chili_pepper_clock, sender);
+        receiver.recv().unwrap();
     }
 }
 

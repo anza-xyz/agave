@@ -1,5 +1,9 @@
 #![allow(dead_code)]
 use {
+    super::chili_pepper_mutator_thread::{
+        ChiliPepperMutatorThread, ChiliPepperMutatorThreadCommand,
+    },
+    crossbeam_channel::{unbounded, Receiver, Sender},
     redb::{
         Database, Error, Key, ReadableTableMetadata, TableDefinition, TableStats, TypeName, Value,
     },
@@ -8,7 +12,9 @@ use {
         borrow::Borrow,
         cmp::Ordering,
         fmt::Debug,
+        io,
         path::{Path, PathBuf},
+        sync::Arc,
     },
 };
 
@@ -75,7 +81,7 @@ impl<'a> Key for PubkeySlot<'a> {
 const TABLE: TableDefinition<PubkeySlot, u64> = TableDefinition::new("chili_pepper");
 
 #[derive(Debug)]
-pub struct ChiliPepperStore {
+pub struct ChiliPepperStoreWrapper {
     db: Database,
     path: PathBuf,
 }
@@ -88,7 +94,7 @@ const DEFAULT_CACHE_SIZE: usize = 1024 * 1024 * 1024; // 1GB for validator
 #[cfg(test)]
 const DEFAULT_CACHE_SIZE: usize = 1024 * 1024; // 1MB for test
 
-impl ChiliPepperStore {
+impl ChiliPepperStoreWrapper {
     pub fn new_with_path(path: impl AsRef<Path>) -> Result<Self, Error> {
         let db = Database::builder()
             .set_cache_size(1024 * 1024)
@@ -284,6 +290,51 @@ impl ChiliPepperStore {
     }
 }
 
+#[derive(Debug)]
+pub struct ChiliPepperStore {
+    pub store: Arc<ChiliPepperStoreWrapper>,
+    sender: Sender<ChiliPepperMutatorThreadCommand>,
+    thread: ChiliPepperMutatorThread,
+}
+
+impl ChiliPepperStore {
+    pub fn new_with_path(
+        path: impl AsRef<Path>,
+        exit: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<Self, Error> {
+        let (sender, receiver) = unbounded();
+        let store = Arc::new(ChiliPepperStoreWrapper::new_with_path(path)?);
+        let thread = ChiliPepperMutatorThread::new(receiver, store.clone(), exit.clone());
+
+        Ok(Self {
+            store,
+            sender,
+            thread,
+        })
+    }
+
+    pub fn open_with_path(
+        path: impl AsRef<Path>,
+        exit: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<Self, Error> {
+        let (sender, receiver) = unbounded();
+        let store = Arc::new(ChiliPepperStoreWrapper::open_with_path(path)?);
+        let thread = ChiliPepperMutatorThread::new(receiver, store.clone(), exit.clone());
+
+        Ok(Self {
+            store,
+            sender,
+            thread,
+        })
+    }
+
+    pub fn send(&self, command: ChiliPepperMutatorThreadCommand) -> Result<(), Error> {
+        self.sender
+            .send(command)
+            .map_err(|e| Error::from(io::Error::new(io::ErrorKind::Other, e)))
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -292,7 +343,7 @@ pub mod tests {
     fn test_with_path() {
         let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
         let path = tmpfile.path().to_path_buf();
-        let store = ChiliPepperStore::new_with_path(&path).expect("create db success");
+        let store = ChiliPepperStoreWrapper::new_with_path(&path).expect("create db success");
 
         let pk = Pubkey::from([1_u8; 32]);
         let some_key = PubkeySlot(&pk, 42);
@@ -302,7 +353,7 @@ pub mod tests {
 
         drop(store);
 
-        let store = ChiliPepperStore::open_with_path(&path).expect("open db success");
+        let store = ChiliPepperStoreWrapper::open_with_path(&path).expect("open db success");
         assert_eq!(store.len().unwrap(), 1);
         assert_eq!(store.get(some_key).unwrap().unwrap(), some_value);
     }
@@ -324,7 +375,7 @@ pub mod tests {
         let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
 
         let db = Database::create(tmpfile.path()).expect("create db success");
-        let store = ChiliPepperStore::new(db);
+        let store = ChiliPepperStoreWrapper::new(db);
 
         for (key, value) in keys.iter().zip(vals.iter()) {
             store.insert(*key, *value).unwrap();
@@ -362,7 +413,7 @@ pub mod tests {
 
         let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
         let db = Database::create(tmpfile.path()).expect("create db success");
-        let store = ChiliPepperStore::new(db);
+        let store = ChiliPepperStoreWrapper::new(db);
 
         store.insert(some_key, some_value).unwrap();
         store.insert(some_key2, some_value2).unwrap();
@@ -400,7 +451,7 @@ pub mod tests {
         let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
 
         let db = Database::create(tmpfile.path()).expect("create db success");
-        let store = ChiliPepperStore::new(db);
+        let store = ChiliPepperStoreWrapper::new(db);
 
         store.bulk_insert(to_insert.into_iter()).unwrap();
 
@@ -526,7 +577,7 @@ pub mod tests {
         let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
 
         let db = Database::create(tmpfile.path()).expect("create db success");
-        let store = ChiliPepperStore::new(db);
+        let store = ChiliPepperStoreWrapper::new(db);
 
         store.bulk_insert(to_insert.into_iter()).unwrap();
 
@@ -539,7 +590,7 @@ pub mod tests {
         let snapshot_path = path.with_extension("snapshot");
         std::fs::copy(&path, &snapshot_path).expect("copy db file success");
         let db2 = Database::open(&snapshot_path).expect("open db success");
-        let store2 = ChiliPepperStore::new(db2);
+        let store2 = ChiliPepperStoreWrapper::new(db2);
 
         assert_eq!(store2.len().unwrap(), 3);
         assert_eq!(store2.get(some_key).unwrap().unwrap(), some_value);
@@ -565,7 +616,7 @@ pub mod tests {
         let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
 
         let db = Database::create(tmpfile.path()).expect("create db success");
-        let store = ChiliPepperStore::new(db);
+        let store = ChiliPepperStoreWrapper::new(db);
 
         store.insert(some_key, some_value).unwrap();
         store.insert(some_key2, some_value2).unwrap();
@@ -596,7 +647,7 @@ pub mod tests {
         let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
 
         let db = Database::create(tmpfile.path()).expect("create db success");
-        let store = ChiliPepperStore::new(db);
+        let store = ChiliPepperStoreWrapper::new(db);
 
         store.bulk_insert(data.into_iter()).unwrap();
         assert_eq!(store.len().unwrap(), 10);
@@ -622,7 +673,7 @@ pub mod tests {
         let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
 
         let db = Database::create(tmpfile.path()).expect("create db success");
-        let store = ChiliPepperStore::new(db);
+        let store = ChiliPepperStoreWrapper::new(db);
 
         store.insert(some_key, some_value).unwrap();
         let savepoint_id = store.create_savepoint().unwrap();
@@ -654,7 +705,8 @@ pub mod tests {
 
         let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
 
-        let store = ChiliPepperStore::new_with_path(tmpfile.path()).expect("create db success");
+        let store =
+            ChiliPepperStoreWrapper::new_with_path(tmpfile.path()).expect("create db success");
         store.insert(some_key, some_value).unwrap();
         let savepoint_id = store.create_savepoint().unwrap();
 
@@ -666,7 +718,7 @@ pub mod tests {
         store.snapshot(savepoint_id, &snapshot_path).unwrap();
 
         let db2 = Database::open(&snapshot_path).expect("open db success");
-        let store2 = ChiliPepperStore::new(db2);
+        let store2 = ChiliPepperStoreWrapper::new(db2);
 
         assert_eq!(store2.len().unwrap(), 1);
         assert_eq!(store2.get(some_key).unwrap().unwrap(), some_value);
