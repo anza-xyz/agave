@@ -6753,6 +6753,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-core-bpf-migration"
+version = "2.2.0"
+
+[[package]]
 name = "solana-cost-model"
 version = "2.2.0"
 dependencies = [

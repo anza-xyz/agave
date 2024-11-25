@@ -1,0 +1,15 @@
+[package]
+name = "solana-core-bpf-migration"
+description = "Solana migration of builtins to Core BPF"
+documentation = "https://docs.rs/solana-core-bpf-migration"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+
+[lints]
+workspace = true
