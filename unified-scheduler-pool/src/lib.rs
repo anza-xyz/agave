@@ -2030,7 +2030,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             }
                             break;
                         };
-                        on_recv.as_mut().unwrap()(banking_packet, &move |task| {
+                        on_recv.as_mut().unwrap()(banking_packet, move |task| {
                             new_task_sender
                                 .send(NewTaskPayload::Payload(task).into())
                                 .unwrap();
