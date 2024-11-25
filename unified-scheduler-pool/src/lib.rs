@@ -163,7 +163,7 @@ trait_set! {
 clone_trait_object!(BatchConverterBase);
 
 type BatchConverterCreator =
-    Box<dyn (FnMut(Arc<BankingStageAdapter>) -> Box<dyn BatchConverter>) + Send>;
+    Box<dyn (FnMut(Arc<BankingStageAdapter>) -> Box<dyn BatchConverterBase>) + Send>;
 
 #[derive(derive_more::Debug)]
 struct BlockProductionSchedulerRespawner {
