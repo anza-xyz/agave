@@ -2274,7 +2274,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
         pool: Arc<SchedulerPool<Self, TH>>,
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
-        banking_stage_context: Option<(BankingPacketReceiver, impl BatchConverter)>,
+        banking_stage_context: Option<(BankingPacketReceiver, Box<dyn BatchConverter>)>,
         banking_stage_adapter: Option<Arc<BankingStageAdapter>>,
     ) -> Self {
         info!("spawning new scheduler for slot: {}", context.slot());
