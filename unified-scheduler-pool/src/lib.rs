@@ -156,14 +156,14 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(3);
 const DEFAULT_MAX_USAGE_QUEUE_COUNT: usize = 262_144;
 
 trait_set! {
-    pub(crate) trait BatchConverter = DynClone + (FnMut(BankingPacketBatch) -> Vec<Task>) + Send;
-            //impl FnMut(BankingPacketBatch) -> Vec<Task> + Clone + Send + 'static,
+    pub trait BatchConverterBase = DynClone + (FnMut(BankingPacketBatch) -> Vec<Task>) + Send;
+    pub trait BatchConverter = Clone + (FnMut(BankingPacketBatch) -> Vec<Task>) + Send + 'static;
 }
 
-clone_trait_object!(BatchConverter);
+clone_trait_object!(BatchConverterBase);
 
 type BatchConverterCreator =
-    Box<dyn (FnMut(Arc<BankingStageAdapter>) -> Box<dyn BatchConverter>) + Send>;
+    Box<dyn (FnMut(Arc<BankingStageAdapter>) -> Box<dyn BatchConverterBase>) + Send>;
 
 #[derive(derive_more::Debug)]
 struct BlockProductionSchedulerRespawner {
