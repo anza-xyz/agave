@@ -869,6 +869,7 @@ mod tests {
             accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
             accounts_index::AccountSecondaryIndexes,
         },
+        solana_clap_utils::keypair,
         solana_core::consensus::tower_storage::NullTowerStorage,
         solana_gossip::cluster_info::ClusterInfo,
         solana_inline_spl::token,
@@ -1286,5 +1287,46 @@ mod tests {
                 assert!(sizes.is_empty());
             }
         }
+    }
+
+    #[test]
+    fn test_set_identity() {
+        let rpc = RpcHandler::start_with_config(TestConfig::default());
+
+        let RpcHandler { io, meta, .. } = rpc;
+
+        let expected_validator_id = Keypair::new();
+        let validator_id_bytes = format!("{:?}", expected_validator_id.to_bytes());
+
+        let set_id_request = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"setIdentityFromBytes","params":[{validator_id_bytes}, false]}}"#,
+        );
+        let response = io.handle_request_sync(&set_id_request, meta.clone());
+        let actual_parsed_response: Value =
+            serde_json::from_str(&response.expect("actual response"))
+                .expect("actual response deserialization");
+
+        let expected_parsed_response: Value = serde_json::from_str(
+            r#"{
+                "id": 1,
+                "jsonrpc": "2.0",
+                "result": null
+            }"#,
+        )
+        .expect("Failed to parse expected response");
+        assert_eq!(actual_parsed_response, expected_parsed_response);
+
+        let contact_info_request =
+            format!(r#"{{"jsonrpc":"2.0","id":1,"method":"contactInfo","params":[]}}"#,);
+        let response = io.handle_request_sync(&contact_info_request, meta.clone());
+        let parsed_response: Value = serde_json::from_str(&response.expect("actual response"))
+            .expect("actual response deserialization");
+        let actual_validator_id = parsed_response["result"]["id"]
+            .as_str()
+            .expect("Expected a string");
+        assert_eq!(
+            actual_validator_id,
+            expected_validator_id.pubkey().to_string()
+        );
     }
 }
