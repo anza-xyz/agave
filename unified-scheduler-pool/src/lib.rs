@@ -157,7 +157,7 @@ const DEFAULT_MAX_USAGE_QUEUE_COUNT: usize = 262_144;
 
 trait_set! {
     pub trait BatchConverterBase = DynClone + (FnMut(BankingPacketBatch) -> Vec<Task>) + Send + 'static;
-    pub trait BatchConverter = Clone + (FnMut(BankingPacketBatch) -> Vec<Task>) + Send + 'static;
+    pub trait BatchConverter = Clone + BatchConverterBase;
 }
 
 clone_trait_object!(BatchConverterBase);
