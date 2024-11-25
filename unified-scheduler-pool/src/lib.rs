@@ -105,7 +105,7 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     block_production_scheduler_respawner: Mutex<Option<BlockProductionSchedulerRespawner>>,
     trashed_scheduler_inners: Mutex<Vec<S::Inner>>,
     timeout_listeners: Mutex<Vec<(TimeoutListener, Instant)>>,
-    handler_count: usize,
+    block_verification_handler_count: usize,
     handler_context: HandlerContext,
     // weak_self could be elided by changing InstalledScheduler::take_scheduler()'s receiver to
     // Arc<Self> from &Self, because SchedulerPool is used as in the form of Arc<SchedulerPool>
@@ -165,6 +165,7 @@ type BatchConverterCreator =
 
 #[derive(derive_more::Debug)]
 struct BlockProductionSchedulerRespawner {
+    handler_count: usize,
     #[debug("{on_spawn_block_production_scheduler:p}")]
     on_spawn_block_production_scheduler: BatchConverterCreator,
     banking_packet_receiver: BankingPacketReceiver,
@@ -583,6 +584,7 @@ where
                 S::from_inner(inner, context, result_with_timings)
             } else {
                 S::spawn(
+                    self.block_verification_handler_count,
                     self.self_arc(),
                     context,
                     result_with_timings,
@@ -620,11 +622,13 @@ where
     pub fn register_banking_stage(
         &self,
         banking_packet_receiver: BankingPacketReceiver,
+        handler_count: usize,
         banking_stage_monitor: Box<dyn BankingStageMonitor>,
         on_spawn_block_production_scheduler: BatchConverterCreator,
     ) {
         *self.block_production_scheduler_respawner.lock().unwrap() =
             Some(BlockProductionSchedulerRespawner {
+                handler_count,
                 banking_packet_receiver,
                 on_spawn_block_production_scheduler,
                 banking_stage_monitor,
@@ -653,6 +657,7 @@ where
         info!("flash session: start!");
         let mut respawner_write = self.block_production_scheduler_respawner.lock().unwrap();
         let BlockProductionSchedulerRespawner {
+            handler_count,
             banking_packet_receiver,
             on_spawn_block_production_scheduler,
             banking_stage_monitor: _,
@@ -668,6 +673,7 @@ where
         let banking_stage_context = (banking_packet_receiver.clone(), on_banking_packet_receive);
         let context = SchedulingContext::new(SchedulingMode::BlockProduction, None);
         let s = S::spawn(
+            *handler_context,
             self.self_arc(),
             context,
             initialized_result_with_timings(),
@@ -1265,7 +1271,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
     fn new(pool: Arc<SchedulerPool<S, TH>>) -> Self {
         let (new_task_sender, new_task_receiver) = crossbeam_channel::unbounded();
         let (session_result_sender, session_result_receiver) = crossbeam_channel::unbounded();
-        let handler_count = pool.handler_count;
 
         Self {
             scheduler_id: pool.new_scheduler_id(),
@@ -1276,7 +1281,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             session_result_receiver,
             session_result_with_timings: None,
             scheduler_thread: None,
-            handler_threads: Vec::with_capacity(handler_count),
+            handler_threads: vec![],
         }
     }
 
@@ -1363,6 +1368,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
     // for type safety.
     fn start_threads(
         &mut self,
+        handler_count: usize,
         mut context: SchedulingContext,
         mut result_with_timings: ResultWithTimings,
         banking_stage_context: Option<(
@@ -1488,7 +1494,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         // 6. the scheduler thread post-processes the executed task.
         let scheduler_main_loop = {
             let banking_stage_context = banking_stage_context.clone();
-            let handler_count = self.pool.handler_count;
             let session_result_sender = self.session_result_sender.clone();
             // Taking new_task_receiver here is important to ensure there's a single receiver. In
             // this way, the replay stage will get .send() failures reliably, after this scheduler
@@ -2078,7 +2083,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 .unwrap(),
         );
 
-        self.handler_threads = (0..self.pool.handler_count)
+        self.handler_threads = (0..handler_count)
             .map({
                 |thx| {
                     thread::Builder::new()
@@ -2228,6 +2233,7 @@ pub trait SpawnableScheduler<TH: TaskHandler>: InstalledScheduler {
     ) -> Self;
 
     fn spawn(
+        handler_count: usize,
         pool: Arc<SchedulerPool<Self, TH>>,
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
@@ -2265,6 +2271,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
     }
 
     fn spawn(
+        handler_count: usize,
         pool: Arc<SchedulerPool<Self, TH>>,
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
@@ -2288,6 +2295,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
             task_creator,
         };
         inner.thread_manager.start_threads(
+            handler_count,
             context.clone(),
             result_with_timings,
             banking_stage_context,
@@ -3863,6 +3871,7 @@ mod tests {
         }
 
         fn spawn(
+            _handler_count: usize,
             pool: Arc<SchedulerPool<Self, DefaultTaskHandler>>,
             context: SchedulingContext,
             _result_with_timings: ResultWithTimings,

@@ -448,6 +448,7 @@ impl BankingStage {
                 non_vote_receiver,
                 tpu_vote_receiver,
                 gossip_vote_receiver,
+                num_threads,
                 bank_forks,
                 unified_scheduler_pool.unwrap(),
             ),
@@ -681,6 +682,7 @@ impl BankingStage {
         non_vote_receiver: BankingPacketReceiver,
         tpu_vote_receiver: BankingPacketReceiver,
         gossip_vote_receiver: BankingPacketReceiver,
+        num_threads: u32,
         bank_forks: Arc<RwLock<BankForks>>,
         unified_scheduler_pool: Arc<DefaultSchedulerPool>,
     ) -> Self {
@@ -696,6 +698,7 @@ impl BankingStage {
 
         unified_scheduler_pool.register_banking_stage(
             unified_receiver,
+            (num_threads - 2) as usize,
             banking_stage_monitor,
             Box::new(move |adapter: Arc<BankingStageAdapter>| {
                 let decision_maker = decision_maker.clone();
