@@ -589,7 +589,7 @@ where
                     self.self_arc(),
                     context,
                     result_with_timings,
-                    None,
+                    None::<(_, fn(_, Box<fn(_)>) -> _)>,
                     None,
                 )
             }
