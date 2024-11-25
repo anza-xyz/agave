@@ -584,6 +584,8 @@ where
             {
                 S::from_inner(inner, context, result_with_timings)
             } else {
+                panic!();
+                /*
                 S::spawn(
                     self.block_verification_handler_count,
                     self.self_arc(),
@@ -592,6 +594,7 @@ where
                     None::<(_, fn(_, Box<fn(_)>) -> _)>,
                     None,
                 )
+                */
             }
         } else {
             let mut id_and_inner = self
