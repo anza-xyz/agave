@@ -2035,7 +2035,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 .send(NewTaskPayload::Payload(task).into())
                                 .unwrap();
                         });
-                        on_recv.as_mut().unwrap()(banking_packet, b);
+                        on_recv.as_mut().unwrap()(banking_packet, &b);
                         continue;
                     },
                     /*
