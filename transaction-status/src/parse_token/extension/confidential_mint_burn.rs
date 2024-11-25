@@ -109,9 +109,10 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
             });
             let mut offset = 2;
             let map = value.as_object_mut().unwrap();
-            if mint_data.equality_proof_instruction_offset != 0
-                || mint_data.ciphertext_validity_proof_instruction_offset != 0
-                || mint_data.range_proof_instruction_offset != 0
+            if offset < account_indexes.len() - 1
+                && (mint_data.equality_proof_instruction_offset != 0
+                    || mint_data.ciphertext_validity_proof_instruction_offset != 0
+                    || mint_data.range_proof_instruction_offset != 0)
             {
                 map.insert(
                     "instructionsSysvar".to_string(),
@@ -189,9 +190,10 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
             });
             let mut offset = 2;
             let map = value.as_object_mut().unwrap();
-            if burn_data.equality_proof_instruction_offset != 0
-                || burn_data.ciphertext_validity_proof_instruction_offset != 0
-                || burn_data.range_proof_instruction_offset != 0
+            if offset < account_indexes.len() - 1
+                && (burn_data.equality_proof_instruction_offset != 0
+                    || burn_data.ciphertext_validity_proof_instruction_offset != 0
+                    || burn_data.range_proof_instruction_offset != 0)
             {
                 map.insert(
                     "instructionsSysvar".to_string(),
@@ -251,6 +253,214 @@ pub(in crate::parse_token) fn parse_confidential_mint_burn_instruction(
                 instruction_type: "confidentialBurn".to_string(),
                 info: value,
             })
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use {
+        super::*,
+        bytemuck::Zeroable,
+        solana_sdk::{
+            instruction::{AccountMeta, Instruction},
+            pubkey::Pubkey,
+        },
+        spl_token_2022::{
+            extension::confidential_mint_burn::instruction::{
+                confidential_burn_with_split_proofs, confidential_mint_with_split_proofs,
+                initialize_mint,
+            },
+            solana_program::message::Message,
+            solana_zk_sdk::{
+                encryption::{
+                    auth_encryption::AeCiphertext,
+                    elgamal::ElGamalPubkey,
+                    pod::{auth_encryption::PodAeCiphertext, elgamal::PodElGamalPubkey},
+                },
+                zk_elgamal_proof_program::proof_data::{
+                    BatchedGroupedCiphertext3HandlesValidityProofData, BatchedRangeProofU128Data,
+                    CiphertextCiphertextEqualityProofData, CiphertextCommitmentEqualityProofData,
+                },
+            },
+        },
+        spl_token_confidential_transfer_proof_extraction::instruction::{ProofData, ProofLocation},
+        std::num::NonZero,
+    };
+
+    fn check_no_panic(mut instruction: Instruction) {
+        let account_meta = AccountMeta::new_readonly(Pubkey::new_unique(), false);
+        for i in 0..20 {
+            instruction.accounts = vec![account_meta.clone(); i];
+            let message = Message::new(&[instruction.clone()], None);
+            let compiled_instruction = &message.instructions[0];
+            let _ = parse_token(
+                compiled_instruction,
+                &AccountKeys::new(&message.account_keys, None),
+            );
+        }
+    }
+
+    #[test]
+    fn test_initialize() {
+        let instruction = initialize_mint(
+            &spl_token_2022::id(),
+            &Pubkey::new_unique(),
+            PodElGamalPubkey::default(),
+            PodAeCiphertext::default(),
+        )
+        .unwrap();
+        check_no_panic(instruction);
+    }
+
+    #[test]
+    fn test_update() {
+        let instruction = update_decryptable_supply(
+            &spl_token_2022::id(),
+            &Pubkey::new_unique(),
+            &Pubkey::new_unique(),
+            &[],
+            AeCiphertext::default(),
+        )
+        .unwrap();
+        check_no_panic(instruction);
+    }
+
+    #[test]
+    fn test_rotate() {
+        for location in [
+            ProofLocation::InstructionOffset(
+                NonZero::new(1).unwrap(),
+                ProofData::InstructionData(&CiphertextCiphertextEqualityProofData::zeroed()),
+            ),
+            ProofLocation::InstructionOffset(
+                NonZero::new(1).unwrap(),
+                ProofData::RecordAccount(&Pubkey::new_unique(), 0),
+            ),
+            ProofLocation::ContextStateAccount(&Pubkey::new_unique()),
+        ] {
+            let instructions = rotate_supply_elgamal_pubkey(
+                &spl_token_2022::id(),
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                &[],
+                ElGamalPubkey::default(),
+                location,
+            )
+            .unwrap();
+            check_no_panic(instructions[0].clone());
+        }
+    }
+
+    #[test]
+    fn test_mint() {
+        for (equality_proof_location, ciphertext_validity_proof_location, range_proof_location) in [
+            (
+                ProofLocation::InstructionOffset(
+                    NonZero::new(1).unwrap(),
+                    ProofData::InstructionData(&CiphertextCommitmentEqualityProofData::zeroed()),
+                ),
+                ProofLocation::InstructionOffset(
+                    NonZero::new(2).unwrap(),
+                    ProofData::InstructionData(
+                        &BatchedGroupedCiphertext3HandlesValidityProofData::zeroed(),
+                    ),
+                ),
+                ProofLocation::InstructionOffset(
+                    NonZero::new(3).unwrap(),
+                    ProofData::InstructionData(&BatchedRangeProofU128Data::zeroed()),
+                ),
+            ),
+            (
+                ProofLocation::InstructionOffset(
+                    NonZero::new(1).unwrap(),
+                    ProofData::RecordAccount(&Pubkey::new_unique(), 0),
+                ),
+                ProofLocation::InstructionOffset(
+                    NonZero::new(2).unwrap(),
+                    ProofData::RecordAccount(&Pubkey::new_unique(), 0),
+                ),
+                ProofLocation::InstructionOffset(
+                    NonZero::new(3).unwrap(),
+                    ProofData::RecordAccount(&Pubkey::new_unique(), 0),
+                ),
+            ),
+            (
+                ProofLocation::ContextStateAccount(&Pubkey::new_unique()),
+                ProofLocation::ContextStateAccount(&Pubkey::new_unique()),
+                ProofLocation::ContextStateAccount(&Pubkey::new_unique()),
+            ),
+        ] {
+            let instructions = confidential_mint_with_split_proofs(
+                &spl_token_2022::id(),
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                None,
+                &Pubkey::new_unique(),
+                &[],
+                equality_proof_location,
+                ciphertext_validity_proof_location,
+                range_proof_location,
+                AeCiphertext::default(),
+            )
+            .unwrap();
+            check_no_panic(instructions[0].clone());
+        }
+    }
+
+    #[test]
+    fn test_burn() {
+        for (equality_proof_location, ciphertext_validity_proof_location, range_proof_location) in [
+            (
+                ProofLocation::InstructionOffset(
+                    NonZero::new(1).unwrap(),
+                    ProofData::InstructionData(&CiphertextCommitmentEqualityProofData::zeroed()),
+                ),
+                ProofLocation::InstructionOffset(
+                    NonZero::new(2).unwrap(),
+                    ProofData::InstructionData(
+                        &BatchedGroupedCiphertext3HandlesValidityProofData::zeroed(),
+                    ),
+                ),
+                ProofLocation::InstructionOffset(
+                    NonZero::new(3).unwrap(),
+                    ProofData::InstructionData(&BatchedRangeProofU128Data::zeroed()),
+                ),
+            ),
+            (
+                ProofLocation::InstructionOffset(
+                    NonZero::new(1).unwrap(),
+                    ProofData::RecordAccount(&Pubkey::new_unique(), 0),
+                ),
+                ProofLocation::InstructionOffset(
+                    NonZero::new(2).unwrap(),
+                    ProofData::RecordAccount(&Pubkey::new_unique(), 0),
+                ),
+                ProofLocation::InstructionOffset(
+                    NonZero::new(3).unwrap(),
+                    ProofData::RecordAccount(&Pubkey::new_unique(), 0),
+                ),
+            ),
+            (
+                ProofLocation::ContextStateAccount(&Pubkey::new_unique()),
+                ProofLocation::ContextStateAccount(&Pubkey::new_unique()),
+                ProofLocation::ContextStateAccount(&Pubkey::new_unique()),
+            ),
+        ] {
+            let instructions = confidential_burn_with_split_proofs(
+                &spl_token_2022::id(),
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                None,
+                PodAeCiphertext::default(),
+                &Pubkey::new_unique(),
+                &[],
+                equality_proof_location,
+                ciphertext_validity_proof_location,
+                range_proof_location,
+            )
+            .unwrap();
+            check_no_panic(instructions[0].clone());
         }
     }
 }

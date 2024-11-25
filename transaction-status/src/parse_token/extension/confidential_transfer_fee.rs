@@ -203,3 +203,96 @@ pub(in crate::parse_token) fn parse_confidential_transfer_fee_instruction(
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use {
+        super::*,
+        bytemuck::Zeroable,
+        solana_sdk::{
+            instruction::{AccountMeta, Instruction},
+            pubkey::Pubkey,
+        },
+        spl_token_2022::{
+            extension::confidential_transfer_fee::instruction::{
+                inner_withdraw_withheld_tokens_from_accounts,
+                inner_withdraw_withheld_tokens_from_mint,
+            },
+            solana_program::message::Message,
+            solana_zk_sdk::{
+                encryption::pod::auth_encryption::PodAeCiphertext,
+                zk_elgamal_proof_program::proof_data::CiphertextCiphertextEqualityProofData,
+            },
+        },
+        spl_token_confidential_transfer_proof_extraction::instruction::{ProofData, ProofLocation},
+        std::num::NonZero,
+    };
+
+    fn check_no_panic(mut instruction: Instruction) {
+        let account_meta = AccountMeta::new_readonly(Pubkey::new_unique(), false);
+        for i in 0..20 {
+            instruction.accounts = vec![account_meta.clone(); i];
+            let message = Message::new(&[instruction.clone()], None);
+            let compiled_instruction = &message.instructions[0];
+            let _ = parse_token(
+                compiled_instruction,
+                &AccountKeys::new(&message.account_keys, None),
+            );
+        }
+    }
+
+    #[test]
+    fn test_withdraw_from_accounts() {
+        for location in [
+            ProofLocation::InstructionOffset(
+                NonZero::new(1).unwrap(),
+                ProofData::InstructionData(&CiphertextCiphertextEqualityProofData::zeroed()),
+            ),
+            ProofLocation::InstructionOffset(
+                NonZero::new(1).unwrap(),
+                ProofData::RecordAccount(&Pubkey::new_unique(), 0),
+            ),
+            ProofLocation::ContextStateAccount(&Pubkey::new_unique()),
+        ] {
+            let instruction = inner_withdraw_withheld_tokens_from_accounts(
+                &spl_token_2022::id(),
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                &PodAeCiphertext::default(),
+                &Pubkey::new_unique(),
+                &[],
+                &[&Pubkey::new_unique(), &Pubkey::new_unique()],
+                location,
+            )
+            .unwrap();
+            check_no_panic(instruction);
+        }
+    }
+
+    #[test]
+    fn test_withdraw_from_mint() {
+        for location in [
+            ProofLocation::InstructionOffset(
+                NonZero::new(1).unwrap(),
+                ProofData::InstructionData(&CiphertextCiphertextEqualityProofData::zeroed()),
+            ),
+            ProofLocation::InstructionOffset(
+                NonZero::new(1).unwrap(),
+                ProofData::RecordAccount(&Pubkey::new_unique(), 0),
+            ),
+            ProofLocation::ContextStateAccount(&Pubkey::new_unique()),
+        ] {
+            let instruction = inner_withdraw_withheld_tokens_from_mint(
+                &spl_token_2022::id(),
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                &PodAeCiphertext::default(),
+                &Pubkey::new_unique(),
+                &[],
+                location,
+            )
+            .unwrap();
+            check_no_panic(instruction);
+        }
+    }
+}
