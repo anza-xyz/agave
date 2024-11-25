@@ -269,7 +269,6 @@ where
         timeout_duration: Duration,
     ) -> Arc<Self> {
         let handler_count = handler_count.unwrap_or(Self::default_handler_count());
-        assert!(handler_count >= 1);
         let bp_is_supported =
             supported_scheduling_mode.is_supported(SchedulingMode::BlockProduction);
 
@@ -1377,6 +1376,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         )>,
         adapter: Option<Arc<BankingStageAdapter>>,
     ) {
+        assert!(handler_count >= 1);
+
         let scheduler_id = self.scheduler_id;
         let mut slot = context.slot();
 
