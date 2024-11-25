@@ -12,8 +12,7 @@ use {
         leader_slot_metrics::LeaderSlotMetricsTracker,
         packet_receiver::PacketReceiver,
         qos_service::QosService,
-        unprocessed_packet_batches::*,
-        unprocessed_transaction_storage::{ThreadType, UnprocessedTransactionStorage},
+        unprocessed_transaction_storage::UnprocessedTransactionStorage,
     },
     crate::{
         banking_stage::{
@@ -435,8 +434,6 @@ impl BankingStage {
         // This thread talks to poh_service and broadcasts the entries once they have been recorded.
         // Once an entry has been recorded, its blockhash is registered with the bank.
         let data_budget = Arc::new(DataBudget::default());
-        let batch_limit =
-            TOTAL_BUFFERED_PACKETS / ((num_threads - NUM_VOTE_PROCESSING_THREADS) as usize);
         // Keeps track of extraneous vote transactions for the vote threads
         let latest_unprocessed_votes = {
             let bank = bank_forks.read().unwrap().working_bank();
@@ -471,9 +468,10 @@ impl BankingStage {
                     ),
                     _ => (
                         non_vote_receiver.clone(),
-                        UnprocessedTransactionStorage::new_transaction_storage(
-                            UnprocessedPacketBatches::with_capacity(batch_limit),
-                            ThreadType::Transactions,
+                        // TODO: Check if this is alright.
+                        UnprocessedTransactionStorage::new_vote_storage(
+                            latest_unprocessed_votes.clone(),
+                            VoteSource::Tpu,
                         ),
                     ),
                 };

@@ -548,7 +548,7 @@ mod tests {
             (packet.meta().size, DeserializedPacket::new(packet).unwrap())
         };
 
-        let mut unprocessed_packet_batches = UnprocessedTransactionStorage::new_transaction_storage(
+        let mut unprocessed_packet_batches = UnprocessedTransactionStorage::new_vote_storage(
             UnprocessedPacketBatches::from_iter(
                 vec![
                     forwarded_packet,
