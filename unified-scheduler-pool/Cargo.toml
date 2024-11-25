@@ -34,6 +34,7 @@ solana-svm = { workspace = true }
 solana-timings = { workspace = true }
 solana-unified-scheduler-logic = { workspace = true }
 static_assertions = { workspace = true }
+trait-set = "0.3.0"
 vec_extract_if_polyfill = { workspace = true }
 
 [dev-dependencies]
