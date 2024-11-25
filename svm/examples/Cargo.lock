@@ -5000,8 +5000,9 @@ dependencies = [
  "modular-bitfield",
  "num_enum",
  "rand 0.8.5",
+ "solana-clock",
  "solana-measure",
- "solana-sdk",
+ "solana-pubkey",
  "tempfile",
 ]
 
@@ -5060,7 +5061,7 @@ dependencies = [
  "serde_derive",
  "serde_yaml",
  "solana-clap-utils",
- "solana-sdk",
+ "solana-commitment-config",
  "url 2.5.3",
 ]
 
@@ -5444,6 +5445,7 @@ dependencies = [
 name = "solana-feature-set"
 version = "2.2.0"
 dependencies = [
+ "ahash 0.8.11",
  "lazy_static",
  "solana-epoch-schedule",
  "solana-hash",
@@ -6352,9 +6354,16 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
+ "solana-account",
  "solana-account-decoder-client-types",
+ "solana-clock",
+ "solana-commitment-config",
+ "solana-fee-calculator",
+ "solana-inflation",
  "solana-inline-spl",
- "solana-sdk",
+ "solana-pubkey",
+ "solana-signer",
+ "solana-transaction-error",
  "solana-transaction-status-client-types",
  "solana-version",
  "thiserror 2.0.3",
