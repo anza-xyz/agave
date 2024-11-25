@@ -4540,9 +4540,9 @@ dependencies = [
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.89"
+version = "1.0.92"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f139b0662de085916d1fb67d2b4169d1addddda1919e696f3252b740b629986e"
+checksum = "37d3544b3f2748c54e147655edb5025752e2303145b5aefb3c3ea2c78b973bb0"
 dependencies = [
  "unicode-ident",
 ]
@@ -5815,12 +5815,15 @@ dependencies = [
  "serde_bytes",
  "serde_derive",
  "solana-account",
+ "solana-account-info",
+ "solana-clock",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-instruction",
  "solana-logger",
- "solana-program",
  "solana-pubkey",
+ "solana-sdk-ids",
+ "solana-sysvar",
 ]
 
 [[package]]
@@ -6576,6 +6579,19 @@ dependencies = [
  "solana-fee-structure",
  "solana-frozen-abi",
  "solana-program-entrypoint",
+]
+
+[[package]]
+name = "solana-compute-budget-interface"
+version = "2.2.0"
+dependencies = [
+ "borsh 1.5.3",
+ "serde",
+ "serde_derive",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
+ "solana-instruction",
+ "solana-sdk-ids",
 ]
 
 [[package]]
@@ -7723,6 +7739,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-precompiles"
+version = "2.2.0"
+dependencies = [
+ "lazy_static",
+ "solana-ed25519-program",
+ "solana-feature-set",
+ "solana-precompile-error",
+ "solana-program",
+ "solana-pubkey",
+ "solana-sdk-ids",
+ "solana-secp256k1-program",
+ "solana-secp256r1-program",
+]
+
+[[package]]
 name = "solana-presigner"
 version = "2.2.0"
 dependencies = [
@@ -8076,6 +8107,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-rent-debits"
+version = "2.2.0"
+dependencies = [
+ "solana-pubkey",
+ "solana-reward-info",
+]
+
+[[package]]
 name = "solana-reserved-account-keys"
 version = "2.2.0"
 dependencies = [
@@ -8424,6 +8463,7 @@ dependencies = [
  "solana-bn254",
  "solana-cluster-type",
  "solana-commitment-config",
+ "solana-compute-budget-interface",
  "solana-decode-error",
  "solana-derivation-path",
  "solana-ed25519-program",
@@ -8439,11 +8479,13 @@ dependencies = [
  "solana-native-token",
  "solana-packet",
  "solana-precompile-error",
+ "solana-precompiles",
  "solana-presigner",
  "solana-program",
  "solana-program-memory",
  "solana-pubkey",
  "solana-quic-definitions",
+ "solana-rent-debits",
  "solana-reserved-account-keys",
  "solana-reward-info",
  "solana-sanitize",

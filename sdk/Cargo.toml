@@ -37,8 +37,10 @@ full = [
     "solana-pubkey/rand",
     "dep:solana-cluster-type",
     "dep:solana-ed25519-program",
+    "dep:solana-compute-budget-interface",
     "dep:solana-keypair",
     "dep:solana-precompile-error",
+    "dep:solana-precompiles",
     "dep:solana-presigner",
     "dep:solana-quic-definitions",
     "dep:solana-secp256k1-program",
@@ -47,10 +49,17 @@ full = [
     "dep:solana-signer",
     "dep:solana-transaction-error"
 ]
-borsh = ["dep:borsh", "solana-program/borsh", "solana-secp256k1-recover/borsh"]
+borsh = [
+    "dep:borsh",
+    "solana-compute-budget-interface/borsh",
+    "solana-program/borsh",
+    "solana-secp256k1-recover/borsh"
+]
 dev-context-only-utils = [
     "qualifier_attr",
     "solana-account/dev-context-only-utils",
+    "solana-compute-budget-interface/dev-context-only-utils",
+    "solana-rent-debits/dev-context-only-utils",
     "solana-transaction-context/dev-context-only-utils",
 ]
 frozen-abi = [
@@ -68,7 +77,7 @@ frozen-abi = [
     "solana-transaction-error/frozen-abi"
 ]
 # Enables the "vendored" feature of openssl inside of secp256r1-program
-openssl-vendored = ["solana-secp256r1-program/openssl-vendored"]
+openssl-vendored = ["solana-precompiles/openssl-vendored"]
 
 [dependencies]
 bincode = { workspace = true }
@@ -107,6 +116,9 @@ solana-cluster-type = { workspace = true, features = [
     "serde",
 ], optional = true }
 solana-commitment-config = { workspace = true, optional = true, features = ["serde"] }
+solana-compute-budget-interface = { workspace = true, optional = true, features = [
+    "serde",
+] }
 solana-decode-error = { workspace = true }
 solana-derivation-path = { workspace = true }
 solana-ed25519-program = { workspace = true, optional = true }
@@ -125,11 +137,13 @@ solana-keypair = { workspace = true, optional = true, features = ["seed-derivabl
 solana-native-token = { workspace = true }
 solana-packet = { workspace = true, features = ["bincode", "serde"] }
 solana-precompile-error = { workspace = true, optional = true }
+solana-precompiles = { workspace = true, optional = true }
 solana-presigner = { workspace = true, optional = true }
 solana-program = { workspace = true }
 solana-program-memory = { workspace = true }
 solana-pubkey = { workspace = true, default-features = false, features = ["std"] }
 solana-quic-definitions = { workspace = true, optional = true }
+solana-rent-debits = { workspace = true }
 solana-reserved-account-keys = { workspace = true }
 solana-reward-info = { workspace = true, features = ["serde"] }
 solana-sanitize = { workspace = true }

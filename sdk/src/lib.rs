@@ -62,7 +62,6 @@ pub use solana_program::{borsh, borsh0_10, borsh1};
 #[deprecated(since = "2.2.0", note = "Use `solana-signer` crate instead")]
 pub use solana_signer::signers;
 pub mod client;
-pub mod compute_budget;
 pub mod entrypoint;
 pub mod entrypoint_deprecated;
 pub mod epoch_rewards_hasher;
@@ -83,7 +82,6 @@ pub mod precompiles;
 pub mod program_utils;
 pub mod pubkey;
 pub mod rent_collector;
-pub mod rent_debits;
 #[deprecated(since = "2.2.0", note = "Use `solana-reward-info` crate instead")]
 pub mod reward_info {
     pub use solana_reward_info::RewardInfo;
@@ -111,6 +109,12 @@ pub use solana_account as account;
 pub use solana_account::state_traits as account_utils;
 #[deprecated(since = "2.1.0", note = "Use `solana-bn254` crate instead")]
 pub use solana_bn254 as alt_bn128;
+#[deprecated(
+    since = "2.2.0",
+    note = "Use `solana-compute-budget-interface` crate instead"
+)]
+#[cfg(feature = "full")]
+pub use solana_compute_budget_interface as compute_budget;
 #[deprecated(since = "2.1.0", note = "Use `solana-decode-error` crate instead")]
 pub use solana_decode_error as decode_error;
 #[deprecated(since = "2.1.0", note = "Use `solana-derivation-path` crate instead")]
@@ -150,6 +154,8 @@ pub use solana_pubkey::pubkey;
 #[cfg(feature = "full")]
 #[deprecated(since = "2.2.0", note = "Use `solana-quic-definitions` crate instead")]
 pub use solana_quic_definitions as quic;
+#[deprecated(since = "2.2.0", note = "Use `solana-rent-debits` crate instead")]
+pub use solana_rent_debits as rent_debits;
 #[cfg(feature = "full")]
 #[deprecated(
     since = "2.2.0",

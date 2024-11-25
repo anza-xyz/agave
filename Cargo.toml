@@ -108,6 +108,7 @@ members = [
     "sdk/clock",
     "sdk/cluster-type",
     "sdk/commitment-config",
+    "sdk/compute-budget-interface",
     "sdk/cpi",
     "sdk/decode-error",
     "sdk/define-syscall",
@@ -137,6 +138,7 @@ members = [
     "sdk/package-metadata-macro",
     "sdk/packet",
     "sdk/precompile-error",
+    "sdk/precompiles",
     "sdk/presigner",
     "sdk/program",
     "sdk/program-entrypoint",
@@ -147,7 +149,9 @@ members = [
     "sdk/pubkey",
     "sdk/quic-definitions",
     "sdk/rent",
+    "sdk/rent-debits",
     "sdk/reserved-account-keys",
+    "sdk/reward-info",
     "sdk/sanitize",
     "sdk/sdk-ids",
     "sdk/secp256k1-program",
@@ -364,7 +368,7 @@ pickledb = { version = "0.5.1", default-features = false }
 predicates = "2.1"
 pretty-hex = "0.3.0"
 prio-graph = "0.3.0"
-proc-macro2 = "1.0.89"
+proc-macro2 = "1.0.92"
 proptest = "1.5"
 prost = "0.11.9"
 prost-build = "0.11.9"
@@ -436,6 +440,7 @@ solana-clock = { path = "sdk/clock", version = "=2.2.0" }
 solana-cluster-type = { path = "sdk/cluster-type", version = "=2.2.0" }
 solana-commitment-config = { path = "sdk/commitment-config", version = "=2.2.0" }
 solana-compute-budget = { path = "compute-budget", version = "=2.2.0" }
+solana-compute-budget-interface = { path = "sdk/compute-budget-interface", version = "=2.2.0" }
 solana-compute-budget-program = { path = "programs/compute-budget", version = "=2.2.0" }
 solana-config-program = { path = "programs/config", version = "=2.2.0" }
 solana-connection-cache = { path = "connection-cache", version = "=2.2.0", default-features = false }
@@ -496,6 +501,7 @@ solana-perf = { path = "perf", version = "=2.2.0" }
 solana-poh = { path = "poh", version = "=2.2.0" }
 solana-poseidon = { path = "poseidon", version = "=2.2.0" }
 solana-precompile-error = { path = "sdk/precompile-error", version = "=2.2.0" }
+solana-precompiles = { path = "sdk/precompiles", version = "=2.2.0" }
 solana-presigner = { path = "sdk/presigner", version = "=2.2.0" }
 solana-program = { path = "sdk/program", version = "=2.2.0", default-features = false }
 solana-program-error = { path = "sdk/program-error", version = "=2.2.0" }
@@ -511,6 +517,7 @@ solana-quic-definitions = { path = "sdk/quic-definitions", version = "=2.2.0" }
 solana-rayon-threadlimit = { path = "rayon-threadlimit", version = "=2.2.0" }
 solana-remote-wallet = { path = "remote-wallet", version = "=2.2.0", default-features = false }
 solana-rent = { path = "sdk/rent", version = "=2.2.0", default-features = false }
+solana-rent-debits = { path = "sdk/rent-debits", version = "=2.2.0" }
 solana-reserved-account-keys = { path = "sdk/reserved-account-keys", version = "=2.2.0", default-features = false }
 solana-reward-info = { path = "sdk/reward-info", version = "=2.2.0" }
 solana-secp256r1-program = { path = "sdk/secp256r1-program", version = "=2.2.0", default-features = false }
