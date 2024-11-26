@@ -37,7 +37,6 @@ use {
     crate::{
         account_saver::collect_accounts_to_store,
         bank::{
-            builtins::{BuiltinPrototype, BUILTINS, STATELESS_BUILTINS},
             metrics::*,
             partitioned_epoch_rewards::{EpochRewardStatus, StakeRewards, VoteRewardsAccounts},
         },
@@ -96,7 +95,10 @@ use {
         create_program_runtime_environment_v1, create_program_runtime_environment_v2,
     },
     solana_compute_budget::compute_budget::ComputeBudget,
-    solana_core_bpf_migration::callback::AccountLoaderCallback,
+    solana_core_bpf_migration::{
+        callback::AccountLoaderCallback,
+        prototypes::{BuiltinPrototype, BUILTINS, STATELESS_BUILTINS},
+    },
     solana_cost_model::cost_tracker::CostTracker,
     solana_feature_set::{
         self as feature_set, remove_rounding_in_fee_calculation, reward_full_priority_fee,

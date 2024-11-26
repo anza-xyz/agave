@@ -94,8 +94,8 @@ impl TargetCoreBpf {
 mod tests {
     use {
         super::*,
-        crate::bank::builtins::BUILTINS,
         assert_matches::assert_matches,
+        solana_core_bpf_migration::prototypes::BUILTINS,
         solana_sdk::{account::WritableAccount, bpf_loader_upgradeable, native_loader, rent::Rent},
         std::collections::HashMap,
     };
