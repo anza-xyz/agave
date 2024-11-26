@@ -970,6 +970,7 @@ mod tests {
             thread::sleep,
         },
     };
+    use solana_core::banking_trace::Channels;
 
     pub(crate) fn new_test_cluster_info(keypair: Option<Arc<Keypair>>) -> (Node, ClusterInfo) {
         let keypair = keypair.unwrap_or_else(|| Arc::new(Keypair::new()));
