@@ -45,6 +45,7 @@ use {
         streamer::StakedNodes,
     },
     solana_turbine::broadcast_stage::{BroadcastStage, BroadcastStageType},
+    solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{
         collections::HashMap,
         net::{SocketAddr, UdpSocket},
@@ -54,7 +55,6 @@ use {
     },
     tokio::sync::mpsc::Sender as AsyncSender,
 };
-use solana_unified_scheduler_pool::DefaultSchedulerPool;
 
 // allow multiple connections for NAT and any open/close overlap
 pub const MAX_QUIC_CONNECTIONS_PER_PEER: usize = 8;
