@@ -2,10 +2,7 @@
 use std::ffi::{CStr, CString};
 use {
     crate::{
-        bank::{
-            builtins::BuiltinPrototype, Bank, BankFieldsToDeserialize, BankFieldsToSerialize,
-            BankRc,
-        },
+        bank::{Bank, BankFieldsToDeserialize, BankFieldsToSerialize, BankRc},
         epoch_stakes::{EpochStakes, VersionedEpochStakes},
         runtime_config::RuntimeConfig,
         serde_snapshot::storage::SerializableAccountStorageEntry,
@@ -29,6 +26,7 @@ use {
         blockhash_queue::BlockhashQueue,
         epoch_accounts_hash::EpochAccountsHash,
     },
+    solana_core_bpf_migration::prototypes::BuiltinPrototype,
     solana_measure::measure::Measure,
     solana_sdk::{
         clock::{Epoch, Slot, UnixTimestamp},
