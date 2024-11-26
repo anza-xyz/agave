@@ -243,7 +243,7 @@ impl BankingTracer {
     }
 
     pub fn create_channels(&self, unified_scheduler_pool: Option<Arc<DefaultSchedulerPool>>) -> Channels {
-        if let Some(true) = unified_scheduler_pool.as_ref().map(|pool| poo.block_production_supported()) {
+        if let Some(true) = unified_scheduler_pool.as_ref().map(|pool| pool.block_production_supported()) {
             panic!();
         } else {
             let (non_vote_sender, non_vote_receiver) = self.create_channel_non_vote();
