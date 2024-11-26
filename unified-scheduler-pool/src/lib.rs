@@ -178,10 +178,7 @@ where
     S: SpawnableScheduler<TH>,
     TH: TaskHandler,
 {
-    // Some internal impl and test code want an actual concrete type, NOT the
-    // `dyn InstalledSchedulerPool`. So don't merge this into `Self::new_dyn()`.
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn new(
+    pub fn new(
         supported_scheduling_mode: SupportedSchedulingMode,
         handler_count: Option<usize>,
         log_messages_bytes_limit: Option<usize>,
@@ -463,26 +460,6 @@ where
 
     // This apparently-meaningless wrapper is handy, because some callers explicitly want
     // `dyn InstalledSchedulerPool` to be returned for type inference convenience.
-    pub fn new_dyn(
-        supported_scheduling_mode: SupportedSchedulingMode,
-        handler_count: Option<usize>,
-        log_messages_bytes_limit: Option<usize>,
-        transaction_status_sender: Option<TransactionStatusSender>,
-        replay_vote_sender: Option<ReplayVoteSender>,
-        prioritization_fee_cache: Arc<PrioritizationFeeCache>,
-        transaction_recorder: TransactionRecorder,
-    ) -> InstalledSchedulerPoolArc {
-        Self::new(
-            supported_scheduling_mode,
-            handler_count,
-            log_messages_bytes_limit,
-            transaction_status_sender,
-            replay_vote_sender,
-            prioritization_fee_cache,
-            transaction_recorder,
-        )
-    }
-
     pub fn new_dyn_for_verification(
         handler_count: Option<usize>,
         log_messages_bytes_limit: Option<usize>,
