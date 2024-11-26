@@ -5965,6 +5965,7 @@ dependencies = [
  "solana-short-vec",
  "solana-system-interface",
  "solana-transaction-error",
+ "wasm-bindgen",
 ]
 
 [[package]]

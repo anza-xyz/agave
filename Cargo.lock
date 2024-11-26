@@ -7556,6 +7556,7 @@ dependencies = [
  "solana-sysvar",
  "solana-transaction-error",
  "static_assertions",
+ "wasm-bindgen",
 ]
 
 [[package]]

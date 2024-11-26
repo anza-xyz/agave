@@ -30,6 +30,9 @@ solana-system-interface = { workspace = true, optional = true, features = [
 ] }
 solana-transaction-error = { workspace = true }
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { workspace = true }
+
 [dev-dependencies]
 anyhow = { workspace = true }
 bitflags = { workspace = true }
