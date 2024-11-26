@@ -172,9 +172,11 @@ pub fn execute_batch(
         replay_vote_sender,
     );
 
+    // TODO(wen): block cost check needs to be activated for vote only replay stage.
     let (check_block_cost_limits_result, check_block_cost_limits_us) = measure_us!(if bank
         .feature_set
         .is_active(&solana_feature_set::apply_cost_tracker_during_replay::id())
+        && !vote_only_execution
     {
         check_block_cost_limits(bank, &commit_results, batch.sanitized_transactions())
     } else {

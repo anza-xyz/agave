@@ -222,7 +222,7 @@ fn bench_banking(bencher: &mut Bencher, tx_type: TransactionType) {
     let bank = bank_forks.read().unwrap().get(0).unwrap();
 
     // set cost tracker limits to MAX so it will not filter out TXs
-    bank.write_cost_tracker()
+    bank.write_cost_tracker(false)
         .unwrap()
         .set_limits(u64::MAX, u64::MAX, u64::MAX);
 
