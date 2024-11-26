@@ -181,7 +181,7 @@ where
     // Some internal impl and test code want an actual concrete type, NOT the
     // `dyn InstalledSchedulerPool`. So don't merge this into `Self::new_dyn()`.
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    pub fn new(
+    fn new(
         supported_scheduling_mode: SupportedSchedulingMode,
         handler_count: Option<usize>,
         log_messages_bytes_limit: Option<usize>,
@@ -205,6 +205,7 @@ where
         )
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn new_for_verification(
         handler_count: Option<usize>,
         log_messages_bytes_limit: Option<usize>,
