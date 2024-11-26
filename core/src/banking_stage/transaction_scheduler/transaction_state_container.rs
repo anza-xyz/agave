@@ -51,7 +51,7 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
     /// Returns true if the queue is empty.
     fn is_empty(&self) -> bool;
 
-    /// Returns the remaining capacity of the queue
+    /// Returns the remaining capacity of the container
     fn remaining_capacity(&self) -> usize;
 
     /// Get the top transaction id in the priority queue.
@@ -107,7 +107,6 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
         self.priority_queue.is_empty()
     }
 
-    /// Returns the remaining capacity of the container
     fn remaining_capacity(&self) -> usize {
         self.priority_queue
             .capacity()
@@ -125,8 +124,6 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
         self.id_to_transaction_state.get_mut(id)
     }
 
-    /// Get reference to `SanitizedTransactionTTL` by id.
-    /// Panics if the transaction does not exist.
     fn get_transaction_ttl(&self, id: TransactionId) -> Option<&SanitizedTransactionTTL<Tx>> {
         self.id_to_transaction_state
             .get(id)
@@ -175,7 +172,6 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
         self.push_id_into_queue_with_remaining_capacity(priority_id, self.remaining_capacity())
     }
 
-    /// Remove transaction by id.
     fn remove_by_id(&mut self, id: TransactionId) {
         self.id_to_transaction_state.remove(id);
     }
