@@ -529,6 +529,7 @@ impl Validator {
         start_progress: Arc<RwLock<ValidatorStartProgress>>,
         socket_addr_space: SocketAddrSpace,
         use_quic: bool,
+        vote_use_quic: bool,
         tpu_connection_pool_size: usize,
         tpu_enable_udp: bool,
         tpu_max_connections_per_ipaddr_per_minute: u64,
@@ -1014,6 +1015,28 @@ impl Validator {
             )),
         };
 
+        let vote_connection_cache = match vote_use_quic {
+            true => {
+                let vote_connection_cache = ConnectionCache::new_with_client_options(
+                    "connection_cache_vote_quic",
+                    1,
+                    None,
+                    Some((
+                        &identity_keypair,
+                        node.info
+                            .tpu_vote(Protocol::QUIC)
+                            .map_err(|err| {
+                                ValidatorError::Other(format!("Invalid TPU address: {err:?}"))
+                            })?
+                            .ip(),
+                    )),
+                    Some((&staked_nodes, &identity_keypair.pubkey())),
+                );
+                Arc::new(vote_connection_cache)
+            }
+            false => Arc::new(ConnectionCache::with_udp("connection_cache_vote_udp", 1)),
+        };
+
         let rpc_override_health_check =
             Arc::new(AtomicBool::new(config.rpc_config.disable_health_check));
         let (
@@ -1427,6 +1450,7 @@ impl Validator {
             cluster_slots.clone(),
             wen_restart_repair_slots.clone(),
             slot_status_notifier,
+            vote_connection_cache,
         )
         .map_err(ValidatorError::Other)?;
 
@@ -2710,6 +2734,7 @@ mod tests {
         solana_sdk::{genesis_config::create_genesis_config, poh_config::PohConfig},
         solana_tpu_client::tpu_client::{
             DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_ENABLE_UDP, DEFAULT_TPU_USE_QUIC,
+            DEFAULT_VOTE_USE_QUIC,
         },
         std::{fs::remove_dir_all, thread, time::Duration},
     };
@@ -2749,6 +2774,7 @@ mod tests {
             start_progress.clone(),
             SocketAddrSpace::Unspecified,
             DEFAULT_TPU_USE_QUIC,
+            DEFAULT_VOTE_USE_QUIC,
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
             DEFAULT_TPU_ENABLE_UDP,
             32, // max connections per IpAddr per minute for test
@@ -2968,6 +2994,7 @@ mod tests {
                     Arc::new(RwLock::new(ValidatorStartProgress::default())),
                     SocketAddrSpace::Unspecified,
                     DEFAULT_TPU_USE_QUIC,
+                    DEFAULT_VOTE_USE_QUIC,
                     DEFAULT_TPU_CONNECTION_POOL_SIZE,
                     DEFAULT_TPU_ENABLE_UDP,
                     32, // max connections per IpAddr per minute for test

@@ -4,6 +4,7 @@ use {
         next_leader::upcoming_leader_tpu_vote_sockets,
     },
     crossbeam_channel::Receiver,
+    solana_client::connection_cache::ConnectionCache,
     solana_gossip::cluster_info::ClusterInfo,
     solana_measure::measure::Measure,
     solana_poh::poh_recorder::PohRecorder,
@@ -48,6 +49,7 @@ impl VotingService {
         cluster_info: Arc<ClusterInfo>,
         poh_recorder: Arc<RwLock<PohRecorder>>,
         tower_storage: Arc<dyn TowerStorage>,
+        connection_cache: Arc<ConnectionCache>,
     ) -> Self {
         let thread_hdl = Builder::new()
             .name("solVoteService".to_string())
@@ -58,6 +60,7 @@ impl VotingService {
                         &poh_recorder,
                         tower_storage.as_ref(),
                         vote_op,
+                        connection_cache.clone(),
                     );
                 }
             })
@@ -70,6 +73,7 @@ impl VotingService {
         poh_recorder: &RwLock<PohRecorder>,
         tower_storage: &dyn TowerStorage,
         vote_op: VoteOp,
+        connection_cache: Arc<ConnectionCache>,
     ) {
         if let VoteOp::PushVote { saved_tower, .. } = &vote_op {
             let mut measure = Measure::start("tower storage save");
@@ -89,15 +93,20 @@ impl VotingService {
             cluster_info,
             poh_recorder,
             UPCOMING_LEADER_FANOUT_SLOTS,
+            connection_cache.protocol(),
         );
 
         if !upcoming_leader_sockets.is_empty() {
             for tpu_vote_socket in upcoming_leader_sockets {
-                let _ = cluster_info.send_transaction(vote_op.tx(), Some(tpu_vote_socket));
+                let _ = cluster_info.send_transaction(
+                    vote_op.tx(),
+                    Some(tpu_vote_socket),
+                    &connection_cache,
+                );
             }
         } else {
             // Send to our own tpu vote socket if we cannot find a leader to send to
-            let _ = cluster_info.send_transaction(vote_op.tx(), None);
+            let _ = cluster_info.send_transaction(vote_op.tx(), None, &connection_cache);
         }
 
         match vote_op {

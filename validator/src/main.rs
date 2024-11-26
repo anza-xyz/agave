@@ -1124,6 +1124,8 @@ pub fn main() {
     let accounts_shrink_optimize_total_space =
         value_t_or_exit!(matches, "accounts_shrink_optimize_total_space", bool);
     let tpu_use_quic = !matches.is_present("tpu_disable_quic");
+    let vote_use_quic = value_t_or_exit!(matches, "vote_use_quic", bool);
+
     let tpu_enable_udp = if matches.is_present("tpu_enable_udp") {
         true
     } else {
@@ -2078,6 +2080,7 @@ pub fn main() {
         start_progress,
         socket_addr_space,
         tpu_use_quic,
+        vote_use_quic,
         tpu_connection_pool_size,
         tpu_enable_udp,
         tpu_max_connections_per_ipaddr_per_minute,

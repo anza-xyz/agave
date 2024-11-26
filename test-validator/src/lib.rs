@@ -58,6 +58,7 @@ use {
     solana_streamer::socket::SocketAddrSpace,
     solana_tpu_client::tpu_client::{
         DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_ENABLE_UDP, DEFAULT_TPU_USE_QUIC,
+        DEFAULT_VOTE_USE_QUIC,
     },
     std::{
         collections::{HashMap, HashSet},
@@ -1046,6 +1047,7 @@ impl TestValidator {
             config.start_progress.clone(),
             socket_addr_space,
             DEFAULT_TPU_USE_QUIC,
+            DEFAULT_VOTE_USE_QUIC,
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
             config.tpu_enable_udp,
             32, // max connections per IpAddr per minute for test
