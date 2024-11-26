@@ -2348,6 +2348,15 @@ impl BankingStageAdapter {
             "resetting transaction_deduper... done: {}",
             self.transaction_deduper.len()
         );
+        info!(
+            "resetting usage_queue_loader... {}",
+            self.transaction_deduper.len()
+        );
+        self.usage_queue_loader.clear();
+        info!(
+            "resetting usage_queue_loader... done: {}",
+            self.transaction_deduper.len()
+        );
     }
 }
 
