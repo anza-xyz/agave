@@ -10,3 +10,10 @@ impl TransactionData for &[u8] {
         self
     }
 }
+
+impl TransactionData for bytes::Bytes {
+    #[inline]
+    fn data(&self) -> &[u8] {
+        self.as_ref()
+    }
+}
