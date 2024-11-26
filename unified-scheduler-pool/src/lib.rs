@@ -2322,10 +2322,14 @@ impl BankingStageAdapter {
 
     fn recreate_task(&self, task: Task) -> Task {
         let new_transaction = task.transaction().clone();
-        let old_index = task.index();
-        let inherited_priority = old_index & const { (u64::MAX as TaskKey) << (TaskKey::BITS / 2) };
-        let new_task_id = self.bulk_assign_task_ids(1) as TaskKey;
-        let new_index = inherited_priority | new_task_id;
+
+        let new_index = {
+            let old_index = task.index();
+            let inherited_priority =
+                old_index & const { (u64::MAX as TaskKey) << (TaskKey::BITS / 2) };
+            let new_task_id = self.bulk_assign_task_ids(1) as TaskKey;
+            inherited_priority | new_task_id
+        };
 
         self.do_create_task(new_transaction, new_index)
     }

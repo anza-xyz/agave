@@ -743,9 +743,11 @@ impl BankingStage {
                                 &bank,
                             );
 
-                            let reversed_priority = (u64::MAX - priority) as TaskKey;
-                            let task_id = (task_id_base + packet_index as u64) as TaskKey;
-                            let index = reversed_priority << const { TaskKey::BITS / 2 } | task_id;
+                            let index = {
+                                let reversed_priority = (u64::MAX - priority) as TaskKey;
+                                let task_id = (task_id_base + packet_index as u64) as TaskKey;
+                                reversed_priority << const { TaskKey::BITS / 2 } | task_id
+                            };
 
                             let Some(task) = adapter.create_task(transaction, index) else {
                                 continue;
