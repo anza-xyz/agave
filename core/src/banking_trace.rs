@@ -231,10 +231,9 @@ impl BankingTracer {
     }
 
     pub fn create_channels(&self, pool: Option<&Arc<DefaultSchedulerPool>>) -> Channels {
-        if pool
-            .map(|pool| pool.block_production_supported())
-            .unwrap_or_default()
-        {
+        let is_unified = pool.map(|pool| pool.block_production_supported()).unwrap_or_default();
+
+        if is_unified {
             let (non_vote_sender, non_vote_receiver) = self.create_channel_non_vote();
             let (tpu_vote_sender, tpu_vote_receiver) =
                 self.create_unified_channel_tpu_vote(&non_vote_sender, &non_vote_receiver);
