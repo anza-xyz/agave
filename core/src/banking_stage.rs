@@ -35,10 +35,7 @@ use {
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     solana_ledger::blockstore_processor::TransactionStatusSender,
     solana_measure::measure_us,
-    solana_perf::{
-        data_budget::DataBudget,
-        packet::{BankingPacketBatch, PACKETS_PER_BATCH},
-    },
+    solana_perf::{data_budget::DataBudget, packet::PACKETS_PER_BATCH},
     solana_poh::poh_recorder::{PohRecorder, TransactionRecorder},
     solana_runtime::{
         bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
