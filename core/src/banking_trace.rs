@@ -230,8 +230,8 @@ impl BankingTracer {
         self.active_tracer.is_some()
     }
 
-    pub fn create_channels(&self, scheduler_pool: Option<&Arc<DefaultSchedulerPool>>) -> Channels {
-        if scheduler_pool
+    pub fn create_channels(&self, pool: Option<&Arc<DefaultSchedulerPool>>) -> Channels {
+        if pool
             .map(|pool| pool.block_production_supported())
             .unwrap_or_default()
         {
