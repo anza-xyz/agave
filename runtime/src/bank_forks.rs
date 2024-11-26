@@ -227,6 +227,7 @@ impl BankForks {
         );
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn reinstall_schedulers(&mut self, mode: SchedulingMode) {
         for (slot, bank) in self.banks.iter_mut() {
             if !bank.is_frozen() {
