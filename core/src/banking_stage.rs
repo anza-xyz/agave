@@ -721,18 +721,24 @@ impl BankingStage {
                                 bank.vote_only_bank(),
                                 &bank,
                                 bank.get_reserved_account_keys(),
-                            ) else { continue };
+                            ) else {
+                                continue;
+                            };
 
                             let Some(_) = SanitizedTransaction::validate_account_locks(
                                 transaction.message(),
                                 transaction_account_lock_limit,
                             )
-                            .ok() else { continue };
+                            .ok() else {
+                                continue;
+                            };
 
                             let Some(compute_budget_limits) = process_compute_budget_instructions(
                                 SVMMessage::program_instructions_iter(transaction.message()),
                             )
-                            .ok() else { continue };
+                            .ok() else {
+                                continue;
+                            };
 
                             let (priority, _cost) = calculate_priority_and_cost(
                                 &transaction,
@@ -745,7 +751,7 @@ impl BankingStage {
                             let index = reversed_priority << const { TaskKey::BITS / 2 } | task_id;
 
                             let Some(task) = adapter.create_task(transaction, index) else {
-                                continue
+                                continue;
                             };
                             f(task);
                         }
