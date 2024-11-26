@@ -7046,7 +7046,6 @@ dependencies = [
 name = "solana-frozen-abi"
 version = "2.2.0"
 dependencies = [
- "ahash 0.8.11",
  "bitflags 2.6.0",
  "bs58",
  "bv",

@@ -617,14 +617,3 @@ impl<T: AbiExample> AbiExample for std::sync::OnceLock<T> {
         Self::from(T::example())
     }
 }
-
-use ahash::AHashMap;
-impl<K: std::cmp::Eq + std::hash::Hash + AbiExample, V: AbiExample> AbiExample for AHashMap<K, V> {
-    fn example() -> Self {
-        info!("AbiExample for (AHashMap<K, V>): {}", type_name::<Self>());
-        let mut map: AHashMap<K, V> = AHashMap::default();
-        map.insert(K::example(), V::example());
-        map
-    }
-}
-
