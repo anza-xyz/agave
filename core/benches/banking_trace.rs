@@ -36,7 +36,7 @@ fn black_box_packet_batch(packet_batch: BankingPacketBatch) -> TracerThreadResul
 fn bench_banking_tracer_main_thread_overhead_noop_baseline(bencher: &mut Bencher) {
     let exit = Arc::<AtomicBool>::default();
     let tracer = BankingTracer::new_disabled();
-    let (non_vote_sender, non_vote_receiver) = tracer.create_channel_non_vote();
+    let Channels { non_vote_sender, non_vote_receiver, .. } = tracer.create_channels(None);
 
     let exit_for_dummy_thread = exit.clone();
     let dummy_main_thread = thread::spawn(move || {
