@@ -2,10 +2,9 @@
 #![feature(test)]
 
 use {
-    solana_core::validator::BlockProductionMethod,
+    solana_core::{banking_trace::Channels, validator::BlockProductionMethod},
     solana_vote_program::{vote_state::TowerSync, vote_transaction::new_tower_sync_transaction},
 };
-use solana_core::banking_trace::Channels;
 
 extern crate test;
 

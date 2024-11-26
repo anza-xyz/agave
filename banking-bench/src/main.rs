@@ -8,7 +8,9 @@ use {
     solana_client::connection_cache::ConnectionCache,
     solana_core::{
         banking_stage::BankingStage,
-        banking_trace::{BankingPacketBatch, BankingTracer, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT},
+        banking_trace::{
+            BankingPacketBatch, BankingTracer, Channels, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
+        },
         validator::BlockProductionMethod,
     },
     solana_gossip::cluster_info::{ClusterInfo, Node},
@@ -44,7 +46,6 @@ use {
         time::{Duration, Instant},
     },
 };
-use solana_core::banking_trace::Channels;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;

@@ -3,8 +3,9 @@ use {
     crate::{
         banking_stage::{BankingStage, LikeClusterInfo},
         banking_trace::{
-            BankingPacketBatch, BankingTracer, ChannelLabel, TimedTracedEvent, TracedEvent,
-            TracedSender, TracerThread, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT, BASENAME,
+            BankingPacketBatch, BankingTracer, ChannelLabel, Channels, TimedTracedEvent,
+            TracedEvent, TracedSender, TracerThread, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
+            BASENAME,
         },
         validator::BlockProductionMethod,
     },
@@ -54,7 +55,6 @@ use {
     },
     thiserror::Error,
 };
-use crate::banking_trace::Channels;
 
 /// This creates a simulated environment around `BankingStage` to produce leader's blocks based on
 /// recorded banking trace events (`TimedTracedEvent`).
