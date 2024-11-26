@@ -18,6 +18,7 @@ use {
     },
     thiserror::Error,
 };
+use solana_unified_scheduler_pool::DefaultSchedulerPool;
 
 pub type BankingPacketBatch = Arc<(Vec<PacketBatch>, Option<SigverifyTracerPacketStats>)>;
 pub type BankingPacketSender = TracedSender;
