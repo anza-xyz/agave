@@ -52,7 +52,7 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
     solana_unified_scheduler_pool::{BankingStageAdapter, DefaultSchedulerPool},
     std::{
-        cmp, env, iter,
+        cmp, env,
         ops::Deref,
         sync::{
             atomic::{AtomicU64, AtomicUsize, Ordering},
