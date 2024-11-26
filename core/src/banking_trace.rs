@@ -230,10 +230,6 @@ impl BankingTracer {
         self.active_tracer.is_some()
     }
 
-    fn create_channel(&self, label: ChannelLabel) -> (BankingPacketSender, BankingPacketReceiver) {
-        Self::channel(label, self.active_tracer.as_ref().cloned())
-    }
-
     pub fn create_channels(
         &self,
         unified_scheduler_pool: Option<&Arc<DefaultSchedulerPool>>,
@@ -269,7 +265,11 @@ impl BankingTracer {
         }
     }
 
-    pub fn create_channel_non_vote(&self) -> (BankingPacketSender, BankingPacketReceiver) {
+    fn create_channel(&self, label: ChannelLabel) -> (BankingPacketSender, BankingPacketReceiver) {
+        Self::channel(label, self.active_tracer.as_ref().cloned())
+    }
+
+    fn create_channel_non_vote(&self) -> (BankingPacketSender, BankingPacketReceiver) {
         self.create_channel(ChannelLabel::NonVote)
     }
 
@@ -286,9 +286,8 @@ impl BankingTracer {
         sender: &TracedSender,
         receiver: &BankingPacketReceiver,
     ) -> (BankingPacketSender, BankingPacketReceiver) {
-        let label = ChannelLabel::TpuVote;
         Self::channel_inner(
-            label,
+            ChannelLabel::TpuVote,
             self.active_tracer.as_ref().cloned(),
             sender.sender.clone(),
             receiver.clone(),
@@ -300,9 +299,8 @@ impl BankingTracer {
         sender: &TracedSender,
         receiver: &BankingPacketReceiver,
     ) -> (BankingPacketSender, BankingPacketReceiver) {
-        let label = ChannelLabel::GossipVote;
         Self::channel_inner(
-            label,
+            ChannelLabel::GossipVote,
             self.active_tracer.as_ref().cloned(),
             sender.sender.clone(),
             receiver.clone(),
