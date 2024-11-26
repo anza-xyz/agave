@@ -1262,4 +1262,42 @@ mod test {
             }
         }
     }
+
+    #[tokio::test]
+    async fn test_override_feature_account() {
+        let with_deactivate_flag = solana_sdk::feature_set::deprecate_rewards_sysvar::id();
+        let without_deactivate_flag = solana_sdk::feature_set::disable_fees_sysvar::id();
+
+        let owner = Pubkey::new_unique();
+        let account = || AccountSharedData::new(100_000, 0, &owner);
+
+        let (test_validator, _payer) = TestValidatorGenesis::default()
+            .deactivate_features(&[with_deactivate_flag]) // Just deactivate one feature.
+            .add_accounts([
+                (with_deactivate_flag, account()), // But add both accounts.
+                (without_deactivate_flag, account()),
+            ])
+            .start_async()
+            .await;
+
+        let rpc_client = test_validator.get_async_rpc_client();
+
+        let our_accounts = rpc_client
+            .get_multiple_accounts(&[with_deactivate_flag, without_deactivate_flag])
+            .await
+            .unwrap();
+
+        // The first one, where we provided `--deactivate-feature`, should be
+        // the account we provided.
+        let overriden_account = our_accounts[0].as_ref().unwrap();
+        assert_eq!(overriden_account.lamports, 100_000);
+        assert_eq!(overriden_account.data.len(), 0);
+        assert_eq!(overriden_account.owner, owner);
+
+        // The second one should be a feature account.
+        let feature_account = our_accounts[1].as_ref().unwrap();
+        assert_eq!(feature_account.owner, solana_sdk::feature::id());
+        let feature_state: Feature = bincode::deserialize(feature_account.data()).unwrap();
+        assert!(feature_state.activated_at.is_some());
+    }
 }
