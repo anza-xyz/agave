@@ -14,7 +14,6 @@ spl() {
       feature-proposal/program
       governance/addin-mock/program
       governance/program
-      memo/program
       name-service/program
       stake-pool/program
       single-pool/program
