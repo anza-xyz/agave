@@ -2301,6 +2301,14 @@ impl BankingStageAdapter {
         self.next_task_id.fetch_add(count, Relaxed)
     }
 
+    pub fn do_create_task(&self, transaction: SanitizedTransaction, index: TaskKey) -> Task {
+        SchedulingStateMachine::create_task(
+            transaction,
+            index,
+            &mut |pubkey| self.usage_queue_loader.load(pubkey),
+        )
+    }
+
     pub fn create_task(&self, transaction: SanitizedTransaction, index: TaskKey) -> Option<Task> {
         if self
             .transaction_deduper
@@ -2311,11 +2319,7 @@ impl BankingStageAdapter {
             self.transaction_deduper.insert(*transaction.message_hash());
         }
 
-        Some(SchedulingStateMachine::create_task(
-            transaction,
-            index,
-            &mut |pubkey| self.usage_queue_loader.load(pubkey),
-        ))
+        Some(self.do_create_task(transaction, index))
     }
 
     fn recreate_task(&self, task: Task) -> Task {
@@ -2323,9 +2327,8 @@ impl BankingStageAdapter {
         let old_index = task.index();
         let new_index =
             (old_index & ((u64::MAX as TaskKey) << 64)) | self.bulk_assign_task_ids(1) as TaskKey;
-        SchedulingStateMachine::create_task(transaction, new_index, &mut |pubkey| {
-            self.usage_queue_loader.load(pubkey)
-        })
+
+        self.do_create_task(transaction, new_index)
     }
 
     fn reset(&self) {
