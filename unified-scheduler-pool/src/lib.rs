@@ -7,7 +7,6 @@
 //! At the highest level, this crate takes `SanitizedTransaction`s via its `schedule_execution()`
 //! and commits any side-effects (i.e. on-chain state changes) into the associated `Bank` via
 //! `solana-ledger`'s helper function called `execute_batch()`.
-
 use {
     assert_matches::assert_matches,
     crossbeam_channel::{self, never, select_biased, Receiver, RecvError, SendError, Sender},
@@ -54,6 +53,8 @@ use {
     trait_set::trait_set,
     vec_extract_if_polyfill::MakeExtractIf,
 };
+#[cfg(test)]
+use solana_runtime::installed_scheduler_pool::InstalledSchedulerPoolArc;
 
 mod sleepless_testing;
 use crate::sleepless_testing::BuilderTracked;
@@ -2463,7 +2464,6 @@ mod tests {
             thread::JoinHandle,
         },
     };
-    use solana_runtime::installed_scheduler_pool::InstalledSchedulerPoolArc;
 
     #[derive(Debug)]
     enum TestCheckPoint {
