@@ -18,6 +18,7 @@ use {
     tempfile::TempDir,
     test::Bencher,
 };
+use solana_core::banking_trace::Channels;
 
 fn ensure_fresh_setup_to_benchmark(path: &PathBuf) {
     // make sure fresh setup; otherwise banking tracer appends and rotates
