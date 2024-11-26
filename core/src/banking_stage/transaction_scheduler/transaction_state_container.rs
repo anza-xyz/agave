@@ -96,6 +96,8 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
 
 impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<Tx> {
     fn with_capacity(capacity: usize) -> Self {
+        // Extra capacity is added because some additional space is needed when
+        // pushing a new transaction into the container to avoid reallocation.
         const EXTRA_CAPACITY: usize = 64;
         Self {
             priority_queue: MinMaxHeap::with_capacity(capacity),
