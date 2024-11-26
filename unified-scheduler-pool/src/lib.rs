@@ -156,14 +156,13 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(3);
 const DEFAULT_MAX_USAGE_QUEUE_COUNT: usize = 262_144;
 
 trait_set! {
-    pub trait BatchConverterBase = DynClone + (for<'a> FnMut(BankingPacketBatch, &'a dyn Fn(Task))) + Send + 'static;
-    pub trait BatchConverter = Clone + BatchConverterBase;
+    pub trait BatchConverter = DynClone + (for<'a> FnMut(BankingPacketBatch, &'a dyn Fn(Task))) + Send + 'static;
 }
 
-clone_trait_object!(BatchConverterBase);
+clone_trait_object!(BatchConverter);
 
 type BatchConverterCreator =
-    Box<dyn (FnMut(Arc<BankingStageAdapter>) -> Box<dyn BatchConverterBase>) + Send>;
+    Box<dyn (FnMut(Arc<BankingStageAdapter>) -> Box<dyn BatchConverter>) + Send>;
 
 #[derive(derive_more::Debug)]
 struct BlockProductionSchedulerRespawner {
@@ -1372,7 +1371,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         handler_count: usize,
         mut context: SchedulingContext,
         mut result_with_timings: ResultWithTimings,
-        banking_stage_context: Option<(BankingPacketReceiver, Box<dyn BatchConverterBase>)>,
+        banking_stage_context: Option<(BankingPacketReceiver, Box<dyn BatchConverter>)>,
         adapter: Option<Arc<BankingStageAdapter>>,
     ) {
         assert!(handler_count >= 1);
@@ -2236,7 +2235,7 @@ pub trait SpawnableScheduler<TH: TaskHandler>: InstalledScheduler {
         pool: Arc<SchedulerPool<Self, TH>>,
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
-        banking_stage_context: Option<(BankingPacketReceiver, Box<dyn BatchConverterBase>)>,
+        banking_stage_context: Option<(BankingPacketReceiver, Box<dyn BatchConverter>)>,
         banking_stage_adapter: Option<Arc<BankingStageAdapter>>,
     ) -> Self
     where
@@ -2271,7 +2270,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
         pool: Arc<SchedulerPool<Self, TH>>,
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
-        banking_stage_context: Option<(BankingPacketReceiver, Box<dyn BatchConverterBase>)>,
+        banking_stage_context: Option<(BankingPacketReceiver, Box<dyn BatchConverter>)>,
         banking_stage_adapter: Option<Arc<BankingStageAdapter>>,
     ) -> Self {
         info!("spawning new scheduler for slot: {}", context.slot());
@@ -3868,7 +3867,7 @@ mod tests {
             pool: Arc<SchedulerPool<Self, DefaultTaskHandler>>,
             context: SchedulingContext,
             _result_with_timings: ResultWithTimings,
-            _banking_stage_context: Option<(BankingPacketReceiver, Box<dyn BatchConverterBase>)>,
+            _banking_stage_context: Option<(BankingPacketReceiver, Box<dyn BatchConverter>)>,
             _banking_stage_adapter: Option<Arc<BankingStageAdapter>>,
         ) -> Self {
             AsyncScheduler::<TRIGGER_RACE_CONDITION>(
