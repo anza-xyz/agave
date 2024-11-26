@@ -207,7 +207,7 @@ impl Tpu {
             non_vote_receiver,
             tpu_vote_sender, tpu_vote_receiver,
             gossip_vote_sender, gossip_vote_receiver,
-        } = banking_tracer.create_channels(unified_scheduler_pool);
+        } = banking_tracer.create_channels(unified_scheduler_pool.as_ref());
 
         let sigverify_stage = {
             let verifier = TransactionSigVerifier::new(non_vote_sender);
