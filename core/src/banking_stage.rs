@@ -1262,7 +1262,14 @@ mod tests {
             ..
         } = create_slow_genesis_config(2);
         let banking_tracer = BankingTracer::new_disabled();
-        let (non_vote_sender, non_vote_receiver) = banking_tracer.create_channel_non_vote();
+        let Channels {
+            non_vote_sender,
+            non_vote_receiver,
+            tpu_vote_sender,
+            tpu_vote_receiver,
+            gossip_vote_sender,
+            gossip_vote_receiver,
+        } = banking_tracer.create_channels(None);
 
         // Process a batch that includes a transaction that receives two lamports.
         let alice = Keypair::new();
@@ -1292,9 +1299,6 @@ mod tests {
             .send(BankingPacketBatch::new((packet_batches, None)))
             .unwrap();
 
-        let (tpu_vote_sender, tpu_vote_receiver) = banking_tracer.create_channel_tpu_vote();
-        let (gossip_vote_sender, gossip_vote_receiver) =
-            banking_tracer.create_channel_gossip_vote();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         {
             let (replay_vote_sender, _replay_vote_receiver) = unbounded();
