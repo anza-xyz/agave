@@ -101,7 +101,7 @@ fn bench_banking_tracer_main_thread_overhead_under_sustained_write(bencher: &mut
         1024 * 1024, // cause more frequent trace file rotation
     )))
     .unwrap();
-    let (non_vote_sender, non_vote_receiver) = tracer.create_channel_non_vote();
+    let Channels { non_vote_sender, non_vote_receiver, .. } = tracer.create_channels(None);
 
     let exit_for_dummy_thread = exit.clone();
     let dummy_main_thread = thread::spawn(move || {
