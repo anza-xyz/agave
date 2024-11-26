@@ -767,9 +767,7 @@ mod tests {
         mock.expect_context()
             .times(1)
             .in_sequence(&mut seq.lock().unwrap())
-            .return_const(SchedulingContext::for_verification(
-                Some(bank),
-            ));
+            .return_const(SchedulingContext::for_verification(bank));
 
         for wait_reason in is_dropped_flags {
             let seq_cloned = seq.clone();
