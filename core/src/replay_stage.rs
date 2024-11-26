@@ -4076,7 +4076,7 @@ impl ReplayStage {
             Measure::start("generate_new_bank_forks_write_lock");
         let mut forks = bank_forks.write().unwrap();
         for (_, bank) in new_banks {
-            forks.insert_with_scheduling_mode(SchedulingMode::BlockVerification, bank);
+            forks.insert(bank);
         }
         generate_new_bank_forks_write_lock.stop();
         saturating_add_assign!(
