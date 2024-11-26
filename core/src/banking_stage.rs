@@ -703,7 +703,7 @@ impl BankingStage {
                 let decision_maker = decision_maker.clone();
                 let bank_forks = bank_forks.clone();
 
-                Box::new(move |batches: BankingPacketBatch, f| {
+                Box::new(move |batches: BankingPacketBatch, task_submitter| {
                     let decision = decision_maker.make_consume_or_forward_decision();
                     if matches!(decision, BufferedPacketsDecision::Forward) {
                         return;
@@ -753,7 +753,7 @@ impl BankingStage {
                             let Some(task) = adapter.create_task(transaction, index) else {
                                 continue;
                             };
-                            f(task);
+                            task_submitter(task);
                         }
                     }
                 })
