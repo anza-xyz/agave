@@ -230,11 +230,11 @@ impl BankingTracer {
         self.active_tracer.is_some()
     }
 
-    pub fn create_channels(
-        &self,
-        unified_scheduler_pool: Option<&Arc<DefaultSchedulerPool>>,
-    ) -> Channels {
-        if let Some(true) = unified_scheduler_pool.map(|pool| pool.block_production_supported()) {
+    pub fn create_channels(&self, scheduler_pool: Option<&Arc<DefaultSchedulerPool>>) -> Channels {
+        if scheduler_pool
+            .map(|pool| pool.block_production_supported())
+            .unwrap_or_default()
+        {
             let (non_vote_sender, non_vote_receiver) = self.create_channel_non_vote();
             let (tpu_vote_sender, tpu_vote_receiver) =
                 self.create_unified_channel_tpu_vote(&non_vote_sender, &non_vote_receiver);
