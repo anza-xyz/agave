@@ -191,17 +191,9 @@ mod tests {
         let sock_addr: SocketAddr = ip_str
             .parse()
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-        let reader = bind_to(
-            sock_addr.ip(),
-            /*port:*/ sock_addr.port(),
-            /*reuseport:*/ false,
-        )?;
+        let reader = bind_to(sock_addr.ip(), sock_addr.port(), /*reuseport:*/ false)?;
         let addr = reader.local_addr()?;
-        let sender = bind_to(
-            sock_addr.ip(),
-            /*port:*/ sock_addr.port(),
-            /*reuseport:*/ false,
-        )?;
+        let sender = bind_to(sock_addr.ip(), sock_addr.port(), /*reuseport:*/ false)?;
         let saddr = sender.local_addr()?;
         Ok((reader, addr, sender, saddr))
     }

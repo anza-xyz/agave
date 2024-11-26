@@ -19,11 +19,11 @@ use {
         TokioRuntime, TransportConfig,
     },
     solana_keypair::Keypair,
-    solana_net_utils::{bind_to, bind_to_localhost},
+    solana_net_utils::bind_to_localhost,
     solana_perf::packet::PacketBatch,
     solana_quic_definitions::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT},
     std::{
-        net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
+        net::{SocketAddr, UdpSocket},
         sync::{atomic::AtomicBool, Arc, RwLock},
     },
     tokio::task::JoinHandle,
@@ -142,6 +142,10 @@ pub fn setup_quic_server(
     let sockets = {
         #[cfg(not(target_os = "windows"))]
         {
+            use {
+                solana_net_utils::bind_to,
+                std::net::{IpAddr, Ipv4Addr},
+            };
             (0..10)
                 .map(|_| {
                     bind_to(

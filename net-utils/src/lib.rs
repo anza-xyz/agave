@@ -1,5 +1,7 @@
 //! The `net_utils` module assists with networking
 #![allow(clippy::arithmetic_side_effects)]
+#[cfg(feature = "dev-context-only-utils")]
+use tokio::net::UdpSocket as TokioUdpSocket;
 use {
     crossbeam_channel::unbounded,
     log::*,
@@ -12,7 +14,6 @@ use {
         sync::{Arc, RwLock},
         time::{Duration, Instant},
     },
-    tokio::net::UdpSocket as TokioUdpSocket,
     url::Url,
 };
 
@@ -546,6 +547,7 @@ pub fn bind_to(ip_addr: IpAddr, port: u16, reuseport: bool) -> io::Result<UdpSoc
     bind_to_with_config(ip_addr, port, config)
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 pub async fn bind_to_async(
     ip_addr: IpAddr,
     port: u16,
@@ -564,6 +566,7 @@ pub fn bind_to_localhost() -> io::Result<UdpSocket> {
     )
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 pub async fn bind_to_localhost_async() -> io::Result<TokioUdpSocket> {
     bind_to_async(
         IpAddr::V4(Ipv4Addr::LOCALHOST),
@@ -579,6 +582,16 @@ pub fn bind_to_unspecified() -> io::Result<UdpSocket> {
         /*port:*/ 0,
         /*reuseport:*/ false,
     )
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+pub async fn bind_to_unspecified_async() -> io::Result<TokioUdpSocket> {
+    bind_to_async(
+        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+        /*port:*/ 0,
+        /*reuseport:*/ false,
+    )
+    .await
 }
 
 pub fn bind_to_with_config(

@@ -68,19 +68,9 @@ mod tests {
         let sock_addr: SocketAddr = ip_str
             .parse()
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-        let reader = bind_to_async(
-            sock_addr.ip(),
-            /*port*/ sock_addr.port(),
-            /*reuseport:*/ false,
-        )
-        .await?;
+        let reader = bind_to_async(sock_addr.ip(), sock_addr.port(), /*reuseport:*/ false).await?;
         let addr = reader.local_addr()?;
-        let sender = bind_to_async(
-            sock_addr.ip(),
-            /*port*/ sock_addr.port(),
-            /*reuseport:*/ false,
-        )
-        .await?;
+        let sender = bind_to_async(sock_addr.ip(), sock_addr.port(), /*reuseport:*/ false).await?;
         let saddr = sender.local_addr()?;
         Ok((reader, addr, sender, saddr))
     }
