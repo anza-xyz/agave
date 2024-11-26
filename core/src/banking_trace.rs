@@ -234,14 +234,6 @@ impl BankingTracer {
         Self::channel(label, self.active_tracer.as_ref().cloned())
     }
 
-    fn create_channel2(&self, label: ChannelLabel) -> (BankingPacketSender, BankingPacketReceiver) {
-        Self::channel(label, self.active_tracer.as_ref().cloned())
-    }
-
-    pub fn create_channel_non_vote(&self) -> (BankingPacketSender, BankingPacketReceiver) {
-        self.create_channel(ChannelLabel::NonVote)
-    }
-
     pub fn create_channels(&self, unified_scheduler_pool: Option<Arc<DefaultSchedulerPool>>) -> Channels {
         if let Some(true) = unified_scheduler_pool.as_ref().map(|pool| pool.block_production_supported()) {
             let (non_vote_sender, non_vote_receiver) = self.create_channel_non_vote();
@@ -276,6 +268,10 @@ impl BankingTracer {
                 gossip_vote_receiver,
             }
         }
+    }
+
+    pub fn create_channel_non_vote(&self) -> (BankingPacketSender, BankingPacketReceiver) {
+        self.create_channel(ChannelLabel::NonVote)
     }
 
     pub fn create_channel_tpu_vote(&self) -> (BankingPacketSender, BankingPacketReceiver) {
