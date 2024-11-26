@@ -179,6 +179,15 @@ pub fn receiving_loop_with_minimized_sender_overhead<T, E, const SLEEP_MS: u64>(
     Ok(())
 }
 
+struct ChannelSet {
+    non_vote_sender: BankingPacketSender,
+    non_vote_receiver: BankingPacketReceiver,
+    tpu_vote_sender: BankingPacketSender,
+    tpu_vote_receiver: BankingPacketReceiver,
+    gossip_vote_sender: BankingPacketSender,
+    gossip_vote_receiver: BankingPacketReceiver,
+}
+
 impl BankingTracer {
     pub fn new(
         maybe_config: Option<(&PathBuf, Arc<AtomicBool>, DirByteLimit)>,
