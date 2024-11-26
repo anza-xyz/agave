@@ -627,4 +627,3 @@ impl<K: std::cmp::Eq + std::hash::Hash + AbiExample, V: AbiExample> AbiExample f
         map
     }
 }
-
