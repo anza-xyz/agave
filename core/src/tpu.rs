@@ -120,7 +120,7 @@ impl Tpu {
         block_production_method: BlockProductionMethod,
         enable_block_production_forwarding: bool,
         _generator_config: Option<GeneratorConfig>, /* vestigial code for replay invalidator */
-        unified_scheduler_pool: Option<Arc<solana_unified_scheduler_pool::DefaultSchedulerPool>>,
+        unified_scheduler_pool: Option<Arc<DefaultSchedulerPool>>,
     ) -> (Self, Vec<Arc<dyn NotifyKeyUpdate + Sync + Send>>) {
         let TpuSockets {
             transactions: transactions_sockets,
