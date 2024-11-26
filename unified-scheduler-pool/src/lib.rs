@@ -2323,7 +2323,7 @@ impl BankingStageAdapter {
     fn recreate_task(&self, task: Task) -> Task {
         let transaction = task.transaction().clone();
         let old_index = task.index();
-        let original_shifted_priority = old_index & const { (u64::MAX as TaskKey) << TaskKey::BITS / 2 };
+        let original_shifted_priority = old_index & const { (u64::MAX as TaskKey) << (TaskKey::BITS / 2) };
         let new_task_id = self.bulk_assign_task_ids(1) as TaskKey;
         let new_index = original_shifted_priority | new_task_id;
 
