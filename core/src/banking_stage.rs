@@ -694,7 +694,7 @@ impl BankingStage {
 
         unified_scheduler_pool.register_banking_stage(
             unified_receiver,
-            (num_threads - 2) as usize,
+            (num_threads - NUM_VOTE_PROCESSING_THREADS) as usize,
             banking_stage_monitor,
             Box::new(move |adapter: Arc<BankingStageAdapter>| {
                 let decision_maker = decision_maker.clone();

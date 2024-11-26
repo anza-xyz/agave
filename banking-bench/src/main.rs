@@ -476,7 +476,7 @@ fn main() {
     ) {
         let scheduler_pool = DefaultSchedulerPool::new(
             SupportedSchedulingMode::Either(SchedulingMode::BlockProduction),
-            Some((num_banking_threads - 2) as usize),
+            None,
             None,
             None,
             Some(replay_vote_sender.clone()),
