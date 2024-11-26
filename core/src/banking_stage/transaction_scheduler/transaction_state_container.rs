@@ -70,7 +70,7 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
     fn insert_new_transaction(
         &mut self,
         transaction_ttl: SanitizedTransactionTTL<Tx>,
-        packet: Arc<ImmutableDeserializedPacket>,
+        packet: Option<Arc<ImmutableDeserializedPacket>>,
         priority: u64,
         cost: u64,
     ) -> bool;
@@ -135,7 +135,7 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
     fn insert_new_transaction(
         &mut self,
         transaction_ttl: SanitizedTransactionTTL<Tx>,
-        packet: Arc<ImmutableDeserializedPacket>,
+        packet: Option<Arc<ImmutableDeserializedPacket>>,
         priority: u64,
         cost: u64,
     ) -> bool {
@@ -268,7 +268,7 @@ mod tests {
     ) {
         for priority in 0..num as u64 {
             let (transaction_ttl, packet, priority, cost) = test_transaction(priority);
-            container.insert_new_transaction(transaction_ttl, packet, priority, cost);
+            container.insert_new_transaction(transaction_ttl, Some(packet), priority, cost);
         }
     }
 
