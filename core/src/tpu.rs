@@ -201,27 +201,12 @@ impl Tpu {
         )
         .unwrap();
 
-        let (non_vote_sender, non_vote_receiver) = banking_tracer.create_channel_non_vote();
-
-        let (tpu_vote_sender, tpu_vote_receiver) = if unified_scheduler_pool
-            .as_ref()
-            .map(|pool| pool.block_production_supported())
-            .unwrap_or_default()
-        {
-            banking_tracer.create_unified_channel_tpu_vote(&non_vote_sender, &non_vote_receiver)
-        } else {
-            banking_tracer.create_channel_tpu_vote()
-        };
-
-        let (gossip_vote_sender, gossip_vote_receiver) = if unified_scheduler_pool
-            .as_ref()
-            .map(|pool| pool.block_production_supported())
-            .unwrap_or_default()
-        {
-            banking_tracer.create_unified_channel_gossip_vote(&non_vote_sender, &non_vote_receiver)
-        } else {
-            banking_tracer.create_channel_gossip_vote()
-        };
+        let Channels {
+            non_vote_sender,
+            non_vote_receiver,
+            tpu_vote_sender, tpu_vote_receiver,
+            gossip_vote_sender, gossip_vote_receiver,
+        } = banking_tracer.create_channels(unified_scheduler_pool);
 
         let sigverify_stage = {
             let verifier = TransactionSigVerifier::new(non_vote_sender);
