@@ -2463,6 +2463,7 @@ mod tests {
             thread::JoinHandle,
         },
     };
+    use solana_runtime::installed_scheduler_pool::InstalledSchedulerPoolArc;
 
     #[derive(Debug)]
     enum TestCheckPoint {
