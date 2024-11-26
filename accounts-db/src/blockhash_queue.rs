@@ -1,11 +1,11 @@
 #[allow(deprecated)]
 use solana_sdk::sysvar::recent_blockhashes;
 use {
-    ahash::AHashMap,
     serde::{Deserialize, Serialize},
     solana_sdk::{
         clock::MAX_RECENT_BLOCKHASHES, fee_calculator::FeeCalculator, hash::Hash, timing::timestamp,
     },
+    std::collections::HashMap,
 };
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -36,7 +36,7 @@ pub struct BlockhashQueue {
     /// last hash to be registered
     last_hash: Option<Hash>,
 
-    hashes: AHashMap<Hash, HashInfo>,
+    hashes: HashMap<Hash, HashInfo>,
 
     /// hashes older than `max_age` will be dropped from the queue
     max_age: usize,
@@ -51,7 +51,7 @@ impl Default for BlockhashQueue {
 impl BlockhashQueue {
     pub fn new(max_age: usize) -> Self {
         Self {
-            hashes: AHashMap::new(),
+            hashes: HashMap::new(),
             last_hash_index: 0,
             last_hash: None,
             max_age,
