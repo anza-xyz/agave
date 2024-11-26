@@ -34,6 +34,20 @@ lazy_static! {
     /// https://github.com/solana-labs/solana/issues/29595.
     static ref BUILTIN_INSTRUCTION_COSTS: AHashMap<Pubkey, BuiltinCost> = [
     (
+        solana_system_program::id(),
+        BuiltinCost {
+            native_cost: solana_system_program::system_processor::DEFAULT_COMPUTE_UNITS,
+            core_bpf_migration_feature: BUILTINS[0].core_bpf_migration_config.as_ref().map(|c| c.feature_id),
+        },
+    ),
+    (
+        solana_vote_program::id(),
+        BuiltinCost {
+            native_cost: solana_vote_program::vote_processor::DEFAULT_COMPUTE_UNITS,
+            core_bpf_migration_feature: BUILTINS[1].core_bpf_migration_config.as_ref().map(|c| c.feature_id),
+        },
+    ),
+    (
         solana_stake_program::id(),
         BuiltinCost {
             native_cost: solana_stake_program::stake_instruction::DEFAULT_COMPUTE_UNITS,
@@ -45,41 +59,6 @@ lazy_static! {
         BuiltinCost {
             native_cost: solana_config_program::config_processor::DEFAULT_COMPUTE_UNITS,
             core_bpf_migration_feature: BUILTINS[3].core_bpf_migration_config.as_ref().map(|c| c.feature_id),
-        },
-    ),
-    (
-        solana_vote_program::id(),
-        BuiltinCost {
-            native_cost: solana_vote_program::vote_processor::DEFAULT_COMPUTE_UNITS,
-            core_bpf_migration_feature: BUILTINS[1].core_bpf_migration_config.as_ref().map(|c| c.feature_id),
-        },
-    ),
-    (
-        solana_system_program::id(),
-        BuiltinCost {
-            native_cost: solana_system_program::system_processor::DEFAULT_COMPUTE_UNITS,
-            core_bpf_migration_feature: BUILTINS[0].core_bpf_migration_config.as_ref().map(|c| c.feature_id),
-        },
-    ),
-    (
-        compute_budget::id(),
-        BuiltinCost {
-            native_cost: solana_compute_budget_program::DEFAULT_COMPUTE_UNITS,
-            core_bpf_migration_feature: BUILTINS[7].core_bpf_migration_config.as_ref().map(|c| c.feature_id),
-        },
-    ),
-    (
-        address_lookup_table::program::id(),
-        BuiltinCost {
-            native_cost: solana_address_lookup_table_program::processor::DEFAULT_COMPUTE_UNITS,
-            core_bpf_migration_feature: BUILTINS[8].core_bpf_migration_config.as_ref().map(|c| c.feature_id),
-        },
-    ),
-    (
-        bpf_loader_upgradeable::id(),
-        BuiltinCost {
-            native_cost: solana_bpf_loader_program::UPGRADEABLE_LOADER_COMPUTE_UNITS,
-            core_bpf_migration_feature: BUILTINS[6].core_bpf_migration_config.as_ref().map(|c| c.feature_id),
         },
     ),
     (
@@ -97,12 +76,36 @@ lazy_static! {
         },
     ),
     (
+        bpf_loader_upgradeable::id(),
+        BuiltinCost {
+            native_cost: solana_bpf_loader_program::UPGRADEABLE_LOADER_COMPUTE_UNITS,
+            core_bpf_migration_feature: BUILTINS[6].core_bpf_migration_config.as_ref().map(|c| c.feature_id),
+        },
+    ),
+    (
+        compute_budget::id(),
+        BuiltinCost {
+            native_cost: solana_compute_budget_program::DEFAULT_COMPUTE_UNITS,
+            core_bpf_migration_feature: BUILTINS[7].core_bpf_migration_config.as_ref().map(|c| c.feature_id),
+        },
+    ),
+    (
+        address_lookup_table::program::id(),
+        BuiltinCost {
+            native_cost: solana_address_lookup_table_program::processor::DEFAULT_COMPUTE_UNITS,
+            core_bpf_migration_feature: BUILTINS[8].core_bpf_migration_config.as_ref().map(|c| c.feature_id),
+        },
+    ),
+    // zk-token-proof-program
+    (
         loader_v4::id(),
         BuiltinCost {
             native_cost: solana_loader_v4_program::DEFAULT_COMPUTE_UNITS,
             core_bpf_migration_feature: BUILTINS[10].core_bpf_migration_config.as_ref().map(|c| c.feature_id),
         },
     ),
+    // zk-elgamal-proof-program
+
     // Note: These are precompile, run directly in bank during sanitizing;
     (
         secp256k1_program::id(),
