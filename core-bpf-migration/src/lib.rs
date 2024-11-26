@@ -17,3 +17,4 @@ pub mod error;
 pub mod prototypes;
 pub mod source_buffer;
 pub mod target_builtin;
+pub mod target_core_bpf;

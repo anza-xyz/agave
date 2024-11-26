@@ -1,11 +1,9 @@
-mod target_core_bpf;
-
 use {
     crate::bank::Bank,
     num_traits::{CheckedAdd, CheckedSub},
     solana_core_bpf_migration::{
         config::CoreBpfMigrationConfig, error::CoreBpfMigrationError, source_buffer::SourceBuffer,
-        target_builtin::TargetBuiltin,
+        target_builtin::TargetBuiltin, target_core_bpf::TargetCoreBpf,
     },
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext},
@@ -21,7 +19,6 @@ use {
         transaction_context::TransactionContext,
     },
     std::{cmp::Ordering, sync::atomic::Ordering::Relaxed},
-    target_core_bpf::TargetCoreBpf,
 };
 
 fn checked_add<T: CheckedAdd>(a: T, b: T) -> Result<T, CoreBpfMigrationError> {

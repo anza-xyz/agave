@@ -1,15 +1,14 @@
 use {
-    solana_core_bpf_migration::{callback::AccountLoaderCallback, error::CoreBpfMigrationError},
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        bpf_loader_upgradeable::{self, get_program_data_address, UpgradeableLoaderState},
-        pubkey::Pubkey,
-    },
+    crate::{callback::AccountLoaderCallback, error::CoreBpfMigrationError},
+    solana_account::{AccountSharedData, ReadableAccount},
+    solana_program::bpf_loader_upgradeable::{get_program_data_address, UpgradeableLoaderState},
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::bpf_loader_upgradeable,
 };
 
 /// The account details of a Core BPF program slated to be upgraded.
 #[derive(Debug)]
-pub(crate) struct TargetCoreBpf {
+pub struct TargetCoreBpf {
     pub program_address: Pubkey,
     pub program_data_address: Pubkey,
     pub program_data_account: AccountSharedData,
@@ -23,7 +22,7 @@ impl TargetCoreBpf {
     /// and it should be marked as executable.
     /// The program data account should exist with the correct state
     /// (a ProgramData header and the program ELF).
-    pub(crate) fn new_checked<CB: AccountLoaderCallback>(
+    pub fn new_checked<CB: AccountLoaderCallback>(
         callback: &CB,
         program_address: &Pubkey,
     ) -> Result<Self, CoreBpfMigrationError> {
@@ -94,9 +93,11 @@ impl TargetCoreBpf {
 mod tests {
     use {
         super::*,
+        crate::prototypes::BUILTINS,
         assert_matches::assert_matches,
-        solana_core_bpf_migration::prototypes::BUILTINS,
-        solana_sdk::{account::WritableAccount, bpf_loader_upgradeable, native_loader, rent::Rent},
+        solana_account::WritableAccount,
+        solana_rent::Rent,
+        solana_sdk_ids::{bpf_loader_upgradeable, native_loader},
         std::collections::HashMap,
     };
 
