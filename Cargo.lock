@@ -6755,6 +6755,10 @@ dependencies = [
 [[package]]
 name = "solana-core-bpf-migration"
 version = "2.2.0"
+dependencies = [
+ "solana-account",
+ "solana-pubkey",
+]
 
 [[package]]
 name = "solana-cost-model"
@@ -8368,6 +8372,7 @@ dependencies = [
  "solana-compute-budget",
  "solana-compute-budget-program",
  "solana-config-program",
+ "solana-core-bpf-migration",
  "solana-cost-model",
  "solana-feature-set",
  "solana-fee",

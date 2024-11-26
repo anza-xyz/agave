@@ -1,6 +1,6 @@
 use {
     super::error::CoreBpfMigrationError,
-    crate::bank::Bank,
+    solana_core_bpf_migration::callback::AccountLoaderCallback,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount},
         bpf_loader_upgradeable::{self, UpgradeableLoaderState},
@@ -19,13 +19,13 @@ pub(crate) struct SourceBuffer {
 impl SourceBuffer {
     /// Collects the details of a buffer account and verifies it exists, is
     /// owned by the upgradeable loader, and has the correct state.
-    pub(crate) fn new_checked(
-        bank: &Bank,
+    pub(crate) fn new_checked<CB: AccountLoaderCallback>(
+        callback: &CB,
         buffer_address: &Pubkey,
     ) -> Result<Self, CoreBpfMigrationError> {
         // The buffer account should exist.
-        let buffer_account = bank
-            .get_account_with_fixed_root(buffer_address)
+        let buffer_account = callback
+            .load_account(buffer_address)
             .ok_or(CoreBpfMigrationError::AccountNotFound(*buffer_address))?;
 
         // The buffer account should be owned by the upgradeable loader.
@@ -53,59 +53,79 @@ impl SourceBuffer {
 mod tests {
     use {
         super::*,
-        crate::bank::tests::create_simple_test_bank,
+        crate::bank::builtins::BUILTINS,
         assert_matches::assert_matches,
-        solana_sdk::{account::WritableAccount, bpf_loader_upgradeable},
+        solana_sdk::{account::WritableAccount, bpf_loader_upgradeable, native_loader, rent::Rent},
+        std::collections::HashMap,
     };
 
-    fn store_account(bank: &Bank, address: &Pubkey, data: &[u8], owner: &Pubkey) {
-        let space = data.len();
-        let lamports = bank.get_minimum_balance_for_rent_exemption(space);
-        let mut account = AccountSharedData::new(lamports, space, owner);
-        account.data_as_mut_slice().copy_from_slice(data);
-        bank.store_account_and_update_capitalization(address, &account);
+    #[derive(Default)]
+    struct SimpleAccountStore {
+        accounts: HashMap<Pubkey, AccountSharedData>,
+        rent: Rent,
+    }
+
+    impl SimpleAccountStore {
+        fn new() -> Self {
+            let mut me = Self::default();
+            BUILTINS.iter().for_each(|b| {
+                me.store_account(&b.program_id, b.name.as_bytes(), &native_loader::id());
+            });
+            me
+        }
+
+        fn store_account(&mut self, address: &Pubkey, data: &[u8], owner: &Pubkey) {
+            let space = data.len();
+            let lamports = self.rent.minimum_balance(space);
+            let mut account = AccountSharedData::new(lamports, space, owner);
+            account.data_as_mut_slice().copy_from_slice(data);
+            self.accounts.insert(*address, account);
+        }
+    }
+
+    impl AccountLoaderCallback for SimpleAccountStore {
+        fn load_account(&self, address: &Pubkey) -> Option<AccountSharedData> {
+            self.accounts.get(address).cloned()
+        }
     }
 
     #[test]
     fn test_source_buffer() {
-        let bank = create_simple_test_bank(0);
+        let mut account_store = SimpleAccountStore::new();
 
         let buffer_address = Pubkey::new_unique();
 
         // Fail if the buffer account does not exist
         assert_matches!(
-            SourceBuffer::new_checked(&bank, &buffer_address).unwrap_err(),
+            SourceBuffer::new_checked(&account_store, &buffer_address).unwrap_err(),
             CoreBpfMigrationError::AccountNotFound(..)
         );
 
         // Fail if the buffer account is not owned by the upgradeable loader.
-        store_account(
-            &bank,
+        account_store.store_account(
             &buffer_address,
             &[4u8; 200],
             &Pubkey::new_unique(), // Not the upgradeable loader
         );
         assert_matches!(
-            SourceBuffer::new_checked(&bank, &buffer_address).unwrap_err(),
+            SourceBuffer::new_checked(&account_store, &buffer_address).unwrap_err(),
             CoreBpfMigrationError::IncorrectOwner(..)
         );
 
         // Fail if the buffer account does not have the correct state.
-        store_account(
-            &bank,
+        account_store.store_account(
             &buffer_address,
             &[4u8; 200], // Not the correct state
             &bpf_loader_upgradeable::id(),
         );
         assert_matches!(
-            SourceBuffer::new_checked(&bank, &buffer_address).unwrap_err(),
+            SourceBuffer::new_checked(&account_store, &buffer_address).unwrap_err(),
             CoreBpfMigrationError::BincodeError(..)
         );
 
         // Fail if the buffer account does not have the correct state.
         // This time, valid `UpgradeableLoaderState` but not a buffer account.
-        store_account(
-            &bank,
+        account_store.store_account(
             &buffer_address,
             &bincode::serialize(&UpgradeableLoaderState::ProgramData {
                 slot: 0,
@@ -115,13 +135,13 @@ mod tests {
             &bpf_loader_upgradeable::id(),
         );
         assert_matches!(
-            SourceBuffer::new_checked(&bank, &buffer_address).unwrap_err(),
+            SourceBuffer::new_checked(&account_store, &buffer_address).unwrap_err(),
             CoreBpfMigrationError::InvalidBufferAccount(..)
         );
 
         // Success
         let elf = vec![4u8; 200];
-        let test_success = |authority_address: Option<Pubkey>| {
+        let mut test_success = |authority_address: Option<Pubkey>| {
             // BPF Loader always writes ELF bytes after
             // `UpgradeableLoaderState::size_of_buffer_metadata()`.
             let buffer_metadata_size = UpgradeableLoaderState::size_of_buffer_metadata();
@@ -134,9 +154,9 @@ mod tests {
             .unwrap();
             data[buffer_metadata_size..].copy_from_slice(&elf);
 
-            store_account(&bank, &buffer_address, &data, &bpf_loader_upgradeable::id());
+            account_store.store_account(&buffer_address, &data, &bpf_loader_upgradeable::id());
 
-            let source_buffer = SourceBuffer::new_checked(&bank, &buffer_address).unwrap();
+            let source_buffer = SourceBuffer::new_checked(&account_store, &buffer_address).unwrap();
 
             assert_eq!(source_buffer.buffer_address, buffer_address);
             assert_eq!(

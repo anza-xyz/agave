@@ -96,6 +96,7 @@ use {
         create_program_runtime_environment_v1, create_program_runtime_environment_v2,
     },
     solana_compute_budget::compute_budget::ComputeBudget,
+    solana_core_bpf_migration::callback::AccountLoaderCallback,
     solana_cost_model::cost_tracker::CostTracker,
     solana_feature_set::{
         self as feature_set, remove_rounding_in_fee_calculation, reward_full_priority_fee,
@@ -7111,6 +7112,12 @@ impl Bank {
     pub fn add_builtin(&self, program_id: Pubkey, name: &str, builtin: ProgramCacheEntry) {
         self.transaction_processor
             .add_builtin(self, program_id, name, builtin)
+    }
+}
+
+impl AccountLoaderCallback for Bank {
+    fn load_account(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
+        self.get_account_with_fixed_root(pubkey)
     }
 }
 

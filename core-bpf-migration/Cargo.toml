@@ -10,6 +10,8 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+solana-account = { workspace = true }
+solana-pubkey = { workspace = true }
 
 [lints]
 workspace = true
