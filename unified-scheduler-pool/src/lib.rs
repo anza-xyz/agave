@@ -502,7 +502,7 @@ where
 
         if should_trash {
             if is_block_production_scheduler_returned {
-                scheduler.abort();
+                scheduler.ensure_abort();
             }
             // Delay drop()-ing this trashed returned scheduler inner by stashing it in
             // self.trashed_scheduler_inners, which is periodically drained by the `solScCleaner`
