@@ -251,22 +251,28 @@ impl Index {
 }
 
 impl ShredIndex {
+    pub fn new() -> Self {
+        ShredIndex {
+            index: BTreeSet::new(),
+        }
+    }
+
     pub fn num_shreds(&self) -> usize {
         self.index.len()
     }
 
-    pub(crate) fn range<R>(&self, bounds: R) -> impl Iterator<Item = &u64>
+    pub fn range<R>(&self, bounds: R) -> impl Iterator<Item = &u64>
     where
         R: RangeBounds<u64>,
     {
         self.index.range(bounds)
     }
 
-    pub(crate) fn contains(&self, index: u64) -> bool {
+    pub fn contains(&self, index: u64) -> bool {
         self.index.contains(&index)
     }
 
-    pub(crate) fn insert(&mut self, index: u64) {
+    pub fn insert(&mut self, index: u64) {
         self.index.insert(index);
     }
 }
