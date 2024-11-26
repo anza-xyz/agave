@@ -660,7 +660,7 @@ fn process_entries(
                     (starting_index..starting_index.saturating_add(transactions.len())).collect();
                 loop {
                     // try to lock the accounts
-                    let batch = bank.prepare_sanitized_batch(transactions);
+                    let batch = bank.prepare_sanitized_batch(transactions, vote_only_execution);
                     let first_lock_err = first_err(batch.lock_results());
 
                     // if locking worked

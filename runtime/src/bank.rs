@@ -3518,12 +3518,16 @@ impl Bank {
     pub fn prepare_sanitized_batch<'a, 'b>(
         &'a self,
         txs: &'b [SanitizedTransaction],
+        vote_only_execution: bool,
     ) -> TransactionBatch<'a, 'b, SanitizedTransaction> {
         let tx_account_lock_limit = self.get_transaction_account_lock_limit();
-        let lock_results = self
-            .rc
-            .accounts
-            .lock_accounts(txs.iter(), tx_account_lock_limit);
+        let lock_results = if vote_only_execution {
+            txs.iter().map(|_| Ok(())).collect::<Vec<Result<()>>>()
+        } else {
+            self.rc
+                .accounts
+                .lock_accounts(txs.iter(), tx_account_lock_limit)
+        };
         TransactionBatch::new(lock_results, self, OwnedOrBorrowed::Borrowed(txs))
     }
 
@@ -6344,7 +6348,7 @@ impl Bank {
             .filter_map(|(pubkey, vote_state)| {
                 let stake = self
                     .epoch_stakes(self.epoch())
-                    .and_then(|epoch_stakes| Some(epoch_stakes.vote_account_stake(pubkey)));
+                    .map(|epoch_stakes| epoch_stakes.vote_account_stake(pubkey));
                 stake.map(|stake| (*pubkey, (stake, vote_state.clone())))
             })
             .collect::<VoteStateHashMap>()
