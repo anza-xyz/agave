@@ -2197,7 +2197,7 @@ pub trait SchedulerInner {
     fn id(&self) -> SchedulerId;
     fn is_overgrown(&self, on_hot_path: bool) -> bool;
     fn reset(&self);
-    fn abort(&mut self);
+    fn ensure_abort(&mut self);
 }
 
 pub trait SpawnableScheduler<TH: TaskHandler>: InstalledScheduler {
