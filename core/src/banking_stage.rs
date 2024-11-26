@@ -717,7 +717,7 @@ impl BankingStage {
                         let packets = PacketDeserializer::deserialize_packets_with_indexes(batch);
 
                         for (packet, packet_index) in packets {
-                            let (transaction, _) = packet.build_sanitized_transaction(
+                            let Some((transaction, _)) = packet.build_sanitized_transaction(
                                 bank.vote_only_bank(),
                                 &bank,
                                 bank.get_reserved_account_keys(),
