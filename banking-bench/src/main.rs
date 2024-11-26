@@ -449,19 +449,6 @@ fn main() {
             BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
         )))
         .unwrap();
-    let (non_vote_sender, non_vote_receiver) = banking_tracer.create_channel_non_vote();
-    let (tpu_vote_sender, tpu_vote_receiver) =
-        if let BlockProductionMethod::UnifiedScheduler = block_production_method {
-            banking_tracer.create_unified_channel_tpu_vote(&non_vote_sender, &non_vote_receiver)
-        } else {
-            banking_tracer.create_channel_tpu_vote()
-        };
-    let (gossip_vote_sender, gossip_vote_receiver) =
-        if let BlockProductionMethod::UnifiedScheduler = block_production_method {
-            banking_tracer.create_unified_channel_gossip_vote(&non_vote_sender, &non_vote_receiver)
-        } else {
-            banking_tracer.create_channel_gossip_vote()
-        };
     let cluster_info = {
         let keypair = Arc::new(Keypair::new());
         let node = Node::new_localhost_with_pubkey(&keypair.pubkey());
@@ -502,6 +489,14 @@ fn main() {
     } else {
         None
     };
+    let Channels {
+        non_vote_sender,
+        non_vote_receiver,
+        tpu_vote_sender,
+        tpu_vote_receiver,
+        gossip_vote_sender,
+        gossip_vote_receiver,
+    } = banking_tracer.create_channels(scheduler_pool.as_ref());
 
     let banking_stage = BankingStage::new_num_threads(
         block_production_method.clone(),
