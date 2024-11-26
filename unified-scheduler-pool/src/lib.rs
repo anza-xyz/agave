@@ -250,11 +250,6 @@ where
         )
     }
 
-    pub fn block_production_supported(&self) -> bool {
-        self.supported_scheduling_mode
-            .is_supported(SchedulingMode::BlockProduction)
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn do_new(
         supported_scheduling_mode: SupportedSchedulingMode,
@@ -479,6 +474,11 @@ where
             prioritization_fee_cache,
             TransactionRecorder::new_dummy(),
         )
+    }
+
+    pub fn block_production_supported(&self) -> bool {
+        self.supported_scheduling_mode
+            .is_supported(SchedulingMode::BlockProduction)
     }
 
     // See a comment at the weak_self field for justification of this method's existence.
