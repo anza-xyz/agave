@@ -2311,8 +2311,8 @@ impl BankingStageAdapter {
         index: TaskKey,
     ) -> Option<Task> {
         let hash = transaction.message_hash();
-        if self.transaction_deduper.contains(hash)
-            || !self.transaction_deduper.insert(*transaction.message_hash()) {
+        // Tolerate double lookup to avoid a write-lock....
+        if self.transaction_deduper.contains(hash) || !self.transaction_deduper.insert(*hash) {
             //return None;
         }
 
