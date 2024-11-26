@@ -228,6 +228,10 @@ impl BankingTracer {
         self.create_channel(ChannelLabel::NonVote)
     }
 
+    pub fn create_channel_non_vote2(&self, unified_scheduler_pool: Option<Arc<DefaultSchedulerPool>>) -> (BankingPacketSender, BankingPacketReceiver) {
+        self.create_channel(ChannelLabel::NonVote)
+    }
+
     pub fn create_channel_tpu_vote(&self) -> (BankingPacketSender, BankingPacketReceiver) {
         self.create_channel(ChannelLabel::TpuVote)
     }
