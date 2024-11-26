@@ -6277,6 +6277,7 @@ dependencies = [
  "solana-bpf-loader-program",
  "solana-compute-budget-program",
  "solana-config-program",
+ "solana-core-bpf-migration",
  "solana-frozen-abi",
  "solana-loader-v4-program",
  "solana-sdk",
