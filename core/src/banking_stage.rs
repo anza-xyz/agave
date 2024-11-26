@@ -711,13 +711,12 @@ impl BankingStage {
                     let bank = bank_forks.read().unwrap().working_bank();
                     let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
                     let batches = batches.0.iter();
-                    let transactions = batches.flat_map(|batch| {
+                    for batch in batches {
                         // over-provision nevertheless some of packets could be invalid.
                         let task_id_base = adapter.bulk_assign_task_ids(batch.len() as u64);
-                        let packets = PacketDeserializer::deserialize_packets_with_indexes(batch)
-                            .zip(iter::repeat(task_id_base));
+                        let packets = PacketDeserializer::deserialize_packets_with_indexes(batch);
 
-                        packets.filter_map(|((packet, packet_index), task_id_base)| {
+                        for (packet, packet_index) in packets {
                             let (transaction, _) = packet.build_sanitized_transaction(
                                 bank.vote_only_bank(),
                                 &bank,
@@ -745,11 +744,12 @@ impl BankingStage {
                             let task_id = (task_id_base + packet_index as u64) as TaskKey;
                             let index = reversed_priority << const { TaskKey::BITS / 2 } | task_id;
 
-                            adapter.create_task(transaction, index)
-                        })
-                    });
+                            if let Some(task) = adapter.create_task(transaction, index) {
+                                f(t);
+                            }
+                        }
+                    }
 
-                    transactions.for_each(|t| f(t));
                 })
             }),
         );
