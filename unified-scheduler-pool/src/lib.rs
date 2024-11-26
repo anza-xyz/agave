@@ -1691,9 +1691,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                         executed_task.task.transaction().clone(),
                                         executed_task.task.index(),
                                     );
-                                    error!("requeued tx!!!!");
+                                    debug!("requeued tx!!!!");
                                     state_machine.do_schedule_task(task, true);
-                                    drop(result_with_timings);
                                 }
                                 drop(executed_task);
                                 if should_pause && !session_pausing && slot != 282254387/*00*/ {
