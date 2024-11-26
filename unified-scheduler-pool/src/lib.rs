@@ -2310,15 +2310,10 @@ impl BankingStageAdapter {
         transaction: SanitizedTransaction,
         index: TaskKey,
     ) -> Option<Task> {
-        if self
-            .transaction_deduper
-            .contains(transaction.message_hash())
-        {
+        let hash = transaction.message_hash();
+        if self.transaction_deduper.contains(hash)
+            || !self.transaction_deduper.insert(*transaction.message_hash()) {
             //return None;
-        } else {
-            if !self.transaction_deduper.insert(*transaction.message_hash()) {
-                //return None;
-            }
         }
 
         Some(self.do_create_task(transaction, index))
