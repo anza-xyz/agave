@@ -7371,7 +7371,6 @@ dependencies = [
  "dyn-clone",
  "enum-ptr",
  "log",
- "qualifier_attr",
  "scopeguard",
  "serde",
  "solana-cost-model",
