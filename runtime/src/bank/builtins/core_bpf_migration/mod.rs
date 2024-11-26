@@ -1,11 +1,12 @@
-mod source_buffer;
 mod target_builtin;
 mod target_core_bpf;
 
 use {
     crate::bank::Bank,
     num_traits::{CheckedAdd, CheckedSub},
-    solana_core_bpf_migration::{config::CoreBpfMigrationConfig, error::CoreBpfMigrationError},
+    solana_core_bpf_migration::{
+        config::CoreBpfMigrationConfig, error::CoreBpfMigrationError, source_buffer::SourceBuffer,
+    },
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::ProgramCacheForTxBatch,
@@ -19,7 +20,6 @@ use {
         pubkey::Pubkey,
         transaction_context::TransactionContext,
     },
-    source_buffer::SourceBuffer,
     std::{cmp::Ordering, sync::atomic::Ordering::Relaxed},
     target_builtin::TargetBuiltin,
     target_core_bpf::TargetCoreBpf,

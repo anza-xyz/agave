@@ -6756,6 +6756,7 @@ dependencies = [
 name = "solana-core-bpf-migration"
 version = "2.2.0"
 dependencies = [
+ "assert_matches",
  "bincode",
  "solana-account",
  "solana-address-lookup-table-program",
@@ -6765,8 +6766,10 @@ dependencies = [
  "solana-feature-set",
  "solana-instruction",
  "solana-loader-v4-program",
+ "solana-program",
  "solana-program-runtime",
  "solana-pubkey",
+ "solana-rent",
  "solana-sdk-ids",
  "solana-stake-program",
  "solana-system-program",

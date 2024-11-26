@@ -5307,6 +5307,7 @@ dependencies = [
  "solana-feature-set",
  "solana-instruction",
  "solana-loader-v4-program",
+ "solana-program",
  "solana-program-runtime",
  "solana-pubkey",
  "solana-sdk-ids",

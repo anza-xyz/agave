@@ -15,3 +15,4 @@ pub mod callback;
 pub mod config;
 pub mod error;
 pub mod prototypes;
+pub mod source_buffer;

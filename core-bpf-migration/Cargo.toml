@@ -22,6 +22,7 @@ solana-config-program = { workspace = true }
 solana-feature-set = { workspace = true }
 solana-instruction = { workspace = true }
 solana-loader-v4-program = { workspace = true }
+solana-program = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sdk-ids = { workspace = true }
@@ -31,6 +32,10 @@ solana-vote-program = { workspace = true }
 solana-zk-elgamal-proof-program = { workspace = true }
 solana-zk-token-proof-program = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+assert_matches = { workspace = true }
+solana-rent = { workspace = true }
 
 [lints]
 workspace = true
