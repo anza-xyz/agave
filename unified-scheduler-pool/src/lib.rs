@@ -1066,10 +1066,6 @@ impl UsageQueueLoader {
     fn count(&self) -> usize {
         self.usage_queues.len()
     }
-
-    fn reset(&self) {
-        self.usage_queues.clear();
-    }
 }
 
 // (this is slow needing atomic mem reads. However, this can be turned into a lot faster
@@ -2352,15 +2348,8 @@ impl BankingStageAdapter {
             "resetting transaction_deduper... done: {}",
             self.transaction_deduper.len()
         );
-        info!(
-            "resetting usage_queue_loader... {}",
-            self.transaction_deduper.len()
-        );
-        self.usage_queue_loader.reset();
-        info!(
-            "resetting usage_queue_loader... done: {}",
-            self.transaction_deduper.len()
-        );
+        // We can't reset self.usage_queue_loader because task (re)creation is multi-threaded
+        // without any synchronization
     }
 }
 
