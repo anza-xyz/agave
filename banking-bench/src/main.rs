@@ -44,6 +44,7 @@ use {
         time::{Duration, Instant},
     },
 };
+use solana_core::banking_trace::Channels;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
