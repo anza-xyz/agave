@@ -502,6 +502,7 @@ where
 
         if should_trash {
             if is_block_production_scheduler_returned {
+                // Abort this trashed scheduler to avoid consuming BankingPacketBatch...
                 scheduler.ensure_abort();
             }
             // Delay drop()-ing this trashed returned scheduler inner by stashing it in
