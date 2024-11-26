@@ -2307,7 +2307,11 @@ impl BankingStageAdapter {
         })
     }
 
-    pub fn create_new_task(&self, transaction: SanitizedTransaction, index: TaskKey) -> Option<Task> {
+    pub fn create_new_task(
+        &self,
+        transaction: SanitizedTransaction,
+        index: TaskKey,
+    ) -> Option<Task> {
         if self
             .transaction_deduper
             .contains(transaction.message_hash())
