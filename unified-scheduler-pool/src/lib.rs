@@ -2301,12 +2301,10 @@ impl BankingStageAdapter {
         self.next_task_id.fetch_add(count, Relaxed)
     }
 
-    pub fn do_create_task(&self, transaction: SanitizedTransaction, index: TaskKey) -> Task {
-        SchedulingStateMachine::create_task(
-            transaction,
-            index,
-            &mut |pubkey| self.usage_queue_loader.load(pubkey),
-        )
+    fn do_create_task(&self, transaction: SanitizedTransaction, index: TaskKey) -> Task {
+        SchedulingStateMachine::create_task(transaction, index, &mut |pubkey| {
+            self.usage_queue_loader.load(pubkey)
+        })
     }
 
     pub fn create_task(&self, transaction: SanitizedTransaction, index: TaskKey) -> Option<Task> {
