@@ -1066,6 +1066,10 @@ impl UsageQueueLoader {
     fn count(&self) -> usize {
         self.usage_queues.len()
     }
+
+    fn reset(&self) {
+        self.usage_queues.clear();
+    }
 }
 
 // (this is slow needing atomic mem reads. However, this can be turned into a lot faster
