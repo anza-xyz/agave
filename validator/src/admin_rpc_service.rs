@@ -1299,6 +1299,8 @@ mod tests {
         }
     }
 
+    // This test checks that the rpc call to `set_identity` works a expected with
+    // Bank but without validator.
     #[test]
     fn test_set_identity() {
         let rpc = RpcHandler::start_with_config(TestConfig::default());
@@ -1327,7 +1329,7 @@ mod tests {
         assert_eq!(actual_parsed_response, expected_parsed_response);
 
         let contact_info_request =
-            format!(r#"{{"jsonrpc":"2.0","id":1,"method":"contactInfo","params":[]}}"#,);
+            r#"{"jsonrpc":"2.0","id":1,"method":"contactInfo","params":[]}"#.to_string();
         let response = io.handle_request_sync(&contact_info_request, meta.clone());
         let parsed_response: Value = serde_json::from_str(&response.expect("actual response"))
             .expect("actual response deserialization");
@@ -1340,9 +1342,7 @@ mod tests {
         );
     }
 
-    // This test checks that set_identity call works well with working validator and client.
-    //
-    // It is part of the validator crate and not core to avoid circular dependencies.
+    // This test checks that `set_identity` call works with working validator and client.
     #[test]
     fn test_set_identity_with_validator() {
         let leader_keypair = Keypair::new();
@@ -1428,7 +1428,7 @@ mod tests {
         assert_eq!(actual_parsed_response, expected_parsed_response);
 
         let contact_info_request =
-            format!(r#"{{"jsonrpc":"2.0","id":1,"method":"contactInfo","params":[]}}"#,);
+            r#"{"jsonrpc":"2.0","id":1,"method":"contactInfo","params":[]}"#.to_string();
         let response = io.handle_request_sync(&contact_info_request, meta.clone());
         let parsed_response: Value = serde_json::from_str(&response.expect("actual response"))
             .expect("actual response deserialization");
@@ -1441,7 +1441,7 @@ mod tests {
         );
 
         let contact_info_request =
-            format!(r#"{{"jsonrpc":"2.0","id":1,"method":"exit","params":[]}}"#,);
+            r#"{"jsonrpc":"2.0","id":1,"method":"exit","params":[]}"#.to_string();
         let exit_response = io.handle_request_sync(&contact_info_request, meta.clone());
         let actual_parsed_response: Value =
             serde_json::from_str(&exit_response.expect("actual response"))
