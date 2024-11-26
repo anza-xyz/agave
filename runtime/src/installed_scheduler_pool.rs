@@ -767,8 +767,7 @@ mod tests {
         mock.expect_context()
             .times(1)
             .in_sequence(&mut seq.lock().unwrap())
-            .return_const(SchedulingContext::new(
-                SchedulingMode::BlockVerification,
+            .return_const(SchedulingContext::for_verification(
                 Some(bank),
             ));
 
