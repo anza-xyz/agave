@@ -143,7 +143,7 @@ fn bench_banking_tracer_background_thread_throughput(bencher: &mut Bencher) {
 
         let (tracer, tracer_thread) =
             BankingTracer::new(Some((&path, exit.clone(), 50 * 1024 * 1024))).unwrap();
-        let (non_vote_sender, non_vote_receiver) = tracer.create_channel_non_vote();
+        let Channels { non_vote_sender, non_vote_receiver, .. } = tracer.create_channels(None);
 
         let dummy_main_thread = thread::spawn(move || {
             receiving_loop_with_minimized_sender_overhead::<_, TraceError, 0>(
