@@ -180,12 +180,12 @@ pub fn receiving_loop_with_minimized_sender_overhead<T, E, const SLEEP_MS: u64>(
 }
 
 pub struct Channels {
-    non_vote_sender: BankingPacketSender,
-    non_vote_receiver: BankingPacketReceiver,
-    tpu_vote_sender: BankingPacketSender,
-    tpu_vote_receiver: BankingPacketReceiver,
-    gossip_vote_sender: BankingPacketSender,
-    gossip_vote_receiver: BankingPacketReceiver,
+    pub non_vote_sender: BankingPacketSender,
+    pub non_vote_receiver: BankingPacketReceiver,
+    pub tpu_vote_sender: BankingPacketSender,
+    pub tpu_vote_receiver: BankingPacketReceiver,
+    pub gossip_vote_sender: BankingPacketSender,
+    pub gossip_vote_receiver: BankingPacketReceiver,
 }
 
 impl BankingTracer {
