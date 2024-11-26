@@ -33,7 +33,7 @@ struct Config<'a> {
     dump: bool,
     features: Vec<String>,
     force_tools_install: bool,
-    no_install: bool,
+    skip_tools_install: bool,
     generate_child_script_on_failure: bool,
     no_default_features: bool,
     offline: bool,
@@ -62,7 +62,7 @@ impl Default for Config<'_> {
             dump: false,
             features: vec![],
             force_tools_install: false,
-            no_install: false,
+            skip_tools_install: false,
             generate_child_script_on_failure: false,
             no_default_features: false,
             offline: false,
@@ -664,7 +664,7 @@ fn build_solana_package(
         "x86_64"
     };
 
-    if !config.no_install {
+    if !config.skip_tools_install {
         let platform_tools_download_file_name = if cfg!(target_os = "windows") {
             format!("platform-tools-windows-{arch}.tar.bz2")
         } else if cfg!(target_os = "macos") {
@@ -1039,12 +1039,12 @@ fn main() {
             Arg::new("force_tools_install")
                 .long("force-tools-install")
                 .takes_value(false)
-                .conflicts_with("no_install")
+                .conflicts_with("skip_tools_install")
                 .help("Download and install platform-tools even when existing tools are located"),
         )
         .arg(
-            Arg::new("no_install")
-                .long("no-install")
+            Arg::new("skip_tools_install")
+                .long("skip-tools-install")
                 .takes_value(false)
                 .conflicts_with("force_tools_install")
                 .help("Skip downloading and installing platform-tools, assuming they are properly mounted"),
@@ -1172,7 +1172,7 @@ fn main() {
         dump: matches.is_present("dump"),
         features: matches.values_of_t("features").ok().unwrap_or_default(),
         force_tools_install: matches.is_present("force_tools_install"),
-        no_install: matches.is_present("no_install"),
+        skip_tools_install: matches.is_present("skip_tools_install"),
         generate_child_script_on_failure: matches.is_present("generate_child_script_on_failure"),
         no_default_features: matches.is_present("no_default_features"),
         remap_cwd: !matches.is_present("remap_cwd"),
