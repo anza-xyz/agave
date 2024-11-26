@@ -1097,17 +1097,6 @@ enum TaskCreator {
 }
 
 impl TaskCreator {
-    fn usage_queue_loader(&self) -> &UsageQueueLoader {
-        use TaskCreator::*;
-
-        match self {
-            BlockVerification { usage_queue_loader } => usage_queue_loader,
-            BlockProduction {
-                banking_stage_adapter,
-            } => &banking_stage_adapter.usage_queue_loader,
-        }
-    }
-
     fn reset(&self) {
         use TaskCreator::*;
 
