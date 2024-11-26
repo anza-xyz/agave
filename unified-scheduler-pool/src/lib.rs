@@ -2316,7 +2316,9 @@ impl BankingStageAdapter {
         {
             //return None;
         } else {
-            self.transaction_deduper.insert(*transaction.message_hash());
+            if !self.transaction_deduper.insert(*transaction.message_hash()) {
+                //return None;
+            }
         }
 
         Some(self.do_create_task(transaction, index))
