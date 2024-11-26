@@ -8,8 +8,6 @@
 //! and commits any side-effects (i.e. on-chain state changes) into the associated `Bank` via
 //! `solana-ledger`'s helper function called `execute_batch()`.
 
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 use {
     assert_matches::assert_matches,
     crossbeam_channel::{self, never, select_biased, Receiver, RecvError, SendError, Sender},

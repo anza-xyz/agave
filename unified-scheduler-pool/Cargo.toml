@@ -20,7 +20,6 @@ derive_more = { workspace = true }
 dyn-clone = "1.0.17"
 enum-ptr = "0.2.0"
 log = { workspace = true }
-qualifier_attr = { workspace = true }
 scopeguard = { workspace = true }
 serde = { workspace = true }
 solana-cost-model = { workspace = true }
