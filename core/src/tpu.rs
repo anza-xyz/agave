@@ -157,8 +157,6 @@ impl Tpu {
             shared_staked_nodes_overrides,
         );
 
-        let (non_vote_sender, non_vote_receiver) = banking_tracer.create_channel_non_vote();
-
         let SpawnServerResult {
             endpoints: _,
             thread: tpu_quic_t,
@@ -202,6 +200,8 @@ impl Tpu {
             tpu_coalesce,
         )
         .unwrap();
+
+        let (non_vote_sender, non_vote_receiver) = banking_tracer.create_channel_non_vote();
 
         let (tpu_vote_sender, tpu_vote_receiver) = if unified_scheduler_pool
             .as_ref()
