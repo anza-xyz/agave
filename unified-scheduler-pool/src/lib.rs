@@ -631,7 +631,7 @@ where
             .map(|respawner| respawner.banking_stage_monitor.status())
     }
 
-    pub fn spawn_block_production_scheduler(
+    fn spawn_block_production_scheduler(
         &self,
         id_and_inner: &mut MutexGuard<'_, (Option<SchedulerId>, Option<S::Inner>)>,
     ) {
