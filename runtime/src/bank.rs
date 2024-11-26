@@ -948,7 +948,7 @@ pub struct Bank {
     block_id: RwLock<Option<Hash>>,
 
     /// The set of accounts that have been read during the current slot with corresponding chili peppers
-    loaded_account_chili_peppers: RwLock<HashMap<Pubkey, u64>>,
+    loaded_account_chili_peppers: RwLock<HashMap<Pubkey, Option<u64>>>,
 
     /// Accounts stats for computing the bank hash
     bank_hash_stats: AtomicBankHashStats,
@@ -3382,9 +3382,7 @@ impl Bank {
                             .accounts_db
                             .loaded_account_chili_peppers(&self.ancestors, key);
                         info!("load chili_pepper {} {} {:?}", slot, key, chili_pepper);
-                        if let Some(chili_pepper) = chili_pepper {
-                            result.insert(*key, chili_pepper);
-                        }
+                        result.insert(*key, chili_pepper);
                     });
                     // TODO: fail transaction if chili_pepper is below what is specified in the transaction.
                 }
@@ -6887,7 +6885,7 @@ impl Bank {
             .collect();
 
         info!(
-            "Updating chili peppers for slot: {}, pubkeys: {}",
+            "insert chili_pepper for slot: {}, pubkeys: {}",
             slot,
             pubkeys.len()
         );

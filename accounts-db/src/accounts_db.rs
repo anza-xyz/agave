@@ -1646,7 +1646,7 @@ pub struct AccountsDb {
     pub(crate) best_ancient_slots_to_shrink: RwLock<VecDeque<(Slot, u64)>>,
 
     /// Stores for accounts's chili pepper data
-    chili_pepper_store: Option<Arc<ChiliPepperStore>>,
+    chili_pepper_store: Option<ChiliPepperStore>,
 }
 
 /// results from 'split_storages_ancient'
@@ -2025,11 +2025,9 @@ impl AccountsDb {
                 .unwrap_or_else(|| base_working_path.join(Self::DEFAULT_CHILI_PEPPER_PATH));
 
             let chili_pepper_store = if chili_pepper_path.exists() {
-                Arc::new(
-                    ChiliPepperStore::open_with_path(&chili_pepper_path, exit.clone()).unwrap(),
-                )
+                ChiliPepperStore::open_with_path(&chili_pepper_path, exit.clone()).unwrap()
             } else {
-                Arc::new(ChiliPepperStore::new_with_path(&chili_pepper_path, exit.clone()).unwrap())
+                ChiliPepperStore::new_with_path(&chili_pepper_path, exit.clone()).unwrap()
             };
 
             Some(chili_pepper_store)

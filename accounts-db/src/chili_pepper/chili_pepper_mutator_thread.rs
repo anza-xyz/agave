@@ -2,7 +2,8 @@ use {
     super::chili_pepper_store::{ChiliPepperStoreWrapper, PubkeySlot},
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
     log::{debug, info},
-    solana_sdk::{clock::Slot, pubkey::Pubkey},
+    solana_measure::measure_us,
+    solana_sdk::{clock::Slot, pubkey::Pubkey, timing::AtomicInterval},
     std::{
         path::PathBuf,
         sync::{
@@ -23,6 +24,45 @@ pub enum ChiliPepperMutatorThreadCommand {
     Snapshot(u64, PathBuf),
 }
 
+#[derive(Debug, Default)]
+pub struct ChiliPepperStat {
+    last_report: AtomicInterval,
+    insert_time: u64,
+    clean_time: u64,
+    snapshot_time: u64,
+    len: u64,
+    bytes: u64,
+}
+
+impl ChiliPepperStat {
+    fn report(&mut self, store: &ChiliPepperStoreWrapper) {
+        if self.last_report.should_update(1000) {
+            self.len = store.len().unwrap_or(0);
+            self.bytes = match store.stat() {
+                Ok(stat) => stat.stored_bytes(),
+                Err(_) => 0,
+            };
+
+            datapoint_info!(
+                "chili_pepper_stat",
+                ("len", self.len, i64),
+                ("bytes", self.bytes, i64),
+                ("insert_time", self.insert_time, i64),
+                ("clean_time", self.clean_time, i64),
+                ("snapshot_time", self.snapshot_time, i64),
+            );
+
+            self.reset();
+        }
+    }
+
+    fn reset(&mut self) {
+        self.insert_time = 0;
+        self.clean_time = 0;
+        self.snapshot_time = 0;
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct ChiliPepperMutatorThread {
     pub _thread: thread::JoinHandle<()>,
@@ -34,15 +74,17 @@ impl ChiliPepperMutatorThread {
         store: Arc<ChiliPepperStoreWrapper>,
         exit: Arc<AtomicBool>,
     ) -> Self {
+        info!("ChiliPepperMutatorThread: started");
         let thread = thread::Builder::new()
             .name("solChiliPepperMutatorThread".to_string())
             .spawn(move || {
+                let mut stat = ChiliPepperStat::default();
+
                 loop {
-                    info!("ChiliPepperMutatorThread: started");
                     if exit.load(Ordering::Relaxed) {
                         break;
                     }
-
+                    stat.report(&store);
                     // sleep wait on the channel for 200ms half of the block time
                     match receiver.recv_timeout(Duration::from_millis(200)) {
                         Ok(command) => match command {
@@ -50,16 +92,19 @@ impl ChiliPepperMutatorThread {
                                 (ref pubkeys, slot, chili_pepper_clock),
                                 sender,
                             ) => {
-                                let to_insert = pubkeys.iter().map(|pubkey| {
-                                    (PubkeySlot::new(pubkey, slot), chili_pepper_clock)
+                                let (_, insert_time) = measure_us!({
+                                    let to_insert = pubkeys.iter().map(|pubkey| {
+                                        (PubkeySlot::new(pubkey, slot), chili_pepper_clock)
+                                    });
+
+                                    // TODO handle insert error
+                                    store
+                                        .bulk_insert(to_insert)
+                                        .expect("chili pepper store insert failed");
+
+                                    sender.send(()).unwrap();
                                 });
-
-                                // TODO handle insert error
-                                store
-                                    .bulk_insert(to_insert)
-                                    .expect("chili pepper store insert failed");
-
-                                sender.send(()).unwrap();
+                                stat.insert_time += insert_time;
                             }
                             ChiliPepperMutatorThreadCommand::Delete(ref keys, slot) => {
                                 let iter = keys.iter().map(|pubkey| PubkeySlot::new(pubkey, slot));
@@ -68,10 +113,13 @@ impl ChiliPepperMutatorThread {
                                     .expect("chili pepper store delete failed");
                             }
                             ChiliPepperMutatorThreadCommand::Clean(threshold) => {
-                                // TODO handle clean error
-                                store
-                                    .clean(threshold)
-                                    .expect("chili pepper store clean failed");
+                                let (_, clean_time) = measure_us!({
+                                    // TODO handle clean error
+                                    store
+                                        .clean(threshold)
+                                        .expect("chili pepper store clean failed");
+                                });
+                                stat.clean_time += clean_time;
                             }
                             ChiliPepperMutatorThreadCommand::CreateSavePoint(sender) => {
                                 // TOD handle savepoint error
