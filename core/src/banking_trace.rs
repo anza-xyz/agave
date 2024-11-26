@@ -5,6 +5,7 @@ use {
     rolling_file::{RollingCondition, RollingConditionBasic, RollingFileAppender},
     solana_perf::packet::{PacketBatch, SigverifyTracerPacketStats},
     solana_sdk::{hash::Hash, slot_history::Slot},
+    solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{
         fs::{create_dir_all, remove_dir_all},
         io::{self, Write},
@@ -18,7 +19,6 @@ use {
     },
     thiserror::Error,
 };
-use solana_unified_scheduler_pool::DefaultSchedulerPool;
 
 pub type BankingPacketBatch = Arc<(Vec<PacketBatch>, Option<SigverifyTracerPacketStats>)>;
 pub type BankingPacketSender = TracedSender;
@@ -234,17 +234,16 @@ impl BankingTracer {
         Self::channel(label, self.active_tracer.as_ref().cloned())
     }
 
-    pub fn create_channels(&self, unified_scheduler_pool: Option<&Arc<DefaultSchedulerPool>>) -> Channels {
+    pub fn create_channels(
+        &self,
+        unified_scheduler_pool: Option<&Arc<DefaultSchedulerPool>>,
+    ) -> Channels {
         if let Some(true) = unified_scheduler_pool.map(|pool| pool.block_production_supported()) {
             let (non_vote_sender, non_vote_receiver) = self.create_channel_non_vote();
-            let (tpu_vote_sender, tpu_vote_receiver) = self.create_unified_channel_tpu_vote(
-                &non_vote_sender,
-                &non_vote_receiver,
-            );
-            let (gossip_vote_sender, gossip_vote_receiver) = self.create_unified_channel_gossip_vote(
-                &non_vote_sender,
-                &non_vote_receiver,
-            );
+            let (tpu_vote_sender, tpu_vote_receiver) =
+                self.create_unified_channel_tpu_vote(&non_vote_sender, &non_vote_receiver);
+            let (gossip_vote_sender, gossip_vote_receiver) =
+                self.create_unified_channel_gossip_vote(&non_vote_sender, &non_vote_receiver);
 
             Channels {
                 non_vote_sender,

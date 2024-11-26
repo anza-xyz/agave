@@ -5,7 +5,7 @@ pub use solana_sdk::net::DEFAULT_TPU_COALESCE;
 use {
     crate::{
         banking_stage::BankingStage,
-        banking_trace::{BankingTracer, TracerThread},
+        banking_trace::{BankingTracer, Channels, TracerThread},
         cluster_info_vote_listener::{
             ClusterInfoVoteListener, DuplicateConfirmedSlotsSender, GossipVerifiedVoteHashSender,
             VerifiedVoteSender, VoteTracker,
@@ -55,7 +55,6 @@ use {
     },
     tokio::sync::mpsc::Sender as AsyncSender,
 };
-use crate::banking_trace::Channels;
 
 // allow multiple connections for NAT and any open/close overlap
 pub const MAX_QUIC_CONNECTIONS_PER_PEER: usize = 8;
@@ -205,8 +204,10 @@ impl Tpu {
         let Channels {
             non_vote_sender,
             non_vote_receiver,
-            tpu_vote_sender, tpu_vote_receiver,
-            gossip_vote_sender, gossip_vote_receiver,
+            tpu_vote_sender,
+            tpu_vote_receiver,
+            gossip_vote_sender,
+            gossip_vote_receiver,
         } = banking_tracer.create_channels(unified_scheduler_pool.as_ref());
 
         let sigverify_stage = {
