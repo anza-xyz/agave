@@ -196,22 +196,22 @@ impl AggregateCommitmentService {
 
         let mut commitment = HashMap::new();
         let mut rooted_stake: Vec<(Slot, u64)> = Vec::new();
-        for (pubkey, (lamports, account)) in bank.vote_accounts().iter() {
-            if *lamports == 0 {
+        for (pubkey, (lamports, vote_state)) in bank.vote_only_vote_states().into_iter() {
+            if lamports == 0 {
                 continue;
             }
-            let vote_state = if pubkey == node_vote_pubkey {
+            let vote_state = if &pubkey == node_vote_pubkey {
                 // Override old vote_state in bank with latest one for my own vote pubkey
                 node_vote_state
             } else {
-                account.vote_state()
+                &vote_state
             };
             Self::aggregate_commitment_for_vote_account(
                 &mut commitment,
                 &mut rooted_stake,
                 vote_state,
                 ancestors,
-                *lamports,
+                lamports,
             );
         }
 

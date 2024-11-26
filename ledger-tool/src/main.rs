@@ -211,12 +211,10 @@ fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
         let bank = &bank_forks[*fork_slot];
 
         let total_stake = bank
-            .vote_accounts()
-            .iter()
-            .map(|(_, (stake, _))| stake)
-            .sum();
-        for (stake, vote_account) in bank.vote_accounts().values() {
-            let vote_state = vote_account.vote_state();
+            .epoch_stakes(bank.epoch())
+            .expect("epoch stakes must exist")
+            .total_stake();
+        for (stake, vote_state) in bank.vote_only_vote_states().values() {
             if let Some(last_vote) = vote_state.votes.iter().last() {
                 let entry = last_votes.entry(vote_state.node_pubkey).or_insert((
                     last_vote.slot(),
@@ -255,8 +253,7 @@ fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
 
         let mut first = true;
         loop {
-            for (_, vote_account) in bank.vote_accounts().values() {
-                let vote_state = vote_account.vote_state();
+            for (_, vote_state) in bank.vote_only_vote_states().values() {
                 if let Some(last_vote) = vote_state.votes.iter().last() {
                     let validator_votes = all_votes.entry(vote_state.node_pubkey).or_default();
                     validator_votes

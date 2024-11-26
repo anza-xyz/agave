@@ -1,4 +1,4 @@
-use crate::replay_stage::DUPLICATE_THRESHOLD;
+use {crate::replay_stage::DUPLICATE_THRESHOLD, solana_vote::vote_account::VoteStateHashMap};
 
 pub mod fork_choice;
 pub mod heaviest_subtree_fork_choice;
@@ -366,7 +366,7 @@ impl Tower {
     pub(crate) fn collect_vote_lockouts(
         vote_account_pubkey: &Pubkey,
         bank_slot: Slot,
-        vote_accounts: &VoteAccountsHashMap,
+        vote_states: VoteStateHashMap,
         ancestors: &HashMap<Slot, HashSet<Slot>>,
         get_frozen_hash: impl Fn(Slot) -> Option<Hash>,
         latest_validator_votes_for_frozen_banks: &mut LatestValidatorVotesForFrozenBanks,
@@ -379,13 +379,11 @@ impl Tower {
         // keyed by end of the range
         let mut lockout_intervals = LockoutIntervals::new();
         let mut my_latest_landed_vote = None;
-        for (&key, (voted_stake, account)) in vote_accounts.iter() {
-            let voted_stake = *voted_stake;
+        for (key, (voted_stake, mut vote_state)) in vote_states.into_iter() {
             if voted_stake == 0 {
                 continue;
             }
             trace!("{} {} with stake {}", vote_account_pubkey, key, voted_stake);
-            let mut vote_state = account.vote_state().clone();
             for vote in &vote_state.votes {
                 lockout_intervals
                     .entry(vote.lockout.last_locked_out_slot())

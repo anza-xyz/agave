@@ -749,6 +749,7 @@ pub fn process_vote_unfiltered(
     epoch: Epoch,
     current_slot: Slot,
     timely_vote_credits: bool,
+    update_replay_tip: bool,
 ) -> Result<(), VoteError> {
     check_slots_are_valid(vote_state, vote_slots, &vote.hash, slot_hashes)?;
     vote_slots.iter().for_each(|s| {
@@ -760,22 +761,24 @@ pub fn process_vote_unfiltered(
             vote.replay_tip_slot,
         )
     });
-    // It's possible we copy replay tip from on chain, in that case the replay_tip
-    // in vote_state is newer, then do not update replay tip here.
-    if vote_state.replay_tip_slot > vote.replay_tip_slot {
-        warn!(
-            "replay tip {} newer in vote state compared to vote {}, not updated.",
-            vote_state.replay_tip_slot, vote.replay_tip_slot
-        );
-    } else if vote_state.replay_tip_slot == vote.replay_tip_slot
-        && vote_state.replay_tip_hash != vote.replay_tip_hash
-    {
-        panic!(
-            "New replay tip hash for {} is different {} vs {}",
-            vote_state.replay_tip_slot, vote_state.replay_tip_hash, vote.replay_tip_hash
-        );
-    } else {
-        vote_state.update_replay_tip(vote.replay_tip_slot, vote.replay_tip_hash);
+    if update_replay_tip {
+        // It's possible we copy replay tip from on chain, in that case the replay_tip
+        // in vote_state is newer, then do not update replay tip here.
+        if vote_state.replay_tip_slot > vote.replay_tip_slot {
+            warn!(
+                "replay tip {} newer in vote state compared to vote {}, not updated.",
+                vote_state.replay_tip_slot, vote.replay_tip_slot
+            );
+        } else if vote_state.replay_tip_slot == vote.replay_tip_slot
+            && vote_state.replay_tip_hash != vote.replay_tip_hash
+        {
+            panic!(
+                "New replay tip hash for {} is different {} vs {}",
+                vote_state.replay_tip_slot, vote_state.replay_tip_hash, vote.replay_tip_hash
+            );
+        } else {
+            vote_state.update_replay_tip(vote.replay_tip_slot, vote.replay_tip_hash);
+        }
     }
     Ok(())
 }
@@ -809,6 +812,7 @@ pub fn process_vote(
         epoch,
         current_slot,
         timely_vote_credits,
+        true,
     )
 }
 
@@ -826,6 +830,7 @@ pub fn process_vote_unchecked(vote_state: &mut VoteState, vote: Vote) -> Result<
         vote_state.current_epoch(),
         0,
         true,
+        false,
     )
 }
 

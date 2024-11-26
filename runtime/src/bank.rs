@@ -175,7 +175,7 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
     solana_timings::{ExecuteTimingType, ExecuteTimings},
     solana_vote::{
-        vote_account::{VoteAccount, VoteAccountsHashMap},
+        vote_account::{VoteAccount, VoteAccountsHashMap, VoteStateHashMap},
         vote_parser::parse_sanitized_vote_transaction,
         vote_transaction::VoteTransaction,
     },
@@ -6334,6 +6334,20 @@ impl Bank {
     pub fn vote_accounts(&self) -> Arc<VoteAccountsHashMap> {
         let stakes = self.stakes_cache.stakes();
         Arc::from(stakes.vote_accounts())
+    }
+
+    pub fn vote_only_vote_states(&self) -> VoteStateHashMap {
+        self.vote_states
+            .read()
+            .unwrap()
+            .iter()
+            .filter_map(|(pubkey, vote_state)| {
+                let stake = self
+                    .epoch_stakes(self.epoch())
+                    .and_then(|epoch_stakes| Some(epoch_stakes.vote_account_stake(pubkey)));
+                stake.map(|stake| (*pubkey, (stake, vote_state.clone())))
+            })
+            .collect::<VoteStateHashMap>()
     }
 
     /// Vote account for the given vote account pubkey.

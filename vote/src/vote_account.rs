@@ -42,6 +42,7 @@ struct VoteAccountInner {
 }
 
 pub type VoteAccountsHashMap = HashMap<Pubkey, (/*stake:*/ u64, VoteAccount)>;
+pub type VoteStateHashMap = HashMap<Pubkey, (/*stake:*/ u64, VoteState)>;
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VoteAccounts {
