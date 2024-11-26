@@ -24,7 +24,7 @@ use {
     solana_runtime::{
         installed_scheduler_pool::{
             initialized_result_with_timings, InstalledScheduler, InstalledSchedulerBox,
-            InstalledSchedulerPool, InstalledSchedulerPoolArc, ResultWithTimings, ScheduleResult,
+            InstalledSchedulerPool, ResultWithTimings, ScheduleResult,
             SchedulerAborted, SchedulerId, SchedulingContext, TimeoutListener,
             UninstalledScheduler, UninstalledSchedulerBox,
         },
