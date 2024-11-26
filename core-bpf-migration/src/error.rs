@@ -1,7 +1,6 @@
-use {
-    solana_sdk::{instruction::InstructionError, pubkey::Pubkey},
-    thiserror::Error,
-};
+//! Errors that can occur during a Core BPF migration.
+
+use {solana_instruction::error::InstructionError, solana_pubkey::Pubkey, thiserror::Error};
 
 /// Errors returned by a Core BPF migration.
 #[derive(Debug, Error)]

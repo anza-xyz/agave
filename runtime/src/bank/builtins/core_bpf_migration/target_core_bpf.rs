@@ -1,6 +1,5 @@
 use {
-    super::error::CoreBpfMigrationError,
-    solana_core_bpf_migration::callback::AccountLoaderCallback,
+    solana_core_bpf_migration::{callback::AccountLoaderCallback, error::CoreBpfMigrationError},
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount},
         bpf_loader_upgradeable::{self, get_program_data_address, UpgradeableLoaderState},

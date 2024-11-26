@@ -1,12 +1,11 @@
-pub(crate) mod error;
 mod source_buffer;
 mod target_builtin;
 mod target_core_bpf;
 
 use {
     crate::bank::Bank,
-    error::CoreBpfMigrationError,
     num_traits::{CheckedAdd, CheckedSub},
+    solana_core_bpf_migration::error::CoreBpfMigrationError,
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::ProgramCacheForTxBatch,

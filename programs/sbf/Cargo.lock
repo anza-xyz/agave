@@ -5447,8 +5447,11 @@ dependencies = [
 name = "solana-core-bpf-migration"
 version = "2.2.0"
 dependencies = [
+ "bincode",
  "solana-account",
+ "solana-instruction",
  "solana-pubkey",
+ "thiserror 2.0.3",
 ]
 
 [[package]]
