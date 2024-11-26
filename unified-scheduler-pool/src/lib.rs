@@ -89,6 +89,7 @@ impl SupportedSchedulingMode {
         }
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
     fn block_verification_only() -> Self {
         Self::Either(SchedulingMode::BlockVerification)
     }
