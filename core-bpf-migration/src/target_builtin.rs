@@ -1,19 +1,17 @@
 use {
-    solana_core_bpf_migration::{
+    crate::{
         callback::AccountLoaderCallback, config::CoreBpfMigrationTargetType,
         error::CoreBpfMigrationError,
     },
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        bpf_loader_upgradeable::get_program_data_address,
-        native_loader::ID as NATIVE_LOADER_ID,
-        pubkey::Pubkey,
-    },
+    solana_account::{AccountSharedData, ReadableAccount},
+    solana_program::bpf_loader_upgradeable::get_program_data_address,
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::native_loader::ID as NATIVE_LOADER_ID,
 };
 
 /// The account details of a built-in program to be migrated to Core BPF.
 #[derive(Debug)]
-pub(crate) struct TargetBuiltin {
+pub struct TargetBuiltin {
     pub program_address: Pubkey,
     pub program_account: AccountSharedData,
     pub program_data_address: Pubkey,
@@ -22,7 +20,7 @@ pub(crate) struct TargetBuiltin {
 impl TargetBuiltin {
     /// Collects the details of a built-in program and verifies it is properly
     /// configured
-    pub(crate) fn new_checked<CB: AccountLoaderCallback>(
+    pub fn new_checked<CB: AccountLoaderCallback>(
         callback: &CB,
         program_address: &Pubkey,
         migration_target: &CoreBpfMigrationTargetType,
@@ -72,14 +70,12 @@ impl TargetBuiltin {
 mod tests {
     use {
         super::*,
+        crate::prototypes::BUILTINS,
         assert_matches::assert_matches,
-        solana_core_bpf_migration::prototypes::BUILTINS,
-        solana_sdk::{
-            account::Account,
-            bpf_loader_upgradeable::{UpgradeableLoaderState, ID as BPF_LOADER_UPGRADEABLE_ID},
-            native_loader,
-            rent::Rent,
-        },
+        solana_account::Account,
+        solana_program::bpf_loader_upgradeable::UpgradeableLoaderState,
+        solana_rent::Rent,
+        solana_sdk_ids::{bpf_loader_upgradeable::ID as BPF_LOADER_UPGRADEABLE_ID, native_loader},
         std::collections::HashMap,
         test_case::test_case,
     };
@@ -130,18 +126,18 @@ mod tests {
         }
     }
 
-    #[test_case(solana_sdk::address_lookup_table::program::id())]
-    #[test_case(solana_sdk::bpf_loader::id())]
-    #[test_case(solana_sdk::bpf_loader_deprecated::id())]
-    #[test_case(solana_sdk::bpf_loader_upgradeable::id())]
-    #[test_case(solana_sdk::compute_budget::id())]
-    #[test_case(solana_config_program::id())]
-    #[test_case(solana_stake_program::id())]
-    #[test_case(solana_system_program::id())]
-    #[test_case(solana_vote_program::id())]
-    #[test_case(solana_sdk::loader_v4::id())]
-    #[test_case(solana_zk_token_sdk::zk_token_proof_program::id())]
-    #[test_case(solana_zk_sdk::zk_elgamal_proof_program::id())]
+    #[test_case(solana_sdk_ids::address_lookup_table::id())]
+    #[test_case(solana_sdk_ids::bpf_loader::id())]
+    #[test_case(solana_sdk_ids::bpf_loader_deprecated::id())]
+    #[test_case(solana_sdk_ids::bpf_loader_upgradeable::id())]
+    #[test_case(solana_sdk_ids::compute_budget::id())]
+    #[test_case(solana_sdk_ids::config::id())]
+    #[test_case(solana_sdk_ids::loader_v4::id())]
+    #[test_case(solana_sdk_ids::stake::id())]
+    #[test_case(solana_sdk_ids::system_program::id())]
+    #[test_case(solana_sdk_ids::vote::id())]
+    #[test_case(solana_sdk_ids::zk_elgamal_proof_program::id())]
+    #[test_case(solana_sdk_ids::zk_token_proof_program::id())]
     fn test_target_program_builtin(program_address: Pubkey) {
         let migration_target = CoreBpfMigrationTargetType::Builtin;
         let mut account_store = SimpleAccountStore::new();
@@ -201,8 +197,8 @@ mod tests {
         );
     }
 
-    #[test_case(solana_sdk::feature::id())]
-    #[test_case(solana_sdk::native_loader::id())]
+    #[test_case(solana_sdk_ids::feature::id())]
+    #[test_case(solana_sdk_ids::native_loader::id())]
     fn test_target_program_stateless_builtin(program_address: Pubkey) {
         let migration_target = CoreBpfMigrationTargetType::Stateless;
         let mut account_store = SimpleAccountStore::new();

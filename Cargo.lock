@@ -6758,6 +6758,7 @@ version = "2.2.0"
 dependencies = [
  "assert_matches",
  "bincode",
+ "serde",
  "solana-account",
  "solana-address-lookup-table-program",
  "solana-bpf-loader-program",
@@ -6776,6 +6777,7 @@ dependencies = [
  "solana-vote-program",
  "solana-zk-elgamal-proof-program",
  "solana-zk-token-proof-program",
+ "test-case",
  "thiserror 2.0.3",
 ]
 

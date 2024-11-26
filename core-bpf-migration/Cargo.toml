@@ -35,7 +35,9 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
+serde = { workspace = true }
 solana-rent = { workspace = true }
+test-case = { workspace = true }
 
 [lints]
 workspace = true
