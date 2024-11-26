@@ -6759,6 +6759,7 @@ dependencies = [
  "bincode",
  "solana-account",
  "solana-instruction",
+ "solana-program-runtime",
  "solana-pubkey",
  "thiserror 2.0.3",
 ]
