@@ -250,7 +250,7 @@ where
         )
     }
 
-    pub fn block_production_enabled(&self) -> bool {
+    pub fn block_production_supported(&self) -> bool {
         self.supported_scheduling_mode
             .is_supported(SchedulingMode::BlockProduction)
     }

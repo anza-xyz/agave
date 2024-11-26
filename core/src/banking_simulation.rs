@@ -794,7 +794,7 @@ impl BankingSimulator {
         ) {
             retracer.create_channel_gossip_vote()
         } else {
-            retracer.create_unified_channel_tpu_vote(&non_vote_sender, &non_vote_receiver)
+            retracer.create_unified_channel_gossip_vote(&non_vote_sender, &non_vote_receiver)
         };
 
         let connection_cache = Arc::new(ConnectionCache::new("connection_cache_sim"));

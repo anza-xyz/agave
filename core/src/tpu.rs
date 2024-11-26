@@ -204,7 +204,7 @@ impl Tpu {
 
         let (tpu_vote_sender, tpu_vote_receiver) = if unified_scheduler_pool
             .as_ref()
-            .map(|pool| pool.block_production_enabled())
+            .map(|pool| pool.block_production_supported())
             .unwrap_or_default()
         {
             banking_tracer.create_unified_channel_tpu_vote(&non_vote_sender, &non_vote_receiver)
@@ -214,7 +214,7 @@ impl Tpu {
 
         let (gossip_vote_sender, gossip_vote_receiver) = if unified_scheduler_pool
             .as_ref()
-            .map(|pool| pool.block_production_enabled())
+            .map(|pool| pool.block_production_supported())
             .unwrap_or_default()
         {
             banking_tracer.create_unified_channel_gossip_vote(&non_vote_sender, &non_vote_receiver)
