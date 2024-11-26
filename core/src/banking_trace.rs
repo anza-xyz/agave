@@ -179,7 +179,7 @@ pub fn receiving_loop_with_minimized_sender_overhead<T, E, const SLEEP_MS: u64>(
     Ok(())
 }
 
-struct ChannelSet {
+struct Channels {
     non_vote_sender: BankingPacketSender,
     non_vote_receiver: BankingPacketReceiver,
     tpu_vote_sender: BankingPacketSender,
@@ -242,8 +242,8 @@ impl BankingTracer {
         self.create_channel(ChannelLabel::NonVote)
     }
 
-    pub fn create_channel_non_vote2(&self, unified_scheduler_pool: Option<Arc<DefaultSchedulerPool>>) -> (BankingPacketSender, BankingPacketReceiver) {
-        self.create_channel2(ChannelLabel::NonVote)
+    pub fn create_channels(&self, unified_scheduler_pool: Option<Arc<DefaultSchedulerPool>>) -> Channels {
+       panic!();
     }
 
     pub fn create_channel_tpu_vote(&self) -> (BankingPacketSender, BankingPacketReceiver) {
