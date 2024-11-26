@@ -779,23 +779,14 @@ impl BankingSimulator {
             BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
         );
 
-        let (non_vote_sender, non_vote_receiver) = retracer.create_channel_non_vote();
-        let (tpu_vote_sender, tpu_vote_receiver) = if !matches!(
-            block_production_method,
-            BlockProductionMethod::UnifiedScheduler
-        ) {
-            retracer.create_channel_tpu_vote()
-        } else {
-            retracer.create_unified_channel_tpu_vote(&non_vote_sender, &non_vote_receiver)
-        };
-        let (gossip_vote_sender, gossip_vote_receiver) = if !matches!(
-            block_production_method,
-            BlockProductionMethod::UnifiedScheduler
-        ) {
-            retracer.create_channel_gossip_vote()
-        } else {
-            retracer.create_unified_channel_gossip_vote(&non_vote_sender, &non_vote_receiver)
-        };
+        let Channels {
+            non_vote_sender,
+            non_vote_receiver,
+            tpu_vote_sender,
+            tpu_vote_receiver,
+            gossip_vote_sender,
+            gossip_vote_receiver,
+        } = banking_tracer.create_channels(unified_scheduler_pool.as_ref());
 
         let connection_cache = Arc::new(ConnectionCache::new("connection_cache_sim"));
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
