@@ -26,7 +26,7 @@ impl HashInfo {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "2GFWjonjAdte2KsJthPzFdSvVKJ4viKYTPzUHB8dzjtE")
+    frozen_abi(digest = "DZVVXt4saSgH1CWGrzBcX2sq5yswCuRqGx1Y1ZehtWT6")
 )]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlockhashQueue {
