@@ -1324,7 +1324,11 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                      prior to clean",
                 )
                 .hidden(hidden_unless_forced()),
-        )
+        ).arg(
+            Arg::with_name("accounts_db_enable_chili_pepper")
+                .long("accounts-db-enable-chili-pepper")
+                .help("Enables chili pepper")
+                .hidden(hidden_unless_forced()),)
         .arg(
             Arg::with_name("accounts_db_scan_filter_for_shrinking")
                 .long("accounts-db-scan-filter-for-shrinking")
@@ -1339,12 +1343,6 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                     \"only-abnormal\", which will scan in-memory index for abnormal entries, but will also \
                     verify that on-disk account entries are indeed normal.",
                 )
-                .hidden(hidden_unless_forced()),
-        )
-        .arg(
-            Arg::with_name("accounts_db_skip_shrink")
-                .long("accounts-db-skip-shrink")
-                .help("Debug option to skip the shrinking of the accounts index")
                 .hidden(hidden_unless_forced()),
         )
         .arg(
