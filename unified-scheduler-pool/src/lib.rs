@@ -2356,7 +2356,7 @@ impl BankingStageAdapter {
             "resetting usage_queue_loader... {}",
             self.transaction_deduper.len()
         );
-        self.usage_queue_loader.clear();
+        self.usage_queue_loader.reset();
         info!(
             "resetting usage_queue_loader... done: {}",
             self.transaction_deduper.len()
