@@ -269,19 +269,19 @@ impl BankingTracer {
         }
     }
 
-    pub fn create_channel_non_vote(&self) -> (BankingPacketSender, BankingPacketReceiver) {
+    fn create_channel_non_vote(&self) -> (BankingPacketSender, BankingPacketReceiver) {
         self.create_channel(ChannelLabel::NonVote)
     }
 
-    pub fn create_channel_tpu_vote(&self) -> (BankingPacketSender, BankingPacketReceiver) {
+    fn create_channel_tpu_vote(&self) -> (BankingPacketSender, BankingPacketReceiver) {
         self.create_channel(ChannelLabel::TpuVote)
     }
 
-    pub fn create_channel_gossip_vote(&self) -> (BankingPacketSender, BankingPacketReceiver) {
+    fn create_channel_gossip_vote(&self) -> (BankingPacketSender, BankingPacketReceiver) {
         self.create_channel(ChannelLabel::GossipVote)
     }
 
-    pub fn create_unified_channel_tpu_vote(
+    fn create_unified_channel_tpu_vote(
         &self,
         sender: &TracedSender,
         receiver: &BankingPacketReceiver,
@@ -295,7 +295,7 @@ impl BankingTracer {
         )
     }
 
-    pub fn create_unified_channel_gossip_vote(
+    fn create_unified_channel_gossip_vote(
         &self,
         sender: &TracedSender,
         receiver: &BankingPacketReceiver,
