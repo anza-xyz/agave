@@ -697,7 +697,7 @@ mod tests {
             const TEST_TRANSACTION_COST: u64 = 5000;
             container.insert_new_transaction(
                 transaction_ttl,
-                packet,
+                Some(packet),
                 compute_unit_price,
                 TEST_TRANSACTION_COST,
             );
