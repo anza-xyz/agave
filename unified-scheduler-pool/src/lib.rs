@@ -501,13 +501,13 @@ where
         let is_block_production_scheduler_returned = Some(id) == id_and_inner.0.as_ref().copied();
 
         if should_trash {
-            // Delay drop()-ing this trashed returned scheduler inner by stashing it in
-            // self.trashed_scheduler_inners, which is periodically drained by the `solScCleaner`
-            // thread. Dropping it could take long time (in fact,
-            // PooledSchedulerInner::block_verification_usage_queue_loader can contain many entries to drop).
             if is_block_production_scheduler_returned {
                 scheduler.abort();
             }
+            // Delay drop()-ing this trashed returned scheduler inner by stashing it in
+            // self.trashed_scheduler_inners, which is periodically drained by the `solScCleaner`
+            // thread. Dropping it could take long time (in fact,
+            // TaskCreator::usage_queue_loader() can contain many entries to drop).
             self.trashed_scheduler_inners
                 .lock()
                 .expect("not poisoned")
@@ -2449,6 +2449,9 @@ where
     }
 
     fn abort(&mut self) {
+        if self.are_threads_joined() {
+            return;
+        }
         self.thread_manager.disconnect_new_task_sender()
     }
 }
