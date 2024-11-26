@@ -729,7 +729,7 @@ impl BankingStage {
                             )
                             .ok() else { continue };
 
-                            let compute_budget_limits = process_compute_budget_instructions(
+                            let Some(compute_budget_limits) = process_compute_budget_instructions(
                                 SVMMessage::program_instructions_iter(transaction.message()),
                             )
                             .ok() else { continue };
