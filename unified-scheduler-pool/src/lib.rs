@@ -3835,7 +3835,7 @@ mod tests {
             todo!()
         }
 
-        fn abort(&mut self) {
+        fn ensure_abort(&mut self) {
             todo!()
         }
     }
