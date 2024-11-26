@@ -744,9 +744,10 @@ impl BankingStage {
                             let task_id = (task_id_base + packet_index as u64) as TaskKey;
                             let index = reversed_priority << const { TaskKey::BITS / 2 } | task_id;
 
-                            if let Some(task) = adapter.create_task(transaction, index) {
-                                f(task);
-                            }
+                            let Some(task) = adapter.create_task(transaction, index) else {
+                                continue
+                            };
+                            f(task);
                         }
                     }
                 })
