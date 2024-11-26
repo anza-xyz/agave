@@ -237,6 +237,7 @@ version = "2.2.0"
 dependencies = [
  "agave-transaction-view",
  "bincode",
+ "bytes",
  "criterion",
  "solana-sdk",
  "solana-sdk-ids",
