@@ -7,6 +7,7 @@
 //! At the highest level, this crate takes `SanitizedTransaction`s via its `schedule_execution()`
 //! and commits any side-effects (i.e. on-chain state changes) into the associated `Bank` via
 //! `solana-ledger`'s helper function called `execute_batch()`.
+
 #[cfg(test)]
 use solana_runtime::installed_scheduler_pool::InstalledSchedulerPoolArc;
 use {
