@@ -48,6 +48,17 @@ cargo_audit_ignores=(
   # URL:       https://rustsec.org/advisories/RUSTSEC-2024-0376
   # Solution:  Upgrade to >=0.12.3
   --ignore RUSTSEC-2024-0376
+
+  # Crate:     rustls
+  # Version:   0.23.17
+  # Title:     rustls network-reachable panic in `Acceptor::accept`
+  # Date:      2024-11-22
+  # ID:        RUSTSEC-2024-0399
+  # URL:       https://rustsec.org/advisories/RUSTSEC-2024-0399
+  # Solution:  Upgrade to >=0.23.18
+  # Dependency tree:
+  # rustls 0.23.17
+  --ignore RUSTSEC-2024-0399
 )
 scripts/cargo-for-all-lock-files.sh audit "${cargo_audit_ignores[@]}" | $dep_tree_filter
 # we want the `cargo audit` exit code, not `$dep_tree_filter`'s
