@@ -2448,8 +2448,8 @@ where
         self.task_creator.reset()
     }
 
-    fn abort(&mut self) {
-        if self.are_threads_joined() {
+    fn ensure_abort(&mut self) {
+        if self.thread_manager.are_threads_joined() {
             return;
         }
         self.thread_manager.disconnect_new_task_sender()
