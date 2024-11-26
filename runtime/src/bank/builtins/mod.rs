@@ -3,7 +3,7 @@ pub mod prototypes;
 
 pub use prototypes::{BuiltinPrototype, StatelessBuiltinPrototype};
 use {
-    core_bpf_migration::CoreBpfMigrationConfig,
+    solana_core_bpf_migration::config::{CoreBpfMigrationConfig, CoreBpfMigrationTargetType},
     solana_feature_set as feature_set,
     solana_sdk::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable},
 };
@@ -56,7 +56,7 @@ pub static BUILTINS: &[BuiltinPrototype] = &[
             source_buffer_address: buffer_accounts::stake_program::id(),
             upgrade_authority_address: None,
             feature_id: solana_feature_set::migrate_stake_program_to_core_bpf::id(),
-            migration_target: core_bpf_migration::CoreBpfMigrationTargetType::Builtin,
+            migration_target: CoreBpfMigrationTargetType::Builtin,
             datapoint_name: "migrate_builtin_to_core_bpf_stake_program",
         }),
         name: "stake_program",
@@ -69,7 +69,7 @@ pub static BUILTINS: &[BuiltinPrototype] = &[
             source_buffer_address: buffer_accounts::config_program::id(),
             upgrade_authority_address: None,
             feature_id: solana_feature_set::migrate_config_program_to_core_bpf::id(),
-            migration_target: core_bpf_migration::CoreBpfMigrationTargetType::Builtin,
+            migration_target: CoreBpfMigrationTargetType::Builtin,
             datapoint_name: "migrate_builtin_to_core_bpf_config_program",
         }),
         name: "config_program",
@@ -110,7 +110,7 @@ pub static BUILTINS: &[BuiltinPrototype] = &[
             source_buffer_address: buffer_accounts::address_lookup_table_program::id(),
             upgrade_authority_address: None,
             feature_id: solana_feature_set::migrate_address_lookup_table_program_to_core_bpf::id(),
-            migration_target: core_bpf_migration::CoreBpfMigrationTargetType::Builtin,
+            migration_target: CoreBpfMigrationTargetType::Builtin,
             datapoint_name: "migrate_builtin_to_core_bpf_address_lookup_table_program",
         }),
         name: "address_lookup_table_program",
@@ -146,7 +146,7 @@ pub static STATELESS_BUILTINS: &[StatelessBuiltinPrototype] = &[StatelessBuiltin
         source_buffer_address: buffer_accounts::feature_gate_program::id(),
         upgrade_authority_address: None,
         feature_id: solana_feature_set::migrate_feature_gate_program_to_core_bpf::id(),
-        migration_target: core_bpf_migration::CoreBpfMigrationTargetType::Stateless,
+        migration_target: CoreBpfMigrationTargetType::Stateless,
         datapoint_name: "migrate_stateless_to_core_bpf_feature_gate_program",
     }),
     name: "feature_gate_program",
@@ -178,7 +178,7 @@ mod buffer_accounts {
 // tests.
 #[cfg(test)]
 mod test_only {
-    use super::core_bpf_migration::{CoreBpfMigrationConfig, CoreBpfMigrationTargetType};
+    use solana_core_bpf_migration::config::{CoreBpfMigrationConfig, CoreBpfMigrationTargetType};
     pub mod system_program {
         pub mod feature {
             solana_sdk::declare_id!("AnjsdWg7LXFbjDdy78wncCJs9PyTdWpKkFmHAwQU1mQ6");

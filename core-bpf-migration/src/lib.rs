@@ -12,4 +12,5 @@
 //!   model.
 
 pub mod callback;
+pub mod config;
 pub mod error;

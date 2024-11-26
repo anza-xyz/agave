@@ -1,5 +1,5 @@
 use {
-    super::core_bpf_migration::CoreBpfMigrationConfig,
+    solana_core_bpf_migration::config::CoreBpfMigrationConfig,
     solana_program_runtime::invoke_context::BuiltinFunctionWithContext, solana_sdk::pubkey::Pubkey,
 };
 

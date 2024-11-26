@@ -1,6 +1,8 @@
 use {
-    super::CoreBpfMigrationTargetType,
-    solana_core_bpf_migration::{callback::AccountLoaderCallback, error::CoreBpfMigrationError},
+    solana_core_bpf_migration::{
+        callback::AccountLoaderCallback, config::CoreBpfMigrationTargetType,
+        error::CoreBpfMigrationError,
+    },
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount},
         bpf_loader_upgradeable::get_program_data_address,
