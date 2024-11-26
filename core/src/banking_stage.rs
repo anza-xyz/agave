@@ -745,7 +745,7 @@ impl BankingStage {
                             let index = reversed_priority << const { TaskKey::BITS / 2 } | task_id;
 
                             if let Some(task) = adapter.create_task(transaction, index) {
-                                f(t);
+                                f(task);
                             }
                         }
                     }
