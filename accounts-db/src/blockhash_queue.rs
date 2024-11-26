@@ -36,7 +36,7 @@ pub struct BlockhashQueue {
     /// last hash to be registered
     last_hash: Option<Hash>,
 
-    hashes: HashMap<Hash, HashInfo>,
+    hashes: HashMap<Hash, HashInfo, ahash::RandomState>,
 
     /// hashes older than `max_age` will be dropped from the queue
     max_age: usize,
@@ -51,7 +51,7 @@ impl Default for BlockhashQueue {
 impl BlockhashQueue {
     pub fn new(max_age: usize) -> Self {
         Self {
-            hashes: HashMap::new(),
+            hashes: HashMap::with_hasher(ahash::RandomState::new()),
             last_hash_index: 0,
             last_hash: None,
             max_age,
