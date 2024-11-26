@@ -1687,17 +1687,15 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 };
                                 state_machine.deschedule_task(&executed_task.task);
                                 if should_pause && !session_ending {
-                                    let ExecutedTask {
-                                        task,
-                                        result_with_timings,
-                                    } = *executed_task;
-                                    let task = adapter.as_ref().unwrap().recreate_task(task);
+                                    let task = adapter.as_ref().unwrap().recreate_task(
+                                        executed_task.task.transaction.clone(),
+                                        executed_task.task.index(),
+                                    );
                                     error!("requeued tx!!!!");
                                     state_machine.do_schedule_task(task, true);
                                     drop(result_with_timings);
-                                } else {
-                                    drop(executed_task);
                                 }
+                                drop(executed_task);
                                 if should_pause && !session_pausing && slot != 282254387/*00*/ {
                                     session_pausing = true;
                                     "pausing"
@@ -2325,11 +2323,8 @@ impl BankingStageAdapter {
         Some(self.do_create_task(transaction, index))
     }
 
-    fn recreate_task(&self, task: Task) -> Task {
-        let new_transaction = task.transaction().clone();
-
+    fn recreate_task(&self, new_transaction: SanitizedTransaction, old_index: TaskKey) -> Task {
         let new_index = {
-            let old_index = task.index();
             let inherited_priority =
                 old_index & const { (u64::MAX as TaskKey) << (TaskKey::BITS / 2) };
             let new_task_id = self.bulk_assign_task_ids(1) as TaskKey;
