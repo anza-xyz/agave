@@ -179,7 +179,7 @@ pub fn receiving_loop_with_minimized_sender_overhead<T, E, const SLEEP_MS: u64>(
     Ok(())
 }
 
-struct Channels {
+pub struct Channels {
     non_vote_sender: BankingPacketSender,
     non_vote_receiver: BankingPacketReceiver,
     tpu_vote_sender: BankingPacketSender,
