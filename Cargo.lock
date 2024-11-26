@@ -8889,6 +8889,7 @@ dependencies = [
  "solana-svm",
  "solana-timings",
  "solana-unified-scheduler-logic",
+ "solana-unified-scheduler-pool",
  "static_assertions",
  "trait-set",
  "vec_extract_if_polyfill",
