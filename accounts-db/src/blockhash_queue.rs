@@ -51,7 +51,7 @@ impl Default for BlockhashQueue {
 impl BlockhashQueue {
     pub fn new(max_age: usize) -> Self {
         Self {
-            hashes: HashMap::with_hasher(ahash::RandomState::new()),
+            hashes: HashMap::default(),
             last_hash_index: 0,
             last_hash: None,
             max_age,
