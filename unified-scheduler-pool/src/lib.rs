@@ -1687,7 +1687,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 };
                                 state_machine.deschedule_task(&executed_task.task);
                                 if should_pause && !session_ending {
-                                    let task = adapter.as_ref().unwrap().recreate_task(
+                                    let task = adapter.as_ref().unwrap().recreate_task_with_new_index(
                                         executed_task.task.transaction().clone(),
                                         executed_task.task.index(),
                                     );
@@ -2322,7 +2322,11 @@ impl BankingStageAdapter {
         Some(self.do_create_task(transaction, index))
     }
 
-    fn recreate_task(&self, new_transaction: SanitizedTransaction, old_index: TaskKey) -> Task {
+    fn recreate_task_with_new_index(
+        &self,
+        transaction: SanitizedTransaction,
+        old_index: TaskKey,
+    ) -> Task {
         let new_index = {
             let inherited_priority =
                 old_index & const { (u64::MAX as TaskKey) << (TaskKey::BITS / 2) };
@@ -2330,7 +2334,7 @@ impl BankingStageAdapter {
             inherited_priority | new_task_id
         };
 
-        self.do_create_task(new_transaction, new_index)
+        self.do_create_task(transaction, new_index)
     }
 
     fn reset(&self) {
