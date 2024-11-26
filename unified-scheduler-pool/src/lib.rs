@@ -458,7 +458,8 @@ where
 
     // This apparently-meaningless wrapper is handy, because some callers explicitly want
     // `dyn InstalledSchedulerPool` to be returned for type inference convenience.
-    pub fn new_dyn_for_verification(
+    #[cfg(test)]
+    fn new_dyn_for_verification(
         handler_count: Option<usize>,
         log_messages_bytes_limit: Option<usize>,
         transaction_status_sender: Option<TransactionStatusSender>,

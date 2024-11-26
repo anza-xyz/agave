@@ -8876,7 +8876,6 @@ dependencies = [
  "enum-ptr",
  "lazy_static",
  "log",
- "qualifier_attr",
  "scopeguard",
  "serde",
  "solana-cost-model",
