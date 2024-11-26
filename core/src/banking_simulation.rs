@@ -54,6 +54,7 @@ use {
     },
     thiserror::Error,
 };
+use crate::banking_trace::Channels;
 
 /// This creates a simulated environment around `BankingStage` to produce leader's blocks based on
 /// recorded banking trace events (`TimedTracedEvent`).
@@ -786,7 +787,7 @@ impl BankingSimulator {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = banking_tracer.create_channels(unified_scheduler_pool.as_ref());
+        } = retracer.create_channels(unified_scheduler_pool.as_ref());
 
         let connection_cache = Arc::new(ConnectionCache::new("connection_cache_sim"));
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
