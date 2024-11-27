@@ -161,7 +161,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
 
         let account = if let Some(account) = self.account_cache.get(account_key) {
             // If lamports is 0, a previous transaction deallocated this account.
-            // We must shadow the cache entry so the account may be reopened.
+            // We return None instead of the account we found so it can be created fresh.
             // We never evict from the cache, or else we would fetch stale state from accounts-db.
             if account.lamports() == 0 {
                 None
