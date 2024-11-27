@@ -915,7 +915,7 @@ checksum = "de05f8756f1c68937349406d4632ae96ae35901019b5e59c508d9c38c64715fb"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.85",
+ "syn 2.0.89",
 ]
 
 [[package]]
@@ -2013,7 +2013,7 @@ dependencies = [
  "convert_case 0.6.0",
  "proc-macro2",
  "quote",
- "syn 2.0.85",
+ "syn 2.0.89",
  "unicode-xid",
 ]
 
@@ -2270,7 +2270,7 @@ checksum = "367a8dac40699e965e2fb8ac3b272b20058a107ac285b40041155227e4e93fba"
 dependencies = [
  "darling",
  "quote",
- "syn 2.0.85",
+ "syn 2.0.89",
 ]
 
 [[package]]
