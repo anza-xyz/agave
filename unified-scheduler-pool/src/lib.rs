@@ -335,8 +335,7 @@ where
                     (idle_inner_count, r)
                 };
 
-                let banking_stage_status = scheduler_pool.banking_stage_status();
-                if let Some(BankingStageStatus::Exited) = &banking_stage_status {
+                if matches!(scheduler_pool.banking_stage_status(), BankingStageStatus::Exited) {
                     scheduler_pool.unregister_banking_stage();
                     exiting = true;
                 }
