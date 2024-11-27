@@ -56,6 +56,13 @@ use {
     vec_extract_if_polyfill::MakeExtractIf,
 };
 
+#[derive(Clone)]
+struct BankingStageContext {
+    adapter: Arc<BankingStageAdapter>,
+    banking_packet_receiver: BankingPacketReceiver,
+    on_banking_packet_receive: Box<dyn BatchConverter>,
+}
+
 mod sleepless_testing;
 use crate::sleepless_testing::BuilderTracked;
 
@@ -596,7 +603,11 @@ where
         });
 
         let on_banking_packet_receive = on_spawn_block_production_scheduler(adapter.clone());
-        let banking_stage_context = (adapter, banking_packet_receiver.clone(), on_banking_packet_receive);
+        let banking_stage_context = BankingStageContext {
+            adapter,
+            banking_packet_receiver: banking_packet_receiver.clone(),
+            on_banking_packet_receive,
+        };
         let scheduling_context = SchedulingContext::new(SchedulingMode::BlockProduction, None);
         let s = S::spawn(
             *handler_count,
@@ -1295,7 +1306,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         handler_count: usize,
         mut context: SchedulingContext,
         mut result_with_timings: ResultWithTimings,
-        banking_stage_context: Option<(Arc<BankingStageAdapter>, BankingPacketReceiver, Box<dyn BatchConverter>)>,
+        banking_stage_context: Option<BankingStageContext>,
     ) {
         assert!(handler_count >= 1);
 
@@ -1498,7 +1509,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 let mut cpu_log_reported_at = cpu_session_started_at;
                 let mut error_count = ShortCounter::zero();
 
-                let (banking_stage_adapter, banking_packet_receiver, _on_recv) = banking_stage_context.into_iter().unzip();
+                let (banking_stage_adapter, banking_packet_receiver, _on_recv) = banking_stage_context.unzip();
                 let banking_packet_receiver = banking_packet_receiver.unwrap_or_else(never);
 
                 macro_rules! log_scheduler {
@@ -2155,7 +2166,7 @@ pub trait SpawnableScheduler<TH: TaskHandler>: InstalledScheduler {
         pool: Arc<SchedulerPool<Self, TH>>,
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
-        banking_stage_context: Option<(Arc<BankingStageAdapter>, BankingPacketReceiver, Box<dyn BatchConverter>)>,
+        banking_stage_context: Option<BankingStageContext>,
     ) -> Self
     where
         Self: Sized;
@@ -2189,7 +2200,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
         pool: Arc<SchedulerPool<Self, TH>>,
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
-        banking_stage_context: Option<(Arc<BankingStageAdapter>, BankingPacketReceiver, Box<dyn BatchConverter>)>,
+        banking_stage_context: Option<BankingStageContext>,
     ) -> Self {
         info!("spawning new scheduler for slot: {}", context.slot());
         let task_creator = match context.mode() {
@@ -2197,7 +2208,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
                 usage_queue_loader: UsageQueueLoader::default(),
             },
             SchedulingMode::BlockProduction => TaskCreator::BlockProduction {
-                banking_stage_adapter: banking_stage_context.as_ref().unwrap().0.clone(),
+                banking_stage_adapter: banking_stage_context.as_ref().unwrap().adapter.clone(),
             },
         };
         let mut inner = Self::Inner {
