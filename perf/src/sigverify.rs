@@ -5,8 +5,8 @@
 //!
 use {
     crate::{
-        cuda_runtime::RecycledVec,
         packet::{Packet, PacketBatch, PacketFlags},
+        recycled_vec::RecycledVec,
         recycler::Recycler,
     },
     rayon::{prelude::*, ThreadPool},

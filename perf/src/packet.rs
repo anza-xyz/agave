@@ -1,7 +1,7 @@
 //! The `packet` module defines data structures and methods to pull data from the network.
 pub use solana_packet::{self, Meta, Packet, PacketFlags, PACKET_DATA_SIZE};
 use {
-    crate::{cuda_runtime::RecycledVec, recycler::Recycler},
+    crate::{recycled_vec::RecycledVec, recycler::Recycler},
     bincode::config::Options,
     rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator},
     serde::{de::DeserializeOwned, Deserialize, Serialize},

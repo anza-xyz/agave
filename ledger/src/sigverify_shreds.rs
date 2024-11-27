@@ -5,8 +5,8 @@ use {
     sha2::{Digest, Sha512},
     solana_metrics::inc_new_counter_debug,
     solana_perf::{
-        cuda_runtime::RecycledVec,
         packet::{Packet, PacketBatch},
+        recycled_vec::RecycledVec,
         recycler_cache::RecyclerCache,
         sigverify::count_packets_in_batches,
     },

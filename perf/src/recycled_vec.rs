@@ -1,9 +1,4 @@
 // Module for cuda-related helper functions and wrappers.
-//
-// cudaHostRegister/cudaHostUnregister -
-//    apis for page-pinning memory. Cuda driver/hardware cannot overlap
-//    copies from host memory to GPU memory unless the memory is page-pinned and
-//    cannot be paged to disk. The cuda driver provides these interfaces to pin and unpin memory.
 
 use {
     crate::recycler::{RecyclerX, Reset},
@@ -18,8 +13,7 @@ use {
 };
 
 // A vector wrapper where the underlying memory can be
-// page-pinned. Controlled by flags in case user only wants
-// to pin in certain circumstances.
+// recycled.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct RecycledVec<T: Default + Clone + Sized> {
