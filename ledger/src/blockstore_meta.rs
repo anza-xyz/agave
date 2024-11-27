@@ -1,14 +1,18 @@
 use {
-    crate::shred::{Shred, ShredType},
+    crate::{
+        blockstore::MAX_DATA_SHREDS_PER_SLOT,
+        shred::{Shred, ShredType},
+    },
     bitflags::bitflags,
     serde::{Deserialize, Deserializer, Serialize, Serializer},
+    serde_with::serde_as,
     solana_sdk::{
         clock::{Slot, UnixTimestamp},
         hash::Hash,
     },
     std::{
         collections::BTreeSet,
-        ops::{Range, RangeBounds},
+        ops::{Bound, Range, RangeBounds},
     },
 };
 
@@ -250,30 +254,239 @@ impl Index {
     }
 }
 
+/// Superseded by [`ShredIndex`].
+///
+/// TODO: Remove this once new [`ShredIndex`] is fully rolled out
+/// and no longer relies on it for fallback.
 impl ShredIndex {
-    pub fn new() -> Self {
-        ShredIndex {
-            index: BTreeSet::new(),
-        }
-    }
-
     pub fn num_shreds(&self) -> usize {
         self.index.len()
     }
 
-    pub fn range<R>(&self, bounds: R) -> impl Iterator<Item = &u64>
+    pub(crate) fn range<R>(&self, bounds: R) -> impl Iterator<Item = &u64>
     where
         R: RangeBounds<u64>,
     {
         self.index.range(bounds)
     }
 
-    pub fn contains(&self, index: u64) -> bool {
+    pub(crate) fn contains(&self, index: u64) -> bool {
         self.index.contains(&index)
     }
 
-    pub fn insert(&mut self, index: u64) {
+    pub(crate) fn insert(&mut self, index: u64) {
         self.index.insert(index);
+    }
+
+    #[allow(unused)]
+    fn remove(&mut self, index: u64) {
+        self.index.remove(&index);
+    }
+}
+
+const MAX_U64S_PER_SLOT: usize = MAX_DATA_SHREDS_PER_SLOT / 64;
+
+/// A bit array of shred indices, where each u64 represents 64 shred indices.
+///
+/// The current implementation of [`ShredIndexLegacy`] utilizes a [`BTreeSet`] to store
+/// shred indices. While [`BTreeSet`] remains efficient as operations are amortized
+/// over time, the overhead of the B-tree structure becomes significant when frequently
+/// serialized and deserialized. In particular:
+/// - **Tree Traversal**: Serialization requires walking the non-contiguous tree structure.
+/// - **Reconstruction**: Deserialization involves rebuilding the tree in bulk,
+///   including dynamic memory allocations and re-balancing nodes.
+///
+/// In contrast, our bit array implementation provides:
+/// - **Contiguous Memory**: All bits are stored in a contiguous array of u64 words,
+///   allowing direct indexing and efficient memory access patterns.
+/// - **Direct Range Access**: Can load only the specific words that overlap with a
+///   requested range, avoiding unnecessary traversal.
+/// - **Simplified Serialization**: The contiguous memory layout allows for efficient
+///   serialization/deserialization without tree reconstruction.
+#[serde_as]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ShredIndexNext {
+    #[serde_as(as = "[_; MAX_U64S_PER_SLOT]")]
+    index: [u64; MAX_U64S_PER_SLOT],
+    num_shreds: usize,
+}
+
+impl Default for ShredIndexNext {
+    fn default() -> Self {
+        Self {
+            index: [0; MAX_U64S_PER_SLOT],
+            num_shreds: 0,
+        }
+    }
+}
+
+impl ShredIndexNext {
+    pub fn num_shreds(&self) -> usize {
+        self.num_shreds
+    }
+
+    fn index_and_mask(index: u64) -> (usize, u64) {
+        let word_idx = (index / 64) as usize;
+        let bit_idx = index % 64;
+        let mask = 1 << bit_idx;
+        (word_idx, mask)
+    }
+
+    #[allow(unused)]
+    fn remove(&mut self, index: u64) {
+        if index >= MAX_DATA_SHREDS_PER_SLOT as u64 {
+            return;
+        }
+
+        let (word_idx, mask) = Self::index_and_mask(index);
+
+        if self.index[word_idx] & mask != 0 {
+            self.index[word_idx] &= !mask;
+            self.num_shreds -= 1;
+        }
+    }
+
+    #[allow(unused)]
+    pub(crate) fn contains(&self, idx: u64) -> bool {
+        if idx >= MAX_DATA_SHREDS_PER_SLOT as u64 {
+            return false;
+        }
+        let (word_idx, mask) = Self::index_and_mask(idx);
+        (self.index[word_idx] & mask) != 0
+    }
+
+    pub(crate) fn insert(&mut self, idx: u64) {
+        if idx >= MAX_DATA_SHREDS_PER_SLOT as u64 {
+            return;
+        }
+        let (word_idx, mask) = Self::index_and_mask(idx);
+        if self.index[word_idx] & mask == 0 {
+            self.index[word_idx] |= mask;
+            self.num_shreds += 1;
+        }
+    }
+
+    /// Provides an iterator over the set shred indices within a specified range.
+    ///
+    /// # Algorithm
+    /// 1. Divide the specified range into 64-bit words.
+    /// 2. For each word:
+    ///    - Calculate the base index (position of the word * 64).
+    ///    - Process all set bits in the word.
+    ///    - For words overlapping the range boundaries:
+    ///      - Determine the relevant bit range using boundaries.
+    ///      - Mask out bits outside the range.
+    ///    - Use bit manipulation to iterate over set bits efficiently.
+    ///
+    /// ## Explanation
+    /// > Note we're showing 32 bits per word in examples for brevity, but each word is 64 bits.
+    ///
+    /// Given range `[75..205]`:
+    ///
+    /// Word layout (each word is 64 bits), where each X represents a bit candidate:
+    /// ```text
+    /// Word 1 (0–63):    [................................] ← Not included (outside range)
+    /// Word 2 (64–127):  [..........XXXXXXXXXXXXXXXXXXXXXX] ← Partial word (start)
+    /// Word 3 (128–191): [XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX] ← Full word (entirely in range)
+    /// Word 4 (192–255): [XXXXXXXXXXXXXXXXXXX.............] ← Partial word (end)
+    /// ```
+    ///
+    /// Partial Word 2 (contains start boundary 75):
+    /// - Base index = 64
+    /// - Lower boundary = 75 - 64 = 11
+    /// - Lower mask = `11111111111111110000000000000000`
+    ///
+    /// Partial Word 4 (contains end boundary 205):
+    /// - Base index = 192
+    /// - Upper boundary = 205 - 192 = 13
+    /// - Upper mask = `00000000000000000000000000001111`
+    ///
+    /// Final mask = `word & lower_mask & upper_mask`
+    ///
+    /// Bit iteration:
+    /// 1. Apply masks to restrict the bits to the range.
+    /// 2. While bits remain in the masked word:
+    ///    a. Find the lowest set bit (`trailing_zeros`).
+    ///    b. Add the bit's position to the base index.
+    ///    c. Clear the lowest set bit (`n & (n - 1)`).
+    /// ```
+    pub(crate) fn range<R>(&self, bounds: R) -> impl Iterator<Item = u64> + '_
+    where
+        R: RangeBounds<u64>,
+    {
+        let start = match bounds.start_bound() {
+            Bound::Included(&n) => n,
+            Bound::Excluded(&n) => n + 1,
+            Bound::Unbounded => 0,
+        };
+        let end = match bounds.end_bound() {
+            Bound::Included(&n) => n + 1,
+            Bound::Excluded(&n) => n,
+            Bound::Unbounded => MAX_DATA_SHREDS_PER_SLOT as u64,
+        };
+
+        let end_word: usize = ((end + 63) / 64).min(MAX_U64S_PER_SLOT as u64) as usize;
+        let start_word = ((start / 64) as usize).min(end_word);
+
+        self.index[start_word..end_word]
+            .iter()
+            .enumerate()
+            .flat_map(move |(word_offset, &word)| {
+                let base_idx = (start_word + word_offset) as u64 * 64;
+
+                let lower_bound = if base_idx < start {
+                    start - base_idx
+                } else {
+                    0
+                };
+                let upper_bound = if base_idx + 64 > end {
+                    end - base_idx
+                } else {
+                    64
+                };
+
+                let lower_mask = !0u64 << lower_bound;
+                let upper_mask = !0u64 >> (64 - upper_bound);
+                let mask = word & lower_mask & upper_mask;
+
+                std::iter::from_fn({
+                    let mut remaining = mask;
+                    move || {
+                        if remaining == 0 {
+                            None
+                        } else {
+                            let bit_idx = remaining.trailing_zeros() as u64;
+                            // Clear the lowest set bit
+                            remaining &= remaining - 1;
+                            Some(base_idx + bit_idx)
+                        }
+                    }
+                })
+            })
+    }
+}
+
+impl FromIterator<u64> for ShredIndexNext {
+    fn from_iter<T: IntoIterator<Item = u64>>(iter: T) -> Self {
+        let mut next_index = ShredIndexNext::default();
+        for idx in iter {
+            next_index.insert(idx);
+        }
+        next_index
+    }
+}
+
+impl From<ShredIndex> for ShredIndexNext {
+    fn from(value: ShredIndex) -> Self {
+        value.index.into_iter().collect()
+    }
+}
+
+impl From<ShredIndexNext> for ShredIndex {
+    fn from(value: ShredIndexNext) -> Self {
+        ShredIndex {
+            index: value.range(0..MAX_DATA_SHREDS_PER_SLOT as u64).collect(),
+        }
     }
 }
 
@@ -643,7 +856,7 @@ mod test {
             .collect::<Vec<_>>()
             .choose_multiple(&mut rng, erasure_config.num_data)
         {
-            index.data_mut().index.remove(&idx);
+            index.data_mut().remove(idx);
 
             assert_eq!(e_meta.status(&index), CanRecover);
         }
@@ -656,10 +869,79 @@ mod test {
             .collect::<Vec<_>>()
             .choose_multiple(&mut rng, erasure_config.num_coding)
         {
-            index.coding_mut().index.remove(&idx);
+            index.coding_mut().remove(idx);
 
             assert_eq!(e_meta.status(&index), DataFull);
         }
+    }
+
+    #[test]
+    fn shred_index_legacy_compat() {
+        use rand::Rng;
+        let mut legacy = ShredIndex::default();
+        let mut next_index = ShredIndexNext::default();
+
+        for i in (0..MAX_DATA_SHREDS_PER_SLOT as u64).skip(3) {
+            next_index.insert(i);
+            legacy.insert(i);
+        }
+
+        for &i in legacy.index.iter() {
+            assert!(next_index.contains(i));
+        }
+
+        assert_eq!(next_index.num_shreds(), legacy.num_shreds());
+
+        let rand_range = rand::thread_rng().gen_range(1000..MAX_DATA_SHREDS_PER_SLOT as u64);
+        assert_eq!(
+            next_index.range(0..rand_range).sum::<u64>(),
+            legacy.range(0..rand_range).sum::<u64>()
+        );
+
+        assert_eq!(ShredIndexNext::from(legacy.clone()), next_index);
+        assert_eq!(ShredIndex::from(next_index), legacy);
+    }
+
+    #[test]
+    fn test_shred_index_next_boundary_conditions() {
+        let mut index = ShredIndexNext::default();
+
+        // First possible index
+        index.insert(0);
+        // Last index in first word
+        index.insert(63);
+        // First index in second word
+        index.insert(64);
+        // Last index in second word
+        index.insert(127);
+        // Last valid index
+        index.insert(MAX_DATA_SHREDS_PER_SLOT as u64 - 1);
+        // Should be ignored (too large)
+        index.insert(MAX_DATA_SHREDS_PER_SLOT as u64);
+
+        // Verify contents
+        assert!(index.contains(0));
+        assert!(index.contains(63));
+        assert!(index.contains(64));
+        assert!(index.contains(127));
+        assert!(index.contains(MAX_DATA_SHREDS_PER_SLOT as u64 - 1));
+        assert!(!index.contains(MAX_DATA_SHREDS_PER_SLOT as u64));
+
+        // Cross-word boundary
+        assert_eq!(index.range(50..70).collect::<Vec<_>>(), vec![63, 64]);
+        // Full first word
+        assert_eq!(index.range(0..64).collect::<Vec<_>>(), vec![0, 63]);
+        // Full second word
+        assert_eq!(index.range(64..128).collect::<Vec<_>>(), vec![64, 127]);
+
+        // Empty ranges
+        assert_eq!(index.range(0..0).count(), 0);
+        assert_eq!(index.range(1..1).count(), 0);
+
+        // Test range that exceeds max
+        let oversized_range = index.range(0..MAX_DATA_SHREDS_PER_SLOT as u64 + 1);
+        assert_eq!(oversized_range.count(), 5);
+        assert_eq!(index.num_shreds(), 5);
     }
 
     #[test]

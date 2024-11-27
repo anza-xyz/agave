@@ -938,7 +938,6 @@ checksum = "1bc2832c24239b0141d5674bb9174f9d68a8b5b3f2753311927c172ca46f7e9c"
 dependencies = [
  "funty",
  "radium",
- "serde",
  "tap",
  "wyz",
 ]
@@ -7333,9 +7332,7 @@ dependencies = [
  "assert_matches",
  "bincode",
  "bitflags 2.6.0",
- "bitvec",
  "bs58",
- "bv",
  "byteorder",
  "bzip2",
  "chrono",

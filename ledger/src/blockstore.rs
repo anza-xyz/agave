@@ -2407,7 +2407,15 @@ impl Blockstore {
     }
 
     pub fn get_index(&self, slot: Slot) -> Result<Option<Index>> {
-        self.index_cf.get(slot)
+        let result = self.index_cf.get(slot);
+
+        match result {
+            Ok(index) => Ok(index),
+            Err(BlockstoreError::Serialize(e) | BlockstoreError::InvalidShredData(e)) => {
+                Err(BlockstoreError::InvalidShredData(e))
+            }
+            err => err,
+        }
     }
 
     /// Manually update the meta for a slot.
