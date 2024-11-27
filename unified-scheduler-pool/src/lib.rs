@@ -1915,9 +1915,9 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
         let handler_main_loop = || {
             let banking_packet_receiver = if let Some(b) = banking_stage_context.as_ref() {
-                b.banking_packet_receiver
+                &b.banking_packet_receiver
             } else {
-                never()
+                &never()
             };
             let new_task_sender = Arc::downgrade(&self.new_task_sender);
 
