@@ -237,6 +237,7 @@ impl SchedulingContext {
         Self { mode, bank }
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn for_verification(bank: Arc<Bank>) -> Self {
         Self::new(SchedulingMode::BlockVerification, Some(bank))
     }
