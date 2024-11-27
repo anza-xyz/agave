@@ -33,8 +33,7 @@ use {
 mod sdk_transactions;
 mod transaction_view;
 
-#[derive(Clone)]
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct RuntimeTransaction<T> {
     transaction: T,
     // transaction meta is a collection of fields, it is updated

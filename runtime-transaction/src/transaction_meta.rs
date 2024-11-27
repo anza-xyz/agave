@@ -36,8 +36,7 @@ pub trait StaticMeta {
 /// on-chain ALT, examples are: transaction usage costs, nonce account.
 pub trait DynamicMeta: StaticMeta {}
 
-#[derive(Clone)]
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct TransactionMeta {
     pub(crate) message_hash: Hash,
     pub(crate) is_simple_vote_transaction: bool,
