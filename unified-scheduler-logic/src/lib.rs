@@ -1964,7 +1964,7 @@ mod tests {
         RuntimeTransaction::from_transaction_for_tests(unsigned)
     }
 
-    fn transaction_with_writable_read2(address: Pubkey, address2: Pubkey) -> SanitizedTransaction {
+    fn transaction_with_writable_read2(address: Pubkey, address2: Pubkey) -> RuntimeTransaction<SanitizedTransaction> {
         let instruction = Instruction {
             program_id: Pubkey::default(),
             accounts: vec![
@@ -1975,7 +1975,7 @@ mod tests {
         };
         let message = Message::new(&[instruction], Some(&Pubkey::new_unique()));
         let unsigned = Transaction::new_unsigned(message);
-        SanitizedTransaction::from_transaction_for_tests(unsigned)
+        RuntimeTransaction::from_transaction_for_tests(unsigned)
     }
 
     fn create_address_loader(
