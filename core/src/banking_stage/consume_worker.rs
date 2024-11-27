@@ -8,6 +8,7 @@ use {
     solana_measure::measure_us,
     solana_poh::leader_bank_notifier::LeaderBankNotifier,
     solana_runtime::bank::Bank,
+    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_sdk::clock::Slot,
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     std::{
@@ -21,28 +22,28 @@ use {
 };
 
 #[derive(Debug, Error)]
-pub enum ConsumeWorkerError {
+pub enum ConsumeWorkerError<Tx> {
     #[error("Failed to receive work from scheduler: {0}")]
     Recv(#[from] RecvError),
     #[error("Failed to send finalized consume work to scheduler: {0}")]
-    Send(#[from] SendError<FinishedConsumeWork>),
+    Send(#[from] SendError<FinishedConsumeWork<Tx>>),
 }
 
-pub(crate) struct ConsumeWorker {
-    consume_receiver: Receiver<ConsumeWork>,
+pub(crate) struct ConsumeWorker<Tx> {
+    consume_receiver: Receiver<ConsumeWork<Tx>>,
     consumer: Consumer,
-    consumed_sender: Sender<FinishedConsumeWork>,
+    consumed_sender: Sender<FinishedConsumeWork<Tx>>,
 
     leader_bank_notifier: Arc<LeaderBankNotifier>,
     metrics: Arc<ConsumeWorkerMetrics>,
 }
 
-impl ConsumeWorker {
+impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
     pub fn new(
         id: u32,
-        consume_receiver: Receiver<ConsumeWork>,
+        consume_receiver: Receiver<ConsumeWork<Tx>>,
         consumer: Consumer,
-        consumed_sender: Sender<FinishedConsumeWork>,
+        consumed_sender: Sender<FinishedConsumeWork<Tx>>,
         leader_bank_notifier: Arc<LeaderBankNotifier>,
     ) -> Self {
         Self {
@@ -58,14 +59,14 @@ impl ConsumeWorker {
         self.metrics.clone()
     }
 
-    pub fn run(self) -> Result<(), ConsumeWorkerError> {
+    pub fn run(self) -> Result<(), ConsumeWorkerError<Tx>> {
         loop {
             let work = self.consume_receiver.recv()?;
             self.consume_loop(work)?;
         }
     }
 
-    fn consume_loop(&self, work: ConsumeWork) -> Result<(), ConsumeWorkerError> {
+    fn consume_loop(&self, work: ConsumeWork<Tx>) -> Result<(), ConsumeWorkerError<Tx>> {
         let (maybe_consume_bank, get_bank_us) = measure_us!(self.get_consume_bank());
         let Some(mut bank) = maybe_consume_bank else {
             self.metrics
@@ -103,7 +104,11 @@ impl ConsumeWorker {
     }
 
     /// Consume a single batch.
-    fn consume(&self, bank: &Arc<Bank>, work: ConsumeWork) -> Result<(), ConsumeWorkerError> {
+    fn consume(
+        &self,
+        bank: &Arc<Bank>,
+        work: ConsumeWork<Tx>,
+    ) -> Result<(), ConsumeWorkerError<Tx>> {
         let output = self.consumer.process_and_record_aged_transactions(
             bank,
             &work.transactions,
@@ -130,7 +135,7 @@ impl ConsumeWorker {
     }
 
     /// Retry current batch and all outstanding batches.
-    fn retry_drain(&self, work: ConsumeWork) -> Result<(), ConsumeWorkerError> {
+    fn retry_drain(&self, work: ConsumeWork<Tx>) -> Result<(), ConsumeWorkerError<Tx>> {
         for work in try_drain_iter(work, &self.consume_receiver) {
             self.retry(work)?;
         }
@@ -138,7 +143,7 @@ impl ConsumeWorker {
     }
 
     /// Send transactions back to scheduler as retryable.
-    fn retry(&self, work: ConsumeWork) -> Result<(), ConsumeWorkerError> {
+    fn retry(&self, work: ConsumeWork<Tx>) -> Result<(), ConsumeWorkerError<Tx>> {
         let retryable_indexes: Vec<_> = (0..work.transactions.len()).collect();
         let num_retryable = retryable_indexes.len();
         self.metrics
@@ -296,6 +301,12 @@ impl ConsumeWorkerMetrics {
             .collect_balances_us
             .fetch_add(*collect_balances_us, Ordering::Relaxed);
         self.timing_metrics
+            .load_execute_us_min
+            .fetch_min(*load_execute_us, Ordering::Relaxed);
+        self.timing_metrics
+            .load_execute_us_max
+            .fetch_max(*load_execute_us, Ordering::Relaxed);
+        self.timing_metrics
             .load_execute_us
             .fetch_add(*load_execute_us, Ordering::Relaxed);
         self.timing_metrics
@@ -310,6 +321,9 @@ impl ConsumeWorkerMetrics {
         self.timing_metrics
             .find_and_send_votes_us
             .fetch_add(*find_and_send_votes_us, Ordering::Relaxed);
+        self.timing_metrics
+            .num_batches_processed
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     fn update_on_error_counters(
@@ -505,12 +519,15 @@ struct ConsumeWorkerTimingMetrics {
     cost_model_us: AtomicU64,
     collect_balances_us: AtomicU64,
     load_execute_us: AtomicU64,
+    load_execute_us_min: AtomicU64,
+    load_execute_us_max: AtomicU64,
     freeze_lock_us: AtomicU64,
     record_us: AtomicU64,
     commit_us: AtomicU64,
     find_and_send_votes_us: AtomicU64,
     wait_for_bank_success_us: AtomicU64,
     wait_for_bank_failure_us: AtomicU64,
+    num_batches_processed: AtomicU64,
 }
 
 impl ConsumeWorkerTimingMetrics {
@@ -531,6 +548,21 @@ impl ConsumeWorkerTimingMetrics {
             (
                 "load_execute_us",
                 self.load_execute_us.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "load_execute_us_min",
+                self.load_execute_us_min.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "load_execute_us_max",
+                self.load_execute_us_max.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_batches_processed",
+                self.num_batches_processed.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
@@ -733,6 +765,7 @@ mod tests {
             bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
             vote_sender_types::ReplayVoteReceiver,
         },
+        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
             address_lookup_table::AddressLookupTableAccount,
             clock::{Slot, MAX_PROCESSING_AGE},
@@ -772,18 +805,26 @@ mod tests {
         _poh_simulator: JoinHandle<()>,
         _replay_vote_receiver: ReplayVoteReceiver,
 
-        consume_sender: Sender<ConsumeWork>,
-        consumed_receiver: Receiver<FinishedConsumeWork>,
+        consume_sender: Sender<ConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
+        consumed_receiver: Receiver<FinishedConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
     }
 
-    fn setup_test_frame() -> (TestFrame, ConsumeWorker) {
+    fn setup_test_frame() -> (
+        TestFrame,
+        ConsumeWorker<RuntimeTransaction<SanitizedTransaction>>,
+    ) {
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
             ..
         } = create_slow_genesis_config(10_000);
         let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
-        let bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::new_unique(), 1));
+        // Warp to next epoch for MaxAge tests.
+        let bank = Arc::new(Bank::new_from_parent(
+            bank.clone(),
+            &Pubkey::new_unique(),
+            bank.get_epoch_info().slots_in_epoch,
+        ));
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
@@ -863,7 +904,7 @@ mod tests {
         let bid = TransactionBatchId::new(0);
         let id = TransactionId::new(0);
         let max_age = MaxAge {
-            epoch_invalidation_slot: bank.slot(),
+            sanitized_epoch: bank.epoch(),
             alt_invalidation_slot: bank.slot(),
         };
         let work = ConsumeWork {
@@ -912,7 +953,7 @@ mod tests {
         let bid = TransactionBatchId::new(0);
         let id = TransactionId::new(0);
         let max_age = MaxAge {
-            epoch_invalidation_slot: bank.slot(),
+            sanitized_epoch: bank.epoch(),
             alt_invalidation_slot: bank.slot(),
         };
         let work = ConsumeWork {
@@ -962,7 +1003,7 @@ mod tests {
         let id1 = TransactionId::new(1);
         let id2 = TransactionId::new(0);
         let max_age = MaxAge {
-            epoch_invalidation_slot: bank.slot(),
+            sanitized_epoch: bank.epoch(),
             alt_invalidation_slot: bank.slot(),
         };
         consume_sender
@@ -1023,7 +1064,7 @@ mod tests {
         let id1 = TransactionId::new(1);
         let id2 = TransactionId::new(0);
         let max_age = MaxAge {
-            epoch_invalidation_slot: bank.slot(),
+            sanitized_epoch: bank.epoch(),
             alt_invalidation_slot: bank.slot(),
         };
         consume_sender
@@ -1077,6 +1118,7 @@ mod tests {
             .unwrap()
             .set_bank_for_test(bank.clone());
         assert!(bank.slot() > 0);
+        assert!(bank.epoch() > 0);
 
         // No conflicts between transactions. Test 6 cases.
         // 1. Epoch expiration, before slot => still succeeds due to resanitizing
@@ -1101,7 +1143,7 @@ mod tests {
                 readonly: vec![],
             };
             let loader = SimpleAddressLoader::Enabled(loaded_addresses);
-            SanitizedTransaction::try_create(
+            RuntimeTransaction::try_create(
                 VersionedTransaction::try_new(
                     VersionedMessage::V0(
                         v0::Message::try_compile(
@@ -1161,27 +1203,27 @@ mod tests {
                 transactions: txs,
                 max_ages: vec![
                     MaxAge {
-                        epoch_invalidation_slot: bank.slot() - 1,
+                        sanitized_epoch: bank.epoch() - 1,
                         alt_invalidation_slot: Slot::MAX,
                     },
                     MaxAge {
-                        epoch_invalidation_slot: bank.slot(),
+                        sanitized_epoch: bank.epoch(),
                         alt_invalidation_slot: Slot::MAX,
                     },
                     MaxAge {
-                        epoch_invalidation_slot: bank.slot() + 1,
+                        sanitized_epoch: bank.epoch() + 1,
                         alt_invalidation_slot: Slot::MAX,
                     },
                     MaxAge {
-                        epoch_invalidation_slot: u64::MAX,
+                        sanitized_epoch: bank.epoch(),
                         alt_invalidation_slot: bank.slot() - 1,
                     },
                     MaxAge {
-                        epoch_invalidation_slot: u64::MAX,
+                        sanitized_epoch: bank.epoch(),
                         alt_invalidation_slot: bank.slot(),
                     },
                     MaxAge {
-                        epoch_invalidation_slot: u64::MAX,
+                        sanitized_epoch: bank.epoch(),
                         alt_invalidation_slot: bank.slot() + 1,
                     },
                 ],

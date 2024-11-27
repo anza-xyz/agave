@@ -4,7 +4,7 @@ use {
     crate::{
         error::{LedgerToolError, Result},
         ledger_path::canonicalize_ledger_path,
-        ledger_utils::{get_program_ids, get_shred_storage_type},
+        ledger_utils::get_program_ids,
         output::{output_ledger, output_slot, CliDuplicateSlotProof, SlotBounds, SlotInfo},
     },
     chrono::{DateTime, Utc},
@@ -21,7 +21,7 @@ use {
         ancestor_iterator::AncestorIterator,
         blockstore::{Blockstore, PurgeType},
         blockstore_db::{self, Column, ColumnName, Database},
-        blockstore_options::{AccessType, BLOCKSTORE_DIRECTORY_ROCKS_FIFO},
+        blockstore_options::AccessType,
         shred::Shred,
     },
     solana_sdk::{
@@ -49,7 +49,7 @@ fn analyze_column<
     let mut val_hist = histogram::Histogram::new();
     let mut val_tot: u64 = 0;
     let mut row_hist = histogram::Histogram::new();
-    for (key, val) in db.iter::<C>(blockstore_db::IteratorMode::Start)? {
+    for (key, val) in db.column::<C>().iter(blockstore_db::IteratorMode::Start)? {
         // Key length is fixed, only need to calculate it once
         if key_len == 0 {
             key_len = C::key(key).len() as u64;
@@ -669,22 +669,8 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
             let target_db = PathBuf::from(value_t_or_exit!(arg_matches, "target_db", String));
 
             let source = crate::open_blockstore(&ledger_path, arg_matches, AccessType::Secondary);
-
-            // Check if shred storage type can be inferred; if not, a new
-            // ledger is being created. open_blockstore() will attempt to
-            // to infer shred storage type as well, but this check provides
-            // extra insight to user on how to create a FIFO ledger.
-            let _ = get_shred_storage_type(
-                &target_db,
-                &format!(
-                    "No --target-db ledger at {:?} was detected, default compaction \
-                 (RocksLevel) will be used. Fifo compaction can be enabled for a new \
-                 ledger by manually creating {BLOCKSTORE_DIRECTORY_ROCKS_FIFO} directory \
-                 within the specified --target_db directory.",
-                    &target_db
-                ),
-            );
             let target = crate::open_blockstore(&target_db, arg_matches, AccessType::Primary);
+
             for (slot, _meta) in source.slot_meta_iterator(starting_slot)? {
                 if slot > ending_slot {
                     break;

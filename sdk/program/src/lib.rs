@@ -472,28 +472,19 @@ extern crate self as solana_program;
 pub mod address_lookup_table;
 pub mod big_mod_exp;
 pub mod blake3;
-#[cfg(feature = "borsh")]
-pub mod borsh;
-#[cfg(feature = "borsh")]
-pub mod borsh0_10;
-#[cfg(feature = "borsh")]
-pub mod borsh1;
 pub mod bpf_loader;
 pub mod bpf_loader_deprecated;
 pub mod bpf_loader_upgradeable;
 pub mod compute_units;
 pub mod ed25519_program;
 pub mod entrypoint_deprecated;
-pub mod epoch_rewards;
 pub mod epoch_schedule;
 pub mod epoch_stake;
 pub mod feature;
 pub mod hash;
 pub mod incinerator;
 pub mod instruction;
-pub mod keccak;
 pub mod lamports;
-pub mod last_restart_slot;
 pub mod loader_instruction;
 pub mod loader_upgradeable_instruction;
 pub mod loader_v4;
@@ -503,7 +494,6 @@ pub mod message;
 pub mod nonce;
 pub mod program;
 pub mod program_error;
-pub mod program_stubs;
 pub mod program_utils;
 pub mod secp256k1_program;
 pub mod slot_hashes;
@@ -517,8 +507,23 @@ pub mod sysvar;
 pub mod vote;
 pub mod wasm;
 
+#[cfg(feature = "borsh")]
+#[deprecated(since = "2.1.0", note = "Use `solana-borsh` crate instead")]
+pub use solana_borsh::deprecated as borsh;
+#[cfg(feature = "borsh")]
+#[deprecated(since = "2.1.0", note = "Use `solana-borsh` crate instead")]
+pub use solana_borsh::v0_10 as borsh0_10;
+#[cfg(feature = "borsh")]
+#[deprecated(since = "2.1.0", note = "Use `solana-borsh` crate instead")]
+pub use solana_borsh::v1 as borsh1;
+#[deprecated(since = "2.1.0", note = "Use `solana-epoch-rewards` crate instead")]
+pub use solana_epoch_rewards as epoch_rewards;
 #[deprecated(since = "2.1.0", note = "Use `solana-fee-calculator` crate instead")]
 pub use solana_fee_calculator as fee_calculator;
+#[deprecated(since = "2.2.0", note = "Use `solana-keccak-hasher` crate instead")]
+pub use solana_keccak_hasher as keccak;
+#[deprecated(since = "2.1.0", note = "Use `solana-last-restart-slot` crate instead")]
+pub use solana_last_restart_slot as last_restart_slot;
 #[deprecated(since = "2.1.0", note = "Use `solana-program-memory` crate instead")]
 pub use solana_program_memory as program_memory;
 #[deprecated(since = "2.1.0", note = "Use `solana-program-pack` crate instead")]
@@ -535,6 +540,8 @@ pub use solana_serialize_utils as serialize_utils;
 pub use solana_short_vec as short_vec;
 #[deprecated(since = "2.1.0", note = "Use `solana-stable-layout` crate instead")]
 pub use solana_stable_layout as stable_layout;
+#[cfg(not(target_os = "solana"))]
+pub use solana_sysvar::program_stubs;
 #[cfg(target_arch = "wasm32")]
 pub use wasm_bindgen::prelude::wasm_bindgen;
 pub use {
@@ -547,13 +554,14 @@ pub use {
         entrypoint_no_alloc,
     },
     solana_program_option as program_option, solana_pubkey as pubkey, solana_rent as rent,
+    solana_sysvar::impl_sysvar_get,
 };
 /// The [config native program][np].
 ///
 /// [np]: https://docs.solanalabs.com/runtime/programs#config-program
 pub mod config {
     pub mod program {
-        crate::declare_id!("Config1111111111111111111111111111111111111");
+        pub use solana_sdk_ids::config::{check_id, id, ID};
     }
 }
 
@@ -602,6 +610,8 @@ pub mod sdk_ids {
 #[deprecated(since = "2.1.0", note = "Use `solana-decode-error` crate instead")]
 pub use solana_decode_error as decode_error;
 pub use solana_pubkey::{declare_deprecated_id, declare_id, pubkey};
+#[deprecated(since = "2.1.0", note = "Use `solana-sysvar-id` crate instead")]
+pub use solana_sysvar_id::{declare_deprecated_sysvar_id, declare_sysvar_id};
 
 #[macro_use]
 extern crate serde_derive;

@@ -37,8 +37,7 @@ use {
     lazy_static::lazy_static,
     quinn::Endpoint,
     solana_accounts_db::{
-        accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
-        accounts_index::AccountSecondaryIndexes,
+        accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         hardened_unpack::{
             open_genesis_config, OpenGenesisConfigError, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
@@ -66,7 +65,7 @@ use {
             MAX_REPLAY_WAKE_UP_SIGNALS,
         },
         blockstore_metric_report_service::BlockstoreMetricReportService,
-        blockstore_options::{BlockstoreOptions, BlockstoreRecoveryMode, LedgerColumnOptions},
+        blockstore_options::{BlockstoreOptions, BLOCKSTORE_DIRECTORY_ROCKS_LEVEL},
         blockstore_processor::{self, TransactionStatusSender},
         entry_notifier_interface::EntryNotifierArc,
         entry_notifier_service::{EntryNotifierSender, EntryNotifierService},
@@ -134,6 +133,7 @@ use {
     solana_vote_program::vote_state,
     solana_wen_restart::wen_restart::{wait_for_wen_restart, WenRestartConfig},
     std::{
+        borrow::Cow,
         collections::{HashMap, HashSet},
         net::SocketAddr,
         num::NonZeroUsize,
@@ -189,7 +189,6 @@ impl BlockVerificationMethod {
 #[derive(Clone, EnumString, EnumVariantNames, Default, IntoStaticStr, Display)]
 #[strum(serialize_all = "kebab-case")]
 pub enum BlockProductionMethod {
-    ThreadLocalMultiIterator,
     CentralScheduler,
     #[default]
     UnifiedScheduler,
@@ -247,13 +246,14 @@ pub struct ValidatorConfig {
     pub rpc_config: JsonRpcConfig,
     /// Specifies which plugins to start up with
     pub on_start_geyser_plugin_config_files: Option<Vec<PathBuf>>,
+    pub geyser_plugin_always_enabled: bool,
     pub rpc_addrs: Option<(SocketAddr, SocketAddr)>, // (JsonRpc, JsonRpcPubSub)
     pub pubsub_config: PubSubConfig,
     pub snapshot_config: SnapshotConfig,
     pub max_ledger_shreds: Option<u64>,
+    pub blockstore_options: BlockstoreOptions,
     pub broadcast_stage_type: BroadcastStageType,
     pub turbine_disabled: Arc<AtomicBool>,
-    pub enforce_ulimit_nofile: bool,
     pub fixed_leader_schedule: Option<FixedSchedule>,
     pub wait_for_supermajority: Option<Slot>,
     pub new_hard_forks: Option<Vec<Slot>>,
@@ -263,7 +263,6 @@ pub struct ValidatorConfig {
     pub gossip_validators: Option<HashSet<Pubkey>>, // None = gossip with all
     pub accounts_hash_interval_slots: u64,
     pub max_genesis_archive_unpacked_size: u64,
-    pub wal_recovery_mode: Option<BlockstoreRecoveryMode>,
     /// Run PoH, transaction signature and other transaction verifications during blockstore
     /// processing.
     pub run_verification: bool,
@@ -281,7 +280,6 @@ pub struct ValidatorConfig {
     pub poh_pinned_cpu_core: usize,
     pub poh_hashes_per_batch: u64,
     pub process_ledger_before_services: bool,
-    pub account_indexes: AccountSecondaryIndexes,
     pub accounts_db_config: Option<AccountsDbConfig>,
     pub warp_slot: Option<Slot>,
     pub accounts_db_test_hash_calculation: bool,
@@ -291,9 +289,7 @@ pub struct ValidatorConfig {
     pub staked_nodes_overrides: Arc<RwLock<HashMap<Pubkey, u64>>>,
     pub validator_exit: Arc<RwLock<Exit>>,
     pub no_wait_for_vote_to_start_leader: bool,
-    pub accounts_shrink_ratio: AccountShrinkThreshold,
     pub wait_to_vote_slot: Option<Slot>,
-    pub ledger_column_options: LedgerColumnOptions,
     pub runtime_config: RuntimeConfig,
     pub banking_trace_dir_byte_limit: banking_trace::DirByteLimit,
     pub block_verification_method: BlockVerificationMethod,
@@ -305,6 +301,7 @@ pub struct ValidatorConfig {
     pub wen_restart_coordinator: Option<Pubkey>,
     pub unified_scheduler_handler_threads: Option<usize>,
     pub ip_echo_server_threads: NonZeroUsize,
+    pub rayon_global_threads: NonZeroUsize,
     pub replay_forks_threads: NonZeroUsize,
     pub replay_transactions_threads: NonZeroUsize,
     pub tvu_shred_sigverify_threads: NonZeroUsize,
@@ -320,16 +317,17 @@ impl Default for ValidatorConfig {
             expected_shred_version: None,
             voting_disabled: false,
             max_ledger_shreds: None,
+            blockstore_options: BlockstoreOptions::default(),
             account_paths: Vec::new(),
             account_snapshot_paths: Vec::new(),
             rpc_config: JsonRpcConfig::default(),
             on_start_geyser_plugin_config_files: None,
+            geyser_plugin_always_enabled: false,
             rpc_addrs: None,
             pubsub_config: PubSubConfig::default(),
             snapshot_config: SnapshotConfig::new_load_only(),
             broadcast_stage_type: BroadcastStageType::Standard,
             turbine_disabled: Arc::<AtomicBool>::default(),
-            enforce_ulimit_nofile: true,
             fixed_leader_schedule: None,
             wait_for_supermajority: None,
             new_hard_forks: None,
@@ -339,7 +337,6 @@ impl Default for ValidatorConfig {
             gossip_validators: None,
             accounts_hash_interval_slots: u64::MAX,
             max_genesis_archive_unpacked_size: MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
-            wal_recovery_mode: None,
             run_verification: true,
             require_tower: false,
             tower_storage: Arc::new(NullTowerStorage::default()),
@@ -355,7 +352,6 @@ impl Default for ValidatorConfig {
             poh_pinned_cpu_core: poh_service::DEFAULT_PINNED_CPU_CORE,
             poh_hashes_per_batch: poh_service::DEFAULT_HASHES_PER_BATCH,
             process_ledger_before_services: false,
-            account_indexes: AccountSecondaryIndexes::default(),
             warp_slot: None,
             accounts_db_test_hash_calculation: false,
             accounts_db_skip_shrink: false,
@@ -364,10 +360,8 @@ impl Default for ValidatorConfig {
             staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
             validator_exit: Arc::new(RwLock::new(Exit::default())),
             no_wait_for_vote_to_start_leader: true,
-            accounts_shrink_ratio: AccountShrinkThreshold::default(),
             accounts_db_config: None,
             wait_to_vote_slot: None,
-            ledger_column_options: LedgerColumnOptions::default(),
             runtime_config: RuntimeConfig::default(),
             banking_trace_dir_byte_limit: 0,
             block_verification_method: BlockVerificationMethod::default(),
@@ -379,6 +373,7 @@ impl Default for ValidatorConfig {
             wen_restart_coordinator: None,
             unified_scheduler_handler_threads: None,
             ip_echo_server_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
+            rayon_global_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             replay_forks_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             replay_transactions_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             tvu_shred_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
@@ -389,14 +384,18 @@ impl Default for ValidatorConfig {
 
 impl ValidatorConfig {
     pub fn default_for_test() -> Self {
+        let max_thread_count =
+            NonZeroUsize::new(get_max_thread_count()).expect("thread count is non-zero");
+
         Self {
-            enforce_ulimit_nofile: false,
+            accounts_db_config: Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            blockstore_options: BlockstoreOptions::default_for_tests(),
             rpc_config: JsonRpcConfig::default_for_test(),
             block_production_method: BlockProductionMethod::default(),
             enable_block_production_forwarding: true, // enable forwarding by default for tests
+            rayon_global_threads: max_thread_count,
             replay_forks_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
-            replay_transactions_threads: NonZeroUsize::new(get_max_thread_count())
-                .expect("thread count is non-zero"),
+            replay_transactions_threads: max_thread_count,
             tvu_shred_sigverify_threads: NonZeroUsize::new(get_thread_count())
                 .expect("thread count is non-zero"),
             ..Self::default()
@@ -557,6 +556,18 @@ impl Validator {
     ) -> Result<Self> {
         let start_time = Instant::now();
 
+        // Initialize the global rayon pool first to ensure the value in config
+        // is honored. Otherwise, some code accessing the global pool could
+        // cause it to get initialized with Rayon's default (not ours)
+        if rayon::ThreadPoolBuilder::new()
+            .thread_name(|i| format!("solRayonGlob{i:02}"))
+            .num_threads(config.rayon_global_threads.get())
+            .build_global()
+            .is_err()
+        {
+            warn!("Rayon global thread pool already initialized");
+        }
+
         let id = identity_keypair.pubkey();
         assert_eq!(&id, node.info.pubkey());
 
@@ -573,8 +584,17 @@ impl Validator {
 
         let exit = Arc::new(AtomicBool::new(false));
 
+        let geyser_plugin_config_files = config
+            .on_start_geyser_plugin_config_files
+            .as_ref()
+            .map(Cow::Borrowed)
+            .or_else(|| {
+                config
+                    .geyser_plugin_always_enabled
+                    .then_some(Cow::Owned(vec![]))
+            });
         let geyser_plugin_service =
-            if let Some(geyser_plugin_config_files) = &config.on_start_geyser_plugin_config_files {
+            if let Some(geyser_plugin_config_files) = geyser_plugin_config_files {
                 let (confirmed_bank_sender, confirmed_bank_receiver) = unbounded();
                 bank_notification_senders.push(confirmed_bank_sender);
                 let rpc_to_plugin_manager_receiver_and_exit =
@@ -582,7 +602,8 @@ impl Validator {
                 Some(
                     GeyserPluginService::new_with_receiver(
                         confirmed_bank_receiver,
-                        geyser_plugin_config_files,
+                        config.geyser_plugin_always_enabled,
+                        geyser_plugin_config_files.as_ref(),
                         rpc_to_plugin_manager_receiver_and_exit,
                     )
                     .map_err(|err| {
@@ -604,14 +625,6 @@ impl Validator {
 
         for cluster_entrypoint in &cluster_entrypoints {
             info!("entrypoint: {:?}", cluster_entrypoint);
-        }
-
-        if rayon::ThreadPoolBuilder::new()
-            .thread_name(|i| format!("solRayonGlob{i:02}"))
-            .build_global()
-            .is_err()
-        {
-            warn!("Rayon global thread pool already initialized");
         }
 
         if solana_perf::perf_libs::api().is_some() {
@@ -866,16 +879,6 @@ impl Validator {
             "Using: block-verification-method: {}, block-production-method: {}",
             config.block_verification_method, config.block_production_method
         );
-        if matches!(
-            config.block_production_method,
-            BlockProductionMethod::ThreadLocalMultiIterator
-        ) {
-            warn!(
-                "--block-production-method thread-local-multi-iterator is deprecated \
-                   and will be removed in a future release. Please use \
-                   --block-production-method=central-scheduler instead."
-            );
-        }
 
         let (replay_vote_sender, replay_vote_receiver) = unbounded();
 
@@ -1457,7 +1460,7 @@ impl Validator {
         .map_err(ValidatorError::Other)?;
 
         if in_wen_restart {
-            info!("Waiting for wen_restart phase one to finish");
+            info!("Waiting for wen_restart to finish");
             wait_for_wen_restart(WenRestartConfig {
                 wen_restart_path: config.wen_restart_proto_path.clone().unwrap(),
                 wen_restart_coordinator: config.wen_restart_coordinator.unwrap(),
@@ -1488,6 +1491,7 @@ impl Validator {
                 broadcast: node.sockets.broadcast,
                 transactions_quic: node.sockets.tpu_quic,
                 transactions_forwards_quic: node.sockets.tpu_forwards_quic,
+                vote_quic: node.sockets.tpu_vote_quic,
             },
             &rpc_subscriptions,
             transaction_status_sender,
@@ -1883,15 +1887,6 @@ fn post_process_restored_tower(
     Ok(restored_tower)
 }
 
-fn blockstore_options_from_config(config: &ValidatorConfig) -> BlockstoreOptions {
-    BlockstoreOptions {
-        recovery_mode: config.wal_recovery_mode.clone(),
-        column_options: config.ledger_column_options.clone(),
-        enforce_ulimit_nofile: config.enforce_ulimit_nofile,
-        ..BlockstoreOptions::default()
-    }
-}
-
 fn load_genesis(
     config: &ValidatorConfig,
     ledger_path: &Path,
@@ -1952,7 +1947,7 @@ fn load_blockstore(
     *start_progress.write().unwrap() = ValidatorStartProgress::LoadingLedger;
 
     let mut blockstore =
-        Blockstore::open_with_options(ledger_path, blockstore_options_from_config(config))
+        Blockstore::open_with_options(ledger_path, config.blockstore_options.clone())
             .map_err(|err| format!("Failed to open Blockstore: {err:?}"))?;
 
     let (ledger_signal_sender, ledger_signal_receiver) = bounded(MAX_REPLAY_WAKE_UP_SIGNALS);
@@ -1974,9 +1969,7 @@ fn load_blockstore(
         halt_at_slot,
         new_hard_forks: config.new_hard_forks.clone(),
         debug_keys: config.debug_keys.clone(),
-        account_indexes: config.account_indexes.clone(),
         accounts_db_config: config.accounts_db_config.clone(),
-        shrink_ratio: config.accounts_shrink_ratio,
         accounts_db_test_hash_calculation: config.accounts_db_test_hash_calculation,
         accounts_db_skip_shrink: config.accounts_db_skip_shrink,
         accounts_db_force_initial_clean: config.accounts_db_force_initial_clean,
@@ -2380,17 +2373,11 @@ fn cleanup_blockstore_incorrect_shred_versions(
     // not critical, so swallow errors from backup blockstore operations.
     let backup_folder = format!(
         "{}_backup_{}_{}_{}",
-        config
-            .ledger_column_options
-            .shred_storage_type
-            .blockstore_directory(),
-        incorrect_shred_version,
-        start_slot,
-        end_slot
+        BLOCKSTORE_DIRECTORY_ROCKS_LEVEL, incorrect_shred_version, start_slot, end_slot
     );
     match Blockstore::open_with_options(
         &blockstore.ledger_path().join(backup_folder),
-        blockstore_options_from_config(config),
+        config.blockstore_options.clone(),
     ) {
         Ok(backup_blockstore) => {
             info!("Backing up slots from {start_slot} to {end_slot}");

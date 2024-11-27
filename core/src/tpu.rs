@@ -38,9 +38,9 @@ use {
     },
     solana_sdk::{clock::Slot, pubkey::Pubkey, quic::NotifyKeyUpdate, signature::Keypair},
     solana_streamer::{
-        nonblocking::quic::{DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_WAIT_FOR_CHUNK_TIMEOUT},
         quic::{
-            spawn_server_multi, SpawnServerResult, MAX_STAKED_CONNECTIONS, MAX_UNSTAKED_CONNECTIONS,
+            spawn_server_multi, QuicServerParams, SpawnServerResult, MAX_STAKED_CONNECTIONS,
+            MAX_UNSTAKED_CONNECTIONS,
         },
         streamer::StakedNodes,
     },
@@ -66,6 +66,7 @@ pub struct TpuSockets {
     pub broadcast: Vec<UdpSocket>,
     pub transactions_quic: Vec<UdpSocket>,
     pub transactions_forwards_quic: Vec<UdpSocket>,
+    pub vote_quic: Vec<UdpSocket>,
 }
 
 pub struct Tpu {
@@ -80,6 +81,7 @@ pub struct Tpu {
     tpu_entry_notifier: Option<TpuEntryNotifier>,
     staked_nodes_updater_service: StakedNodesUpdaterService,
     tracer_thread_hdl: TracerThread,
+    tpu_vote_quic_t: thread::JoinHandle<()>,
 }
 
 impl Tpu {
@@ -130,6 +132,7 @@ impl Tpu {
             broadcast: broadcast_sockets,
             transactions_quic: transactions_quic_sockets,
             transactions_forwards_quic: transactions_forwards_quic_sockets,
+            vote_quic: tpu_vote_quic_sockets,
         } = sockets;
 
         let (packet_sender, packet_receiver) = unbounded();
@@ -166,6 +169,32 @@ impl Tpu {
             gossip_vote_receiver,
         } = banking_tracer.create_channels(unified_scheduler_pool.as_ref());
 
+        // Streamer for Votes:
+        let SpawnServerResult {
+            endpoints: _,
+            thread: tpu_vote_quic_t,
+            key_updater: vote_streamer_key_updater,
+        } = spawn_server_multi(
+            "solQuicTVo",
+            "quic_streamer_tpu_vote",
+            tpu_vote_quic_sockets,
+            keypair,
+            vote_packet_sender.clone(),
+            exit.clone(),
+            staked_nodes.clone(),
+            QuicServerParams {
+                max_connections_per_peer: 1,
+                max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
+                coalesce: tpu_coalesce,
+                max_staked_connections: MAX_STAKED_CONNECTIONS
+                    .saturating_add(MAX_UNSTAKED_CONNECTIONS),
+                max_unstaked_connections: 0,
+                ..QuicServerParams::default()
+            },
+        )
+        .unwrap();
+
+        // Streamer for TPU
         let SpawnServerResult {
             endpoints: _,
             thread: tpu_quic_t,
@@ -177,17 +206,17 @@ impl Tpu {
             keypair,
             packet_sender,
             exit.clone(),
-            MAX_QUIC_CONNECTIONS_PER_PEER,
             staked_nodes.clone(),
-            MAX_STAKED_CONNECTIONS,
-            MAX_UNSTAKED_CONNECTIONS,
-            DEFAULT_MAX_STREAMS_PER_MS,
-            tpu_max_connections_per_ipaddr_per_minute,
-            DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
-            tpu_coalesce,
+            QuicServerParams {
+                max_connections_per_peer: MAX_QUIC_CONNECTIONS_PER_PEER,
+                max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
+                coalesce: tpu_coalesce,
+                ..QuicServerParams::default()
+            },
         )
         .unwrap();
 
+        // Streamer for TPU forward
         let SpawnServerResult {
             endpoints: _,
             thread: tpu_forwards_quic_t,
@@ -199,14 +228,16 @@ impl Tpu {
             keypair,
             forwarded_packet_sender,
             exit.clone(),
-            MAX_QUIC_CONNECTIONS_PER_PEER,
             staked_nodes.clone(),
-            MAX_STAKED_CONNECTIONS.saturating_add(MAX_UNSTAKED_CONNECTIONS),
-            0, // Prevent unstaked nodes from forwarding transactions
-            DEFAULT_MAX_STREAMS_PER_MS,
-            tpu_max_connections_per_ipaddr_per_minute,
-            DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
-            tpu_coalesce,
+            QuicServerParams {
+                max_connections_per_peer: MAX_QUIC_CONNECTIONS_PER_PEER,
+                max_staked_connections: MAX_STAKED_CONNECTIONS
+                    .saturating_add(MAX_UNSTAKED_CONNECTIONS),
+                max_unstaked_connections: 0, // Prevent unstaked nodes from forwarding transactions
+                max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
+                coalesce: tpu_coalesce,
+                ..QuicServerParams::default()
+            },
         )
         .unwrap();
 
@@ -297,8 +328,9 @@ impl Tpu {
                 tpu_entry_notifier,
                 staked_nodes_updater_service,
                 tracer_thread_hdl,
+                tpu_vote_quic_t,
             },
-            vec![key_updater, forwards_key_updater],
+            vec![key_updater, forwards_key_updater, vote_streamer_key_updater],
         )
     }
 
@@ -312,6 +344,7 @@ impl Tpu {
             self.staked_nodes_updater_service.join(),
             self.tpu_quic_t.join(),
             self.tpu_forwards_quic_t.join(),
+            self.tpu_vote_quic_t.join(),
         ];
         let broadcast_result = self.broadcast_stage.join();
         for result in results {

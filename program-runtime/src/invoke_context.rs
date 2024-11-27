@@ -8,7 +8,10 @@ use {
         sysvar_cache::SysvarCache,
     },
     solana_compute_budget::compute_budget::ComputeBudget,
-    solana_feature_set::{move_precompile_verification_to_svm, FeatureSet},
+    solana_feature_set::{
+        lift_cpi_caller_restriction, move_precompile_verification_to_svm,
+        remove_accounts_executable_flag_checks, FeatureSet,
+    },
     solana_log_collector::{ic_msg, LogCollector},
     solana_measure::measure::Measure,
     solana_rbpf::{
@@ -37,7 +40,6 @@ use {
     },
     solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_type_overrides::sync::{atomic::Ordering, Arc},
-    solana_vote::vote_account::VoteAccountsHashMap,
     std::{
         alloc::Layout,
         cell::RefCell,
@@ -147,27 +149,27 @@ impl BpfAllocator {
 
 pub struct EnvironmentConfig<'a> {
     pub blockhash: Hash,
-    epoch_total_stake: Option<u64>,
-    epoch_vote_accounts: Option<&'a VoteAccountsHashMap>,
+    pub blockhash_lamports_per_signature: u64,
+    epoch_total_stake: u64,
+    get_epoch_vote_account_stake_callback: &'a dyn Fn(&'a Pubkey) -> u64,
     pub feature_set: Arc<FeatureSet>,
-    pub lamports_per_signature: u64,
     sysvar_cache: &'a SysvarCache,
 }
 impl<'a> EnvironmentConfig<'a> {
     pub fn new(
         blockhash: Hash,
-        epoch_total_stake: Option<u64>,
-        epoch_vote_accounts: Option<&'a VoteAccountsHashMap>,
+        blockhash_lamports_per_signature: u64,
+        epoch_total_stake: u64,
+        get_epoch_vote_account_stake_callback: &'a dyn Fn(&'a Pubkey) -> u64,
         feature_set: Arc<FeatureSet>,
-        lamports_per_signature: u64,
         sysvar_cache: &'a SysvarCache,
     ) -> Self {
         Self {
             blockhash,
+            blockhash_lamports_per_signature,
             epoch_total_stake,
-            epoch_vote_accounts,
+            get_epoch_vote_account_stake_callback,
             feature_set,
-            lamports_per_signature,
             sysvar_cache,
         }
     }
@@ -427,23 +429,38 @@ impl<'a> InvokeContext<'a> {
 
         // Find and validate executables / program accounts
         let callee_program_id = instruction.program_id;
-        let program_account_index = instruction_context
-            .find_index_of_instruction_account(self.transaction_context, &callee_program_id)
-            .ok_or_else(|| {
-                ic_msg!(self, "Unknown program {}", callee_program_id);
-                InstructionError::MissingAccount
-            })?;
-        let borrowed_program_account = instruction_context
-            .try_borrow_instruction_account(self.transaction_context, program_account_index)?;
-        if !borrowed_program_account.is_executable() {
-            ic_msg!(self, "Account {} is not executable", callee_program_id);
-            return Err(InstructionError::AccountNotExecutable);
-        }
+        let program_account_index = if self
+            .get_feature_set()
+            .is_active(&lift_cpi_caller_restriction::id())
+        {
+            self.transaction_context
+                .find_index_of_program_account(&callee_program_id)
+                .ok_or_else(|| {
+                    ic_msg!(self, "Unknown program {}", callee_program_id);
+                    InstructionError::MissingAccount
+                })?
+        } else {
+            let program_account_index = instruction_context
+                .find_index_of_instruction_account(self.transaction_context, &callee_program_id)
+                .ok_or_else(|| {
+                    ic_msg!(self, "Unknown program {}", callee_program_id);
+                    InstructionError::MissingAccount
+                })?;
+            let borrowed_program_account = instruction_context
+                .try_borrow_instruction_account(self.transaction_context, program_account_index)?;
+            #[allow(deprecated)]
+            if !self
+                .get_feature_set()
+                .is_active(&remove_accounts_executable_flag_checks::id())
+                && !borrowed_program_account.is_executable()
+            {
+                ic_msg!(self, "Account {} is not executable", callee_program_id);
+                return Err(InstructionError::AccountNotExecutable);
+            }
+            borrowed_program_account.get_index_in_transaction()
+        };
 
-        Ok((
-            instruction_accounts,
-            vec![borrowed_program_account.get_index_in_transaction()],
-        ))
+        Ok((instruction_accounts, vec![program_account_index]))
     }
 
     /// Processes an instruction and returns how many compute units were used
@@ -640,13 +657,15 @@ impl<'a> InvokeContext<'a> {
     }
 
     /// Get cached epoch total stake.
-    pub fn get_epoch_total_stake(&self) -> Option<u64> {
+    pub fn get_epoch_total_stake(&self) -> u64 {
         self.environment_config.epoch_total_stake
     }
 
-    /// Get cached epoch vote accounts.
-    pub fn get_epoch_vote_accounts(&self) -> Option<&VoteAccountsHashMap> {
-        self.environment_config.epoch_vote_accounts
+    /// Get cached stake for the epoch vote account.
+    pub fn get_epoch_vote_account_stake(&self, pubkey: &'a Pubkey) -> u64 {
+        (self
+            .environment_config
+            .get_epoch_vote_account_stake_callback)(pubkey)
     }
 
     // Should alignment be enforced during user pointer translation
@@ -746,10 +765,10 @@ macro_rules! with_mock_invoke_context {
         });
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
-            None,
-            None,
-            Arc::new(FeatureSet::all_enabled()),
             0,
+            0,
+            &|_| 0,
+            Arc::new(FeatureSet::all_enabled()),
             &sysvar_cache,
         );
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();

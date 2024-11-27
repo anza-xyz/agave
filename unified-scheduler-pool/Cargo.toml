@@ -15,7 +15,7 @@ assert_matches = { workspace = true }
 cpu-time = "1.0.0"
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true }
-derivative = { workspace = true }
+derive-where = { workspace = true }
 derive_more = { workspace = true }
 dyn-clone = "1.0.17"
 enum-ptr = "0.2.0"
@@ -28,6 +28,7 @@ solana-perf = { workspace = true }
 solana-poh = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-runtime = { workspace = true }
+solana-runtime-transaction = { workspace = true }
 solana-sdk = { workspace = true }
 solana-svm = { workspace = true }
 solana-timings = { workspace = true }

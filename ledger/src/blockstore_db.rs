@@ -9,9 +9,7 @@ use {
             PERF_METRIC_OP_NAME_MULTI_GET, PERF_METRIC_OP_NAME_PUT,
             PERF_METRIC_OP_NAME_WRITE_BATCH,
         },
-        blockstore_options::{
-            AccessType, BlockstoreOptions, LedgerColumnOptions, ShredStorageType,
-        },
+        blockstore_options::{AccessType, BlockstoreOptions, LedgerColumnOptions},
     },
     bincode::{deserialize, serialize},
     byteorder::{BigEndian, ByteOrder},
@@ -22,9 +20,8 @@ use {
         compaction_filter::CompactionFilter,
         compaction_filter_factory::{CompactionFilterContext, CompactionFilterFactory},
         properties as RocksProperties, ColumnFamily, ColumnFamilyDescriptor, CompactionDecision,
-        DBCompactionStyle, DBCompressionType, DBIterator, DBPinnableSlice, DBRawIterator,
-        FifoCompactOptions, IteratorMode as RocksIteratorMode, LiveFile, Options,
-        WriteBatch as RWriteBatch, DB,
+        DBCompressionType, DBIterator, DBPinnableSlice, DBRawIterator,
+        IteratorMode as RocksIteratorMode, LiveFile, Options, WriteBatch as RWriteBatch, DB,
     },
     serde::{de::DeserializeOwned, Serialize},
     solana_accounts_db::hardened_unpack::UnpackError,
@@ -35,7 +32,7 @@ use {
     },
     solana_storage_proto::convert::generated,
     std::{
-        collections::{HashMap, HashSet},
+        collections::HashSet,
         ffi::{CStr, CString},
         fs,
         marker::PhantomData,
@@ -51,7 +48,6 @@ use {
 const BLOCKSTORE_METRICS_ERROR: i64 = -1;
 
 const MAX_WRITE_BUFFER_SIZE: u64 = 256 * 1024 * 1024; // 256MB
-const FIFO_WRITE_BUFFER_SIZE: u64 = 2 * MAX_WRITE_BUFFER_SIZE;
 
 // SST files older than this value will be picked up for compaction. This value
 // was chosen to be one day to strike a balance between storage getting
@@ -480,8 +476,6 @@ impl Rocks {
     ) -> Vec<ColumnFamilyDescriptor> {
         use columns::*;
 
-        let (cf_descriptor_shred_data, cf_descriptor_shred_code) =
-            new_cf_descriptor_pair_shreds::<ShredData, ShredCode>(options, oldest_slot);
         let mut cf_descriptors = vec![
             new_cf_descriptor::<SlotMeta>(options, oldest_slot),
             new_cf_descriptor::<DeadSlots>(options, oldest_slot),
@@ -491,8 +485,8 @@ impl Rocks {
             new_cf_descriptor::<BankHash>(options, oldest_slot),
             new_cf_descriptor::<Root>(options, oldest_slot),
             new_cf_descriptor::<Index>(options, oldest_slot),
-            cf_descriptor_shred_data,
-            cf_descriptor_shred_code,
+            new_cf_descriptor::<ShredData>(options, oldest_slot),
+            new_cf_descriptor::<ShredCode>(options, oldest_slot),
             new_cf_descriptor::<TransactionStatus>(options, oldest_slot),
             new_cf_descriptor::<AddressSignatures>(options, oldest_slot),
             new_cf_descriptor::<TransactionMemos>(options, oldest_slot),
@@ -1405,9 +1399,25 @@ impl<C: Column + ColumnName> LedgerColumn<C> {
     }
 }
 
-pub struct WriteBatch<'a> {
+pub struct WriteBatch {
     write_batch: RWriteBatch,
-    map: HashMap<&'static str, &'a ColumnFamily>,
+}
+
+impl WriteBatch {
+    fn put_cf(&mut self, cf: &ColumnFamily, key: &[u8], value: &[u8]) -> Result<()> {
+        self.write_batch.put_cf(cf, key, value);
+        Ok(())
+    }
+
+    fn delete_cf(&mut self, cf: &ColumnFamily, key: &[u8]) -> Result<()> {
+        self.write_batch.delete_cf(cf, key);
+        Ok(())
+    }
+
+    fn delete_range_cf(&mut self, cf: &ColumnFamily, from: &[u8], to: &[u8]) -> Result<()> {
+        self.write_batch.delete_range_cf(cf, from, to);
+        Ok(())
+    }
 }
 
 impl Database {
@@ -1426,36 +1436,6 @@ impl Database {
         Rocks::destroy(path)?;
 
         Ok(())
-    }
-
-    pub fn get<C>(&self, key: C::Index) -> Result<Option<C::Type>>
-    where
-        C: TypedColumn + ColumnName,
-    {
-        if let Some(pinnable_slice) = self
-            .backend
-            .get_pinned_cf(self.cf_handle::<C>(), &C::key(key))?
-        {
-            let value = deserialize(pinnable_slice.as_ref())?;
-            Ok(Some(value))
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub fn iter<C>(
-        &self,
-        iterator_mode: IteratorMode<C::Index>,
-    ) -> Result<impl Iterator<Item = (C::Index, Box<[u8]>)> + '_>
-    where
-        C: Column + ColumnName,
-    {
-        let cf = self.cf_handle::<C>();
-        let iter = self.backend.iterator_cf::<C>(cf, iterator_mode);
-        Ok(iter.map(|pair| {
-            let (key, value) = pair.unwrap();
-            (C::index(&key), value)
-        }))
     }
 
     #[inline]
@@ -1486,12 +1466,7 @@ impl Database {
 
     pub fn batch(&self) -> Result<WriteBatch> {
         let write_batch = self.backend.batch();
-        let map = Rocks::columns()
-            .into_iter()
-            .map(|desc| (desc, self.backend.cf_handle(desc)))
-            .collect();
-
-        Ok(WriteBatch { write_batch, map })
+        Ok(WriteBatch { write_batch })
     }
 
     pub fn write(&self, batch: WriteBatch) -> Result<()> {
@@ -1500,37 +1475,6 @@ impl Database {
 
     pub fn storage_size(&self) -> Result<u64> {
         Ok(fs_extra::dir::get_size(&self.path)?)
-    }
-
-    /// Adds a \[`from`, `to`\] range that deletes all entries between the `from` slot
-    /// and `to` slot inclusively.  If `from` slot and `to` slot are the same, then all
-    /// entries in that slot will be removed.
-    ///
-    pub fn delete_range_cf<C>(&self, batch: &mut WriteBatch, from: Slot, to: Slot) -> Result<()>
-    where
-        C: Column + ColumnName,
-    {
-        let cf = self.cf_handle::<C>();
-        // Note that the default behavior of rocksdb's delete_range_cf deletes
-        // files within [from, to), while our purge logic applies to [from, to].
-        //
-        // For consistency, we make our delete_range_cf works for [from, to] by
-        // adjusting the `to` slot range by 1.
-        let from_index = C::as_index(from);
-        let to_index = C::as_index(to.saturating_add(1));
-        batch.delete_range_cf::<C>(cf, from_index, to_index)
-    }
-
-    /// Delete files whose slot range is within \[`from`, `to`\].
-    pub fn delete_file_in_range_cf<C>(&self, from: Slot, to: Slot) -> Result<()>
-    where
-        C: Column + ColumnName,
-    {
-        self.backend.delete_file_in_range_cf(
-            self.cf_handle::<C>(),
-            &C::key(C::as_index(from)),
-            &C::key(C::as_index(to)),
-        )
     }
 
     pub fn is_primary_access(&self) -> bool {
@@ -1657,6 +1601,16 @@ where
         result
     }
 
+    pub fn put_bytes_in_batch(
+        &self,
+        batch: &mut WriteBatch,
+        key: C::Index,
+        value: &[u8],
+    ) -> Result<()> {
+        let key = C::key(key);
+        batch.put_cf(self.handle(), &key, value)
+    }
+
     /// Retrieves the specified RocksDB integer property of the current
     /// column family.
     ///
@@ -1681,6 +1635,40 @@ where
             );
         }
         result
+    }
+
+    pub fn delete_in_batch(&self, batch: &mut WriteBatch, key: C::Index) -> Result<()> {
+        let key = C::key(key);
+        batch.delete_cf(self.handle(), &key)
+    }
+
+    /// Adds a \[`from`, `to`\] range that deletes all entries between the `from` slot
+    /// and `to` slot inclusively.  If `from` slot and `to` slot are the same, then all
+    /// entries in that slot will be removed.
+    pub fn delete_range_in_batch(&self, batch: &mut WriteBatch, from: Slot, to: Slot) -> Result<()>
+    where
+        C: Column + ColumnName,
+    {
+        // Note that the default behavior of rocksdb's delete_range_cf deletes
+        // files within [from, to), while our purge logic applies to [from, to].
+        //
+        // For consistency, we make our delete_range_cf works for [from, to] by
+        // adjusting the `to` slot range by 1.
+        let from_key = C::key(C::as_index(from));
+        let to_key = C::key(C::as_index(to.saturating_add(1)));
+        batch.delete_range_cf(self.handle(), &from_key, &to_key)
+    }
+
+    /// Delete files whose slot range is within \[`from`, `to`\].
+    pub fn delete_file_in_range(&self, from: Slot, to: Slot) -> Result<()>
+    where
+        C: Column + ColumnName,
+    {
+        self.backend.delete_file_in_range_cf(
+            self.handle(),
+            &C::key(C::as_index(from)),
+            &C::key(C::as_index(to)),
+        )
     }
 }
 
@@ -1763,6 +1751,17 @@ where
             );
         }
         result
+    }
+
+    pub fn put_in_batch(
+        &self,
+        batch: &mut WriteBatch,
+        key: C::Index,
+        value: &C::Type,
+    ) -> Result<()> {
+        let key = C::key(key);
+        let serialized_value = serialize(value)?;
+        batch.put_cf(self.handle(), &key, &serialized_value)
     }
 }
 
@@ -1887,55 +1886,14 @@ where
                 .map(|index| (index, value))
         }))
     }
-}
 
-impl<'a> WriteBatch<'a> {
-    pub fn put_bytes<C: Column + ColumnName>(&mut self, key: C::Index, bytes: &[u8]) -> Result<()> {
-        self.write_batch
-            .put_cf(self.get_cf::<C>(), C::key(key), bytes);
-        Ok(())
-    }
-
-    pub fn delete<C: Column + ColumnName>(&mut self, key: C::Index) -> Result<()> {
-        self.delete_raw::<C>(&C::key(key))
-    }
-
-    pub(crate) fn delete_raw<C: Column + ColumnName>(&mut self, key: &[u8]) -> Result<()> {
-        self.write_batch.delete_cf(self.get_cf::<C>(), key);
-        Ok(())
-    }
-
-    pub fn put<C: TypedColumn + ColumnName>(
-        &mut self,
-        key: C::Index,
-        value: &C::Type,
+    pub(crate) fn delete_deprecated_in_batch(
+        &self,
+        batch: &mut WriteBatch,
+        key: C::DeprecatedIndex,
     ) -> Result<()> {
-        let serialized_value = serialize(&value)?;
-        self.write_batch
-            .put_cf(self.get_cf::<C>(), C::key(key), serialized_value);
-        Ok(())
-    }
-
-    #[inline]
-    fn get_cf<C: Column + ColumnName>(&self) -> &'a ColumnFamily {
-        self.map[C::NAME]
-    }
-
-    /// Adds a \[`from`, `to`) range deletion entry to the batch.
-    ///
-    /// Note that the \[`from`, `to`) deletion range of WriteBatch::delete_range_cf
-    /// is different from \[`from`, `to`\] of Database::delete_range_cf as we makes
-    /// the semantics of Database::delete_range_cf matches the blockstore purge
-    /// logic.
-    fn delete_range_cf<C: Column>(
-        &mut self,
-        cf: &ColumnFamily,
-        from: C::Index,
-        to: C::Index, // exclusive
-    ) -> Result<()> {
-        self.write_batch
-            .delete_range_cf(cf, C::key(from), C::key(to));
-        Ok(())
+        let key = C::deprecated_key(key);
+        batch.delete_cf(self.handle(), &key)
     }
 }
 
@@ -2056,93 +2014,6 @@ fn process_cf_options_advanced<C: 'static + Column + ColumnName>(
                 .to_rocksdb_compression_type(),
         );
     }
-}
-
-/// Creates and returns the column family descriptors for both data shreds and
-/// coding shreds column families.
-///
-/// @return a pair of ColumnFamilyDescriptor where the first / second elements
-/// are associated to the first / second template class respectively.
-fn new_cf_descriptor_pair_shreds<
-    D: 'static + Column + ColumnName, // Column Family for Data Shred
-    C: 'static + Column + ColumnName, // Column Family for Coding Shred
->(
-    options: &BlockstoreOptions,
-    oldest_slot: &OldestSlot,
-) -> (ColumnFamilyDescriptor, ColumnFamilyDescriptor) {
-    match &options.column_options.shred_storage_type {
-        ShredStorageType::RocksLevel => (
-            new_cf_descriptor::<D>(options, oldest_slot),
-            new_cf_descriptor::<C>(options, oldest_slot),
-        ),
-        ShredStorageType::RocksFifo(fifo_options) => (
-            new_cf_descriptor_fifo::<D>(&fifo_options.shred_data_cf_size, &options.column_options),
-            new_cf_descriptor_fifo::<C>(&fifo_options.shred_code_cf_size, &options.column_options),
-        ),
-    }
-}
-
-fn new_cf_descriptor_fifo<C: 'static + Column + ColumnName>(
-    max_cf_size: &u64,
-    column_options: &LedgerColumnOptions,
-) -> ColumnFamilyDescriptor {
-    if *max_cf_size > FIFO_WRITE_BUFFER_SIZE {
-        ColumnFamilyDescriptor::new(
-            C::NAME,
-            get_cf_options_fifo::<C>(max_cf_size, column_options),
-        )
-    } else {
-        panic!(
-            "{} cf_size must be greater than write buffer size {} when using \
-             ShredStorageType::RocksFifo.",
-            C::NAME,
-            FIFO_WRITE_BUFFER_SIZE
-        );
-    }
-}
-
-/// Returns the RocksDB Column Family Options which use FIFO Compaction.
-///
-/// Note that this CF options is optimized for workloads which write-keys
-/// are mostly monotonically increasing over time.  For workloads where
-/// write-keys do not follow any order in general should use get_cf_options
-/// instead.
-///
-/// - [`max_cf_size`]: the maximum allowed column family size.  Note that
-///   rocksdb will start deleting the oldest SST file when the column family
-///   size reaches `max_cf_size` - `FIFO_WRITE_BUFFER_SIZE` to strictly
-///   maintain the size limit.
-fn get_cf_options_fifo<C: 'static + Column + ColumnName>(
-    max_cf_size: &u64,
-    column_options: &LedgerColumnOptions,
-) -> Options {
-    let mut options = Options::default();
-
-    options.set_max_write_buffer_number(8);
-    options.set_write_buffer_size(FIFO_WRITE_BUFFER_SIZE as usize);
-    // FIFO always has its files in L0 so we only have one level.
-    options.set_num_levels(1);
-    // Since FIFO puts all its file in L0, it is suggested to have unlimited
-    // number of open files.  The actual total number of open files will
-    // be close to max_cf_size / write_buffer_size.
-    options.set_max_open_files(-1);
-
-    let mut fifo_compact_options = FifoCompactOptions::default();
-
-    // Note that the following actually specifies size trigger for deleting
-    // the oldest SST file instead of specifying the size limit as its name
-    // might suggest.  As a result, we should trigger the file deletion when
-    // the size reaches `max_cf_size - write_buffer_size` in order to correctly
-    // maintain the storage size limit.
-    fifo_compact_options
-        .set_max_table_files_size((*max_cf_size).saturating_sub(FIFO_WRITE_BUFFER_SIZE));
-
-    options.set_compaction_style(DBCompactionStyle::Fifo);
-    options.set_fifo_compaction_options(&fifo_compact_options);
-
-    process_cf_options_advanced::<C>(&mut options, column_options);
-
-    options
 }
 
 fn get_db_options(access_type: &AccessType) -> Options {

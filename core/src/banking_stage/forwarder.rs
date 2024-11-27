@@ -19,7 +19,8 @@ use {
     solana_perf::{data_budget::DataBudget, packet::Packet},
     solana_poh::poh_recorder::PohRecorder,
     solana_runtime::bank_forks::BankForks,
-    solana_sdk::{pubkey::Pubkey, transaction::SanitizedTransaction, transport::TransportError},
+    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
+    solana_sdk::{pubkey::Pubkey, transport::TransportError},
     solana_streamer::sendmmsg::batch_send,
     std::{
         iter::repeat,
@@ -64,7 +65,7 @@ impl<T: LikeClusterInfo> Forwarder<T> {
 
     pub fn try_add_packet(
         &mut self,
-        sanitized_transaction: &SanitizedTransaction,
+        sanitized_transaction: &impl TransactionWithMeta,
         immutable_packet: Arc<ImmutableDeserializedPacket>,
         feature_set: &FeatureSet,
     ) -> bool {

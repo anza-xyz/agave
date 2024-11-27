@@ -36,7 +36,7 @@
 extern crate self as solana_sdk;
 
 #[cfg(feature = "full")]
-pub use signer::signers;
+pub use solana_commitment_config as commitment_config;
 #[cfg(not(target_os = "solana"))]
 pub use solana_program::program_stubs;
 // These solana_program imports could be *-imported, but that causes a bunch of
@@ -58,51 +58,46 @@ pub use solana_program::{
 };
 #[cfg(feature = "borsh")]
 pub use solana_program::{borsh, borsh0_10, borsh1};
+#[cfg(feature = "full")]
+#[deprecated(since = "2.2.0", note = "Use `solana-signer` crate instead")]
+pub use solana_signer::signers;
 pub mod client;
-pub mod commitment_config;
-pub mod compute_budget;
-pub mod deserialize_utils;
-pub mod ed25519_instruction;
 pub mod entrypoint;
 pub mod entrypoint_deprecated;
-pub mod epoch_info;
 pub mod epoch_rewards_hasher;
 pub mod example_mocks;
 pub mod exit;
 pub mod feature;
-pub mod fee;
 pub mod genesis_config;
 pub mod hard_forks;
 pub mod hash;
-pub mod inflation;
 pub mod inner_instruction;
 pub mod log;
 pub mod native_loader;
 pub mod net;
 pub mod nonce_account;
 pub mod offchain_message;
-pub mod packet;
 pub mod poh_config;
 pub mod precompiles;
 pub mod program_utils;
 pub mod pubkey;
-pub mod quic;
 pub mod rent_collector;
-pub mod rent_debits;
-pub mod reserved_account_keys;
-pub mod reward_info;
-pub mod reward_type;
+#[deprecated(since = "2.2.0", note = "Use `solana-reward-info` crate instead")]
+pub mod reward_info {
+    pub use solana_reward_info::RewardInfo;
+}
+#[deprecated(since = "2.2.0", note = "Use `solana-reward-info` crate instead")]
+pub mod reward_type {
+    pub use solana_reward_info::RewardType;
+}
 pub mod rpc_port;
 pub mod scheduling;
-pub mod secp256k1_instruction;
 pub mod shred_version;
 pub mod signature;
 pub mod signer;
 pub mod simple_vote_transaction_checker;
 pub mod system_transaction;
-pub mod timing;
 pub mod transaction;
-pub mod transaction_context;
 pub mod transport;
 pub mod wasm;
 
@@ -115,12 +110,29 @@ pub use solana_account as account;
 pub use solana_account::state_traits as account_utils;
 #[deprecated(since = "2.1.0", note = "Use `solana-bn254` crate instead")]
 pub use solana_bn254 as alt_bn128;
+#[deprecated(
+    since = "2.2.0",
+    note = "Use `solana-compute-budget-interface` crate instead"
+)]
+#[cfg(feature = "full")]
+pub use solana_compute_budget_interface as compute_budget;
 #[deprecated(since = "2.1.0", note = "Use `solana-decode-error` crate instead")]
 pub use solana_decode_error as decode_error;
 #[deprecated(since = "2.1.0", note = "Use `solana-derivation-path` crate instead")]
 pub use solana_derivation_path as derivation_path;
+#[cfg(feature = "full")]
+#[deprecated(since = "2.2.0", note = "Use `solana-ed25519-program` crate instead")]
+pub use solana_ed25519_program as ed25519_instruction;
+#[deprecated(since = "2.2.0", note = "Use `solana-epoch-info` crate instead")]
+pub use solana_epoch_info as epoch_info;
 #[deprecated(since = "2.1.0", note = "Use `solana-feature-set` crate instead")]
 pub use solana_feature_set as feature_set;
+#[deprecated(since = "2.2.0", note = "Use `solana-fee-structure` crate instead")]
+pub use solana_fee_structure as fee;
+#[deprecated(since = "2.1.0", note = "Use `solana-inflation` crate instead")]
+pub use solana_inflation as inflation;
+#[deprecated(since = "2.1.0", note = "Use `solana-packet` crate instead")]
+pub use solana_packet as packet;
 #[deprecated(since = "2.1.0", note = "Use `solana-program-memory` crate instead")]
 pub use solana_program_memory as program_memory;
 #[deprecated(since = "2.1.0", note = "Use `solana_pubkey::pubkey` instead")]
@@ -140,6 +152,17 @@ pub use solana_program_memory as program_memory;
 /// assert_eq!(ID, my_id);
 /// ```
 pub use solana_pubkey::pubkey;
+#[cfg(feature = "full")]
+#[deprecated(since = "2.2.0", note = "Use `solana-quic-definitions` crate instead")]
+pub use solana_quic_definitions as quic;
+#[deprecated(since = "2.2.0", note = "Use `solana-rent-debits` crate instead")]
+pub use solana_rent_debits as rent_debits;
+#[cfg(feature = "full")]
+#[deprecated(
+    since = "2.2.0",
+    note = "Use `solana-reserved-account-keys` crate instead"
+)]
+pub use solana_reserved_account_keys as reserved_account_keys;
 #[deprecated(since = "2.1.0", note = "Use `solana-sanitize` crate instead")]
 pub use solana_sanitize as sanitize;
 /// Same as `declare_id` except report that this id has been deprecated.
@@ -168,12 +191,24 @@ pub use solana_sdk_macro::declare_deprecated_id;
 pub use solana_sdk_macro::declare_id;
 /// Convenience macro to define multiple static public keys.
 pub use solana_sdk_macro::pubkeys;
+#[deprecated(since = "2.2.0", note = "Use `solana-secp256k1-program` crate instead")]
+#[cfg(feature = "full")]
+pub use solana_secp256k1_program as secp256k1_instruction;
 #[deprecated(since = "2.1.0", note = "Use `solana-secp256k1-recover` crate instead")]
 pub use solana_secp256k1_recover as secp256k1_recover;
+#[deprecated(since = "2.2.0", note = "Use `solana-serde` crate instead")]
+pub use solana_serde as deserialize_utils;
 #[deprecated(since = "2.1.0", note = "Use `solana-serde-varint` crate instead")]
 pub use solana_serde_varint as serde_varint;
 #[deprecated(since = "2.1.0", note = "Use `solana-short-vec` crate instead")]
 pub use solana_short_vec as short_vec;
+#[deprecated(since = "2.2.0", note = "Use `solana-time-utils` crate instead")]
+pub use solana_time_utils as timing;
+#[deprecated(
+    since = "2.2.0",
+    note = "Use `solana-transaction-context` crate instead"
+)]
+pub use solana_transaction_context as transaction_context;
 
 /// Convenience macro for `AddAssign` with saturating arithmetic.
 /// Replace by `std::num::Saturating` once stable

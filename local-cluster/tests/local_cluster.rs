@@ -102,6 +102,7 @@ use {
 };
 
 #[test]
+#[serial]
 fn test_local_cluster_start_and_exit() {
     solana_logger::setup();
     let num_nodes = 1;
@@ -115,6 +116,7 @@ fn test_local_cluster_start_and_exit() {
 }
 
 #[test]
+#[serial]
 fn test_local_cluster_start_and_exit_with_config() {
     solana_logger::setup();
     const NUM_NODES: usize = 1;
@@ -1535,6 +1537,7 @@ fn test_fake_shreds_broadcast_leader() {
 }
 
 #[test]
+#[serial]
 fn test_wait_for_max_stake() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
     let validator_config = ValidatorConfig::default_for_test();
@@ -1543,9 +1546,16 @@ fn test_wait_for_max_stake() {
     // make a root and derive the new leader schedule in time.
     let stakers_slot_offset = slots_per_epoch.saturating_mul(MAX_LEADER_SCHEDULE_EPOCH_OFFSET);
     // Reduce this so that we can complete the test faster by advancing through
-    // slots/epochs faster. But don't make it too small because it can make us
-    // susceptible to skipped slots and the cluster getting stuck.
-    let ticks_per_slot = 16;
+    // slots/epochs faster. But don't make it too small because it can cause the
+    // test to fail in two important ways:
+    // 1. Increase likelihood of skipped slots, which can prevent rooting and
+    //    lead to not generating leader schedule in time and cluster getting
+    //    stuck.
+    // 2. Make the cluster advance through too many epochs before all the
+    //    validators spin up, which can lead to not properly observing gossip
+    //    votes, not repairing missing slots, and some subset of nodes getting
+    //    stuck.
+    let ticks_per_slot = 32;
     let num_validators = 4;
     let mut config = ClusterConfig {
         cluster_lamports: DEFAULT_CLUSTER_LAMPORTS,
@@ -1584,6 +1594,7 @@ fn test_wait_for_max_stake() {
 }
 
 #[test]
+#[serial]
 // Test that when a leader is leader for banks B_i..B_{i+n}, and B_i is not
 // votable, then B_{i+1} still chains to B_i
 fn test_no_voting() {
@@ -2083,6 +2094,7 @@ fn restart_whole_cluster_after_hard_fork(
 }
 
 #[test]
+#[serial]
 fn test_hard_fork_invalidates_tower() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
 
@@ -4372,18 +4384,37 @@ fn test_cluster_partition_1_1_1() {
     )
 }
 
-// Cluster needs a supermajority to remain, so the minimum size for this test is 4
 #[test]
 #[serial]
 fn test_leader_failure_4() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
     error!("test_leader_failure_4");
+    // Cluster needs a supermajority to remain even after taking 1 node offline,
+    // so the minimum number of nodes for this test is 4.
     let num_nodes = 4;
     let validator_config = ValidatorConfig::default_for_test();
+    // Embed vote and stake account in genesis to avoid waiting for stake
+    // activation and race conditions around accepting gossip votes, repairing
+    // blocks, etc. before we advance through too many epochs.
+    let validator_keys: Option<Vec<(Arc<Keypair>, bool)>> = Some(
+        (0..num_nodes)
+            .map(|_| (Arc::new(Keypair::new()), true))
+            .collect(),
+    );
+    // Skip the warmup slots because these short epochs can cause problems when
+    // bringing multiple fresh validators online that are pre-staked in genesis.
+    // The problems arise because we skip their leader slots while they're still
+    // starting up, experience partitioning, and can fail to generate leader
+    // schedules in time because the short epochs have the same slots per epoch
+    // as the total tower height, so any skipped slots can lead to not rooting,
+    // not generating leader schedule, and stalling the cluster.
+    let skip_warmup_slots = true;
     let mut config = ClusterConfig {
         cluster_lamports: DEFAULT_CLUSTER_LAMPORTS,
-        node_stakes: vec![DEFAULT_NODE_STAKE; 4],
+        node_stakes: vec![DEFAULT_NODE_STAKE; num_nodes],
         validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
+        validator_keys,
+        skip_warmup_slots,
         ..ClusterConfig::default()
     };
     let local = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
@@ -4429,6 +4460,7 @@ fn test_leader_failure_4() {
 // slot_hash expiry to 64 slots.
 
 #[test]
+#[serial]
 fn test_slot_hash_expiry() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
     solana_sdk::slot_hashes::set_entries_for_tests_only(64);
@@ -5296,7 +5328,7 @@ fn test_boot_from_local_state_missing_archive() {
 // 0
 //   \--- 2
 //
-// 1. > DUPLICATE_THRESHOLD of the nodes vote on some version of the the duplicate block 3,
+// 1. > DUPLICATE_THRESHOLD of the nodes vote on some version of the duplicate block 3,
 // but don't immediately duplicate confirm so they remove 3 from fork choice and reset PoH back to 1.
 // 2. All the votes on 3 don't land because there are no further blocks building off 3.
 // 3. Some < SWITCHING_THRESHOLD of nodes vote on 2, making it the heaviest fork because no votes on 3 landed

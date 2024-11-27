@@ -1,0 +1,17 @@
+# The SVM team is in the process of migrating these subdirectories to a new
+# repo and would like to avoid introducing dependencies in the meantime.
+/transaction-view/ @anza-xyz/svm
+/programs/bpf_loader/ @anza-xyz/svm
+/builtins-default-costs/ @anza-xyz/svm
+/compute-budget/ @anza-xyz/svm
+/programs/compute-budget/ @anza-xyz/svm
+/fee/ @anza-xyz/svm
+/programs/loader-v4/ @anza-xyz/svm
+/log-collector/ @anza-xyz/svm
+/program-runtime/ @anza-xyz/svm
+/runtime-transaction/ @anza-xyz/svm
+/svm/ @anza-xyz/svm
+/svm-conformance/ @anza-xyz/svm
+/svm-rent-collector/ @anza-xyz/svm
+/svm-transaction/ @anza-xyz/svm
+/programs/system/ @anza-xyz/svm

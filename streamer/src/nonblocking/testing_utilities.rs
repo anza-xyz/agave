@@ -6,7 +6,10 @@ use {
         DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
     },
     crate::{
-        quic::{StreamerStats, MAX_STAKED_CONNECTIONS, MAX_UNSTAKED_CONNECTIONS},
+        quic::{
+            QuicServerParams, StreamerStats, DEFAULT_TPU_COALESCE, MAX_STAKED_CONNECTIONS,
+            MAX_UNSTAKED_CONNECTIONS,
+        },
         streamer::StakedNodes,
         tls_certificates::new_dummy_x509_certificate,
     },
@@ -15,12 +18,9 @@ use {
         crypto::rustls::QuicClientConfig, ClientConfig, Connection, EndpointConfig, IdleTimeout,
         TokioRuntime, TransportConfig,
     },
+    solana_keypair::Keypair,
     solana_perf::packet::PacketBatch,
-    solana_sdk::{
-        net::DEFAULT_TPU_COALESCE,
-        quic::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT},
-        signer::keypair::Keypair,
-    },
+    solana_quic_definitions::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT},
     std::{
         net::{SocketAddr, UdpSocket},
         sync::{atomic::AtomicBool, Arc, RwLock},
@@ -111,7 +111,7 @@ pub struct TestServerConfig {
     pub max_staked_connections: usize,
     pub max_unstaked_connections: usize,
     pub max_streams_per_ms: u64,
-    pub max_connections_per_ipaddr_per_minute: u64,
+    pub max_connections_per_ipaddr_per_min: u64,
 }
 
 impl Default for TestServerConfig {
@@ -121,7 +121,7 @@ impl Default for TestServerConfig {
             max_staked_connections: MAX_STAKED_CONNECTIONS,
             max_unstaked_connections: MAX_UNSTAKED_CONNECTIONS,
             max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS,
-            max_connections_per_ipaddr_per_minute: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
+            max_connections_per_ipaddr_per_min: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
         }
     }
 }
@@ -176,7 +176,7 @@ pub fn setup_quic_server_with_sockets(
         max_staked_connections,
         max_unstaked_connections,
         max_streams_per_ms,
-        max_connections_per_ipaddr_per_minute,
+        max_connections_per_ipaddr_per_min,
     }: TestServerConfig,
 ) -> SpawnTestServerResult {
     let exit = Arc::new(AtomicBool::new(false));
@@ -184,6 +184,15 @@ pub fn setup_quic_server_with_sockets(
     let keypair = Keypair::new();
     let server_address = sockets[0].local_addr().unwrap();
     let staked_nodes = Arc::new(RwLock::new(option_staked_nodes.unwrap_or_default()));
+    let quic_server_params = QuicServerParams {
+        max_connections_per_peer,
+        max_staked_connections,
+        max_unstaked_connections,
+        max_streams_per_ms,
+        max_connections_per_ipaddr_per_min,
+        wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
+        coalesce: DEFAULT_TPU_COALESCE,
+    };
     let SpawnNonBlockingServerResult {
         endpoints: _,
         stats,
@@ -195,14 +204,8 @@ pub fn setup_quic_server_with_sockets(
         &keypair,
         sender,
         exit.clone(),
-        max_connections_per_peer,
         staked_nodes,
-        max_staked_connections,
-        max_unstaked_connections,
-        max_streams_per_ms,
-        max_connections_per_ipaddr_per_minute,
-        DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
-        DEFAULT_TPU_COALESCE,
+        quic_server_params,
     )
     .unwrap();
     SpawnTestServerResult {

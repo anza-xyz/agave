@@ -252,24 +252,54 @@ pub struct ReplayStageConfig {
     pub vote_account: Pubkey,
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
     pub exit: Arc<AtomicBool>,
-    pub rpc_subscriptions: Arc<RpcSubscriptions>,
-    pub slot_status_notifier: Option<SlotStatusNotifier>,
     pub leader_schedule_cache: Arc<LeaderScheduleCache>,
-    pub accounts_background_request_sender: AbsRequestSender,
     pub block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
-    pub transaction_status_sender: Option<TransactionStatusSender>,
-    pub rewards_recorder_sender: Option<RewardsRecorderSender>,
-    pub cache_block_meta_sender: Option<CacheBlockMetaSender>,
-    pub entry_notification_sender: Option<EntryNotifierSender>,
-    pub bank_notification_sender: Option<BankNotificationSenderConfig>,
     pub wait_for_vote_to_start_leader: bool,
-    pub ancestor_hashes_replay_update_sender: AncestorHashesReplayUpdateSender,
     pub tower_storage: Arc<dyn TowerStorage>,
     // Stops voting until this slot has been reached. Should be used to avoid
     // duplicate voting which can lead to slashing.
     pub wait_to_vote_slot: Option<Slot>,
     pub replay_forks_threads: NonZeroUsize,
     pub replay_transactions_threads: NonZeroUsize,
+    pub blockstore: Arc<Blockstore>,
+    pub bank_forks: Arc<RwLock<BankForks>>,
+    pub cluster_info: Arc<ClusterInfo>,
+    pub poh_recorder: Arc<RwLock<PohRecorder>>,
+    pub tower: Tower,
+    pub vote_tracker: Arc<VoteTracker>,
+    pub cluster_slots: Arc<ClusterSlots>,
+    pub log_messages_bytes_limit: Option<usize>,
+    pub prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+    pub banking_tracer: Arc<BankingTracer>,
+}
+
+pub struct ReplaySenders {
+    pub rpc_subscriptions: Arc<RpcSubscriptions>,
+    pub slot_status_notifier: Option<SlotStatusNotifier>,
+    pub accounts_background_request_sender: AbsRequestSender,
+    pub transaction_status_sender: Option<TransactionStatusSender>,
+    pub rewards_recorder_sender: Option<RewardsRecorderSender>,
+    pub cache_block_meta_sender: Option<CacheBlockMetaSender>,
+    pub entry_notification_sender: Option<EntryNotifierSender>,
+    pub bank_notification_sender: Option<BankNotificationSenderConfig>,
+    pub ancestor_hashes_replay_update_sender: AncestorHashesReplayUpdateSender,
+    pub retransmit_slots_sender: Sender<u64>,
+    pub replay_vote_sender: ReplayVoteSender,
+    pub cluster_slots_update_sender: Sender<Vec<u64>>,
+    pub cost_update_sender: Sender<CostUpdate>,
+    pub voting_sender: Sender<VoteOp>,
+    pub drop_bank_sender: Sender<Vec<BankWithScheduler>>,
+    pub block_metadata_notifier: Option<BlockMetadataNotifierArc>,
+    pub dumped_slots_sender: Sender<Vec<(u64, Hash)>>,
+}
+
+pub struct ReplayReceivers {
+    pub ledger_signal_receiver: Receiver<bool>,
+    pub duplicate_slots_receiver: Receiver<u64>,
+    pub ancestor_duplicate_slots_receiver: Receiver<AncestorDuplicateSlotToRepair>,
+    pub duplicate_confirmed_slots_receiver: Receiver<Vec<(u64, Hash)>>,
+    pub gossip_verified_vote_hash_receiver: Receiver<(Pubkey, u64, Hash)>,
+    pub popular_pruned_forks_receiver: Receiver<Vec<u64>>,
 }
 
 /// Timing information for the ReplayStage main processing loop
@@ -507,55 +537,62 @@ pub struct ReplayStage {
 }
 
 impl ReplayStage {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: ReplayStageConfig,
-        blockstore: Arc<Blockstore>,
-        bank_forks: Arc<RwLock<BankForks>>,
-        cluster_info: Arc<ClusterInfo>,
-        ledger_signal_receiver: Receiver<bool>,
-        duplicate_slots_receiver: DuplicateSlotReceiver,
-        poh_recorder: Arc<RwLock<PohRecorder>>,
-        mut tower: Tower,
-        vote_tracker: Arc<VoteTracker>,
-        cluster_slots: Arc<ClusterSlots>,
-        retransmit_slots_sender: Sender<Slot>,
-        ancestor_duplicate_slots_receiver: AncestorDuplicateSlotsReceiver,
-        replay_vote_sender: ReplayVoteSender,
-        duplicate_confirmed_slots_receiver: DuplicateConfirmedSlotsReceiver,
-        gossip_verified_vote_hash_receiver: GossipVerifiedVoteHashReceiver,
-        cluster_slots_update_sender: ClusterSlotsUpdateSender,
-        cost_update_sender: Sender<CostUpdate>,
-        voting_sender: Sender<VoteOp>,
-        drop_bank_sender: Sender<Vec<BankWithScheduler>>,
-        block_metadata_notifier: Option<BlockMetadataNotifierArc>,
-        log_messages_bytes_limit: Option<usize>,
-        prioritization_fee_cache: Arc<PrioritizationFeeCache>,
-        dumped_slots_sender: DumpedSlotsSender,
-        banking_tracer: Arc<BankingTracer>,
-        popular_pruned_forks_receiver: PopularPrunedForksReceiver,
+        senders: ReplaySenders,
+        receivers: ReplayReceivers,
     ) -> Result<Self, String> {
         let ReplayStageConfig {
             vote_account,
             authorized_voter_keypairs,
             exit,
+            leader_schedule_cache,
+            block_commitment_cache,
+            wait_for_vote_to_start_leader,
+            tower_storage,
+            wait_to_vote_slot,
+            replay_forks_threads,
+            replay_transactions_threads,
+            blockstore,
+            bank_forks,
+            cluster_info,
+            poh_recorder,
+            mut tower,
+            vote_tracker,
+            cluster_slots,
+            log_messages_bytes_limit,
+            prioritization_fee_cache,
+            banking_tracer,
+        } = config;
+
+        let ReplaySenders {
             rpc_subscriptions,
             slot_status_notifier,
-            leader_schedule_cache,
             accounts_background_request_sender,
-            block_commitment_cache,
             transaction_status_sender,
             rewards_recorder_sender,
             cache_block_meta_sender,
             entry_notification_sender,
             bank_notification_sender,
-            wait_for_vote_to_start_leader,
             ancestor_hashes_replay_update_sender,
-            tower_storage,
-            wait_to_vote_slot,
-            replay_forks_threads,
-            replay_transactions_threads,
-        } = config;
+            retransmit_slots_sender,
+            replay_vote_sender,
+            cluster_slots_update_sender,
+            cost_update_sender,
+            voting_sender,
+            drop_bank_sender,
+            block_metadata_notifier,
+            dumped_slots_sender,
+        } = senders;
+
+        let ReplayReceivers {
+            ledger_signal_receiver,
+            duplicate_slots_receiver,
+            ancestor_duplicate_slots_receiver,
+            duplicate_confirmed_slots_receiver,
+            gossip_verified_vote_hash_receiver,
+            popular_pruned_forks_receiver,
+        } = receivers;
 
         trace!("replay stage");
         // Start the replay stage loop
@@ -700,6 +737,7 @@ impl ReplayStage {
                     &bank_notification_sender,
                     &rewards_recorder_sender,
                     &rpc_subscriptions,
+                    &slot_status_notifier,
                     &mut duplicate_slots_tracker,
                     &duplicate_confirmed_slots,
                     &mut epoch_slots_frozen_slots,
@@ -2246,6 +2284,7 @@ impl ReplayStage {
         root: Slot,
         err: &BlockstoreProcessorError,
         rpc_subscriptions: &Arc<RpcSubscriptions>,
+        slot_status_notifier: &Option<SlotStatusNotifier>,
         duplicate_slots_tracker: &mut DuplicateSlotsTracker,
         duplicate_confirmed_slots: &DuplicateConfirmedSlots,
         epoch_slots_frozen_slots: &mut EpochSlotsFrozenSlots,
@@ -2286,11 +2325,21 @@ impl ReplayStage {
 
         blockstore.slots_stats.mark_dead(slot);
 
+        let err = format!("error: {err:?}");
+
+        if let Some(slot_status_notifier) = slot_status_notifier {
+            slot_status_notifier
+                .read()
+                .unwrap()
+                .notify_slot_dead(slot, err.clone());
+        }
+
         rpc_subscriptions.notify_slot_update(SlotUpdate::Dead {
             slot,
-            err: format!("error: {err:?}"),
+            err,
             timestamp: timestamp(),
         });
+
         let dead_state = DeadState::new_from_state(
             slot,
             duplicate_slots_tracker,
@@ -3021,6 +3070,7 @@ impl ReplayStage {
         bank_notification_sender: &Option<BankNotificationSenderConfig>,
         rewards_recorder_sender: &Option<RewardsRecorderSender>,
         rpc_subscriptions: &Arc<RpcSubscriptions>,
+        slot_status_notifier: &Option<SlotStatusNotifier>,
         duplicate_slots_tracker: &mut DuplicateSlotsTracker,
         duplicate_confirmed_slots: &DuplicateConfirmedSlots,
         epoch_slots_frozen_slots: &mut EpochSlotsFrozenSlots,
@@ -3061,6 +3111,7 @@ impl ReplayStage {
                             root,
                             err,
                             rpc_subscriptions,
+                            slot_status_notifier,
                             duplicate_slots_tracker,
                             duplicate_confirmed_slots,
                             epoch_slots_frozen_slots,
@@ -3109,6 +3160,7 @@ impl ReplayStage {
                             root,
                             &BlockstoreProcessorError::InvalidTransaction(err),
                             rpc_subscriptions,
+                            slot_status_notifier,
                             duplicate_slots_tracker,
                             duplicate_confirmed_slots,
                             epoch_slots_frozen_slots,
@@ -3140,6 +3192,7 @@ impl ReplayStage {
                                 root,
                                 &result_err,
                                 rpc_subscriptions,
+                                slot_status_notifier,
                                 duplicate_slots_tracker,
                                 duplicate_confirmed_slots,
                                 epoch_slots_frozen_slots,
@@ -3318,6 +3371,7 @@ impl ReplayStage {
         bank_notification_sender: &Option<BankNotificationSenderConfig>,
         rewards_recorder_sender: &Option<RewardsRecorderSender>,
         rpc_subscriptions: &Arc<RpcSubscriptions>,
+        slot_status_notifier: &Option<SlotStatusNotifier>,
         duplicate_slots_tracker: &mut DuplicateSlotsTracker,
         duplicate_confirmed_slots: &DuplicateConfirmedSlots,
         epoch_slots_frozen_slots: &mut EpochSlotsFrozenSlots,
@@ -3400,6 +3454,7 @@ impl ReplayStage {
             bank_notification_sender,
             rewards_recorder_sender,
             rpc_subscriptions,
+            slot_status_notifier,
             duplicate_slots_tracker,
             duplicate_confirmed_slots,
             epoch_slots_frozen_slots,
@@ -4228,6 +4283,7 @@ pub(crate) mod tests {
         solana_rpc::{
             optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
             rpc::{create_test_transaction_entries, populate_blockstore_for_tests},
+            slot_status_notifier::SlotStatusNotifierInterface,
         },
         solana_runtime::{
             accounts_background_service::AbsRequestSender,
@@ -4253,7 +4309,7 @@ pub(crate) mod tests {
         std::{
             fs::remove_dir_all,
             iter,
-            sync::{atomic::AtomicU64, Arc, RwLock},
+            sync::{atomic::AtomicU64, Arc, Mutex, RwLock},
         },
         tempfile::tempdir,
         test_case::test_case,
@@ -4898,6 +4954,34 @@ pub(crate) mod tests {
         );
     }
 
+    struct SlotStatusNotifierForTest {
+        dead_slots: Arc<Mutex<HashSet<Slot>>>,
+    }
+
+    impl SlotStatusNotifierForTest {
+        pub fn new(dead_slots: Arc<Mutex<HashSet<Slot>>>) -> Self {
+            Self { dead_slots }
+        }
+    }
+
+    impl SlotStatusNotifierInterface for SlotStatusNotifierForTest {
+        fn notify_slot_confirmed(&self, _slot: Slot, _parent: Option<Slot>) {}
+
+        fn notify_slot_processed(&self, _slot: Slot, _parent: Option<Slot>) {}
+
+        fn notify_slot_rooted(&self, _slot: Slot, _parent: Option<Slot>) {}
+
+        fn notify_first_shred_received(&self, _slot: Slot) {}
+
+        fn notify_completed(&self, _slot: Slot) {}
+
+        fn notify_created_bank(&self, _slot: Slot, _parent: Slot) {}
+
+        fn notify_slot_dead(&self, slot: Slot, _error: String) {
+            self.dead_slots.lock().unwrap().insert(slot);
+        }
+    }
+
     // Given a shred and a fatal expected error, check that replaying that shred causes causes the fork to be
     // marked as dead. Returns the error for caller to verify.
     fn check_dead_fork<F>(shred_to_insert: F) -> result::Result<(), BlockstoreProcessorError>
@@ -4966,6 +5050,12 @@ pub(crate) mod tests {
             ));
             let (ancestor_hashes_replay_update_sender, _ancestor_hashes_replay_update_receiver) =
                 unbounded();
+            let dead_slots = Arc::new(Mutex::new(HashSet::default()));
+
+            let slot_status_notifier: Option<SlotStatusNotifier> = Some(Arc::new(RwLock::new(
+                SlotStatusNotifierForTest::new(dead_slots.clone()),
+            )));
+
             if let Err(err) = &res {
                 ReplayStage::mark_dead_slot(
                     &blockstore,
@@ -4973,6 +5063,7 @@ pub(crate) mod tests {
                     0,
                     err,
                     &rpc_subscriptions,
+                    &slot_status_notifier,
                     &mut DuplicateSlotsTracker::default(),
                     &DuplicateConfirmedSlots::new(),
                     &mut EpochSlotsFrozenSlots::default(),
@@ -4983,7 +5074,7 @@ pub(crate) mod tests {
                     &mut PurgeRepairSlotCounter::default(),
                 );
             }
-
+            assert!(dead_slots.lock().unwrap().contains(&bank1.slot()));
             // Check that the erroring bank was marked as dead in the progress map
             assert!(progress
                 .get(&bank1.slot())

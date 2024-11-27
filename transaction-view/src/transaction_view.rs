@@ -1,9 +1,9 @@
 use {
     crate::{
         address_table_lookup_frame::AddressTableLookupIterator,
-        instructions_frame::InstructionsIterator, message_header_frame::TransactionVersion,
-        result::Result, sanitize::sanitize, transaction_data::TransactionData,
-        transaction_frame::TransactionFrame,
+        instructions_frame::InstructionsIterator, result::Result, sanitize::sanitize,
+        transaction_data::TransactionData, transaction_frame::TransactionFrame,
+        transaction_version::TransactionVersion,
     },
     core::fmt::{Debug, Formatter},
     solana_sdk::{hash::Hash, pubkey::Pubkey, signature::Signature},
@@ -196,6 +196,14 @@ impl<D: TransactionData> TransactionView<true, D> {
     pub(crate) fn num_writable_signed_static_accounts(&self) -> u8 {
         self.num_required_signatures()
             .wrapping_sub(self.num_readonly_signed_static_accounts())
+    }
+
+    /// Return the total number of accounts in the transactions.
+    #[inline]
+    pub fn total_num_accounts(&self) -> u16 {
+        u16::from(self.num_static_account_keys())
+            .wrapping_add(self.total_writable_lookup_accounts())
+            .wrapping_add(self.total_readonly_lookup_accounts())
     }
 }
 

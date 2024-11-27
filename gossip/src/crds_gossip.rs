@@ -6,16 +6,17 @@
 
 use {
     crate::{
-        cluster_info::Ping,
         cluster_info_metrics::GossipStats,
         contact_info::ContactInfo,
         crds::{Crds, GossipRoute},
+        crds_data::CrdsData,
         crds_gossip_error::CrdsGossipError,
         crds_gossip_pull::{CrdsFilter, CrdsGossipPull, CrdsTimeouts, ProcessPullStats},
         crds_gossip_push::CrdsGossipPush,
-        crds_value::{CrdsData, CrdsValue},
+        crds_value::CrdsValue,
         duplicate_shred::{self, DuplicateShredIndex, MAX_DUPLICATE_SHREDS},
         ping_pong::PingCache,
+        protocol::Ping,
     },
     itertools::Itertools,
     rand::{CryptoRng, Rng},
@@ -101,7 +102,7 @@ impl CrdsGossip {
         let mut crds = self.crds.write().unwrap();
         if crds
             .get_records(&pubkey)
-            .any(|value| match &value.value.data {
+            .any(|value| match value.value.data() {
                 CrdsData::DuplicateShred(_, value) => value.slot == shred_slot,
                 _ => false,
             })
@@ -121,7 +122,7 @@ impl CrdsGossip {
         let mut num_dup_shreds = 0;
         let offset = crds
             .get_records(&pubkey)
-            .filter_map(|value| match &value.value.data {
+            .filter_map(|value| match value.value.data() {
                 CrdsData::DuplicateShred(ix, value) => {
                     num_dup_shreds += 1;
                     Some((value.wallclock, *ix))
@@ -139,7 +140,7 @@ impl CrdsGossip {
         let entries = chunks.enumerate().map(|(k, chunk)| {
             let index = (offset + k as DuplicateShredIndex) % MAX_DUPLICATE_SHREDS;
             let data = CrdsData::DuplicateShred(index, chunk);
-            CrdsValue::new_signed(data, keypair)
+            CrdsValue::new(data, keypair)
         });
         let now = timestamp();
         for entry in entries {
@@ -223,14 +224,6 @@ impl CrdsGossip {
             pings,
             socket_addr_space,
         )
-    }
-
-    /// Process a pull request and create a response.
-    pub fn process_pull_requests<I>(&self, callers: I, now: u64)
-    where
-        I: IntoIterator<Item = CrdsValue>,
-    {
-        CrdsGossipPull::process_pull_requests(&self.crds, callers, now);
     }
 
     pub fn generate_pull_responses(
@@ -417,7 +410,6 @@ pub(crate) fn maybe_ping_gossip_addresses<R: Rng + CryptoRng>(
 mod test {
     use {
         super::*,
-        crate::crds_value::CrdsData,
         solana_sdk::{hash::hash, timing::timestamp},
     };
 

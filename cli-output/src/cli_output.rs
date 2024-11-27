@@ -1163,8 +1163,9 @@ fn show_votes_and_credits(
         )?;
         writeln!(
             f,
-            "  credits/slots: {}/{}",
-            entry.credits_earned, entry.slots_in_epoch
+            "  credits/max credits: {}/{}",
+            entry.credits_earned,
+            entry.slots_in_epoch * u64::from(entry.max_credits_per_slot)
         )?;
     }
     if let Some(oldest) = epoch_voting_history.iter().next() {
@@ -1740,6 +1741,7 @@ pub struct CliEpochVotingHistory {
     pub credits_earned: u64,
     pub credits: u64,
     pub prev_credits: u64,
+    pub max_credits_per_slot: u8,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -3272,7 +3274,7 @@ mod tests {
         ));
 
         let signers = vec![present.as_ref(), absent.as_ref(), bad.as_ref()];
-        let blockhash = Hash::new(&[7u8; 32]);
+        let blockhash = Hash::new_from_array([7u8; 32]);
         tx.try_partial_sign(&signers, blockhash).unwrap();
         let res = return_signers(&tx, &OutputFormat::JsonCompact).unwrap();
         let sign_only = parse_sign_only_reply_string(&res);

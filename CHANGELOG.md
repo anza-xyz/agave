@@ -8,20 +8,29 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 and follows a [Backwards Compatibility Policy](https://docs.solanalabs.com/backwards-compatibility)
 
 Release channels have their own copy of this changelog:
-* [edge - v2.1](#edge-channel)
-* [beta - v2.0](https://github.com/solana-labs/solana/blob/v2.0/CHANGELOG.md)
-* [stable - v1.18](https://github.com/solana-labs/solana/blob/v1.18/CHANGELOG.md)
+* [edge - v2.2](#edge-channel)
+* [beta - v2.1](https://github.com/solana-labs/solana/blob/v2.1/CHANGELOG.md)
+* [stable - v2.0](https://github.com/solana-labs/solana/blob/v2.0/CHANGELOG.md)
 
 <a name="edge-channel"></a>
-## [2.1.0] - Unreleased
+## [2.2.0] - Unreleased
+* Changes
+  * CLI:
+    * Add global `--skip-preflight` option for skipping preflight checks on all transactions sent through RPC. This flag, along with `--use-rpc`, can improve success rate with program deployments using the public RPC nodes.
+  * Unhide `--accounts-db-access-storages-method` for agave-validator and agave-ledger-tool
+
+## [2.1.0]
 * Breaking:
   * SDK:
-    * `cargo-build-sbf` and `cargo-build-bpf` have been deprecated for two years and have now been definitely removed.
+    * `cargo-build-bpf` and `cargo-test-bpf` have been deprecated for two years and have now been definitely removed.
        Use `cargo-build-sbf` and `cargo-test-sbf` instead.
+    * dependency: `curve25519-dalek` upgraded to new major version 4 (#1693). This causes breakage when mixing v2.0 and v2.1 Solana crates, so be sure to use all of one or the other. Please use only crates compatible with v2.1.
   * Stake:
     * removed the unreleased `redelegate` instruction processor and CLI commands (#2213)
   * Banks-client:
     * relax functions to use `&self` instead of `&mut self` (#2591)
+  * `agave-validator`:
+    * Remove the deprecated value of `fifo` for `--rocksdb-shred-compaction` (#3451)
 * Changes
   * SDK:
     * removed the `respan` macro. This was marked as "internal use only" and was no longer used internally.

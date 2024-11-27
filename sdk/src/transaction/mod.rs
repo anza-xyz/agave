@@ -136,8 +136,15 @@ use {
 mod sanitized;
 mod versioned;
 
+#[deprecated(
+    since = "2.2.0",
+    note = "Use `solana_transaction_error::TransactionResult` instead"
+)]
+pub use solana_transaction_error::TransactionResult as Result;
 #[deprecated(since = "2.1.0", note = "Use solana_transaction_error crate instead")]
-pub use solana_transaction_error::*;
+pub use solana_transaction_error::{
+    AddressLoaderError, SanitizeMessageError, TransactionError, TransportError, TransportResult,
+};
 pub use {sanitized::*, versioned::*};
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
@@ -146,8 +153,6 @@ pub enum TransactionVerificationMode {
     HashAndVerifyPrecompiles,
     FullVerification,
 }
-
-pub type Result<T> = result::Result<T, TransactionError>;
 
 /// An atomically-committed sequence of instructions.
 ///
@@ -173,7 +178,7 @@ pub type Result<T> = result::Result<T, TransactionError>;
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "686AAhRhjXpqKidmJEdHHcJCL9XxCxebu8Xmku9shp83")
+    frozen_abi(digest = "GESn6AYYNhpNfzJXdQ6kGjqz4VjpMw3ye9rghqaEqks7")
 )]
 #[derive(Debug, PartialEq, Default, Eq, Clone, Serialize, Deserialize)]
 pub struct Transaction {
@@ -935,11 +940,11 @@ impl Transaction {
         keypairs: &T,
         recent_blockhash: Hash,
     ) -> result::Result<(), SignerError> {
-        let positions = self.get_signing_keypair_positions(&keypairs.pubkeys())?;
-        if positions.iter().any(|pos| pos.is_none()) {
-            return Err(SignerError::KeypairPubkeyMismatch);
-        }
-        let positions: Vec<usize> = positions.iter().map(|pos| pos.unwrap()).collect();
+        let positions: Vec<usize> = self
+            .get_signing_keypair_positions(&keypairs.pubkeys())?
+            .into_iter()
+            .collect::<Option<_>>()
+            .ok_or(SignerError::KeypairPubkeyMismatch)?;
         self.try_partial_sign_unchecked(keypairs, positions, recent_blockhash)
     }
 

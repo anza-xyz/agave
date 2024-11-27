@@ -161,8 +161,17 @@ impl HeaviestForkAggregate {
         })
     }
 
-    pub(crate) fn block_stake_map(self) -> HashMap<(Slot, Hash), u64> {
-        self.block_stake_map
+    pub(crate) fn print_block_stake_map(&self) {
+        let total_stake = self.epoch_stakes.total_stake();
+        for ((slot, hash), stake) in self.block_stake_map.iter() {
+            info!(
+                "Heaviest Fork Aggregated Slot: {}, Hash: {}, Stake: {}, Percent: {:.2}%",
+                slot,
+                hash,
+                stake,
+                *stake as f64 / total_stake as f64 * 100.0,
+            );
+        }
     }
 }
 

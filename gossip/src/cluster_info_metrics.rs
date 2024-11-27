@@ -98,8 +98,8 @@ pub struct GossipStats {
     pub(crate) filter_crds_values_dropped_requests: Counter,
     pub(crate) filter_crds_values_dropped_values: Counter,
     pub(crate) filter_pull_response: Counter,
+    pub(crate) generate_prune_messages: Counter,
     pub(crate) generate_pull_responses: Counter,
-    pub(crate) get_accounts_hash: Counter,
     pub(crate) get_epoch_duration_no_working_bank: Counter,
     pub(crate) get_votes: Counter,
     pub(crate) get_votes_count: Counter,
@@ -146,7 +146,6 @@ pub struct GossipStats {
     pub(crate) packets_sent_push_messages_count: Counter,
     pub(crate) process_gossip_packets_time: Counter,
     pub(crate) process_prune: Counter,
-    pub(crate) process_pull_requests: Counter,
     pub(crate) process_pull_response: Counter,
     pub(crate) process_pull_response_count: Counter,
     pub(crate) process_pull_response_fail_insert: Counter,
@@ -207,7 +206,6 @@ pub(crate) fn submit_gossip_stats(
         ("push_vote_read", stats.push_vote_read.clear(), i64),
         ("get_votes", stats.get_votes.clear(), i64),
         ("get_votes_count", stats.get_votes_count.clear(), i64),
-        ("get_accounts_hash", stats.get_accounts_hash.clear(), i64),
         ("all_tvu_peers", stats.all_tvu_peers.clear(), i64),
         ("tvu_peers", stats.tvu_peers.clear(), i64),
         (
@@ -326,11 +324,6 @@ pub(crate) fn submit_gossip_stats(
         (
             "process_pull_resp_len",
             stats.process_pull_response_len.clear(),
-            i64
-        ),
-        (
-            "process_pull_requests",
-            stats.process_pull_requests.clear(),
             i64
         ),
         (
@@ -479,6 +472,11 @@ pub(crate) fn submit_gossip_stats(
         (
             "get_epoch_duration_no_working_bank",
             stats.get_epoch_duration_no_working_bank.clear(),
+            i64
+        ),
+        (
+            "generate_prune_messages",
+            stats.generate_prune_messages.clear(),
             i64
         ),
     );

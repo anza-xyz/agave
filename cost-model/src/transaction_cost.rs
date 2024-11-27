@@ -1,7 +1,7 @@
 use {
     crate::block_cost_limits,
-    solana_sdk::{message::TransactionSignatureDetails, pubkey::Pubkey},
-    solana_svm_transaction::svm_message::SVMMessage,
+    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
+    solana_sdk::pubkey::Pubkey,
 };
 
 /// TransactionCost is used to represent resources required to process
@@ -15,12 +15,12 @@ use {
 const SIMPLE_VOTE_USAGE_COST: u64 = 3428;
 
 #[derive(Debug)]
-pub enum TransactionCost<'a, Tx: SVMMessage> {
+pub enum TransactionCost<'a, Tx: TransactionWithMeta> {
     SimpleVote { transaction: &'a Tx },
     Transaction(UsageCostDetails<'a, Tx>),
 }
 
-impl<'a, Tx: SVMMessage> TransactionCost<'a, Tx> {
+impl<'a, Tx: TransactionWithMeta> TransactionCost<'a, Tx> {
     pub fn sum(&self) -> u64 {
         #![allow(clippy::assertions_on_constants)]
         match self {
@@ -104,9 +104,10 @@ impl<'a, Tx: SVMMessage> TransactionCost<'a, Tx> {
     pub fn num_transaction_signatures(&self) -> u64 {
         match self {
             Self::SimpleVote { .. } => 1,
-            Self::Transaction(usage_cost) => {
-                usage_cost.signature_details.num_transaction_signatures()
-            }
+            Self::Transaction(usage_cost) => usage_cost
+                .transaction
+                .signature_details()
+                .num_transaction_signatures(),
         }
     }
 
@@ -114,7 +115,8 @@ impl<'a, Tx: SVMMessage> TransactionCost<'a, Tx> {
         match self {
             Self::SimpleVote { .. } => 0,
             Self::Transaction(usage_cost) => usage_cost
-                .signature_details
+                .transaction
+                .signature_details()
                 .num_secp256k1_instruction_signatures(),
         }
     }
@@ -123,7 +125,8 @@ impl<'a, Tx: SVMMessage> TransactionCost<'a, Tx> {
         match self {
             Self::SimpleVote { .. } => 0,
             Self::Transaction(usage_cost) => usage_cost
-                .signature_details
+                .transaction
+                .signature_details()
                 .num_ed25519_instruction_signatures(),
         }
     }
@@ -131,7 +134,7 @@ impl<'a, Tx: SVMMessage> TransactionCost<'a, Tx> {
 
 // costs are stored in number of 'compute unit's
 #[derive(Debug)]
-pub struct UsageCostDetails<'a, Tx: SVMMessage> {
+pub struct UsageCostDetails<'a, Tx: TransactionWithMeta> {
     pub transaction: &'a Tx,
     pub signature_cost: u64,
     pub write_lock_cost: u64,
@@ -139,10 +142,9 @@ pub struct UsageCostDetails<'a, Tx: SVMMessage> {
     pub programs_execution_cost: u64,
     pub loaded_accounts_data_size_cost: u64,
     pub allocated_accounts_data_size: u64,
-    pub signature_details: TransactionSignatureDetails,
 }
 
-impl<'a, Tx: SVMMessage> UsageCostDetails<'a, Tx> {
+impl<'a, Tx: TransactionWithMeta> UsageCostDetails<'a, Tx> {
     pub fn sum(&self) -> u64 {
         self.signature_cost
             .saturating_add(self.write_lock_cost)
@@ -157,7 +159,7 @@ impl<'a, Tx: SVMMessage> UsageCostDetails<'a, Tx> {
 pub struct WritableKeysTransaction(pub Vec<Pubkey>);
 
 #[cfg(feature = "dev-context-only-utils")]
-impl SVMMessage for WritableKeysTransaction {
+impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction {
     fn num_total_signatures(&self) -> u64 {
         unimplemented!("WritableKeysTransaction::num_total_signatures")
     }
@@ -219,18 +221,70 @@ impl SVMMessage for WritableKeysTransaction {
     }
 }
 
+#[cfg(feature = "dev-context-only-utils")]
+impl solana_svm_transaction::svm_transaction::SVMTransaction for WritableKeysTransaction {
+    fn signature(&self) -> &solana_sdk::signature::Signature {
+        unimplemented!("WritableKeysTransaction::signature")
+    }
+
+    fn signatures(&self) -> &[solana_sdk::signature::Signature] {
+        unimplemented!("WritableKeysTransaction::signatures")
+    }
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+impl solana_runtime_transaction::transaction_meta::StaticMeta for WritableKeysTransaction {
+    fn message_hash(&self) -> &solana_sdk::hash::Hash {
+        unimplemented!("WritableKeysTransaction::message_hash")
+    }
+
+    fn is_simple_vote_transaction(&self) -> bool {
+        unimplemented!("WritableKeysTransaction::is_simple_vote_transaction")
+    }
+
+    fn signature_details(&self) -> &solana_sdk::message::TransactionSignatureDetails {
+        const DUMMY: solana_sdk::message::TransactionSignatureDetails =
+            solana_sdk::message::TransactionSignatureDetails::new(0, 0, 0);
+        &DUMMY
+    }
+
+    fn compute_budget_limits(
+        &self,
+        _feature_set: &solana_feature_set::FeatureSet,
+    ) -> solana_sdk::transaction::Result<
+        solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
+    > {
+        unimplemented!("WritableKeysTransaction::compute_budget_limits")
+    }
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+impl TransactionWithMeta for WritableKeysTransaction {
+    #[allow(refining_impl_trait)]
+    fn as_sanitized_transaction(
+        &self,
+    ) -> std::borrow::Cow<solana_sdk::transaction::SanitizedTransaction> {
+        unimplemented!("WritableKeysTransaction::as_sanitized_transaction");
+    }
+
+    fn to_versioned_transaction(&self) -> solana_sdk::transaction::VersionedTransaction {
+        unimplemented!("WritableKeysTransaction::to_versioned_transaction")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use {
         super::*,
         crate::cost_model::CostModel,
         solana_feature_set::FeatureSet,
+        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
             hash::Hash,
             message::SimpleAddressLoader,
             reserved_account_keys::ReservedAccountKeys,
             signer::keypair::Keypair,
-            transaction::{MessageHash, SanitizedTransaction, VersionedTransaction},
+            transaction::{MessageHash, VersionedTransaction},
         },
         solana_vote_program::{vote_state::TowerSync, vote_transaction},
     };
@@ -251,7 +305,7 @@ mod tests {
         );
 
         // create a sanitized vote transaction
-        let vote_transaction = SanitizedTransaction::try_create(
+        let vote_transaction = RuntimeTransaction::try_create(
             VersionedTransaction::from(transaction.clone()),
             MessageHash::Compute,
             Some(true),
@@ -261,7 +315,7 @@ mod tests {
         .unwrap();
 
         // create a identical sanitized transaction, but identified as non-vote
-        let none_vote_transaction = SanitizedTransaction::try_create(
+        let none_vote_transaction = RuntimeTransaction::try_create(
             VersionedTransaction::from(transaction),
             MessageHash::Compute,
             Some(false),

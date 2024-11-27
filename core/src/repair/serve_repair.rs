@@ -33,7 +33,7 @@ use {
         data_budget::DataBudget,
         packet::{Packet, PacketBatch, PacketBatchRecycler},
     },
-    solana_runtime::bank_forks::BankForks,
+    solana_runtime::{bank_forks::BankForks, root_bank_cache::RootBankCache},
     solana_sdk::{
         clock::Slot,
         genesis_config::ClusterType,
@@ -144,7 +144,7 @@ impl AncestorHashesRepairType {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiEnumVisitor, AbiExample),
-    frozen_abi(digest = "9SdneX58ekpqLJBzUwfwJsK2fZc9mN4vTcaS4temEjkP")
+    frozen_abi(digest = "GPS6e6pgUdbXLwXN6XHTqrUVMwAL2YKLPDawgMi5hHzi")
 )]
 #[derive(Debug, Deserialize, Serialize)]
 pub enum AncestorHashesResponse {
@@ -225,7 +225,7 @@ pub(crate) type Ping = ping_pong::Ping<[u8; REPAIR_PING_TOKEN_SIZE]>;
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiEnumVisitor, AbiExample),
-    frozen_abi(digest = "3E2R8jiSt9QfVHdX3MgW3UdeNWfor7zNjJcLJLz2K1JY")
+    frozen_abi(digest = "9KN64WUT7XDYj9zZopS1hztGyAP9y4N4QznsyC4mqsGs")
 )]
 #[derive(Debug, Deserialize, Serialize)]
 pub enum RepairProtocol {
@@ -273,7 +273,7 @@ fn discard_malformed_repair_requests(
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiEnumVisitor, AbiExample),
-    frozen_abi(digest = "CpKVYghdpMDRMiGjZpa71dcnB7rCVHLVogZbB3AGDKAK")
+    frozen_abi(digest = "9A6ae44qpdT7PaxiDZbybMM2mewnSnPs3C4CxhpbbYuV")
 )]
 #[derive(Debug, Deserialize, Serialize)]
 pub(crate) enum RepairResponse {
@@ -337,10 +337,9 @@ impl RepairProtocol {
     }
 }
 
-#[derive(Clone)]
 pub struct ServeRepair {
     cluster_info: Arc<ClusterInfo>,
-    bank_forks: Arc<RwLock<BankForks>>,
+    root_bank_cache: RootBankCache,
     repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>,
 }
 
@@ -407,7 +406,7 @@ impl ServeRepair {
     ) -> Self {
         Self {
             cluster_info,
-            bank_forks,
+            root_bank_cache: RootBankCache::new(bank_forks),
             repair_whitelist,
         }
     }
@@ -631,7 +630,7 @@ impl ServeRepair {
 
     /// Process messages from the network
     fn run_listen(
-        &self,
+        &mut self,
         ping_cache: &mut PingCache,
         recycler: &PacketBatchRecycler,
         blockstore: &Blockstore,
@@ -647,7 +646,7 @@ impl ServeRepair {
         let mut total_requests = requests.len();
 
         let socket_addr_space = *self.cluster_info.socket_addr_space();
-        let root_bank = self.bank_forks.read().unwrap().root_bank();
+        let root_bank = self.root_bank_cache.root_bank();
         let epoch_staked_nodes = root_bank.epoch_staked_nodes(root_bank.epoch());
         let identity_keypair = self.cluster_info.keypair().clone();
         let my_id = identity_keypair.pubkey();
@@ -810,7 +809,7 @@ impl ServeRepair {
     }
 
     pub(crate) fn listen(
-        self,
+        mut self,
         blockstore: Arc<Blockstore>,
         requests_receiver: Receiver<RemoteRequest>,
         response_sender: PacketBatchSender,
