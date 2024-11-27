@@ -1306,7 +1306,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         handler_count: usize,
         mut context: SchedulingContext,
         mut result_with_timings: ResultWithTimings,
-        mut banking_stage_context: Option<BankingStageContext>,
+        banking_stage_context: Option<BankingStageContext>,
     ) {
         assert!(handler_count >= 1);
 
@@ -1914,7 +1914,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         };
 
         let handler_main_loop = || {
-            let banking_stage_context = banking_stage_context.clone();
+            let mut banking_stage_context = banking_stage_context.clone();
             let banking_packet_receiver = if let Some(b) = banking_stage_context.as_ref() {
                 b.banking_packet_receiver.clone()
             } else {
