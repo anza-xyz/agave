@@ -33,7 +33,7 @@ use {
 mod sdk_transactions;
 mod transaction_view;
 
-#[derive(Clone))]
+#[derive(Clone)]
 #[derive(Debug)]
 pub struct RuntimeTransaction<T> {
     transaction: T,
