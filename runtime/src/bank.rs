@@ -3412,7 +3412,10 @@ impl Bank {
         ));
         timings.saturating_add_in_place(ExecuteTimingType::CheckUs, check_us);
 
-        self.check_chili_pepper(sanitized_txs, &check_results[..]);
+        let (_, check_chili_pepper_us) =
+            measure_us!(self.check_chili_pepper(sanitized_txs, &check_results[..]));
+        timings
+            .saturating_add_in_place(ExecuteTimingType::CheckChiliPepperUs, check_chili_pepper_us);
 
         let (blockhash, blockhash_lamports_per_signature) =
             self.last_blockhash_and_lamports_per_signature();
