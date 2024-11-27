@@ -529,6 +529,7 @@ impl CounterWithStatus {
 }
 
 #[repr(C, packed)]
+#[allow(clippy::type_complexity)]
 struct PackedTaskInner {
     index: TaskKey,
     lock_context_and_transaction: Box<(Vec<Compact<LockContext>>, Box<RuntimeTransaction<SanitizedTransaction>>)>,
