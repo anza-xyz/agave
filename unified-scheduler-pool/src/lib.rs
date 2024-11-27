@@ -597,15 +597,14 @@ where
         });
 
         let on_banking_packet_receive = on_spawn_block_production_scheduler(adapter.clone());
-        let banking_stage_context = (banking_packet_receiver.clone(), on_banking_packet_receive);
-        let context = SchedulingContext::new(SchedulingMode::BlockProduction, None);
+        let banking_stage_context = (adapter, banking_packet_receiver.clone(), on_banking_packet_receive);
+        let scheduling_context = SchedulingContext::new(SchedulingMode::BlockProduction, None);
         let s = S::spawn(
             *handler_count,
             self.self_arc(),
-            context,
+            scheduling_context,
             initialized_result_with_timings(),
             Some(banking_stage_context),
-            Some(adapter),
         );
         let s = s.into_inner().1;
         assert!(id_and_inner.0.replace(s.id()).is_none());
@@ -2158,8 +2157,7 @@ pub trait SpawnableScheduler<TH: TaskHandler>: InstalledScheduler {
         pool: Arc<SchedulerPool<Self, TH>>,
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
-        banking_stage_context: Option<(BankingPacketReceiver, Box<dyn BatchConverter>)>,
-        banking_stage_adapter: Option<Arc<BankingStageAdapter>>,
+        banking_stage_context: Option<(Arc<BankingStageAdapter>, BankingPacketReceiver, Box<dyn BatchConverter>)>,
     ) -> Self
     where
         Self: Sized;
@@ -2193,8 +2191,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
         pool: Arc<SchedulerPool<Self, TH>>,
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
-        banking_stage_context: Option<(BankingPacketReceiver, Box<dyn BatchConverter>)>,
-        banking_stage_adapter: Option<Arc<BankingStageAdapter>>,
+        banking_stage_context: Option<(Arc<BankingStageAdapter>, BankingPacketReceiver, Box<dyn BatchConverter>)>,
     ) -> Self {
         info!("spawning new scheduler for slot: {}", context.slot());
         let task_creator = match context.mode() {
