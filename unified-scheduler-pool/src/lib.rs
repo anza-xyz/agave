@@ -164,13 +164,13 @@ const DEFAULT_MAX_USAGE_QUEUE_COUNT: usize = 262_144;
 
 trait_set! {
     pub trait BatchConverter =
-        DynClone + (for<'a> FnMut(BankingPacketBatch, &'a dyn Fn(Task))) + Send + 'static;
+        DynClone + (for<'a> Fn(BankingPacketBatch, &'a dyn Fn(Task))) + Send + 'static;
 }
 
 clone_trait_object!(BatchConverter);
 
 type BatchConverterCreator =
-    Box<dyn (FnMut(Arc<BankingStageAdapter>) -> Box<dyn BatchConverter>) + Send>;
+    Box<dyn (Fn(Arc<BankingStageAdapter>) -> Box<dyn BatchConverter>) + Send>;
 
 #[derive(derive_more::Debug)]
 struct BlockProductionSchedulerRespawner {
