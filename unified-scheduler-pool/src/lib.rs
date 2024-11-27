@@ -620,7 +620,7 @@ where
             initialized_result_with_timings(),
             Some(banking_stage_context),
         );
-        let inner = scheduler.into_inner().1;
+        let ((Ok(result), _timings), inner) = scheduler.into_inner() else { panic!() };
         assert!(id_and_inner.0.replace(inner.id()).is_none());
         assert!(id_and_inner.1.replace(inner).is_none());
         self.block_production_scheduler_condvar.notify_all();
