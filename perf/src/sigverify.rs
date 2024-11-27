@@ -6,7 +6,7 @@
 use {
     crate::{
         cuda_runtime::RecycledVec,
-        packet::{Packet, PacketBatch, PacketFlags, PACKET_DATA_SIZE},
+        packet::{Packet, PacketBatch, PacketFlags},
         perf_libs,
         recycler::Recycler,
     },
@@ -591,77 +591,10 @@ pub fn mark_disabled(batches: &mut [PacketBatch], r: &[Vec<u8>]) {
 
 pub fn ed25519_verify(
     batches: &mut [PacketBatch],
-    recycler: &Recycler<TxOffset>,
-    recycler_out: &Recycler<RecycledVec<u8>>,
     reject_non_vote: bool,
     valid_packet_count: usize,
 ) {
-    let Some(api) = perf_libs::api() else {
-        return ed25519_verify_cpu(batches, reject_non_vote, valid_packet_count);
-    };
-    let total_packet_count = count_packets_in_batches(batches);
-    // micro-benchmarks show GPU time for smallest batch around 15-20ms
-    // and CPU speed for 64-128 sigverifies around 10-20ms. 64 is a nice
-    // power-of-two number around that accounting for the fact that the CPU
-    // may be busy doing other things while being a real validator
-    // TODO: dynamically adjust this crossover
-    let maybe_valid_percentage = 100usize
-        .wrapping_mul(valid_packet_count)
-        .checked_div(total_packet_count);
-    let Some(valid_percentage) = maybe_valid_percentage else {
-        return;
-    };
-    if valid_percentage < 90 || valid_packet_count < 64 {
-        ed25519_verify_cpu(batches, reject_non_vote, valid_packet_count);
-        return;
-    }
-
-    let (signature_offsets, pubkey_offsets, msg_start_offsets, msg_sizes, sig_lens) =
-        generate_offsets(batches, recycler, reject_non_vote);
-
-    debug!("CUDA ECDSA for {}", valid_packet_count);
-    debug!("allocating out..");
-    let mut out = recycler_out.allocate("out_buffer");
-    let mut elems = Vec::new();
-    let mut rvs = Vec::new();
-
-    let mut num_packets: usize = 0;
-    for batch in batches.iter() {
-        elems.push(perf_libs::Elems {
-            elems: batch.as_ptr().cast::<u8>(),
-            num: batch.len() as u32,
-        });
-        let v = vec![0u8; batch.len()];
-        rvs.push(v);
-        num_packets = num_packets.saturating_add(batch.len());
-    }
-    out.resize(signature_offsets.len(), 0);
-    trace!("Starting verify num packets: {}", num_packets);
-    trace!("elem len: {}", elems.len() as u32);
-    trace!("packet sizeof: {}", size_of::<Packet>() as u32);
-    trace!("len offset: {}", PACKET_DATA_SIZE as u32);
-    const USE_NON_DEFAULT_STREAM: u8 = 1;
-    unsafe {
-        let res = (api.ed25519_verify_many)(
-            elems.as_ptr(),
-            elems.len() as u32,
-            size_of::<Packet>() as u32,
-            num_packets as u32,
-            signature_offsets.len() as u32,
-            msg_sizes.as_ptr(),
-            pubkey_offsets.as_ptr(),
-            signature_offsets.as_ptr(),
-            msg_start_offsets.as_ptr(),
-            out.as_mut_ptr(),
-            USE_NON_DEFAULT_STREAM,
-        );
-        if res != 0 {
-            trace!("RETURN!!!: {}", res);
-        }
-    }
-    trace!("done verify");
-    copy_return_values(sig_lens, &out, &mut rvs);
-    mark_disabled(batches, &rvs);
+    ed25519_verify_cpu(batches, reject_non_vote, valid_packet_count);
 }
 
 #[cfg(test)]
@@ -677,6 +610,7 @@ mod tests {
         bincode::{deserialize, serialize},
         curve25519_dalek::{edwards::CompressedEdwardsY, scalar::Scalar},
         rand::{thread_rng, Rng},
+        solana_packet::PACKET_DATA_SIZE,
         solana_program::{
             instruction::CompiledInstruction,
             message::{Message, MessageHeader},
@@ -1113,10 +1047,8 @@ mod tests {
     }
 
     fn ed25519_verify(batches: &mut [PacketBatch]) {
-        let recycler = Recycler::default();
-        let recycler_out = Recycler::default();
         let packet_count = sigverify::count_packets_in_batches(batches);
-        sigverify::ed25519_verify(batches, &recycler, &recycler_out, false, packet_count);
+        sigverify::ed25519_verify(batches, false, packet_count);
     }
 
     #[test]
@@ -1213,8 +1145,6 @@ mod tests {
         let tx = test_multisig_tx();
         let packet = Packet::from_data(None, tx).unwrap();
 
-        let recycler = Recycler::default();
-        let recycler_out = Recycler::default();
         for _ in 0..50 {
             let num_batches = thread_rng().gen_range(2..30);
             let mut batches = generate_packet_batches_random_size(&packet, 128, num_batches);
@@ -1240,7 +1170,7 @@ mod tests {
             // equivalent to the CPU verification pipeline.
             let mut batches_cpu = batches.clone();
             let packet_count = sigverify::count_packets_in_batches(&batches);
-            sigverify::ed25519_verify(&mut batches, &recycler, &recycler_out, false, packet_count);
+            sigverify::ed25519_verify(&mut batches, false, packet_count);
             ed25519_verify_cpu(&mut batches_cpu, false, packet_count);
 
             // check result

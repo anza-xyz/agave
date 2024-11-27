@@ -13,11 +13,8 @@ use {
     solana_measure::measure::Measure,
     solana_merkle_tree::MerkleTree,
     solana_perf::{
-        cuda_runtime::RecycledVec,
         packet::{Packet, PacketBatch, PacketBatchRecycler, PACKETS_PER_BATCH},
-        perf_libs,
-        recycler::Recycler,
-        sigverify,
+        perf_libs, sigverify,
     },
     solana_rayon_threadlimit::get_max_thread_count,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
@@ -307,8 +304,6 @@ impl<Tx: TransactionWithMeta> EntrySigVerificationState<Tx> {
 #[derive(Default, Clone)]
 pub struct VerifyRecyclers {
     packet_recycler: PacketBatchRecycler,
-    out_recycler: Recycler<RecycledVec<u8>>,
-    tx_offset_recycler: Recycler<sigverify::TxOffset>,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
@@ -502,20 +497,12 @@ fn start_verify_transactions_gpu<Tx: TransactionWithMeta + Send + Sync + 'static
     });
     let mut packet_batches = packet_batches?;
 
-    let tx_offset_recycler = verify_recyclers.tx_offset_recycler;
-    let out_recycler = verify_recyclers.out_recycler;
     let num_packets = transactions.len();
     let gpu_verify_thread = thread::Builder::new()
         .name("solGpuSigVerify".into())
         .spawn(move || {
             let mut verify_time = Measure::start("sigverify");
-            sigverify::ed25519_verify(
-                &mut packet_batches,
-                &tx_offset_recycler,
-                &out_recycler,
-                false,
-                num_packets,
-            );
+            sigverify::ed25519_verify(&mut packet_batches, false, num_packets);
             let verified = packet_batches
                 .iter()
                 .all(|batch| batch.iter().all(|p| !p.meta().discard()));

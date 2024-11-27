@@ -1,7 +1,6 @@
 //! The `sigverify` module provides digital signature verification functions.
 //! By default, signatures are verified in parallel using all available CPU
-//! cores.  When perf-libs are available signature verification is offloaded
-//! to the GPU.
+//! cores.
 //!
 
 pub use solana_perf::sigverify::{
@@ -12,7 +11,7 @@ use {
         banking_trace::{BankingPacketBatch, BankingPacketSender},
         sigverify_stage::{SigVerifier, SigVerifyServiceError},
     },
-    solana_perf::{cuda_runtime::RecycledVec, packet::PacketBatch, recycler::Recycler, sigverify},
+    solana_perf::{packet::PacketBatch, sigverify},
     solana_sdk::{packet::Packet, saturating_add_assign},
 };
 
@@ -58,8 +57,6 @@ impl SigverifyTracerPacketStats {
 pub struct TransactionSigVerifier {
     packet_sender: BankingPacketSender,
     tracer_packet_stats: SigverifyTracerPacketStats,
-    recycler: Recycler<TxOffset>,
-    recycler_out: Recycler<RecycledVec<u8>>,
     reject_non_vote: bool,
 }
 
@@ -75,8 +72,6 @@ impl TransactionSigVerifier {
         Self {
             packet_sender,
             tracer_packet_stats: SigverifyTracerPacketStats::default(),
-            recycler: Recycler::warmed(50, 4096),
-            recycler_out: Recycler::warmed(50, 4096),
             reject_non_vote: false,
         }
     }
@@ -139,13 +134,7 @@ impl SigVerifier for TransactionSigVerifier {
         mut batches: Vec<PacketBatch>,
         valid_packets: usize,
     ) -> Vec<PacketBatch> {
-        sigverify::ed25519_verify(
-            &mut batches,
-            &self.recycler,
-            &self.recycler_out,
-            self.reject_non_vote,
-            valid_packets,
-        );
+        sigverify::ed25519_verify(&mut batches, self.reject_non_vote, valid_packets);
         batches
     }
 }
