@@ -614,7 +614,7 @@ where
         };
 
         let s = S::spawn(
-            *handler_count,
+            handler_count,
             self.self_arc(),
             SchedulingContext::new(SchedulingMode::BlockProduction, None),
             initialized_result_with_timings(),
