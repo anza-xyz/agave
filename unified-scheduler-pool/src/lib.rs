@@ -336,7 +336,7 @@ where
                 };
 
                 let banking_stage_status = scheduler_pool.banking_stage_status();
-                if matches!(banking_stage_status, BankingStageStatus::Exited) {
+                if matches!(banking_stage_status, Some(BankingStageStatus::Exited)) {
                     scheduler_pool.unregister_banking_stage();
                     exiting = true;
                 }
