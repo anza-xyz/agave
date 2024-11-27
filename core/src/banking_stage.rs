@@ -351,6 +351,7 @@ impl BankingStage {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         block_production_method: BlockProductionMethod,
+        transaction_struct: TransactionStructure,
         cluster_info: &impl LikeClusterInfo,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         non_vote_receiver: BankingPacketReceiver,
@@ -366,6 +367,7 @@ impl BankingStage {
     ) -> Self {
         Self::new_num_threads(
             block_production_method,
+            transaction_struct,
             cluster_info,
             poh_recorder,
             non_vote_receiver,
@@ -385,6 +387,7 @@ impl BankingStage {
     #[allow(clippy::too_many_arguments)]
     pub fn new_num_threads(
         block_production_method: BlockProductionMethod,
+        transaction_struct: TransactionStructure,
         cluster_info: &impl LikeClusterInfo,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         non_vote_receiver: BankingPacketReceiver,
@@ -401,7 +404,7 @@ impl BankingStage {
     ) -> Self {
         match block_production_method {
             BlockProductionMethod::CentralScheduler => Self::new_central_scheduler(
-                TransactionStructure::Sdk,
+                transaction_struct,
                 cluster_info,
                 poh_recorder,
                 non_vote_receiver,
@@ -828,6 +831,7 @@ mod tests {
             sync::atomic::{AtomicBool, Ordering},
             thread::sleep,
         },
+        test_case::test_case,
     };
 
     pub(crate) fn new_test_cluster_info(keypair: Option<Arc<Keypair>>) -> (Node, ClusterInfo) {
@@ -846,8 +850,9 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn test_banking_stage_shutdown1() {
+    #[test_case(TransactionStructure::Sdk)]
+    #[test_case(TransactionStructure::View)]
+    fn test_banking_stage_shutdown1(transaction_struct: TransactionStructure) {
         let genesis_config = create_genesis_config(2).genesis_config;
         let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         let banking_tracer = BankingTracer::new_disabled();
@@ -873,6 +878,7 @@ mod tests {
 
             let banking_stage = BankingStage::new(
                 BlockProductionMethod::CentralScheduler,
+                transaction_struct,
                 &cluster_info,
                 &poh_recorder,
                 non_vote_receiver,
@@ -896,8 +902,9 @@ mod tests {
         Blockstore::destroy(ledger_path.path()).unwrap();
     }
 
-    #[test]
-    fn test_banking_stage_tick() {
+    #[test_case(TransactionStructure::Sdk)]
+    #[test_case(TransactionStructure::View)]
+    fn test_banking_stage_tick(transaction_struct: TransactionStructure) {
         solana_logger::setup();
         let GenesisConfigInfo {
             mut genesis_config, ..
@@ -933,6 +940,7 @@ mod tests {
 
             let banking_stage = BankingStage::new(
                 BlockProductionMethod::CentralScheduler,
+                transaction_struct,
                 &cluster_info,
                 &poh_recorder,
                 non_vote_receiver,
@@ -979,7 +987,10 @@ mod tests {
         with_vers.into_iter().map(|(b, _)| b).collect()
     }
 
-    fn test_banking_stage_entries_only(block_production_method: BlockProductionMethod) {
+    fn test_banking_stage_entries_only(
+        block_production_method: BlockProductionMethod,
+        transaction_struct: TransactionStructure,
+    ) {
         solana_logger::setup();
         let GenesisConfigInfo {
             genesis_config,
@@ -1017,6 +1028,7 @@ mod tests {
 
             let banking_stage = BankingStage::new(
                 block_production_method,
+                transaction_struct,
                 &cluster_info,
                 &poh_recorder,
                 non_vote_receiver,
@@ -1110,9 +1122,13 @@ mod tests {
         Blockstore::destroy(ledger_path.path()).unwrap();
     }
 
-    #[test]
-    fn test_banking_stage_entries_only_central_scheduler() {
-        test_banking_stage_entries_only(BlockProductionMethod::CentralScheduler);
+    #[test_case(TransactionStructure::Sdk)]
+    #[test_case(TransactionStructure::View)]
+    fn test_banking_stage_entries_only_central_scheduler(transaction_struct: TransactionStructure) {
+        test_banking_stage_entries_only(
+            BlockProductionMethod::CentralScheduler,
+            transaction_struct,
+        );
     }
 
     #[test]
@@ -1344,8 +1360,9 @@ mod tests {
         tick_producer.unwrap()
     }
 
-    #[test]
-    fn test_unprocessed_transaction_storage_full_send() {
+    #[test_case(TransactionStructure::Sdk)]
+    #[test_case(TransactionStructure::View)]
+    fn test_unprocessed_transaction_storage_full_send(transaction_struct: TransactionStructure) {
         solana_logger::setup();
         let GenesisConfigInfo {
             genesis_config,
@@ -1383,6 +1400,7 @@ mod tests {
 
             let banking_stage = BankingStage::new(
                 BlockProductionMethod::CentralScheduler,
+                transaction_struct,
                 &cluster_info,
                 &poh_recorder,
                 non_vote_receiver,
