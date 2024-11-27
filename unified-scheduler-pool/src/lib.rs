@@ -588,7 +588,7 @@ where
         id_and_inner: &mut MutexGuard<'_, (Option<SchedulerId>, Option<S::Inner>)>,
     ) {
         info!("flash session: start!");
-        let (handler_count, banking_stage_context): (usize, _) =  {
+        let (handler_count, banking_stage_context): (usize, _) = {
             let mut respawner_write = self.block_production_scheduler_respawner.lock().unwrap();
             let BlockProductionSchedulerRespawner {
                 handler_count,
@@ -609,7 +609,7 @@ where
                     banking_packet_receiver: banking_packet_receiver.clone(),
                     on_banking_packet_receive: on_spawn_block_production_scheduler(adapter.clone()),
                     adapter,
-                }
+                },
             )
         };
 
@@ -620,7 +620,9 @@ where
             initialized_result_with_timings(),
             Some(banking_stage_context),
         );
-        let ((Ok(_result), _timings), inner) = scheduler.into_inner() else { panic!() };
+        let ((Ok(_result), _timings), inner) = scheduler.into_inner() else {
+            panic!()
+        };
         assert!(id_and_inner.0.replace(inner.id()).is_none());
         assert!(id_and_inner.1.replace(inner).is_none());
         self.block_production_scheduler_condvar.notify_all();
