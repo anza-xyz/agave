@@ -2410,7 +2410,9 @@ mod tests {
             bank::Bank,
             bank_forks::BankForks,
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
-            installed_scheduler_pool::{BankWithScheduler, SchedulingContext},
+            installed_scheduler_pool::{
+                BankWithScheduler, InstalledSchedulerPoolArc, SchedulingContext,
+            },
             prioritization_fee_cache::PrioritizationFeeCache,
         },
         solana_sdk::{
@@ -2426,60 +2428,58 @@ mod tests {
             thread::JoinHandle,
         },
     };
-    use solana_runtime::installed_scheduler_pool::InstalledSchedulerPoolArc;
 
-impl<S, TH> SchedulerPool<S, TH>
-where
-    S: SpawnableScheduler<TH>,
-    TH: TaskHandler,
-{
-    fn do_new_for_verification(
-        handler_count: Option<usize>,
-        log_messages_bytes_limit: Option<usize>,
-        transaction_status_sender: Option<TransactionStatusSender>,
-        replay_vote_sender: Option<ReplayVoteSender>,
-        prioritization_fee_cache: Arc<PrioritizationFeeCache>,
-        pool_cleaner_interval: Duration,
-        max_pooling_duration: Duration,
-        max_usage_queue_count: usize,
-        timeout_duration: Duration,
-    ) -> Arc<Self> {
-        Self::do_new(
-            SupportedSchedulingMode::block_verification_only(),
-            handler_count,
-            log_messages_bytes_limit,
-            transaction_status_sender,
-            replay_vote_sender,
-            prioritization_fee_cache,
-            TransactionRecorder::new_dummy(),
-            pool_cleaner_interval,
-            max_pooling_duration,
-            max_usage_queue_count,
-            timeout_duration,
-        )
+    impl<S, TH> SchedulerPool<S, TH>
+    where
+        S: SpawnableScheduler<TH>,
+        TH: TaskHandler,
+    {
+        fn do_new_for_verification(
+            handler_count: Option<usize>,
+            log_messages_bytes_limit: Option<usize>,
+            transaction_status_sender: Option<TransactionStatusSender>,
+            replay_vote_sender: Option<ReplayVoteSender>,
+            prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+            pool_cleaner_interval: Duration,
+            max_pooling_duration: Duration,
+            max_usage_queue_count: usize,
+            timeout_duration: Duration,
+        ) -> Arc<Self> {
+            Self::do_new(
+                SupportedSchedulingMode::block_verification_only(),
+                handler_count,
+                log_messages_bytes_limit,
+                transaction_status_sender,
+                replay_vote_sender,
+                prioritization_fee_cache,
+                TransactionRecorder::new_dummy(),
+                pool_cleaner_interval,
+                max_pooling_duration,
+                max_usage_queue_count,
+                timeout_duration,
+            )
+        }
+
+        // This apparently-meaningless wrapper is handy, because some callers explicitly want
+        // `dyn InstalledSchedulerPool` to be returned for type inference convenience.
+        fn new_dyn_for_verification(
+            handler_count: Option<usize>,
+            log_messages_bytes_limit: Option<usize>,
+            transaction_status_sender: Option<TransactionStatusSender>,
+            replay_vote_sender: Option<ReplayVoteSender>,
+            prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+        ) -> InstalledSchedulerPoolArc {
+            Self::new(
+                SupportedSchedulingMode::block_verification_only(),
+                handler_count,
+                log_messages_bytes_limit,
+                transaction_status_sender,
+                replay_vote_sender,
+                prioritization_fee_cache,
+                TransactionRecorder::new_dummy(),
+            )
+        }
     }
-
-    // This apparently-meaningless wrapper is handy, because some callers explicitly want
-    // `dyn InstalledSchedulerPool` to be returned for type inference convenience.
-    fn new_dyn_for_verification(
-        handler_count: Option<usize>,
-        log_messages_bytes_limit: Option<usize>,
-        transaction_status_sender: Option<TransactionStatusSender>,
-        replay_vote_sender: Option<ReplayVoteSender>,
-        prioritization_fee_cache: Arc<PrioritizationFeeCache>,
-    ) -> InstalledSchedulerPoolArc {
-        Self::new(
-            SupportedSchedulingMode::block_verification_only(),
-            handler_count,
-            log_messages_bytes_limit,
-            transaction_status_sender,
-            replay_vote_sender,
-            prioritization_fee_cache,
-            TransactionRecorder::new_dummy(),
-        )
-    }
-
-}
 
     #[derive(Debug)]
     enum TestCheckPoint {
