@@ -213,7 +213,7 @@ impl AccountsCache {
             self
                 .cache
                 .entry(slot)
-                .or_insert(self.new_inner())
+                .or_insert_with(|| self.new_inner())
                 .clone());
 
         slot_cache.insert(pubkey, account)
