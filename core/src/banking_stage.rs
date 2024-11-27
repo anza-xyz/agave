@@ -21,7 +21,7 @@ use {
             packet_deserializer::PacketDeserializer,
             transaction_scheduler::{
                 prio_graph_scheduler::PrioGraphScheduler,
-                scheduler_controller::{calculate_priority_and_cost, SchedulerController},
+                scheduler_controller::SchedulerController,
                 scheduler_error::SchedulerError,
             },
         },
