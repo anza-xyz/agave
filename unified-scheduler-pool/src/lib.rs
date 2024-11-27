@@ -57,7 +57,7 @@ use {
 };
 
 #[derive(Clone)]
-struct BankingStageContext {
+pub struct BankingStageContext {
     adapter: Arc<BankingStageAdapter>,
     banking_packet_receiver: BankingPacketReceiver,
     on_banking_packet_receive: Box<dyn BatchConverter>,
