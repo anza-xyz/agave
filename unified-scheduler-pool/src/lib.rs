@@ -1296,8 +1296,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         handler_count: usize,
         mut context: SchedulingContext,
         mut result_with_timings: ResultWithTimings,
-        banking_stage_context: Option<(BankingPacketReceiver, Box<dyn BatchConverter>)>,
-        adapter: Option<Arc<BankingStageAdapter>>,
+        banking_stage_context: Option<(Arc<BankingStageAdapter>, BankingPacketReceiver, Box<dyn BatchConverter>)>,
     ) {
         assert!(handler_count >= 1);
 
@@ -2211,7 +2210,6 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
             context.clone(),
             result_with_timings,
             banking_stage_context,
-            banking_stage_adapter,
         );
         Self { inner, context }
     }
