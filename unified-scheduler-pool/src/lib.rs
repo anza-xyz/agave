@@ -1942,10 +1942,20 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 } else {
                     &never()
                 };
+                let (do_now, dont_now) = (&disconnected::<()>(), &never::<()>());
 
+                let mut busy_start = Instant::now();
                 loop {
+                    let busy_waker = if busy_start.elapsed() < const { Duration::from_micros(100) } {
+                        do_now
+                    } else {
+                        dont_now
+                    };
+
                     let (task, sender) = select_biased! {
                         recv(runnable_task_receiver.for_select()) -> message => {
+                            defer! { busy_start = Instant::now() }
+
                             let Ok(message) = message else {
                                 break;
                             };
@@ -1956,6 +1966,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             }
                         },
                         recv(banking_packet_receiver) -> banking_packet => {
+                            defer! { busy_start = Instant::now() }
+
                             let Some(new_task_sender) = new_task_sender.upgrade() else {
                                 info!("dead new_task_sender");
                                 break;
@@ -1979,6 +1991,9 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             });
                             continue;
                         },
+                        recv(busy_waker) -> _ => {
+                            continue;
+                        },
                         /*
                         recv(runnable_task_receiver.aux_for_select()) -> task => {
                             if let Ok(task) = task {
@@ -1989,6 +2004,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             }
                         },
                         */
+                        //default => { continue },
                     };
                     defer! {
                         if !thread::panicking() {
