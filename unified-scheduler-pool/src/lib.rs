@@ -1964,7 +1964,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             }
                             break;
                         };
-                        (banking_stage_context.as_mut().unwrap().on_banking_packet_receive)(banking_packet, &move |task| {
+                        (banking_stage_context.as_ref().unwrap().on_banking_packet_receive)(banking_packet, &move |task| {
                             new_task_sender
                                 .send(NewTaskPayload::Payload(task).into())
                                 .unwrap();
