@@ -118,6 +118,7 @@ impl Tpu {
         tpu_max_connections_per_ipaddr_per_minute: u64,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
         block_production_method: BlockProductionMethod,
+        transaction_struct: TransactionStructure,
         enable_block_production_forwarding: bool,
         _generator_config: Option<GeneratorConfig>, /* vestigial code for replay invalidator */
     ) -> (Self, Vec<Arc<dyn NotifyKeyUpdate + Sync + Send>>) {
@@ -266,7 +267,7 @@ impl Tpu {
 
         let banking_stage = BankingStage::new(
             block_production_method,
-            TransactionStructure::Sdk, // TODO: add cli
+            transaction_struct,
             cluster_info,
             poh_recorder,
             non_vote_receiver,
