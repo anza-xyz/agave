@@ -12,7 +12,7 @@ use {
         banking_trace::{BankingPacketBatch, BankingPacketSender},
         sigverify_stage::{SigVerifier, SigVerifyServiceError},
     },
-    solana_perf::{cuda_runtime::PinnedVec, packet::PacketBatch, recycler::Recycler, sigverify},
+    solana_perf::{cuda_runtime::RecycledVec, packet::PacketBatch, recycler::Recycler, sigverify},
     solana_sdk::{packet::Packet, saturating_add_assign},
 };
 
@@ -59,7 +59,7 @@ pub struct TransactionSigVerifier {
     packet_sender: BankingPacketSender,
     tracer_packet_stats: SigverifyTracerPacketStats,
     recycler: Recycler<TxOffset>,
-    recycler_out: Recycler<PinnedVec<u8>>,
+    recycler_out: Recycler<RecycledVec<u8>>,
     reject_non_vote: bool,
 }
 

@@ -6,7 +6,7 @@ use {
     sha2::{Digest, Sha512},
     solana_metrics::inc_new_counter_debug,
     solana_perf::{
-        cuda_runtime::PinnedVec,
+        cuda_runtime::RecycledVec,
         packet::{Packet, PacketBatch},
         perf_libs,
         recycler_cache::RecyclerCache,
@@ -101,7 +101,7 @@ fn slot_key_data_for_gpu(
     batches: &[PacketBatch],
     slot_keys: &HashMap<Slot, Pubkey>,
     recycler_cache: &RecyclerCache,
-) -> (/*pubkeys:*/ PinnedVec<u8>, TxOffset) {
+) -> (/*pubkeys:*/ RecycledVec<u8>, TxOffset) {
     //TODO: mark Pubkey::default shreds as failed after the GPU returns
     assert_eq!(slot_keys.get(&Slot::MAX), Some(&Pubkey::default()));
     let slots: Vec<Slot> = thread_pool.install(|| {
@@ -160,7 +160,7 @@ fn get_merkle_roots(
     packets: &[PacketBatch],
     recycler_cache: &RecyclerCache,
 ) -> (
-    PinnedVec<u8>,      // Merkle roots
+    RecycledVec<u8>,    // Merkle roots
     Vec<Option<usize>>, // Offsets
 ) {
     let merkle_roots: Vec<Option<Hash>> = thread_pool.install(|| {
@@ -199,7 +199,7 @@ fn get_merkle_roots(
 
 // Resizes the buffer to >= size and a multiple of
 // std::mem::size_of::<Packet>().
-fn resize_buffer(buffer: &mut PinnedVec<u8>, size: usize) {
+fn resize_buffer(buffer: &mut RecycledVec<u8>, size: usize) {
     //HACK: Pubkeys vector is passed along as a `PacketBatch` buffer to the GPU
     //TODO: GPU needs a more opaque interface, which can handle variable sized structures for data
     //Pad the Pubkeys buffer such that it is bigger than a buffer of Packet sized elems
@@ -208,7 +208,7 @@ fn resize_buffer(buffer: &mut PinnedVec<u8>, size: usize) {
     buffer.resize(size, 0u8);
 }
 
-fn elems_from_buffer(buffer: &PinnedVec<u8>) -> perf_libs::Elems {
+fn elems_from_buffer(buffer: &RecycledVec<u8>) -> perf_libs::Elems {
     // resize_buffer ensures that buffer size is a multiple of Packet size.
     debug_assert_eq!(buffer.len() % std::mem::size_of::<Packet>(), 0);
     let num_packets = buffer.len() / std::mem::size_of::<Packet>();
@@ -360,7 +360,7 @@ pub fn sign_shreds_cpu(thread_pool: &ThreadPool, keypair: &Keypair, batches: &mu
     inc_new_counter_debug!("ed25519_shred_sign_cpu", packet_count);
 }
 
-pub fn sign_shreds_gpu_pinned_keypair(keypair: &Keypair, cache: &RecyclerCache) -> PinnedVec<u8> {
+pub fn sign_shreds_gpu_pinned_keypair(keypair: &Keypair, cache: &RecyclerCache) -> RecycledVec<u8> {
     let mut vec = cache.buffer().allocate("pinned_keypair");
     let pubkey = keypair.pubkey().to_bytes();
     let secret = keypair.secret().to_bytes();
@@ -380,7 +380,7 @@ pub fn sign_shreds_gpu_pinned_keypair(keypair: &Keypair, cache: &RecyclerCache) 
 pub fn sign_shreds_gpu(
     thread_pool: &ThreadPool,
     keypair: &Keypair,
-    pinned_keypair: &Option<Arc<PinnedVec<u8>>>,
+    pinned_keypair: &Option<Arc<RecycledVec<u8>>>,
     batches: &mut [PacketBatch],
     recycler_cache: &RecyclerCache,
 ) {

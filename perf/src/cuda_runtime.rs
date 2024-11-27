@@ -56,15 +56,15 @@ fn unpin<T>(mem: *mut T) {
 // to pin in certain circumstances.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug, Default, Serialize, Deserialize)]
-pub struct PinnedVec<T: Default + Clone + Sized> {
+pub struct RecycledVec<T: Default + Clone + Sized> {
     x: Vec<T>,
     pinned: bool,
     pinnable: bool,
     #[serde(skip)]
-    recycler: Weak<RecyclerX<PinnedVec<T>>>,
+    recycler: Weak<RecyclerX<RecycledVec<T>>>,
 }
 
-impl<T: Default + Clone + Sized> Reset for PinnedVec<T> {
+impl<T: Default + Clone + Sized> Reset for RecycledVec<T> {
     fn reset(&mut self) {
         self.resize(0, T::default());
     }
@@ -77,8 +77,8 @@ impl<T: Default + Clone + Sized> Reset for PinnedVec<T> {
     }
 }
 
-impl<T: Clone + Default + Sized> From<PinnedVec<T>> for Vec<T> {
-    fn from(mut pinned_vec: PinnedVec<T>) -> Self {
+impl<T: Clone + Default + Sized> From<RecycledVec<T>> for Vec<T> {
+    fn from(mut pinned_vec: RecycledVec<T>) -> Self {
         if pinned_vec.pinned {
             // If the vector is pinned and has a recycler, just return a clone
             // so that the next allocation of a PinnedVec will recycle an
@@ -95,7 +95,7 @@ impl<T: Clone + Default + Sized> From<PinnedVec<T>> for Vec<T> {
     }
 }
 
-impl<'a, T: Clone + Default + Sized> IntoIterator for &'a PinnedVec<T> {
+impl<'a, T: Clone + Default + Sized> IntoIterator for &'a RecycledVec<T> {
     type Item = &'a T;
     type IntoIter = Iter<'a, T>;
 
@@ -104,7 +104,7 @@ impl<'a, T: Clone + Default + Sized> IntoIterator for &'a PinnedVec<T> {
     }
 }
 
-impl<T: Clone + Default + Sized, I: SliceIndex<[T]>> Index<I> for PinnedVec<T> {
+impl<T: Clone + Default + Sized, I: SliceIndex<[T]>> Index<I> for RecycledVec<T> {
     type Output = I::Output;
 
     #[inline]
@@ -113,14 +113,14 @@ impl<T: Clone + Default + Sized, I: SliceIndex<[T]>> Index<I> for PinnedVec<T> {
     }
 }
 
-impl<T: Clone + Default + Sized, I: SliceIndex<[T]>> IndexMut<I> for PinnedVec<T> {
+impl<T: Clone + Default + Sized, I: SliceIndex<[T]>> IndexMut<I> for RecycledVec<T> {
     #[inline]
     fn index_mut(&mut self, index: I) -> &mut Self::Output {
         &mut self.x[index]
     }
 }
 
-impl<T: Clone + Default + Sized> PinnedVec<T> {
+impl<T: Clone + Default + Sized> RecycledVec<T> {
     pub fn iter(&self) -> Iter<'_, T> {
         self.x.iter()
     }
@@ -134,7 +134,7 @@ impl<T: Clone + Default + Sized> PinnedVec<T> {
     }
 }
 
-impl<'a, T: Clone + Send + Sync + Default + Sized> IntoParallelIterator for &'a PinnedVec<T> {
+impl<'a, T: Clone + Send + Sync + Default + Sized> IntoParallelIterator for &'a RecycledVec<T> {
     type Iter = rayon::slice::Iter<'a, T>;
     type Item = &'a T;
     fn into_par_iter(self) -> Self::Iter {
@@ -142,7 +142,7 @@ impl<'a, T: Clone + Send + Sync + Default + Sized> IntoParallelIterator for &'a 
     }
 }
 
-impl<'a, T: Clone + Send + Sync + Default + Sized> IntoParallelIterator for &'a mut PinnedVec<T> {
+impl<'a, T: Clone + Send + Sync + Default + Sized> IntoParallelIterator for &'a mut RecycledVec<T> {
     type Iter = rayon::slice::IterMut<'a, T>;
     type Item = &'a mut T;
     fn into_par_iter(self) -> Self::Iter {
@@ -150,7 +150,7 @@ impl<'a, T: Clone + Send + Sync + Default + Sized> IntoParallelIterator for &'a 
     }
 }
 
-impl<T: Clone + Default + Sized> PinnedVec<T> {
+impl<T: Clone + Default + Sized> RecycledVec<T> {
     pub fn reserve(&mut self, size: usize) {
         self.x.reserve(size);
     }
@@ -300,7 +300,7 @@ impl<T: Clone + Default + Sized> PinnedVec<T> {
     }
 }
 
-impl<T: Clone + Default + Sized> Clone for PinnedVec<T> {
+impl<T: Clone + Default + Sized> Clone for RecycledVec<T> {
     fn clone(&self) -> Self {
         let mut x = self.x.clone();
         let pinned = if self.pinned {
@@ -324,7 +324,7 @@ impl<T: Clone + Default + Sized> Clone for PinnedVec<T> {
     }
 }
 
-impl<T: Sized + Default + Clone> Drop for PinnedVec<T> {
+impl<T: Sized + Default + Clone> Drop for RecycledVec<T> {
     fn drop(&mut self) {
         if let Some(recycler) = self.recycler.upgrade() {
             recycler.recycle(std::mem::take(self));
@@ -340,7 +340,7 @@ mod tests {
 
     #[test]
     fn test_pinned_vec() {
-        let mut mem = PinnedVec::with_capacity(10);
+        let mut mem = RecycledVec::with_capacity(10);
         mem.set_pinnable();
         mem.push(50);
         mem.resize(2, 10);

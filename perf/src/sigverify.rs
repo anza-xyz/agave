@@ -5,7 +5,7 @@
 //!
 use {
     crate::{
-        cuda_runtime::PinnedVec,
+        cuda_runtime::RecycledVec,
         packet::{Packet, PacketBatch, PacketFlags, PACKET_DATA_SIZE},
         perf_libs,
         recycler::Recycler,
@@ -38,7 +38,7 @@ lazy_static! {
         .unwrap();
 }
 
-pub type TxOffset = PinnedVec<u32>;
+pub type TxOffset = RecycledVec<u32>;
 
 type TxOffsets = (TxOffset, TxOffset, TxOffset, TxOffset, Vec<Vec<u32>>);
 
@@ -428,13 +428,13 @@ pub fn generate_offsets(
     reject_non_vote: bool,
 ) -> TxOffsets {
     debug!("allocating..");
-    let mut signature_offsets: PinnedVec<_> = recycler.allocate("sig_offsets");
+    let mut signature_offsets: RecycledVec<_> = recycler.allocate("sig_offsets");
     signature_offsets.set_pinnable();
-    let mut pubkey_offsets: PinnedVec<_> = recycler.allocate("pubkey_offsets");
+    let mut pubkey_offsets: RecycledVec<_> = recycler.allocate("pubkey_offsets");
     pubkey_offsets.set_pinnable();
-    let mut msg_start_offsets: PinnedVec<_> = recycler.allocate("msg_start_offsets");
+    let mut msg_start_offsets: RecycledVec<_> = recycler.allocate("msg_start_offsets");
     msg_start_offsets.set_pinnable();
-    let mut msg_sizes: PinnedVec<_> = recycler.allocate("msg_size_offsets");
+    let mut msg_sizes: RecycledVec<_> = recycler.allocate("msg_size_offsets");
     msg_sizes.set_pinnable();
     let mut current_offset: usize = 0;
     let offsets = batches
@@ -540,7 +540,7 @@ pub fn ed25519_verify_disabled(batches: &mut [PacketBatch]) {
     });
 }
 
-pub fn copy_return_values<I, T>(sig_lens: I, out: &PinnedVec<u8>, rvs: &mut [Vec<u8>])
+pub fn copy_return_values<I, T>(sig_lens: I, out: &RecycledVec<u8>, rvs: &mut [Vec<u8>])
 where
     I: IntoIterator<Item = T>,
     T: IntoIterator<Item = u32>,
@@ -596,7 +596,7 @@ pub fn mark_disabled(batches: &mut [PacketBatch], r: &[Vec<u8>]) {
 pub fn ed25519_verify(
     batches: &mut [PacketBatch],
     recycler: &Recycler<TxOffset>,
-    recycler_out: &Recycler<PinnedVec<u8>>,
+    recycler_out: &Recycler<RecycledVec<u8>>,
     reject_non_vote: bool,
     valid_packet_count: usize,
 ) {
@@ -734,8 +734,9 @@ mod tests {
                     .collect()
             })
             .collect();
-        let out =
-            PinnedVec::<u8>::from_vec(out.into_iter().flatten().flatten().map(u8::from).collect());
+        let out = RecycledVec::<u8>::from_vec(
+            out.into_iter().flatten().flatten().map(u8::from).collect(),
+        );
         let mut rvs: Vec<Vec<u8>> = sig_lens
             .iter()
             .map(|sig_lens| vec![0u8; sig_lens.len()])
