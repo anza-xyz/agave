@@ -20,11 +20,11 @@ use {
         accounts::AccountAddressFilter,
         accounts_index::{AccountIndex, AccountSecondaryIndexes, IndexKey, ScanConfig},
     },
-    solana_client::connection_cache::{ConnectionCache, Protocol},
+    solana_client::connection_cache::Protocol,
     solana_entry::entry::Entry,
     solana_faucet::faucet::request_airdrop_transaction,
     solana_feature_set as feature_set,
-    solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
+    solana_gossip::cluster_info::ClusterInfo,
     solana_inline_spl::{
         token::{SPL_TOKEN_ACCOUNT_MINT_OFFSET, SPL_TOKEN_ACCOUNT_OWNER_OFFSET},
         token_2022::{self, ACCOUNTTYPE_ACCOUNT},
@@ -33,7 +33,6 @@ use {
         blockstore::{Blockstore, SignatureInfosForAddress},
         blockstore_db::BlockstoreError,
         blockstore_meta::{PerfSample, PerfSampleV1, PerfSampleV2},
-        get_tmp_ledger_path,
         leader_schedule_cache::LeaderScheduleCache,
     },
     solana_metrics::inc_new_counter_info,
@@ -54,7 +53,7 @@ use {
     solana_runtime::{
         bank::{Bank, TransactionSimulationResult},
         bank_forks::BankForks,
-        commitment::{BlockCommitmentArray, BlockCommitmentCache, CommitmentSlots},
+        commitment::{BlockCommitmentArray, BlockCommitmentCache},
         installed_scheduler_pool::BankWithScheduler,
         non_circulating_supply::calculate_non_circulating_supply,
         prioritization_fee_cache::PrioritizationFeeCache,
@@ -62,6 +61,7 @@ use {
         snapshot_utils,
         verify_precompiles::verify_precompiles,
     },
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount},
         clock::{Slot, UnixTimestamp, MAX_PROCESSING_AGE},
@@ -80,13 +80,9 @@ use {
             VersionedTransaction, MAX_TX_ACCOUNT_LOCKS,
         },
     },
-    solana_send_transaction_service::{
-        send_transaction_service::{SendTransactionService, TransactionInfo},
-        tpu_info::NullTpuInfo,
-    },
+    solana_send_transaction_service::send_transaction_service::TransactionInfo,
     solana_stake_program,
     solana_storage_bigtable::Error as StorageError,
-    solana_streamer::socket::SocketAddrSpace,
     solana_transaction_status::{
         map_inner_instructions, BlockEncodingOptions, ConfirmedBlock,
         ConfirmedTransactionStatusWithSignature, ConfirmedTransactionWithStatusMeta,
@@ -116,6 +112,17 @@ use {
         },
         time::Duration,
     },
+};
+#[cfg(test)]
+use {
+    solana_client::connection_cache::ConnectionCache,
+    solana_gossip::contact_info::ContactInfo,
+    solana_ledger::get_tmp_ledger_path,
+    solana_runtime::commitment::CommitmentSlots,
+    solana_send_transaction_service::{
+        send_transaction_service::SendTransactionService, tpu_info::NullTpuInfo,
+    },
+    solana_streamer::socket::SocketAddrSpace,
 };
 
 pub mod account_resolver;
@@ -348,7 +355,7 @@ impl JsonRpcRequestProcessor {
         )
     }
 
-    // Useful for unit testing
+    #[cfg(test)]
     pub fn new_from_bank(
         bank: Bank,
         socket_addr_space: SocketAddrSpace,
@@ -377,7 +384,7 @@ impl JsonRpcRequestProcessor {
             &bank_forks,
             None,
             receiver,
-            &connection_cache,
+            connection_cache,
             1000,
             1,
             exit.clone(),
@@ -1682,118 +1689,118 @@ impl JsonRpcRequestProcessor {
         let commitment = config.commitment.unwrap_or_default();
         check_is_at_least_confirmed(commitment)?;
 
-        if self.config.enable_rpc_transaction_history {
-            let highest_super_majority_root = self
-                .block_commitment_cache
-                .read()
-                .unwrap()
-                .highest_super_majority_root();
-            let highest_slot = if commitment.is_confirmed() {
-                let confirmed_bank = self.get_bank_with_config(config)?;
-                confirmed_bank.slot()
-            } else {
-                let min_context_slot = config.min_context_slot.unwrap_or_default();
-                if highest_super_majority_root < min_context_slot {
-                    return Err(RpcCustomError::MinContextSlotNotReached {
-                        context_slot: highest_super_majority_root,
-                    }
-                    .into());
+        if !self.config.enable_rpc_transaction_history {
+            return Err(RpcCustomError::TransactionHistoryNotAvailable.into());
+        }
+
+        let highest_super_majority_root = self
+            .block_commitment_cache
+            .read()
+            .unwrap()
+            .highest_super_majority_root();
+        let highest_slot = if commitment.is_confirmed() {
+            let confirmed_bank = self.get_bank_with_config(config)?;
+            confirmed_bank.slot()
+        } else {
+            let min_context_slot = config.min_context_slot.unwrap_or_default();
+            if highest_super_majority_root < min_context_slot {
+                return Err(RpcCustomError::MinContextSlotNotReached {
+                    context_slot: highest_super_majority_root,
                 }
-                highest_super_majority_root
-            };
+                .into());
+            }
+            highest_super_majority_root
+        };
 
-            let SignatureInfosForAddress {
-                infos: mut results,
-                found_before,
-            } = self
-                .blockstore
-                .get_confirmed_signatures_for_address2(address, highest_slot, before, until, limit)
-                .map_err(|err| Error::invalid_params(format!("{err}")))?;
+        let SignatureInfosForAddress {
+            infos: mut results,
+            found_before,
+        } = self
+            .blockstore
+            .get_confirmed_signatures_for_address2(address, highest_slot, before, until, limit)
+            .map_err(|err| Error::invalid_params(format!("{err}")))?;
 
-            let map_results = |results: Vec<ConfirmedTransactionStatusWithSignature>| {
-                results
-                    .into_iter()
-                    .map(|x| {
-                        let mut item: RpcConfirmedTransactionStatusWithSignature = x.into();
-                        if item.slot <= highest_super_majority_root {
-                            item.confirmation_status =
-                                Some(TransactionConfirmationStatus::Finalized);
-                        } else {
-                            item.confirmation_status =
-                                Some(TransactionConfirmationStatus::Confirmed);
-                            if item.block_time.is_none() {
-                                let r_bank_forks = self.bank_forks.read().unwrap();
-                                item.block_time = r_bank_forks
-                                    .get(item.slot)
-                                    .map(|bank| bank.clock().unix_timestamp);
-                            }
-                        }
-                        item
-                    })
-                    .collect()
-            };
-
-            if results.len() < limit {
-                if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-                    let mut bigtable_before = before;
-                    if !results.is_empty() {
-                        limit -= results.len();
-                        bigtable_before = results.last().map(|x| x.signature);
-                    }
-
-                    // If the oldest address-signature found in Blockstore has not yet been
-                    // uploaded to long-term storage, modify the storage query to return all latest
-                    // signatures to prevent erroring on RowNotFound. This can race with upload.
-                    if found_before && bigtable_before.is_some() {
-                        match bigtable_ledger_storage
-                            .get_signature_status(&bigtable_before.unwrap())
-                            .await
-                        {
-                            Err(StorageError::SignatureNotFound) => {
-                                bigtable_before = None;
-                            }
-                            Err(err) => {
-                                warn!("{:?}", err);
-                                return Ok(map_results(results));
-                            }
-                            Ok(_) => {}
+        let map_results = |results: Vec<ConfirmedTransactionStatusWithSignature>| {
+            results
+                .into_iter()
+                .map(|x| {
+                    let mut item: RpcConfirmedTransactionStatusWithSignature = x.into();
+                    if item.slot <= highest_super_majority_root {
+                        item.confirmation_status = Some(TransactionConfirmationStatus::Finalized);
+                    } else {
+                        item.confirmation_status = Some(TransactionConfirmationStatus::Confirmed);
+                        if item.block_time.is_none() {
+                            let r_bank_forks = self.bank_forks.read().unwrap();
+                            item.block_time = r_bank_forks
+                                .get(item.slot)
+                                .map(|bank| bank.clock().unix_timestamp);
                         }
                     }
+                    item
+                })
+                .collect()
+        };
 
-                    let bigtable_results = bigtable_ledger_storage
-                        .get_confirmed_signatures_for_address(
-                            &address,
-                            bigtable_before.as_ref(),
-                            until.as_ref(),
-                            limit,
-                        )
-                        .await;
-                    match bigtable_results {
-                        Ok(bigtable_results) => {
-                            let results_set: HashSet<_> =
-                                results.iter().map(|result| result.signature).collect();
-                            for (bigtable_result, _) in bigtable_results {
-                                // In the upload race condition, latest address-signatures in
-                                // long-term storage may include original `before` signature...
-                                if before != Some(bigtable_result.signature)
-                                    // ...or earlier Blockstore signatures
-                                    && !results_set.contains(&bigtable_result.signature)
-                                {
-                                    results.push(bigtable_result);
-                                }
-                            }
+        if results.len() < limit {
+            if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
+                let mut bigtable_before = before;
+                if !results.is_empty() {
+                    limit -= results.len();
+                    bigtable_before = results.last().map(|x| x.signature);
+                }
+
+                // If the oldest address-signature found in Blockstore has not yet been
+                // uploaded to long-term storage, modify the storage query to return all latest
+                // signatures to prevent erroring on RowNotFound. This can race with upload.
+                if found_before && bigtable_before.is_some() {
+                    match bigtable_ledger_storage
+                        .get_signature_status(&bigtable_before.unwrap())
+                        .await
+                    {
+                        Err(StorageError::SignatureNotFound) => {
+                            bigtable_before = None;
                         }
                         Err(err) => {
-                            warn!("{:?}", err);
+                            warn!("Failed to query Bigtable: {:?}", err);
+                            return Err(RpcCustomError::LongTermStorageUnreachable.into());
                         }
+                        Ok(_) => {}
+                    }
+                }
+
+                let bigtable_results = bigtable_ledger_storage
+                    .get_confirmed_signatures_for_address(
+                        &address,
+                        bigtable_before.as_ref(),
+                        until.as_ref(),
+                        limit,
+                    )
+                    .await;
+                match bigtable_results {
+                    Ok(bigtable_results) => {
+                        let results_set: HashSet<_> =
+                            results.iter().map(|result| result.signature).collect();
+                        for (bigtable_result, _) in bigtable_results {
+                            // In the upload race condition, latest address-signatures in
+                            // long-term storage may include original `before` signature...
+                            if before != Some(bigtable_result.signature)
+                                    // ...or earlier Blockstore signatures
+                                    && !results_set.contains(&bigtable_result.signature)
+                            {
+                                results.push(bigtable_result);
+                            }
+                        }
+                    }
+                    Err(StorageError::SignatureNotFound) => {}
+                    Err(err) => {
+                        warn!("Failed to query Bigtable: {:?}", err);
+                        return Err(RpcCustomError::LongTermStorageUnreachable.into());
                     }
                 }
             }
-
-            Ok(map_results(results))
-        } else {
-            Err(RpcCustomError::TransactionHistoryNotAvailable.into())
         }
+
+        Ok(map_results(results))
     }
 
     pub async fn get_first_available_block(&self) -> Slot {
@@ -4212,8 +4219,8 @@ fn sanitize_transaction(
     transaction: VersionedTransaction,
     address_loader: impl AddressLoader,
     reserved_account_keys: &HashSet<Pubkey>,
-) -> Result<SanitizedTransaction> {
-    SanitizedTransaction::try_create(
+) -> Result<RuntimeTransaction<SanitizedTransaction>> {
+    RuntimeTransaction::try_create(
         transaction,
         MessageHash::Compute,
         None,
@@ -4332,11 +4339,12 @@ pub mod tests {
         serde::de::DeserializeOwned,
         solana_accounts_db::accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
         solana_entry::entry::next_versioned_entry,
-        solana_gossip::socketaddr,
+        solana_gossip::{contact_info::ContactInfo, socketaddr},
         solana_ledger::{
             blockstore_meta::PerfSampleV2,
             blockstore_processor::fill_blockstore_slot_with_ticks,
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
+            get_tmp_ledger_path,
         },
         solana_rpc_client_api::{
             custom_error::{
@@ -4347,8 +4355,10 @@ pub mod tests {
             filter::MemcmpEncodedBytes,
         },
         solana_runtime::{
-            accounts_background_service::AbsRequestSender, bank::BankTestConfig,
-            commitment::BlockCommitment, non_circulating_supply::non_circulating_accounts,
+            accounts_background_service::AbsRequestSender,
+            bank::BankTestConfig,
+            commitment::{BlockCommitment, CommitmentSlots},
+            non_circulating_supply::non_circulating_accounts,
         },
         solana_sdk::{
             account::{Account, WritableAccount},
@@ -4376,6 +4386,7 @@ pub mod tests {
             },
             vote::state::VoteState,
         },
+        solana_send_transaction_service::tpu_info::NullTpuInfo,
         solana_transaction_status::{
             EncodedConfirmedBlock, EncodedTransaction, EncodedTransactionWithStatusMeta,
             TransactionDetails,
@@ -4737,7 +4748,7 @@ pub mod tests {
             let prioritization_fee_cache = &self.meta.prioritization_fee_cache;
             let transactions: Vec<_> = transactions
                 .into_iter()
-                .map(SanitizedTransaction::from_transaction_for_tests)
+                .map(RuntimeTransaction::from_transaction_for_tests)
                 .collect();
             prioritization_fee_cache.update(&bank, transactions.iter());
         }
@@ -6486,7 +6497,7 @@ pub mod tests {
             &bank_forks,
             None,
             receiver,
-            &connection_cache,
+            connection_cache,
             1000,
             1,
             exit,
@@ -6760,7 +6771,7 @@ pub mod tests {
             &bank_forks,
             None,
             receiver,
-            &connection_cache,
+            connection_cache,
             1000,
             1,
             exit,

@@ -6,10 +6,10 @@
 use {
     crate::{block_cost_limits::*, transaction_cost::TransactionCost},
     solana_metrics::datapoint_info,
+    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_sdk::{
         clock::Slot, pubkey::Pubkey, saturating_add_assign, transaction::TransactionError,
     },
-    solana_svm_transaction::svm_message::SVMMessage,
     std::{cmp::Ordering, collections::HashMap},
 };
 
@@ -160,7 +160,7 @@ impl CostTracker {
 
     pub fn try_add(
         &mut self,
-        tx_cost: &TransactionCost<impl SVMMessage>,
+        tx_cost: &TransactionCost<impl TransactionWithMeta>,
     ) -> Result<UpdatedCosts, CostTrackerError> {
         self.would_fit(tx_cost)?;
         let updated_costliest_account_cost = self.add_transaction_cost(tx_cost);
@@ -172,7 +172,7 @@ impl CostTracker {
 
     pub fn update_execution_cost(
         &mut self,
-        estimated_tx_cost: &TransactionCost<impl SVMMessage>,
+        estimated_tx_cost: &TransactionCost<impl TransactionWithMeta>,
         actual_execution_units: u64,
         actual_loaded_accounts_data_size_cost: u64,
     ) {
@@ -198,7 +198,7 @@ impl CostTracker {
         }
     }
 
-    pub fn remove(&mut self, tx_cost: &TransactionCost<impl SVMMessage>) {
+    pub fn remove(&mut self, tx_cost: &TransactionCost<impl TransactionWithMeta>) {
         self.remove_transaction_cost(tx_cost);
     }
 
@@ -269,7 +269,7 @@ impl CostTracker {
 
     fn would_fit(
         &self,
-        tx_cost: &TransactionCost<impl SVMMessage>,
+        tx_cost: &TransactionCost<impl TransactionWithMeta>,
     ) -> Result<(), CostTrackerError> {
         let cost: u64 = tx_cost.sum();
 
@@ -316,7 +316,7 @@ impl CostTracker {
     }
 
     // Returns the highest account cost for all write-lock accounts `TransactionCost` updated
-    fn add_transaction_cost(&mut self, tx_cost: &TransactionCost<impl SVMMessage>) -> u64 {
+    fn add_transaction_cost(&mut self, tx_cost: &TransactionCost<impl TransactionWithMeta>) -> u64 {
         saturating_add_assign!(
             self.allocated_accounts_data_size,
             tx_cost.allocated_accounts_data_size()
@@ -337,7 +337,7 @@ impl CostTracker {
         self.add_transaction_execution_cost(tx_cost, tx_cost.sum())
     }
 
-    fn remove_transaction_cost(&mut self, tx_cost: &TransactionCost<impl SVMMessage>) {
+    fn remove_transaction_cost(&mut self, tx_cost: &TransactionCost<impl TransactionWithMeta>) {
         let cost = tx_cost.sum();
         self.sub_transaction_execution_cost(tx_cost, cost);
         self.allocated_accounts_data_size = self
@@ -359,7 +359,7 @@ impl CostTracker {
     /// Return the costliest account cost that were updated by `TransactionCost`
     fn add_transaction_execution_cost(
         &mut self,
-        tx_cost: &TransactionCost<impl SVMMessage>,
+        tx_cost: &TransactionCost<impl TransactionWithMeta>,
         adjustment: u64,
     ) -> u64 {
         let mut costliest_account_cost = 0;
@@ -382,7 +382,7 @@ impl CostTracker {
     /// Subtract extra execution units from cost_tracker
     fn sub_transaction_execution_cost(
         &mut self,
-        tx_cost: &TransactionCost<impl SVMMessage>,
+        tx_cost: &TransactionCost<impl TransactionWithMeta>,
         adjustment: u64,
     ) {
         for account_key in tx_cost.writable_accounts() {
@@ -412,10 +412,7 @@ mod tests {
     use {
         super::*,
         crate::transaction_cost::{WritableKeysTransaction, *},
-        solana_sdk::{
-            message::TransactionSignatureDetails,
-            signature::{Keypair, Signer},
-        },
+        solana_sdk::signature::{Keypair, Signer},
         std::cmp,
     };
 
@@ -453,7 +450,6 @@ mod tests {
             programs_execution_cost,
             loaded_accounts_data_size_cost: 0,
             allocated_accounts_data_size: 0,
-            signature_details: TransactionSignatureDetails::new(0, 0, 0),
         }
     }
 

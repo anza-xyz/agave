@@ -13,11 +13,12 @@
 
 use {
     crate::{
-        cluster_info::{Ping, CRDS_UNIQUE_PUBKEY_CAPACITY},
+        cluster_info::CRDS_UNIQUE_PUBKEY_CAPACITY,
         crds::{Crds, CrdsError, Cursor, GossipRoute},
         crds_gossip,
         crds_value::CrdsValue,
         ping_pong::PingCache,
+        protocol::Ping,
         push_active_set::PushActiveSet,
         received_cache::ReceivedCache,
     },
@@ -280,7 +281,7 @@ impl CrdsGossipPush {
 mod tests {
     use {
         super::*,
-        crate::{contact_info::ContactInfo, crds_value::CrdsData},
+        crate::{contact_info::ContactInfo, crds_data::CrdsData},
         std::time::{Duration, Instant},
     };
 

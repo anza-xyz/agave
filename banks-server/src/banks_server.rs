@@ -15,6 +15,7 @@ use {
         commitment::BlockCommitmentCache,
         verify_precompiles::verify_precompiles,
     },
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk::{
         account::Account,
         clock::Slot,
@@ -178,7 +179,7 @@ fn simulate_transaction(
     bank: &Bank,
     transaction: VersionedTransaction,
 ) -> BanksTransactionResultWithSimulation {
-    let sanitized_transaction = match SanitizedTransaction::try_create(
+    let sanitized_transaction = match RuntimeTransaction::try_create(
         transaction,
         MessageHash::Compute,
         Some(false), // is_simple_vote_tx
@@ -458,7 +459,7 @@ pub async fn start_tcp_server(
                 &bank_forks,
                 None,
                 receiver,
-                &connection_cache,
+                connection_cache.clone(),
                 5_000,
                 0,
                 exit.clone(),

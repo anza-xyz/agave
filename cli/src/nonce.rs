@@ -437,7 +437,11 @@ pub fn process_authorize_nonce_account(
         &tx.message,
         config.commitment,
     )?;
-    let result = rpc_client.send_and_confirm_transaction_with_spinner(&tx);
+    let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
+        &tx,
+        config.commitment,
+        config.send_transaction_config,
+    );
 
     log_instruction_custom_error::<SystemError>(result, config)
 }
@@ -537,7 +541,11 @@ pub fn process_create_nonce_account(
 
     let mut tx = Transaction::new_unsigned(message);
     tx.try_sign(&config.signers, latest_blockhash)?;
-    let result = rpc_client.send_and_confirm_transaction_with_spinner(&tx);
+    let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
+        &tx,
+        config.commitment,
+        config.send_transaction_config,
+    );
 
     log_instruction_custom_error::<SystemError>(result, config)
 }
@@ -597,7 +605,11 @@ pub fn process_new_nonce(
         &tx.message,
         config.commitment,
     )?;
-    let result = rpc_client.send_and_confirm_transaction_with_spinner(&tx);
+    let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
+        &tx,
+        config.commitment,
+        config.send_transaction_config,
+    );
 
     log_instruction_custom_error::<SystemError>(result, config)
 }
@@ -667,7 +679,11 @@ pub fn process_withdraw_from_nonce_account(
         &tx.message,
         config.commitment,
     )?;
-    let result = rpc_client.send_and_confirm_transaction_with_spinner(&tx);
+    let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
+        &tx,
+        config.commitment,
+        config.send_transaction_config,
+    );
 
     log_instruction_custom_error::<SystemError>(result, config)
 }
@@ -697,7 +713,11 @@ pub(crate) fn process_upgrade_nonce_account(
         &tx.message,
         config.commitment,
     )?;
-    let result = rpc_client.send_and_confirm_transaction_with_spinner(&tx);
+    let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
+        &tx,
+        config.commitment,
+        config.send_transaction_config,
+    );
     log_instruction_custom_error::<SystemError>(result, config)
 }
 
@@ -1118,7 +1138,7 @@ mod tests {
         let mut nonce_account = nonce_account::create_account(1).into_inner();
         assert_eq!(state_from_account(&nonce_account), Ok(State::Uninitialized));
 
-        let durable_nonce = DurableNonce::from_blockhash(&Hash::new(&[42u8; 32]));
+        let durable_nonce = DurableNonce::from_blockhash(&Hash::new_from_array([42u8; 32]));
         let data = nonce::state::Data::new(Pubkey::from([1u8; 32]), durable_nonce, 42);
         nonce_account
             .set_state(&Versions::new(State::Initialized(data.clone())))
@@ -1148,7 +1168,7 @@ mod tests {
             Err(Error::InvalidStateForOperation)
         );
 
-        let durable_nonce = DurableNonce::from_blockhash(&Hash::new(&[42u8; 32]));
+        let durable_nonce = DurableNonce::from_blockhash(&Hash::new_from_array([42u8; 32]));
         let data = nonce::state::Data::new(Pubkey::from([1u8; 32]), durable_nonce, 42);
         nonce_account
             .set_state(&Versions::new(State::Initialized(data.clone())))

@@ -45,7 +45,8 @@ solana-measure = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-rpc = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
-solana-sdk = { workspace = true }
+solana-runtime-transaction = { workspace = true }
+solana-sdk = { workspace = true, features = ["openssl-vendored"] }
 solana-stake-program = { workspace = true }
 solana-storage-bigtable = { workspace = true }
 solana-streamer = { workspace = true }
@@ -58,7 +59,7 @@ solana_rbpf = { workspace = true, features = ["debugger"] }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 
-[target.'cfg(not(target_env = "msvc"))'.dependencies]
+[target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
 jemallocator = { workspace = true }
 
 [dev-dependencies]

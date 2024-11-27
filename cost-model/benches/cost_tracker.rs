@@ -6,7 +6,7 @@ use {
         cost_tracker::CostTracker,
         transaction_cost::{TransactionCost, UsageCostDetails, WritableKeysTransaction},
     },
-    solana_sdk::{message::TransactionSignatureDetails, pubkey::Pubkey},
+    solana_sdk::pubkey::Pubkey,
     test::Bencher,
 };
 
@@ -57,7 +57,6 @@ fn get_costs(
                 programs_execution_cost: 9999,
                 loaded_accounts_data_size_cost: 0,
                 allocated_accounts_data_size: 0,
-                signature_details: TransactionSignatureDetails::new(0, 0, 0),
             })
         })
         .collect_vec()

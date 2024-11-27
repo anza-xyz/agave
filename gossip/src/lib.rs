@@ -5,6 +5,7 @@ pub mod cluster_info;
 pub mod cluster_info_metrics;
 pub mod contact_info;
 pub mod crds;
+pub mod crds_data;
 pub mod crds_entry;
 pub mod crds_gossip;
 pub mod crds_gossip_error;
@@ -22,6 +23,7 @@ pub mod gossip_service;
 #[macro_use]
 mod legacy_contact_info;
 pub mod ping_pong;
+mod protocol;
 mod push_active_set;
 mod received_cache;
 pub mod restart_crds_values;

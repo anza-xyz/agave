@@ -201,24 +201,25 @@ impl Bank {
                 &mut program_cache_for_tx_batch,
                 EnvironmentConfig::new(
                     Hash::default(),
-                    None,
-                    None,
-                    self.feature_set.clone(),
                     0,
+                    0,
+                    &|_| 0,
+                    self.feature_set.clone(),
                     &sysvar_cache,
                 ),
                 None,
                 compute_budget,
             );
 
-            solana_bpf_loader_program::direct_deploy_program(
-                &mut dummy_invoke_context,
+            use solana_bpf_loader_program::deploy_program_internal;
+            solana_bpf_loader_program::deploy_program!(
+                dummy_invoke_context,
                 program_id,
                 &bpf_loader_upgradeable::id(),
                 data_len,
                 elf,
                 self.slot,
-            )?
+            );
         }
 
         // Update the program cache by merging with `programs_modified`, which

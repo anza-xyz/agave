@@ -14,6 +14,10 @@ Release channels have their own copy of this changelog:
 
 <a name="edge-channel"></a>
 ## [2.2.0] - Unreleased
+* Changes
+  * CLI:
+    * Add global `--skip-preflight` option for skipping preflight checks on all transactions sent through RPC. This flag, along with `--use-rpc`, can improve success rate with program deployments using the public RPC nodes.
+  * Unhide `--accounts-db-access-storages-method` for agave-validator and agave-ledger-tool
 
 ## [2.1.0]
 * Breaking:
@@ -25,6 +29,8 @@ Release channels have their own copy of this changelog:
     * removed the unreleased `redelegate` instruction processor and CLI commands (#2213)
   * Banks-client:
     * relax functions to use `&self` instead of `&mut self` (#2591)
+  * `agave-validator`:
+    * Remove the deprecated value of `fifo` for `--rocksdb-shred-compaction` (#3451)
 * Changes
   * SDK:
     * removed the `respan` macro. This was marked as "internal use only" and was no longer used internally.

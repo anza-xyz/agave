@@ -7,3 +7,4 @@ pub mod instructions_processor;
 pub mod runtime_transaction;
 pub mod signature_details;
 pub mod transaction_meta;
+pub mod transaction_with_meta;

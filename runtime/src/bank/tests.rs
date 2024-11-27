@@ -35,8 +35,7 @@ use {
     },
     solana_compute_budget::{
         compute_budget::ComputeBudget,
-        compute_budget_limits::{self, MAX_COMPUTE_UNIT_LIMIT},
-        prioritization_fee::{PrioritizationFeeDetails, PrioritizationFeeType},
+        compute_budget_limits::{self, ComputeBudgetLimits, MAX_COMPUTE_UNIT_LIMIT},
     },
     solana_feature_set::{self as feature_set, FeatureSet},
     solana_inline_spl::token,
@@ -1741,7 +1740,7 @@ fn test_rent_eager_collect_rent_in_partition(should_collect_rent: bool) {
     );
 }
 
-fn new_from_parent_next_epoch(
+pub(in crate::bank) fn new_from_parent_next_epoch(
     parent: Arc<Bank>,
     bank_forks: &RwLock<BankForks>,
     epochs: Epoch,
@@ -3432,20 +3431,17 @@ fn test_bank_parent_account_spend() {
 #[test_case(false; "accounts lt hash disabled")]
 #[test_case(true; "accounts lt hash enabled")]
 fn test_bank_hash_internal_state(is_accounts_lt_hash_enabled: bool) {
-    let (genesis_config, mint_keypair) =
+    let (mut genesis_config, mint_keypair) =
         create_genesis_config_no_tx_fee_no_rent(sol_to_lamports(1.));
+    if !is_accounts_lt_hash_enabled {
+        // Disable the accounts lt hash feature by removing its account from genesis.
+        genesis_config
+            .accounts
+            .remove(&feature_set::accounts_lt_hash::id())
+            .unwrap();
+    }
     let (bank0, _bank_forks0) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let (bank1, bank_forks1) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    bank0
-        .rc
-        .accounts
-        .accounts_db
-        .set_is_experimental_accumulator_hash_enabled(is_accounts_lt_hash_enabled);
-    bank1
-        .rc
-        .accounts
-        .accounts_db
-        .set_is_experimental_accumulator_hash_enabled(is_accounts_lt_hash_enabled);
     assert_eq!(
         bank0.is_accounts_lt_hash_enabled(),
         is_accounts_lt_hash_enabled,
@@ -3486,14 +3482,16 @@ fn test_bank_hash_internal_state(is_accounts_lt_hash_enabled: bool) {
 #[test_case(true; "accounts lt hash enabled")]
 fn test_bank_hash_internal_state_verify(is_accounts_lt_hash_enabled: bool) {
     for pass in 0..4 {
-        let (genesis_config, mint_keypair) =
+        let (mut genesis_config, mint_keypair) =
             create_genesis_config_no_tx_fee_no_rent(sol_to_lamports(1.));
+        if !is_accounts_lt_hash_enabled {
+            // Disable the accounts lt hash feature by removing its account from genesis.
+            genesis_config
+                .accounts
+                .remove(&feature_set::accounts_lt_hash::id())
+                .unwrap();
+        }
         let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        bank0
-            .rc
-            .accounts
-            .accounts_db
-            .set_is_experimental_accumulator_hash_enabled(is_accounts_lt_hash_enabled);
         assert_eq!(
             bank0.is_accounts_lt_hash_enabled(),
             is_accounts_lt_hash_enabled,
@@ -7231,7 +7229,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         bank.process_transaction(&transaction),
         Err(TransactionError::InstructionError(
             0,
-            InstructionError::InvalidAccountData
+            InstructionError::UnsupportedProgramId
         )),
     );
     {
@@ -7255,7 +7253,7 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         bank.process_transaction(&transaction),
         Err(TransactionError::InstructionError(
             0,
-            InstructionError::InvalidAccountData,
+            InstructionError::UnsupportedProgramId,
         )),
     );
     {
@@ -7747,16 +7745,12 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         .get_mut(6)
         .unwrap() = AccountMeta::new_readonly(Pubkey::new_unique(), false);
     let message = Message::new(&instructions, Some(&mint_keypair.pubkey()));
-    assert_eq!(
-        TransactionError::InstructionError(1, InstructionError::MissingAccount),
-        bank_client
-            .send_and_confirm_message(
-                &[&mint_keypair, &program_keypair, &upgrade_authority_keypair],
-                message
-            )
-            .unwrap_err()
-            .unwrap()
-    );
+    assert!(bank_client
+        .send_and_confirm_message(
+            &[&mint_keypair, &program_keypair, &upgrade_authority_keypair],
+            message
+        )
+        .is_ok());
 
     fn truncate_data(account: &mut AccountSharedData, len: usize) {
         let mut data = account.data().to_vec();
@@ -10040,17 +10034,17 @@ fn test_verify_and_hash_transaction_sig_len() {
     // Too few signatures: Sanitization failure
     {
         let tx = make_transaction(TestCase::RemoveSignature);
-        assert_eq!(
+        assert_matches!(
             bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification),
-            Err(TransactionError::SanitizeFailure),
+            Err(TransactionError::SanitizeFailure)
         );
     }
     // Too many signatures: Sanitization failure
     {
         let tx = make_transaction(TestCase::AddSignature);
-        assert_eq!(
+        assert_matches!(
             bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification),
-            Err(TransactionError::SanitizeFailure),
+            Err(TransactionError::SanitizeFailure)
         );
     }
 }
@@ -10085,9 +10079,9 @@ fn test_verify_transactions_packet_data_size() {
     {
         let tx = make_transaction(25);
         assert!(bincode::serialized_size(&tx).unwrap() > PACKET_DATA_SIZE as u64);
-        assert_eq!(
+        assert_matches!(
             bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification),
-            Err(TransactionError::SanitizeFailure),
+            Err(TransactionError::SanitizeFailure)
         );
     }
     // Assert that verify fails as soon as serialized
@@ -10303,10 +10297,6 @@ fn test_calculate_fee_compute_units() {
         MAX_COMPUTE_UNIT_LIMIT,
     ] {
         const PRIORITIZATION_FEE_RATE: u64 = 42;
-        let prioritization_fee_details = PrioritizationFeeDetails::new(
-            PrioritizationFeeType::ComputeUnitPrice(PRIORITIZATION_FEE_RATE),
-            requested_compute_units as u64,
-        );
         let message = new_sanitized_message(Message::new(
             &[
                 ComputeBudgetInstruction::set_compute_unit_limit(requested_compute_units),
@@ -10316,9 +10306,14 @@ fn test_calculate_fee_compute_units() {
             Some(&Pubkey::new_unique()),
         ));
         let fee = calculate_test_fee(&message, 1, &fee_structure);
+        let fee_budget_limits = FeeBudgetLimits::from(ComputeBudgetLimits {
+            compute_unit_price: PRIORITIZATION_FEE_RATE,
+            compute_unit_limit: requested_compute_units,
+            ..ComputeBudgetLimits::default()
+        });
         assert_eq!(
             fee,
-            lamports_per_signature + prioritization_fee_details.get_fee()
+            lamports_per_signature + fee_budget_limits.prioritization_fee
         );
     }
 }
@@ -10332,11 +10327,11 @@ fn test_calculate_prioritization_fee() {
 
     let request_units = 1_000_000_u32;
     let request_unit_price = 2_000_000_000_u64;
-    let prioritization_fee_details = PrioritizationFeeDetails::new(
-        PrioritizationFeeType::ComputeUnitPrice(request_unit_price),
-        request_units as u64,
-    );
-    let prioritization_fee = prioritization_fee_details.get_fee();
+    let fee_budget_limits = FeeBudgetLimits::from(ComputeBudgetLimits {
+        compute_unit_price: request_unit_price,
+        compute_unit_limit: request_units,
+        ..ComputeBudgetLimits::default()
+    });
 
     let message = new_sanitized_message(Message::new(
         &[
@@ -10353,7 +10348,7 @@ fn test_calculate_prioritization_fee() {
     );
     assert_eq!(
         fee,
-        fee_structure.lamports_per_signature + prioritization_fee
+        fee_structure.lamports_per_signature + fee_budget_limits.prioritization_fee
     );
 }
 
@@ -12997,7 +12992,7 @@ fn test_failed_simulation_compute_units() {
     let transaction = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
 
     bank.freeze();
-    let sanitized = SanitizedTransaction::from_transaction_for_tests(transaction);
+    let sanitized = RuntimeTransaction::from_transaction_for_tests(transaction);
     let simulation = bank.simulate_transaction(&sanitized, false);
     assert_eq!(expected_consumed_units, simulation.units_consumed);
 }
@@ -13020,7 +13015,7 @@ fn test_failed_simulation_load_error() {
     let transaction = Transaction::new(&[&mint_keypair], message, bank.last_blockhash());
 
     bank.freeze();
-    let sanitized = SanitizedTransaction::from_transaction_for_tests(transaction);
+    let sanitized = RuntimeTransaction::from_transaction_for_tests(transaction);
     let simulation = bank.simulate_transaction(&sanitized, false);
     assert_eq!(
         simulation,

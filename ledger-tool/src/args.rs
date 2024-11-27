@@ -126,11 +126,14 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .value_name("METHOD")
             .takes_value(true)
             .possible_values(&["mmap", "file"])
-            .help("Access account storage using this method")
-            .hidden(hidden_unless_forced()),
+            .help("Access account storages using this method"),
         Arg::with_name("accounts_db_experimental_accumulator_hash")
             .long("accounts-db-experimental-accumulator-hash")
             .help("Enables the experimental accumulator hash")
+            .hidden(hidden_unless_forced()),
+        Arg::with_name("accounts_db_verify_experimental_accumulator_hash")
+            .long("accounts-db-verify-experimental-accumulator-hash")
+            .help("Verifies the experimental accumulator hash")
             .hidden(hidden_unless_forced()),
         Arg::with_name("accounts_db_hash_threads")
             .long("accounts-db-hash-threads")
@@ -152,6 +155,13 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .validator(is_parsable::<usize>)
             .takes_value(true)
             .help("The number of ancient storages the ancient slot combining should converge to.")
+            .hidden(hidden_unless_forced()),
+        Arg::with_name("accounts_db_hash_calculation_pubkey_bins")
+            .long("accounts-db-hash-calculation-pubkey-bins")
+            .value_name("USIZE")
+            .validator(is_parsable::<usize>)
+            .takes_value(true)
+            .help("The number of pubkey bins used for accounts hash calculation.")
             .hidden(hidden_unless_forced()),
     ]
     .into_boxed_slice()
@@ -370,6 +380,12 @@ pub fn get_accounts_db_config(
         )
         .ok(),
         max_ancient_storages: value_t!(arg_matches, "accounts_db_max_ancient_storages", usize).ok(),
+        hash_calculation_pubkey_bins: value_t!(
+            arg_matches,
+            "accounts_db_hash_calculation_pubkey_bins",
+            usize
+        )
+        .ok(),
         exhaustively_verify_refcounts: arg_matches.is_present("accounts_db_verify_refcounts"),
         skip_initial_hash_calc: arg_matches.is_present("accounts_db_skip_initial_hash_calculation"),
         test_partitioned_epoch_rewards,
@@ -380,6 +396,8 @@ pub fn get_accounts_db_config(
         scan_filter_for_shrinking,
         enable_experimental_accumulator_hash: arg_matches
             .is_present("accounts_db_experimental_accumulator_hash"),
+        verify_experimental_accumulator_hash: arg_matches
+            .is_present("accounts_db_verify_experimental_accumulator_hash"),
         num_hash_threads,
         ..AccountsDbConfig::default()
     }

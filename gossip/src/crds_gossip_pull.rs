@@ -13,7 +13,6 @@
 
 use {
     crate::{
-        cluster_info::Ping,
         cluster_info_metrics::GossipStats,
         contact_info::ContactInfo,
         crds::{Crds, GossipRoute, VersionedCrdsValue},
@@ -21,6 +20,7 @@ use {
         crds_gossip_error::CrdsGossipError,
         crds_value::CrdsValue,
         ping_pong::PingCache,
+        protocol::Ping,
     },
     itertools::Itertools,
     rand::{
@@ -30,7 +30,7 @@ use {
     rayon::{prelude::*, ThreadPool},
     solana_bloom::bloom::{Bloom, ConcurrentBloom},
     solana_sdk::{
-        hash::{hash, Hash},
+        hash::Hash,
         native_token::LAMPORTS_PER_SOL,
         packet::PACKET_DATA_SIZE,
         pubkey::Pubkey,
@@ -349,7 +349,7 @@ impl CrdsGossipPull {
         let failed_inserts = responses
             .into_iter()
             .filter_map(upsert)
-            .map(|resp| hash(&bincode::serialize(&resp).unwrap()))
+            .map(|resp| *resp.hash())
             .collect();
         (active_values, expired_values, failed_inserts)
     }
@@ -427,7 +427,7 @@ impl CrdsGossipPull {
         thread_pool.install(|| {
             crds.par_values()
                 .with_min_len(PAR_MIN_LENGTH)
-                .map(|v| v.value_hash)
+                .map(|v| *v.value.hash())
                 .chain(crds.purged().with_min_len(PAR_MIN_LENGTH))
                 .chain(
                     failed_inserts
@@ -472,13 +472,13 @@ impl CrdsGossipPull {
             }
             let caller_wallclock = caller_wallclock.checked_add(jitter).unwrap_or(0);
             let pred = |entry: &&VersionedCrdsValue| {
-                debug_assert!(filter.test_mask(&entry.value_hash));
+                debug_assert!(filter.test_mask(entry.value.hash()));
                 // Skip values that are too new.
                 if entry.value.wallclock() > caller_wallclock {
                     total_skipped.fetch_add(1, Ordering::Relaxed);
                     false
                 } else {
-                    !filter.filter_contains(&entry.value_hash)
+                    !filter.filter_contains(entry.value.hash())
                 }
             };
             let out: Vec<_> = crds
@@ -637,10 +637,7 @@ pub(crate) fn get_max_bloom_filter_bytes(caller: &CrdsValue) -> usize {
     let size_of_filter = PACKET_DATA_SIZE
         .checked_sub(
             // 4 bytes for u32 enum variant identifier of Protocol.
-            4 + bincode::serialized_size(caller)
-                .map(usize::try_from)
-                .unwrap()
-                .unwrap(),
+            4 + caller.bincode_serialized_size(),
         )
         .unwrap();
     MAX_BYTES_CACHE
@@ -655,9 +652,9 @@ pub(crate) mod tests {
     use {
         super::*,
         crate::{
-            cluster_info::Protocol,
-            crds_value::{CrdsData, Vote},
+            crds_data::{CrdsData, Vote},
             legacy_contact_info::LegacyContactInfo,
+            protocol::Protocol,
         },
         itertools::Itertools,
         rand::{seq::SliceRandom, SeedableRng},
@@ -684,8 +681,8 @@ pub(crate) mod tests {
 
     #[test]
     fn test_hash_as_u64() {
-        let arr: Vec<u8> = (0..HASH_BYTES).map(|i| i as u8 + 1).collect();
-        let hash = Hash::new(&arr);
+        let arr: [u8; HASH_BYTES] = std::array::from_fn(|i| i as u8 + 1);
+        let hash = Hash::new_from_array(arr);
         assert_eq!(CrdsFilter::hash_as_u64(&hash), 0x807060504030201);
     }
 
@@ -811,7 +808,11 @@ pub(crate) mod tests {
         assert_eq!(filters.len(), MIN_NUM_BLOOM_FILTERS.max(4));
         let crds = crds.read().unwrap();
         let purged: Vec<_> = thread_pool.install(|| crds.purged().collect());
-        let hash_values: Vec<_> = crds.values().map(|v| v.value_hash).chain(purged).collect();
+        let hash_values: Vec<_> = crds
+            .values()
+            .map(|v| *v.value.hash())
+            .chain(purged)
+            .collect();
         // CrdsValue::new_rand may generate exact same value twice in which
         // case its hash-value is not added to purged values.
         assert!(
@@ -1246,10 +1247,7 @@ pub(crate) mod tests {
         node_crds
             .insert(old.clone(), 0, GossipRoute::LocalMessage)
             .unwrap();
-        let value_hash = {
-            let entry: &VersionedCrdsValue = node_crds.get(&old.label()).unwrap();
-            entry.value_hash
-        };
+        let value_hash = *node_crds.get::<&CrdsValue>(&old.label()).unwrap().hash();
         //verify self is valid
         assert_eq!(
             node_crds.get::<&CrdsValue>(&node_label).unwrap().label(),
@@ -1455,7 +1453,7 @@ pub(crate) mod tests {
         let packet_data_size_range = (PACKET_DATA_SIZE - 5)..=PACKET_DATA_SIZE;
         let max_bytes = get_max_bloom_filter_bytes(caller);
         let filters = CrdsFilterSet::new(rng, num_items, max_bytes);
-        let request_bytes = bincode::serialized_size(caller).unwrap();
+        let request_bytes = caller.bincode_serialized_size() as u64;
         for filter in Vec::<CrdsFilter>::from(filters) {
             let request_bytes = 4 + request_bytes + bincode::serialized_size(&filter).unwrap();
             let request = Protocol::PullRequest(filter, caller.clone());
@@ -1483,13 +1481,13 @@ pub(crate) mod tests {
             node
         };
         {
-            let caller = CrdsValue::new_signed(CrdsData::ContactInfo(node.clone()), &keypair);
+            let caller = CrdsValue::new(CrdsData::ContactInfo(node.clone()), &keypair);
             assert_eq!(get_max_bloom_filter_bytes(&caller), 1175);
             verify_get_max_bloom_filter_bytes(&mut rng, &caller, num_items);
         }
         let node = LegacyContactInfo::try_from(&node).unwrap();
         {
-            let caller = CrdsValue::new_signed(CrdsData::LegacyContactInfo(node), &keypair);
+            let caller = CrdsValue::new(CrdsData::LegacyContactInfo(node), &keypair);
             assert_eq!(get_max_bloom_filter_bytes(&caller), 1136);
             verify_get_max_bloom_filter_bytes(&mut rng, &caller, num_items);
         }
@@ -1501,13 +1499,13 @@ pub(crate) mod tests {
             node
         };
         {
-            let caller = CrdsValue::new_signed(CrdsData::ContactInfo(node.clone()), &keypair);
+            let caller = CrdsValue::new(CrdsData::ContactInfo(node.clone()), &keypair);
             assert_eq!(get_max_bloom_filter_bytes(&caller), 1165);
             verify_get_max_bloom_filter_bytes(&mut rng, &caller, num_items);
         }
         let node = LegacyContactInfo::try_from(&node).unwrap();
         {
-            let caller = CrdsValue::new_signed(CrdsData::LegacyContactInfo(node), &keypair);
+            let caller = CrdsValue::new(CrdsData::LegacyContactInfo(node), &keypair);
             assert_eq!(get_max_bloom_filter_bytes(&caller), 992);
             verify_get_max_bloom_filter_bytes(&mut rng, &caller, num_items);
         }
