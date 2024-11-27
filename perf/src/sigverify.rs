@@ -429,13 +429,9 @@ pub fn generate_offsets(
 ) -> TxOffsets {
     debug!("allocating..");
     let mut signature_offsets: RecycledVec<_> = recycler.allocate("sig_offsets");
-    signature_offsets.set_pinnable();
     let mut pubkey_offsets: RecycledVec<_> = recycler.allocate("pubkey_offsets");
-    pubkey_offsets.set_pinnable();
     let mut msg_start_offsets: RecycledVec<_> = recycler.allocate("msg_start_offsets");
-    msg_start_offsets.set_pinnable();
     let mut msg_sizes: RecycledVec<_> = recycler.allocate("msg_size_offsets");
-    msg_sizes.set_pinnable();
     let mut current_offset: usize = 0;
     let offsets = batches
         .iter_mut()
@@ -626,7 +622,6 @@ pub fn ed25519_verify(
     debug!("CUDA ECDSA for {}", valid_packet_count);
     debug!("allocating out..");
     let mut out = recycler_out.allocate("out_buffer");
-    out.set_pinnable();
     let mut elems = Vec::new();
     let mut rvs = Vec::new();
 

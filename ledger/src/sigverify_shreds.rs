@@ -126,7 +126,6 @@ fn slot_key_data_for_gpu(
         .map(|slot| (slot_keys[slot], *slot))
         .into_group_map();
     let mut keyvec = recycler_cache.buffer().allocate("shred_gpu_pubkeys");
-    keyvec.set_pinnable();
 
     let keyvec_size = keys_to_slots.len() * size_of::<Pubkey>();
     resize_buffer(&mut keyvec, keyvec_size);
@@ -144,7 +143,6 @@ fn slot_key_data_for_gpu(
             .collect()
     };
     let mut offsets = recycler_cache.offsets().allocate("shred_offsets");
-    offsets.set_pinnable();
     for slot in slots {
         offsets.push(key_offsets[&slot] as u32);
     }
@@ -179,7 +177,6 @@ fn get_merkle_roots(
     });
     let num_merkle_roots = merkle_roots.iter().flatten().count();
     let mut buffer = recycler_cache.buffer().allocate("shred_gpu_merkle_roots");
-    buffer.set_pinnable();
     resize_buffer(&mut buffer, num_merkle_roots * SIZE_OF_MERKLE_ROOT);
     let offsets = {
         let mut next_offset = 0;
@@ -228,11 +225,8 @@ fn shred_gpu_offsets(
         range.start + offset..range.end + offset
     }
     let mut signature_offsets = recycler_cache.offsets().allocate("shred_signatures");
-    signature_offsets.set_pinnable();
     let mut msg_start_offsets = recycler_cache.offsets().allocate("shred_msg_starts");
-    msg_start_offsets.set_pinnable();
     let mut msg_sizes = recycler_cache.offsets().allocate("shred_msg_sizes");
-    msg_sizes.set_pinnable();
     let offsets = std::iter::successors(Some(offset), |offset| {
         offset.checked_add(std::mem::size_of::<Packet>())
     });
@@ -288,7 +282,6 @@ pub fn verify_shreds_gpu(
     let (signature_offsets, msg_start_offsets, msg_sizes) =
         shred_gpu_offsets(offset, batches, merkle_roots_offsets, recycler_cache);
     let mut out = recycler_cache.buffer().allocate("out_buffer");
-    out.set_pinnable();
     out.resize(signature_offsets.len(), 0u8);
     let mut elems = vec![
         elems_from_buffer(&pubkeys),
@@ -417,7 +410,6 @@ pub fn sign_shreds_gpu(
         shred_gpu_offsets(offset, batches, merkle_roots_offsets, recycler_cache);
     let total_sigs = signature_offsets.len();
     let mut signatures_out = recycler_cache.buffer().allocate("ed25519 signatures");
-    signatures_out.set_pinnable();
     signatures_out.resize(total_sigs * sig_size, 0);
 
     let mut elems = vec![

@@ -27,7 +27,7 @@ fn bench_sigverify_shreds_sign_gpu(bencher: &mut Bencher) {
         .unwrap();
     let recycler_cache = RecyclerCache::default();
 
-    let mut packet_batch = PacketBatch::new_pinned_with_capacity(NUM_PACKETS);
+    let mut packet_batch = PacketBatch::with_capacity(NUM_PACKETS);
     packet_batch.resize(NUM_PACKETS, Packet::default());
     let slot = 0xdead_c0de;
     for p in packet_batch.iter_mut() {

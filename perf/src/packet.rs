@@ -37,12 +37,6 @@ impl PacketBatch {
         Self { packets }
     }
 
-    pub fn new_pinned_with_capacity(capacity: usize) -> Self {
-        let mut batch = Self::with_capacity(capacity);
-        batch.packets.reserve_and_pin(capacity);
-        batch
-    }
-
     pub fn new_unpinned_with_recycler(
         recycler: &PacketBatchRecycler,
         capacity: usize,
@@ -59,7 +53,7 @@ impl PacketBatch {
         name: &'static str,
     ) -> Self {
         let mut packets = recycler.allocate(name);
-        packets.reserve_and_pin(capacity);
+        packets.reserve(capacity);
         Self { packets }
     }
 
