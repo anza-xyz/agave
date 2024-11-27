@@ -311,6 +311,13 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         count_metrics: &mut SchedulerCountMetrics,
         decision: &BufferedPacketsDecision,
     ) -> bool {
+        let (root_bank, working_bank) = {
+            let bank_forks = self.bank_forks.read().unwrap();
+            let root_bank = bank_forks.root_bank();
+            let working_bank = bank_forks.working_bank();
+            (root_bank, working_bank)
+        };
+
         // Receive packet batches.
         const TIMEOUT: Duration = Duration::from_millis(10);
         let start = Instant::now();
@@ -336,6 +343,8 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
                         timing_metrics,
                         count_metrics,
                         decision,
+                        &root_bank,
+                        &working_bank,
                         packet_batch_message,
                     );
                 }
@@ -355,6 +364,8 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
                         timing_metrics,
                         count_metrics,
                         decision,
+                        &root_bank,
+                        &working_bank,
                         packet_batch_message,
                     );
                 }
@@ -376,6 +387,8 @@ impl TransactionViewReceiveAndBuffer {
         timing_metrics: &mut SchedulerTimingMetrics,
         count_metrics: &mut SchedulerCountMetrics,
         decision: &BufferedPacketsDecision,
+        root_bank: &Bank,
+        working_bank: &Bank,
         packet_batch_message: BankingPacketBatch,
     ) {
         // Do not support forwarding - only add support for this if we really need it.
@@ -385,12 +398,6 @@ impl TransactionViewReceiveAndBuffer {
 
         let start = Instant::now();
         // Sanitize packets, generate IDs, and insert into the container.
-        let (root_bank, working_bank) = {
-            let bank_forks = self.bank_forks.read().unwrap();
-            let root_bank = bank_forks.root_bank();
-            let working_bank = bank_forks.working_bank();
-            (root_bank, working_bank)
-        };
         let alt_resolved_slot = root_bank.slot();
         let sanitized_epoch = root_bank.epoch();
         let transaction_account_lock_limit = working_bank.get_transaction_account_lock_limit();
