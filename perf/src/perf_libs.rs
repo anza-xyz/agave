@@ -1,14 +1,11 @@
 use {
     core::ffi::c_void,
-    dlopen2::symbor::{Container, SymBorApi, Symbol},
+    dlopen2::symbor::{SymBorApi, Symbol},
     log::*,
     std::{
         env,
-        ffi::OsStr,
-        fs,
         os::raw::{c_int, c_uint},
-        path::{Path, PathBuf},
-        sync::Once,
+        path::PathBuf,
     },
 };
 
@@ -81,22 +78,6 @@ pub struct Api<'a> {
         Symbol<'a, unsafe extern "C" fn(packed_ge: *const u8) -> c_int>,
 }
 
-static mut API: Option<Container<Api>> = None;
-
-fn init(name: &OsStr) {
-    static INIT_HOOK: Once = Once::new();
-
-    info!("Loading {:?}", name);
-    unsafe {
-        INIT_HOOK.call_once(|| {
-            API = Some(Container::load(name).unwrap_or_else(|err| {
-                error!("Unable to load {:?}: {}", name, err);
-                std::process::exit(1);
-            }));
-        })
-    }
-}
-
 pub fn locate_perf_libs() -> Option<PathBuf> {
     let exe = env::current_exe().expect("Unable to get executable path");
     let perf_libs = exe.parent().unwrap().join("perf-libs");
@@ -108,38 +89,6 @@ pub fn locate_perf_libs() -> Option<PathBuf> {
     None
 }
 
-fn find_cuda_home(perf_libs_path: &Path) -> Option<PathBuf> {
-    if let Ok(cuda_home) = env::var("CUDA_HOME") {
-        let path = PathBuf::from(cuda_home);
-        if path.is_dir() {
-            info!("Using CUDA_HOME: {:?}", path);
-            return Some(path);
-        }
-        warn!("Ignoring CUDA_HOME, not a path: {:?}", path);
-    }
-
-    // Search /usr/local for a `cuda-` directory that matches a perf-libs subdirectory
-    for entry in fs::read_dir(perf_libs_path).unwrap().flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let dir_name = path.file_name().unwrap().to_str().unwrap_or("");
-        if !dir_name.starts_with("cuda-") {
-            continue;
-        }
-
-        let cuda_home: PathBuf = ["/", "usr", "local", dir_name].iter().collect();
-        if !cuda_home.is_dir() {
-            continue;
-        }
-
-        info!("CUDA installation found at {:?}", cuda_home);
-        return Some(cuda_home);
-    }
-    None
-}
-
 pub fn append_to_ld_library_path(mut ld_library_path: String) {
     if let Ok(env_value) = env::var("LD_LIBRARY_PATH") {
         ld_library_path.push(':');
@@ -147,29 +96,4 @@ pub fn append_to_ld_library_path(mut ld_library_path: String) {
     }
     info!("setting ld_library_path to: {:?}", ld_library_path);
     env::set_var("LD_LIBRARY_PATH", ld_library_path);
-}
-
-pub fn init_cuda() {
-    if let Some(perf_libs_path) = locate_perf_libs() {
-        if let Some(cuda_home) = find_cuda_home(&perf_libs_path) {
-            let cuda_lib64_dir = cuda_home.join("lib64");
-            if cuda_lib64_dir.is_dir() {
-                // Prefix LD_LIBRARY_PATH with $CUDA_HOME/lib64 directory
-                // to ensure the correct CUDA version is used
-                append_to_ld_library_path(cuda_lib64_dir.to_str().unwrap_or("").to_string())
-            } else {
-                warn!("CUDA lib64 directory does not exist: {:?}", cuda_lib64_dir);
-            }
-
-            let libcuda_crypt = perf_libs_path
-                .join(cuda_home.file_name().unwrap())
-                .join("libcuda-crypt.so");
-            return init(libcuda_crypt.as_os_str());
-        } else {
-            warn!("CUDA installation not found");
-        }
-    }
-
-    // Last resort!  Blindly load the shared object and hope it all works out
-    init(OsStr::new("libcuda-crypt.so"))
 }

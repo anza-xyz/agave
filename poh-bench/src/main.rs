@@ -6,7 +6,6 @@ use solana_entry::entry::{create_ticks, init_poh, EntrySlice};
 use {
     clap::{crate_description, crate_name, Arg, Command},
     solana_measure::measure::Measure,
-    solana_perf::perf_libs,
     solana_rayon_threadlimit::get_max_thread_count,
     solana_sdk::hash::hash,
 };
@@ -57,12 +56,6 @@ fn main() {
                 .takes_value(true)
                 .help("Number of threads"),
         )
-        .arg(
-            Arg::new("cuda")
-                .long("cuda")
-                .takes_value(false)
-                .help("Use cuda"),
-        )
         .get_matches();
 
     let max_num_entries: u64 = matches.value_of_t("max_num_entries").unwrap_or(64);
@@ -82,9 +75,6 @@ fn main() {
         .thread_name(|i| format!("solPohBench{i:02}"))
         .build()
         .expect("new rayon threadpool");
-    if matches.is_present("cuda") {
-        perf_libs::init_cuda();
-    }
     init_poh();
     while num_entries <= max_num_entries as usize {
         let mut time = Measure::start("time");
