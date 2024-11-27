@@ -1480,7 +1480,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
             let mut session_ending = false;
             let (mut session_pausing, mut is_finished) =
-                if context.mode() == SchedulingMode::BlockProduction {
+                if matches!(context.mode(), SchedulingMode::BlockProduction) {
                     (true, true)
                 } else {
                     (false, false)
@@ -1666,7 +1666,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             recv(finished_blocked_task_receiver) -> executed_task => {
                                 let Ok(executed_task) = executed_task else {
                                     error!("all handlers gone!!!");
-                                    assert!(state_machine.mode() == SchedulingMode::BlockProduction);
+                                    assert_matches!(state_machine.mode(), SchedulingMode::BlockProduction);
                                     break 'nonaborted_main_loop;
                                 };
 
