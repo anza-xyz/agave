@@ -1512,7 +1512,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 let banking_packet_receiver = if let Some(b) = banking_stage_context.as_ref() {
                     &b.banking_packet_receiver
                 } else {
-                    never()
+                    &never()
                 };
 
                 macro_rules! log_scheduler {
