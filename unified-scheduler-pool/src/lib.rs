@@ -1915,11 +1915,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
         let handler_main_loop = || {
             let banking_stage_context = banking_stage_context.clone();
-            let banking_packet_receiver = if let Some(b) = banking_stage_context.as_ref() {
-                &b.banking_packet_receiver
-            } else {
-                &never()
-            };
             let new_task_sender = Arc::downgrade(&self.new_task_sender);
 
             let pool = self.pool.clone();
@@ -1935,7 +1930,14 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             // 2. Subsequent contexts are propagated explicitly inside `.after_select()` as part of
             //    `select_biased!`, which are sent from `.send_chained_channel()` in the scheduler
             //    thread for all-but-initial sessions.
-            move || loop {
+            move || {
+            let banking_packet_receiver = if let Some(b) = banking_stage_context.as_ref() {
+                &b.banking_packet_receiver
+            } else {
+                &never()
+            };
+
+                loop {
                 let (task, sender) = select_biased! {
                     recv(runnable_task_receiver.for_select()) -> message => {
                         let Ok(message) = message else {
@@ -2009,6 +2011,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     warn!("handler_thread: scheduler thread aborted...");
                     break;
                 }
+            }
             }
         };
 
