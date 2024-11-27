@@ -1499,7 +1499,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 let mut cpu_log_reported_at = cpu_session_started_at;
                 let mut error_count = ShortCounter::zero();
 
-                let (banking_packet_receiver, _on_recv) = banking_stage_context.unzip();
+                let (banking_stage_adapter, banking_packet_receiver, _on_recv) = banking_stage_context.unzip();
                 let banking_packet_receiver = banking_packet_receiver.unwrap_or_else(never);
 
                 macro_rules! log_scheduler {
@@ -1629,7 +1629,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 };
                                 state_machine.deschedule_task(&executed_task.task);
                                 if should_pause && !session_ending {
-                                    let task = adapter.as_ref().unwrap().recreate_task(
+                                    let task = banking_stage_adapter.as_ref().unwrap().recreate_task(
                                         executed_task.task.transaction().clone(),
                                         executed_task.task.index(),
                                     );
