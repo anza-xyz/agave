@@ -3869,8 +3869,7 @@ mod tests {
             pool: Arc<SchedulerPool<Self, DefaultTaskHandler>>,
             context: SchedulingContext,
             _result_with_timings: ResultWithTimings,
-            _banking_stage_context: Option<(BankingPacketReceiver, Box<dyn BatchConverter>)>,
-            _banking_stage_adapter: Option<Arc<BankingStageAdapter>>,
+            _banking_stage_context: Option<BankingStageContext>,
         ) -> Self {
             AsyncScheduler::<TRIGGER_RACE_CONDITION>(
                 Mutex::new(initialized_result_with_timings()),
