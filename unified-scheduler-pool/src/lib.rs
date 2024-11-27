@@ -419,27 +419,6 @@ where
         scheduler_pool
     }
 
-    // This apparently-meaningless wrapper is handy, because some callers explicitly want
-    // `dyn InstalledSchedulerPool` to be returned for type inference convenience.
-    #[cfg(test)]
-    fn new_dyn_for_verification(
-        handler_count: Option<usize>,
-        log_messages_bytes_limit: Option<usize>,
-        transaction_status_sender: Option<TransactionStatusSender>,
-        replay_vote_sender: Option<ReplayVoteSender>,
-        prioritization_fee_cache: Arc<PrioritizationFeeCache>,
-    ) -> InstalledSchedulerPoolArc {
-        Self::new(
-            SupportedSchedulingMode::block_verification_only(),
-            handler_count,
-            log_messages_bytes_limit,
-            transaction_status_sender,
-            replay_vote_sender,
-            prioritization_fee_cache,
-            TransactionRecorder::new_dummy(),
-        )
-    }
-
     pub fn block_production_supported(&self) -> bool {
         self.supported_scheduling_mode
             .is_supported(SchedulingMode::BlockProduction)
@@ -2479,6 +2458,27 @@ where
             timeout_duration,
         )
     }
+
+    // This apparently-meaningless wrapper is handy, because some callers explicitly want
+    // `dyn InstalledSchedulerPool` to be returned for type inference convenience.
+    fn new_dyn_for_verification(
+        handler_count: Option<usize>,
+        log_messages_bytes_limit: Option<usize>,
+        transaction_status_sender: Option<TransactionStatusSender>,
+        replay_vote_sender: Option<ReplayVoteSender>,
+        prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+    ) -> InstalledSchedulerPoolArc {
+        Self::new(
+            SupportedSchedulingMode::block_verification_only(),
+            handler_count,
+            log_messages_bytes_limit,
+            transaction_status_sender,
+            replay_vote_sender,
+            prioritization_fee_cache,
+            TransactionRecorder::new_dummy(),
+        )
+    }
+
 }
 
     #[derive(Debug)]
