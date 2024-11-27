@@ -102,12 +102,12 @@ use {
     assert_matches::assert_matches,
     by_address::ByAddress,
     more_asserts::assert_gt,
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk::{
         pubkey::Pubkey,
         scheduling::{SchedulingMode, TaskKey},
         transaction::SanitizedTransaction,
     },
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     static_assertions::const_assert_eq,
     std::{
         collections::{BTreeSet, HashSet},
@@ -532,7 +532,10 @@ impl CounterWithStatus {
 #[allow(clippy::type_complexity)]
 struct PackedTaskInner {
     index: TaskKey,
-    lock_context_and_transaction: Box<(Vec<Compact<LockContext>>, Box<RuntimeTransaction<SanitizedTransaction>>)>,
+    lock_context_and_transaction: Box<(
+        Vec<Compact<LockContext>>,
+        Box<RuntimeTransaction<SanitizedTransaction>>,
+    )>,
 }
 const_assert_eq!(mem::size_of::<PackedTaskInner>(), 24);
 
@@ -1965,7 +1968,10 @@ mod tests {
         RuntimeTransaction::from_transaction_for_tests(unsigned)
     }
 
-    fn transaction_with_writable_read2(address: Pubkey, address2: Pubkey) -> RuntimeTransaction<SanitizedTransaction> {
+    fn transaction_with_writable_read2(
+        address: Pubkey,
+        address2: Pubkey,
+    ) -> RuntimeTransaction<SanitizedTransaction> {
         let instruction = Instruction {
             program_id: Pubkey::default(),
             accounts: vec![

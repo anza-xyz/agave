@@ -21,8 +21,8 @@ use {
             packet_deserializer::PacketDeserializer,
             transaction_scheduler::{
                 prio_graph_scheduler::PrioGraphScheduler,
-                scheduler_controller::SchedulerController,
-                scheduler_error::SchedulerError,
+                receive_and_buffer::calculate_priority_and_cost,
+                scheduler_controller::SchedulerController, scheduler_error::SchedulerError,
             },
         },
         banking_trace::BankingPacketReceiver,
@@ -63,7 +63,6 @@ use {
         transaction_state_container::TransactionStateContainer,
     },
 };
-use crate::banking_stage::transaction_scheduler::receive_and_buffer::calculate_priority_and_cost;
 
 // Below modules are pub to allow use by banking_stage bench
 pub mod committer;
