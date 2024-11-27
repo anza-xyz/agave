@@ -1,5 +1,3 @@
-// Module for cuda-related helper functions and wrappers.
-
 use {
     crate::recycler::{RecyclerX, Reset},
     rand::{seq::SliceRandom, Rng},

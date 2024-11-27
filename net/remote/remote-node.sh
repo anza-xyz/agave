@@ -75,28 +75,6 @@ ln -sfT validator.log.\$now validator.log
 EOF
 chmod +x ~/solana/on-reboot
 
-GPU_CUDA_OK=false
-GPU_FAIL_IF_NONE=false
-case "$gpuMode" in
-  on) # GPU *required*, any vendor
-    GPU_CUDA_OK=true
-    GPU_FAIL_IF_NONE=true
-    ;;
-  off) # CPU-only
-    ;;
-  auto) # Use GPU if installed, any vendor
-    GPU_CUDA_OK=true
-    ;;
-  cuda) # GPU *required*, CUDA-only
-    GPU_CUDA_OK=true
-    GPU_FAIL_IF_NONE=true
-    ;;
-  *)
-    echo "Unexpected gpuMode: \"$gpuMode\""
-    exit 1
-    ;;
-esac
-
 case $deployMethod in
 local|tar|skip)
   PATH="$HOME"/.cargo/bin:"$PATH"
@@ -120,14 +98,6 @@ cat >> ~/solana/on-reboot <<EOF
   echo \$! > iftop.pid
   scripts/system-stats.sh  > system-stats.log 2>&1 &
   echo \$! > system-stats.pid
-
-  if ${GPU_CUDA_OK} && [[ -e /dev/nvidia0 ]]; then
-    echo Selecting agave-validator-cuda
-    export SOLANA_CUDA=1
-  elif ${GPU_FAIL_IF_NONE} ; then
-    echo "Expected GPU, found none!"
-    export SOLANA_GPU_MISSING=1
-  fi
 EOF
 
   case $nodeType in

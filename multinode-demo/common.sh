@@ -15,15 +15,6 @@ if [[ $1 = "--prebuild" ]]; then
   prebuild=true
 fi
 
-if [[ $(uname) != Linux ]]; then
-  # Protect against unsupported configurations to prevent non-obvious errors
-  # later. Arguably these should be fatal errors but for now prefer tolerance.
-  if [[ -n $SOLANA_CUDA ]]; then
-    echo "Warning: CUDA is not supported on $(uname)"
-    SOLANA_CUDA=
-  fi
-fi
-
 if [[ -n $USE_INSTALL || ! -f "$SOLANA_ROOT"/Cargo.toml ]]; then
   solana_program() {
     declare program="$1"
@@ -70,7 +61,6 @@ fi
 solana_bench_tps=$(solana_program bench-tps)
 solana_faucet=$(solana_program faucet)
 agave_validator=$(solana_program validator)
-agave_validator_cuda="$agave_validator --cuda"
 solana_genesis=$(solana_program genesis)
 solana_gossip=$(solana_program gossip)
 solana_keygen=$(solana_program keygen)
