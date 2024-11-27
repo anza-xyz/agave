@@ -297,21 +297,13 @@ where
 
         let cleaner_main_loop = {
             let weak_scheduler_pool = Arc::downgrade(&scheduler_pool);
-            let strong_scheduler_pool = if bp_is_supported {
-                Some(scheduler_pool.clone())
-            } else {
-                None
-            };
 
             let mut exiting = false;
             move || loop {
                 sleep(pool_cleaner_interval);
                 info!("Scheduler pool cleaner: start!!!",);
 
-                let Some(scheduler_pool) = strong_scheduler_pool
-                    .clone()
-                    .or_else(|| weak_scheduler_pool.upgrade())
-                else {
+                let Some(scheduler_pool) = weak_scheduler_pool.upgrade() else {
                     break;
                 };
 
