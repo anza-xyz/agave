@@ -33,7 +33,7 @@ use {
     solana_core::{
         banking_simulation::{BankingSimulator, BankingTraceEvents},
         system_monitor_service::{SystemMonitorService, SystemMonitorStatsReportConfig},
-        validator::{BlockProductionMethod, BlockVerificationMethod},
+        validator::{BlockProductionMethod, BlockVerificationMethod, TransactionStructure},
     },
     solana_cost_model::{cost_model::CostModel, cost_tracker::CostTracker},
     solana_feature_set::{self as feature_set, FeatureSet},
@@ -2492,14 +2492,18 @@ fn main() {
                         BlockProductionMethod
                     )
                     .unwrap_or_default();
+                    let transaction_struct =
+                        value_t!(arg_matches, "transaction_struct", TransactionStructure)
+                            .unwrap_or_default();
 
-                    info!("Using: block-production-method: {block_production_method}");
+                    info!("Using: block-production-method: {block_production_method} transaction-structure: {transaction_struct}");
 
                     match simulator.start(
                         genesis_config,
                         bank_forks,
                         blockstore,
                         block_production_method,
+                        transaction_struct,
                     ) {
                         Ok(()) => println!("Ok"),
                         Err(error) => {
