@@ -613,16 +613,16 @@ where
             )
         };
 
-        let s = S::spawn(
+        let scheduler = S::spawn(
             handler_count,
             self.self_arc(),
             SchedulingContext::new(SchedulingMode::BlockProduction, None),
             initialized_result_with_timings(),
             Some(banking_stage_context),
         );
-        let s = s.into_inner().1;
-        assert!(id_and_inner.0.replace(s.id()).is_none());
-        assert!(id_and_inner.1.replace(s).is_none());
+        let inner = scheduler.into_inner().1;
+        assert!(id_and_inner.0.replace(inner.id()).is_none());
+        assert!(id_and_inner.1.replace(inner).is_none());
         self.block_production_scheduler_condvar.notify_all();
         info!("flash session: end!");
     }
