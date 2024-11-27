@@ -7,10 +7,15 @@ use {
         immutable_deserialized_packet::ImmutableDeserializedPacket,
         scheduler_messages::TransactionId,
     },
+    agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
+    bytes::{Bytes, BytesMut},
     itertools::MinMaxResult,
     min_max_heap::MinMaxHeap,
     slab::Slab,
-    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
+    solana_runtime_transaction::{
+        runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
+    },
+    solana_sdk::packet::PACKET_DATA_SIZE,
     std::sync::Arc,
 };
 
@@ -65,23 +70,20 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
     /// Panics if the transaction does not exist.
     fn get_transaction_ttl(&self, id: TransactionId) -> Option<&SanitizedTransactionTTL<Tx>>;
 
-    /// Insert a new transaction into the container's queues and maps.
-    /// Returns `true` if a packet was dropped due to capacity limits.
-    fn insert_new_transaction(
-        &mut self,
-        transaction_ttl: SanitizedTransactionTTL<Tx>,
-        packet: Option<Arc<ImmutableDeserializedPacket>>,
-        priority: u64,
-        cost: u64,
-    ) -> bool;
-
     /// Retries a transaction - inserts transaction back into map (but not packet).
     /// This transitions the transaction to `Unprocessed` state.
     fn retry_transaction(
         &mut self,
         transaction_id: TransactionId,
         transaction_ttl: SanitizedTransactionTTL<Tx>,
-    );
+    ) {
+        let transaction_state = self
+            .get_mut_transaction_state(transaction_id)
+            .expect("transaction must exist");
+        let priority_id = TransactionPriorityId::new(transaction_state.priority(), transaction_id);
+        transaction_state.transition_to_unprocessed(transaction_ttl);
+        self.push_id_into_queue(priority_id);
+    }
 
     /// Pushes a transaction id into the priority queue. If the queue is full, the lowest priority
     /// transaction will be dropped (removed from the queue and map).
@@ -132,7 +134,29 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
             .map(|state| state.transaction_ttl())
     }
 
-    fn insert_new_transaction(
+    fn push_id_into_queue(&mut self, priority_id: TransactionPriorityId) -> bool {
+        self.push_id_into_queue_with_remaining_capacity(priority_id, self.remaining_capacity())
+    }
+
+    fn remove_by_id(&mut self, id: TransactionId) {
+        self.id_to_transaction_state.remove(id);
+    }
+
+    fn get_min_max_priority(&self) -> MinMaxResult<u64> {
+        match self.priority_queue.peek_min() {
+            Some(min) => match self.priority_queue.peek_max() {
+                Some(max) => MinMaxResult::MinMax(min.priority, max.priority),
+                None => MinMaxResult::OneElement(min.priority),
+            },
+            None => MinMaxResult::NoElements,
+        }
+    }
+}
+
+impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
+    /// Insert a new transaction into the container's queues and maps.
+    /// Returns `true` if a packet was dropped due to capacity limits.
+    pub(crate) fn insert_new_transaction(
         &mut self,
         transaction_ttl: SanitizedTransactionTTL<Tx>,
         packet: Option<Arc<ImmutableDeserializedPacket>>,
@@ -157,39 +181,6 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
         self.push_id_into_queue_with_remaining_capacity(priority_id, remaining_capacity)
     }
 
-    fn retry_transaction(
-        &mut self,
-        transaction_id: TransactionId,
-        transaction_ttl: SanitizedTransactionTTL<Tx>,
-    ) {
-        let transaction_state = self
-            .get_mut_transaction_state(transaction_id)
-            .expect("transaction must exist");
-        let priority_id = TransactionPriorityId::new(transaction_state.priority(), transaction_id);
-        transaction_state.transition_to_unprocessed(transaction_ttl);
-        self.push_id_into_queue(priority_id);
-    }
-
-    fn push_id_into_queue(&mut self, priority_id: TransactionPriorityId) -> bool {
-        self.push_id_into_queue_with_remaining_capacity(priority_id, self.remaining_capacity())
-    }
-
-    fn remove_by_id(&mut self, id: TransactionId) {
-        self.id_to_transaction_state.remove(id);
-    }
-
-    fn get_min_max_priority(&self) -> MinMaxResult<u64> {
-        match self.priority_queue.peek_min() {
-            Some(min) => match self.priority_queue.peek_max() {
-                Some(max) => MinMaxResult::MinMax(min.priority, max.priority),
-                None => MinMaxResult::OneElement(min.priority),
-            },
-            None => MinMaxResult::NoElements,
-        }
-    }
-}
-
-impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
     fn push_id_into_queue_with_remaining_capacity(
         &mut self,
         priority_id: TransactionPriorityId,
@@ -203,6 +194,171 @@ impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
             self.priority_queue.push(priority_id);
             false
         }
+    }
+}
+
+/// A wrapper around `TransactionStateContainer` that allows re-uses
+/// pre-allocated `Bytes` to copy packet data into and use for serialization.
+/// This is used to avoid allocations in parsing transactions.
+pub struct TransactionViewStateContainer {
+    inner: TransactionStateContainer<RuntimeTransaction<ResolvedTransactionView<Bytes>>>,
+    bytes_buffer: Box<[MaybeBytes]>,
+}
+
+enum MaybeBytes {
+    None,
+    Bytes(Bytes),
+    BytesMut(BytesMut),
+}
+
+impl MaybeBytes {
+    fn reserve_space(&mut self) -> BytesMut {
+        match core::mem::replace(self, MaybeBytes::None) {
+            MaybeBytes::BytesMut(bytes) => bytes,
+            _ => unreachable!("invalid state"),
+        }
+    }
+
+    fn freeze(&mut self, bytes: Bytes) {
+        debug_assert!(matches!(self, MaybeBytes::None));
+        *self = MaybeBytes::Bytes(bytes);
+    }
+
+    fn free_space(&mut self, mut bytes: BytesMut) {
+        debug_assert!(matches!(self, MaybeBytes::None));
+        bytes.clear();
+        *self = MaybeBytes::BytesMut(bytes);
+    }
+}
+
+struct SuccessfulInsert {
+    state: TransactionState<RuntimeTransaction<ResolvedTransactionView<Bytes>>>,
+    bytes: Bytes,
+}
+
+impl TransactionViewStateContainer {
+    fn try_insert_with(&mut self, f: impl FnOnce(BytesMut) -> Result<SuccessfulInsert, BytesMut>) {
+        if self.inner.id_to_transaction_state.len() == self.inner.id_to_transaction_state.capacity()
+        {
+            return;
+        }
+
+        // Get a vacant entry in the slab.
+        let vacant_entry = self.inner.id_to_transaction_state.vacant_entry();
+        let transaction_id = vacant_entry.key();
+
+        // Get the vacant space in the bytes buffer.
+        let bytes_entry = &mut self.bytes_buffer[transaction_id];
+        let bytes = bytes_entry.reserve_space();
+
+        // Attempt to insert the transaction, storing the frozen bytes back into bytes buffer.
+        match f(bytes) {
+            Ok(SuccessfulInsert { state, bytes }) => {
+                vacant_entry.insert(state);
+                bytes_entry.freeze(bytes);
+            }
+            Err(bytes) => bytes_entry.free_space(bytes),
+        }
+    }
+
+    // This is re-implemented since we need it to call `remove_by_id` on this
+    // struct rather than `inner`. This is important because we need to return
+    // the `Bytes` to the pool.
+    fn push_id_into_queue_with_remaining_capacity(
+        &mut self,
+        priority_id: TransactionPriorityId,
+        remaining_capacity: usize,
+    ) -> bool {
+        if remaining_capacity == 0 {
+            let popped_id = self.inner.priority_queue.push_pop_min(priority_id);
+            self.remove_by_id(popped_id.id);
+            true
+        } else {
+            self.inner.priority_queue.push(priority_id);
+            false
+        }
+    }
+}
+
+impl StateContainer<RuntimeTransaction<ResolvedTransactionView<Bytes>>>
+    for TransactionViewStateContainer
+{
+    fn with_capacity(capacity: usize) -> Self {
+        let inner = TransactionStateContainer::with_capacity(capacity);
+        let bytes_buffer = (0..inner.id_to_transaction_state.capacity())
+            .map(|_| {
+                MaybeBytes::BytesMut({
+                    let mut bytes = BytesMut::zeroed(PACKET_DATA_SIZE);
+                    bytes.clear();
+                    bytes
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        Self {
+            inner,
+            bytes_buffer,
+        }
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    #[inline]
+    fn remaining_capacity(&self) -> usize {
+        self.inner.remaining_capacity()
+    }
+
+    #[inline]
+    fn pop(&mut self) -> Option<TransactionPriorityId> {
+        self.inner.pop()
+    }
+
+    #[inline]
+    fn get_mut_transaction_state(
+        &mut self,
+        id: TransactionId,
+    ) -> Option<&mut TransactionState<RuntimeTransaction<ResolvedTransactionView<Bytes>>>> {
+        self.inner.get_mut_transaction_state(id)
+    }
+
+    #[inline]
+    fn get_transaction_ttl(
+        &self,
+        id: TransactionId,
+    ) -> Option<&SanitizedTransactionTTL<RuntimeTransaction<ResolvedTransactionView<Bytes>>>> {
+        self.inner.get_transaction_ttl(id)
+    }
+
+    #[inline]
+    fn push_id_into_queue(&mut self, priority_id: TransactionPriorityId) -> bool {
+        self.push_id_into_queue_with_remaining_capacity(priority_id, self.remaining_capacity())
+    }
+
+    fn remove_by_id(&mut self, id: TransactionId) {
+        // Remove the entry from the map:
+        // 1. If it was unprocessed, this will drop the `Bytes` held.
+        // 2. If it was scheduled, this just marks the entry as removed.
+        let _ = self.inner.id_to_transaction_state.remove(id);
+
+        // Clear the bytes buffer.
+        let bytes_entry = &mut self.bytes_buffer[id];
+        let MaybeBytes::Bytes(bytes) = core::mem::replace(bytes_entry, MaybeBytes::None) else {
+            unreachable!("invalid state");
+        };
+
+        // Return the `Bytes` to the pool.
+        let bytes = bytes
+            .try_into_mut()
+            .expect("all `Bytes` instances must be dropped");
+        bytes_entry.free_space(bytes);
+    }
+
+    #[inline]
+    fn get_min_max_priority(&self) -> MinMaxResult<u64> {
+        self.inner.get_min_max_priority()
     }
 }
 
