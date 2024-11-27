@@ -1931,87 +1931,87 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             //    `select_biased!`, which are sent from `.send_chained_channel()` in the scheduler
             //    thread for all-but-initial sessions.
             move || {
-            let banking_packet_receiver = if let Some(b) = banking_stage_context.as_ref() {
-                &b.banking_packet_receiver
-            } else {
-                &never()
-            };
+                let banking_packet_receiver = if let Some(b) = banking_stage_context.as_ref() {
+                    &b.banking_packet_receiver
+                } else {
+                    &never()
+                };
 
                 loop {
-                let (task, sender) = select_biased! {
-                    recv(runnable_task_receiver.for_select()) -> message => {
-                        let Ok(message) = message else {
-                            break;
-                        };
-                        if let Some(task) = runnable_task_receiver.after_select(message.into()) {
-                            (task, &finished_blocked_task_sender)
-                        } else {
-                            continue;
-                        }
-                    },
-                    recv(banking_packet_receiver) -> banking_packet => {
-                        let Some(new_task_sender) = new_task_sender.upgrade() else {
-                            info!("dead new_task_sender");
-                            break;
-                        };
-
-                        let Ok(banking_packet) = banking_packet else {
-                            info!("disconnected banking_packet_receiver");
-                            let current_thread = thread::current();
-                            if new_task_sender.send(NewTaskPayload::Disconnect(Unit::new()).into()).is_ok() {
-                                info!("notified a disconnect from {:?}", current_thread);
+                    let (task, sender) = select_biased! {
+                        recv(runnable_task_receiver.for_select()) -> message => {
+                            let Ok(message) = message else {
+                                break;
+                            };
+                            if let Some(task) = runnable_task_receiver.after_select(message.into()) {
+                                (task, &finished_blocked_task_sender)
                             } else {
-                                // It seems that the scheduler thread has been aborted already...
-                                warn!("failed to notify a disconnect from {:?}", current_thread);
+                                continue;
                             }
-                            break;
-                        };
-                        (banking_stage_context.as_ref().unwrap().on_banking_packet_receive)(banking_packet, &move |task| {
-                            new_task_sender
-                                .send(NewTaskPayload::Payload(task).into())
-                                .unwrap();
-                        });
-                        continue;
-                    },
-                    /*
-                    recv(runnable_task_receiver.aux_for_select()) -> task => {
-                        if let Ok(task) = task {
-                            (task, &finished_idle_task_sender)
-                        } else {
-                            runnable_task_receiver.never_receive_from_aux();
-                            continue;
-                        }
-                    },
-                    */
-                };
-                defer! {
-                    if !thread::panicking() {
-                        return;
-                    }
+                        },
+                        recv(banking_packet_receiver) -> banking_packet => {
+                            let Some(new_task_sender) = new_task_sender.upgrade() else {
+                                info!("dead new_task_sender");
+                                break;
+                            };
 
-                    // The scheduler thread can't detect panics in handler threads with
-                    // disconnected channel errors, unless all of them has died. So, send an
-                    // explicit Err promptly.
-                    let current_thread = thread::current();
-                    error!("handler thread is panicking: {:?}", current_thread);
-                    if sender.send(Err(HandlerPanicked)).is_ok() {
-                        info!("notified a panic from {:?}", current_thread);
-                    } else {
-                        // It seems that the scheduler thread has been aborted already...
-                        warn!("failed to notify a panic from {:?}", current_thread);
+                            let Ok(banking_packet) = banking_packet else {
+                                info!("disconnected banking_packet_receiver");
+                                let current_thread = thread::current();
+                                if new_task_sender.send(NewTaskPayload::Disconnect(Unit::new()).into()).is_ok() {
+                                    info!("notified a disconnect from {:?}", current_thread);
+                                } else {
+                                    // It seems that the scheduler thread has been aborted already...
+                                    warn!("failed to notify a disconnect from {:?}", current_thread);
+                                }
+                                break;
+                            };
+                            (banking_stage_context.as_ref().unwrap().on_banking_packet_receive)(banking_packet, &move |task| {
+                                new_task_sender
+                                    .send(NewTaskPayload::Payload(task).into())
+                                    .unwrap();
+                            });
+                            continue;
+                        },
+                        /*
+                        recv(runnable_task_receiver.aux_for_select()) -> task => {
+                            if let Ok(task) = task {
+                                (task, &finished_idle_task_sender)
+                            } else {
+                                runnable_task_receiver.never_receive_from_aux();
+                                continue;
+                            }
+                        },
+                        */
+                    };
+                    defer! {
+                        if !thread::panicking() {
+                            return;
+                        }
+
+                        // The scheduler thread can't detect panics in handler threads with
+                        // disconnected channel errors, unless all of them has died. So, send an
+                        // explicit Err promptly.
+                        let current_thread = thread::current();
+                        error!("handler thread is panicking: {:?}", current_thread);
+                        if sender.send(Err(HandlerPanicked)).is_ok() {
+                            info!("notified a panic from {:?}", current_thread);
+                        } else {
+                            // It seems that the scheduler thread has been aborted already...
+                            warn!("failed to notify a panic from {:?}", current_thread);
+                        }
+                    }
+                    let mut task = ExecutedTask::new_boxed(task);
+                    Self::execute_task_with_handler(
+                        runnable_task_receiver.context(),
+                        &mut task,
+                        &pool.handler_context,
+                    );
+                    if sender.send(Ok(task)).is_err() {
+                        warn!("handler_thread: scheduler thread aborted...");
+                        break;
                     }
                 }
-                let mut task = ExecutedTask::new_boxed(task);
-                Self::execute_task_with_handler(
-                    runnable_task_receiver.context(),
-                    &mut task,
-                    &pool.handler_context,
-                );
-                if sender.send(Ok(task)).is_err() {
-                    warn!("handler_thread: scheduler thread aborted...");
-                    break;
-                }
-            }
             }
         };
 
