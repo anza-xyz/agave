@@ -3,6 +3,7 @@ use {
     crate::bank::CollectorFeeDetails,
     log::{debug, warn},
     solana_feature_set::{remove_rounding_in_fee_calculation, reward_full_priority_fee},
+    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_sdk::{
         account::{ReadableAccount, WritableAccount},
         fee::FeeBudgetLimits,
@@ -10,7 +11,6 @@ use {
         reward_info::RewardInfo,
         reward_type::RewardType,
         system_program,
-        transaction::SanitizedTransaction,
     },
     solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
     solana_vote::vote_account::VoteAccountsHashMap,
@@ -73,7 +73,7 @@ impl Bank {
 
     pub fn calculate_reward_for_transaction(
         &self,
-        transaction: &SanitizedTransaction,
+        transaction: &impl TransactionWithMeta,
         fee_budget_limits: &FeeBudgetLimits,
     ) -> u64 {
         let fee_details = solana_fee::calculate_fee_details(
