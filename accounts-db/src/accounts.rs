@@ -2,8 +2,9 @@ use {
     crate::{
         account_locks::{validate_account_locks, AccountLocks},
         accounts_db::{
-            AccountStorageEntry, AccountsAddRootTiming, AccountsDb, LoadHint, LoadedAccount,
-            ScanAccountStorageData, ScanStorageResult, VerifyAccountsHashAndLamportsConfig,
+            stats::AtomicBankHashStats, AccountStorageEntry, AccountsAddRootTiming, AccountsDb,
+            LoadHint, LoadedAccount, ScanAccountStorageData, ScanStorageResult,
+            VerifyAccountsHashAndLamportsConfig,
         },
         accounts_index::{IndexKey, ScanConfig, ScanError, ScanResult},
         ancestors::Ancestors,
@@ -551,8 +552,15 @@ impl Accounts {
     /// Slow because lock is held for 1 operation instead of many.
     /// WARNING: This noncached version is only to be used for tests/benchmarking
     /// as bypassing the cache in general is not supported
-    pub fn store_slow_uncached(&self, slot: Slot, pubkey: &Pubkey, account: &AccountSharedData) {
-        self.accounts_db.store_uncached(slot, &[(pubkey, account)]);
+    pub fn store_slow_uncached(
+        &self,
+        slot: Slot,
+        pubkey: &Pubkey,
+        account: &AccountSharedData,
+        bank_hash_stats: Option<&AtomicBankHashStats>,
+    ) {
+        self.accounts_db
+            .store_uncached(slot, &[(pubkey, account)], bank_hash_stats);
     }
 
     /// This function will prevent multiple threads from modifying the same account state at the
@@ -633,13 +641,19 @@ impl Accounts {
         &self,
         accounts: impl StorableAccounts<'a>,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
+        bank_hash_stats: Option<&AtomicBankHashStats>,
     ) {
         self.accounts_db
-            .store_cached_inline_update_index(accounts, transactions);
+            .store_cached_inline_update_index(accounts, transactions, bank_hash_stats);
     }
 
-    pub fn store_accounts_cached<'a>(&self, accounts: impl StorableAccounts<'a>) {
-        self.accounts_db.store_cached(accounts, None)
+    pub fn store_accounts_cached<'a>(
+        &self,
+        accounts: impl StorableAccounts<'a>,
+        bank_hash_stats: Option<&AtomicBankHashStats>,
+    ) {
+        self.accounts_db
+            .store_cached(accounts, None, bank_hash_stats)
     }
 
     /// Add a slot to root.  Root slots cannot be purged
@@ -770,7 +784,7 @@ mod tests {
         let invalid_table_key = Pubkey::new_unique();
         let mut invalid_table_account = AccountSharedData::default();
         invalid_table_account.set_lamports(1);
-        accounts.store_slow_uncached(0, &invalid_table_key, &invalid_table_account);
+        accounts.store_slow_uncached(0, &invalid_table_key, &invalid_table_account, None);
 
         let address_table_lookup = MessageAddressTableLookup {
             account_key: invalid_table_key,
@@ -797,7 +811,7 @@ mod tests {
         let invalid_table_key = Pubkey::new_unique();
         let invalid_table_account =
             AccountSharedData::new(1, 0, &address_lookup_table::program::id());
-        accounts.store_slow_uncached(0, &invalid_table_key, &invalid_table_account);
+        accounts.store_slow_uncached(0, &invalid_table_key, &invalid_table_account, None);
 
         let address_table_lookup = MessageAddressTableLookup {
             account_key: invalid_table_key,
@@ -836,7 +850,7 @@ mod tests {
                 0,
             )
         };
-        accounts.store_slow_uncached(0, &table_key, &table_account);
+        accounts.store_slow_uncached(0, &table_key, &table_account, None);
 
         let address_table_lookup = MessageAddressTableLookup {
             account_key: table_key,
@@ -868,13 +882,13 @@ mod tests {
         // Load accounts owned by various programs into AccountsDb
         let pubkey0 = solana_sdk::pubkey::new_rand();
         let account0 = AccountSharedData::new(1, 0, &Pubkey::from([2; 32]));
-        accounts.store_slow_uncached(0, &pubkey0, &account0);
+        accounts.store_slow_uncached(0, &pubkey0, &account0, None);
         let pubkey1 = solana_sdk::pubkey::new_rand();
         let account1 = AccountSharedData::new(1, 0, &Pubkey::from([2; 32]));
-        accounts.store_slow_uncached(0, &pubkey1, &account1);
+        accounts.store_slow_uncached(0, &pubkey1, &account1, None);
         let pubkey2 = solana_sdk::pubkey::new_rand();
         let account2 = AccountSharedData::new(1, 0, &Pubkey::from([3; 32]));
-        accounts.store_slow_uncached(0, &pubkey2, &account2);
+        accounts.store_slow_uncached(0, &pubkey2, &account2, None);
 
         let loaded = accounts.load_by_program_slot(0, Some(&Pubkey::from([2; 32])));
         assert_eq!(loaded.len(), 2);
@@ -882,14 +896,6 @@ mod tests {
         assert_eq!(loaded, vec![(pubkey2, account2)]);
         let loaded = accounts.load_by_program_slot(0, Some(&Pubkey::from([4; 32])));
         assert_eq!(loaded, vec![]);
-    }
-
-    #[test]
-    fn test_accounts_empty_bank_hash_stats() {
-        let accounts_db = AccountsDb::new_single_for_tests();
-        let accounts = Accounts::new(Arc::new(accounts_db));
-        assert!(accounts.accounts_db.get_bank_hash_stats(0).is_some());
-        assert!(accounts.accounts_db.get_bank_hash_stats(1).is_none());
     }
 
     #[test]

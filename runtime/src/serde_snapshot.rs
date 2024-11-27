@@ -703,7 +703,7 @@ impl<'a> Serialize for SerializableBankAndStorage<'a> {
         let slot = self.bank.slot();
         let mut bank_fields = self.bank.get_fields_to_serialize();
         let accounts_db = &self.bank.rc.accounts.accounts_db;
-        let bank_hash_stats = accounts_db.get_bank_hash_stats(slot).unwrap();
+        let bank_hash_stats = self.bank.get_bank_hash_stats();
         let accounts_delta_hash = accounts_db.get_accounts_delta_hash(slot).unwrap();
         let accounts_hash = accounts_db.get_accounts_hash(slot).unwrap().0;
         let write_version = accounts_db.write_version.load(Ordering::Acquire);
@@ -747,7 +747,7 @@ impl<'a> Serialize for SerializableBankAndStorageNoExtra<'a> {
         let slot = self.bank.slot();
         let bank_fields = self.bank.get_fields_to_serialize();
         let accounts_db = &self.bank.rc.accounts.accounts_db;
-        let bank_hash_stats = accounts_db.get_bank_hash_stats(slot).unwrap();
+        let bank_hash_stats = self.bank.get_bank_hash_stats();
         let accounts_delta_hash = accounts_db.get_accounts_delta_hash(slot).unwrap();
         let accounts_hash = accounts_db.get_accounts_hash(slot).unwrap().0;
         let write_version = accounts_db.write_version.load(Ordering::Acquire);
@@ -1209,12 +1209,6 @@ where
         old_accounts_delta_hash.is_none(),
         "There should not already be an AccountsDeltaHash at slot {snapshot_slot}: {old_accounts_delta_hash:?}",
         );
-    let old_stats = accounts_db
-        .update_bank_hash_stats_from_snapshot(snapshot_slot, snapshot_bank_hash_info.stats);
-    assert!(
-        old_stats.is_none(),
-        "There should not already be a BankHashStats at slot {snapshot_slot}: {old_stats:?}",
-    );
     accounts_db.storage.initialize(storage);
     accounts_db
         .next_id

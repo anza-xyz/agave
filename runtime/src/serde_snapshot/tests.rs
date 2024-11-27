@@ -15,8 +15,9 @@ mod serde_snapshot_tests {
             account_storage::{AccountStorageMap, AccountStorageReference},
             accounts::Accounts,
             accounts_db::{
-                get_temp_accounts_paths, test_utils::create_test_accounts, AccountStorageEntry,
-                AccountsDb, AtomicAccountsFileId, VerifyAccountsHashAndLamportsConfig,
+                get_temp_accounts_paths, stats::BankHashStats, test_utils::create_test_accounts,
+                AccountStorageEntry, AccountsDb, AtomicAccountsFileId,
+                VerifyAccountsHashAndLamportsConfig,
             },
             accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
             accounts_hash::AccountsHash,
@@ -108,7 +109,7 @@ mod serde_snapshot_tests {
     where
         W: Write,
     {
-        let bank_hash_stats = accounts_db.get_bank_hash_stats(slot).unwrap();
+        let bank_hash_stats = BankHashStats::default();
         let accounts_delta_hash = accounts_db.get_accounts_delta_hash(slot).unwrap();
         let accounts_hash = accounts_db.get_accounts_hash(slot).unwrap().0;
         let write_version = accounts_db.write_version.load(Ordering::Acquire);

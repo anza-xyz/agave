@@ -1533,8 +1533,6 @@ pub struct AccountsDb {
 
     pub thread_pool_hash: ThreadPool,
 
-    bank_hash_stats: DashMap<Slot, AtomicBankHashStats>,
-
     accounts_delta_hashes: Mutex<HashMap<Slot, AccountsDeltaHash>>,
     accounts_hashes: Mutex<HashMap<Slot, (AccountsHash, /*capitalization*/ u64)>>,
     incremental_accounts_hashes:
@@ -1867,7 +1865,7 @@ impl solana_frozen_abi::abi_example::AbiExample for AccountsDb {
         let some_data_len = 5;
         let some_slot: Slot = 0;
         let account = AccountSharedData::new(1, some_data_len, &key);
-        accounts_db.store_uncached(some_slot, &[(&key, &account)]);
+        accounts_db.store_uncached(some_slot, &[(&key, &account)], None);
         accounts_db.add_root(0);
 
         accounts_db
@@ -1980,9 +1978,6 @@ impl AccountsDb {
             Self::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI,
         ));
 
-        let bank_hash_stats =
-            DashMap::from_iter(std::iter::once((0, AtomicBankHashStats::default())));
-
         // Increase the stack for foreground threads
         // rayon needs a lot of stack
         const ACCOUNTS_STACK_SIZE: usize = 8 * 1024 * 1024;
@@ -2051,7 +2046,6 @@ impl AccountsDb {
                 .into(),
             verify_experimental_accumulator_hash: accounts_db_config
                 .verify_experimental_accumulator_hash,
-            bank_hash_stats,
             thread_pool,
             thread_pool_clean,
             thread_pool_hash,
@@ -4559,7 +4553,6 @@ impl AccountsDb {
         dropped_roots.for_each(|slot| {
             self.accounts_index.clean_dead_slot(slot);
             accounts_delta_hashes.remove(&slot);
-            self.bank_hash_stats.remove(&slot);
             // the storage has been removed from this slot and recycled or dropped
             assert!(self.storage.remove(&slot, false).is_none());
             debug_assert!(
@@ -4969,21 +4962,6 @@ impl AccountsDb {
 
             ScanStorageResult::Stored(retval)
         }
-    }
-
-    /// Insert a default bank hash stats for `slot`
-    ///
-    /// This fn is called when creating a new bank from parent.
-    pub fn insert_default_bank_hash_stats(&self, slot: Slot, parent_slot: Slot) {
-        if self.bank_hash_stats.get(&slot).is_some() {
-            error!(
-                "set_hash: already exists; multiple forks with shared slot {slot} as child \
-                 (parent: {parent_slot})!?"
-            );
-            return;
-        }
-        self.bank_hash_stats
-            .insert(slot, AtomicBankHashStats::default());
     }
 
     pub fn load(
@@ -7652,32 +7630,6 @@ impl AccountsDb {
             .cloned()
     }
 
-    /// When reconstructing AccountsDb from a snapshot, insert the `bank_hash_stats` into the
-    /// internal bank hash stats map.
-    ///
-    /// This fn is only called when loading from a snapshot, which means AccountsDb is new and its
-    /// bank hash stats map is unpopulated.  Except for slot 0.
-    ///
-    /// Slot 0 is a special case.  When a new AccountsDb is created--like when loading from a
-    /// snapshot--the bank hash stats map is populated with a default entry at slot 0.  Remove the
-    /// default entry at slot 0, and then insert the new value at `slot`.
-    pub fn update_bank_hash_stats_from_snapshot(
-        &mut self,
-        slot: Slot,
-        stats: BankHashStats,
-    ) -> Option<BankHashStats> {
-        self.bank_hash_stats.remove(&0);
-
-        self.bank_hash_stats
-            .insert(slot, AtomicBankHashStats::new(&stats))
-            .map(|old_stat| old_stat.load())
-    }
-
-    /// Get the bank hash stats for `slot` in the `bank_hash_stats` map
-    pub fn get_bank_hash_stats(&self, slot: Slot) -> Option<BankHashStats> {
-        self.bank_hash_stats.get(&slot).map(|stats| stats.load())
-    }
-
     fn update_index<'a>(
         &self,
         infos: Vec<AccountInfo>,
@@ -7901,7 +7853,6 @@ impl AccountsDb {
         let mut accounts_delta_hashes = self.accounts_delta_hashes.lock().unwrap();
         for slot in dead_slots_iter {
             accounts_delta_hashes.remove(slot);
-            self.bank_hash_stats.remove(slot);
         }
         drop(accounts_delta_hashes);
 
@@ -8082,6 +8033,7 @@ impl AccountsDb {
         &self,
         accounts: impl StorableAccounts<'a>,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
+        bank_hash_stat: Option<&AtomicBankHashStats>,
     ) {
         self.store(
             accounts,
@@ -8089,6 +8041,7 @@ impl AccountsDb {
             transactions,
             StoreReclaims::Default,
             UpdateIndexThreadSelection::PoolWithThreshold,
+            bank_hash_stat,
         );
     }
 
@@ -8096,6 +8049,7 @@ impl AccountsDb {
         &self,
         accounts: impl StorableAccounts<'a>,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
+        bank_hash_stat: Option<&AtomicBankHashStats>,
     ) {
         self.store(
             accounts,
@@ -8103,12 +8057,18 @@ impl AccountsDb {
             transactions,
             StoreReclaims::Default,
             UpdateIndexThreadSelection::Inline,
+            bank_hash_stat,
         );
     }
 
     /// Store the account update.
     /// only called by tests
-    pub fn store_uncached(&self, slot: Slot, accounts: &[(&Pubkey, &AccountSharedData)]) {
+    pub fn store_uncached(
+        &self,
+        slot: Slot,
+        accounts: &[(&Pubkey, &AccountSharedData)],
+        bank_hash_stat: Option<&AtomicBankHashStats>,
+    ) {
         let storage = self.find_storage_candidate(slot);
         self.store(
             (slot, accounts),
@@ -8116,6 +8076,7 @@ impl AccountsDb {
             None,
             StoreReclaims::Default,
             UpdateIndexThreadSelection::PoolWithThreshold,
+            bank_hash_stat,
         );
     }
 
@@ -8126,6 +8087,7 @@ impl AccountsDb {
         transactions: Option<&'a [&'a SanitizedTransaction]>,
         reclaim: StoreReclaims,
         update_index_thread_selection: UpdateIndexThreadSelection,
+        bank_hash_stats: Option<&AtomicBankHashStats>,
     ) {
         // If all transactions in a batch are errored,
         // it's possible to get a store with no accounts.
@@ -8146,10 +8108,9 @@ impl AccountsDb {
             .store_total_data
             .fetch_add(total_data as u64, Ordering::Relaxed);
 
-        self.bank_hash_stats
-            .entry(accounts.target_slot())
-            .or_default()
-            .accumulate(&stats);
+        if let Some(bank_hash_stats) = bank_hash_stats {
+            bank_hash_stats.accumulate(&stats);
+        }
 
         // we use default hashes for now since the same account may be stored to the cache multiple times
         self.store_accounts_unfrozen(
@@ -9425,6 +9386,7 @@ impl AccountsDb {
             None,
             StoreReclaims::Default,
             UpdateIndexThreadSelection::PoolWithThreshold,
+            None,
         );
     }
 
@@ -9617,7 +9579,7 @@ pub mod test_utils {
                 data_size,
                 AccountSharedData::default().owner(),
             );
-            accounts.store_slow_uncached(slot, &pubkey, &account);
+            accounts.store_slow_uncached(slot, &pubkey, &account, None);
             pubkeys.push(pubkey);
         }
     }
@@ -9628,7 +9590,7 @@ pub mod test_utils {
         for pubkey in pubkeys {
             let amount = thread_rng().gen_range(0..10);
             let account = AccountSharedData::new(amount, 0, AccountSharedData::default().owner());
-            accounts.store_slow_uncached(slot, pubkey, &account);
+            accounts.store_slow_uncached(slot, pubkey, &account, None);
         }
     }
 }

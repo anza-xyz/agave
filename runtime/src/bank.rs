@@ -74,6 +74,7 @@ use {
         account_locks::validate_account_locks,
         accounts::{AccountAddressFilter, Accounts, PubkeyAccountSlot},
         accounts_db::{
+            stats::{AtomicBankHashStats, BankHashStats},
             AccountStorageEntry, AccountsDb, AccountsDbConfig, CalcAccountsHashDataSource,
             DuplicatesLtHash, OldStoragesPolicy, PubkeyHashAccount,
             VerifyAccountsHashAndLamportsConfig,
@@ -591,6 +592,7 @@ impl PartialEq for Bank {
             cache_for_accounts_lt_hash: _,
             stats_for_accounts_lt_hash: _,
             block_id,
+            bank_hash_stats: _,
             // Ignore new fields explicitly if they do not impact PartialEq.
             // Adding ".." will remove compile-time checks that if a new field
             // is added to the struct, this PartialEq is accordingly updated.
@@ -947,6 +949,8 @@ pub struct Bank {
     /// None for banks that have not yet completed replay or for leader banks as we cannot populate block_id
     /// until bankless leader. Can be computed directly from shreds without needing to execute transactions.
     block_id: RwLock<Option<Hash>>,
+
+    bank_hash_stats: AtomicBankHashStats,
 }
 
 struct VoteWithStakeDelegations {
@@ -1081,6 +1085,7 @@ impl Bank {
             cache_for_accounts_lt_hash: RwLock::new(AHashMap::new()),
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
+            bank_hash_stats: AtomicBankHashStats::default(),
         };
 
         bank.transaction_processor =
@@ -1211,7 +1216,6 @@ impl Bank {
 
         let (rc, bank_rc_creation_time_us) = measure_us!({
             let accounts_db = Arc::clone(&parent.rc.accounts.accounts_db);
-            accounts_db.insert_default_bank_hash_stats(slot, parent.slot());
             BankRc {
                 accounts: Arc::new(Accounts::new(accounts_db)),
                 parent: RwLock::new(Some(Arc::clone(&parent))),
@@ -1337,6 +1341,7 @@ impl Bank {
             cache_for_accounts_lt_hash: RwLock::new(AHashMap::new()),
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
+            bank_hash_stats: AtomicBankHashStats::new(&parent.bank_hash_stats.load()),
         };
 
         let (_, ancestors_time_us) = measure_us!({
@@ -1749,6 +1754,7 @@ impl Bank {
             cache_for_accounts_lt_hash: RwLock::new(AHashMap::new()),
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
+            bank_hash_stats: AtomicBankHashStats::default(),
         };
 
         bank.transaction_processor =
@@ -2786,9 +2792,11 @@ impl Bank {
         );
         assert!(!self.freeze_started());
         thread_pool.install(|| {
-            stake_rewards
-                .par_chunks(512)
-                .for_each(|chunk| self.rc.accounts.store_accounts_cached((slot, chunk)))
+            stake_rewards.par_chunks(512).for_each(|chunk| {
+                self.rc
+                    .accounts
+                    .store_accounts_cached((slot, chunk), Some(&self.bank_hash_stats));
+            })
         });
         metrics
             .store_stake_accounts_us
@@ -4125,6 +4133,7 @@ impl Bank {
             self.rc.accounts.store_cached(
                 (self.slot(), accounts_to_store.as_slice()),
                 transactions.as_deref(),
+                Some(&self.bank_hash_stats),
             );
         });
 
@@ -5101,7 +5110,9 @@ impl Bank {
                 )
             })
         });
-        self.rc.accounts.store_accounts_cached(accounts);
+        self.rc
+            .accounts
+            .store_accounts_cached(accounts, Some(&self.bank_hash_stats));
         m.stop();
         self.rc
             .accounts
@@ -5626,12 +5637,7 @@ impl Bank {
         #[cfg(feature = "dev-context-only-utils")]
         let hash = hash_override.unwrap_or(std::hint::black_box(hash));
 
-        let bank_hash_stats = self
-            .rc
-            .accounts
-            .accounts_db
-            .get_bank_hash_stats(slot)
-            .expect("No bank hash stats were found for this bank, that should not be possible");
+        let bank_hash_stats = self.bank_hash_stats.load();
 
         let total_us = measure_total.end_as_us();
         datapoint_info!(
@@ -7111,6 +7117,10 @@ impl Bank {
     pub fn add_builtin(&self, program_id: Pubkey, name: &str, builtin: ProgramCacheEntry) {
         self.transaction_processor
             .add_builtin(self, program_id, name, builtin)
+    }
+
+    pub fn get_bank_hash_stats(&self) -> BankHashStats {
+        self.bank_hash_stats.load()
     }
 }
 

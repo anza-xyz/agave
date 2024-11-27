@@ -71,7 +71,7 @@ impl AtomicBankHashStats {
         }
     }
 
-    pub fn accumulate(&mut self, other: &BankHashStats) {
+    pub fn accumulate(&self, other: &BankHashStats) {
         self.num_updated_accounts
             .fetch_add(other.num_updated_accounts, Ordering::Relaxed);
         self.num_removed_accounts
