@@ -1,8 +1,8 @@
 #![allow(clippy::arithmetic_side_effects)]
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-use solana_entry::entry::{self, create_ticks, init_poh, EntrySlice, VerifyRecyclers};
+use solana_entry::entry::{self, create_ticks, init_poh, EntrySlice};
 #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-use solana_entry::entry::{create_ticks, init_poh, EntrySlice, VerifyRecyclers};
+use solana_entry::entry::{create_ticks, init_poh, EntrySlice};
 use {
     clap::{crate_description, crate_name, Arg, Command},
     solana_measure::measure::Measure,
@@ -91,7 +91,7 @@ fn main() {
         for _ in 0..iterations {
             assert!(ticks[..num_entries]
                 .verify_cpu_generic(&start_hash, &thread_pool)
-                .finish_verify(&thread_pool));
+                .finish_verify());
         }
         time.stop();
         println!(
@@ -138,11 +138,10 @@ fn main() {
 
         if perf_libs::api().is_some() {
             let mut time = Measure::start("time");
-            let recyclers = VerifyRecyclers::default();
             for _ in 0..iterations {
                 assert!(ticks[..num_entries]
-                    .start_verify(&start_hash, &thread_pool, recyclers.clone())
-                    .finish_verify(&thread_pool));
+                    .start_verify(&start_hash, &thread_pool)
+                    .finish_verify());
             }
             time.stop();
             println!(

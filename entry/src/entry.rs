@@ -12,7 +12,6 @@ use {
     serde::{Deserialize, Serialize},
     solana_measure::measure::Measure,
     solana_merkle_tree::MerkleTree,
-    solana_metrics::*,
     solana_perf::{
         cuda_runtime::RecycledVec,
         packet::{Packet, PacketBatch, PacketBatchRecycler, PACKETS_PER_BATCH},
@@ -31,10 +30,9 @@ use {
         },
     },
     std::{
-        cmp,
         ffi::OsStr,
         iter::repeat_with,
-        sync::{Arc, Mutex, Once},
+        sync::{Arc, Once},
         thread::{self, JoinHandle},
         time::Instant,
     },
@@ -250,25 +248,8 @@ pub fn next_hash(
     }
 }
 
-/// Last action required to verify an entry
-enum VerifyAction {
-    /// Mixin a hash before computing the last hash for a transaction entry
-    Mixin(Hash),
-    /// Compute one last hash for a tick entry
-    Tick,
-    /// No action needed (tick entry with no hashes)
-    None,
-}
-
-pub struct GpuVerificationData {
-    thread_h: Option<JoinHandle<u64>>,
-    hashes: Option<Arc<Mutex<RecycledVec<Hash>>>>,
-    verifications: Option<Vec<(VerifyAction, Hash)>>,
-}
-
 pub enum DeviceVerificationData {
     Cpu(),
-    Gpu(GpuVerificationData),
 }
 
 pub struct EntryVerificationState {
@@ -325,8 +306,6 @@ impl<Tx: TransactionWithMeta> EntrySigVerificationState<Tx> {
 
 #[derive(Default, Clone)]
 pub struct VerifyRecyclers {
-    hash_recycler: Recycler<RecycledVec<Hash>>,
-    tick_count_recycler: Recycler<RecycledVec<u64>>,
     packet_recycler: PacketBatchRecycler,
     out_recycler: Recycler<RecycledVec<u8>>,
     tx_offset_recycler: Recycler<sigverify::TxOffset>,
@@ -348,43 +327,8 @@ impl EntryVerificationState {
         self.poh_duration_us
     }
 
-    pub fn finish_verify(&mut self, thread_pool: &ThreadPool) -> bool {
+    pub fn finish_verify(&mut self) -> bool {
         match &mut self.device_verification_data {
-            DeviceVerificationData::Gpu(verification_state) => {
-                let gpu_time_us = verification_state.thread_h.take().unwrap().join().unwrap();
-
-                let mut verify_check_time = Measure::start("verify_check");
-                let hashes = verification_state.hashes.take().unwrap();
-                let hashes = Arc::try_unwrap(hashes)
-                    .expect("unwrap Arc")
-                    .into_inner()
-                    .expect("into_inner");
-                let res = thread_pool.install(|| {
-                    hashes
-                        .into_par_iter()
-                        .cloned()
-                        .zip(verification_state.verifications.take().unwrap())
-                        .all(|(hash, (action, expected))| {
-                            let actual = match action {
-                                VerifyAction::Mixin(mixin) => {
-                                    Poh::new(hash, None).record(mixin).unwrap().hash
-                                }
-                                VerifyAction::Tick => Poh::new(hash, None).tick().unwrap().hash,
-                                VerifyAction::None => hash,
-                            };
-                            actual == expected
-                        })
-                });
-                verify_check_time.stop();
-                self.poh_duration_us += gpu_time_us + verify_check_time.as_us();
-
-                self.verification_status = if res {
-                    EntryVerificationStatus::Success
-                } else {
-                    EntryVerificationStatus::Failure
-                };
-                res
-            }
             DeviceVerificationData::Cpu() => {
                 self.verification_status == EntryVerificationStatus::Success
             }
@@ -619,12 +563,7 @@ pub trait EntrySlice {
         simd_len: usize,
         thread_pool: &ThreadPool,
     ) -> EntryVerificationState;
-    fn start_verify(
-        &self,
-        start_hash: &Hash,
-        thread_pool: &ThreadPool,
-        recyclers: VerifyRecyclers,
-    ) -> EntryVerificationState;
+    fn start_verify(&self, start_hash: &Hash, thread_pool: &ThreadPool) -> EntryVerificationState;
     fn verify(&self, start_hash: &Hash, thread_pool: &ThreadPool) -> bool;
     /// Checks that each entry tick has the correct number of hashes. Entry slices do not
     /// necessarily end in a tick, so `tick_hash_count` is used to carry over the hash count
@@ -636,8 +575,7 @@ pub trait EntrySlice {
 
 impl EntrySlice for [Entry] {
     fn verify(&self, start_hash: &Hash, thread_pool: &ThreadPool) -> bool {
-        self.start_verify(start_hash, thread_pool, VerifyRecyclers::default())
-            .finish_verify(thread_pool)
+        self.start_verify(start_hash, thread_pool).finish_verify()
     }
 
     fn verify_cpu_generic(
@@ -788,97 +726,8 @@ impl EntrySlice for [Entry] {
         }
     }
 
-    fn start_verify(
-        &self,
-        start_hash: &Hash,
-        thread_pool: &ThreadPool,
-        recyclers: VerifyRecyclers,
-    ) -> EntryVerificationState {
-        let start = Instant::now();
-        let Some(api) = perf_libs::api() else {
-            return self.verify_cpu(start_hash, thread_pool);
-        };
-        inc_new_counter_info!("entry_verify-num_entries", self.len());
-
-        let genesis = [Entry {
-            num_hashes: 0,
-            hash: *start_hash,
-            transactions: vec![],
-        }];
-
-        let hashes: Vec<Hash> = genesis
-            .iter()
-            .chain(self)
-            .map(|entry| entry.hash)
-            .take(self.len())
-            .collect();
-
-        let mut hashes_pinned = recyclers.hash_recycler.allocate("poh_verify_hash");
-        hashes_pinned.resize(hashes.len(), Hash::default());
-        hashes_pinned.copy_from_slice(&hashes);
-
-        let mut num_hashes_vec = recyclers
-            .tick_count_recycler
-            .allocate("poh_verify_num_hashes");
-        num_hashes_vec.reserve(cmp::max(1, self.len()));
-        for entry in self {
-            num_hashes_vec.push(entry.num_hashes.saturating_sub(1));
-        }
-
-        let length = self.len();
-        let hashes = Arc::new(Mutex::new(hashes_pinned));
-        let hashes_clone = hashes.clone();
-
-        let gpu_verify_thread = thread::Builder::new()
-            .name("solGpuPohVerify".into())
-            .spawn(move || {
-                let mut hashes = hashes_clone.lock().unwrap();
-                let gpu_wait = Instant::now();
-                let res;
-                unsafe {
-                    res = (api.poh_verify_many)(
-                        hashes.as_mut_ptr() as *mut u8,
-                        num_hashes_vec.as_ptr(),
-                        length,
-                        1,
-                    );
-                }
-                assert!(res == 0, "GPU PoH verify many failed");
-                inc_new_counter_info!(
-                    "entry_verify-gpu_thread",
-                    gpu_wait.elapsed().as_micros() as usize
-                );
-                gpu_wait.elapsed().as_micros() as u64
-            })
-            .unwrap();
-
-        let verifications = thread_pool.install(|| {
-            self.into_par_iter()
-                .map(|entry| {
-                    let answer = entry.hash;
-                    let action = if entry.transactions.is_empty() {
-                        if entry.num_hashes == 0 {
-                            VerifyAction::None
-                        } else {
-                            VerifyAction::Tick
-                        }
-                    } else {
-                        VerifyAction::Mixin(hash_transactions(&entry.transactions))
-                    };
-                    (action, answer)
-                })
-                .collect()
-        });
-        let device_verification_data = DeviceVerificationData::Gpu(GpuVerificationData {
-            thread_h: Some(gpu_verify_thread),
-            verifications: Some(verifications),
-            hashes: Some(hashes),
-        });
-        EntryVerificationState {
-            verification_status: EntryVerificationStatus::Pending,
-            poh_duration_us: start.elapsed().as_micros() as u64,
-            device_verification_data,
-        }
+    fn start_verify(&self, start_hash: &Hash, thread_pool: &ThreadPool) -> EntryVerificationState {
+        self.verify_cpu(start_hash, thread_pool)
     }
 
     fn verify_tick_hash_count(&self, tick_hash_count: &mut u64, hashes_per_tick: u64) -> bool {
