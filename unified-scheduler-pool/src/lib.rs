@@ -8,8 +8,6 @@
 //! and commits any side-effects (i.e. on-chain state changes) into the associated `Bank` via
 //! `solana-ledger`'s helper function called `execute_batch()`.
 
-#[cfg(test)]
-use solana_runtime::installed_scheduler_pool::InstalledSchedulerPoolArc;
 use {
     assert_matches::assert_matches,
     crossbeam_channel::{self, never, select_biased, Receiver, RecvError, SendError, Sender},
@@ -221,33 +219,6 @@ where
             replay_vote_sender,
             prioritization_fee_cache,
             TransactionRecorder::new_dummy(),
-        )
-    }
-
-    #[cfg(test)]
-    fn do_new_for_verification(
-        handler_count: Option<usize>,
-        log_messages_bytes_limit: Option<usize>,
-        transaction_status_sender: Option<TransactionStatusSender>,
-        replay_vote_sender: Option<ReplayVoteSender>,
-        prioritization_fee_cache: Arc<PrioritizationFeeCache>,
-        pool_cleaner_interval: Duration,
-        max_pooling_duration: Duration,
-        max_usage_queue_count: usize,
-        timeout_duration: Duration,
-    ) -> Arc<Self> {
-        Self::do_new(
-            SupportedSchedulingMode::block_verification_only(),
-            handler_count,
-            log_messages_bytes_limit,
-            transaction_status_sender,
-            replay_vote_sender,
-            prioritization_fee_cache,
-            TransactionRecorder::new_dummy(),
-            pool_cleaner_interval,
-            max_pooling_duration,
-            max_usage_queue_count,
-            timeout_duration,
         )
     }
 
@@ -2476,6 +2447,39 @@ mod tests {
             thread::JoinHandle,
         },
     };
+    use solana_runtime::installed_scheduler_pool::InstalledSchedulerPoolArc;
+
+impl<S, TH> SchedulerPool<S, TH>
+where
+    S: SpawnableScheduler<TH>,
+    TH: TaskHandler,
+{
+    fn do_new_for_verification(
+        handler_count: Option<usize>,
+        log_messages_bytes_limit: Option<usize>,
+        transaction_status_sender: Option<TransactionStatusSender>,
+        replay_vote_sender: Option<ReplayVoteSender>,
+        prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+        pool_cleaner_interval: Duration,
+        max_pooling_duration: Duration,
+        max_usage_queue_count: usize,
+        timeout_duration: Duration,
+    ) -> Arc<Self> {
+        Self::do_new(
+            SupportedSchedulingMode::block_verification_only(),
+            handler_count,
+            log_messages_bytes_limit,
+            transaction_status_sender,
+            replay_vote_sender,
+            prioritization_fee_cache,
+            TransactionRecorder::new_dummy(),
+            pool_cleaner_interval,
+            max_pooling_duration,
+            max_usage_queue_count,
+            timeout_duration,
+        )
+    }
+}
 
     #[derive(Debug)]
     enum TestCheckPoint {
