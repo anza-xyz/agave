@@ -509,7 +509,6 @@ where
                     context,
                     result_with_timings,
                     None,
-                    None,
                 )
             }
         } else {
