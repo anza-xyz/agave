@@ -588,31 +588,32 @@ where
         id_and_inner: &mut MutexGuard<'_, (Option<SchedulerId>, Option<S::Inner>)>,
     ) {
         info!("flash session: start!");
-        let mut respawner_write = self.block_production_scheduler_respawner.lock().unwrap();
-        let BlockProductionSchedulerRespawner {
-            handler_count,
-            banking_packet_receiver,
-            on_spawn_block_production_scheduler,
-            banking_stage_monitor: _,
-        } = &mut *respawner_write.as_mut().unwrap();
+        let banking_stage_context =  {
+            let mut respawner_write = self.block_production_scheduler_respawner.lock().unwrap();
+            let BlockProductionSchedulerRespawner {
+                handler_count,
+                banking_packet_receiver,
+                on_spawn_block_production_scheduler,
+                banking_stage_monitor: _,
+            } = &mut *respawner_write.as_mut().unwrap();
 
-        let adapter = Arc::new(BankingStageAdapter {
-            usage_queue_loader: UsageQueueLoader::default(),
-            transaction_deduper: DashSet::with_capacity(1_000_000),
-            next_task_id: AtomicU64::default(),
-        });
+            let adapter = Arc::new(BankingStageAdapter {
+                usage_queue_loader: UsageQueueLoader::default(),
+                transaction_deduper: DashSet::with_capacity(1_000_000),
+                next_task_id: AtomicU64::default(),
+            });
 
-        let on_banking_packet_receive = on_spawn_block_production_scheduler(adapter.clone());
-        let banking_stage_context = BankingStageContext {
-            adapter,
-            banking_packet_receiver: banking_packet_receiver.clone(),
-            on_banking_packet_receive,
+            BankingStageContext {
+                adapter,
+                banking_packet_receiver: banking_packet_receiver.clone(),
+                on_banking_packet_receive: on_spawn_block_production_scheduler(adapter.clone()),
+            }
         };
-        let scheduling_context = SchedulingContext::new(SchedulingMode::BlockProduction, None);
+
         let s = S::spawn(
             *handler_count,
             self.self_arc(),
-            scheduling_context,
+            SchedulingContext::new(SchedulingMode::BlockProduction, None),
             initialized_result_with_timings(),
             Some(banking_stage_context),
         );
