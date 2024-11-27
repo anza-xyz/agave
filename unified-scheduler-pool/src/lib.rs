@@ -1914,7 +1914,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         };
 
         let handler_main_loop = || {
-            let banking_packet_receiver = if let Some(b) = banking_stage_context.clone().as_ref() {
+            let banking_stage_context = banking_stage_context.clone();
+            let banking_packet_receiver = if let Some(b) = banking_stage_context.as_ref() {
                 b.banking_packet_receiver.clone()
             } else {
                 never()
