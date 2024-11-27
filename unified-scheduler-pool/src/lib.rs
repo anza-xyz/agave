@@ -1688,7 +1688,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 state_machine.deschedule_task(&executed_task.task);
                                 if should_pause && !session_ending {
                                     let task = adapter.as_ref().unwrap().recreate_task_with_new_index(
-                                        executed_task.task.transaction().clone(),
+                                        executed_task.task.transaction(),
                                         executed_task.task.index(),
                                     );
                                     debug!("requeued tx!!!!");
