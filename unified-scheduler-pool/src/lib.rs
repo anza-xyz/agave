@@ -2299,7 +2299,7 @@ impl BankingStageAdapter {
         self.next_task_id.fetch_add(count, Relaxed)
     }
 
-    fn do_create_task(&self, transaction: SanitizedTransaction, index: TaskKey) -> Task {
+    fn do_create_task(&self, transaction: RuntimeTransaction<SanitizedTransaction>, index: TaskKey) -> Task {
         SchedulingStateMachine::create_task(transaction, index, &mut |pubkey| {
             self.usage_queue_loader.load(pubkey)
         })
@@ -2307,7 +2307,7 @@ impl BankingStageAdapter {
 
     pub fn create_new_task(
         &self,
-        transaction: SanitizedTransaction,
+        transaction: RuntimeTransaction<SanitizedTransaction>,
         index: TaskKey,
     ) -> Option<Task> {
         let hash = transaction.message_hash();
@@ -2321,7 +2321,7 @@ impl BankingStageAdapter {
 
     fn recreate_task_with_new_index(
         &self,
-        transaction: SanitizedTransaction,
+        transaction: RuntimeTransaction<SanitizedTransaction>,
         old_index: TaskKey,
     ) -> Task {
         let new_index = {
