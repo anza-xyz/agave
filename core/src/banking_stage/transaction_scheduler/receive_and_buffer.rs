@@ -49,8 +49,8 @@ use {
 };
 
 pub(crate) trait ReceiveAndBuffer {
-    type Transaction: TransactionWithMeta;
-    type Container: StateContainer<Self::Transaction>;
+    type Transaction: TransactionWithMeta + Send + Sync;
+    type Container: StateContainer<Self::Transaction> + Send + Sync;
 
     /// Returns whether the packet receiver is still connected.
     fn receive_and_buffer_packets(
@@ -294,12 +294,12 @@ impl SanitizedTransactionReceiveAndBuffer {
     }
 }
 
-pub(crate) struct TransactionViewRecieveAndBuffer {
+pub(crate) struct TransactionViewReceiveAndBuffer {
     pub receiver: BankingPacketReceiver,
     pub bank_forks: Arc<RwLock<BankForks>>,
 }
 
-impl ReceiveAndBuffer for TransactionViewRecieveAndBuffer {
+impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
     type Transaction = RuntimeTransaction<ResolvedTransactionView<Bytes>>;
     type Container = TransactionViewStateContainer;
 
@@ -361,7 +361,7 @@ impl ReceiveAndBuffer for TransactionViewRecieveAndBuffer {
     }
 }
 
-impl TransactionViewRecieveAndBuffer {
+impl TransactionViewReceiveAndBuffer {
     fn handle_packet_batch_message(
         &mut self,
         container: &mut TransactionViewStateContainer,
@@ -504,8 +504,7 @@ impl TransactionViewRecieveAndBuffer {
 
         let max_age = calculate_max_age(sanitized_epoch, deactivation_slot, alt_resolved_slot);
         let fee_budget_limits = FeeBudgetLimits::from(compute_budget_limits);
-        let (priority, cost) =
-            calculate_priority_and_cost(&view, &fee_budget_limits, &working_bank);
+        let (priority, cost) = calculate_priority_and_cost(&view, &fee_budget_limits, working_bank);
 
         Ok(TransactionState::new(
             SanitizedTransactionTTL {
