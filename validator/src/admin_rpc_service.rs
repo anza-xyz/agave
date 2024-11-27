@@ -1342,77 +1342,103 @@ mod tests {
         );
     }
 
+    struct TestValidatorWithAdminRpc {
+        meta: AdminRpcRequestMetadata,
+        io: MetaIoHandler<AdminRpcRequestMetadata>,
+        validator_ledger_path: PathBuf,
+    }
+
+    impl TestValidatorWithAdminRpc {
+        fn new() -> Self {
+            let leader_keypair = Keypair::new();
+            let leader_node = Node::new_localhost_with_pubkey(&leader_keypair.pubkey());
+
+            let validator_keypair = Keypair::new();
+            let validator_node = Node::new_localhost_with_pubkey(&validator_keypair.pubkey());
+            let genesis_config =
+                create_genesis_config_with_leader(10_000, &leader_keypair.pubkey(), 1000)
+                    .genesis_config;
+            let (validator_ledger_path, _blockhash) = create_new_tmp_ledger!(&genesis_config);
+
+            let voting_keypair = Arc::new(Keypair::new());
+            let voting_pubkey = voting_keypair.pubkey();
+            let authorized_voter_keypairs = Arc::new(RwLock::new(vec![voting_keypair]));
+            let validator_config = ValidatorConfig {
+                rpc_addrs: Some((
+                    validator_node.info.rpc().unwrap(),
+                    validator_node.info.rpc_pubsub().unwrap(),
+                )),
+                ..ValidatorConfig::default_for_test()
+            };
+            let start_progress = Arc::new(RwLock::new(ValidatorStartProgress::default()));
+
+            let post_init = Arc::new(RwLock::new(None));
+            let meta = AdminRpcRequestMetadata {
+                rpc_addr: validator_config.rpc_addrs.map(|(rpc_addr, _)| rpc_addr),
+                start_time: SystemTime::now(),
+                start_progress: start_progress.clone(),
+                validator_exit: validator_config.validator_exit.clone(),
+                authorized_voter_keypairs: authorized_voter_keypairs.clone(),
+                tower_storage: Arc::new(NullTowerStorage {}),
+                post_init: post_init.clone(),
+                staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
+                rpc_to_plugin_manager_sender: None,
+            };
+
+            let _validator = Validator::new(
+                validator_node,
+                Arc::new(validator_keypair),
+                &validator_ledger_path,
+                &voting_pubkey,
+                authorized_voter_keypairs,
+                vec![leader_node.info],
+                &validator_config,
+                true, // should_check_duplicate_instance
+                None, // rpc_to_plugin_manager_receiver
+                start_progress.clone(),
+                SocketAddrSpace::Unspecified,
+                DEFAULT_TPU_USE_QUIC,
+                DEFAULT_TPU_CONNECTION_POOL_SIZE,
+                DEFAULT_TPU_ENABLE_UDP,
+                32, // max connections per IpAddr per minute for test
+                post_init,
+            )
+            .expect("assume successful validator start");
+            assert_eq!(
+                *start_progress.read().unwrap(),
+                ValidatorStartProgress::Running
+            );
+            let mut io = MetaIoHandler::default();
+            io.extend_with(AdminRpcImpl.to_delegate());
+            Self {
+                meta,
+                io,
+                validator_ledger_path,
+            }
+        }
+
+        fn handle_request(&self, request: &str) -> Option<String> {
+            self.io.handle_request_sync(request, self.meta.clone())
+        }
+    }
+
+    impl Drop for TestValidatorWithAdminRpc {
+        fn drop(&mut self) {
+            remove_dir_all(self.validator_ledger_path.clone()).unwrap();
+        }
+    }
+
     // This test checks that `set_identity` call works with working validator and client.
     #[test]
     fn test_set_identity_with_validator() {
-        let leader_keypair = Keypair::new();
-        let leader_node = Node::new_localhost_with_pubkey(&leader_keypair.pubkey());
-
-        let validator_keypair = Keypair::new();
-        let validator_node = Node::new_localhost_with_pubkey(&validator_keypair.pubkey());
-        let genesis_config =
-            create_genesis_config_with_leader(10_000, &leader_keypair.pubkey(), 1000)
-                .genesis_config;
-        let (validator_ledger_path, _blockhash) = create_new_tmp_ledger!(&genesis_config);
-
-        let voting_keypair = Arc::new(Keypair::new());
-        let voting_pubkey = voting_keypair.pubkey();
-        let authorized_voter_keypairs = Arc::new(RwLock::new(vec![voting_keypair]));
-        let validator_config = ValidatorConfig {
-            rpc_addrs: Some((
-                validator_node.info.rpc().unwrap(),
-                validator_node.info.rpc_pubsub().unwrap(),
-            )),
-            ..ValidatorConfig::default_for_test()
-        };
-        let start_progress = Arc::new(RwLock::new(ValidatorStartProgress::default()));
-
-        let post_init = Arc::new(RwLock::new(None));
-        let meta = AdminRpcRequestMetadata {
-            rpc_addr: validator_config.rpc_addrs.map(|(rpc_addr, _)| rpc_addr),
-            start_time: SystemTime::now(),
-            start_progress: start_progress.clone(),
-            validator_exit: validator_config.validator_exit.clone(),
-            authorized_voter_keypairs: authorized_voter_keypairs.clone(),
-            tower_storage: Arc::new(NullTowerStorage {}),
-            post_init: post_init.clone(),
-            staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
-            rpc_to_plugin_manager_sender: None,
-        };
-
-        let _validator = Validator::new(
-            validator_node,
-            Arc::new(validator_keypair),
-            &validator_ledger_path,
-            &voting_pubkey,
-            authorized_voter_keypairs,
-            vec![leader_node.info],
-            &validator_config,
-            true, // should_check_duplicate_instance
-            None, // rpc_to_plugin_manager_receiver
-            start_progress.clone(),
-            SocketAddrSpace::Unspecified,
-            DEFAULT_TPU_USE_QUIC,
-            DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            DEFAULT_TPU_ENABLE_UDP,
-            32, // max connections per IpAddr per minute for test
-            post_init,
-        )
-        .expect("assume successful validator start");
-        assert_eq!(
-            *start_progress.read().unwrap(),
-            ValidatorStartProgress::Running
-        );
-        let mut io = MetaIoHandler::default();
-        io.extend_with(AdminRpcImpl.to_delegate());
-
+        let test_validator = TestValidatorWithAdminRpc::new();
         let expected_validator_id = Keypair::new();
         let validator_id_bytes = format!("{:?}", expected_validator_id.to_bytes());
 
         let set_id_request = format!(
             r#"{{"jsonrpc":"2.0","id":1,"method":"setIdentityFromBytes","params":[{validator_id_bytes}, false]}}"#,
         );
-        let response = io.handle_request_sync(&set_id_request, meta.clone());
+        let response = test_validator.handle_request(&set_id_request);
         let actual_parsed_response: Value =
             serde_json::from_str(&response.expect("actual response"))
                 .expect("actual response deserialization");
@@ -1429,7 +1455,7 @@ mod tests {
 
         let contact_info_request =
             r#"{"jsonrpc":"2.0","id":1,"method":"contactInfo","params":[]}"#.to_string();
-        let response = io.handle_request_sync(&contact_info_request, meta.clone());
+        let response = test_validator.handle_request(&contact_info_request);
         let parsed_response: Value = serde_json::from_str(&response.expect("actual response"))
             .expect("actual response deserialization");
         let actual_validator_id = parsed_response["result"]["id"]
@@ -1442,12 +1468,10 @@ mod tests {
 
         let contact_info_request =
             r#"{"jsonrpc":"2.0","id":1,"method":"exit","params":[]}"#.to_string();
-        let exit_response = io.handle_request_sync(&contact_info_request, meta.clone());
+        let exit_response = test_validator.handle_request(&contact_info_request);
         let actual_parsed_response: Value =
             serde_json::from_str(&exit_response.expect("actual response"))
                 .expect("actual response deserialization");
         assert_eq!(actual_parsed_response, expected_parsed_response);
-
-        remove_dir_all(validator_ledger_path).unwrap();
     }
 }
