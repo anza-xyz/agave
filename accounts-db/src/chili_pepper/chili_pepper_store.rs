@@ -3,7 +3,7 @@ use {
     super::chili_pepper_mutator_thread::{
         ChiliPepperMutatorThread, ChiliPepperMutatorThreadCommand,
     },
-    crossbeam_channel::{unbounded, Receiver, Sender},
+    crossbeam_channel::{unbounded, Sender},
     redb::{
         Database, Error, Key, ReadableTableMetadata, TableDefinition, TableStats, TypeName, Value,
     },

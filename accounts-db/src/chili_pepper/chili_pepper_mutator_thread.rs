@@ -225,7 +225,7 @@ mod test {
         let snapshot_cmd =
             ChiliPepperMutatorThreadCommand::Snapshot(savepoint, snapshot_path.clone());
         sender.send(snapshot_cmd).unwrap();
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(1000));
 
         let store2 =
             Arc::new(ChiliPepperStoreWrapper::new_with_path(snapshot_path.clone()).unwrap());

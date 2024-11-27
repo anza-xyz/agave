@@ -82,7 +82,7 @@ use {
         accounts_index::{IndexKey, ScanConfig, ScanResult},
         accounts_partition::{self, Partition, PartitionIndex},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
-        ancestors::{self, Ancestors, AncestorsForSerialization},
+        ancestors::{Ancestors, AncestorsForSerialization},
         blockhash_queue::BlockhashQueue,
         chili_pepper::BLOCK_CHILI_PEPPER_LIMIT,
         epoch_accounts_hash::EpochAccountsHash,
