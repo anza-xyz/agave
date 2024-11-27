@@ -231,17 +231,23 @@ impl MaybeBytes {
     }
 }
 
-struct SuccessfulInsert {
-    state: TransactionState<RuntimeTransaction<ResolvedTransactionView<Bytes>>>,
-    bytes: Bytes,
+pub(crate) struct SuccessfulInsert {
+    pub state: TransactionState<RuntimeTransaction<ResolvedTransactionView<Bytes>>>,
+    pub bytes: Bytes,
 }
 
 impl TransactionViewStateContainer {
-    fn try_insert_with(&mut self, f: impl FnOnce(BytesMut) -> Result<SuccessfulInsert, BytesMut>) {
+    /// Returns true if packet was dropped due to capacity limits.
+    pub(crate) fn try_insert_with(
+        &mut self,
+        f: impl FnOnce(BytesMut) -> Result<SuccessfulInsert, BytesMut>,
+    ) -> bool {
         if self.inner.id_to_transaction_state.len() == self.inner.id_to_transaction_state.capacity()
         {
-            return;
+            return true;
         }
+        // Get remaining capacity before inserting.
+        let remaining_capacity = self.remaining_capacity();
 
         // Get a vacant entry in the slab.
         let vacant_entry = self.inner.id_to_transaction_state.vacant_entry();
@@ -254,16 +260,24 @@ impl TransactionViewStateContainer {
         // Attempt to insert the transaction, storing the frozen bytes back into bytes buffer.
         match f(bytes) {
             Ok(SuccessfulInsert { state, bytes }) => {
+                let priority_id = TransactionPriorityId::new(state.priority(), transaction_id);
                 vacant_entry.insert(state);
                 bytes_entry.freeze(bytes);
+
+                // Push the transaction into the queue.
+                self.push_id_into_queue_with_remaining_capacity(priority_id, remaining_capacity)
             }
-            Err(bytes) => bytes_entry.free_space(bytes),
+            Err(bytes) => {
+                bytes_entry.free_space(bytes);
+                false
+            }
         }
     }
 
     // This is re-implemented since we need it to call `remove_by_id` on this
     // struct rather than `inner`. This is important because we need to return
     // the `Bytes` to the pool.
+    /// Returns true if packet was dropped due to capacity limits.
     fn push_id_into_queue_with_remaining_capacity(
         &mut self,
         priority_id: TransactionPriorityId,
