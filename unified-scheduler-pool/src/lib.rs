@@ -620,7 +620,7 @@ where
             .map(|respawner| respawner.banking_stage_monitor.status())
     }
 
-    fn should_respawn() -> bool {
+    fn should_respawn(&self) -> bool {
         !matches!(
             self.banking_stage_status(),
             None | Some(BankingStageStatus::Exited)
