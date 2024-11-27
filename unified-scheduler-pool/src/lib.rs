@@ -604,7 +604,7 @@ where
             });
 
             (
-                handler_count.clone(),
+                *handler_count,
                 BankingStageContext {
                     banking_packet_receiver: banking_packet_receiver.clone(),
                     on_banking_packet_receive: on_spawn_block_production_scheduler(adapter.clone()),
