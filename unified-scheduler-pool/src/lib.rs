@@ -604,7 +604,7 @@ where
             });
 
             (
-                *handler_count,
+                handler_count,
                 BankingStageContext {
                     adapter,
                     banking_packet_receiver: banking_packet_receiver.clone(),
