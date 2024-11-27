@@ -208,6 +208,31 @@ impl BlockProductionMethod {
     }
 }
 
+#[derive(Clone, EnumString, EnumVariantNames, Default, IntoStaticStr, Display)]
+#[strum(serialize_all = "kebab-case")]
+pub enum TransactionStructure {
+    #[default]
+    Sdk,
+    View,
+}
+
+impl TransactionStructure {
+    pub const fn cli_names() -> &'static [&'static str] {
+        Self::VARIANTS
+    }
+
+    pub fn cli_message() -> &'static str {
+        lazy_static! {
+            static ref MESSAGE: String = format!(
+                "Switch internal transaction structure/representation [default: {}]",
+                TransactionStructure::default()
+            );
+        };
+
+        &MESSAGE
+    }
+}
+
 /// Configuration for the block generator invalidator for replay.
 #[derive(Clone, Debug)]
 pub struct GeneratorConfig {

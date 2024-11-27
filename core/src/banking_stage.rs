@@ -26,7 +26,7 @@ use {
         },
         banking_trace::BankingPacketReceiver,
         tracer_packet_stats::TracerPacketStats,
-        validator::BlockProductionMethod,
+        validator::{BlockProductionMethod, TransactionStructure},
     },
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     histogram::Histogram,
@@ -52,7 +52,9 @@ use {
         time::{Duration, Instant},
     },
     transaction_scheduler::{
-        receive_and_buffer::SanitizedTransactionReceiveAndBuffer,
+        receive_and_buffer::{
+            ReceiveAndBuffer, SanitizedTransactionReceiveAndBuffer, TransactionViewReceiveAndBuffer,
+        },
         transaction_state_container::TransactionStateContainer,
     },
 };
@@ -402,6 +404,7 @@ impl BankingStage {
     ) -> Self {
         match block_production_method {
             BlockProductionMethod::CentralScheduler => Self::new_central_scheduler(
+                TransactionStructure::Sdk,
                 cluster_info,
                 poh_recorder,
                 non_vote_receiver,
@@ -506,7 +509,8 @@ impl BankingStage {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn new_central_scheduler(
+    fn new_central_scheduler(
+        transaction_struct: TransactionStructure,
         cluster_info: &impl LikeClusterInfo,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         non_vote_receiver: BankingPacketReceiver,
@@ -569,6 +573,77 @@ impl BankingStage {
             ));
         }
 
+        let transaction_struct = if enable_forwarding {
+            warn!(
+                "Forwarding only supported for `Sdk` transaction struct. Overriding to use `Sdk`."
+            );
+            TransactionStructure::Sdk
+        } else {
+            transaction_struct
+        };
+
+        match transaction_struct {
+            TransactionStructure::Sdk => {
+                let receive_and_buffer = SanitizedTransactionReceiveAndBuffer::new(
+                    PacketDeserializer::new(non_vote_receiver),
+                    bank_forks.clone(),
+                    enable_forwarding,
+                );
+                Self::spawn_scheduler_and_workers(
+                    &mut bank_thread_hdls,
+                    receive_and_buffer,
+                    decision_maker,
+                    committer,
+                    cluster_info,
+                    poh_recorder,
+                    num_threads,
+                    log_messages_bytes_limit,
+                    connection_cache,
+                    bank_forks,
+                    enable_forwarding,
+                    data_budget,
+                );
+            }
+            TransactionStructure::View => {
+                let receive_and_buffer = TransactionViewReceiveAndBuffer {
+                    receiver: non_vote_receiver,
+                    bank_forks: bank_forks.clone(),
+                };
+                Self::spawn_scheduler_and_workers(
+                    &mut bank_thread_hdls,
+                    receive_and_buffer,
+                    decision_maker,
+                    committer,
+                    cluster_info,
+                    poh_recorder,
+                    num_threads,
+                    log_messages_bytes_limit,
+                    connection_cache,
+                    bank_forks,
+                    enable_forwarding,
+                    data_budget,
+                );
+            }
+        }
+
+        Self { bank_thread_hdls }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn spawn_scheduler_and_workers<R: ReceiveAndBuffer + Send + Sync + 'static>(
+        bank_thread_hdls: &mut Vec<JoinHandle<()>>,
+        receive_and_buffer: R,
+        decision_maker: DecisionMaker,
+        committer: Committer,
+        cluster_info: &impl LikeClusterInfo,
+        poh_recorder: &Arc<RwLock<PohRecorder>>,
+        num_threads: u32,
+        log_messages_bytes_limit: Option<usize>,
+        connection_cache: Arc<ConnectionCache>,
+        bank_forks: Arc<RwLock<BankForks>>,
+        enable_forwarding: bool,
+        data_budget: Arc<DataBudget>,
+    ) {
         // Create channels for communication between scheduler and workers
         let num_workers = (num_threads).saturating_sub(NUM_VOTE_PROCESSING_THREADS);
         let (work_senders, work_receivers): (Vec<Sender<_>>, Vec<Receiver<_>>) =
@@ -613,36 +688,30 @@ impl BankingStage {
             )
         });
 
-        // Spawn the central scheduler thread
-        bank_thread_hdls.push({
-            let packet_deserializer = PacketDeserializer::new(non_vote_receiver);
-            let receive_and_buffer = SanitizedTransactionReceiveAndBuffer::new(
-                packet_deserializer,
-                bank_forks.clone(),
-                forwarder.is_some(),
-            );
-            let scheduler = PrioGraphScheduler::new(work_senders, finished_work_receiver);
-            let scheduler_controller = SchedulerController::new(
-                decision_maker.clone(),
-                receive_and_buffer,
-                bank_forks,
-                scheduler,
-                worker_metrics,
-                forwarder,
-            );
+        bank_thread_hdls.push(
             Builder::new()
                 .name("solBnkTxSched".to_string())
-                .spawn(move || match scheduler_controller.run() {
-                    Ok(_) => {}
-                    Err(SchedulerError::DisconnectedRecvChannel(_)) => {}
-                    Err(SchedulerError::DisconnectedSendChannel(_)) => {
-                        warn!("Unexpected worker disconnect from scheduler")
+                .spawn(move || {
+                    let scheduler = PrioGraphScheduler::new(work_senders, finished_work_receiver);
+                    let scheduler_controller = SchedulerController::new(
+                        decision_maker.clone(),
+                        receive_and_buffer,
+                        bank_forks,
+                        scheduler,
+                        worker_metrics,
+                        forwarder,
+                    );
+
+                    match scheduler_controller.run() {
+                        Ok(_) => {}
+                        Err(SchedulerError::DisconnectedRecvChannel(_)) => {}
+                        Err(SchedulerError::DisconnectedSendChannel(_)) => {
+                            warn!("Unexpected worker disconnect from scheduler")
+                        }
                     }
                 })
-                .unwrap()
-        });
-
-        Self { bank_thread_hdls }
+                .unwrap(),
+        );
     }
 
     fn spawn_thread_local_multi_iterator_thread<T: LikeClusterInfo>(
