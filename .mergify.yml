@@ -72,7 +72,6 @@ pull_request_rules:
             - status-success=cargo-test-sbf (token-upgrade/program)
             - status-success=cargo-test-sbf (feature-proposal/program)
             - status-success=cargo-test-sbf (governance/addin-mock/program, governance/program)
-            - status-success=cargo-test-sbf (memo/program)
             - status-success=cargo-test-sbf (name-service/program)
             - status-success=cargo-test-sbf (stake-pool/program)
             - status-success=cargo-test-sbf (single-pool/program)
