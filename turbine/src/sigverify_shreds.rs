@@ -10,9 +10,9 @@ use {
     solana_ledger::{
         leader_schedule_cache::LeaderScheduleCache,
         shred,
-        sigverify_shreds::{verify_shreds_gpu, LruCache},
+        sigverify_shreds::{verify_shreds, LruCache},
     },
-    solana_perf::{self, deduper::Deduper, packet::PacketBatch, recycler_cache::RecyclerCache},
+    solana_perf::{self, deduper::Deduper, packet::PacketBatch},
     solana_runtime::{
         bank::{Bank, MAX_LEADER_SCHEDULE_STAKES},
         bank_forks::BankForks,
@@ -68,7 +68,6 @@ pub fn spawn_shred_sigverify(
     verified_sender: Sender<Vec<PacketBatch>>,
     num_sigverify_threads: NonZeroUsize,
 ) -> JoinHandle<()> {
-    let recycler_cache = RecyclerCache::warmed();
     let mut stats = ShredSigVerifyStats::new(Instant::now());
     let cache = RwLock::new(LruCache::new(SIGVERIFY_LRU_CACHE_CAPACITY));
     let cluster_nodes_cache = ClusterNodesCache::<RetransmitStage>::new(
@@ -96,7 +95,6 @@ pub fn spawn_shred_sigverify(
                 &cluster_info,
                 &bank_forks,
                 &leader_schedule_cache,
-                &recycler_cache,
                 &deduper,
                 &shred_fetch_receiver,
                 &retransmit_sender,
@@ -126,7 +124,6 @@ fn run_shred_sigverify<const K: usize>(
     cluster_info: &ClusterInfo,
     bank_forks: &RwLock<BankForks>,
     leader_schedule_cache: &LeaderScheduleCache,
-    recycler_cache: &RecyclerCache,
     deduper: &Deduper<K, [u8]>,
     shred_fetch_receiver: &Receiver<PacketBatch>,
     retransmit_sender: &Sender<Vec</*shred:*/ Vec<u8>>>,
@@ -168,7 +165,6 @@ fn run_shred_sigverify<const K: usize>(
         &keypair.pubkey(),
         &working_bank,
         leader_schedule_cache,
-        recycler_cache,
         &mut packets,
         cache,
     );
@@ -296,7 +292,6 @@ fn verify_packets(
     self_pubkey: &Pubkey,
     working_bank: &Bank,
     leader_schedule_cache: &LeaderScheduleCache,
-    recycler_cache: &RecyclerCache,
     packets: &mut [PacketBatch],
     cache: &RwLock<LruCache>,
 ) {
@@ -306,7 +301,7 @@ fn verify_packets(
             .filter_map(|(slot, pubkey)| Some((slot, pubkey?)))
             .chain(std::iter::once((Slot::MAX, Pubkey::default())))
             .collect();
-    let out = verify_shreds_gpu(thread_pool, packets, &leader_slots, recycler_cache, cache);
+    let out = verify_shreds(thread_pool, packets, &leader_slots, cache);
     solana_perf::sigverify::mark_disabled(packets, &out);
 }
 
@@ -507,7 +502,6 @@ mod tests {
             &Pubkey::new_unique(), // self_pubkey
             &working_bank,
             &leader_schedule_cache,
-            &RecyclerCache::warmed(),
             &mut batches,
             &cache,
         );
