@@ -2199,7 +2199,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
                 usage_queue_loader: UsageQueueLoader::default(),
             },
             SchedulingMode::BlockProduction => TaskCreator::BlockProduction {
-                banking_stage_adapter: banking_stage_adapter.clone().unwrap(),
+                banking_stage_adapter: banking_stage_context.as_ref().0.clone().unwrap(),
             },
         };
         let mut inner = Self::Inner {
