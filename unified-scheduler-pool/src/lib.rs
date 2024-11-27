@@ -1306,7 +1306,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         handler_count: usize,
         mut context: SchedulingContext,
         mut result_with_timings: ResultWithTimings,
-        banking_stage_context: Option<BankingStageContext>,
+        mut banking_stage_context: Option<BankingStageContext>,
     ) {
         assert!(handler_count >= 1);
 
