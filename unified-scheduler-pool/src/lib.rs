@@ -588,7 +588,7 @@ where
         id_and_inner: &mut MutexGuard<'_, (Option<SchedulerId>, Option<S::Inner>)>,
     ) {
         info!("flash session: start!");
-        let (handler_count, banking_stage_context) =  {
+        let (handler_count: usize, banking_stage_context) =  {
             let mut respawner_write = self.block_production_scheduler_respawner.lock().unwrap();
             let BlockProductionSchedulerRespawner {
                 handler_count,
@@ -604,7 +604,7 @@ where
             });
 
             (
-                *handler_count,
+                handler_count,
                 BankingStageContext {
                     banking_packet_receiver: banking_packet_receiver.clone(),
                     on_banking_packet_receive: on_spawn_block_production_scheduler(adapter.clone()),
