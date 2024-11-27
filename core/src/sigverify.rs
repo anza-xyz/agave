@@ -4,7 +4,7 @@
 //!
 
 pub use solana_perf::sigverify::{
-    count_packets_in_batches, ed25519_verify_cpu, ed25519_verify_disabled, init, TxOffset,
+    count_packets_in_batches, ed25519_verify_cpu, ed25519_verify_disabled, TxOffset,
 };
 use {
     crate::{
@@ -68,7 +68,6 @@ impl TransactionSigVerifier {
     }
 
     pub fn new(packet_sender: BankingPacketSender) -> Self {
-        init();
         Self {
             packet_sender,
             tracer_packet_stats: SigverifyTracerPacketStats::default(),

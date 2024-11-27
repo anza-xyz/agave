@@ -7,7 +7,6 @@ use {
     crate::{
         cuda_runtime::RecycledVec,
         packet::{Packet, PacketBatch, PacketFlags},
-        perf_libs,
         recycler::Recycler,
     },
     rayon::{prelude::*, ThreadPool},
@@ -91,16 +90,6 @@ impl std::convert::From<std::boxed::Box<bincode::ErrorKind>> for PacketError {
 impl std::convert::From<std::num::TryFromIntError> for PacketError {
     fn from(_e: std::num::TryFromIntError) -> Self {
         Self::InvalidLen
-    }
-}
-
-pub fn init() {
-    if let Some(api) = perf_libs::api() {
-        unsafe {
-            (api.ed25519_set_verbose)(true);
-            assert!((api.ed25519_init)(), "ed25519_init() failed");
-            (api.ed25519_set_verbose)(false);
-        }
     }
 }
 
@@ -551,34 +540,6 @@ where
     }
 }
 
-// return true for success, i.e ge unpacks and !ge.is_small_order()
-pub fn check_packed_ge_small_order(ge: &[u8; 32]) -> bool {
-    if let Some(api) = perf_libs::api() {
-        unsafe {
-            // Returns 1 == fail, 0 == success
-            let res = (api.ed25519_check_packed_ge_small_order)(ge.as_ptr());
-
-            return res == 0;
-        }
-    }
-    false
-}
-
-pub fn get_checked_scalar(scalar: &[u8; 32]) -> Result<[u8; 32], PacketError> {
-    let mut out = [0u8; 32];
-    if let Some(api) = perf_libs::api() {
-        unsafe {
-            let res = (api.ed25519_get_checked_scalar)(out.as_mut_ptr(), scalar.as_ptr());
-            if res == 0 {
-                return Ok(out);
-            } else {
-                return Err(PacketError::InvalidLen);
-            }
-        }
-    }
-    Ok(out)
-}
-
 pub fn mark_disabled(batches: &mut [PacketBatch], r: &[Vec<u8>]) {
     for (batch, v) in batches.iter_mut().zip(r) {
         for (pkt, f) in batch.iter_mut().zip(v) {
@@ -608,7 +569,6 @@ mod tests {
             test_tx::{new_test_vote_tx, test_multisig_tx, test_tx},
         },
         bincode::{deserialize, serialize},
-        curve25519_dalek::{edwards::CompressedEdwardsY, scalar::Scalar},
         rand::{thread_rng, Rng},
         solana_packet::PACKET_DATA_SIZE,
         solana_program::{
@@ -620,10 +580,7 @@ mod tests {
             transaction::Transaction,
         },
         solana_signature::Signature,
-        std::{
-            iter::repeat_with,
-            sync::atomic::{AtomicU64, Ordering},
-        },
+        std::iter::repeat_with,
     };
 
     const SIG_OFFSET: usize = 1;
@@ -1185,83 +1142,6 @@ mod tests {
     #[test]
     fn test_verify_fail() {
         test_verify_n(5, true);
-    }
-
-    #[test]
-    fn test_get_checked_scalar() {
-        solana_logger::setup();
-        if perf_libs::api().is_none() {
-            return;
-        }
-
-        let passed_g = AtomicU64::new(0);
-        let failed_g = AtomicU64::new(0);
-        (0..4).into_par_iter().for_each(|_| {
-            let mut input = [0u8; 32];
-            let mut passed = 0;
-            let mut failed = 0;
-            for _ in 0..1_000_000 {
-                thread_rng().fill(&mut input);
-                let ans = get_checked_scalar(&input);
-                let ref_ans = Scalar::from_canonical_bytes(input).into_option();
-                if let Some(ref_ans) = ref_ans {
-                    passed += 1;
-                    assert_eq!(ans.unwrap(), ref_ans.to_bytes());
-                } else {
-                    failed += 1;
-                    assert!(ans.is_err());
-                }
-            }
-            passed_g.fetch_add(passed, Ordering::Relaxed);
-            failed_g.fetch_add(failed, Ordering::Relaxed);
-        });
-        info!(
-            "passed: {} failed: {}",
-            passed_g.load(Ordering::Relaxed),
-            failed_g.load(Ordering::Relaxed)
-        );
-    }
-
-    #[test]
-    fn test_ge_small_order() {
-        solana_logger::setup();
-        if perf_libs::api().is_none() {
-            return;
-        }
-
-        let passed_g = AtomicU64::new(0);
-        let failed_g = AtomicU64::new(0);
-        (0..4).into_par_iter().for_each(|_| {
-            let mut input = [0u8; 32];
-            let mut passed = 0;
-            let mut failed = 0;
-            for _ in 0..1_000_000 {
-                thread_rng().fill(&mut input);
-                let ans = check_packed_ge_small_order(&input);
-                let ref_ge = CompressedEdwardsY::from_slice(&input).unwrap();
-                if let Some(ref_element) = ref_ge.decompress() {
-                    if ref_element.is_small_order() {
-                        assert!(!ans);
-                    } else {
-                        assert!(ans);
-                    }
-                } else {
-                    assert!(!ans);
-                }
-                if ans {
-                    passed += 1;
-                } else {
-                    failed += 1;
-                }
-            }
-            passed_g.fetch_add(passed, Ordering::Relaxed);
-            failed_g.fetch_add(failed, Ordering::Relaxed);
-        });
-        info!(
-            "passed: {} failed: {}",
-            passed_g.load(Ordering::Relaxed),
-            failed_g.load(Ordering::Relaxed)
-        );
     }
 
     #[test]

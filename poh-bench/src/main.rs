@@ -136,21 +136,6 @@ fn main() {
             }
         }
 
-        if perf_libs::api().is_some() {
-            let mut time = Measure::start("time");
-            for _ in 0..iterations {
-                assert!(ticks[..num_entries]
-                    .start_verify(&start_hash, &thread_pool)
-                    .finish_verify());
-            }
-            time.stop();
-            println!(
-                "{},gpu_cuda,{}",
-                num_entries,
-                time.as_us() / iterations as u64
-            );
-        }
-
         println!();
         num_entries *= 2;
     }

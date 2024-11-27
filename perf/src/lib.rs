@@ -49,15 +49,6 @@ fn is_rosetta_emulated() -> bool {
 }
 
 pub fn report_target_features() {
-    warn!(
-        "CUDA is {}abled",
-        if crate::perf_libs::api().is_some() {
-            "en"
-        } else {
-            "dis"
-        }
-    );
-
     // Validator binaries built on a machine with AVX support will generate invalid opcodes
     // when run on machines without AVX causing a non-obvious process abort.  Instead detect
     // the mismatch and error cleanly.

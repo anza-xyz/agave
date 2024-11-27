@@ -10,27 +10,18 @@ use {
     rand::{thread_rng, Rng},
     rayon::{prelude::*, ThreadPool},
     serde::{Deserialize, Serialize},
-    solana_measure::measure::Measure,
     solana_merkle_tree::MerkleTree,
-    solana_perf::{
-        packet::{Packet, PacketBatch, PacketBatchRecycler, PACKETS_PER_BATCH},
-        perf_libs, sigverify,
-    },
     solana_rayon_threadlimit::get_max_thread_count,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_sdk::{
         hash::Hash,
-        packet::Meta,
-        transaction::{
-            Result, Transaction, TransactionError, TransactionVerificationMode,
-            VersionedTransaction,
-        },
+        transaction::{Result, Transaction, TransactionVerificationMode, VersionedTransaction},
     },
     std::{
         ffi::OsStr,
         iter::repeat_with,
         sync::{Arc, Once},
-        thread::{self, JoinHandle},
+        thread::JoinHandle,
         time::Instant,
     },
 };
@@ -301,11 +292,6 @@ impl<Tx: TransactionWithMeta> EntrySigVerificationState<Tx> {
     }
 }
 
-#[derive(Default, Clone)]
-pub struct VerifyRecyclers {
-    packet_recycler: PacketBatchRecycler,
-}
-
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum EntryVerificationStatus {
     Failure,
@@ -360,37 +346,11 @@ pub fn start_verify_transactions<Tx: TransactionWithMeta + Send + Sync + 'static
     entries: Vec<Entry>,
     skip_verification: bool,
     thread_pool: &ThreadPool,
-    verify_recyclers: VerifyRecyclers,
     verify: Arc<
         dyn Fn(VersionedTransaction, TransactionVerificationMode) -> Result<Tx> + Send + Sync,
     >,
 ) -> Result<EntrySigVerificationState<Tx>> {
-    let api = perf_libs::api();
-
-    // Use the CPU if we have too few transactions for GPU signature verification to be worth it.
-    // We will also use the CPU if no acceleration API is used or if we're skipping
-    // the signature verification as we'd have nothing to do on the GPU in that case.
-    // TODO: make the CPU-to GPU crossover point dynamic, perhaps based on similar future
-    // heuristics to what might be used in sigverify::ed25519_verify when a dynamic crossover
-    // is introduced for that function (see TODO in sigverify::ed25519_verify)
-    let use_cpu = skip_verification
-        || api.is_none()
-        || entries
-            .iter()
-            .try_fold(0, |accum: usize, entry: &Entry| -> Option<usize> {
-                if accum.saturating_add(entry.transactions.len()) < 512 {
-                    Some(accum.saturating_add(entry.transactions.len()))
-                } else {
-                    None
-                }
-            })
-            .is_some();
-
-    if use_cpu {
-        start_verify_transactions_cpu(entries, skip_verification, thread_pool, verify)
-    } else {
-        start_verify_transactions_gpu(entries, verify_recyclers, thread_pool, verify)
-    }
+    start_verify_transactions_cpu(entries, skip_verification, thread_pool, verify)
 }
 
 fn start_verify_transactions_cpu<Tx: TransactionWithMeta + Send + Sync + 'static>(
@@ -417,106 +377,6 @@ fn start_verify_transactions_cpu<Tx: TransactionWithMeta + Send + Sync + 'static
         verification_status: EntryVerificationStatus::Success,
         entries: Some(entries),
         device_verification_data: DeviceSigVerificationData::Cpu(),
-        gpu_verify_duration_us: 0,
-    })
-}
-
-fn start_verify_transactions_gpu<Tx: TransactionWithMeta + Send + Sync + 'static>(
-    entries: Vec<Entry>,
-    verify_recyclers: VerifyRecyclers,
-    thread_pool: &ThreadPool,
-    verify: Arc<
-        dyn Fn(VersionedTransaction, TransactionVerificationMode) -> Result<Tx> + Send + Sync,
-    >,
-) -> Result<EntrySigVerificationState<Tx>> {
-    let verify_func = {
-        move |versioned_tx: VersionedTransaction| -> Result<Tx> {
-            verify(
-                versioned_tx,
-                TransactionVerificationMode::HashAndVerifyPrecompiles,
-            )
-        }
-    };
-
-    let entries = verify_transactions(entries, thread_pool, Arc::new(verify_func))?;
-
-    let transactions = entries
-        .iter()
-        .filter_map(|entry_type| match entry_type {
-            EntryType::Tick(_) => None,
-            EntryType::Transactions(transactions) => Some(transactions),
-        })
-        .flatten()
-        .collect::<Vec<_>>();
-
-    if transactions.is_empty() {
-        return Ok(EntrySigVerificationState {
-            verification_status: EntryVerificationStatus::Success,
-            entries: Some(entries),
-            device_verification_data: DeviceSigVerificationData::Cpu(),
-            gpu_verify_duration_us: 0,
-        });
-    }
-
-    let packet_batches = thread_pool.install(|| {
-        transactions
-            .par_chunks(PACKETS_PER_BATCH)
-            .map(|transaction_chunk| {
-                let num_transactions = transaction_chunk.len();
-                let mut packet_batch = PacketBatch::new_with_recycler(
-                    &verify_recyclers.packet_recycler,
-                    num_transactions,
-                    "entry-sig-verify",
-                );
-                // We use set_len here instead of resize(num_txs, Packet::default()), to save
-                // memory bandwidth and avoid writing a large amount of data that will be overwritten
-                // soon afterwards. As well, Packet::default() actually leaves the packet data
-                // uninitialized, so the initialization would simply write junk into
-                // the vector anyway.
-                unsafe {
-                    packet_batch.set_len(num_transactions);
-                }
-                let transaction_iter = transaction_chunk
-                    .iter()
-                    .map(|tx| tx.to_versioned_transaction());
-
-                let res = packet_batch
-                    .iter_mut()
-                    .zip(transaction_iter)
-                    .all(|(packet, tx)| {
-                        *packet.meta_mut() = Meta::default();
-                        Packet::populate_packet(packet, None, &tx).is_ok()
-                    });
-                if res {
-                    Ok(packet_batch)
-                } else {
-                    Err(TransactionError::SanitizeFailure)
-                }
-            })
-            .collect::<Result<Vec<_>>>()
-    });
-    let mut packet_batches = packet_batches?;
-
-    let num_packets = transactions.len();
-    let gpu_verify_thread = thread::Builder::new()
-        .name("solGpuSigVerify".into())
-        .spawn(move || {
-            let mut verify_time = Measure::start("sigverify");
-            sigverify::ed25519_verify(&mut packet_batches, false, num_packets);
-            let verified = packet_batches
-                .iter()
-                .all(|batch| batch.iter().all(|p| !p.meta().discard()));
-            verify_time.stop();
-            (verified, verify_time.as_us())
-        })
-        .unwrap();
-
-    Ok(EntrySigVerificationState {
-        verification_status: EntryVerificationStatus::Pending,
-        entries: Some(entries),
-        device_verification_data: DeviceSigVerificationData::Gpu(GpuSigVerificationData {
-            thread_h: Some(gpu_verify_thread),
-        }),
         gpu_verify_duration_us: 0,
     })
 }
@@ -811,6 +671,7 @@ pub fn thread_pool_for_benches() -> ThreadPool {
 mod tests {
     use {
         super::*,
+        solana_measure::measure::Measure,
         solana_perf::test_tx::{test_invalid_tx, test_tx},
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
@@ -839,7 +700,6 @@ mod tests {
     fn test_verify_transactions<Tx: TransactionWithMeta + Send + Sync + 'static>(
         entries: Vec<Entry>,
         skip_verification: bool,
-        verify_recyclers: VerifyRecyclers,
         thread_pool: &ThreadPool,
         verify: Arc<
             dyn Fn(VersionedTransaction, TransactionVerificationMode) -> Result<Tx> + Send + Sync,
@@ -859,14 +719,9 @@ mod tests {
 
         let cpu_verify_result =
             verify_transactions(entries.clone(), thread_pool, Arc::new(verify_func));
-        let mut gpu_verify_result: EntrySigVerificationState<Tx> = {
-            let verify_result = start_verify_transactions(
-                entries,
-                skip_verification,
-                thread_pool,
-                verify_recyclers,
-                verify,
-            );
+        let mut verify_result: EntrySigVerificationState<Tx> = {
+            let verify_result =
+                start_verify_transactions(entries, skip_verification, thread_pool, verify);
             match verify_result {
                 Ok(res) => res,
                 _ => EntrySigVerificationState {
@@ -880,14 +735,14 @@ mod tests {
 
         match cpu_verify_result {
             Ok(_) => {
-                assert!(gpu_verify_result.verification_status != EntryVerificationStatus::Failure);
-                assert!(gpu_verify_result.finish_verify());
+                assert!(verify_result.verification_status != EntryVerificationStatus::Failure);
+                assert!(verify_result.finish_verify());
                 true
             }
             _ => {
                 assert!(
-                    gpu_verify_result.verification_status == EntryVerificationStatus::Failure
-                        || !gpu_verify_result.finish_verify()
+                    verify_result.verification_status == EntryVerificationStatus::Failure
+                        || !verify_result.finish_verify()
                 );
                 false
             }
@@ -895,7 +750,7 @@ mod tests {
     }
 
     #[test]
-    fn test_entry_gpu_verify() {
+    fn test_entry_verify_transactions() {
         let thread_pool = thread_pool_for_tests();
 
         let verify_transaction = {
@@ -923,8 +778,6 @@ mod tests {
             }
         };
 
-        let recycler = VerifyRecyclers::default();
-
         // Make sure we test with a number of transactions that's not a multiple of PACKETS_PER_BATCH
         let entries_invalid = (0..1025)
             .map(|_| {
@@ -943,14 +796,12 @@ mod tests {
         assert!(!test_verify_transactions(
             entries_invalid,
             false,
-            recycler.clone(),
             &thread_pool,
             Arc::new(verify_transaction)
         ));
         assert!(test_verify_transactions(
             entries_valid,
             false,
-            recycler,
             &thread_pool,
             Arc::new(verify_transaction)
         ));

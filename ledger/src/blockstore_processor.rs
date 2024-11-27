@@ -21,7 +21,7 @@ use {
     },
     solana_cost_model::cost_model::CostModel,
     solana_entry::entry::{
-        self, create_ticks, Entry, EntrySlice, EntryType, EntryVerificationStatus, VerifyRecyclers,
+        self, create_ticks, Entry, EntrySlice, EntryType, EntryVerificationStatus,
     },
     solana_measure::{measure::Measure, measure_us},
     solana_metrics::datapoint_error,
@@ -963,7 +963,6 @@ pub(crate) fn process_blockstore_for_bank_0(
         blockstore,
         &replay_tx_thread_pool,
         opts,
-        &VerifyRecyclers::default(),
         cache_block_meta_sender,
         entry_notification_sender,
     );
@@ -1151,7 +1150,6 @@ fn confirm_full_slot(
     bank: &BankWithScheduler,
     replay_tx_thread_pool: &ThreadPool,
     opts: &ProcessOptions,
-    recyclers: &VerifyRecyclers,
     progress: &mut ConfirmationProgress,
     transaction_status_sender: Option<&TransactionStatusSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
@@ -1172,7 +1170,6 @@ fn confirm_full_slot(
         transaction_status_sender,
         entry_notification_sender,
         replay_vote_sender,
-        recyclers,
         opts.allow_dead_slots,
         opts.runtime_config.log_messages_bytes_limit,
         &ignored_prioritization_fee_cache,
@@ -1510,7 +1507,6 @@ pub fn confirm_slot(
     transaction_status_sender: Option<&TransactionStatusSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
-    recyclers: &VerifyRecyclers,
     allow_dead_slots: bool,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
@@ -1541,7 +1537,6 @@ pub fn confirm_slot(
         transaction_status_sender,
         entry_notification_sender,
         replay_vote_sender,
-        recyclers,
         log_messages_bytes_limit,
         prioritization_fee_cache,
     )
@@ -1558,7 +1553,6 @@ fn confirm_slot_entries(
     transaction_status_sender: Option<&TransactionStatusSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
-    recyclers: &VerifyRecyclers,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
 ) -> result::Result<(), BlockstoreProcessorError> {
@@ -1661,7 +1655,6 @@ fn confirm_slot_entries(
         entries,
         skip_verification,
         replay_tx_thread_pool,
-        recyclers.clone(),
         Arc::new(verify_transaction),
     );
     let transaction_cpu_duration_us = transaction_verification_start.elapsed().as_micros() as u64;
@@ -1753,7 +1746,6 @@ fn process_bank_0(
     blockstore: &Blockstore,
     replay_tx_thread_pool: &ThreadPool,
     opts: &ProcessOptions,
-    recyclers: &VerifyRecyclers,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
 ) {
@@ -1764,7 +1756,6 @@ fn process_bank_0(
         bank0,
         replay_tx_thread_pool,
         opts,
-        recyclers,
         &mut progress,
         None,
         entry_notification_sender,
@@ -1888,7 +1879,6 @@ fn load_frozen_forks(
 
     let on_halt_store_hash_raw_data_for_debug = opts.on_halt_store_hash_raw_data_for_debug;
     if Some(bank_forks.read().unwrap().root()) != opts.halt_at_slot {
-        let recyclers = VerifyRecyclers::default();
         let mut all_banks = HashMap::new();
 
         const STATUS_REPORT_INTERVAL: Duration = Duration::from_secs(2);
@@ -1935,7 +1925,6 @@ fn load_frozen_forks(
                 &bank,
                 replay_tx_thread_pool,
                 opts,
-                &recyclers,
                 &mut progress,
                 transaction_status_sender,
                 cache_block_meta_sender,
@@ -2127,7 +2116,6 @@ pub fn process_single_slot(
     bank: &BankWithScheduler,
     replay_tx_thread_pool: &ThreadPool,
     opts: &ProcessOptions,
-    recyclers: &VerifyRecyclers,
     progress: &mut ConfirmationProgress,
     transaction_status_sender: Option<&TransactionStatusSender>,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
@@ -2143,7 +2131,6 @@ pub fn process_single_slot(
         bank,
         replay_tx_thread_pool,
         opts,
-        recyclers,
         progress,
         transaction_status_sender,
         entry_notification_sender,
@@ -4106,14 +4093,12 @@ pub mod tests {
             accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
-        let recyclers = VerifyRecyclers::default();
         let replay_tx_thread_pool = create_thread_pool(1);
         process_bank_0(
             &bank0,
             &blockstore,
             &replay_tx_thread_pool,
             &opts,
-            &recyclers,
             None,
             None,
         );
@@ -4128,7 +4113,6 @@ pub mod tests {
             &bank1,
             &replay_tx_thread_pool,
             &opts,
-            &recyclers,
             &mut ConfirmationProgress::new(bank0_last_blockhash),
             None,
             None,
@@ -4760,7 +4744,6 @@ pub mod tests {
             None,
             None,
             None,
-            &VerifyRecyclers::default(),
             None,
             &PrioritizationFeeCache::new(0u64),
         )
@@ -4853,7 +4836,6 @@ pub mod tests {
             Some(&transaction_status_sender),
             None,
             None,
-            &VerifyRecyclers::default(),
             None,
             &PrioritizationFeeCache::new(0u64),
         )
@@ -4898,7 +4880,6 @@ pub mod tests {
             Some(&transaction_status_sender),
             None,
             None,
-            &VerifyRecyclers::default(),
             None,
             &PrioritizationFeeCache::new(0u64),
         )
