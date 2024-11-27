@@ -705,7 +705,7 @@ impl BankingStage {
                     let batches = batches.0.iter();
                     for batch in batches {
                         // over-provision nevertheless some of packets could be invalid.
-                        let task_id_base = adapter.bulk_assign_task_ids(batch.len() as u64);
+                        let task_id_base = adapter.generate_task_ids(batch.len() as u64);
                         let packets = PacketDeserializer::deserialize_packets_with_indexes(batch);
 
                         for (packet, packet_index) in packets {
