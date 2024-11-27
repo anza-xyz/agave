@@ -507,12 +507,7 @@ where
                 .expect("not poisoned")
                 .push(scheduler);
 
-            if is_block_production_scheduler_returned
-                && !matches!(
-                    self.banking_stage_status(),
-                    None | Some(BankingStageStatus::Exited)
-                )
-            {
+            if is_block_production_scheduler_returned && self.should_respawn() {
                 info!("respawning on trashd scheduler...");
                 id_and_inner.0.take();
                 self.spawn_block_production_scheduler(&mut id_and_inner);
@@ -623,6 +618,13 @@ where
             .unwrap()
             .as_ref()
             .map(|respawner| respawner.banking_stage_monitor.status())
+    }
+
+    fn should_respawn() -> bool {
+        !matches!(
+            self.banking_stage_status(),
+            None | Some(BankingStageStatus::Exited)
+        )
     }
 
     fn spawn_block_production_scheduler(
