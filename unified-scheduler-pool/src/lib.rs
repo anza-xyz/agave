@@ -1509,8 +1509,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 let mut cpu_log_reported_at = cpu_session_started_at;
                 let mut error_count = ShortCounter::zero();
 
-                let (banking_stage_adapter, banking_packet_receiver, _on_recv) = banking_stage_context.unzip();
-                let banking_packet_receiver = banking_packet_receiver.unwrap_or_else(never);
+                let banking_packet_receiver = banking_stage_context.banking_packet_receiver.unwrap_or_else(never);
 
                 macro_rules! log_scheduler {
                     ($level:ident, $prefix:tt) => {
