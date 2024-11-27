@@ -15,17 +15,16 @@ use {
     solana_client::connection_cache::ConnectionCache,
     solana_connection_cache::client_connection::ClientConnection as TpuConnection,
     solana_feature_set::FeatureSet,
-    solana_measure::measure_us,
     solana_perf::{data_budget::DataBudget, packet::Packet},
     solana_poh::poh_recorder::PohRecorder,
     solana_runtime::bank_forks::BankForks,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk::{pubkey::Pubkey, transport::TransportError},
-    solana_streamer::sendmmsg::batch_send,
+    solana_streamer::sendmmsg::{batch_send, SendPktsError},
     solana_svm_transaction::svm_message::SVMMessage,
     std::{
         iter::repeat,
-        net::{SocketAddr, UdpSocket},
+        net::UdpSocket,
         sync::{atomic::Ordering, Arc, RwLock},
     },
 };
@@ -184,40 +183,76 @@ impl<T: LikeClusterInfo> Forwarder<T> {
     /// Forwards all valid, unprocessed packets in the iterator, up to a rate limit.
     /// Returns whether forwarding succeeded, the number of attempted forwarded packets
     /// if any, the time spent forwarding in us, and the leader pubkey if any.
-    pub fn forward_packets<'a>(
+    fn forward_packets<'a>(
         &self,
         forward_option: &ForwardOption,
         forwardable_packets: impl Iterator<Item = &'a Packet>,
     ) -> (
         std::result::Result<(), TransportError>,
         usize,
-        u64,
         Option<Pubkey>,
     ) {
-        let Some((leader_pubkey, addr)) = self.get_leader_and_addr(forward_option) else {
-            return (Ok(()), 0, 0, None);
-        };
-
-        self.update_data_budget();
-        let packet_vec: Vec<_> = forwardable_packets
-            .filter(|p| !p.meta().forwarded())
-            .filter(|p| p.meta().is_from_staked_node())
-            .filter(|p| self.data_budget.take(p.meta().size))
-            .filter_map(|p| p.data(..).map(|data| data.to_vec()))
-            .collect();
-
-        let packet_vec_len = packet_vec.len();
-        // TODO: see https://github.com/solana-labs/solana/issues/23819
-        // fix this so returns the correct number of succeeded packets
-        // when there's an error sending the batch. This was left as-is for now
-        // in favor of shipping Quic support, which was considered higher-priority
-        let (res, forward_us) = if !packet_vec.is_empty() {
-            measure_us!(self.forward(forward_option, packet_vec, &addr))
-        } else {
-            (Ok(()), 0)
-        };
-
-        (res, packet_vec_len, forward_us, Some(leader_pubkey))
+        match forward_option {
+            ForwardOption::NotForward => {
+                return (Ok(()), 0, None);
+            }
+            ForwardOption::ForwardTransaction => {
+                let Some((leader_pubkey, addr)) =
+                    next_leader(&self.cluster_info, &self.poh_recorder, |node| {
+                        node.tpu_forwards(self.connection_cache.protocol())
+                    })
+                else {
+                    return (Ok(()), 0, None);
+                };
+                self.update_data_budget();
+                let packet_vec: Vec<_> = forwardable_packets
+                    .filter(|p| !p.meta().forwarded())
+                    .filter(|p| p.meta().is_from_staked_node())
+                    .filter(|p| self.data_budget.take(p.meta().size))
+                    .filter_map(|p| p.data(..).map(|data| data.to_vec()))
+                    .collect();
+                let packet_vec_len = packet_vec.len();
+                if packet_vec_len == 0 {
+                    return (Ok(()), 0, Some(leader_pubkey));
+                }
+                // TODO: see https://github.com/solana-labs/solana/issues/23819
+                // fix this so returns the correct number of succeeded packets
+                // when there's an error sending the batch. This was left as-is for now
+                // in favor of shipping Quic support, which was considered higher-priority
+                let conn = self.connection_cache.get_connection(&addr);
+                let res = conn.send_data_batch_async(packet_vec);
+                (res, packet_vec_len, Some(leader_pubkey))
+            }
+            ForwardOption::ForwardTpuVote => {
+                let Some((leader_pubkey, addr)) =
+                    next_leader_tpu_vote(&self.cluster_info, &self.poh_recorder)
+                else {
+                    return (Ok(()), 0, None);
+                };
+                self.update_data_budget();
+                let filtered_forwardable_packets = forwardable_packets
+                    .filter(|p| !p.meta().forwarded())
+                    .filter(|p| p.meta().is_from_staked_node())
+                    .filter(|p| self.data_budget.take(p.meta().size))
+                    .filter_map(|p| p.data(..).map(|data| data.to_vec()));
+                // The vote must be forwarded using only UDP.
+                let pkts: Vec<_> = filtered_forwardable_packets.zip(repeat(addr)).collect();
+                if pkts.is_empty() {
+                    return (Ok(()), 0, Some(leader_pubkey));
+                }
+                match batch_send(&self.socket, &pkts) {
+                    Ok(()) => (Ok(()), pkts.len(), Some(leader_pubkey)),
+                    Err(error) => {
+                        let SendPktsError::IoError(error, num_failed) = error;
+                        (
+                            Err(TransportError::Custom(format!("{error:?}"))),
+                            pkts.len() - num_failed,
+                            Some(leader_pubkey),
+                        )
+                    }
+                }
+            }
+        }
     }
 
     /// Forwards all valid, unprocessed packets in the buffer, up to a rate limit. Returns
@@ -232,7 +267,7 @@ impl<T: LikeClusterInfo> Forwarder<T> {
         usize,
         Option<Pubkey>,
     ) {
-        let (res, num_packets, _forward_us, leader_pubkey) =
+        let (res, num_packets, leader_pubkey) =
             self.forward_packets(forward_option, forwardable_packets);
         if let Err(ref err) = res {
             warn!("failed to forward packets: {err}");
@@ -253,21 +288,6 @@ impl<T: LikeClusterInfo> Forwarder<T> {
         (res, num_packets, leader_pubkey)
     }
 
-    /// Get the pubkey and socket address for the leader to forward to
-    fn get_leader_and_addr(&self, forward_option: &ForwardOption) -> Option<(Pubkey, SocketAddr)> {
-        match forward_option {
-            ForwardOption::NotForward => None,
-            ForwardOption::ForwardTransaction => {
-                next_leader(&self.cluster_info, &self.poh_recorder, |node| {
-                    node.tpu_forwards(self.connection_cache.protocol())
-                })
-            }
-            ForwardOption::ForwardTpuVote => {
-                next_leader_tpu_vote(&self.cluster_info, &self.poh_recorder)
-            }
-        }
-    }
-
     /// Re-fill the data budget if enough time has passed
     fn update_data_budget(&self) {
         const INTERVAL_MS: u64 = 100;
@@ -281,26 +301,6 @@ impl<T: LikeClusterInfo> Forwarder<T> {
                 MAX_BYTES_BUDGET,
             )
         });
-    }
-
-    fn forward(
-        &self,
-        forward_option: &ForwardOption,
-        packet_vec: Vec<Vec<u8>>,
-        addr: &SocketAddr,
-    ) -> Result<(), TransportError> {
-        match forward_option {
-            ForwardOption::ForwardTpuVote => {
-                // The vote must be forwarded using only UDP.
-                let pkts: Vec<_> = packet_vec.into_iter().zip(repeat(*addr)).collect();
-                batch_send(&self.socket, &pkts).map_err(|err| err.into())
-            }
-            ForwardOption::ForwardTransaction => {
-                let conn = self.connection_cache.get_connection(addr);
-                conn.send_data_batch_async(packet_vec)
-            }
-            ForwardOption::NotForward => panic!("should not forward"),
-        }
     }
 }
 
