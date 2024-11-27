@@ -52,7 +52,8 @@ pub(crate) trait ReceiveAndBuffer {
     type Transaction: TransactionWithMeta + Send + Sync;
     type Container: StateContainer<Self::Transaction> + Send + Sync;
 
-    /// Returns whether the packet receiver is still connected.
+    /// Returns false only if no packets were received
+    /// AND the receiver is disconnected.
     fn receive_and_buffer_packets(
         &mut self,
         container: &mut Self::Container,
@@ -313,6 +314,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         // Receive packet batches.
         const TIMEOUT: Duration = Duration::from_millis(10);
         let start = Instant::now();
+        let mut received_message = false;
 
         // If not leader, do a blocking-receive initially. This lets the thread
         // sleep when there is not work to do.
@@ -328,6 +330,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         ) {
             match self.receiver.recv_timeout(TIMEOUT) {
                 Ok(packet_batch_message) => {
+                    received_message = true;
                     self.handle_packet_batch_message(
                         container,
                         timing_metrics,
@@ -337,13 +340,16 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
                     );
                 }
                 Err(RecvTimeoutError::Timeout) => return true,
-                Err(RecvTimeoutError::Disconnected) => return false,
+                Err(RecvTimeoutError::Disconnected) => {
+                    return received_message;
+                }
             }
         }
 
         while start.elapsed() < TIMEOUT {
             match self.receiver.try_recv() {
                 Ok(packet_batch_message) => {
+                    received_message = true;
                     self.handle_packet_batch_message(
                         container,
                         timing_metrics,
@@ -353,7 +359,9 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
                     );
                 }
                 Err(TryRecvError::Empty) => return true,
-                Err(TryRecvError::Disconnected) => return false,
+                Err(TryRecvError::Disconnected) => {
+                    return received_message;
+                }
             }
         }
 
