@@ -6,7 +6,6 @@ pub mod packet;
 pub mod perf_libs;
 pub mod recycled_vec;
 pub mod recycler;
-pub mod recycler_cache;
 pub mod sigverify;
 #[cfg(feature = "dev-context-only-utils")]
 pub mod test_tx;

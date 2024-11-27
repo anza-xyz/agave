@@ -2,12 +2,9 @@
 use {
     crate::shred::{self, SignedData},
     rayon::{prelude::*, ThreadPool},
-    sha2::{Digest, Sha512},
     solana_metrics::inc_new_counter_debug,
     solana_perf::{
         packet::{Packet, PacketBatch},
-        recycled_vec::RecycledVec,
-        recycler_cache::RecyclerCache,
         sigverify::count_packets_in_batches,
     },
     solana_sdk::{
@@ -86,17 +83,6 @@ fn verify_shreds_cpu(
     rv
 }
 
-// Resizes the buffer to >= size and a multiple of
-// std::mem::size_of::<Packet>().
-fn resize_buffer(buffer: &mut RecycledVec<u8>, size: usize) {
-    //HACK: Pubkeys vector is passed along as a `PacketBatch` buffer to the GPU
-    //TODO: GPU needs a more opaque interface, which can handle variable sized structures for data
-    //Pad the Pubkeys buffer such that it is bigger than a buffer of Packet sized elems
-    let num_packets = (size + std::mem::size_of::<Packet>() - 1) / std::mem::size_of::<Packet>();
-    let size = num_packets * std::mem::size_of::<Packet>();
-    buffer.resize(size, 0u8);
-}
-
 pub fn verify_shreds(
     thread_pool: &ThreadPool,
     batches: &[PacketBatch],
@@ -131,23 +117,6 @@ pub fn sign_shreds_cpu(thread_pool: &ThreadPool, keypair: &Keypair, batches: &mu
         });
     });
     inc_new_counter_debug!("ed25519_shred_sign_cpu", packet_count);
-}
-
-pub fn sign_shreds_keypair(keypair: &Keypair, cache: &RecyclerCache) -> RecycledVec<u8> {
-    let mut vec = cache.buffer().allocate("keypair");
-    let pubkey = keypair.pubkey().to_bytes();
-    let secret = keypair.secret().to_bytes();
-    let mut hasher = Sha512::default();
-    hasher.update(secret);
-    let mut result = hasher.finalize();
-    result[0] &= 248;
-    result[31] &= 63;
-    result[31] |= 64;
-    let size = pubkey.len() + result.len();
-    resize_buffer(&mut vec, size);
-    vec[0..pubkey.len()].copy_from_slice(&pubkey);
-    vec[pubkey.len()..size].copy_from_slice(&result);
-    vec
 }
 
 pub fn sign_shreds(thread_pool: &ThreadPool, keypair: &Keypair, batches: &mut [PacketBatch]) {
