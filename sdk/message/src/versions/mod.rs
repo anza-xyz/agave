@@ -5,7 +5,7 @@ use {
         compiled_instruction::CompiledInstruction, legacy::Message as LegacyMessage,
         v0::MessageAddressTableLookup, MessageHeader,
     },
-    solana_hash::{Hash, HASH_BYTES},
+    solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
     std::collections::HashSet,
@@ -155,20 +155,21 @@ impl VersionedMessage {
         bincode::serialize(self).unwrap()
     }
 
-    #[cfg(feature = "bincode")]
+    #[cfg(all(feature = "bincode", feature = "blake3"))]
     /// Compute the blake3 hash of this transaction's message
     pub fn hash(&self) -> Hash {
         let message_bytes = self.serialize();
         Self::hash_raw_message(&message_bytes)
     }
 
+    #[cfg(feature = "blake3")]
     /// Compute the blake3 hash of a raw transaction message
     pub fn hash_raw_message(message_bytes: &[u8]) -> Hash {
         use blake3::traits::digest::Digest;
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"solana-tx-message-v1");
         hasher.update(message_bytes);
-        let hash_bytes: [u8; HASH_BYTES] = hasher.finalize().into();
+        let hash_bytes: [u8; solana_hash::HASH_BYTES] = hasher.finalize().into();
         hash_bytes.into()
     }
 }

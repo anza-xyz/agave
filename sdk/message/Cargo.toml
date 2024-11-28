@@ -11,7 +11,7 @@ edition = { workspace = true }
 
 [dependencies]
 bincode = { workspace = true, optional = true }
-blake3 = { workspace = true, features = ["traits-preview"] }
+blake3 = { workspace = true, features = ["traits-preview"], optional = true }
 lazy_static = { workspace = true }
 serde = { workspace = true, optional = true }
 serde_derive = { workspace = true, optional = true }
@@ -53,7 +53,8 @@ bincode = [
     "dep:solana-system-interface",
     "serde",
 ]
-dev-context-only-utils = ["bincode"]
+blake3 = ["dep:blake3"]
+dev-context-only-utils = ["bincode", "blake3"]
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
