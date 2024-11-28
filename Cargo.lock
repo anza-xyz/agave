@@ -6734,6 +6734,7 @@ dependencies = [
  "solana-svm",
  "solana-svm-transaction",
  "solana-timings",
+ "solana-tls-utils",
  "solana-tpu-client",
  "solana-transaction-status",
  "solana-turbine",
@@ -8095,6 +8096,7 @@ dependencies = [
  "solana-sdk",
  "solana-signer",
  "solana-streamer",
+ "solana-tls-utils",
  "solana-transaction-error",
  "thiserror 2.0.3",
  "tokio",
@@ -8935,6 +8937,7 @@ dependencies = [
  "solana-signer",
  "solana-streamer",
  "solana-time-utils",
+ "solana-tls-utils",
  "solana-transaction-error",
  "solana-transaction-metrics-tracker",
  "thiserror 2.0.3",
@@ -9158,6 +9161,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-tls-utils"
+version = "2.2.0"
+dependencies = [
+ "rustls 0.23.19",
+ "solana-keypair",
+ "solana-pubkey",
+ "solana-sdk",
+ "solana-signer",
+ "x509-parser",
+]
+
+[[package]]
 name = "solana-tokens"
 version = "2.2.0"
 dependencies = [
@@ -9252,6 +9267,7 @@ dependencies = [
  "solana-rpc-client",
  "solana-sdk",
  "solana-streamer",
+ "solana-tls-utils",
  "solana-tpu-client",
  "thiserror 2.0.3",
  "tokio",
@@ -9411,6 +9427,7 @@ dependencies = [
  "solana-runtime",
  "solana-sdk",
  "solana-streamer",
+ "solana-tls-utils",
  "static_assertions",
  "test-case",
  "thiserror 2.0.3",

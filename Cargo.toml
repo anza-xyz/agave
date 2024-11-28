@@ -87,7 +87,6 @@ members = [
     "programs/zk-token-proof-tests",
     "pubsub-client",
     "quic-client",
-    "tls-utils",
     "rayon-threadlimit",
     "rbpf-cli",
     "remote-wallet",
@@ -188,6 +187,7 @@ members = [
     "test-validator",
     "thin-client",
     "timings",
+    "tls-utils",
     "tokens",
     "tps-client",
     "tpu-client",
@@ -495,7 +495,6 @@ solana-metrics = { path = "metrics", version = "=2.2.0" }
 solana-msg = { path = "sdk/msg", version = "=2.2.0" }
 solana-native-token = { path = "sdk/native-token", version = "=2.2.0" }
 solana-net-utils = { path = "net-utils", version = "=2.2.0" }
-solana-tls-utils = { path = "tls-utils", version = "=2.2.0" }
 solana-nohash-hasher = "0.2.1"
 solana-nonce = { path = "sdk/nonce", version = "=2.2.0" }
 solana-notifier = { path = "notifier", version = "=2.2.0" }
@@ -525,8 +524,8 @@ solana-rent = { path = "sdk/rent", version = "=2.2.0", default-features = false 
 solana-rent-debits = { path = "sdk/rent-debits", version = "=2.2.0" }
 solana-reserved-account-keys = { path = "sdk/reserved-account-keys", version = "=2.2.0", default-features = false }
 solana-reward-info = { path = "sdk/reward-info", version = "=2.2.0" }
-solana-secp256r1-program = { path = "sdk/secp256r1-program", version = "=2.2.0", default-features = false }
 solana-sanitize = { path = "sdk/sanitize", version = "=2.2.0" }
+solana-secp256r1-program = { path = "sdk/secp256r1-program", version = "=2.2.0", default-features = false }
 solana-seed-derivable = { path = "sdk/seed-derivable", version = "=2.2.0" }
 solana-seed-phrase = { path = "sdk/seed-phrase", version = "=2.2.0" }
 solana-serde = { path = "sdk/serde", version = "=2.2.0" }
@@ -539,6 +538,7 @@ solana-slot-hashes = { path = "sdk/slot-hashes", version = "=2.2.0" }
 solana-slot-history = { path = "sdk/slot-history", version = "=2.2.0" }
 solana-time-utils = { path = "sdk/time-utils", version = "=2.2.0" }
 solana-timings = { path = "timings", version = "=2.2.0" }
+solana-tls-utils = { path = "tls-utils", version = "=2.2.0" }
 solana-unified-scheduler-logic = { path = "unified-scheduler-logic", version = "=2.2.0" }
 solana-unified-scheduler-pool = { path = "unified-scheduler-pool", version = "=2.2.0" }
 solana-rpc = { path = "rpc", version = "=2.2.0" }

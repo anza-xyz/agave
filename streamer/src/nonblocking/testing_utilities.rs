@@ -21,7 +21,7 @@ use {
     solana_net_utils::bind_to_localhost,
     solana_perf::packet::PacketBatch,
     solana_quic_definitions::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT},
-    solana_tls_utils::new_dummy_x509_certificate,
+    solana_tls_utils::{new_dummy_x509_certificate, SkipServerVerification},
     std::{
         net::{SocketAddr, UdpSocket},
         sync::{atomic::AtomicBool, Arc, RwLock},

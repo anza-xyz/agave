@@ -29,10 +29,10 @@ solana-quic-definitions = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-signer = { workspace = true }
 solana-streamer = { workspace = true }
+solana-tls-utils = { workspace = true }
 solana-transaction-error = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
-
 [dev-dependencies]
 crossbeam-channel = { workspace = true }
 solana-logger = { workspace = true }
