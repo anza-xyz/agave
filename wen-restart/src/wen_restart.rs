@@ -264,6 +264,7 @@ pub(crate) fn aggregate_restart_last_voted_fork_slots(
     }
     let mut cursor = solana_gossip::crds::Cursor::default();
     let mut is_full_slots = HashSet::new();
+    let mut old_progress = WenRestartProgress::default();
     loop {
         if exit.load(Ordering::Relaxed) {
             return Err(WenRestartError::Exiting.into());
@@ -320,10 +321,14 @@ pub(crate) fn aggregate_restart_last_voted_fork_slots(
                 .collect();
         }
         filtered_slots.sort();
-        info!(
-            "Active peers: {} Slots to repair: {:?}",
-            active_percent, &filtered_slots
-        );
+        if progress != &old_progress {
+            info!(
+                "Active peers: {} Slots to repair: {:?}",
+                active_percent, &filtered_slots
+            );
+            write_wen_restart_records(wen_restart_path, progress)?;
+            old_progress = progress.clone();
+        }
         if filtered_slots.is_empty()
             && active_percent >= wait_for_supermajority_threshold_percent as f64
         {
@@ -333,7 +338,6 @@ pub(crate) fn aggregate_restart_last_voted_fork_slots(
         {
             *wen_restart_repair_slots.write().unwrap() = filtered_slots;
         }
-        write_wen_restart_records(wen_restart_path, progress)?;
         let elapsed = timestamp().saturating_sub(start);
         let time_left = GOSSIP_SLEEP_MILLIS.saturating_sub(elapsed);
         if time_left > 0 {
@@ -719,6 +723,7 @@ pub(crate) fn aggregate_restart_heaviest_fork(
     let mut cursor = solana_gossip::crds::Cursor::default();
     let mut total_active_stake = 0;
     let mut stat_printed_at = Instant::now();
+    let mut old_progress = WenRestartProgress::default();
     loop {
         if exit.load(Ordering::Relaxed) {
             return Ok(());
@@ -761,14 +766,15 @@ pub(crate) fn aggregate_restart_heaviest_fork(
                 .unwrap()
                 .total_active_stake = current_total_active_stake;
         }
-        let total_active_stake = heaviest_fork_aggregate.total_active_stake();
-        info!(
-            "Total active stake: {} Total stake {} Active percent: {:.2}%",
-            total_active_stake,
-            total_stake,
-            total_active_stake as f64 / total_stake as f64 * 100.0,
-        );
-        write_wen_restart_records(wen_restart_path, progress)?;
+        if old_progress != *progress {
+            info!(
+                "Total active stake: {} Total stake {}",
+                heaviest_fork_aggregate.total_active_stake(),
+                total_stake
+            );
+            write_wen_restart_records(wen_restart_path, progress)?;
+            old_progress = progress.clone();
+        }
         let elapsed = timestamp().saturating_sub(start);
         let time_left = GOSSIP_SLEEP_MILLIS.saturating_sub(elapsed);
         if time_left > 0 {

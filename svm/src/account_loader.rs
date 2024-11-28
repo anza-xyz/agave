@@ -160,33 +160,31 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         }
 
         let account = if let Some(account) = self.account_cache.get(account_key) {
-            // Inspect the account prior to collecting rent, since
-            // rent collection can modify the account.
-            self.callbacks
-                .inspect_account(account_key, AccountState::Alive(account), is_writable);
-
             // If lamports is 0, a previous transaction deallocated this account.
-            // Return None without inspecting, so it can be recreated.
+            // We return None instead of the account we found so it can be created fresh.
+            // We never evict from the cache, or else we would fetch stale state from accounts-db.
             if account.lamports() == 0 {
                 None
             } else {
                 Some(account.clone())
             }
         } else if let Some(account) = self.callbacks.get_account_shared_data(account_key) {
-            // Inspect the account prior to collecting rent, since
-            // rent collection can modify the account.
-            self.callbacks
-                .inspect_account(account_key, AccountState::Alive(&account), is_writable);
-
             self.account_cache.insert(*account_key, account.clone());
-
             Some(account)
         } else {
-            self.callbacks
-                .inspect_account(account_key, AccountState::Dead, is_writable);
-
             None
         };
+
+        // Inspect prior to collecting rent, since rent collection can modify the account.
+        self.callbacks.inspect_account(
+            account_key,
+            if let Some(ref account) = account {
+                AccountState::Alive(account)
+            } else {
+                AccountState::Dead
+            },
+            is_writable,
+        );
 
         account.map(|account| LoadedTransactionAccount {
             loaded_size: account.data().len(),
