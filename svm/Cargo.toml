@@ -57,12 +57,12 @@ shuttle = { workspace = true }
 solana-compute-budget-program = { workspace = true }
 solana-ed25519-program = { workspace = true }
 solana-logger = { workspace = true }
+solana-sbpf = { workspace = true }
 solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
 solana-secp256r1-program = { workspace = true, features = ["openssl-vendored"] }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-svm = { path = ".", features = ["dev-context-only-utils"] }
 solana-svm-conformance = { workspace = true }
-solana_rbpf = { workspace = true }
 test-case = { workspace = true }
 
 [package.metadata.docs.rs]

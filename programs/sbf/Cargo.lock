@@ -4547,12 +4547,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
-name = "scroll"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04c565b551bafbef4157586fa379538366e4385d42082f255bfd96e4fe8519da"
-
-[[package]]
 name = "sct"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5132,10 +5126,10 @@ dependencies = [
  "solana-poseidon",
  "solana-program-memory",
  "solana-program-runtime",
+ "solana-sbpf",
  "solana-sdk",
  "solana-timings",
  "solana-type-overrides",
- "solana_rbpf",
  "thiserror 2.0.7",
 ]
 
@@ -6052,9 +6046,9 @@ dependencies = [
  "solana-log-collector",
  "solana-measure",
  "solana-program-runtime",
+ "solana-sbpf",
  "solana-sdk",
  "solana-type-overrides",
- "solana_rbpf",
 ]
 
 [[package]]
@@ -6442,6 +6436,7 @@ dependencies = [
  "solana-precompiles",
  "solana-pubkey",
  "solana-rent",
+ "solana-sbpf",
  "solana-sdk-ids",
  "solana-slot-hashes",
  "solana-stable-layout",
@@ -6450,7 +6445,6 @@ dependencies = [
  "solana-timings",
  "solana-transaction-context",
  "solana-type-overrides",
- "solana_rbpf",
  "thiserror 2.0.7",
 ]
 
@@ -6479,11 +6473,11 @@ dependencies = [
  "solana-logger",
  "solana-program-runtime",
  "solana-runtime",
+ "solana-sbpf",
  "solana-sdk",
  "solana-svm",
  "solana-timings",
  "solana-vote-program",
- "solana_rbpf",
  "thiserror 2.0.7",
  "tokio",
 ]
@@ -6913,6 +6907,7 @@ dependencies = [
  "solana-sbf-rust-invoke-dep",
  "solana-sbf-rust-realloc-dep",
  "solana-sbf-rust-realloc-invoke-dep",
+ "solana-sbpf",
  "solana-sdk",
  "solana-svm",
  "solana-svm-transaction",
@@ -6921,7 +6916,6 @@ dependencies = [
  "solana-type-overrides",
  "solana-vote",
  "solana-vote-program",
- "solana_rbpf",
 ]
 
 [[package]]
@@ -7378,6 +7372,23 @@ name = "solana-sbf-syscall-get-epoch-stake"
 version = "2.2.0"
 dependencies = [
  "solana-program",
+]
+
+[[package]]
+name = "solana-sbpf"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92b4c060a707fdb0754a876cbbf49591b60a573b5521b485125d2a4d6ff68ce3"
+dependencies = [
+ "byteorder 1.5.0",
+ "combine 3.8.1",
+ "hash32",
+ "libc",
+ "log",
+ "rand 0.8.5",
+ "rustc-demangle",
+ "thiserror 1.0.69",
+ "winapi 0.3.9",
 ]
 
 [[package]]
@@ -8409,24 +8420,6 @@ dependencies = [
  "subtle",
  "thiserror 2.0.7",
  "zeroize",
-]
-
-[[package]]
-name = "solana_rbpf"
-version = "0.8.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c1941b5ef0c3ce8f2ac5dd984d0fb1a97423c4ff2a02eec81e3913f02e2ac2b"
-dependencies = [
- "byteorder 1.5.0",
- "combine 3.8.1",
- "hash32",
- "libc",
- "log",
- "rand 0.8.5",
- "rustc-demangle",
- "scroll",
- "thiserror 1.0.69",
- "winapi 0.3.9",
 ]
 
 [[package]]
