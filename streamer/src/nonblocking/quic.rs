@@ -9,7 +9,6 @@ use {
         },
         quic::{configure_server, QuicServerError, QuicServerParams, StreamerStats},
         streamer::StakedNodes,
-        tls_certificates::get_pubkey_from_tls_certificate,
     },
     async_channel::{
         unbounded as async_unbounded, Receiver as AsyncReceiver, Sender as AsyncSender,
@@ -36,6 +35,7 @@ use {
     },
     solana_signature::Signature,
     solana_time_utils as timing,
+    solana_tls_utils::get_pubkey_from_tls_certificate,
     solana_transaction_metrics_tracker::signature_if_should_track_packet,
     std::{
         array,

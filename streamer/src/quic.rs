@@ -5,7 +5,6 @@ use {
             DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
         },
         streamer::StakedNodes,
-        tls_certificates::new_dummy_x509_certificate,
     },
     crossbeam_channel::Sender,
     pem::Pem,
@@ -24,6 +23,7 @@ use {
     solana_quic_definitions::{
         NotifyKeyUpdate, QUIC_MAX_TIMEOUT, QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS,
     },
+    solana_tls_utils::new_dummy_x509_certificate,
     std::{
         net::UdpSocket,
         sync::{

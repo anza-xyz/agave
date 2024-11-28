@@ -42,6 +42,7 @@ solana-quic-definitions = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-time-utils = { workspace = true }
+solana-tls-utils = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-transaction-metrics-tracker = { workspace = true }
 thiserror = { workspace = true }
