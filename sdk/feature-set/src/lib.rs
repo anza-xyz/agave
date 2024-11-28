@@ -561,6 +561,10 @@ pub mod enable_alt_bn128_compression_syscall {
     solana_pubkey::declare_id!("EJJewYSddEEtSZHiqugnvhQHiWyZKjkFDQASd7oKSagn");
 }
 
+pub mod fix_alt_bn128_multiplication_input_length {
+    solana_pubkey::declare_id!("bn2puAyxUx6JUabAxYdKdJ5QHbNNmKw8dCGuGCyRrFN");
+}
+
 pub mod enable_program_redeployment_cooldown {
     solana_pubkey::declare_id!("J4HFT8usBxpcF63y46t1upYobJgChmKyZPm5uTBRg25Z");
 }
@@ -1110,6 +1114,7 @@ lazy_static! {
         (accounts_lt_hash::id(), "enables lattice-based accounts hash #3333"),
         (enable_secp256r1_precompile::id(), "Enable secp256r1 precompile SIMD-0075"),
         (migrate_stake_program_to_core_bpf::id(), "Migrate Stake program to Core BPF SIMD-0196 #3655"),
+        (fix_alt_bn128_multiplication_input_length::id(), "fix alt_bn128 multiplication input length #3686"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
