@@ -853,7 +853,6 @@ impl Validator {
                     config.unified_scheduler_handler_threads,
                     config.runtime_config.log_messages_bytes_limit,
                     transaction_status_sender.clone(),
-                    Some(replay_vote_sender.clone()),
                     prioritization_fee_cache.clone(),
                 );
                 bank_forks

@@ -29,7 +29,6 @@ use {
             UninstalledScheduler, UninstalledSchedulerBox,
         },
         prioritization_fee_cache::PrioritizationFeeCache,
-        vote_sender_types::ReplayVoteSender,
     },
     solana_sdk::{
         pubkey::Pubkey,
@@ -99,7 +98,6 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
 pub struct HandlerContext {
     log_messages_bytes_limit: Option<usize>,
     transaction_status_sender: Option<TransactionStatusSender>,
-    replay_vote_sender: Option<ReplayVoteSender>,
     prioritization_fee_cache: Arc<PrioritizationFeeCache>,
 }
 
@@ -137,14 +135,12 @@ where
         handler_count: Option<usize>,
         log_messages_bytes_limit: Option<usize>,
         transaction_status_sender: Option<TransactionStatusSender>,
-        replay_vote_sender: Option<ReplayVoteSender>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
     ) -> Arc<Self> {
         Self::do_new(
             handler_count,
             log_messages_bytes_limit,
             transaction_status_sender,
-            replay_vote_sender,
             prioritization_fee_cache,
             DEFAULT_POOL_CLEANER_INTERVAL,
             DEFAULT_MAX_POOLING_DURATION,
@@ -157,7 +153,6 @@ where
         handler_count: Option<usize>,
         log_messages_bytes_limit: Option<usize>,
         transaction_status_sender: Option<TransactionStatusSender>,
-        replay_vote_sender: Option<ReplayVoteSender>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
         pool_cleaner_interval: Duration,
         max_pooling_duration: Duration,
@@ -175,7 +170,6 @@ where
             handler_context: HandlerContext {
                 log_messages_bytes_limit,
                 transaction_status_sender,
-                replay_vote_sender,
                 prioritization_fee_cache,
             },
             weak_self: weak_self.clone(),
@@ -283,14 +277,12 @@ where
         handler_count: Option<usize>,
         log_messages_bytes_limit: Option<usize>,
         transaction_status_sender: Option<TransactionStatusSender>,
-        replay_vote_sender: Option<ReplayVoteSender>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
     ) -> InstalledSchedulerPoolArc {
         Self::new(
             handler_count,
             log_messages_bytes_limit,
             transaction_status_sender,
-            replay_vote_sender,
             prioritization_fee_cache,
         )
     }
@@ -441,11 +433,9 @@ impl TaskHandler for DefaultTaskHandler {
             &batch_with_indexes,
             bank,
             handler_context.transaction_status_sender.as_ref(),
-            handler_context.replay_vote_sender.as_ref(),
             timings,
             handler_context.log_messages_bytes_limit,
             &handler_context.prioritization_fee_cache,
-            false, // skip_commit
         );
         sleepless_testing::at(CheckPoint::TaskHandled(index));
     }

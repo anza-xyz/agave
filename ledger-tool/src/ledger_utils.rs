@@ -321,7 +321,6 @@ pub fn load_and_process_ledger(
         }
         BlockVerificationMethod::UnifiedScheduler => {
             let no_transaction_status_sender = None;
-            let no_replay_vote_sender = None;
             let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
             bank_forks
                 .write()
@@ -330,7 +329,6 @@ pub fn load_and_process_ledger(
                     unified_scheduler_handler_threads,
                     process_options.runtime_config.log_messages_bytes_limit,
                     no_transaction_status_sender,
-                    no_replay_vote_sender,
                     ignored_prioritization_fee_cache,
                 ));
         }

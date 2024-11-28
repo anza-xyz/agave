@@ -4953,11 +4953,7 @@ impl Bank {
         recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
-        vote_only_execution: bool,
     ) -> (Vec<TransactionCommitResult>, TransactionBalancesSet) {
-        if vote_only_execution {
-            return self.load_execute_and_commit_for_vote_only_execution(batch, max_age, timings);
-        }
         let pre_balances = if collect_balances {
             self.collect_balances(batch)
         } else {
@@ -5029,7 +5025,6 @@ impl Bank {
             },
             &mut ExecuteTimings::default(),
             Some(1000 * 1000),
-            false, // vote_only_execution
         );
 
         commit_results.remove(0)
@@ -5069,7 +5064,6 @@ impl Bank {
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
             None,
-            false, // vote_only_execution
         )
         .0
         .into_iter()

@@ -136,11 +136,9 @@ pub fn execute_batch(
     batch: &TransactionBatchWithIndexes<SanitizedTransaction>,
     bank: &Arc<Bank>,
     transaction_status_sender: Option<&TransactionStatusSender>,
-    replay_vote_sender: Option<&ReplayVoteSender>,
     timings: &mut ExecuteTimings,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
-    vote_only_execution: bool,
 ) -> Result<()> {
     let TransactionBatchWithIndexes {
         batch,
@@ -163,20 +161,12 @@ pub fn execute_batch(
         ExecutionRecordingConfig::new_single_setting(transaction_status_sender.is_some()),
         timings,
         log_messages_bytes_limit,
-        vote_only_execution,
-    );
-
-    bank_utils::find_and_send_votes(
-        batch.sanitized_transactions(),
-        &commit_results,
-        replay_vote_sender,
     );
 
     // TODO(wen): block cost check needs to be activated for vote only replay stage.
     let (check_block_cost_limits_result, check_block_cost_limits_us) = measure_us!(if bank
         .feature_set
         .is_active(&solana_feature_set::apply_cost_tracker_during_replay::id())
-        && !vote_only_execution
     {
         check_block_cost_limits(bank, &commit_results, batch.sanitized_transactions())
     } else {
@@ -288,10 +278,8 @@ fn execute_batches_internal(
     replay_tx_thread_pool: &ThreadPool,
     batches: &[TransactionBatchWithIndexes<SanitizedTransaction>],
     transaction_status_sender: Option<&TransactionStatusSender>,
-    replay_vote_sender: Option<&ReplayVoteSender>,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
-    vote_only_execution: bool,
 ) -> Result<ExecuteBatchesInternalMetrics> {
     assert!(!batches.is_empty());
     let execution_timings_per_thread: Mutex<HashMap<usize, ThreadExecuteTimings>> =
@@ -309,11 +297,9 @@ fn execute_batches_internal(
                     transaction_batch,
                     bank,
                     transaction_status_sender,
-                    replay_vote_sender,
                     &mut timings,
                     log_messages_bytes_limit,
                     prioritization_fee_cache,
-                    vote_only_execution,
                 ));
 
                 let thread_index = replay_tx_thread_pool.current_thread_index().unwrap();
@@ -376,7 +362,7 @@ fn process_batches(
 ) -> Result<()> {
     if vote_only_execution {
         let results = batches
-            .into_iter()
+            .iter()
             .map(|batch| {
                 let TransactionBatchWithIndexes {
                     batch,
@@ -438,11 +424,9 @@ fn process_batches(
             replay_tx_thread_pool,
             batches,
             transaction_status_sender,
-            replay_vote_sender,
             batch_execution_timing,
             log_messages_bytes_limit,
             prioritization_fee_cache,
-            vote_only_execution,
         )
     }
 }
@@ -492,11 +476,9 @@ fn rebatch_and_execute_batches(
     replay_tx_thread_pool: &ThreadPool,
     batches: &[TransactionBatchWithIndexes<SanitizedTransaction>],
     transaction_status_sender: Option<&TransactionStatusSender>,
-    replay_vote_sender: Option<&ReplayVoteSender>,
     timing: &mut BatchExecutionTiming,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
-    vote_only_execution: bool,
 ) -> Result<()> {
     if batches.is_empty() {
         return Ok(());
@@ -562,10 +544,8 @@ fn rebatch_and_execute_batches(
         replay_tx_thread_pool,
         rebatched_txs,
         transaction_status_sender,
-        replay_vote_sender,
         log_messages_bytes_limit,
         prioritization_fee_cache,
-        vote_only_execution,
     )?;
 
     // Pass false because this code-path is never touched by unified scheduler.
