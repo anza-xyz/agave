@@ -87,6 +87,7 @@ members = [
     "programs/zk-token-proof-tests",
     "pubsub-client",
     "quic-client",
+    "tls-utils",
     "rayon-threadlimit",
     "rbpf-cli",
     "remote-wallet",
@@ -494,6 +495,7 @@ solana-metrics = { path = "metrics", version = "=2.2.0" }
 solana-msg = { path = "sdk/msg", version = "=2.2.0" }
 solana-native-token = { path = "sdk/native-token", version = "=2.2.0" }
 solana-net-utils = { path = "net-utils", version = "=2.2.0" }
+solana-tls-utils = { path = "tls-utils", version = "=2.2.0" }
 solana-nohash-hasher = "0.2.1"
 solana-nonce = { path = "sdk/nonce", version = "=2.2.0" }
 solana-notifier = { path = "notifier", version = "=2.2.0" }
