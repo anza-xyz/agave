@@ -374,7 +374,33 @@ fn process_batches(
     prioritization_fee_cache: &PrioritizationFeeCache,
     vote_only_execution: bool,
 ) -> Result<()> {
-    if !vote_only_execution && bank.has_installed_scheduler() {
+    if vote_only_execution {
+        let results = batches
+            .into_iter()
+            .map(|batch| {
+                let TransactionBatchWithIndexes {
+                    batch,
+                    transaction_indexes: _,
+                } = batch;
+                let (commit_results, _) = batch
+                    .bank()
+                    .load_execute_and_commit_for_vote_only_execution(
+                        batch,
+                        MAX_PROCESSING_AGE,
+                        &mut ExecuteTimings::default(),
+                    );
+                bank_utils::find_and_send_votes(
+                    batch.sanitized_transactions(),
+                    &commit_results,
+                    replay_vote_sender,
+                );
+                let first_err = get_first_error(batch, &commit_results);
+                first_err.map(|(result, _)| result).unwrap_or(Ok(()))
+            })
+            .collect::<Vec<Result<()>>>();
+        return first_err(&results);
+    }
+    if bank.has_installed_scheduler() {
         debug!(
             "process_batches()/schedule_batches_for_execution({} batches)",
             batches.len()
