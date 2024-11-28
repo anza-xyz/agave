@@ -1532,6 +1532,26 @@ impl Validator {
             return Err(ValidatorError::WenRestartFinished.into());
         }
 
+        /*
+        let forwarder_client: Box<dyn TransactionClient> = if config.use_tpu_client_next {
+            TpuClientNextClient::new(
+                get_runtime_handle(),
+                my_tpu_address,
+                config.send_transaction_service_config.tpu_peers.clone(),
+                Some(leader_info),
+                config.send_transaction_service_config.leader_forward_count,
+                Some(&*identity_keypair),
+            )
+        } else {
+            ConnectionCacheClient::new(
+                connection_cache.clone(),
+                my_tpu_address,
+                config.send_transaction_service_config.tpu_peers.clone(),
+                Some(leader_info),
+                config.send_transaction_service_config.leader_forward_count,
+            )
+        };*/
+
         let (tpu, mut key_notifies) = Tpu::new(
             &cluster_info,
             &poh_recorder,

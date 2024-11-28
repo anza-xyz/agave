@@ -25,6 +25,9 @@ use {
             },
         },
         banking_trace::BankingPacketReceiver,
+        forwarder_client::{
+            ForwarderClient, ForwarderConnectionCacheClient, ForwarderLeaderUpdater,
+        },
         tracer_packet_stats::TracerPacketStats,
         validator::BlockProductionMethod,
     },
@@ -494,13 +497,11 @@ impl BankingStage {
                     ),
                 };
 
-                let forwarder = Forwarder::new(
-                    poh_recorder.clone(),
-                    bank_forks.clone(),
-                    cluster_info.clone(),
-                    connection_cache.clone(),
-                    data_budget.clone(),
-                );
+                let leader_updater =
+                    ForwarderLeaderUpdater::new(cluster_info.clone(), poh_recorder.clone());
+                let client =
+                    ForwarderConnectionCacheClient::new(connection_cache.clone(), leader_updater);
+                let forwarder = Forwarder::new(client, bank_forks.clone(), data_budget.clone());
 
                 Self::spawn_thread_local_multi_iterator_thread(
                     id,
@@ -555,6 +556,9 @@ impl BankingStage {
         // + 1 for the central scheduler thread
         let mut bank_thread_hdls = Vec::with_capacity(num_threads as usize + 1);
 
+        let leader_updater =
+            ForwarderLeaderUpdater::new(cluster_info.clone(), poh_recorder.clone());
+        let client = ForwarderConnectionCacheClient::new(connection_cache.clone(), leader_updater);
         // Spawn legacy voting threads first: 1 gossip, 1 tpu
         for (id, packet_receiver, vote_source) in [
             (0, gossip_vote_receiver, VoteSource::Gossip),
@@ -567,13 +571,7 @@ impl BankingStage {
                 committer.clone(),
                 transaction_recorder.clone(),
                 log_messages_bytes_limit,
-                Forwarder::new(
-                    poh_recorder.clone(),
-                    bank_forks.clone(),
-                    cluster_info.clone(),
-                    connection_cache.clone(),
-                    data_budget.clone(),
-                ),
+                Forwarder::new(client.clone(), bank_forks.clone(), data_budget.clone()),
                 UnprocessedTransactionStorage::new_vote_storage(
                     latest_unprocessed_votes.clone(),
                     vote_source,
@@ -615,15 +613,8 @@ impl BankingStage {
             )
         }
 
-        let forwarder = enable_forwarding.then(|| {
-            Forwarder::new(
-                poh_recorder.clone(),
-                bank_forks.clone(),
-                cluster_info.clone(),
-                connection_cache.clone(),
-                data_budget.clone(),
-            )
-        });
+        let forwarder = enable_forwarding
+            .then(|| Forwarder::new(client, bank_forks.clone(), data_budget.clone()));
 
         // Spawn the central scheduler thread
         bank_thread_hdls.push({
@@ -652,14 +643,14 @@ impl BankingStage {
         Self { bank_thread_hdls }
     }
 
-    fn spawn_thread_local_multi_iterator_thread<T: LikeClusterInfo>(
+    fn spawn_thread_local_multi_iterator_thread<Client: ForwarderClient>(
         id: u32,
         packet_receiver: BankingPacketReceiver,
         decision_maker: DecisionMaker,
         committer: Committer,
         transaction_recorder: TransactionRecorder,
         log_messages_bytes_limit: Option<usize>,
-        mut forwarder: Forwarder<T>,
+        forwarder: Forwarder<Client>,
         unprocessed_transaction_storage: UnprocessedTransactionStorage,
     ) -> JoinHandle<()> {
         let mut packet_receiver = PacketReceiver::new(id, packet_receiver);
@@ -676,7 +667,7 @@ impl BankingStage {
                 Self::process_loop(
                     &mut packet_receiver,
                     &decision_maker,
-                    &mut forwarder,
+                    forwarder,
                     &consumer,
                     id,
                     unprocessed_transaction_storage,
@@ -686,9 +677,9 @@ impl BankingStage {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn process_buffered_packets<T: LikeClusterInfo>(
+    fn process_buffered_packets<Client: ForwarderClient>(
         decision_maker: &DecisionMaker,
-        forwarder: &mut Forwarder<T>,
+        forwarder: &mut Forwarder<Client>,
         consumer: &Consumer,
         unprocessed_transaction_storage: &mut UnprocessedTransactionStorage,
         banking_stage_stats: &BankingStageStats,
@@ -752,10 +743,10 @@ impl BankingStage {
         }
     }
 
-    fn process_loop<T: LikeClusterInfo>(
+    fn process_loop<Client: ForwarderClient>(
         packet_receiver: &mut PacketReceiver,
         decision_maker: &DecisionMaker,
-        forwarder: &mut Forwarder<T>,
+        mut forwarder: Forwarder<Client>,
         consumer: &Consumer,
         id: u32,
         mut unprocessed_transaction_storage: UnprocessedTransactionStorage,
@@ -772,7 +763,7 @@ impl BankingStage {
             {
                 let (_, process_buffered_packets_us) = measure_us!(Self::process_buffered_packets(
                     decision_maker,
-                    forwarder,
+                    &mut forwarder,
                     consumer,
                     &mut unprocessed_transaction_storage,
                     &banking_stage_stats,

@@ -20,7 +20,7 @@ use {
         immutable_deserialized_packet::ImmutableDeserializedPacket,
         packet_deserializer::PacketDeserializer,
         scheduler_messages::MaxAge,
-        ForwardOption, LikeClusterInfo, TOTAL_BUFFERED_PACKETS,
+        ForwardOption, ForwarderClient, TOTAL_BUFFERED_PACKETS,
     },
     arrayvec::ArrayVec,
     crossbeam_channel::RecvTimeoutError,
@@ -49,7 +49,7 @@ use {
 };
 
 /// Controls packet and transaction flow into scheduler, and scheduling execution.
-pub(crate) struct SchedulerController<T: LikeClusterInfo> {
+pub(crate) struct SchedulerController<Client: ForwarderClient> {
     /// Decision maker for determining what should be done with transactions.
     decision_maker: DecisionMaker,
     /// Packet/Transaction ingress.
@@ -73,17 +73,17 @@ pub(crate) struct SchedulerController<T: LikeClusterInfo> {
     /// Metric report handles for the worker threads.
     worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
     /// State for forwarding packets to the leader, if enabled.
-    forwarder: Option<Forwarder<T>>,
+    forwarder: Option<Forwarder<Client>>,
 }
 
-impl<T: LikeClusterInfo> SchedulerController<T> {
+impl<Client: ForwarderClient> SchedulerController<Client> {
     pub fn new(
         decision_maker: DecisionMaker,
         packet_deserializer: PacketDeserializer,
         bank_forks: Arc<RwLock<BankForks>>,
         scheduler: PrioGraphScheduler,
         worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
-        forwarder: Option<Forwarder<T>>,
+        forwarder: Option<Forwarder<Client>>,
     ) -> Self {
         Self {
             decision_maker,
@@ -720,6 +720,7 @@ mod tests {
                 consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
                 scheduler_messages::{ConsumeWork, FinishedConsumeWork, TransactionBatchId},
                 tests::create_slow_genesis_config,
+                ForwarderConnectionCacheClient,
             },
             banking_trace::BankingPacketBatch,
             sigverify::SigverifyTracerPacketStats,
@@ -762,7 +763,13 @@ mod tests {
         finished_consume_work_sender: Sender<FinishedConsumeWork>,
     }
 
-    fn create_test_frame(num_threads: usize) -> (TestFrame, SchedulerController<Arc<ClusterInfo>>) {
+    fn create_test_frame(
+        num_threads: usize,
+    ) -> (
+        TestFrame,
+        // TODO parametrize later
+        SchedulerController<ForwarderConnectionCacheClient<Arc<ClusterInfo>>>,
+    ) {
         let GenesisConfigInfo {
             mut genesis_config,
             mint_keypair,
@@ -857,7 +864,9 @@ mod tests {
     // In the tests, the decision will not become stale, so it is more convenient
     // to receive first and then schedule.
     fn test_receive_then_schedule(
-        scheduler_controller: &mut SchedulerController<Arc<ClusterInfo>>,
+        scheduler_controller: &mut SchedulerController<
+            ForwarderConnectionCacheClient<Arc<ClusterInfo>>,
+        >,
     ) {
         let decision = scheduler_controller
             .decision_maker

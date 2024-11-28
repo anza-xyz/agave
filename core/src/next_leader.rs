@@ -37,15 +37,6 @@ pub(crate) fn upcoming_leader_tpu_vote_sockets(
         .collect()
 }
 
-pub(crate) fn next_leader_tpu_vote(
-    cluster_info: &impl LikeClusterInfo,
-    poh_recorder: &RwLock<PohRecorder>,
-) -> Option<(Pubkey, SocketAddr)> {
-    next_leader(cluster_info, poh_recorder, |node| {
-        node.tpu_vote(Protocol::UDP)
-    })
-}
-
 pub(crate) fn next_leader<F, E>(
     cluster_info: &impl LikeClusterInfo,
     poh_recorder: &RwLock<PohRecorder>,

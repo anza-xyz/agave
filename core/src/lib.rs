@@ -22,6 +22,7 @@ pub mod consensus;
 pub mod cost_update_service;
 pub mod drop_bank_service;
 pub mod fetch_stage;
+pub(crate) mod forwarder_client;
 pub mod gen_keys;
 pub mod next_leader;
 pub mod optimistic_confirmation_verifier;

@@ -6,17 +6,11 @@ use {
         ForwardOption,
     },
     crate::{
-        banking_stage::{
-            immutable_deserialized_packet::ImmutableDeserializedPacket, LikeClusterInfo,
-        },
-        next_leader::{next_leader, next_leader_tpu_vote},
-        tracer_packet_stats::TracerPacketStats,
+        banking_stage::immutable_deserialized_packet::ImmutableDeserializedPacket,
+        forwarder_client::ForwarderClient, tracer_packet_stats::TracerPacketStats,
     },
-    solana_client::connection_cache::ConnectionCache,
-    solana_connection_cache::client_connection::ClientConnection as TpuConnection,
     solana_feature_set::FeatureSet,
     solana_perf::{data_budget::DataBudget, packet::Packet},
-    solana_poh::poh_recorder::PohRecorder,
     solana_runtime::bank_forks::BankForks,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk::{pubkey::Pubkey, transport::TransportError},
@@ -29,30 +23,24 @@ use {
     },
 };
 
-pub struct Forwarder<T: LikeClusterInfo> {
-    poh_recorder: Arc<RwLock<PohRecorder>>,
+pub(crate) struct Forwarder<Client: ForwarderClient> {
     bank_forks: Arc<RwLock<BankForks>>,
     socket: UdpSocket,
-    cluster_info: T,
-    connection_cache: Arc<ConnectionCache>,
+    client: Client,
     data_budget: Arc<DataBudget>,
     forward_packet_batches_by_accounts: ForwardPacketBatchesByAccounts,
 }
 
-impl<T: LikeClusterInfo> Forwarder<T> {
+impl<Client: ForwarderClient> Forwarder<Client> {
     pub fn new(
-        poh_recorder: Arc<RwLock<PohRecorder>>,
+        client: Client,
         bank_forks: Arc<RwLock<BankForks>>,
-        cluster_info: T,
-        connection_cache: Arc<ConnectionCache>,
         data_budget: Arc<DataBudget>,
     ) -> Self {
         Self {
-            poh_recorder,
             bank_forks,
             socket: UdpSocket::bind("0.0.0.0:0").unwrap(),
-            cluster_info,
-            connection_cache,
+            client,
             data_budget,
             forward_packet_batches_by_accounts:
                 ForwardPacketBatchesByAccounts::new_with_default_batch_limits(),
@@ -197,11 +185,7 @@ impl<T: LikeClusterInfo> Forwarder<T> {
                 return (Ok(()), 0, None);
             }
             ForwardOption::ForwardTransaction => {
-                let Some((leader_pubkey, addr)) =
-                    next_leader(&self.cluster_info, &self.poh_recorder, |node| {
-                        node.tpu_forwards(self.connection_cache.protocol())
-                    })
-                else {
+                let Some((leader_pubkey, _)) = self.client.get_next_leader() else {
                     return (Ok(()), 0, None);
                 };
                 self.update_data_budget();
@@ -213,20 +197,17 @@ impl<T: LikeClusterInfo> Forwarder<T> {
                     .collect();
                 let packet_vec_len = packet_vec.len();
                 if packet_vec_len == 0 {
-                    return (Ok(()), 0, Some(leader_pubkey));
+                    return (Ok(()), 0, None);
                 }
                 // TODO: see https://github.com/solana-labs/solana/issues/23819
                 // fix this so returns the correct number of succeeded packets
                 // when there's an error sending the batch. This was left as-is for now
                 // in favor of shipping Quic support, which was considered higher-priority
-                let conn = self.connection_cache.get_connection(&addr);
-                let res = conn.send_data_batch_async(packet_vec);
-                (res, packet_vec_len, Some(leader_pubkey))
+                self.client.send_transaction_batch(packet_vec);
+                (Ok(()), packet_vec_len, Some(leader_pubkey))
             }
             ForwardOption::ForwardTpuVote => {
-                let Some((leader_pubkey, addr)) =
-                    next_leader_tpu_vote(&self.cluster_info, &self.poh_recorder)
-                else {
+                let Some((leader_pubkey, addr)) = self.client.get_next_leader_vote() else {
                     return (Ok(()), 0, None);
                 };
                 self.update_data_budget();
@@ -312,12 +293,16 @@ mod tests {
             tests::{create_slow_genesis_config_with_leader, new_test_cluster_info},
             unprocessed_packet_batches::{DeserializedPacket, UnprocessedPacketBatches},
             unprocessed_transaction_storage::ThreadType,
+            ForwarderConnectionCacheClient, ForwarderLeaderUpdater,
         },
-        solana_client::rpc_client::SerializableTransaction,
+        solana_client::{connection_cache::ConnectionCache, rpc_client::SerializableTransaction},
         solana_gossip::cluster_info::{ClusterInfo, Node},
         solana_ledger::{blockstore::Blockstore, genesis_utils::GenesisConfigInfo},
         solana_perf::packet::PacketFlags,
-        solana_poh::{poh_recorder::create_test_recorder, poh_service::PohService},
+        solana_poh::{
+            poh_recorder::{create_test_recorder, PohRecorder},
+            poh_service::PohService,
+        },
         solana_runtime::bank::Bank,
         solana_sdk::{
             hash::Hash, poh_config::PohConfig, signature::Keypair, signer::Signer,
@@ -464,13 +449,13 @@ mod tests {
         ];
         let runtime = rt("solQuicTestRt".to_string());
         for (_name, data_budget, expected_num_forwarded) in test_cases {
-            let mut forwarder = Forwarder::new(
-                poh_recorder.clone(),
-                bank_forks.clone(),
-                cluster_info.clone(),
+            let leader_updater =
+                ForwarderLeaderUpdater::new(cluster_info.clone(), poh_recorder.clone());
+            let client = ForwarderConnectionCacheClient::new(
                 Arc::new(ConnectionCache::new("connection_cache_test")),
-                Arc::new(data_budget),
+                leader_updater,
             );
+            let mut forwarder = Forwarder::new(client, bank_forks.clone(), Arc::new(data_budget));
             let unprocessed_packet_batches: UnprocessedPacketBatches =
                 UnprocessedPacketBatches::from_iter(
                     vec![deserialized_packet.clone()].into_iter(),
@@ -561,7 +546,6 @@ mod tests {
             ),
             ThreadType::Transactions,
         );
-        let connection_cache = ConnectionCache::new("connection_cache_test");
 
         let test_cases = vec![
             ("fwd-normal", true, 2, 1),
@@ -569,13 +553,13 @@ mod tests {
             ("fwd-no-hold", false, 0, 0),
         ];
 
-        let mut forwarder = Forwarder::new(
-            poh_recorder,
-            bank_forks,
-            cluster_info,
-            Arc::new(connection_cache),
-            Arc::new(DataBudget::default()),
+        let leader_updater =
+            ForwarderLeaderUpdater::new(cluster_info.clone(), poh_recorder.clone());
+        let client = ForwarderConnectionCacheClient::new(
+            Arc::new(ConnectionCache::new("connection_cache_test")),
+            leader_updater,
         );
+        let mut forwarder = Forwarder::new(client, bank_forks, Arc::new(DataBudget::default()));
         let runtime = rt("solQuicTestRt".to_string());
         for (name, hold, expected_num_unprocessed, expected_num_processed) in test_cases {
             let stats = BankingStageStats::default();

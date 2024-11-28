@@ -2,14 +2,13 @@
 //! tpu-client-next and ConnectionCache.
 // TODO Should it be inside banking stage?
 use {
-    crate::next_leader::next_leader,
+    crate::{banking_stage::LikeClusterInfo, next_leader::next_leader},
     async_trait::async_trait,
     log::warn,
     solana_client::connection_cache::{ConnectionCache, Protocol},
     solana_connection_cache::client_connection::ClientConnection as TpuConnection,
-    solana_gossip::cluster_info::ClusterInfo,
     solana_poh::poh_recorder::PohRecorder,
-    solana_sdk::{quic::NotifyKeyUpdate, signature::Keypair},
+    solana_sdk::{pubkey::Pubkey, quic::NotifyKeyUpdate, signature::Keypair},
     solana_tpu_client_next::{
         connection_workers_scheduler::{
             ConnectionWorkersSchedulerConfig, Fanout, TransactionStatsAndReceiver,
@@ -30,37 +29,36 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
-pub trait ForwarderClient {
-    fn send_transactions_in_batch(&self, wire_transactions: Vec<Vec<u8>>);
+pub(crate) trait ForwarderClient: Send + Clone + 'static {
+    fn send_transaction_batch(&self, wire_transactions: Vec<Vec<u8>>);
 
-    fn protocol(&self) -> Protocol;
+    fn get_next_leader(&self) -> Option<(Pubkey, SocketAddr)>;
+    fn get_next_leader_vote(&self) -> Option<(Pubkey, SocketAddr)>;
 }
 
-struct ForwarderConnectionCacheClient {
+#[derive(Clone)]
+pub(crate) struct ForwarderConnectionCacheClient<T: LikeClusterInfo> {
+    //TODo why Arc? ConnectionCache is Arc inside
     connection_cache: Arc<ConnectionCache>,
-    cluster_info: Arc<ClusterInfo>,
-    poh_recorder: Arc<RwLock<PohRecorder>>,
+    leader_updater: ForwarderLeaderUpdater<T>,
 }
 
-impl ForwarderConnectionCacheClient {
+impl<T: LikeClusterInfo> ForwarderConnectionCacheClient<T> {
     pub fn new(
         connection_cache: Arc<ConnectionCache>,
-        cluster_info: Arc<ClusterInfo>,
-        poh_recorder: Arc<RwLock<PohRecorder>>,
+        leader_updater: ForwarderLeaderUpdater<T>,
     ) -> Self {
         Self {
             connection_cache,
-            cluster_info,
-            poh_recorder,
+            leader_updater,
         }
     }
 }
 
-impl ForwarderClient for ForwarderConnectionCacheClient {
-    fn send_transactions_in_batch(&self, wire_transactions: Vec<Vec<u8>>) {
-        let Some((pubkey, address)) = next_leader(&self.cluster_info, &self.poh_recorder, |node| {
-            node.tpu_forwards(self.connection_cache.protocol())
-        }) else {
+impl<T: LikeClusterInfo> ForwarderClient for ForwarderConnectionCacheClient<T> {
+    fn send_transaction_batch(&self, wire_transactions: Vec<Vec<u8>>) {
+        let address = self.leader_updater.get_next_leader();
+        let Some((_pubkey, address)) = address else {
             return;
         };
         let conn = self.connection_cache.get_connection(&address);
@@ -74,30 +72,52 @@ impl ForwarderClient for ForwarderConnectionCacheClient {
         }
     }
 
-    // Needed?
-    fn protocol(&self) -> Protocol {
-        self.connection_cache.protocol()
+    fn get_next_leader(&self) -> Option<(Pubkey, SocketAddr)> {
+        self.leader_updater.get_next_leader()
+    }
+
+    fn get_next_leader_vote(&self) -> Option<(Pubkey, SocketAddr)> {
+        self.leader_updater.get_next_leader_vote()
     }
 }
 
-impl NotifyKeyUpdate for ForwarderConnectionCacheClient {
+impl<T: LikeClusterInfo> NotifyKeyUpdate for ForwarderConnectionCacheClient<T> {
     fn update_key(&self, validator_identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
         self.connection_cache.update_key(validator_identity)
     }
 }
 
 #[derive(Clone)]
-struct ForwarderLeaderUpdater {
-    cluster_info: Arc<ClusterInfo>,
+pub(crate) struct ForwarderLeaderUpdater<T: LikeClusterInfo> {
+    cluster_info: T,
     poh_recorder: Arc<RwLock<PohRecorder>>,
 }
 
-#[async_trait]
-impl LeaderUpdater for ForwarderLeaderUpdater {
-    fn next_leaders(&mut self, _lookahead_leaders: usize) -> Vec<SocketAddr> {
-        let Some((pubkey, address)) = next_leader(&self.cluster_info, &self.poh_recorder, |node| {
+impl<T: LikeClusterInfo> ForwarderLeaderUpdater<T> {
+    pub fn new(cluster_info: T, poh_recorder: Arc<RwLock<PohRecorder>>) -> Self {
+        Self {
+            cluster_info,
+            poh_recorder,
+        }
+    }
+
+    pub fn get_next_leader(&self) -> Option<(Pubkey, SocketAddr)> {
+        next_leader(&self.cluster_info, &self.poh_recorder, |node| {
             node.tpu_forwards(Protocol::QUIC)
-        }) else {
+        })
+    }
+
+    pub fn get_next_leader_vote(&self) -> Option<(Pubkey, SocketAddr)> {
+        next_leader(&self.cluster_info, &self.poh_recorder, |node| {
+            node.tpu_vote(Protocol::UDP)
+        })
+    }
+}
+
+#[async_trait]
+impl<T: LikeClusterInfo> LeaderUpdater for ForwarderLeaderUpdater<T> {
+    fn next_leaders(&mut self, _lookahead_leaders: usize) -> Vec<SocketAddr> {
+        let Some((_pubkey, address)) = self.get_next_leader() else {
             return vec![];
         };
         vec![address]
@@ -114,19 +134,19 @@ type TpuClientJoinHandle =
 /// * update validator identity keypair and update scheduler (implements [`NotifyKeyUpdate`]).
 ///  so that the underlying task sending
 #[derive(Clone)]
-pub struct ForwarderTpuClientNextClient {
+pub struct ForwarderTpuClientNextClient<T: LikeClusterInfo> {
     runtime_handle: Handle,
     sender: mpsc::Sender<TransactionBatch>,
     // This handle is needed to implement `NotifyKeyUpdate` trait. It's only
     // method takes &self and thus we need to wrap with Mutex
     join_and_cancel: Arc<Mutex<(Option<TpuClientJoinHandle>, CancellationToken)>>,
-    leader_updater: ForwarderLeaderUpdater,
+    leader_updater: ForwarderLeaderUpdater<T>,
 }
 
-impl ForwarderTpuClientNextClient {
+impl<T: LikeClusterInfo> ForwarderTpuClientNextClient<T> {
     pub fn new(
         runtime_handle: Handle,
-        cluster_info: Arc<ClusterInfo>,
+        cluster_info: T,
         poh_recorder: Arc<RwLock<PohRecorder>>,
         validator_identity: Option<&Keypair>,
     ) -> Self {
@@ -221,15 +241,15 @@ impl ForwarderTpuClientNextClient {
     }
 }
 
-impl NotifyKeyUpdate for ForwarderTpuClientNextClient {
+impl<T: LikeClusterInfo> NotifyKeyUpdate for ForwarderTpuClientNextClient<T> {
     fn update_key(&self, validator_identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
         self.runtime_handle
             .block_on(self.do_update_key(validator_identity))
     }
 }
 
-impl ForwarderClient for ForwarderTpuClientNextClient {
-    fn send_transactions_in_batch(&self, wire_transactions: Vec<Vec<u8>>) {
+impl<T: LikeClusterInfo> ForwarderClient for ForwarderTpuClientNextClient<T> {
+    fn send_transaction_batch(&self, wire_transactions: Vec<Vec<u8>>) {
         self.runtime_handle.spawn({
             let sender = self.sender.clone();
             async move {
@@ -241,7 +261,11 @@ impl ForwarderClient for ForwarderTpuClientNextClient {
         });
     }
 
-    fn protocol(&self) -> Protocol {
-        Protocol::QUIC
+    fn get_next_leader(&self) -> Option<(Pubkey, SocketAddr)> {
+        self.leader_updater.get_next_leader()
+    }
+
+    fn get_next_leader_vote(&self) -> Option<(Pubkey, SocketAddr)> {
+        self.leader_updater.get_next_leader_vote()
     }
 }
