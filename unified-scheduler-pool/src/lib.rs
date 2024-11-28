@@ -1946,7 +1946,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
                 let mut busy_start = Instant::now();
                 loop {
-                    let busy_waker = if busy_start.elapsed() < const { Duration::from_micros(100) } {
+                    let busy_waker = if busy_start.elapsed() < const { Duration::from_micros(100) }
+                    {
                         do_now
                     } else {
                         dont_now
