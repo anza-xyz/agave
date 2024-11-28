@@ -260,11 +260,11 @@ impl Message {
     /// # use solana_program::example_mocks::solana_rpc_client;
     /// use anyhow::Result;
     /// use borsh::{BorshSerialize, BorshDeserialize};
+    /// use solana_instruction::Instruction;
+    /// use solana_message::Message;
+    /// use solana_pubkey::Pubkey;
     /// use solana_rpc_client::rpc_client::RpcClient;
     /// use solana_sdk::{
-    ///     instruction::Instruction,
-    ///     message::Message,
-    ///     pubkey::Pubkey,
     ///     signature::{Keypair, Signer},
     ///     transaction::Transaction,
     /// };
@@ -332,11 +332,11 @@ impl Message {
     /// # use solana_program::example_mocks::solana_rpc_client;
     /// use anyhow::Result;
     /// use borsh::{BorshSerialize, BorshDeserialize};
+    /// use solana_instruction::Instruction;
+    /// use solana_message::Message;
+    /// use solana_pubkey::Pubkey;
     /// use solana_rpc_client::rpc_client::RpcClient;
     /// use solana_sdk::{
-    ///     instruction::Instruction,
-    ///     message::Message,
-    ///     pubkey::Pubkey,
     ///     signature::{Keypair, Signer},
     ///     transaction::Transaction,
     /// };
@@ -429,17 +429,16 @@ impl Message {
     /// # use solana_program::example_mocks::solana_rpc_client;
     /// use anyhow::Result;
     /// use borsh::{BorshSerialize, BorshDeserialize};
+    /// use solana_hash::Hash;
+    /// use solana_instruction::Instruction;
+    /// use solana_message::Message;
+    /// use solana_pubkey::Pubkey;
     /// use solana_rpc_client::rpc_client::RpcClient;
     /// use solana_sdk::{
-    ///     hash::Hash,
-    ///     instruction::Instruction,
-    ///     message::Message,
-    ///     nonce,
-    ///     pubkey::Pubkey,
     ///     signature::{Keypair, Signer},
-    ///     system_instruction,
     ///     transaction::Transaction,
     /// };
+    /// use solana_system_interface::instruction::create_nonce_account;
     ///
     /// // A custom program instruction. This would typically be defined in
     /// // another crate so it can be shared between the on-chain program and
@@ -489,12 +488,12 @@ impl Message {
     ///     -> Result<Pubkey>
     /// {
     ///     let nonce_account_address = Keypair::new();
-    ///     let nonce_account_size = nonce::State::size();
+    ///     let nonce_account_size = solana_nonce::state::State::size();
     ///     let nonce_rent = client.get_minimum_balance_for_rent_exemption(nonce_account_size)?;
     ///
     ///     // Assigning the nonce authority to the payer so they can sign for the withdrawal,
     ///     // and we can throw away the nonce address secret key.
-    ///     let create_nonce_instr = system_instruction::create_nonce_account(
+    ///     let create_nonce_instr = create_nonce_account(
     ///         &payer.pubkey(),
     ///         &nonce_account_address.pubkey(),
     ///         &payer.pubkey(),

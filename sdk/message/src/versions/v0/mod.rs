@@ -205,13 +205,12 @@ impl Message {
     /// # use std::borrow::Cow;
     /// # use solana_sdk::account::Account;
     /// use anyhow::Result;
+    /// use solana_instruction::{AccountMeta, Instruction};
+    /// use solana_message::{AddressLookupTableAccount, VersionedMessage, v0};
+    /// use solana_pubkey::Pubkey;
     /// use solana_rpc_client::rpc_client::RpcClient;
     /// use solana_program::address_lookup_table::{self, state::{AddressLookupTable, LookupTableMeta}};
     /// use solana_sdk::{
-    ///      address_lookup_table::AddressLookupTableAccount,
-    ///      instruction::{AccountMeta, Instruction},
-    ///      message::{VersionedMessage, v0},
-    ///      pubkey::Pubkey,
     ///      signature::{Keypair, Signer},
     ///      transaction::VersionedTransaction,
     /// };
