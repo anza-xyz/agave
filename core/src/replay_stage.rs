@@ -2611,7 +2611,7 @@ impl ReplayStage {
                 vote_account_pubkey,
                 &authorized_voter_keypair.pubkey(),
             )
-            .expect("Switch threshold failure should not lead to voting");
+            .expect("Switch failure should not lead to voting");
 
         let mut vote_tx = Transaction::new_with_payer(&[vote_ix], Some(&node_keypair.pubkey()));
 

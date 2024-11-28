@@ -873,6 +873,7 @@ mod tests {
         solana_gossip::cluster_info::ClusterInfo,
         solana_inline_spl::token,
         solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
+        solana_net_utils::bind_to_unspecified,
         solana_rpc::rpc::create_validator_exit,
         solana_runtime::{
             bank::{Bank, BankTestConfig},
@@ -942,7 +943,7 @@ mod tests {
                     vote_account,
                     repair_whitelist,
                     notifies: Vec::new(),
-                    repair_socket: Arc::new(std::net::UdpSocket::bind("0.0.0.0:0").unwrap()),
+                    repair_socket: Arc::new(bind_to_unspecified().unwrap()),
                     outstanding_repair_requests: Arc::<
                         RwLock<repair_service::OutstandingShredRepairs>,
                     >::default(),

@@ -702,7 +702,7 @@ pub fn spawn_server_multi(
 mod test {
     use {
         super::*, crate::nonblocking::quic::test::*, crossbeam_channel::unbounded,
-        std::net::SocketAddr,
+        solana_net_utils::bind_to_localhost, std::net::SocketAddr,
     };
 
     fn setup_quic_server() -> (
@@ -711,7 +711,7 @@ mod test {
         crossbeam_channel::Receiver<PacketBatch>,
         SocketAddr,
     ) {
-        let s = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let s = bind_to_localhost().unwrap();
         let exit = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = unbounded();
         let keypair = Keypair::new();
@@ -766,7 +766,7 @@ mod test {
     #[test]
     fn test_quic_server_multiple_streams() {
         solana_logger::setup();
-        let s = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let s = bind_to_localhost().unwrap();
         let exit = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = unbounded();
         let keypair = Keypair::new();
@@ -811,7 +811,7 @@ mod test {
     #[test]
     fn test_quic_server_unstaked_node_connect_failure() {
         solana_logger::setup();
-        let s = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let s = bind_to_localhost().unwrap();
         let exit = Arc::new(AtomicBool::new(false));
         let (sender, _) = unbounded();
         let keypair = Keypair::new();

@@ -697,7 +697,6 @@ impl VoteState {
         next_vote_slot: Slot,
         epoch: Epoch,
         current_slot: Slot,
-        timely_vote_credits: bool,
     ) {
         // Ignore votes for slots earlier than we already have votes for
         if self
@@ -710,17 +709,13 @@ impl VoteState {
         self.pop_expired_votes(next_vote_slot);
 
         let landed_vote = LandedVote {
-            latency: if timely_vote_credits {
-                Self::compute_vote_latency(next_vote_slot, current_slot)
-            } else {
-                0
-            },
+            latency: Self::compute_vote_latency(next_vote_slot, current_slot),
             lockout: Lockout::new(next_vote_slot),
         };
 
         // Once the stack is full, pop the oldest lockout and distribute rewards
         if self.votes.len() == MAX_LOCKOUT_HISTORY {
-            let credits = self.credits_for_vote_at_index(0, timely_vote_credits);
+            let credits = self.credits_for_vote_at_index(0);
             let landed_vote = self.votes.pop_front().unwrap();
             self.root_slot = Some(landed_vote.slot());
 
@@ -765,7 +760,7 @@ impl VoteState {
     }
 
     /// Returns the credits to award for a vote at the given lockout slot index
-    pub fn credits_for_vote_at_index(&self, index: usize, timely_vote_credits: bool) -> u64 {
+    pub fn credits_for_vote_at_index(&self, index: usize) -> u64 {
         let latency = self
             .votes
             .get(index)
@@ -773,7 +768,7 @@ impl VoteState {
 
         // If latency is 0, this means that the Lockout was created and stored from a software version that did not
         // store vote latencies; in this case, 1 credit is awarded
-        if latency == 0 || !timely_vote_credits {
+        if latency == 0 {
             1
         } else {
             match latency.checked_sub(VOTE_CREDITS_GRACE_SLOTS) {

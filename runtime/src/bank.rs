@@ -60,7 +60,7 @@ use {
         verify_precompiles::verify_precompiles,
     },
     accounts_lt_hash::{CacheValue as AccountsLtHashCacheValue, Stats as AccountsLtHashStats},
-    ahash::AHashMap,
+    ahash::{AHashMap, AHashSet},
     byteorder::{ByteOrder, LittleEndian},
     dashmap::{DashMap, DashSet},
     log::*,
@@ -75,7 +75,8 @@ use {
         accounts::{AccountAddressFilter, Accounts, PubkeyAccountSlot},
         accounts_db::{
             AccountStorageEntry, AccountsDb, AccountsDbConfig, CalcAccountsHashDataSource,
-            DuplicatesLtHash, PubkeyHashAccount, VerifyAccountsHashAndLamportsConfig,
+            DuplicatesLtHash, OldStoragesPolicy, PubkeyHashAccount,
+            VerifyAccountsHashAndLamportsConfig,
         },
         accounts_hash::{
             AccountHash, AccountsHash, AccountsLtHash, CalcAccountsHashConfig, HashStats,
@@ -1463,6 +1464,7 @@ impl Bank {
             .unwrap()
             .stats
             .reset();
+
         new
     }
 
@@ -3026,6 +3028,34 @@ impl Bank {
                 // updating the accounts lt hash must happen *outside* of hash_internal_state() so
                 // that rehash() can be called and *not* modify self.accounts_lt_hash.
                 self.update_accounts_lt_hash();
+
+                // For lattice-hash R&D, we have a CLI arg to do extra verfication.  If set, we'll
+                // re-calculate the accounts lt hash every slot and compare it against the value
+                // already stored in the bank.
+                if self
+                    .rc
+                    .accounts
+                    .accounts_db
+                    .verify_experimental_accumulator_hash
+                {
+                    let slot = self.slot();
+                    info!("Verifying the accounts lt hash for slot {slot}...");
+                    let (calculated_accounts_lt_hash, duration) = meas_dur!({
+                        self.rc
+                            .accounts
+                            .accounts_db
+                            .calculate_accounts_lt_hash_at_startup_from_index(&self.ancestors, slot)
+                    });
+                    let actual_accounts_lt_hash = self.accounts_lt_hash.lock().unwrap();
+                    assert_eq!(
+                        calculated_accounts_lt_hash,
+                        *actual_accounts_lt_hash,
+                        "Verifying the accounts lt hash for slot {slot} failed! calculated checksum: {}, actual checksum: {}",
+                        calculated_accounts_lt_hash.0.checksum(),
+                        actual_accounts_lt_hash.0.checksum(),
+                    );
+                    info!("Verifying the accounts lt hash for slot {slot}... Done successfully in {duration:?}");
+                }
             }
             *hash = self.hash_internal_state();
             self.rc.accounts.accounts_db.mark_slot_frozen(self.slot());
@@ -3767,8 +3797,7 @@ impl Bank {
         let processing_environment = TransactionProcessingEnvironment {
             blockhash,
             blockhash_lamports_per_signature,
-            epoch_total_stake: Some(self.get_current_epoch_total_stake()),
-            epoch_vote_accounts: Some(self.get_current_epoch_vote_accounts()),
+            epoch_total_stake: self.get_current_epoch_total_stake(),
             feature_set: Arc::clone(&self.feature_set),
             fee_lamports_per_signature: self.fee_structure.lamports_per_signature,
             rent_collector: Some(&rent_collector_with_metrics),
@@ -6251,7 +6280,7 @@ impl Bank {
             let should_clean = force_clean || (!skip_shrink && self.slot() > 0);
             if should_clean {
                 info!("Cleaning...");
-                // We cannot clean past the last full snapshot's slot because we are about to
+                // We cannot clean past the latest full snapshot's slot because we are about to
                 // perform an accounts hash calculation *up to that slot*.  If we cleaned *past*
                 // that slot, then accounts could be removed from older storages, which would
                 // change the accounts hash.
@@ -6259,6 +6288,7 @@ impl Bank {
                     Some(latest_full_snapshot_slot),
                     true,
                     self.epoch_schedule(),
+                    self.clean_accounts_old_storages_policy(),
                 );
                 info!("Cleaning... Done.");
             } else {
@@ -6566,6 +6596,7 @@ impl Bank {
             Some(highest_slot_to_clean),
             false,
             self.epoch_schedule(),
+            self.clean_accounts_old_storages_policy(),
         );
     }
 
@@ -6581,20 +6612,34 @@ impl Bank {
     }
 
     pub(crate) fn shrink_ancient_slots(&self) {
+        // Invoke ancient slot shrinking only when the validator is
+        // explicitly configured to do so. This condition may be
+        // removed when the skip rewrites feature is enabled.
+        if self.are_ancient_storages_enabled() {
+            self.rc
+                .accounts
+                .accounts_db
+                .shrink_ancient_slots(self.epoch_schedule())
+        }
+    }
+
+    /// Returns if ancient storages are enabled or not
+    pub fn are_ancient_storages_enabled(&self) -> bool {
         let can_skip_rewrites = self.bank_hash_skips_rent_rewrites();
         let test_skip_rewrites_but_include_in_bank_hash = self
             .rc
             .accounts
             .accounts_db
             .test_skip_rewrites_but_include_in_bank_hash;
-        // Invoke ancient slot shrinking only when the validator is
-        // explicitly configured to do so. This condition may be
-        // removed when the skip rewrites feature is enabled.
-        if can_skip_rewrites || test_skip_rewrites_but_include_in_bank_hash {
-            self.rc
-                .accounts
-                .accounts_db
-                .shrink_ancient_slots(self.epoch_schedule())
+        can_skip_rewrites || test_skip_rewrites_but_include_in_bank_hash
+    }
+
+    /// Returns how clean_accounts() should handle old storages
+    fn clean_accounts_old_storages_policy(&self) -> OldStoragesPolicy {
+        if self.are_ancient_storages_enabled() {
+            OldStoragesPolicy::Leave
+        } else {
+            OldStoragesPolicy::Clean
         }
     }
 
@@ -6796,10 +6841,10 @@ impl Bank {
 
     /// Compute the active feature set based on the current bank state,
     /// and return it together with the set of newly activated features.
-    fn compute_active_feature_set(&self, include_pending: bool) -> (FeatureSet, HashSet<Pubkey>) {
+    fn compute_active_feature_set(&self, include_pending: bool) -> (FeatureSet, AHashSet<Pubkey>) {
         let mut active = self.feature_set.active.clone();
-        let mut inactive = HashSet::new();
-        let mut pending = HashSet::new();
+        let mut inactive = AHashSet::new();
+        let mut pending = AHashSet::new();
         let slot = self.slot();
 
         for feature_id in &self.feature_set.inactive {
@@ -6833,7 +6878,7 @@ impl Bank {
     fn apply_builtin_program_feature_transitions(
         &mut self,
         only_apply_transitions_for_new_features: bool,
-        new_feature_activations: &HashSet<Pubkey>,
+        new_feature_activations: &AHashSet<Pubkey>,
     ) {
         for builtin in BUILTINS.iter() {
             // The `builtin_is_bpf` flag is used to handle the case where a
@@ -7129,6 +7174,13 @@ impl TransactionProcessingCallback for Bank {
             self.inspect_account_for_accounts_lt_hash(address, &account_state, is_writable);
         }
     }
+
+    fn get_current_epoch_vote_account_stake(&self, vote_address: &Pubkey) -> u64 {
+        self.get_current_epoch_vote_accounts()
+            .get(vote_address)
+            .map(|(stake, _)| (*stake))
+            .unwrap_or(0)
+    }
 }
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -7341,7 +7393,14 @@ impl Bank {
         let environments = self
             .transaction_processor
             .get_environments_for_epoch(effective_epoch)?;
-        load_program_with_pubkey(self, &environments, pubkey, self.slot(), reload)
+        load_program_with_pubkey(
+            self,
+            &environments,
+            pubkey,
+            self.slot(),
+            &mut ExecuteTimings::default(), // Called by ledger-tool, metrics not accumulated.
+            reload,
+        )
     }
 
     pub fn withdraw(&self, pubkey: &Pubkey, lamports: u64) -> Result<()> {

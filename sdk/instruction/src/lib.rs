@@ -17,8 +17,9 @@
 
 #[cfg(feature = "std")]
 extern crate std;
+use solana_pubkey::Pubkey;
 #[cfg(feature = "std")]
-use {solana_pubkey::Pubkey, std::vec::Vec};
+use std::vec::Vec;
 pub mod account_meta;
 #[cfg(feature = "std")]
 pub use account_meta::AccountMeta;
@@ -295,4 +296,25 @@ pub struct ProcessedSiblingInstruction {
     pub data_len: u64,
     /// Number of AccountMeta structures
     pub accounts_len: u64,
+}
+
+/// Borrowed version of `AccountMeta`.
+///
+/// This struct is used by the runtime when constructing the instructions sysvar. It is not
+/// useful to Solana programs.
+pub struct BorrowedAccountMeta<'a> {
+    pub pubkey: &'a Pubkey,
+    pub is_signer: bool,
+    pub is_writable: bool,
+}
+
+/// Borrowed version of `Instruction`.
+///
+/// This struct is used by the runtime when constructing the instructions sysvar. It is not
+/// useful to Solana programs.
+#[cfg(feature = "std")]
+pub struct BorrowedInstruction<'a> {
+    pub program_id: &'a Pubkey,
+    pub accounts: Vec<BorrowedAccountMeta<'a>>,
+    pub data: &'a [u8],
 }

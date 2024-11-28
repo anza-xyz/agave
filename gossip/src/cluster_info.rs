@@ -56,9 +56,9 @@ use {
     solana_measure::measure::Measure,
     solana_net_utils::{
         bind_common, bind_common_in_range, bind_in_range, bind_in_range_with_config,
-        bind_more_with_config, bind_two_in_range_with_offset_and_config,
-        find_available_port_in_range, multi_bind_in_range, PortRange, SocketConfig,
-        VALIDATOR_PORT_RANGE,
+        bind_more_with_config, bind_to_localhost, bind_to_unspecified,
+        bind_two_in_range_with_offset_and_config, find_available_port_in_range,
+        multi_bind_in_range, PortRange, SocketConfig, VALIDATOR_PORT_RANGE,
     },
     solana_perf::{
         data_budget::DataBudget,
@@ -224,7 +224,7 @@ impl ClusterInfo {
                 GOSSIP_PING_CACHE_CAPACITY,
             )),
             stats: GossipStats::default(),
-            socket: UdpSocket::bind("0.0.0.0:0").unwrap(),
+            socket: bind_to_unspecified().unwrap(),
             local_message_pending_push_queue: Mutex::default(),
             contact_debug_interval: DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS,
             instance: RwLock::new(NodeInstance::new(&mut thread_rng(), id, timestamp())),
@@ -2038,49 +2038,7 @@ impl ClusterInfo {
             self.gossip.process_push_message(messages, now)
         };
         // Generate prune messages.
-        let self_pubkey = self.id();
-        let prunes = {
-            let _st = ScopedTimer::from(&self.stats.prune_received_cache);
-            self.gossip
-                .prune_received_cache(&self_pubkey, origins, stakes)
-        };
-        let prunes: Vec<(Pubkey /*from*/, Vec<Pubkey> /*origins*/)> = prunes
-            .into_iter()
-            .flat_map(|(from, prunes)| {
-                repeat(from).zip(
-                    prunes
-                        .into_iter()
-                        .chunks(MAX_PRUNE_DATA_NODES)
-                        .into_iter()
-                        .map(Iterator::collect)
-                        .collect::<Vec<_>>(),
-                )
-            })
-            .collect();
-
-        let prune_messages: Vec<_> = {
-            let gossip_crds = self.gossip.crds.read().unwrap();
-            let wallclock = timestamp();
-            thread_pool.install(|| {
-                prunes
-                    .into_par_iter()
-                    .with_min_len(256)
-                    .filter_map(|(from, prunes)| {
-                        let peer: &ContactInfo = gossip_crds.get(from)?;
-                        let mut prune_data = PruneData {
-                            pubkey: self_pubkey,
-                            prunes,
-                            signature: Signature::default(),
-                            destination: from,
-                            wallclock,
-                        };
-                        prune_data.sign(&self.keypair());
-                        let prune_message = Protocol::PruneMessage(self_pubkey, prune_data);
-                        Some((peer.gossip().ok()?, prune_message))
-                    })
-                    .collect()
-            })
-        };
+        let prune_messages = self.generate_prune_messages(thread_pool, origins, stakes);
         let mut packet_batch = PacketBatch::new_unpinned_with_recycler_data_and_dests(
             recycler,
             "handle_batch_push_messages",
@@ -2113,6 +2071,65 @@ impl ClusterInfo {
         if !packet_batch.is_empty() {
             let _ = response_sender.send(packet_batch);
         }
+    }
+
+    fn generate_prune_messages(
+        &self,
+        thread_pool: &ThreadPool,
+        // Unique origin pubkeys of upserted CRDS values from push messages.
+        origins: impl IntoIterator<Item = Pubkey>,
+        stakes: &HashMap<Pubkey, u64>,
+    ) -> Vec<(SocketAddr, Protocol /*::PruneMessage*/)> {
+        let _st = ScopedTimer::from(&self.stats.generate_prune_messages);
+        let self_pubkey = self.id();
+        // Obtain redundant gossip links which can be pruned.
+        let prunes: HashMap</*gossip peer:*/ Pubkey, /*origins:*/ Vec<Pubkey>> = {
+            let _st = ScopedTimer::from(&self.stats.prune_received_cache);
+            self.gossip
+                .prune_received_cache(&self_pubkey, origins, stakes)
+        };
+        // Look up gossip addresses of destination nodes.
+        let prunes: Vec<(
+            Pubkey,      // gossip peer to be pruned
+            SocketAddr,  // gossip socket-addr of peer
+            Vec<Pubkey>, // CRDS value origins
+        )> = {
+            let gossip_crds = self.gossip.crds.read().unwrap();
+            thread_pool.install(|| {
+                prunes
+                    .into_par_iter()
+                    .filter_map(|(pubkey, prunes)| {
+                        let addr = gossip_crds.get::<&ContactInfo>(pubkey)?.gossip().ok()?;
+                        Some((pubkey, addr, prunes))
+                    })
+                    .collect()
+            })
+        };
+        // Create and sign Protocol::PruneMessages.
+        thread_pool.install(|| {
+            let wallclock = timestamp();
+            let keypair: Arc<Keypair> = self.keypair().clone();
+            prunes
+                .into_par_iter()
+                .flat_map(|(destination, addr, prunes)| {
+                    // Chunk up origins so that each chunk fits into a packet.
+                    let prunes = prunes.into_par_iter().chunks(MAX_PRUNE_DATA_NODES);
+                    rayon::iter::repeat((destination, addr)).zip(prunes)
+                })
+                .map(|((destination, addr), prunes)| {
+                    let mut prune_data = PruneData {
+                        pubkey: self_pubkey,
+                        prunes,
+                        signature: Signature::default(),
+                        destination,
+                        wallclock,
+                    };
+                    prune_data.sign(&keypair);
+                    let prune_message = Protocol::PruneMessage(self_pubkey, prune_data);
+                    (addr, prune_message)
+                })
+                .collect()
+        })
     }
 
     fn require_stake_for_gossip(&self, stakes: &HashMap<Pubkey, u64>) -> bool {
@@ -2609,8 +2626,6 @@ impl Node {
         num_quic_endpoints: usize,
     ) -> Self {
         let localhost_ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        let localhost_bind_addr = format!("{localhost_ip_addr:?}:0");
-        let unspecified_bind_addr = format!("{:?}:0", IpAddr::V4(Ipv4Addr::UNSPECIFIED));
         let port_range = (1024, 65535);
 
         let udp_config = SocketConfig { reuseport: false };
@@ -2629,8 +2644,8 @@ impl Node {
         let (gossip_port, (gossip, ip_echo)) =
             bind_common_in_range(localhost_ip_addr, port_range).unwrap();
         let gossip_addr = SocketAddr::new(localhost_ip_addr, gossip_port);
-        let tvu = UdpSocket::bind(&localhost_bind_addr).unwrap();
-        let tvu_quic = UdpSocket::bind(&localhost_bind_addr).unwrap();
+        let tvu = bind_to_localhost().unwrap();
+        let tvu_quic = bind_to_localhost().unwrap();
         let ((_tpu_forwards_port, tpu_forwards), (_tpu_forwards_quic_port, tpu_forwards_quic)) =
             bind_two_in_range_with_offset_and_config(
                 localhost_ip_addr,
@@ -2643,24 +2658,23 @@ impl Node {
         let tpu_forwards_quic =
             bind_more_with_config(tpu_forwards_quic, num_quic_endpoints, quic_config.clone())
                 .unwrap();
-        let tpu_vote = UdpSocket::bind(&localhost_bind_addr).unwrap();
-        let tpu_vote_quic = UdpSocket::bind(&localhost_bind_addr).unwrap();
-
+        let tpu_vote = bind_to_localhost().unwrap();
+        let tpu_vote_quic = bind_to_localhost().unwrap();
         let tpu_vote_quic =
             bind_more_with_config(tpu_vote_quic, num_quic_endpoints, quic_config).unwrap();
 
-        let repair = UdpSocket::bind(&localhost_bind_addr).unwrap();
-        let repair_quic = UdpSocket::bind(&localhost_bind_addr).unwrap();
+        let repair = bind_to_localhost().unwrap();
+        let repair_quic = bind_to_localhost().unwrap();
         let rpc_port = find_available_port_in_range(localhost_ip_addr, port_range).unwrap();
         let rpc_addr = SocketAddr::new(localhost_ip_addr, rpc_port);
         let rpc_pubsub_port = find_available_port_in_range(localhost_ip_addr, port_range).unwrap();
         let rpc_pubsub_addr = SocketAddr::new(localhost_ip_addr, rpc_pubsub_port);
-        let broadcast = vec![UdpSocket::bind(&unspecified_bind_addr).unwrap()];
-        let retransmit_socket = UdpSocket::bind(&unspecified_bind_addr).unwrap();
-        let serve_repair = UdpSocket::bind(&localhost_bind_addr).unwrap();
-        let serve_repair_quic = UdpSocket::bind(&localhost_bind_addr).unwrap();
-        let ancestor_hashes_requests = UdpSocket::bind(&unspecified_bind_addr).unwrap();
-        let ancestor_hashes_requests_quic = UdpSocket::bind(&unspecified_bind_addr).unwrap();
+        let broadcast = vec![bind_to_unspecified().unwrap()];
+        let retransmit_socket = bind_to_unspecified().unwrap();
+        let serve_repair = bind_to_localhost().unwrap();
+        let serve_repair_quic = bind_to_localhost().unwrap();
+        let ancestor_hashes_requests = bind_to_unspecified().unwrap();
+        let ancestor_hashes_requests_quic = bind_to_unspecified().unwrap();
 
         let mut info = ContactInfo::new(
             *pubkey,
@@ -3002,7 +3016,7 @@ pub fn push_messages_to_peer(
         "push_messages_to_peer",
         &reqs,
     );
-    let sock = UdpSocket::bind("0.0.0.0:0").unwrap();
+    let sock = bind_to_unspecified().unwrap();
     packet::send_to(&packet_batch, &sock, socket_addr_space)?;
     Ok(())
 }
@@ -3135,6 +3149,7 @@ mod tests {
         },
         itertools::izip,
         solana_ledger::shred::Shredder,
+        solana_net_utils::bind_to,
         solana_sdk::signature::{Keypair, Signer},
         solana_vote_program::{vote_instruction, vote_state::Vote},
         std::{
@@ -4378,7 +4393,12 @@ mod tests {
 
         let cluster_info44 = Arc::new({
             let mut node = Node::new_localhost_with_pubkey(&keypair44.pubkey());
-            node.sockets.gossip = UdpSocket::bind("127.0.0.1:65534").unwrap();
+            node.sockets.gossip = bind_to(
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+                /*port*/ 65534,
+                /*reuseport:*/ false,
+            )
+            .unwrap();
             info!("{:?}", node);
             ClusterInfo::new(node.info, keypair44.clone(), SocketAddrSpace::Unspecified)
         });

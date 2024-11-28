@@ -74,6 +74,7 @@ members = [
     "programs/bpf_loader",
     "programs/bpf_loader/gen-syscall-list",
     "programs/compute-budget",
+    "programs/compute-budget-bench",
     "programs/config",
     "programs/ed25519-tests",
     "programs/loader-v4",
@@ -107,11 +108,13 @@ members = [
     "sdk/clock",
     "sdk/cluster-type",
     "sdk/commitment-config",
+    "sdk/compute-budget-interface",
     "sdk/cpi",
     "sdk/decode-error",
     "sdk/define-syscall",
     "sdk/derivation-path",
     "sdk/ed25519-program",
+    "sdk/epoch-info",
     "sdk/epoch-rewards",
     "sdk/epoch-schedule",
     "sdk/feature-set",
@@ -124,6 +127,7 @@ members = [
     "sdk/hash",
     "sdk/inflation",
     "sdk/instruction",
+    "sdk/keccak-hasher",
     "sdk/keypair",
     "sdk/logger",
     "sdk/macro",
@@ -134,6 +138,7 @@ members = [
     "sdk/package-metadata-macro",
     "sdk/packet",
     "sdk/precompile-error",
+    "sdk/precompiles",
     "sdk/presigner",
     "sdk/program",
     "sdk/program-entrypoint",
@@ -144,9 +149,12 @@ members = [
     "sdk/pubkey",
     "sdk/quic-definitions",
     "sdk/rent",
+    "sdk/rent-debits",
     "sdk/reserved-account-keys",
+    "sdk/reward-info",
     "sdk/sanitize",
     "sdk/sdk-ids",
+    "sdk/secp256k1-program",
     "sdk/secp256r1-program",
     "sdk/seed-derivable",
     "sdk/seed-phrase",
@@ -160,8 +168,10 @@ members = [
     "sdk/slot-hashes",
     "sdk/slot-history",
     "sdk/stable-layout",
+    "sdk/sysvar",
     "sdk/sysvar-id",
     "sdk/time-utils",
+    "sdk/transaction-context",
     "sdk/transaction-error",
     "send-transaction-service",
     "stake-accounts",
@@ -245,14 +255,14 @@ backoff = "0.4.0"
 base64 = "0.22.1"
 bincode = "1.3.3"
 bitflags = { version = "2.6.0" }
-blake3 = "1.5.4"
+blake3 = "1.5.5"
 borsh = { version = "1.5.3", features = ["derive", "unstable__schema"] }
 borsh0-10 = { package = "borsh", version = "0.10.3" }
 bs58 = { version = "0.5.1", default-features = false }
 bv = "0.11.1"
 byte-unit = "4.0.19"
 bytecount = "0.6.8"
-bytemuck = "1.19.0"
+bytemuck = "1.20.0"
 bytemuck_derive = "1.8.0"
 byteorder = "1.5.0"
 bytes = "1.8"
@@ -297,7 +307,6 @@ fs_extra = "1.3.0"
 futures = "0.3.31"
 futures-util = "0.3.29"
 gag = "1.0.0"
-generic-array = { version = "0.14.7", default-features = false }
 gethostname = "0.2.3"
 getrandom = "0.2.10"
 goauth = "0.13.1"
@@ -328,7 +337,7 @@ jsonrpc-ipc-server = "18.0.0"
 jsonrpc-pubsub = "18.0.0"
 lazy-lru = "0.1.3"
 lazy_static = "1.5.0"
-libc = "0.2.162"
+libc = "0.2.166"
 libloading = "0.7.4"
 libsecp256k1 = { version = "0.6.0", default-features = false, features = [
     "std",
@@ -359,7 +368,7 @@ pickledb = { version = "0.5.1", default-features = false }
 predicates = "2.1"
 pretty-hex = "0.3.0"
 prio-graph = "0.3.0"
-proc-macro2 = "1.0.89"
+proc-macro2 = "1.0.92"
 proptest = "1.5"
 prost = "0.11.9"
 prost-build = "0.11.9"
@@ -373,6 +382,7 @@ quote = "1.0"
 rand = "0.8.5"
 rand0-7 = { package = "rand", version = "0.7" }
 rand_chacha = "0.3.1"
+rand_chacha0-2 = { package = "rand_chacha", version = "0.2.2" }
 rayon = "1.10.0"
 reed-solomon-erasure = "6.0.0"
 regex = "1.11.1"
@@ -380,14 +390,15 @@ reqwest = { version = "0.11.27", default-features = false }
 reqwest-middleware = "0.2.5"
 rolling-file = "0.2.0"
 rpassword = "7.3"
-rustls = { version = "0.23.16", default-features = false }
+rustls = { version = "0.23.18", default-features = false }
 scopeguard = "1.2.0"
 semver = "1.0.23"
 seqlock = "0.2.0"
 serde = "1.0.215" # must match the serde_derive version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
+serde-big-array = "0.5.1"
 serde_bytes = "0.11.15"
 serde_derive = "1.0.215" # must match the serde version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
-serde_json = "1.0.132"
+serde_json = "1.0.133"
 serde_with = { version = "3.11.0", default-features = false }
 serde_yaml = "0.9.34"
 serial_test = "2.0.0"
@@ -396,6 +407,7 @@ sha3 = "0.10.8"
 shuttle = "0.7.1"
 signal-hook = "0.3.17"
 siphasher = "0.3.11"
+slab = "0.4.9"
 smallvec = "1.13.2"
 smpl_jwt = "0.7.1"
 socket2 = "0.5.7"
@@ -429,6 +441,7 @@ solana-clock = { path = "sdk/clock", version = "=2.2.0" }
 solana-cluster-type = { path = "sdk/cluster-type", version = "=2.2.0" }
 solana-commitment-config = { path = "sdk/commitment-config", version = "=2.2.0" }
 solana-compute-budget = { path = "compute-budget", version = "=2.2.0" }
+solana-compute-budget-interface = { path = "sdk/compute-budget-interface", version = "=2.2.0" }
 solana-compute-budget-program = { path = "programs/compute-budget", version = "=2.2.0" }
 solana-config-program = { path = "programs/config", version = "=2.2.0" }
 solana-connection-cache = { path = "connection-cache", version = "=2.2.0", default-features = false }
@@ -443,6 +456,7 @@ solana-download-utils = { path = "download-utils", version = "=2.2.0" }
 solana-ed25519-program = { path = "sdk/ed25519-program", version = "=2.2.0" }
 solana-entry = { path = "entry", version = "=2.2.0" }
 solana-program-entrypoint = { path = "sdk/program-entrypoint", version = "=2.2.0" }
+solana-epoch-info = { path = "sdk/epoch-info", version = "=2.2.0" }
 solana-epoch-rewards = { path = "sdk/epoch-rewards", version = "=2.2.0" }
 solana-epoch-schedule = { path = "sdk/epoch-schedule", version = "=2.2.0" }
 solana-faucet = { path = "faucet", version = "=2.2.0" }
@@ -463,6 +477,7 @@ solana-hash = { path = "sdk/hash", version = "=2.2.0", default-features = false 
 solana-inflation = { path = "sdk/inflation", version = "=2.2.0" }
 solana-inline-spl = { path = "inline-spl", version = "=2.2.0" }
 solana-instruction = { path = "sdk/instruction", version = "=2.2.0", default-features = false }
+solana-keccak-hasher = { path = "sdk/keccak-hasher", version = "=2.2.0" }
 solana-keypair = { path = "sdk/keypair", version = "=2.2.0" }
 solana-last-restart-slot = { path = "sdk/last-restart-slot", version = "=2.2.0" }
 solana-lattice-hash = { path = "lattice-hash", version = "=2.2.0" }
@@ -487,6 +502,7 @@ solana-perf = { path = "perf", version = "=2.2.0" }
 solana-poh = { path = "poh", version = "=2.2.0" }
 solana-poseidon = { path = "poseidon", version = "=2.2.0" }
 solana-precompile-error = { path = "sdk/precompile-error", version = "=2.2.0" }
+solana-precompiles = { path = "sdk/precompiles", version = "=2.2.0" }
 solana-presigner = { path = "sdk/presigner", version = "=2.2.0" }
 solana-program = { path = "sdk/program", version = "=2.2.0", default-features = false }
 solana-program-error = { path = "sdk/program-error", version = "=2.2.0" }
@@ -502,6 +518,7 @@ solana-quic-definitions = { path = "sdk/quic-definitions", version = "=2.2.0" }
 solana-rayon-threadlimit = { path = "rayon-threadlimit", version = "=2.2.0" }
 solana-remote-wallet = { path = "remote-wallet", version = "=2.2.0", default-features = false }
 solana-rent = { path = "sdk/rent", version = "=2.2.0", default-features = false }
+solana-rent-debits = { path = "sdk/rent-debits", version = "=2.2.0" }
 solana-reserved-account-keys = { path = "sdk/reserved-account-keys", version = "=2.2.0", default-features = false }
 solana-reward-info = { path = "sdk/reward-info", version = "=2.2.0" }
 solana-secp256r1-program = { path = "sdk/secp256r1-program", version = "=2.2.0", default-features = false }
@@ -529,6 +546,7 @@ solana-runtime-transaction = { path = "runtime-transaction", version = "=2.2.0" 
 solana-sdk = { path = "sdk", version = "=2.2.0" }
 solana-sdk-ids = { path = "sdk/sdk-ids", version = "=2.2.0" }
 solana-sdk-macro = { path = "sdk/macro", version = "=2.2.0" }
+solana-secp256k1-program = { path = "sdk/secp256k1-program", version = "=2.2.0" }
 solana-secp256k1-recover = { path = "curves/secp256k1-recover", version = "=2.2.0", default-features = false }
 solana-send-transaction-service = { path = "send-transaction-service", version = "=2.2.0" }
 solana-short-vec = { path = "sdk/short-vec", version = "=2.2.0" }
@@ -542,12 +560,14 @@ solana-svm-conformance = { path = "svm-conformance", version = "=2.2.0" }
 solana-svm-rent-collector = { path = "svm-rent-collector", version = "=2.2.0" }
 solana-svm-transaction = { path = "svm-transaction", version = "=2.2.0" }
 solana-system-program = { path = "programs/system", version = "=2.2.0" }
+solana-sysvar = { path = "sdk/sysvar", version = "=2.2.0" }
 solana-sysvar-id = { path = "sdk/sysvar-id", version = "=2.2.0" }
 solana-test-validator = { path = "test-validator", version = "=2.2.0" }
 solana-thin-client = { path = "thin-client", version = "=2.2.0" }
 solana-transaction-error = { path = "sdk/transaction-error", version = "=2.2.0" }
 solana-tpu-client = { path = "tpu-client", version = "=2.2.0", default-features = false }
 solana-tpu-client-next = { path = "tpu-client-next", version = "=2.2.0" }
+solana-transaction-context = { path = "sdk/transaction-context", version = "=2.2.0" }
 solana-transaction-status = { path = "transaction-status", version = "=2.2.0" }
 solana-transaction-status-client-types = { path = "transaction-status-client-types", version = "=2.2.0" }
 solana-transaction-metrics-tracker = { path = "transaction-metrics-tracker", version = "=2.2.0" }
@@ -570,6 +590,7 @@ spl-memo = "=6.0.0"
 spl-pod = "=0.5.0"
 spl-token = "=7.0.0"
 spl-token-2022 = "=6.0.0"
+spl-token-confidential-transfer-proof-extraction = "0.2.0"
 spl-token-group-interface = "=0.5.0"
 spl-token-metadata-interface = "=0.6.0"
 static_assertions = "1.1.0"
@@ -586,7 +607,7 @@ tar = "0.4.43"
 tarpc = "0.29.0"
 tempfile = "3.14.0"
 test-case = "3.3.1"
-thiserror = "1.0.69"
+thiserror = "2.0.3"
 tiny-bip39 = "0.8.2"
 # Update solana-tokio patch below when updating this version
 tokio = "1.29.1"
@@ -600,7 +621,7 @@ tonic-build = "0.9.2"
 trees = "0.4.2"
 tungstenite = "0.20.1"
 uriparse = "0.6.4"
-url = "2.5.3"
+url = "2.5.4"
 vec_extract_if_polyfill = "0.1.0"
 wasm-bindgen = "0.2"
 winapi = "0.3.8"

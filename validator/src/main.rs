@@ -1,5 +1,5 @@
 #![allow(clippy::arithmetic_side_effects)]
-#[cfg(not(target_env = "msvc"))]
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
 use jemallocator::Jemalloc;
 use {
     agave_validator::{
@@ -87,7 +87,7 @@ use {
     },
 };
 
-#[cfg(not(target_env = "msvc"))]
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
 
@@ -1364,6 +1364,8 @@ pub fn main() {
         scan_filter_for_shrinking,
         enable_experimental_accumulator_hash: matches
             .is_present("accounts_db_experimental_accumulator_hash"),
+        verify_experimental_accumulator_hash: matches
+            .is_present("accounts_db_verify_experimental_accumulator_hash"),
         num_clean_threads: Some(accounts_db_clean_threads),
         num_foreground_threads: Some(accounts_db_foreground_threads),
         num_hash_threads: Some(accounts_db_hash_threads),

@@ -511,6 +511,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     storage_access: StorageAccess::Mmap,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormalWithVerify,
     enable_experimental_accumulator_hash: false,
+    verify_experimental_accumulator_hash: false,
     num_clean_threads: None,
     num_foreground_threads: None,
     num_hash_threads: None,
@@ -536,6 +537,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     storage_access: StorageAccess::Mmap,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormalWithVerify,
     enable_experimental_accumulator_hash: false,
+    verify_experimental_accumulator_hash: false,
     num_clean_threads: None,
     num_foreground_threads: None,
     num_hash_threads: None,
@@ -663,6 +665,7 @@ pub struct AccountsDbConfig {
     pub storage_access: StorageAccess,
     pub scan_filter_for_shrinking: ScanFilter,
     pub enable_experimental_accumulator_hash: bool,
+    pub verify_experimental_accumulator_hash: bool,
     /// Number of threads for background cleaning operations (`thread_pool_clean')
     pub num_clean_threads: Option<NonZeroUsize>,
     /// Number of threads for foreground operations (`thread_pool`)
@@ -1621,6 +1624,10 @@ pub struct AccountsDb {
     /// (For R&D only; a feature-gate also exists to turn this on and make it a part of consensus.)
     pub is_experimental_accumulator_hash_enabled: AtomicBool,
 
+    /// Flag to indicate if the experimental accounts lattice hash should be verified.
+    /// (For R&D only)
+    pub verify_experimental_accumulator_hash: bool,
+
     /// These are the ancient storages that could be valuable to
     /// shrink, sorted by amount of dead bytes.  The elements
     /// are sorted from the largest dead bytes to the smallest.
@@ -2040,6 +2047,8 @@ impl AccountsDb {
             is_experimental_accumulator_hash_enabled: accounts_db_config
                 .enable_experimental_accumulator_hash
                 .into(),
+            verify_experimental_accumulator_hash: accounts_db_config
+                .verify_experimental_accumulator_hash,
             bank_hash_stats,
             thread_pool,
             thread_pool_clean,
@@ -2532,11 +2541,30 @@ impl AccountsDb {
         is_startup: bool,
         timings: &mut CleanKeyTimings,
         epoch_schedule: &EpochSchedule,
+        old_storages_policy: OldStoragesPolicy,
     ) -> CleaningCandidates {
         let oldest_non_ancient_slot = self.get_oldest_non_ancient_slot(epoch_schedule);
         let mut dirty_store_processing_time = Measure::start("dirty_store_processing");
-        let max_slot_inclusive =
-            max_clean_root_inclusive.unwrap_or_else(|| self.accounts_index.max_root_inclusive());
+        let max_root_inclusive = self.accounts_index.max_root_inclusive();
+        let max_slot_inclusive = max_clean_root_inclusive.unwrap_or(max_root_inclusive);
+
+        if old_storages_policy == OldStoragesPolicy::Clean {
+            let slot_one_epoch_old =
+                max_root_inclusive.saturating_sub(epoch_schedule.slots_per_epoch);
+            // do nothing special for these 100 old storages that will likely get cleaned up shortly
+            let acceptable_straggler_slot_count = 100;
+            let old_slot_cutoff =
+                slot_one_epoch_old.saturating_sub(acceptable_straggler_slot_count);
+            let (old_storages, old_slots) = self.get_snapshot_storages(..old_slot_cutoff);
+            let num_old_storages = old_storages.len();
+            self.accounts_index
+                .add_uncleaned_roots(old_slots.iter().copied());
+            for (old_slot, old_storage) in std::iter::zip(old_slots, old_storages) {
+                self.dirty_stores.entry(old_slot).or_insert(old_storage);
+            }
+            info!("Marked {num_old_storages} old storages as dirty");
+        }
+
         let mut dirty_stores = Vec::with_capacity(self.dirty_stores.len());
         // find the oldest dirty slot
         // we'll add logging if that append vec cannot be marked dead
@@ -2648,7 +2676,16 @@ impl AccountsDb {
 
     /// Call clean_accounts() with the common parameters that tests/benches use.
     pub fn clean_accounts_for_tests(&self) {
-        self.clean_accounts(None, false, &EpochSchedule::default())
+        self.clean_accounts(
+            None,
+            false,
+            &EpochSchedule::default(),
+            if self.ancient_append_vec_offset.is_some() {
+                OldStoragesPolicy::Leave
+            } else {
+                OldStoragesPolicy::Clean
+            },
+        )
     }
 
     /// called with cli argument to verify refcounts are correct on all accounts
@@ -2755,6 +2792,7 @@ impl AccountsDb {
         max_clean_root_inclusive: Option<Slot>,
         is_startup: bool,
         epoch_schedule: &EpochSchedule,
+        old_storages_policy: OldStoragesPolicy,
     ) {
         if self.exhaustively_verify_refcounts {
             self.exhaustively_verify_refcounts(max_clean_root_inclusive);
@@ -2776,6 +2814,7 @@ impl AccountsDb {
             is_startup,
             &mut key_timings,
             epoch_schedule,
+            old_storages_policy,
         );
 
         let num_candidates = Self::count_pubkeys(&candidates);
@@ -3853,6 +3892,7 @@ impl AccountsDb {
                 if store.num_zero_lamport_single_ref_accounts() == store.count() {
                     // all accounts in this storage can be dead
                     self.accounts_index.add_uncleaned_roots([slot]);
+                    self.dirty_stores.entry(slot).or_insert(store);
                     self.shrink_stats
                         .num_dead_slots_added_to_clean
                         .fetch_add(1, Ordering::Relaxed);
@@ -4700,7 +4740,15 @@ impl AccountsDb {
         let maybe_clean = || {
             if self.dirty_stores.len() > DIRTY_STORES_CLEANING_THRESHOLD {
                 let latest_full_snapshot_slot = self.latest_full_snapshot_slot();
-                self.clean_accounts(latest_full_snapshot_slot, is_startup, epoch_schedule);
+                self.clean_accounts(
+                    latest_full_snapshot_slot,
+                    is_startup,
+                    epoch_schedule,
+                    // Leave any old storages alone for now.  Once the validator is running
+                    // normal, calls to clean_accounts() will have the correct policy based
+                    // on if ancient storages are enabled or not.
+                    OldStoragesPolicy::Leave,
+                );
             }
         };
 
@@ -6874,40 +6922,6 @@ impl AccountsDb {
         true
     }
 
-    /// storages are sorted by slot and have range info.
-    /// add all stores older than slots_per_epoch to dirty_stores so clean visits these slots
-    fn mark_old_slots_as_dirty(
-        &self,
-        storages: &SortedStorages,
-        slots_per_epoch: Slot,
-        stats: &mut crate::accounts_hash::HashStats,
-    ) {
-        // Nothing to do if ancient append vecs are enabled.
-        // Ancient slots will be visited by the ancient append vec code and dealt with correctly.
-        // we expect these ancient append vecs to be old and keeping accounts
-        // We can expect the normal processes will keep them cleaned.
-        // If we included them here then ALL accounts in ALL ancient append vecs will be visited by clean each time.
-        if self.ancient_append_vec_offset.is_some() {
-            return;
-        }
-
-        let mut mark_time = Measure::start("mark_time");
-        let mut num_dirty_slots: usize = 0;
-        let max = storages.max_slot_inclusive();
-        let acceptable_straggler_slot_count = 100; // do nothing special for these old stores which will likely get cleaned up shortly
-        let sub = slots_per_epoch + acceptable_straggler_slot_count;
-        let in_epoch_range_start = max.saturating_sub(sub);
-        for (slot, storage) in storages.iter_range(&(..in_epoch_range_start)) {
-            if let Some(storage) = storage {
-                self.dirty_stores.insert(slot, storage.clone());
-                num_dirty_slots += 1;
-            }
-        }
-        mark_time.stop();
-        stats.mark_time_us = mark_time.as_us();
-        stats.num_dirty_slots = num_dirty_slots;
-    }
-
     pub fn calculate_accounts_hash_from(
         &self,
         data_source: CalcAccountsHashDataSource,
@@ -7247,8 +7261,6 @@ impl AccountsDb {
         let _guard = self.active_stats.activate(ActiveStatItem::Hash);
         let storages_start_slot = storages.range().start;
         stats.oldest_root = storages_start_slot;
-
-        self.mark_old_slots_as_dirty(storages, config.epoch_schedule.slots_per_epoch, &mut stats);
 
         let slot = storages.max_slot_inclusive();
         let use_bg_thread_pool = config.use_bg_thread_pool;
@@ -8462,44 +8474,27 @@ impl AccountsDb {
         &self,
         requested_slots: impl RangeBounds<Slot> + Sync,
     ) -> (Vec<Arc<AccountStorageEntry>>, Vec<Slot>) {
-        let mut m = Measure::start("get slots");
-        let mut slots_and_storages = self
+        let start = Instant::now();
+        let max_alive_root_exclusive = self
+            .accounts_index
+            .roots_tracker
+            .read()
+            .unwrap()
+            .alive_roots
+            .max_exclusive();
+        let (slots, storages) = self
             .storage
-            .iter()
-            .filter_map(|(slot, store)| {
-                requested_slots
-                    .contains(&slot)
-                    .then_some((slot, Some(store)))
+            .get_if(|slot, storage| {
+                (*slot < max_alive_root_exclusive)
+                    && requested_slots.contains(slot)
+                    && storage.has_accounts()
             })
-            .collect::<Vec<_>>();
-        m.stop();
-        let mut m2 = Measure::start("filter");
-        let chunk_size = 5_000;
-        let (result, slots): (Vec<_>, Vec<_>) = self.thread_pool_clean.install(|| {
-            slots_and_storages
-                .par_chunks_mut(chunk_size)
-                .map(|slots_and_storages| {
-                    slots_and_storages
-                        .iter_mut()
-                        .filter(|(slot, _)| self.accounts_index.is_alive_root(*slot))
-                        .filter_map(|(slot, store)| {
-                            let store = std::mem::take(store).unwrap();
-                            store.has_accounts().then_some((store, *slot))
-                        })
-                        .collect::<Vec<(Arc<AccountStorageEntry>, Slot)>>()
-                })
-                .flatten()
-                .unzip()
-        });
-
-        m2.stop();
-
-        debug!(
-            "hash_total: get slots: {}, filter: {}",
-            m.as_us(),
-            m2.as_us(),
-        );
-        (result, slots)
+            .into_vec()
+            .into_iter()
+            .unzip();
+        let duration = start.elapsed();
+        debug!("get_snapshot_storages: {duration:?}");
+        (storages, slots)
     }
 
     /// Returns the latest full snapshot slot
@@ -9343,6 +9338,20 @@ pub(crate) enum UpdateIndexThreadSelection {
     Inline,
     /// Use a thread-pool if the number of updates exceeds a threshold
     PoolWithThreshold,
+}
+
+/// How should old storages be handled in clean_accounts()?
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum OldStoragesPolicy {
+    /// Clean all old storages, even if they were not explictly marked as dirty.
+    ///
+    /// This is the default behavior when not skipping rewrites.
+    Clean,
+    /// Leave all old storages.
+    ///
+    /// When skipping rewrites, we intentionally will have ancient storages.
+    /// Do not clean them up automatically in clean_accounts().
+    Leave,
 }
 
 // These functions/fields are only usable from a dev context (i.e. tests and benches)

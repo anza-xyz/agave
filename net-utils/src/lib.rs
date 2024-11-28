@@ -1,5 +1,7 @@
 //! The `net_utils` module assists with networking
 #![allow(clippy::arithmetic_side_effects)]
+#[cfg(feature = "dev-context-only-utils")]
+use tokio::net::UdpSocket as TokioUdpSocket;
 use {
     crossbeam_channel::unbounded,
     log::*,
@@ -8,7 +10,7 @@ use {
     std::{
         collections::{BTreeMap, HashSet},
         io::{self, Read, Write},
-        net::{IpAddr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket},
+        net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket},
         sync::{Arc, RwLock},
         time::{Duration, Instant},
     },
@@ -545,6 +547,53 @@ pub fn bind_to(ip_addr: IpAddr, port: u16, reuseport: bool) -> io::Result<UdpSoc
     bind_to_with_config(ip_addr, port, config)
 }
 
+#[cfg(feature = "dev-context-only-utils")]
+pub async fn bind_to_async(
+    ip_addr: IpAddr,
+    port: u16,
+    reuseport: bool,
+) -> io::Result<TokioUdpSocket> {
+    let config = SocketConfig { reuseport };
+    let socket = bind_to_with_config_non_blocking(ip_addr, port, config)?;
+    TokioUdpSocket::from_std(socket)
+}
+
+pub fn bind_to_localhost() -> io::Result<UdpSocket> {
+    bind_to(
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        /*port:*/ 0,
+        /*reuseport:*/ false,
+    )
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+pub async fn bind_to_localhost_async() -> io::Result<TokioUdpSocket> {
+    bind_to_async(
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        /*port:*/ 0,
+        /*reuseport:*/ false,
+    )
+    .await
+}
+
+pub fn bind_to_unspecified() -> io::Result<UdpSocket> {
+    bind_to(
+        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+        /*port:*/ 0,
+        /*reuseport:*/ false,
+    )
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+pub async fn bind_to_unspecified_async() -> io::Result<TokioUdpSocket> {
+    bind_to_async(
+        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+        /*port:*/ 0,
+        /*reuseport:*/ false,
+    )
+    .await
+}
+
 pub fn bind_to_with_config(
     ip_addr: IpAddr,
     port: u16,
@@ -555,6 +604,20 @@ pub fn bind_to_with_config(
     let addr = SocketAddr::new(ip_addr, port);
 
     sock.bind(&SockAddr::from(addr)).map(|_| sock.into())
+}
+
+pub fn bind_to_with_config_non_blocking(
+    ip_addr: IpAddr,
+    port: u16,
+    config: SocketConfig,
+) -> io::Result<UdpSocket> {
+    let sock = udp_socket_with_config(config)?;
+
+    let addr = SocketAddr::new(ip_addr, port);
+
+    sock.bind(&SockAddr::from(addr))?;
+    sock.set_nonblocking(true)?;
+    Ok(sock.into())
 }
 
 // binds both a UdpSocket and a TcpListener

@@ -31,6 +31,7 @@ solana-logger = { workspace = true }
 [features]
 default = []
 clap = ["dep:clap", "dep:solana-logger", "dep:solana-version"]
+dev-context-only-utils = []
 
 [lib]
 name = "solana_net_utils"

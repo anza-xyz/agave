@@ -20,12 +20,12 @@
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 
 use {
+    ahash::{AHashMap, AHashSet},
     lazy_static::lazy_static,
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_sha256_hasher::Hasher,
-    std::collections::{HashMap, HashSet},
 };
 
 pub mod deprecate_rewards_sysvar {
@@ -817,7 +817,7 @@ pub mod migrate_config_program_to_core_bpf {
 }
 
 pub mod enable_get_epoch_stake_syscall {
-    solana_pubkey::declare_id!("7mScTYkJXsbdrcwTQRs7oeCSXoJm4WjzBsRyf8bCU3Np");
+    solana_pubkey::declare_id!("FKe75t4LXxGaQnVHdUKM6DSFifVVraGZ8LyNo7oPwy1Z");
 }
 
 pub mod migrate_address_lookup_table_program_to_core_bpf {
@@ -883,13 +883,18 @@ pub mod disable_account_loader_special_case {
 pub mod enable_secp256r1_precompile {
     solana_pubkey::declare_id!("sr11RdZWgbHTHxSroPALe6zgaT5A1K9LcE4nfsZS4gi");
 }
+
 pub mod accounts_lt_hash {
     solana_pubkey::declare_id!("LtHaSHHsUge7EWTPVrmpuexKz6uVHZXZL6cgJa7W7Zn");
 }
 
+pub mod migrate_stake_program_to_core_bpf {
+    solana_pubkey::declare_id!("6M4oQ6eXneVhtLoiAr4yRYQY43eVLjrKbiDZDJc892yk");
+}
+
 lazy_static! {
     /// Map of feature identifiers to user-visible description
-    pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
+    pub static ref FEATURE_NAMES: AHashMap<Pubkey, &'static str> = [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
         (deprecate_rewards_sysvar::id(), "deprecate unused rewards sysvar"),
         (pico_inflation::id(), "pico inflation"),
@@ -1104,6 +1109,7 @@ lazy_static! {
         (disable_account_loader_special_case::id(), "Disable account loader special case #3513"),
         (accounts_lt_hash::id(), "enables lattice-based accounts hash #3333"),
         (enable_secp256r1_precompile::id(), "Enable secp256r1 precompile SIMD-0075"),
+        (migrate_stake_program_to_core_bpf::id(), "Migrate Stake program to Core BPF SIMD-0196 #3655"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
@@ -1130,7 +1136,7 @@ pub struct FullInflationFeaturePair {
 
 lazy_static! {
     /// Set of feature pairs that once enabled will trigger full inflation
-    pub static ref FULL_INFLATION_FEATURE_PAIRS: HashSet<FullInflationFeaturePair> = [
+    pub static ref FULL_INFLATION_FEATURE_PAIRS: AHashSet<FullInflationFeaturePair> = [
         FullInflationFeaturePair {
             vote_id: full_inflation::mainnet::certusone::vote::id(),
             enable_id: full_inflation::mainnet::certusone::enable::id(),
@@ -1145,14 +1151,14 @@ lazy_static! {
 #[cfg_attr(feature = "frozen-abi", derive(solana_frozen_abi_macro::AbiExample))]
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct FeatureSet {
-    pub active: HashMap<Pubkey, u64>,
-    pub inactive: HashSet<Pubkey>,
+    pub active: AHashMap<Pubkey, u64>,
+    pub inactive: AHashSet<Pubkey>,
 }
 impl Default for FeatureSet {
     fn default() -> Self {
         // All features disabled
         Self {
-            active: HashMap::new(),
+            active: AHashMap::new(),
             inactive: FEATURE_NAMES.keys().cloned().collect(),
         }
     }
@@ -1167,7 +1173,7 @@ impl FeatureSet {
     }
 
     /// List of enabled features that trigger full inflation
-    pub fn full_inflation_features_enabled(&self) -> HashSet<Pubkey> {
+    pub fn full_inflation_features_enabled(&self) -> AHashSet<Pubkey> {
         let mut hash_set = FULL_INFLATION_FEATURE_PAIRS
             .iter()
             .filter_map(|pair| {
@@ -1177,7 +1183,7 @@ impl FeatureSet {
                     None
                 }
             })
-            .collect::<HashSet<_>>();
+            .collect::<AHashSet<_>>();
 
         if self.is_active(&full_inflation::devnet_and_testnet::id()) {
             hash_set.insert(full_inflation::devnet_and_testnet::id());
@@ -1189,7 +1195,7 @@ impl FeatureSet {
     pub fn all_enabled() -> Self {
         Self {
             active: FEATURE_NAMES.keys().cloned().map(|key| (key, 0)).collect(),
-            inactive: HashSet::new(),
+            inactive: AHashSet::new(),
         }
     }
 

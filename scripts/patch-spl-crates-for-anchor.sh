@@ -1,5 +1,4 @@
 spl_associated_token_account_version=
-spl_memo_version=
 spl_pod_version=
 spl_token_version=
 spl_token_2022_version=
@@ -12,7 +11,6 @@ spl_type_length_value_version=
 get_spl_versions() {
     declare spl_dir="$1"
     spl_associated_token_account_version=$(readCargoVariable version "$spl_dir/associated-token-account/program/Cargo.toml")
-    spl_memo_version=$(readCargoVariable version "$spl_dir/memo/program/Cargo.toml")
     spl_pod_version=$(readCargoVariable version "$spl_dir/libraries/pod/Cargo.toml")
     spl_token_version=$(readCargoVariable version "$spl_dir/token/program/Cargo.toml")
     spl_token_2022_version=$(readCargoVariable version "$spl_dir/token/program-2022/Cargo.toml"| head -c1) # only use the major version for convenience
@@ -38,8 +36,6 @@ update_spl_dependencies() {
 
     sed -i -e "s#\(spl-associated-token-account = \"\)[^\"]*\(\"\)#\1$spl_associated_token_account_version\2#g" "${tomls[@]}" || return $?
     sed -i -e "s#\(spl-associated-token-account = { version = \"\)[^\"]*\(\"\)#\1$spl_associated_token_account_version\2#g" "${tomls[@]}" || return $?
-    sed -i -e "s#\(spl-memo = \"\)[^\"]*\(\"\)#\1$spl_memo_version\2#g" "${tomls[@]}" || return $?
-    sed -i -e "s#\(spl-memo = { version = \"\)[^\"]*\(\"\)#\1$spl_memo_version\2#g" "${tomls[@]}" || return $?
     sed -i -e "s#\(spl-pod = \"\)[^\"]*\(\"\)#\1$spl_pod_version\2#g" "${tomls[@]}" || return $?
     sed -i -e "s#\(spl-pod = { version = \"\)[^\"]*\(\"\)#\1$spl_pod_version\2#g" "${tomls[@]}" || return $?
     sed -i -e "s#\(spl-token = \"\)[^\"]*\(\"\)#\1$spl_token_version\2#g" "${tomls[@]}" || return $?
@@ -67,7 +63,6 @@ patch_crates_io() {
     declare spl_dir="$2"
     cat >> "$Cargo_toml" <<EOF
     spl-associated-token-account = { path = "$spl_dir/associated-token-account/program" }
-    spl-memo = { path = "$spl_dir/memo/program" }
     spl-pod = { path = "$spl_dir/libraries/pod" }
     spl-token = { path = "$spl_dir/token/program" }
     # Avoid patching spl-token-2022 to avoid forcing anchor to use 4.0.1, which

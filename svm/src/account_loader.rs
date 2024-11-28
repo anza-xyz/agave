@@ -4,13 +4,15 @@ use {
         nonce_info::NonceInfo,
         rollback_accounts::RollbackAccounts,
         transaction_error_metrics::TransactionErrorMetrics,
+        transaction_execution_result::ExecutedTransaction,
         transaction_processing_callback::{AccountState, TransactionProcessingCallback},
     },
+    ahash::{AHashMap, AHashSet},
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_feature_set::{self as feature_set, FeatureSet},
     solana_program_runtime::loaded_programs::ProgramCacheForTxBatch,
     solana_sdk::{
-        account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
+        account::{Account, AccountSharedData, ReadableAccount, WritableAccount, PROGRAM_OWNERS},
         fee::FeeDetails,
         native_loader,
         nonce::State as NonceState,
@@ -22,6 +24,7 @@ use {
         sysvar::{
             self,
             instructions::{construct_instructions_data, BorrowedAccountMeta, BorrowedInstruction},
+            slot_history,
         },
         transaction::{Result, TransactionError},
         transaction_context::{IndexOfAccount, TransactionAccount},
@@ -97,23 +100,34 @@ pub struct FeesOnlyTransaction {
 
 #[cfg_attr(feature = "dev-context-only-utils", derive(Clone))]
 pub(crate) struct AccountLoader<'a, CB: TransactionProcessingCallback> {
-    account_overrides: Option<&'a AccountOverrides>,
     pub(crate) program_cache: ProgramCacheForTxBatch,
     program_accounts: HashMap<Pubkey, (&'a Pubkey, u64)>,
+    account_cache: AHashMap<Pubkey, AccountSharedData>,
     callbacks: &'a CB,
     pub(crate) feature_set: Arc<FeatureSet>,
 }
 impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
-    pub fn new(
+    pub fn new_with_account_cache_capacity(
         account_overrides: Option<&'a AccountOverrides>,
         program_cache: ProgramCacheForTxBatch,
         program_accounts: HashMap<Pubkey, (&'a Pubkey, u64)>,
         callbacks: &'a CB,
         feature_set: Arc<FeatureSet>,
+        capacity: usize,
     ) -> AccountLoader<'a, CB> {
+        let mut account_cache = AHashMap::with_capacity(capacity);
+
+        // SlotHistory may be overridden for simulation.
+        // No other uses of AccountOverrides are expected.
+        if let Some(slot_history) =
+            account_overrides.and_then(|overrides| overrides.get(&slot_history::id()))
+        {
+            account_cache.insert(slot_history::id(), slot_history.clone());
+        }
+
         Self {
             program_cache,
-            account_overrides,
+            account_cache,
             callbacks,
             program_accounts,
             feature_set,
@@ -131,43 +145,121 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
             .feature_set
             .is_active(&feature_set::disable_account_loader_special_case::id());
 
-        if let Some(account_override) = self
-            .account_overrides
-            .and_then(|overrides| overrides.get(account_key))
-        {
-            Some(LoadedTransactionAccount {
-                loaded_size: account_override.data().len(),
-                account: account_override.clone(),
-                rent_collected: 0,
-            })
-        } else if let Some(program) = (use_program_cache && is_invisible_read)
+        if let Some(program) = (use_program_cache && is_invisible_read)
             .then_some(())
             .and_then(|_| self.program_cache.find(account_key))
         {
             // Optimization to skip loading of accounts which are only used as
             // programs in top-level instructions and not passed as instruction accounts.
-            Some(LoadedTransactionAccount {
+            return Some(LoadedTransactionAccount {
                 loaded_size: program.account_size,
                 account: account_shared_data_from_program(account_key, &self.program_accounts)
                     .ok()?,
                 rent_collected: 0,
-            })
+            });
+        }
+
+        let account = if let Some(account) = self.account_cache.get(account_key) {
+            // If lamports is 0, a previous transaction deallocated this account.
+            // We return None instead of the account we found so it can be created fresh.
+            // We never evict from the cache, or else we would fetch stale state from accounts-db.
+            if account.lamports() == 0 {
+                None
+            } else {
+                Some(account.clone())
+            }
         } else if let Some(account) = self.callbacks.get_account_shared_data(account_key) {
-            // Inspect the account prior to collecting rent, since
-            // rent collection can modify the account.
-            self.callbacks
-                .inspect_account(account_key, AccountState::Alive(&account), is_writable);
-
-            Some(LoadedTransactionAccount {
-                loaded_size: account.data().len(),
-                account,
-                rent_collected: 0,
-            })
+            self.account_cache.insert(*account_key, account.clone());
+            Some(account)
         } else {
-            self.callbacks
-                .inspect_account(account_key, AccountState::Dead, is_writable);
-
             None
+        };
+
+        // Inspect prior to collecting rent, since rent collection can modify the account.
+        self.callbacks.inspect_account(
+            account_key,
+            if let Some(ref account) = account {
+                AccountState::Alive(account)
+            } else {
+                AccountState::Dead
+            },
+            is_writable,
+        );
+
+        account.map(|account| LoadedTransactionAccount {
+            loaded_size: account.data().len(),
+            account,
+            rent_collected: 0,
+        })
+    }
+
+    pub fn update_accounts_for_executed_tx(
+        &mut self,
+        message: &impl SVMMessage,
+        executed_transaction: &ExecutedTransaction,
+    ) {
+        if executed_transaction.was_successful() {
+            self.program_cache
+                .merge(&executed_transaction.programs_modified_by_tx);
+
+            self.update_accounts_for_successful_tx(
+                message,
+                &executed_transaction.loaded_transaction.accounts,
+            );
+        } else {
+            self.update_accounts_for_failed_tx(
+                message,
+                &executed_transaction.loaded_transaction.rollback_accounts,
+            );
+        }
+    }
+
+    pub fn update_accounts_for_failed_tx(
+        &mut self,
+        message: &impl SVMMessage,
+        rollback_accounts: &RollbackAccounts,
+    ) {
+        let fee_payer_address = message.fee_payer();
+        match rollback_accounts {
+            RollbackAccounts::FeePayerOnly { fee_payer_account } => {
+                self.account_cache
+                    .insert(*fee_payer_address, fee_payer_account.clone());
+            }
+            RollbackAccounts::SameNonceAndFeePayer { nonce } => {
+                self.account_cache
+                    .insert(*nonce.address(), nonce.account().clone());
+            }
+            RollbackAccounts::SeparateNonceAndFeePayer {
+                nonce,
+                fee_payer_account,
+            } => {
+                self.account_cache
+                    .insert(*nonce.address(), nonce.account().clone());
+                self.account_cache
+                    .insert(*fee_payer_address, fee_payer_account.clone());
+            }
+        }
+    }
+
+    fn update_accounts_for_successful_tx(
+        &mut self,
+        message: &impl SVMMessage,
+        transaction_accounts: &[TransactionAccount],
+    ) {
+        for (i, (address, account)) in (0..message.account_keys().len()).zip(transaction_accounts) {
+            if !message.is_writable(i) {
+                continue;
+            }
+
+            // Accounts that are invoked and also not passed as an instruction
+            // account to a program don't need to be stored because it's assumed
+            // to be impossible for a committable transaction to modify an
+            // invoked account if said account isn't passed to some program.
+            if message.is_invoked(i) && !message.is_instruction_account(i) {
+                continue;
+            }
+
+            self.account_cache.insert(*address, account.clone());
         }
     }
 }
@@ -337,11 +429,11 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     let mut tx_rent: TransactionRent = 0;
     let account_keys = message.account_keys();
     let mut accounts = Vec::with_capacity(account_keys.len());
-    let mut accounts_found = Vec::with_capacity(account_keys.len());
+    let mut validated_loaders = AHashSet::with_capacity(PROGRAM_OWNERS.len());
     let mut rent_debits = RentDebits::default();
     let mut accumulated_accounts_data_size: u32 = 0;
 
-    let mut collect_loaded_account = |key, (loaded_account, found)| -> Result<()> {
+    let mut collect_loaded_account = |key, loaded_account| -> Result<()> {
         let LoadedTransactionAccount {
             account,
             loaded_size,
@@ -359,47 +451,44 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
         rent_debits.insert(key, rent_collected, account.lamports());
 
         accounts.push((*key, account));
-        accounts_found.push(found);
         Ok(())
     };
 
-    // Since the fee payer is always the first account, collect it first. Note
-    // that account overrides are already applied during fee payer validation so
-    // it's fine to use the fee payer directly here rather than checking account
-    // overrides again.
-    collect_loaded_account(message.fee_payer(), (loaded_fee_payer_account, true))?;
+    // Since the fee payer is always the first account, collect it first.
+    // We can use it directly because it was already loaded during validation.
+    collect_loaded_account(message.fee_payer(), loaded_fee_payer_account)?;
 
     // Attempt to load and collect remaining non-fee payer accounts
     for (account_index, account_key) in account_keys.iter().enumerate().skip(1) {
-        let (loaded_account, account_found) = load_transaction_account(
+        let loaded_account = load_transaction_account(
             account_loader,
             message,
             account_key,
             account_index,
             rent_collector,
-        )?;
-        collect_loaded_account(account_key, (loaded_account, account_found))?;
+        );
+        collect_loaded_account(account_key, loaded_account)?;
     }
 
-    let builtins_start_index = accounts.len();
     let program_indices = message
-        .instructions_iter()
-        .map(|instruction| {
+        .program_instructions_iter()
+        .map(|(program_id, instruction)| {
             let mut account_indices = Vec::with_capacity(2);
-            let program_index = instruction.program_id_index as usize;
-            // This command may never return error, because the transaction is sanitized
-            let (program_id, program_account) = accounts
-                .get(program_index)
-                .ok_or(TransactionError::ProgramAccountNotFound)?;
             if native_loader::check_id(program_id) {
                 return Ok(account_indices);
             }
 
-            let account_found = accounts_found.get(program_index).unwrap_or(&true);
-            if !account_found {
+            let program_index = instruction.program_id_index as usize;
+            let program_usage_pattern = AccountUsagePattern::new(message, program_index);
+
+            let Some(LoadedTransactionAccount {
+                account: program_account,
+                ..
+            }) = account_loader.load_account(program_id, program_usage_pattern)
+            else {
                 error_metrics.account_not_found += 1;
                 return Err(TransactionError::ProgramAccountNotFound);
-            }
+            };
 
             if !account_loader
                 .feature_set
@@ -410,21 +499,40 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                 return Err(TransactionError::InvalidProgramForExecution);
             }
             account_indices.insert(0, program_index as IndexOfAccount);
+
             let owner_id = program_account.owner();
             if native_loader::check_id(owner_id) {
                 return Ok(account_indices);
             }
-            if !accounts
-                .get(builtins_start_index..)
-                .ok_or(TransactionError::ProgramAccountNotFound)?
-                .iter()
-                .any(|(key, _)| key == owner_id)
-            {
-                // NOTE this will be changed to a `load_account()` call in a PR immediately following this one
-                // we want to stop pushing loaders on the accounts vec, but tests need to change if we do that
-                // and this PR is complex enough that we want to code review any new behaviors separately
-                if let Some(owner_account) =
-                    account_loader.callbacks.get_account_shared_data(owner_id)
+
+            if !validated_loaders.contains(owner_id) {
+                // NOTE we load the program owner as `ReadOnlyInstruction` to bypass the program cache
+                // since the program cache would incorrectly mark a user-created native-owned account as executable
+                // this preserves consensus until `disable_account_loader_special_case` is active, after which it doesnt matter
+                //
+                // there are a panopoly of fetaure gate activations that affect this code, in generally benign ways:
+                // * `remove_accounts_executable_flag_checks`: incorrect executable flag from program cache no longer matters
+                //   we should still avoid program cache because it changes transaction size
+                //   albeit in a consensus-safe manner because it would result from feature activation
+                // * `disable_account_loader_special_case`: program cache codepath goes away entirely
+                //   at this point the instruction vs invisible distinction ceases to affect loading
+                //   keeping the distinction may be useful for SIMD-163 (cpi caller restriction), but maybe not
+                // * `enable_transaction_loading_failure_fees`: loading failures behave the same as execution failures
+                //   at this point we can restrict valid loaders to those contained in `PROGRAM_OWNERS`
+                //   since any other pseudo-loader owner is destined to fail at execution
+                // * SIMD-186: explicitly defines a sensible transaction data size algorithm
+                //   at this point we stop counting loaders toward transaction data size entirely
+                //
+                // when _all three_ of `remove_accounts_executable_flag_checks`, `enable_transaction_loading_failure_fees`,
+                // and SIMD-186 are active, we do not need to load loaders at all to comply with consensus rules
+                // we may verify program ids are owned by `PROGRAM_OWNERS` purely as an optimization
+                // this could even be done before loading the rest of the accounts for a transaction
+                if let Some(LoadedTransactionAccount {
+                    account: owner_account,
+                    loaded_size: owner_size,
+                    ..
+                }) =
+                    account_loader.load_account(owner_id, AccountUsagePattern::ReadOnlyInstruction)
                 {
                     if !native_loader::check_id(owner_account.owner())
                         || (!account_loader
@@ -437,11 +545,11 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                     }
                     accumulate_and_check_loaded_account_data_size(
                         &mut accumulated_accounts_data_size,
-                        owner_account.data().len(),
+                        owner_size,
                         compute_budget_limits.loaded_accounts_bytes,
                         error_metrics,
                     )?;
-                    accounts.push((*owner_id, owner_account));
+                    validated_loaders.insert(*owner_id);
                 } else {
                     error_metrics.account_not_found += 1;
                     return Err(TransactionError::ProgramAccountNotFound);
@@ -466,8 +574,7 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
     account_key: &Pubkey,
     account_index: usize,
     rent_collector: &dyn SVMRentCollector,
-) -> Result<(LoadedTransactionAccount, bool)> {
-    let mut account_found = true;
+) -> LoadedTransactionAccount {
     let usage_pattern = AccountUsagePattern::new(message, account_index);
 
     let loaded_account = if solana_sdk::sysvar::instructions::check_id(account_key) {
@@ -494,7 +601,6 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
 
         loaded_account
     } else {
-        account_found = false;
         let mut default_account = AccountSharedData::default();
         // All new accounts must be rent-exempt (enforced in Bank::execute_loaded_transaction).
         // Currently, rent collection sets rent_epoch to u64::MAX, but initializing the account
@@ -507,7 +613,7 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
         }
     };
 
-    Ok((loaded_account, account_found))
+    loaded_account
 }
 
 fn account_shared_data_from_program(
@@ -660,12 +766,13 @@ mod tests {
 
     impl<'a> From<&'a TestCallbacks> for AccountLoader<'a, TestCallbacks> {
         fn from(callbacks: &'a TestCallbacks) -> AccountLoader<'a, TestCallbacks> {
-            AccountLoader::new(
+            AccountLoader::new_with_account_cache_capacity(
                 None,
                 ProgramCacheForTxBatch::default(),
                 HashMap::default(),
                 callbacks,
                 Arc::<FeatureSet>::default(),
+                0,
             )
         }
     }
@@ -977,7 +1084,7 @@ mod tests {
         assert_eq!(error_metrics.account_not_found, 0);
         match &loaded_accounts {
             TransactionLoadResult::Loaded(loaded_transaction) => {
-                assert_eq!(loaded_transaction.accounts.len(), 4);
+                assert_eq!(loaded_transaction.accounts.len(), 3);
                 assert_eq!(loaded_transaction.accounts[0].1, accounts[0].1);
                 assert_eq!(loaded_transaction.program_indices.len(), 2);
                 assert_eq!(loaded_transaction.program_indices[0], &[1]);
@@ -1004,12 +1111,13 @@ mod tests {
             accounts_map,
             ..Default::default()
         };
-        let mut account_loader = AccountLoader::new(
+        let mut account_loader = AccountLoader::new_with_account_cache_capacity(
             account_overrides,
             ProgramCacheForTxBatch::default(),
             HashMap::default(),
             &callbacks,
             Arc::new(FeatureSet::all_enabled()),
+            0,
         );
         load_transaction(
             &mut account_loader,
@@ -1451,12 +1559,13 @@ mod tests {
             )),
         );
 
-        let mut account_loader = AccountLoader::new(
+        let mut account_loader = AccountLoader::new_with_account_cache_capacity(
             None,
             loaded_programs,
             program_accounts,
             &mock_bank,
             Arc::<FeatureSet>::default(),
+            0,
         );
 
         let mut error_metrics = TransactionErrorMetrics::default();
@@ -1483,7 +1592,6 @@ mod tests {
                 accounts: vec![
                     (account_keypair.pubkey(), account_data.clone()),
                     (program_keypair.pubkey(), cached_program),
-                    (loader_v2, loader_data),
                 ],
                 program_indices: vec![vec![1]],
                 rent: 0,
@@ -1653,6 +1761,7 @@ mod tests {
         let mut mock_bank = TestCallbacks::default();
         let mut account_data = AccountSharedData::default();
         account_data.set_owner(native_loader::id());
+        account_data.set_lamports(1);
         account_data.set_executable(true);
         mock_bank.accounts_map.insert(key1.pubkey(), account_data);
 
@@ -1766,6 +1875,7 @@ mod tests {
         let sanitized_message = new_unchecked_sanitized_message(message);
         let mut mock_bank = TestCallbacks::default();
         let mut account_data = AccountSharedData::default();
+        account_data.set_lamports(1);
         account_data.set_executable(true);
         account_data.set_owner(key3.pubkey());
         mock_bank.accounts_map.insert(key1.pubkey(), account_data);
@@ -1820,6 +1930,7 @@ mod tests {
         let sanitized_message = new_unchecked_sanitized_message(message);
         let mut mock_bank = TestCallbacks::default();
         let mut account_data = AccountSharedData::default();
+        account_data.set_lamports(1);
         account_data.set_executable(true);
         account_data.set_owner(key3.pubkey());
         mock_bank.accounts_map.insert(key1.pubkey(), account_data);
@@ -1831,6 +1942,7 @@ mod tests {
             .insert(key2.pubkey(), fee_payer_account.clone());
 
         let mut account_data = AccountSharedData::default();
+        account_data.set_lamports(1);
         account_data.set_executable(true);
         account_data.set_owner(native_loader::id());
         mock_bank.accounts_map.insert(key3.pubkey(), account_data);
@@ -1863,10 +1975,6 @@ mod tests {
                     (
                         key1.pubkey(),
                         mock_bank.accounts_map[&key1.pubkey()].clone()
-                    ),
-                    (
-                        key3.pubkey(),
-                        mock_bank.accounts_map[&key3.pubkey()].clone()
                     ),
                 ],
                 program_indices: vec![vec![1]],
@@ -1905,6 +2013,7 @@ mod tests {
         let sanitized_message = new_unchecked_sanitized_message(message);
         let mut mock_bank = TestCallbacks::default();
         let mut account_data = AccountSharedData::default();
+        account_data.set_lamports(1);
         account_data.set_executable(true);
         account_data.set_owner(key3.pubkey());
         mock_bank.accounts_map.insert(key1.pubkey(), account_data);
@@ -1916,6 +2025,7 @@ mod tests {
             .insert(key2.pubkey(), fee_payer_account.clone());
 
         let mut account_data = AccountSharedData::default();
+        account_data.set_lamports(1);
         account_data.set_executable(true);
         account_data.set_owner(native_loader::id());
         mock_bank.accounts_map.insert(key3.pubkey(), account_data);
@@ -1952,10 +2062,6 @@ mod tests {
                         mock_bank.accounts_map[&key1.pubkey()].clone()
                     ),
                     (key4.pubkey(), account_data),
-                    (
-                        key3.pubkey(),
-                        mock_bank.accounts_map[&key3.pubkey()].clone()
-                    ),
                 ],
                 program_indices: vec![vec![1], vec![1]],
                 rent: 0,
@@ -1973,6 +2079,7 @@ mod tests {
         let last_block_hash = Hash::new_unique();
 
         let mut system_data = AccountSharedData::default();
+        system_data.set_lamports(1);
         system_data.set_executable(true);
         system_data.set_owner(native_loader::id());
         bank.accounts_map
@@ -2056,6 +2163,7 @@ mod tests {
         let sanitized_message = new_unchecked_sanitized_message(message);
         let mut mock_bank = TestCallbacks::default();
         let mut account_data = AccountSharedData::default();
+        account_data.set_lamports(1);
         account_data.set_executable(true);
         account_data.set_owner(key3.pubkey());
         mock_bank.accounts_map.insert(key1.pubkey(), account_data);
@@ -2067,6 +2175,7 @@ mod tests {
             .insert(key2.pubkey(), fee_payer_account.clone());
 
         let mut account_data = AccountSharedData::default();
+        account_data.set_lamports(1);
         account_data.set_executable(true);
         account_data.set_owner(native_loader::id());
         mock_bank.accounts_map.insert(key3.pubkey(), account_data);
@@ -2114,10 +2223,6 @@ mod tests {
                         mock_bank.accounts_map[&key1.pubkey()].clone()
                     ),
                     (key4.pubkey(), account_data),
-                    (
-                        key3.pubkey(),
-                        mock_bank.accounts_map[&key3.pubkey()].clone()
-                    ),
                 ],
                 program_indices: vec![vec![1], vec![1]],
                 fee_details: FeeDetails::default(),
@@ -2166,7 +2271,7 @@ mod tests {
         assert!(matches!(
             load_result,
             TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
-                load_error: TransactionError::InvalidProgramForExecution,
+                load_error: TransactionError::ProgramAccountNotFound,
                 ..
             }),
         ));
@@ -2282,7 +2387,7 @@ mod tests {
         let mut account3 = AccountSharedData::default();
         account3.set_lamports(4_000_000_000);
         account3.set_executable(true);
-        account3.set_owner(native_loader::id());
+        account3.set_owner(bpf_loader::id());
         mock_bank.accounts_map.insert(address3, account3.clone());
         let mut account_loader = (&mock_bank).into();
 
@@ -2342,7 +2447,11 @@ mod tests {
             // *not* key0, since it is loaded during fee payer validation
             (address1, vec![(Some(account1), true)]),
             (address2, vec![(None, true)]),
-            (address3, vec![(Some(account3), false)]),
+            (
+                address3,
+                vec![(Some(account3.clone()), false), (Some(account3), false)],
+            ),
+            (bpf_loader::id(), vec![(None, false)]),
         ];
         expected_inspected_accounts.sort_unstable_by(|a, b| a.0.cmp(&b.0));
 
@@ -2450,12 +2559,13 @@ mod tests {
         program_cache.replenish(program2, Arc::new(program2_entry));
 
         let test_transaction_data_size = |transaction, expected_size| {
-            let mut account_loader = AccountLoader::new(
+            let mut account_loader = AccountLoader::new_with_account_cache_capacity(
                 None,
                 program_cache.clone(),
                 program_accounts.clone(),
                 &mock_bank,
                 Arc::<FeatureSet>::default(),
+                0,
             );
 
             let loaded_transaction_accounts = load_transaction_accounts(

@@ -178,6 +178,7 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
 mod tests {
     use {
         crate::{packet::PACKET_DATA_SIZE, recvmmsg::*},
+        solana_net_utils::{bind_to, bind_to_localhost},
         std::{
             net::{SocketAddr, UdpSocket},
             time::{Duration, Instant},
@@ -187,9 +188,12 @@ mod tests {
     type TestConfig = (UdpSocket, SocketAddr, UdpSocket, SocketAddr);
 
     fn test_setup_reader_sender(ip_str: &str) -> io::Result<TestConfig> {
-        let reader = UdpSocket::bind(ip_str)?;
+        let sock_addr: SocketAddr = ip_str
+            .parse()
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+        let reader = bind_to(sock_addr.ip(), sock_addr.port(), /*reuseport:*/ false)?;
         let addr = reader.local_addr()?;
-        let sender = UdpSocket::bind(ip_str)?;
+        let sender = bind_to(sock_addr.ip(), sock_addr.port(), /*reuseport:*/ false)?;
         let saddr = sender.local_addr()?;
         Ok((reader, addr, sender, saddr))
     }
@@ -259,11 +263,11 @@ mod tests {
 
     #[test]
     pub fn test_recv_mmsg_multi_iter_timeout() {
-        let reader = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let reader = bind_to_localhost().expect("bind");
         let addr = reader.local_addr().unwrap();
         reader.set_read_timeout(Some(Duration::new(5, 0))).unwrap();
         reader.set_nonblocking(false).unwrap();
-        let sender = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let sender = bind_to_localhost().expect("bind");
         let saddr = sender.local_addr().unwrap();
         let sent = TEST_NUM_MSGS;
         for _ in 0..sent {
@@ -290,14 +294,14 @@ mod tests {
 
     #[test]
     pub fn test_recv_mmsg_multi_addrs() {
-        let reader = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let reader = bind_to_localhost().expect("bind");
         let addr = reader.local_addr().unwrap();
 
-        let sender1 = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let sender1 = bind_to_localhost().expect("bind");
         let saddr1 = sender1.local_addr().unwrap();
         let sent1 = TEST_NUM_MSGS - 1;
 
-        let sender2 = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let sender2 = bind_to_localhost().expect("bind");
         let saddr2 = sender2.local_addr().unwrap();
         let sent2 = TEST_NUM_MSGS + 1;
 

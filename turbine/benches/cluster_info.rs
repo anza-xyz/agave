@@ -12,6 +12,7 @@ use {
         genesis_utils::{create_genesis_config, GenesisConfigInfo},
         shred::{Shred, ShredFlags},
     },
+    solana_net_utils::bind_to_unspecified,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_sdk::{
         pubkey,
@@ -25,7 +26,7 @@ use {
         },
         cluster_nodes::ClusterNodesCache,
     },
-    std::{collections::HashMap, net::UdpSocket, sync::Arc, time::Duration},
+    std::{collections::HashMap, sync::Arc, time::Duration},
     test::Bencher,
 };
 
@@ -41,7 +42,7 @@ fn broadcast_shreds_bench(bencher: &mut Bencher) {
         leader_keypair,
         SocketAddrSpace::Unspecified,
     );
-    let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
+    let socket = bind_to_unspecified().unwrap();
     let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
     let bank = Bank::new_for_benches(&genesis_config);
     let bank_forks = BankForks::new_rw_arc(bank);
