@@ -5669,12 +5669,8 @@ impl Bank {
 
     fn vote_only_hash_internal_state(&self) -> Hash {
         let slot = self.slot();
-        let mut hash = hashv(&[
-            self.parent_vote_only_hash.as_ref(),
-            self.last_blockhash().as_ref(),
-        ]);
-        hash = self.vote_states.read().unwrap().iter().fold(
-            hash,
+        let vote_hash = self.vote_states.read().unwrap().iter().fold(
+            Hash::default(),
             |old_hash, (account_pubkey, vote_state)| {
                 let mut vote_account_data: Vec<u8> = vec![0; VoteState::size_of()];
                 let versioned = VoteStateVersions::new_current(vote_state.clone());
@@ -5683,7 +5679,11 @@ impl Bank {
                 extend_and_hash(&hash, &vote_account_data)
             },
         );
-
+        let mut hash = hashv(&[
+            self.parent_vote_only_hash.as_ref(),
+            vote_hash.as_ref(),
+            self.last_blockhash().as_ref(),
+        ]);
         let buf = self
             .hard_forks
             .read()
