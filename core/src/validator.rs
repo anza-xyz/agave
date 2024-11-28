@@ -1582,7 +1582,7 @@ impl Validator {
             bank_notification_sender.map(|sender| sender.sender),
             config.tpu_coalesce,
             duplicate_confirmed_slot_sender,
-            &connection_cache,
+            client,
             turbine_quic_endpoint_sender,
             &identity_keypair,
             config.runtime_config.log_messages_bytes_limit,

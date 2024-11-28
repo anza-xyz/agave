@@ -1,7 +1,9 @@
 //! The `tpu` module implements the Transaction Processing Unit, a
 //! multi-stage transaction processing pipeline in software.
 
+use crate::forwarder_client::ForwarderClient;
 pub use solana_sdk::net::DEFAULT_TPU_COALESCE;
+
 use {
     crate::{
         banking_stage::BankingStage,
@@ -84,7 +86,7 @@ pub struct Tpu {
 
 impl Tpu {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub fn new<Client: ForwarderClient>(
         cluster_info: &Arc<ClusterInfo>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         entry_receiver: Receiver<WorkingBankEntry>,
@@ -106,7 +108,7 @@ impl Tpu {
         bank_notification_sender: Option<BankNotificationSender>,
         tpu_coalesce: Duration,
         duplicate_confirmed_slot_sender: DuplicateConfirmedSlotsSender,
-        connection_cache: &Arc<ConnectionCache>,
+        client: Client,
         turbine_quic_endpoint_sender: AsyncSender<(SocketAddr, Bytes)>,
         keypair: &Keypair,
         log_messages_bytes_limit: Option<usize>,
@@ -274,7 +276,7 @@ impl Tpu {
             transaction_status_sender,
             replay_vote_sender,
             log_messages_bytes_limit,
-            connection_cache.clone(),
+            client,
             bank_forks.clone(),
             prioritization_fee_cache,
             enable_block_production_forwarding,

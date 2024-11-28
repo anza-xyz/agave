@@ -349,7 +349,7 @@ impl LikeClusterInfo for Arc<ClusterInfo> {
 impl BankingStage {
     /// Create the stage using `bank`. Exit when `verified_receiver` is dropped.
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub fn new<Client: ForwarderClient>(
         block_production_method: BlockProductionMethod,
         cluster_info: &impl LikeClusterInfo,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
@@ -359,7 +359,7 @@ impl BankingStage {
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: ReplayVoteSender,
         log_messages_bytes_limit: Option<usize>,
-        connection_cache: Arc<ConnectionCache>,
+        client: Client,
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
         enable_forwarding: bool,
@@ -375,7 +375,7 @@ impl BankingStage {
             transaction_status_sender,
             replay_vote_sender,
             log_messages_bytes_limit,
-            connection_cache,
+            client,
             bank_forks,
             prioritization_fee_cache,
             enable_forwarding,
@@ -383,7 +383,7 @@ impl BankingStage {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn new_num_threads(
+    pub fn new_num_threads<Client: ForwarderClient>(
         block_production_method: BlockProductionMethod,
         cluster_info: &impl LikeClusterInfo,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
@@ -394,7 +394,7 @@ impl BankingStage {
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: ReplayVoteSender,
         log_messages_bytes_limit: Option<usize>,
-        connection_cache: Arc<ConnectionCache>,
+        client: Client,
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
         enable_forwarding: bool,
@@ -411,7 +411,7 @@ impl BankingStage {
                     transaction_status_sender,
                     replay_vote_sender,
                     log_messages_bytes_limit,
-                    connection_cache,
+                    client,
                     bank_forks,
                     prioritization_fee_cache,
                 )
@@ -426,7 +426,7 @@ impl BankingStage {
                 transaction_status_sender,
                 replay_vote_sender,
                 log_messages_bytes_limit,
-                connection_cache,
+                client,
                 bank_forks,
                 prioritization_fee_cache,
                 enable_forwarding,
@@ -435,7 +435,7 @@ impl BankingStage {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn new_thread_local_multi_iterator(
+    pub fn new_thread_local_multi_iterator<Client: ForwarderClient>(
         cluster_info: &impl LikeClusterInfo,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         non_vote_receiver: BankingPacketReceiver,
@@ -445,7 +445,7 @@ impl BankingStage {
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: ReplayVoteSender,
         log_messages_bytes_limit: Option<usize>,
-        connection_cache: Arc<ConnectionCache>,
+        client: Client,
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
     ) -> Self {
@@ -497,11 +497,12 @@ impl BankingStage {
                     ),
                 };
 
-                let leader_updater =
-                    ForwarderLeaderUpdater::new(cluster_info.clone(), poh_recorder.clone());
-                let client =
-                    ForwarderConnectionCacheClient::new(connection_cache.clone(), leader_updater);
-                let forwarder = Forwarder::new(client, bank_forks.clone(), data_budget.clone());
+                //let leader_updater =
+                //    ForwarderLeaderUpdater::new(cluster_info.clone(), poh_recorder.clone());
+                //let client =
+                //    ForwarderConnectionCacheClient::new(connection_cache.clone(), leader_updater);
+                let forwarder =
+                    Forwarder::new(client.clone(), bank_forks.clone(), data_budget.clone());
 
                 Self::spawn_thread_local_multi_iterator_thread(
                     id,
@@ -519,7 +520,7 @@ impl BankingStage {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn new_central_scheduler(
+    pub fn new_central_scheduler<Client: ForwarderClient>(
         cluster_info: &impl LikeClusterInfo,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         non_vote_receiver: BankingPacketReceiver,
@@ -529,7 +530,7 @@ impl BankingStage {
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: ReplayVoteSender,
         log_messages_bytes_limit: Option<usize>,
-        connection_cache: Arc<ConnectionCache>,
+        client: Client,
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
         enable_forwarding: bool,
@@ -556,9 +557,9 @@ impl BankingStage {
         // + 1 for the central scheduler thread
         let mut bank_thread_hdls = Vec::with_capacity(num_threads as usize + 1);
 
-        let leader_updater =
-            ForwarderLeaderUpdater::new(cluster_info.clone(), poh_recorder.clone());
-        let client = ForwarderConnectionCacheClient::new(connection_cache.clone(), leader_updater);
+        //let leader_updater =
+        //    ForwarderLeaderUpdater::new(cluster_info.clone(), poh_recorder.clone());
+        //let client = ForwarderConnectionCacheClient::new(connection_cache.clone(), leader_updater);
         // Spawn legacy voting threads first: 1 gossip, 1 tpu
         for (id, packet_receiver, vote_source) in [
             (0, gossip_vote_receiver, VoteSource::Gossip),
