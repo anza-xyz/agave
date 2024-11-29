@@ -68,7 +68,13 @@ impl Bank {
         error_counters: &mut TransactionErrorMetrics,
         vote_only_execution: bool,
     ) -> Vec<TransactionCheckResult> {
-        let lock_results = self.check_age(sanitized_txs, lock_results, max_age, error_counters);
+        let lock_results = self.check_age(
+            sanitized_txs,
+            lock_results,
+            max_age,
+            error_counters,
+            vote_only_execution,
+        );
         self.check_status_cache(
             sanitized_txs,
             lock_results,
@@ -83,8 +89,13 @@ impl Bank {
         lock_results: &[TransactionResult<()>],
         max_age: usize,
         error_counters: &mut TransactionErrorMetrics,
+        vote_only_execution: bool,
     ) -> Vec<TransactionCheckResult> {
-        let hash_queue = self.blockhash_queue.read().unwrap();
+        let hash_queue = if vote_only_execution {
+            self.vote_only_blockhash_queue.read().unwrap()
+        } else {
+            self.blockhash_queue.read().unwrap()
+        };
         let last_blockhash = hash_queue.last_hash();
         let next_durable_nonce = DurableNonce::from_blockhash(&last_blockhash);
         // safe so long as the BlockhashQueue is consistent

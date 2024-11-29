@@ -428,6 +428,7 @@ impl TransactionLogCollector {
 #[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 pub struct BankFieldsToDeserialize {
     pub(crate) blockhash_queue: BlockhashQueue,
+    pub(crate) vote_only_blockhash_queue: BlockhashQueue,
     pub(crate) ancestors: AncestorsForSerialization,
     pub(crate) hash: Hash,
     pub(crate) vote_states: BTreeMap<Pubkey, VoteState>,
@@ -477,6 +478,7 @@ pub struct BankFieldsToDeserialize {
 #[derive(Debug)]
 pub struct BankFieldsToSerialize {
     pub blockhash_queue: BlockhashQueue,
+    pub vote_only_blockhash_queue: BlockhashQueue,
     pub ancestors: AncestorsForSerialization,
     pub hash: Hash,
     pub vote_states: BTreeMap<Pubkey, VoteState>,
@@ -529,6 +531,7 @@ impl PartialEq for Bank {
             status_cache: _,
             vote_only_status_cache: _,
             blockhash_queue,
+            vote_only_blockhash_queue,
             ancestors,
             hash,
             vote_states,
@@ -599,6 +602,7 @@ impl PartialEq for Bank {
             // is added to the struct, this PartialEq is accordingly updated.
         } = self;
         *blockhash_queue.read().unwrap() == *other.blockhash_queue.read().unwrap()
+            && *vote_only_blockhash_queue.read().unwrap() == *other.vote_only_blockhash_queue.read().unwrap()
             && ancestors == &other.ancestors
             && *hash.read().unwrap() == *other.hash.read().unwrap()
             && *vote_states.read().unwrap() == *other.vote_states.read().unwrap()
@@ -646,6 +650,7 @@ impl BankFieldsToSerialize {
     pub fn default_for_tests() -> Self {
         Self {
             blockhash_queue: BlockhashQueue::default(),
+            vote_only_blockhash_queue: BlockhashQueue::default(),
             ancestors: AncestorsForSerialization::default(),
             hash: Hash::default(),
             vote_states: BTreeMap::default(),
@@ -766,6 +771,8 @@ pub struct Bank {
 
     /// FIFO queue of `recent_blockhash` items
     blockhash_queue: RwLock<BlockhashQueue>,
+
+    vote_only_blockhash_queue: RwLock<BlockhashQueue>,
 
     /// The set of parents including this bank
     pub ancestors: Ancestors,
@@ -1015,6 +1022,7 @@ impl Bank {
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
             vote_only_status_cache: Arc::<RwLock<BankStatusCache>>::default(),
             blockhash_queue: RwLock::<BlockhashQueue>::default(),
+            vote_only_blockhash_queue: RwLock::<BlockhashQueue>::default(),
             ancestors: Ancestors::default(),
             hash: RwLock::<Hash>::default(),
             vote_states: RwLock::<BTreeMap<Pubkey, VoteState>>::default(),
@@ -1238,6 +1246,8 @@ impl Bank {
         let bank_id = rc.bank_id_generator.fetch_add(1, Relaxed) + 1;
         let (blockhash_queue, blockhash_queue_time_us) =
             measure_us!(RwLock::new(parent.blockhash_queue.read().unwrap().clone()));
+        let vote_only_blockhash_queue =
+            RwLock::new(parent.vote_only_blockhash_queue.read().unwrap().clone());
 
         let (stakes_cache, stakes_cache_time_us) =
             measure_us!(StakesCache::new(parent.stakes_cache.stakes().clone()));
@@ -1269,6 +1279,7 @@ impl Bank {
             bank_id,
             epoch,
             blockhash_queue,
+            vote_only_blockhash_queue,
 
             // TODO: clean this up, so much special-case copying...
             hashes_per_tick: parent.hashes_per_tick,
@@ -1699,6 +1710,7 @@ impl Bank {
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
             vote_only_status_cache: Arc::<RwLock<BankStatusCache>>::default(),
             blockhash_queue: RwLock::new(fields.blockhash_queue),
+            vote_only_blockhash_queue: RwLock::new(fields.vote_only_blockhash_queue),
             ancestors,
             hash: RwLock::new(fields.hash),
             vote_states: RwLock::new(fields.vote_states),
@@ -1839,6 +1851,7 @@ impl Bank {
         let (epoch_stakes, versioned_epoch_stakes) = split_epoch_stakes(self.epoch_stakes.clone());
         BankFieldsToSerialize {
             blockhash_queue: self.blockhash_queue.read().unwrap().clone(),
+            vote_only_blockhash_queue: self.vote_only_blockhash_queue.read().unwrap().clone(),
             ancestors: AncestorsForSerialization::from(&self.ancestors),
             hash: *self.hash.read().unwrap(),
             vote_states: self.vote_states.read().unwrap().clone(),
@@ -3108,6 +3121,10 @@ impl Bank {
             .write()
             .unwrap()
             .genesis_hash(&genesis_hash, self.fee_rate_governor.lamports_per_signature);
+        self.vote_only_blockhash_queue
+            .write()
+            .unwrap()
+            .genesis_hash(&genesis_hash, self.fee_rate_governor.lamports_per_signature);
 
         self.hashes_per_tick = genesis_config.hashes_per_tick();
         self.ticks_per_slot = genesis_config.ticks_per_slot();
@@ -3190,6 +3207,10 @@ impl Bank {
     /// Return the last block hash registered.
     pub fn last_blockhash(&self) -> Hash {
         self.blockhash_queue.read().unwrap().last_hash()
+    }
+
+    pub fn last_vote_only_blockhash(&self) -> Hash {
+        self.vote_only_blockhash_queue.read().unwrap().last_hash()
     }
 
     pub fn last_blockhash_and_lamports_per_signature(&self) -> (Hash, u64) {
@@ -3339,10 +3360,17 @@ impl Bank {
     /// Register a new recent blockhash in the bank's recent blockhash queue. Called when a bank
     /// reaches its max tick height. Can be called by tests to get new blockhashes for transaction
     /// processing without advancing to a new bank slot.
-    fn register_recent_blockhash(&self, blockhash: &Hash, scheduler: &InstalledSchedulerRwLock) {
-        // This is needed because recent_blockhash updates necessitate synchronizations for
-        // consistent tx check_age handling.
-        BankWithScheduler::wait_for_paused_scheduler(self, scheduler);
+    fn register_recent_blockhash(
+        &self,
+        blockhash: &Hash,
+        scheduler: &InstalledSchedulerRwLock,
+        vote_only_execution: bool,
+    ) {
+        if !vote_only_execution {
+            // This is needed because recent_blockhash updates necessitate synchronizations for
+            // consistent tx check_age handling.
+            BankWithScheduler::wait_for_paused_scheduler(self, scheduler);
+        }
 
         // Only acquire the write lock for the blockhash queue on block boundaries because
         // readers can starve this write lock acquisition and ticks would be slowed down too
@@ -3379,6 +3407,7 @@ impl Bank {
         self.register_recent_blockhash(
             &Hash::new_unique(),
             &BankWithScheduler::no_scheduler_available(),
+            false,
         )
     }
 
@@ -3424,10 +3453,13 @@ impl Bank {
             );
         }
 
-        if vote_only_execution
-            && self.is_block_boundary(self.tick_height_for_vote_only.load(Relaxed) + 1)
-        {
-            self.register_recent_blockhash(hash, scheduler);
+        let tick_height = if vote_only_execution {
+            self.tick_height_for_vote_only()
+        } else {
+            self.tick_height()
+        };
+        if self.is_block_boundary(tick_height + 1) {
+            self.register_recent_blockhash(hash, scheduler, vote_only_execution);
         }
 
         // ReplayStage will start computing the accounts delta hash when it
@@ -3704,7 +3736,7 @@ impl Bank {
     }
 
     pub fn is_hash_valid_for_age(&self, hash: &Hash, max_age: usize) -> bool {
-        self.blockhash_queue
+        self.vote_only_blockhash_queue
             .read()
             .unwrap()
             .is_hash_valid_for_age(hash, max_age)
@@ -5676,7 +5708,7 @@ impl Bank {
         let mut hash = hashv(&[
             self.parent_vote_only_hash.as_ref(),
             vote_hash.as_ref(),
-            self.last_blockhash().as_ref(),
+            self.last_vote_only_blockhash().as_ref(),
         ]);
         let buf = self
             .hard_forks
@@ -6242,9 +6274,11 @@ impl Bank {
         self.slots_per_year
     }
 
-    pub fn update_tick_height_from_parent(&self) {
+    pub fn update_data_from_parent(&self) {
         if let Some(parent) = self.parent() {
             self.tick_height.store(parent.tick_height(), Relaxed);
+            *self.blockhash_queue.write().unwrap() = parent.blockhash_queue.read().unwrap().clone();
+            *self.status_cache.write().unwrap() = parent.status_cache.read().unwrap().clone();
         }
     }
 

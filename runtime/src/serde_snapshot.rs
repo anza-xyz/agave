@@ -134,6 +134,7 @@ struct UnusedAccounts {
 #[derive(Clone, Deserialize)]
 struct DeserializableVersionedBank {
     blockhash_queue: BlockhashQueue,
+    vote_only_blockhash_queue: BlockhashQueue,
     ancestors: AncestorsForSerialization,
     hash: Hash,
     vote_states: BTreeMap<Pubkey, VoteState>,
@@ -177,6 +178,7 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
     fn from(dvb: DeserializableVersionedBank) -> Self {
         BankFieldsToDeserialize {
             blockhash_queue: dvb.blockhash_queue,
+            vote_only_blockhash_queue: dvb.vote_only_blockhash_queue,
             ancestors: dvb.ancestors,
             hash: dvb.hash,
             vote_states: dvb.vote_states,
@@ -222,6 +224,7 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
 #[derive(Serialize)]
 struct SerializableVersionedBank {
     blockhash_queue: BlockhashQueue,
+    vote_only_blockhash_queue: BlockhashQueue,
     ancestors: AncestorsForSerialization,
     hash: Hash,
     vote_states: BTreeMap<Pubkey, VoteState>,
@@ -265,6 +268,7 @@ impl From<BankFieldsToSerialize> for SerializableVersionedBank {
     fn from(rhs: BankFieldsToSerialize) -> Self {
         Self {
             blockhash_queue: rhs.blockhash_queue,
+            vote_only_blockhash_queue: rhs.vote_only_blockhash_queue,
             ancestors: rhs.ancestors,
             hash: rhs.hash,
             vote_states: rhs.vote_states,
