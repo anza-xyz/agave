@@ -3375,7 +3375,11 @@ impl Bank {
         // Only acquire the write lock for the blockhash queue on block boundaries because
         // readers can starve this write lock acquisition and ticks would be slowed down too
         // much if the write lock is acquired for each tick.
-        let mut w_blockhash_queue = self.blockhash_queue.write().unwrap();
+        let mut w_blockhash_queue = if vote_only_execution {
+            self.vote_only_blockhash_queue.write().unwrap()
+        } else {
+            self.blockhash_queue.write().unwrap()
+        };
 
         #[cfg(feature = "dev-context-only-utils")]
         let blockhash_override = self
@@ -3398,7 +3402,9 @@ impl Bank {
         let blockhash = blockhash_override.as_ref().unwrap_or(blockhash);
 
         w_blockhash_queue.register_hash(blockhash, self.fee_rate_governor.lamports_per_signature);
-        self.update_recent_blockhashes_locked(&w_blockhash_queue);
+        if !vote_only_execution {
+            self.update_recent_blockhashes_locked(&w_blockhash_queue);
+        }
     }
 
     // gating this under #[cfg(feature = "dev-context-only-utils")] isn't easy due to
