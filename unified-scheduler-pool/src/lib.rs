@@ -1946,8 +1946,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
                 let mut busy_start = Instant::now();
                 loop {
-                    let busy_waker = if busy_start.elapsed() < const { Duration::from_micros(100) }
-                    {
+                    let busy_waker = if busy_start.elapsed() < Duration::from_micros(10) {
                         do_now
                     } else {
                         dont_now
@@ -1955,8 +1954,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
                     let (task, sender) = select_biased! {
                         recv(runnable_task_receiver.for_select()) -> message => {
-                            defer! { busy_start = Instant::now() }
-
                             let Ok(message) = message else {
                                 break;
                             };
@@ -1967,8 +1964,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             }
                         },
                         recv(banking_packet_receiver) -> banking_packet => {
-                            defer! { busy_start = Instant::now() }
-
                             let Some(new_task_sender) = new_task_sender.upgrade() else {
                                 info!("dead new_task_sender");
                                 break;
@@ -2007,6 +2002,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         */
                         //default => { continue },
                     };
+                    defer! { busy_start = Instant::now() }
                     defer! {
                         if !thread::panicking() {
                             return;
