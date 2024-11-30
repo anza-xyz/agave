@@ -829,6 +829,10 @@ impl JsonRpcRequestProcessor {
         Ok(bank.slot())
     }
 
+    fn get_bankhash(&self, slot: Slot, _config: RpcContextConfig) -> Result<Option<String>> {
+        Ok(self.blockstore.get_bank_hash(slot).map(|x|x.to_string()))
+    }
+
     fn get_block_height(&self, config: RpcContextConfig) -> Result<u64> {
         let bank = self.get_bank_with_config(config)?;
         Ok(bank.block_height())
@@ -2583,6 +2587,9 @@ pub mod rpc_minimal {
         #[rpc(meta, name = "getSlot")]
         fn get_slot(&self, meta: Self::Metadata, config: Option<RpcContextConfig>) -> Result<Slot>;
 
+        #[rpc(meta, name = "getBankHash")]
+        fn get_bankhash(&self, meta: Self::Metadata, slot: Slot, config: Option<RpcContextConfig>) -> Result<Option<String>>;
+
         #[rpc(meta, name = "getBlockHeight")]
         fn get_block_height(
             &self,
@@ -2677,6 +2684,11 @@ pub mod rpc_minimal {
         fn get_slot(&self, meta: Self::Metadata, config: Option<RpcContextConfig>) -> Result<Slot> {
             debug!("get_slot rpc request received");
             meta.get_slot(config.unwrap_or_default())
+        }
+
+        fn get_bankhash(&self, meta: Self::Metadata, slot: Slot, config: Option<RpcContextConfig>) -> Result<Option<String>> {
+            debug!("get_bankhash rpc request received");
+            meta.get_bankhash(slot, config.unwrap_or_default())
         }
 
         fn get_block_height(
