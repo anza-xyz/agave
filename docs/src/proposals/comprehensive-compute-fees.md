@@ -113,7 +113,7 @@ signer can guarantee what fee that will be charged for the transaction based on
 the nonce's blockhash.
 
 Determinism is achieved in two ways:
-- blockhash queue contains a list of recent (<=~2min) blockhashes and a
+- blockhash queue contains a list of recent (&lt;=~2min) blockhashes and a
   `lamports_per_signature` value.  The blockhash queue is one of the snapshot's
   serialized members and thus bank hash depends on it.
 - Nonce accounts used for offline signing contain a `lamports_per_signature`

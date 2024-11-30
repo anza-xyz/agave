@@ -52,7 +52,7 @@ for a keypair file matching the `<PROGRAM_FILEPATH>`, or internally generate a
 new keypair.
 
 A matching program keypair file is in the same directory as the program's shared
-object, and named <PROGRAM_NAME>-keypair.json. Matching program keypairs are
+object, and named `<PROGRAM_NAME>-keypair.json`. Matching program keypairs are
 generated automatically by the program build tools:
 
 ```bash

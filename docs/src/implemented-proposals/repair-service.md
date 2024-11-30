@@ -103,6 +103,6 @@ When a validator receives a request for a shred `S`, they respond with the
 shred if they have it.
 
 When a validator receives a shred through a repair response, they check
-`EpochSlots` to see if <= `1/3` of the network has marked this slot as
+`EpochSlots` to see if &lt;= `1/3` of the network has marked this slot as
 completed. If so, they resubmit this shred through its associated turbine
 path, but only if this validator has not retransmitted this shred before.
