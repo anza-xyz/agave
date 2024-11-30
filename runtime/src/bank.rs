@@ -6284,7 +6284,6 @@ impl Bank {
         if let Some(parent) = self.parent() {
             self.tick_height.store(parent.tick_height(), Relaxed);
             *self.blockhash_queue.write().unwrap() = parent.blockhash_queue.read().unwrap().clone();
-            *self.status_cache.write().unwrap() = parent.status_cache.read().unwrap().clone();
         }
     }
 
