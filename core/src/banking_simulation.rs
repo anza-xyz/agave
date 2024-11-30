@@ -980,10 +980,17 @@ impl BankingSimulator {
         // Spawning and entering these two loops must be done at the same time as they're timed.
         // So, all the mundane setup must be done in advance.
         let sender_thread = sender_loop.spawn(base_simulation_time)?;
-        let (sender_thread, retransmit_slots_sender) =
-            simulator_loop.enter(base_simulation_time, sender_thread, warmed_up_bank);
 
-        simulator_threads.finish(sender_thread, retransmit_slots_sender);
+        let handle = thread::Builder::new()
+            .name("solSimLoop".into())
+            .spawn(move || {
+                let (sender_thread, retransmit_slots_sender) =
+                    simulator_loop.enter(base_simulation_time, sender_thread, warmed_up_bank);
+
+                simulator_threads.finish(sender_thread, retransmit_slots_sender);
+            })
+            .unwrap();
+        let () = handle.join().unwrap();
 
         Ok(())
     }
