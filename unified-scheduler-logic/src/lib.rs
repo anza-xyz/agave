@@ -1869,6 +1869,7 @@ impl SchedulingStateMachine {
     #[must_use]
     pub unsafe fn exclusively_initialize_current_thread_for_scheduling(
         scheduling_mode: SchedulingMode,
+        max_executing_task_count: u32,
     ) -> Self {
         Self {
             // It's very unlikely this is desired to be configurable, like
@@ -1877,7 +1878,7 @@ impl SchedulingStateMachine {
             alive_tasks: BTreeSet::default(),
             alive_task_count: ShortCounter::zero(),
             executing_task_count: ShortCounter::zero(),
-            max_executing_task_count: 200,
+            max_executing_task_count,
             executed_task_total: ShortCounter::zero(),
             buffered_task_total: ShortCounter::zero(),
             blocked_task_count: ShortCounter::zero(),
