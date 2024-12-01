@@ -19,8 +19,8 @@ jsonrpc-http-server = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-solana-accounts-db = { workspace = true }
 solana-account-decoder = { workspace = true }
+solana-accounts-db = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-perf = { workspace = true }

@@ -2691,6 +2691,7 @@ dependencies = [
  "solana-rpc-client-api",
  "solana-sdk",
  "solana-svm",
+ "solana-svm-transaction",
  "solana-system-program",
  "solana-transaction-status",
  "solana-version",
