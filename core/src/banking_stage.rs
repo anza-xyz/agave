@@ -44,7 +44,6 @@ use {
     solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
     solana_sdk::{
         pubkey::Pubkey, scheduling::TaskKey, timing::AtomicInterval,
-        transaction::SanitizedTransaction,
     },
     solana_svm_transaction::svm_message::SVMMessage,
     solana_unified_scheduler_pool::{BankingStageAdapter, DefaultSchedulerPool},
