@@ -407,12 +407,12 @@ impl FinalReplayStage {
     pub fn new(config: FinalReplayConfig) -> Self {
         let fork_thread_pool = rayon::ThreadPoolBuilder::new()
             .num_threads(config.replay_forks_threads.get())
-            .thread_name(|i| format!("solReplayFork{i:02}"))
+            .thread_name(|i| format!("solFinalReplayFork{i:02}"))
             .build()
             .expect("new rayon threadpool");
         let replay_tx_thread_pool = rayon::ThreadPoolBuilder::new()
             .num_threads(config.replay_transactions_threads.get())
-            .thread_name(|i| format!("solReplayTx{i:02}"))
+            .thread_name(|i| format!("solFinalReplayTx{i:02}"))
             .build()
             .expect("new rayon threadpool");
         let verify_recyclers = VerifyRecyclers::default();

@@ -566,7 +566,7 @@ pub(crate) fn find_bankhash_of_heaviest_fork(
 
     let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&root_bank);
     let replay_tx_thread_pool = rayon::ThreadPoolBuilder::new()
-        .thread_name(|i| format!("solReplayTx{i:02}"))
+        .thread_name(|i| format!("solWenReplayTx{i:02}"))
         .build()
         .expect("new rayon threadpool");
     let recyclers = VerifyRecyclers::default();
@@ -1889,7 +1889,7 @@ mod tests {
             old_root_bank.last_blockhash(),
         );
         let replay_tx_thread_pool = rayon::ThreadPoolBuilder::new()
-            .thread_name(|i| format!("solReplayTx{i:02}"))
+            .thread_name(|i| format!("solWenReplayTx{i:02}"))
             .build()
             .expect("new rayon threadpool");
         let recyclers = VerifyRecyclers::default();
