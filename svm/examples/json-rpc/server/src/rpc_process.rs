@@ -81,6 +81,8 @@ use {
         },
     },
 };
+use solana_accounts_db::account_locks::validate_account_locks;
+use solana_svm_transaction::svm_message::SVMMessage;
 
 pub const MAX_REQUEST_BODY_SIZE: usize = 50 * (1 << 10); // 50kB
 
