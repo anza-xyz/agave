@@ -304,20 +304,6 @@ impl SanitizedTransaction {
         Ok(())
     }
 
-    /// Validate a transaction message against locked accounts
-    pub fn validate_account_locks(
-        message: &SanitizedMessage,
-        tx_account_lock_limit: usize,
-    ) -> Result<()> {
-        if message.has_duplicates() {
-            Err(TransactionError::AccountLoadedTwice)
-        } else if message.account_keys().len() > tx_account_lock_limit {
-            Err(TransactionError::TooManyAccountLocks)
-        } else {
-            Ok(())
-        }
-    }
-
     #[cfg(feature = "dev-context-only-utils")]
     pub fn new_for_tests(
         message: SanitizedMessage,
