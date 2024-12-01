@@ -717,7 +717,7 @@ impl BankingStage {
                                 continue;
                             };
 
-                            let Some(_) = SanitizedTransaction::validate_account_locks(
+                            let Some(_) = validate_account_locks(
                                 transaction.message(),
                                 transaction_account_lock_limit,
                             )
