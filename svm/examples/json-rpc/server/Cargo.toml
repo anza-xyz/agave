@@ -28,6 +28,7 @@ solana-program-runtime = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-sdk = { workspace = true }
 solana-svm = { workspace = true }
+solana-svm-transaction = { workspace = true }
 solana-system-program = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-version = { workspace = true }
