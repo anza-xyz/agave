@@ -63,6 +63,7 @@ use {
         transaction_state_container::TransactionStateContainer,
     },
 };
+use solana_accounts_db::account_locks::validate_account_locks;
 
 // Below modules are pub to allow use by banking_stage bench
 pub mod committer;
