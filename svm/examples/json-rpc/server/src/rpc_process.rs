@@ -15,6 +15,7 @@ use {
         parse_token::{get_token_account_mint, is_known_spl_token_id},
         UiAccount, UiAccountEncoding, UiDataSliceConfig, MAX_BASE58_BYTES,
     },
+    solana_accounts_db::account_locks::validate_account_locks,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_perf::packet::PACKET_DATA_SIZE,
     solana_program_runtime::loaded_programs::ProgramCacheEntry,
@@ -56,6 +57,7 @@ use {
             TransactionProcessingConfig, TransactionProcessingEnvironment,
         },
     },
+    solana_svm_transaction::svm_message::SVMMessage,
     solana_system_program::system_processor,
     solana_transaction_status::{
         map_inner_instructions, parse_ui_inner_instructions, TransactionBinaryEncoding,
@@ -81,8 +83,6 @@ use {
         },
     },
 };
-use solana_accounts_db::account_locks::validate_account_locks;
-use solana_svm_transaction::svm_message::SVMMessage;
 
 pub const MAX_REQUEST_BODY_SIZE: usize = 50 * (1 << 10); // 50kB
 
