@@ -1904,7 +1904,10 @@ impl SchedulingStateMachine {
     /// # Safety
     /// Call this exactly once for each thread. See [`TokenCell`] for details.
     pub unsafe fn exclusively_initialize_current_thread_for_scheduling_for_test2() -> Self {
-        Self::exclusively_initialize_current_thread_for_scheduling(SchedulingMode::BlockProduction, 200)
+        Self::exclusively_initialize_current_thread_for_scheduling(
+            SchedulingMode::BlockProduction,
+            200,
+        )
     }
 }
 
