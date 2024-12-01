@@ -161,7 +161,7 @@ impl ForkProgress {
         };
 
         let mut new_progress = Self::new(
-            bank.last_blockhash(),
+            bank.last_vote_only_blockhash(),
             prev_leader_slot,
             validator_stake_info,
             num_blocks_on_fork,
