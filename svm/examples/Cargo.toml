@@ -42,6 +42,7 @@ solana-program-runtime = { path = "../../program-runtime" }
 solana-rpc-client-api = { path = "../../rpc-client-api" }
 solana-sdk = { path = "../../sdk/" }
 solana-svm = { path = "../" }
+solana-svm-transaction = { path = "../../svm-transaction" }
 solana-system-program = { path = "../../programs/system" }
 solana-version = { path = "../../version" }
 solana-test-validator = { path = "../../test-validator" }
