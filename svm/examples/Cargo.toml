@@ -31,6 +31,7 @@ jsonrpc-http-server = "18.0.0"
 log = "0.4.22"
 serde = "1.0.214"
 serde_json = "1.0.132"
+solana-accounts-db = { path = "../../accounts-db" }
 solana-account-decoder = { path = "../../account-decoder" }
 solana-bpf-loader-program = { path = "../../programs/bpf_loader" }
 solana-client = { path = "../../client" }
