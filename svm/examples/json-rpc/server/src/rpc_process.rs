@@ -381,7 +381,6 @@ impl JsonRpcRequestProcessor {
     ) -> TransactionBatch<'a> {
         let tx_account_lock_limit = solana_sdk::transaction::MAX_TX_ACCOUNT_LOCKS;
         let lock_result = validate_account_locks(transaction.account_keys(), tx_account_lock_limit);
-            .map(|_| ());
         let batch = TransactionBatch::new(
             vec![lock_result],
             std::borrow::Cow::Borrowed(std::slice::from_ref(transaction)),
