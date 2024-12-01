@@ -719,7 +719,7 @@ impl BankingStage {
                             };
 
                             let Some(_) = validate_account_locks(
-                                transaction.message(),
+                                transaction.account_keys(),
                                 transaction_account_lock_limit,
                             )
                             .ok() else {
