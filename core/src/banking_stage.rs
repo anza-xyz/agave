@@ -31,6 +31,7 @@ use {
     },
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     histogram::Histogram,
+    solana_accounts_db::account_locks::validate_account_locks,
     solana_client::connection_cache::ConnectionCache,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     solana_ledger::blockstore_processor::TransactionStatusSender,
@@ -42,9 +43,7 @@ use {
         vote_sender_types::ReplayVoteSender,
     },
     solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
-    solana_sdk::{
-        pubkey::Pubkey, scheduling::TaskKey, timing::AtomicInterval,
-    },
+    solana_sdk::{pubkey::Pubkey, scheduling::TaskKey, timing::AtomicInterval},
     solana_svm_transaction::svm_message::SVMMessage,
     solana_unified_scheduler_pool::{BankingStageAdapter, DefaultSchedulerPool},
     std::{
@@ -62,7 +61,6 @@ use {
         transaction_state_container::TransactionStateContainer,
     },
 };
-use solana_accounts_db::account_locks::validate_account_locks;
 
 // Below modules are pub to allow use by banking_stage bench
 pub mod committer;
