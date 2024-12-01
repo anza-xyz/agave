@@ -214,38 +214,6 @@ impl SanitizedTransaction {
         }
     }
 
-    /// Validate and return the account keys locked by this transaction
-    pub fn get_account_locks(
-        &self,
-        tx_account_lock_limit: usize,
-    ) -> Result<TransactionAccountLocks> {
-        Self::validate_account_locks(self.message(), tx_account_lock_limit)?;
-        Ok(self.get_account_locks_unchecked())
-    }
-
-    /// Return the list of accounts that must be locked during processing this transaction.
-    pub fn get_account_locks_unchecked(&self) -> TransactionAccountLocks {
-        let message = &self.message;
-        let account_keys = message.account_keys();
-        let num_readonly_accounts = message.num_readonly_accounts();
-        let num_writable_accounts = account_keys.len().saturating_sub(num_readonly_accounts);
-
-        let mut account_locks = TransactionAccountLocks {
-            writable: Vec::with_capacity(num_writable_accounts),
-            readonly: Vec::with_capacity(num_readonly_accounts),
-        };
-
-        for (i, key) in account_keys.iter().enumerate() {
-            if message.is_writable(i) {
-                account_locks.writable.push(key);
-            } else {
-                account_locks.readonly.push(key);
-            }
-        }
-
-        account_locks
-    }
-
     /// Return the list of addresses loaded from on-chain address lookup tables
     pub fn get_loaded_addresses(&self) -> LoadedAddresses {
         match &self.message {
