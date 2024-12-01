@@ -36,7 +36,6 @@ use {
     solana_entry::entry::VerifyRecyclers,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
-        ancestor_iterator::AncestorIterator,
         block_error::BlockError,
         blockstore::Blockstore,
         blockstore_processor::{
@@ -2371,15 +2370,10 @@ impl ReplayStage {
         }
         trace!("handle votable bank {}", bank.slot());
         // set replay_tip_bank to the first bank in ancestor iterator of bank which is frozen.
-        let replay_tip_bank = AncestorIterator::new_inclusive(bank.slot(), blockstore)
-            .map(|b| {
-                bank_forks
-                    .read()
-                    .unwrap()
-                    .get(b)
-                    .expect("Ancestor should be in bank_forks")
-            })
-            .find(|b| b.is_frozen());
+        let mut replay_tip_bank = Some(bank.clone());
+        while replay_tip_bank.is_some() && !replay_tip_bank.as_ref().unwrap().is_frozen() {
+            replay_tip_bank = replay_tip_bank.unwrap().parent();
+        }
         if replay_tip_bank.is_none() {
             return Err(SetRootError::NoAncestorFrozen(bank.slot()));
         }
