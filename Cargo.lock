@@ -6271,6 +6271,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-builtins"
+version = "2.2.0"
+
+[[package]]
 name = "solana-builtins-default-costs"
 version = "2.2.0"
 dependencies = [
