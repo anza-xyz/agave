@@ -1422,7 +1422,7 @@ impl Bank {
             cache_for_accounts_lt_hash: RwLock::new(AHashMap::new()),
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
-            bank_hash_stats: AtomicBankHashStats::new(&parent.bank_hash_stats.load()),
+            bank_hash_stats: AtomicBankHashStats::default(),
         };
 
         let (_, ancestors_time_us) = measure_us!({
