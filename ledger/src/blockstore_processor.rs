@@ -174,8 +174,10 @@ pub fn execute_batch(
     let is_unified_scheduler_for_block_production = pre_commit_callback.is_some();
     let pre_commit_callback = pre_commit_callback.map(|original_callback| {
         || {
-            if let Some(index) = original_callback() {
-                transaction_indexes = vec![index];
+            if let Some(maybe_index) = original_callback() {
+                if let Some(index) = maybe_index {
+                    transaction_indexes = vec![index];
+                }
                 true
             } else {
                 false
