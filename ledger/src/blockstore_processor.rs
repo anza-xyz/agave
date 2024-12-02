@@ -161,6 +161,7 @@ pub fn execute_batch(
         transaction_indexes,
     } = batch;
     let record_token_balances = transaction_status_sender.is_some();
+    let mut transaction_indexes = transaction_indexes.to_vec();
 
     let mut mint_decimals: HashMap<Pubkey, u8> = HashMap::new();
 
@@ -237,7 +238,7 @@ pub fn execute_batch(
             commit_results,
             balances,
             token_balances,
-            transaction_indexes.to_vec(),
+            transaction_indexes,
         );
     }
 
