@@ -1739,6 +1739,7 @@ impl SchedulingStateMachine {
     /// separation of concern.
     pub fn create_task(
         transaction: RuntimeTransaction<SanitizedTransaction>,
+        transaction_context: TransactionContext,
         index: TaskKey,
         usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
     ) -> Task {
