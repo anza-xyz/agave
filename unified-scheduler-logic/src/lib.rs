@@ -1739,7 +1739,7 @@ impl SchedulingStateMachine {
     /// separation of concern.
     pub fn create_task(
         transaction: RuntimeTransaction<SanitizedTransaction>,
-        transaction_context: TransactionContext,
+        context: TransactionContext,
         index: TaskKey,
         usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
     ) -> Task {
@@ -1798,12 +1798,20 @@ impl SchedulingStateMachine {
             packed_task_inner: PackedTaskInner {
                 lock_context_and_transaction: Box::new((lock_contexts, Box::new(TransactionWrapper {
                     transaction,
-                    context: TransactionContext::BlockVerification(index)
+                    context,
                 }))),
                 index,
             },
             blocked_usage_count: TokenCell::new(CounterWithStatus::new(pending_lock_contexts)),
         })
+    }
+
+    pub fn create_task_for_test(
+        transaction: RuntimeTransaction<SanitizedTransaction>,
+        index: TaskKey,
+        usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
+    ) -> Task {
+        create_task(transaction, TransactionContext::BlockVerification(index), index, usage_queue_loader)
     }
 
     pub fn reset_task(&mut self, task: &Task) {
