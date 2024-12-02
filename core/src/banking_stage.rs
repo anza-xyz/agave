@@ -700,7 +700,7 @@ impl BankingStage {
                     if matches!(decision, BufferedPacketsDecision::Forward) {
                         return;
                     }
-                    let bank = bank_forks.read().unwrap().working_bank();
+                    let bank = bank_forks.read().unwrap().root_bank();
                     let alt_resolved_slot = bank.slot();
                     let sanitized_epoch = bank.epoch();
                     let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
