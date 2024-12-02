@@ -180,7 +180,13 @@ pub fn execute_batch(
         timings,
         log_messages_bytes_limit,
         pre_commit_callback.map(|f| {
-            || f().is_some()
+            || {
+                if let Some(index) = f() {
+                    true
+                } else {
+                    false
+                }
+            }
         })
     ) else {
         return Err(TransactionError::CommitFailed);
