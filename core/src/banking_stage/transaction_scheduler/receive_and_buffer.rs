@@ -195,7 +195,8 @@ impl SanitizedTransactionReceiveAndBuffer {
                     .is_ok()
                 })
                 .filter_map(|(packet, tx, deactivation_slot)| {
-                    tx.compute_budget_limits(&working_bank.feature_set)
+                    tx.compute_budget_instruction_details()
+                        .sanitize_and_convert_to_compute_budget_limits()
                         .map(|compute_budget| {
                             (packet, tx, deactivation_slot, compute_budget.into())
                         })
