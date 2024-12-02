@@ -4037,6 +4037,7 @@ mod tests {
         let task = SchedulingStateMachine::create_task(
             tx,
             0,
+            &|_| UsageQueue::default(),
         );
         DefaultTaskHandler::handle(result, timings, scheduling_context, &task, handler_context);
         assert_matches!(result, Err(TransactionError::AccountLoadedTwice));
