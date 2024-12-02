@@ -755,4 +755,39 @@ mod tests {
         let any_threads = ThreadSet::any(MAX_THREADS);
         assert_eq!(any_threads.num_threads(), MAX_THREADS as u32);
     }
+
+    #[test]
+    fn test_thread_set_iter() {
+        let mut thread_set = ThreadSet::none();
+        assert!(thread_set.contained_threads_iter().next().is_none());
+
+        thread_set.insert(4);
+        assert_eq!(
+            thread_set.contained_threads_iter().collect::<Vec<_>>(),
+            vec![4]
+        );
+
+        thread_set.insert(5);
+        assert_eq!(
+            thread_set.contained_threads_iter().collect::<Vec<_>>(),
+            vec![4, 5]
+        );
+        thread_set.insert(63);
+        assert_eq!(
+            thread_set.contained_threads_iter().collect::<Vec<_>>(),
+            vec![4, 5, 63]
+        );
+
+        thread_set.remove(5);
+        assert_eq!(
+            thread_set.contained_threads_iter().collect::<Vec<_>>(),
+            vec![4, 63]
+        );
+
+        let thread_set = ThreadSet::any(64);
+        assert_eq!(
+            thread_set.contained_threads_iter().collect::<Vec<_>>(),
+            (0..64).collect::<Vec<_>>()
+        );
+    }
 }
