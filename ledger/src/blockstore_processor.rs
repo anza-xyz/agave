@@ -154,7 +154,7 @@ pub fn execute_batch(
     timings: &mut ExecuteTimings,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
-    pre_commit_callback: Option<impl FnOnce() -> Option<usize>>,
+    pre_commit_callback: Option<impl FnOnce() -> Option<Option<usize>>>,
 ) -> Result<()> {
     let TransactionBatchWithIndexes {
         batch,
