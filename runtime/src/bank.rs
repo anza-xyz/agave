@@ -3139,14 +3139,15 @@ impl Bank {
         #[cfg(feature = "dev-context-only-utils")]
         let genesis_hash = genesis_hash.unwrap_or(genesis_config.hash());
 
-        let full_replay_fields = self.full_replay_fields.read().unwrap();
-        let mut blockhash_queue = full_replay_fields
-            .as_ref()
-            .unwrap()
-            .blockhash_queue
-            .write()
-            .unwrap();
+        let mut blockhash_queue = BlockhashQueue::default();
         blockhash_queue.genesis_hash(&genesis_hash, self.fee_rate_governor.lamports_per_signature);
+        self.full_replay_fields
+            .write()
+            .unwrap()
+            .replace(BankFullReplayFields {
+                blockhash_queue: RwLock::new(blockhash_queue),
+                ..BankFullReplayFields::default()
+            });
         self.vote_only_blockhash_queue
             .write()
             .unwrap()
