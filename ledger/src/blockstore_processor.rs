@@ -171,6 +171,7 @@ pub fn execute_batch(
         vec![]
     };
 
+    let is_unified_scheduler_for_block_production = pre_commit_callback.is_some();
     let pre_commit_callback = pre_commit_callback.map(|original_callback| {
         || {
             if let Some(index) = original_callback() {
@@ -181,7 +182,7 @@ pub fn execute_batch(
             }
         }
     });
-    let is_unified_scheduler_for_block_production = pre_commit_callback.is_some();
+
     let Some((commit_results, balances)) = batch.bank().do_load_execute_and_commit_transactions(
         batch,
         MAX_PROCESSING_AGE,
