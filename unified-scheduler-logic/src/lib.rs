@@ -1815,7 +1815,7 @@ impl SchedulingStateMachine {
         index: TaskKey,
         usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
     ) -> Task {
-        Self::do_create_task(transaction, TransactionContext::BlockVerification(index), index, usage_queue_loader)
+        Self::do_create_task(transaction, TransactionContext::BlockVerification, index, usage_queue_loader)
     }
 
     pub fn reset_task(&mut self, task: &Task) {
