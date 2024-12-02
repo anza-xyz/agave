@@ -701,6 +701,8 @@ impl BankingStage {
                         return;
                     }
                     let bank = bank_forks.read().unwrap().working_bank();
+                    let alt_resolved_slot = bank.slot();
+                    let sanitized_epoch = bank.epoch();
                     let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
                     let batches = batches.0.iter();
                     for batch in batches {
@@ -709,7 +711,7 @@ impl BankingStage {
                         let packets = PacketDeserializer::deserialize_packets_with_indexes(batch);
 
                         for (packet, packet_index) in packets {
-                            let Some((transaction, _)) = packet.build_sanitized_transaction(
+                            let Some((transaction, deactivation_slot)) = packet.build_sanitized_transaction(
                                 bank.vote_only_bank(),
                                 &bank,
                                 bank.get_reserved_account_keys(),
@@ -738,8 +740,7 @@ impl BankingStage {
                                 &bank,
                             );
 
-                            let context = TransactionContext::BlockProduction(MaxAge { .. Default::default()
-                            });
+                            let context = TransactionContext::BlockProduction(calculate_max_age(sanitized_epoch, deactivation_slot, alt_resolved_slot));
 
                             let index = {
                                 let reversed_priority = (u64::MAX - priority) as TaskKey;
