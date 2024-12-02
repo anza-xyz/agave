@@ -361,20 +361,6 @@ impl<T> SnapshotAccountsDbFields<T> {
             }
         }
     }
-
-    fn extract_bank_hash_stats(&self) -> BankHashStats {
-        match self.incremental_snapshot_accounts_db_fields.as_ref() {
-            None => self.full_snapshot_accounts_db_fields.3.stats.clone(),
-            Some(AccountsDbFields(
-                _incremental_snapshot_storages,
-                _incremental_snapshot_version,
-                _incremental_snapshot_slot,
-                incremental_snapshot_bank_hash_info,
-                _incremental_snapshot_historical_roots,
-                _incremental_snapshot_historical_roots_with_hash,
-            )) => incremental_snapshot_bank_hash_info.stats.clone(),
-        }
-    }
 }
 
 fn deserialize_from<R, T>(reader: R) -> bincode::Result<T>
@@ -885,29 +871,29 @@ where
             .map(|bank_fields| bank_fields.capitalization),
     );
     let bank_fields = bank_fields.collapse_into();
-    let bank_hash_stats = snapshot_accounts_db_fields.extract_bank_hash_stats();
-    let (accounts_db, reconstructed_accounts_db_info) = reconstruct_accountsdb_from_fields(
-        snapshot_accounts_db_fields,
-        account_paths,
-        storage_and_next_append_vec_id,
-        genesis_config,
-        limit_load_slot_count_from_snapshot,
-        verify_index,
-        accounts_db_config,
-        accounts_update_notifier,
-        exit,
-        bank_fields.epoch_accounts_hash,
-        capitalizations,
-        bank_fields.incremental_snapshot_persistence.as_ref(),
-        bank_fields.accounts_lt_hash.is_some(),
-    )?;
+    let (accounts_db, reconstructed_accounts_db_info, bank_hash_stats) =
+        reconstruct_accountsdb_from_fields(
+            snapshot_accounts_db_fields,
+            account_paths,
+            storage_and_next_append_vec_id,
+            genesis_config,
+            limit_load_slot_count_from_snapshot,
+            verify_index,
+            accounts_db_config,
+            accounts_update_notifier,
+            exit,
+            bank_fields.epoch_accounts_hash,
+            capitalizations,
+            bank_fields.incremental_snapshot_persistence.as_ref(),
+            bank_fields.accounts_lt_hash.is_some(),
+        )?;
 
     let bank_rc = BankRc::new(Accounts::new(Arc::new(accounts_db)));
     let runtime_config = Arc::new(runtime_config.clone());
 
     // if limit_load_slot_count_from_snapshot is set, then we need to side-step some correctness checks beneath this call
     let debug_do_not_add_builtins = limit_load_slot_count_from_snapshot.is_some();
-    let mut bank = Bank::new_from_fields(
+    let bank = Bank::new_from_fields(
         bank_rc,
         genesis_config,
         runtime_config,
@@ -916,10 +902,10 @@ where
         additional_builtins,
         debug_do_not_add_builtins,
         reconstructed_accounts_db_info.accounts_data_len,
+        &bank_hash_stats,
     );
 
     info!("rent_collector: {:?}", bank.rent_collector());
-    bank.set_bank_hash_stats(&bank_hash_stats);
     Ok((
         bank,
         ReconstructedBankInfo {
@@ -1066,7 +1052,7 @@ fn reconstruct_accountsdb_from_fields<E>(
     capitalizations: (u64, Option<u64>),
     incremental_snapshot_persistence: Option<&BankIncrementalSnapshotPersistence>,
     has_accounts_lt_hash: bool,
-) -> Result<(AccountsDb, ReconstructedAccountsDbInfo), Error>
+) -> Result<(AccountsDb, ReconstructedAccountsDbInfo, BankHashStats), Error>
 where
     E: SerializableStorage + std::marker::Sync,
 {
@@ -1278,6 +1264,7 @@ where
             accounts_data_len,
             duplicates_lt_hash,
         },
+        snapshot_bank_hash_info.stats,
     ))
 }
 

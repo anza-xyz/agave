@@ -86,7 +86,7 @@ mod serde_snapshot_tests {
             None,
             false,
         )
-        .map(|(accounts_db, _)| accounts_db)
+        .map(|(accounts_db, _, _)| accounts_db)
     }
 
     fn accountsdb_from_stream<R>(
