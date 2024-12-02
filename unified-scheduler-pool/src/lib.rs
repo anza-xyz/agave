@@ -3798,7 +3798,6 @@ mod tests {
             transaction: RuntimeTransaction<SanitizedTransaction>,
             index: TaskKey,
         ) -> ScheduleResult {
-            let transaction_and_index = (transaction, index);
             let context = self.context().clone();
             let pool = self.3.clone();
 
@@ -3810,12 +3809,17 @@ mod tests {
                 let mut result = Ok(());
                 let mut timings = ExecuteTimings::default();
 
+                let task = SchedulingStateMachine::create_task(
+                    transaction,
+                    index,
+                    &mut |_| UsageQueue::default(),
+                );
+
                 <DefaultTaskHandler as TaskHandler>::handle(
                     &mut result,
                     &mut timings,
                     &context,
-                    &transaction_and_index.0,
-                    transaction_and_index.1,
+                    &task,
                     &pool.handler_context,
                 );
                 (result, timings)
