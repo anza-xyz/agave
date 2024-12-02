@@ -91,10 +91,16 @@ impl Bank {
         error_counters: &mut TransactionErrorMetrics,
         vote_only_execution: bool,
     ) -> Vec<TransactionCheckResult> {
+        let full_replay_fields = self.full_replay_fields.read().unwrap();
         let hash_queue = if vote_only_execution {
             self.vote_only_blockhash_queue.read().unwrap()
         } else {
-            self.blockhash_queue.read().unwrap()
+            full_replay_fields
+                .as_ref()
+                .unwrap()
+                .blockhash_queue
+                .read()
+                .unwrap()
         };
         let last_blockhash = hash_queue.last_hash();
         let next_durable_nonce = DurableNonce::from_blockhash(&last_blockhash);

@@ -427,7 +427,6 @@ impl TransactionLogCollector {
 #[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "dev-context-only-utils", derive(PartialEq))]
 pub struct BankFieldsToDeserialize {
-    pub(crate) blockhash_queue: BlockhashQueue,
     pub(crate) vote_only_blockhash_queue: BlockhashQueue,
     pub(crate) ancestors: AncestorsForSerialization,
     pub(crate) hash: Hash,
@@ -477,7 +476,6 @@ pub struct BankFieldsToDeserialize {
 /// deserialization will use a new mechanism or otherwise be in sync more clearly.
 #[derive(Debug)]
 pub struct BankFieldsToSerialize {
-    pub blockhash_queue: BlockhashQueue,
     pub vote_only_blockhash_queue: BlockhashQueue,
     pub ancestors: AncestorsForSerialization,
     pub hash: Hash,
@@ -530,7 +528,6 @@ impl PartialEq for Bank {
             rc: _,
             status_cache: _,
             vote_only_status_cache: _,
-            blockhash_queue,
             vote_only_blockhash_queue,
             ancestors,
             hash,
@@ -601,8 +598,7 @@ impl PartialEq for Bank {
             // Adding ".." will remove compile-time checks that if a new field
             // is added to the struct, this PartialEq is accordingly updated.
         } = self;
-        *blockhash_queue.read().unwrap() == *other.blockhash_queue.read().unwrap()
-            && *vote_only_blockhash_queue.read().unwrap() == *other.vote_only_blockhash_queue.read().unwrap()
+        *vote_only_blockhash_queue.read().unwrap() == *other.vote_only_blockhash_queue.read().unwrap()
             && ancestors == &other.ancestors
             && *hash.read().unwrap() == *other.hash.read().unwrap()
             && *vote_states.read().unwrap() == *other.vote_states.read().unwrap()
@@ -649,7 +645,6 @@ impl BankFieldsToSerialize {
     /// Only use for tests; many of the fields are invalid!
     pub fn default_for_tests() -> Self {
         Self {
-            blockhash_queue: BlockhashQueue::default(),
             vote_only_blockhash_queue: BlockhashQueue::default(),
             ancestors: AncestorsForSerialization::default(),
             hash: Hash::default(),
@@ -762,12 +757,16 @@ struct HashOverride {
 pub struct BankFullReplayFields {
     /// Bank tick height
     tick_height: AtomicU64,
+
+    /// FIFO queue of `recent_blockhash` items
+    blockhash_queue: RwLock<BlockhashQueue>,
 }
 
 impl Clone for BankFullReplayFields {
     fn clone(&self) -> Self {
         Self {
             tick_height: AtomicU64::new(self.tick_height.load(Relaxed)),
+            blockhash_queue: RwLock::new(self.blockhash_queue.read().unwrap().clone()),
         }
     }
 }
@@ -775,6 +774,7 @@ impl Clone for BankFullReplayFields {
 impl PartialEq for BankFullReplayFields {
     fn eq(&self, other: &Self) -> bool {
         self.tick_height.load(Relaxed) == other.tick_height.load(Relaxed)
+            && *self.blockhash_queue.read().unwrap() == *other.blockhash_queue.read().unwrap()
     }
 }
 
@@ -792,8 +792,6 @@ pub struct Bank {
     pub vote_only_status_cache: Arc<RwLock<BankStatusCache>>,
 
     /// FIFO queue of `recent_blockhash` items
-    blockhash_queue: RwLock<BlockhashQueue>,
-
     vote_only_blockhash_queue: RwLock<BlockhashQueue>,
 
     /// The set of parents including this bank
@@ -1040,7 +1038,6 @@ impl Bank {
             rc: BankRc::new(accounts),
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
             vote_only_status_cache: Arc::<RwLock<BankStatusCache>>::default(),
-            blockhash_queue: RwLock::<BlockhashQueue>::default(),
             vote_only_blockhash_queue: RwLock::<BlockhashQueue>::default(),
             ancestors: Ancestors::default(),
             hash: RwLock::<Hash>::default(),
@@ -1263,8 +1260,6 @@ impl Bank {
         );
 
         let bank_id = rc.bank_id_generator.fetch_add(1, Relaxed) + 1;
-        let (blockhash_queue, blockhash_queue_time_us) =
-            measure_us!(RwLock::new(parent.blockhash_queue.read().unwrap().clone()));
         let vote_only_blockhash_queue =
             RwLock::new(parent.vote_only_blockhash_queue.read().unwrap().clone());
 
@@ -1297,7 +1292,6 @@ impl Bank {
             slot,
             bank_id,
             epoch,
-            blockhash_queue,
             vote_only_blockhash_queue,
 
             // TODO: clean this up, so much special-case copying...
@@ -1472,7 +1466,6 @@ impl Bank {
                 status_cache_time_us,
                 vote_only_status_cache_time_us,
                 fee_components_time_us,
-                blockhash_queue_time_us,
                 stakes_cache_time_us,
                 epoch_stakes_time_us,
                 builtin_program_ids_time_us,
@@ -1734,7 +1727,6 @@ impl Bank {
             rc: bank_rc,
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
             vote_only_status_cache: Arc::<RwLock<BankStatusCache>>::default(),
-            blockhash_queue: RwLock::new(fields.blockhash_queue),
             vote_only_blockhash_queue: RwLock::new(fields.vote_only_blockhash_queue),
             ancestors,
             hash: RwLock::new(fields.hash),
@@ -1875,7 +1867,6 @@ impl Bank {
     pub(crate) fn get_fields_to_serialize(&self) -> BankFieldsToSerialize {
         let (epoch_stakes, versioned_epoch_stakes) = split_epoch_stakes(self.epoch_stakes.clone());
         BankFieldsToSerialize {
-            blockhash_queue: self.blockhash_queue.read().unwrap().clone(),
             vote_only_blockhash_queue: self.vote_only_blockhash_queue.read().unwrap().clone(),
             ancestors: AncestorsForSerialization::from(&self.ancestors),
             hash: *self.hash.read().unwrap(),
@@ -2929,7 +2920,13 @@ impl Bank {
     }
 
     pub fn update_recent_blockhashes(&self) {
-        let blockhash_queue = self.blockhash_queue.read().unwrap();
+        let full_replay_fields = self.full_replay_fields.read().unwrap();
+        let blockhash_queue = full_replay_fields
+            .as_ref()
+            .unwrap()
+            .blockhash_queue
+            .read()
+            .unwrap();
         self.update_recent_blockhashes_locked(&blockhash_queue);
     }
 
@@ -3142,10 +3139,14 @@ impl Bank {
         #[cfg(feature = "dev-context-only-utils")]
         let genesis_hash = genesis_hash.unwrap_or(genesis_config.hash());
 
-        self.blockhash_queue
-            .write()
+        let full_replay_fields = self.full_replay_fields.read().unwrap();
+        let mut blockhash_queue = full_replay_fields
+            .as_ref()
             .unwrap()
-            .genesis_hash(&genesis_hash, self.fee_rate_governor.lamports_per_signature);
+            .blockhash_queue
+            .write()
+            .unwrap();
+        blockhash_queue.genesis_hash(&genesis_hash, self.fee_rate_governor.lamports_per_signature);
         self.vote_only_blockhash_queue
             .write()
             .unwrap()
@@ -3231,7 +3232,14 @@ impl Bank {
 
     /// Return the last block hash registered.
     pub fn last_blockhash(&self) -> Hash {
-        self.blockhash_queue.read().unwrap().last_hash()
+        let full_replay_fields = self.full_replay_fields.read().unwrap();
+        let blockhash_queue = full_replay_fields
+            .as_ref()
+            .unwrap()
+            .blockhash_queue
+            .read()
+            .unwrap();
+        blockhash_queue.last_hash()
     }
 
     pub fn last_vote_only_blockhash(&self) -> Hash {
@@ -3239,7 +3247,13 @@ impl Bank {
     }
 
     pub fn last_blockhash_and_lamports_per_signature(&self) -> (Hash, u64) {
-        let blockhash_queue = self.blockhash_queue.read().unwrap();
+        let full_replay_fields = self.full_replay_fields.read().unwrap();
+        let blockhash_queue = full_replay_fields
+            .as_ref()
+            .unwrap()
+            .blockhash_queue
+            .read()
+            .unwrap();
         let last_hash = blockhash_queue.last_hash();
         let last_lamports_per_signature = blockhash_queue
             .get_lamports_per_signature(&last_hash)
@@ -3248,7 +3262,13 @@ impl Bank {
     }
 
     pub fn is_blockhash_valid(&self, hash: &Hash) -> bool {
-        let blockhash_queue = self.blockhash_queue.read().unwrap();
+        let full_replay_fields = self.full_replay_fields.read().unwrap();
+        let blockhash_queue = full_replay_fields
+            .as_ref()
+            .unwrap()
+            .blockhash_queue
+            .read()
+            .unwrap();
         blockhash_queue.is_hash_valid_for_age(hash, MAX_PROCESSING_AGE)
     }
 
@@ -3261,22 +3281,27 @@ impl Bank {
     }
 
     pub fn get_lamports_per_signature_for_blockhash(&self, hash: &Hash) -> Option<u64> {
-        let blockhash_queue = self.blockhash_queue.read().unwrap();
+        let full_replay_fields = self.full_replay_fields.read().unwrap();
+        let blockhash_queue = full_replay_fields
+            .as_ref()
+            .unwrap()
+            .blockhash_queue
+            .read()
+            .unwrap();
         blockhash_queue.get_lamports_per_signature(hash)
     }
 
     pub fn get_fee_for_message(&self, message: &SanitizedMessage) -> Option<u64> {
-        let lamports_per_signature = {
-            let blockhash_queue = self.blockhash_queue.read().unwrap();
-            blockhash_queue.get_lamports_per_signature(message.recent_blockhash())
-        }
-        .or_else(|| {
-            self.load_message_nonce_account(message).map(
-                |(_nonce_address, _nonce_account, nonce_data)| {
-                    nonce_data.get_lamports_per_signature()
+        let lamports_per_signature =
+            { self.get_lamports_per_signature_for_blockhash(message.recent_blockhash()) }.or_else(
+                || {
+                    self.load_message_nonce_account(message).map(
+                        |(_nonce_address, _nonce_account, nonce_data)| {
+                            nonce_data.get_lamports_per_signature()
+                        },
+                    )
                 },
-            )
-        })?;
+            )?;
         Some(self.get_fee_for_message_with_lamports_per_signature(message, lamports_per_signature))
     }
 
@@ -3323,7 +3348,13 @@ impl Bank {
     }
 
     pub fn get_blockhash_last_valid_block_height(&self, blockhash: &Hash) -> Option<Slot> {
-        let blockhash_queue = self.blockhash_queue.read().unwrap();
+        let full_replay_fields = self.full_replay_fields.read().unwrap();
+        let blockhash_queue = full_replay_fields
+            .as_ref()
+            .unwrap()
+            .blockhash_queue
+            .read()
+            .unwrap();
         // This calculation will need to be updated to consider epoch boundaries if BlockhashQueue
         // length is made variable by epoch
         blockhash_queue
@@ -3400,10 +3431,16 @@ impl Bank {
         // Only acquire the write lock for the blockhash queue on block boundaries because
         // readers can starve this write lock acquisition and ticks would be slowed down too
         // much if the write lock is acquired for each tick.
+        let full_replay_fields = self.full_replay_fields.read().unwrap();
         let mut w_blockhash_queue = if vote_only_execution {
             self.vote_only_blockhash_queue.write().unwrap()
         } else {
-            self.blockhash_queue.write().unwrap()
+            full_replay_fields
+                .as_ref()
+                .unwrap()
+                .blockhash_queue
+                .write()
+                .unwrap()
         };
 
         #[cfg(feature = "dev-context-only-utils")]
@@ -3451,7 +3488,13 @@ impl Bank {
         // Only acquire the write lock for the blockhash queue on block boundaries because
         // readers can starve this write lock acquisition and ticks would be slowed down too
         // much if the write lock is acquired for each tick.
-        let mut w_blockhash_queue = self.blockhash_queue.write().unwrap();
+        let full_replay_fields = self.full_replay_fields.read().unwrap();
+        let mut w_blockhash_queue = full_replay_fields
+            .as_ref()
+            .unwrap()
+            .blockhash_queue
+            .write()
+            .unwrap();
         if let Some(lamports_per_signature) = lamports_per_signature {
             w_blockhash_queue.register_hash(blockhash, lamports_per_signature);
         } else {
@@ -3769,7 +3812,15 @@ impl Bank {
     }
 
     pub fn get_hash_age(&self, hash: &Hash) -> Option<u64> {
-        self.blockhash_queue.read().unwrap().get_hash_age(hash)
+        self.full_replay_fields
+            .read()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .blockhash_queue
+            .read()
+            .unwrap()
+            .get_hash_age(hash)
     }
 
     pub fn is_hash_valid_for_age(&self, hash: &Hash, max_age: usize) -> bool {
@@ -6319,7 +6370,6 @@ impl Bank {
             }
             let parent_full_replay_fields = parent.full_replay_fields.read().unwrap();
             assert!(parent_full_replay_fields.is_some());
-            *self.blockhash_queue.write().unwrap() = parent.blockhash_queue.read().unwrap().clone();
             *self.full_replay_fields.write().unwrap() = parent_full_replay_fields.clone();
         }
     }
