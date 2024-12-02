@@ -1657,6 +1657,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 if should_pause && !session_ending {
                                     let task = banking_stage_context.as_ref().unwrap().adapter.recreate_task(
                                         executed_task.task.transaction().clone(),
+                                        executed_task.task.context().clone(),
                                         executed_task.task.index(),
                                     );
                                     debug!("requeued tx!!!!");
