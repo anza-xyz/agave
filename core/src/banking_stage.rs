@@ -737,7 +737,7 @@ impl BankingStage {
                             );
 
                             let context = TransactionContext::BlockProduction(MaxAge { .. Default::default()
-                            })
+                            });
 
                             let index = {
                                 let reversed_priority = (u64::MAX - priority) as TaskKey;
