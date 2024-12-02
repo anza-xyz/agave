@@ -2291,7 +2291,7 @@ impl BankingStageAdapter {
         context: TransactionContext,
         index: TaskKey,
     ) -> Task {
-        SchedulingStateMachine::create_task(transaction, context, index, &mut |pubkey| {
+        SchedulingStateMachine::do_create_task(transaction, context, index, &mut |pubkey| {
             self.usage_queue_loader.load(pubkey)
         })
     }
