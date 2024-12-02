@@ -718,21 +718,21 @@ impl TaskHandler for DefaultTaskHandler {
     ) {
         let transaction = task.transaction();
         let index = task.index();
-        /*
-                    let move_precompile_verification_to_svm = bank
-                        .feature_set
-                        .is_active(&feature_set::move_precompile_verification_to_svm::id());
-                            let Ok(()) = refilter_prebuilt_transactions(
-                                bank,
-                                transaction,
-                                max_age,
-                                move_precompile_verification_to_svm,
-                            );
-                            */
-
 
         let (cost, added_cost) =
             if matches!(scheduling_context.mode(), SchedulingMode::BlockProduction) {
+                let move_precompile_verification_to_svm = scheduling_context.bank()
+                    .feature_set
+                    .is_active(&feature_set::move_precompile_verification_to_svm::id());
+                if let Ok(()) = scheduling_context.bank().refilter_prebuilt_transactions(
+                    transaction,
+                    &task.context().max_age,
+                    move_precompile_verification_to_svm,
+                ) {
+                    *result = Err(e.into());
+                    break (None, false);
+                }
+
                 use solana_cost_model::cost_model::CostModel;
                 let c =
                     CostModel::calculate_cost(transaction, &scheduling_context.bank().feature_set);
