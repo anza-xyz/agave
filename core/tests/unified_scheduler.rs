@@ -37,6 +37,7 @@ use {
         sync::{Arc, Mutex},
     },
 };
+use solana_unified_scheduler_logic::Task;
 
 #[test]
 fn test_scheduler_waited_by_drop_bank_service() {
