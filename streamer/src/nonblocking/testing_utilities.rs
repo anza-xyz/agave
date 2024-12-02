@@ -83,30 +83,27 @@ pub struct SpawnTestServerResult {
 }
 
 pub fn create_quic_server_sockets() -> Vec<UdpSocket> {
-    let sockets = {
-        #[cfg(not(target_os = "windows"))]
-        {
-            use {
-                solana_net_utils::bind_to,
-                std::net::{IpAddr, Ipv4Addr},
-            };
-            (0..10)
-                .map(|_| {
-                    bind_to(
-                        IpAddr::V4(Ipv4Addr::LOCALHOST),
-                        /*port*/ 0,
-                        /*reuseport:*/ true,
-                    )
-                    .unwrap()
-                })
-                .collect::<Vec<_>>()
-        }
-        #[cfg(target_os = "windows")]
-        {
-            vec![bind_to_localhost().unwrap()]
-        }
-    };
-    sockets
+    #[cfg(not(target_os = "windows"))]
+    {
+        use {
+            solana_net_utils::bind_to,
+            std::net::{IpAddr, Ipv4Addr},
+        };
+        (0..10)
+            .map(|_| {
+                bind_to(
+                    IpAddr::V4(Ipv4Addr::LOCALHOST),
+                    /*port*/ 0,
+                    /*reuseport:*/ true,
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>()
+    }
+    #[cfg(target_os = "windows")]
+    {
+        vec![bind_to_localhost().unwrap()]
+    }
 }
 
 pub fn setup_quic_server(
