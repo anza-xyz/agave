@@ -3620,6 +3620,7 @@ mod tests {
                 task: &Task,
                 handler_context: &HandlerContext,
             ) {
+                let index = task.index();
                 match index {
                     STALLED_TRANSACTION_INDEX => *LOCK_TO_STALL.lock().unwrap(),
                     BLOCKED_TRANSACTION_INDEX => {}
