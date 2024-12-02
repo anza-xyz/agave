@@ -78,7 +78,6 @@ impl AccountsPackage {
             // Since we only snapshot rooted slots, and we know rooted slots must be frozen,
             // that guarantees this slot will have an accounts delta hash.
             let accounts_delta_hash = accounts_db.get_accounts_delta_hash(slot).unwrap();
-            // SAFETY: Every slot *must* have a BankHashStats entry in AccountsDb.
             let bank_hash_stats = bank.get_bank_hash_stats();
             let bank_fields_to_serialize = bank.get_fields_to_serialize();
             SupplementalSnapshotInfo {
