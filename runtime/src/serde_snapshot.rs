@@ -80,12 +80,6 @@ pub struct AccountsDbFields<T>(
     StoredMetaWriteVersion,
     Slot,
     BankHashInfo,
-    /// all slots that were roots within the last epoch
-    #[serde(deserialize_with = "default_on_eof")]
-    Vec<Slot>,
-    /// slots that were roots within the last epoch for which we care about the hash value
-    #[serde(deserialize_with = "default_on_eof")]
-    Vec<(Slot, Hash)>,
 );
 
 /// Incremental snapshots only calculate their accounts hash based on the
@@ -331,8 +325,6 @@ impl<T> SnapshotAccountsDbFields<T> {
                 incremental_snapshot_version,
                 incremental_snapshot_slot,
                 incremental_snapshot_bank_hash_info,
-                incremental_snapshot_historical_roots,
-                incremental_snapshot_historical_roots_with_hash,
             )) => {
                 let full_snapshot_storages = self.full_snapshot_accounts_db_fields.0;
                 let full_snapshot_slot = self.full_snapshot_accounts_db_fields.2;
@@ -355,8 +347,6 @@ impl<T> SnapshotAccountsDbFields<T> {
                     incremental_snapshot_version,
                     incremental_snapshot_slot,
                     incremental_snapshot_bank_hash_info,
-                    incremental_snapshot_historical_roots,
-                    incremental_snapshot_historical_roots_with_hash,
                 ))
             }
         }
@@ -1070,7 +1060,7 @@ where
 
     // Store the accounts hash & capitalization, from the full snapshot, in the new AccountsDb
     {
-        let AccountsDbFields(_, _, slot, bank_hash_info, _, _) =
+        let AccountsDbFields(_, _, slot, bank_hash_info) =
             &snapshot_accounts_db_fields.full_snapshot_accounts_db_fields;
 
         if let Some(incremental_snapshot_persistence) = incremental_snapshot_persistence {
@@ -1113,16 +1103,15 @@ where
 
     // Store the accounts hash & capitalization, from the incremental snapshot, in the new AccountsDb
     {
-        if let Some(AccountsDbFields(_, _, slot, bank_hash_info, _, _)) =
-            snapshot_accounts_db_fields
-                .incremental_snapshot_accounts_db_fields
-                .as_ref()
+        if let Some(AccountsDbFields(_, _, slot, bank_hash_info)) = snapshot_accounts_db_fields
+            .incremental_snapshot_accounts_db_fields
+            .as_ref()
         {
             if let Some(incremental_snapshot_persistence) = incremental_snapshot_persistence {
                 // Use the presence of a BankIncrementalSnapshotPersistence to indicate the
                 // Incremental Accounts Hash feature is enabled, and use its accounts hashes
                 // instead of `BankHashInfo`'s.
-                let AccountsDbFields(_, _, full_slot, full_bank_hash_info, _, _) =
+                let AccountsDbFields(_, _, full_slot, full_bank_hash_info) =
                     &snapshot_accounts_db_fields.full_snapshot_accounts_db_fields;
                 let full_accounts_hash = &full_bank_hash_info.accounts_hash;
                 assert_eq!(
@@ -1173,8 +1162,6 @@ where
         snapshot_version,
         snapshot_slot,
         snapshot_bank_hash_info,
-        _snapshot_historical_roots,
-        _snapshot_historical_roots_with_hash,
     ) = snapshot_accounts_db_fields.collapse_into()?;
 
     // Ensure all account paths exist
