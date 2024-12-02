@@ -2392,25 +2392,6 @@ fn test_hash_stored_account() {
     );
 }
 
-#[test]
-fn test_bank_hash_stats() {
-    solana_logger::setup();
-    let db = AccountsDb::new_single_for_tests();
-
-    let key = Pubkey::default();
-    let some_data_len = 5;
-    let some_slot: Slot = 0;
-    let account = AccountSharedData::new(1, some_data_len, &key);
-    let ancestors = vec![(some_slot, 0)].into_iter().collect();
-
-    db.store_for_tests(some_slot, &[(&key, &account)]);
-    let mut account = db.load_without_fixed_root(&ancestors, &key).unwrap().0;
-    account.checked_sub_lamports(1).unwrap();
-    account.set_executable(true);
-    db.store_for_tests(some_slot, &[(&key, &account)]);
-    db.add_root(some_slot);
-}
-
 // something we can get a ref to
 lazy_static! {
     pub static ref EPOCH_SCHEDULE: EpochSchedule = EpochSchedule::default();
