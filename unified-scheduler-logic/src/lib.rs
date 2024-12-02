@@ -534,10 +534,20 @@ struct PackedTaskInner {
     index: TaskKey,
     lock_context_and_transaction: Box<(
         Vec<Compact<LockContext>>,
-        Box<RuntimeTransaction<SanitizedTransaction>>,
+        Box<TransactionWrapper>,
     )>,
 }
 const_assert_eq!(mem::size_of::<PackedTaskInner>(), 24);
+
+struct TransactionWrapper {
+    transaction: RuntimeTransaction<SanitizedTransaction>,
+    context: TransactionContext,
+}
+
+enum TransactionContext {
+    BlockVerification(TaskKey),
+    BlockProduction(MaxAge),
+}
 
 impl std::fmt::Debug for PackedTaskInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
