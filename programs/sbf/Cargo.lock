@@ -5158,6 +5158,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-builtins"
+version = "2.2.0"
+dependencies = [
+ "solana-pubkey",
+]
+
+[[package]]
 name = "solana-builtins-default-costs"
 version = "2.2.0"
 dependencies = [
@@ -6671,6 +6678,7 @@ dependencies = [
  "solana-address-lookup-table-program",
  "solana-bpf-loader-program",
  "solana-bucket-map",
+ "solana-builtins",
  "solana-compute-budget",
  "solana-compute-budget-program",
  "solana-config-program",

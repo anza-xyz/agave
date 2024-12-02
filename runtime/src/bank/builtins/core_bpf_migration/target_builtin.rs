@@ -1,6 +1,7 @@
 use {
-    super::{error::CoreBpfMigrationError, CoreBpfMigrationTargetType},
+    super::error::CoreBpfMigrationError,
     crate::bank::Bank,
+    solana_builtins::core_bpf_migration::CoreBpfMigrationTargetType,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount},
         bpf_loader_upgradeable::get_program_data_address,
