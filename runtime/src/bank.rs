@@ -1665,10 +1665,14 @@ impl Bank {
             .set_valid(epoch_accounts_hash, parent.slot());
 
         let parent_timestamp = parent.clock().unix_timestamp;
-        let parent_full_replay_fields = parent.full_replay_fields.read().unwrap().clone();
+        let new_full_replay_fields = parent.full_replay_fields.read().unwrap().clone();
         let mut new = Bank::new_from_parent(parent, collector_id, slot);
         new.apply_feature_activations(ApplyFeatureActivationsCaller::WarpFromParent, false);
         new.update_epoch_stakes(new.epoch_schedule().get_epoch(slot));
+        new_full_replay_fields
+            .as_ref()
+            .expect("parent must have full replay fields")
+            .tick_height.store(new.max_tick_height(), Relaxed);
         new.tick_height_for_vote_only
             .store(new.max_tick_height(), Relaxed);
 
@@ -1683,7 +1687,7 @@ impl Bank {
         });
         new.transaction_processor
             .fill_missing_sysvar_cache_entries(&new);
-        *new.full_replay_fields.write().unwrap() = parent_full_replay_fields;
+        *new.full_replay_fields.write().unwrap() = new_full_replay_fields;
         new.vote_only_freeze();
         new.freeze();
         new
