@@ -51,8 +51,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
             result: &mut Result<()>,
             timings: &mut ExecuteTimings,
             scheduling_context: &SchedulingContext,
-            transaction: &RuntimeTransaction<SanitizedTransaction>,
-            index: TaskKey,
+            task: &Task,
             handler_context: &HandlerContext,
         ) {
             info!("Stalling at StallingHandler::handle()...");
@@ -65,8 +64,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
                 result,
                 timings,
                 scheduling_context,
-                transaction,
-                index,
+                task,
                 handler_context,
             );
         }
