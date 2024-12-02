@@ -361,6 +361,20 @@ impl<T> SnapshotAccountsDbFields<T> {
             }
         }
     }
+
+    fn extract_bank_hash_stats(&self) -> BankHashStats {
+        match self.incremental_snapshot_accounts_db_fields.as_ref() {
+            None => self.full_snapshot_accounts_db_fields.3.stats.clone(),
+            Some(AccountsDbFields(
+                _incremental_snapshot_storages,
+                _incremental_snapshot_version,
+                _incremental_snapshot_slot,
+                incremental_snapshot_bank_hash_info,
+                _incremental_snapshot_historical_roots,
+                _incremental_snapshot_historical_roots_with_hash,
+            )) => incremental_snapshot_bank_hash_info.stats.clone(),
+        }
+    }
 }
 
 fn deserialize_from<R, T>(reader: R) -> bincode::Result<T>
@@ -871,6 +885,7 @@ where
             .map(|bank_fields| bank_fields.capitalization),
     );
     let bank_fields = bank_fields.collapse_into();
+    let bank_hash_stats = snapshot_accounts_db_fields.extract_bank_hash_stats();
     let (accounts_db, reconstructed_accounts_db_info) = reconstruct_accountsdb_from_fields(
         snapshot_accounts_db_fields,
         account_paths,
@@ -892,7 +907,7 @@ where
 
     // if limit_load_slot_count_from_snapshot is set, then we need to side-step some correctness checks beneath this call
     let debug_do_not_add_builtins = limit_load_slot_count_from_snapshot.is_some();
-    let bank = Bank::new_from_fields(
+    let mut bank = Bank::new_from_fields(
         bank_rc,
         genesis_config,
         runtime_config,
@@ -904,7 +919,7 @@ where
     );
 
     info!("rent_collector: {:?}", bank.rent_collector());
-
+    bank.set_bank_hash_stats(&bank_hash_stats);
     Ok((
         bank,
         ReconstructedBankInfo {

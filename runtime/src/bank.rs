@@ -950,6 +950,7 @@ pub struct Bank {
     /// until bankless leader. Can be computed directly from shreds without needing to execute transactions.
     block_id: RwLock<Option<Hash>>,
 
+    /// Accounts stats for computing the bank hash
     bank_hash_stats: AtomicBankHashStats,
 }
 
@@ -7121,6 +7122,10 @@ impl Bank {
 
     pub fn get_bank_hash_stats(&self) -> BankHashStats {
         self.bank_hash_stats.load()
+    }
+
+    pub fn set_bank_hash_stats(&mut self, bank_hash_stats: &BankHashStats) {
+        self.bank_hash_stats = AtomicBankHashStats::new(bank_hash_stats);
     }
 }
 
