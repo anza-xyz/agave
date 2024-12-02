@@ -344,7 +344,7 @@ pub(crate) fn calculate_priority_and_cost(
 /// slots, the value used here is the lower-bound on the deactivation
 /// period, i.e. the transaction's address lookups are valid until
 /// AT LEAST this slot.
-fn calculate_max_age(
+pub(crate) fn calculate_max_age(
     sanitized_epoch: Epoch,
     deactivation_slot: Slot,
     current_slot: Slot,
