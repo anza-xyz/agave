@@ -2286,9 +2286,10 @@ impl BankingStageAdapter {
     fn do_create_task(
         &self,
         transaction: RuntimeTransaction<SanitizedTransaction>,
+        context: TransactionContext,
         index: TaskKey,
     ) -> Task {
-        SchedulingStateMachine::create_task(transaction, index, &mut |pubkey| {
+        SchedulingStateMachine::create_task(transaction, context, index, &mut |pubkey| {
             self.usage_queue_loader.load(pubkey)
         })
     }
@@ -2296,6 +2297,7 @@ impl BankingStageAdapter {
     pub fn create_new_task(
         &self,
         transaction: RuntimeTransaction<SanitizedTransaction>,
+        context: TransactionContext,
         index: TaskKey,
     ) -> Option<Task> {
         let hash = transaction.message_hash();
@@ -2304,12 +2306,13 @@ impl BankingStageAdapter {
             //return None;
         }
 
-        Some(self.do_create_task(transaction, index))
+        Some(self.do_create_task(transaction, context, index))
     }
 
     fn recreate_task(
         &self,
         transaction: RuntimeTransaction<SanitizedTransaction>,
+        context: TransactionContext,
         old_index: TaskKey,
     ) -> Task {
         let new_index = {
@@ -2319,7 +2322,7 @@ impl BankingStageAdapter {
             inherited_priority | new_task_id
         };
 
-        self.do_create_task(transaction, new_index)
+        self.do_create_task(transaction, context, new_index)
     }
 
     fn reset(&self) {
