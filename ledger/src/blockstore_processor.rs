@@ -10,7 +10,7 @@ use {
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     chrono_humanize::{Accuracy, HumanTime, Tense},
-    crossbeam_channel::Sender,
+    crossbeam_channel::{Receiver, Sender},
     itertools::Itertools,
     log::*,
     rayon::{prelude::*, ThreadPool},
@@ -28,7 +28,7 @@ use {
     solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
     solana_runtime::{
         accounts_background_service::{AbsRequestSender, SnapshotRequestKind},
-        bank::{Bank, TransactionBalancesSet},
+        bank::{Bank, KeyedRewardsAndNumPartitions, TransactionBalancesSet},
         bank_forks::{BankForks, SetRootError},
         bank_utils,
         commitment::VOTE_THRESHOLD_SIZE,
@@ -2274,6 +2274,15 @@ pub fn cache_block_meta(bank: &Arc<Bank>, cache_block_meta_sender: Option<&Cache
             .unwrap_or_else(|err| warn!("cache_block_meta_sender failed: {:?}", err));
     }
 }
+
+pub type RewardsBatch = (Slot, KeyedRewardsAndNumPartitions);
+pub enum RewardsMessage {
+    Batch(RewardsBatch),
+    Complete(Slot),
+}
+
+pub type RewardsRecorderReceiver = Receiver<RewardsMessage>;
+pub type RewardsRecorderSender = Sender<RewardsMessage>;
 
 // used for tests only
 pub fn fill_blockstore_slot_with_ticks(
