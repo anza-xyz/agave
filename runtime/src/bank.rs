@@ -758,7 +758,7 @@ struct HashOverride {
     bank_hash: Hash,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct BankFullReplayFields {
     /// Bank tick height
     tick_height: AtomicU64,

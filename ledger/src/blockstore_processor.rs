@@ -30,7 +30,7 @@ use {
     solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
     solana_runtime::{
         accounts_background_service::{AbsRequestSender, SnapshotRequestKind},
-        bank::{Bank, TransactionBalancesSet},
+        bank::{Bank, BankFullReplayFields, TransactionBalancesSet},
         bank_forks::{BankForks, SetRootError},
         bank_utils,
         commitment::VOTE_THRESHOLD_SIZE,
@@ -1761,6 +1761,7 @@ fn process_bank_0(
     entry_notification_sender: Option<&EntryNotifierSender>,
 ) {
     assert_eq!(bank0.slot(), 0);
+    *bank0.full_replay_fields.write().unwrap() = Some(BankFullReplayFields::default());
     let last_blockhash = bank0.last_blockhash();
     let mut progress = ConfirmationProgress::new(last_blockhash);
     confirm_full_slot(
