@@ -1,6 +1,8 @@
 //! Primitive types relevant to transaction scheduling
 #![cfg(feature = "full")]
 
+use solana_sdk::clock::{Epoch, Slot};
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SchedulingMode {
     BlockVerification,
