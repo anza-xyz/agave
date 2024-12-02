@@ -732,7 +732,7 @@ impl TaskHandler for DefaultTaskHandler {
                     max_age,
                     move_precompile_verification_to_svm,
                 ) {
-                    *result = Err(e.into());
+                    *result = Err(e);
                     (None, false)
                 } else {
                     use solana_cost_model::cost_model::CostModel;
