@@ -7,7 +7,7 @@ use {
     crate::banking_stage::{
         decision_maker::BufferedPacketsDecision,
         immutable_deserialized_packet::ImmutableDeserializedPacket,
-        packet_deserializer::PacketDeserializer, scheduler_messages::MaxAge,
+        packet_deserializer::PacketDeserializer,
         transaction_scheduler::transaction_state::SanitizedTransactionTTL,
         TransactionStateContainer,
     },
@@ -32,6 +32,7 @@ use {
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     std::sync::{Arc, RwLock},
 };
+use solana_sdk::scheduling::MaxAge;
 
 pub(crate) trait ReceiveAndBuffer {
     type Transaction: TransactionWithMeta;
