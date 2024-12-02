@@ -547,7 +547,7 @@ struct TransactionWrapper {
 }
 
 #[derive(Debug)]
-enum TransactionContext {
+pub enum TransactionContext {
     BlockVerification(TaskKey),
     BlockProduction(MaxAge),
 }
