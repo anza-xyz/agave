@@ -74,9 +74,8 @@ use {
         account_locks::validate_account_locks,
         accounts::{AccountAddressFilter, Accounts, PubkeyAccountSlot},
         accounts_db::{
-            stats::{AtomicBankHashStats, BankHashStats},
-            AccountStorageEntry, AccountsDb, AccountsDbConfig, CalcAccountsHashDataSource,
-            DuplicatesLtHash, OldStoragesPolicy, PubkeyHashAccount,
+            stats::BankHashStats, AccountStorageEntry, AccountsDb, AccountsDbConfig,
+            CalcAccountsHashDataSource, DuplicatesLtHash, OldStoragesPolicy, PubkeyHashAccount,
             VerifyAccountsHashAndLamportsConfig,
         },
         accounts_hash::{
@@ -1014,6 +1013,49 @@ pub struct ProcessedTransactionCounts {
     pub processed_non_vote_transactions_count: u64,
     pub processed_with_successful_result_count: u64,
     pub signature_count: u64,
+}
+
+#[derive(Debug, Default)]
+pub struct AtomicBankHashStats {
+    pub num_updated_accounts: AtomicU64,
+    pub num_removed_accounts: AtomicU64,
+    pub num_lamports_stored: AtomicU64,
+    pub total_data_len: AtomicU64,
+    pub num_executable_accounts: AtomicU64,
+}
+
+impl AtomicBankHashStats {
+    pub fn new(stat: &BankHashStats) -> Self {
+        AtomicBankHashStats {
+            num_updated_accounts: AtomicU64::new(stat.num_updated_accounts),
+            num_removed_accounts: AtomicU64::new(stat.num_removed_accounts),
+            num_lamports_stored: AtomicU64::new(stat.num_lamports_stored),
+            total_data_len: AtomicU64::new(stat.total_data_len),
+            num_executable_accounts: AtomicU64::new(stat.num_executable_accounts),
+        }
+    }
+
+    pub fn accumulate(&self, other: &BankHashStats) {
+        self.num_updated_accounts
+            .fetch_add(other.num_updated_accounts, Relaxed);
+        self.num_removed_accounts
+            .fetch_add(other.num_removed_accounts, Relaxed);
+        self.total_data_len.fetch_add(other.total_data_len, Relaxed);
+        self.num_lamports_stored
+            .fetch_add(other.num_lamports_stored, Relaxed);
+        self.num_executable_accounts
+            .fetch_add(other.num_executable_accounts, Relaxed);
+    }
+
+    pub fn load(&self) -> BankHashStats {
+        BankHashStats {
+            num_updated_accounts: self.num_updated_accounts.load(Relaxed),
+            num_removed_accounts: self.num_removed_accounts.load(Relaxed),
+            num_lamports_stored: self.num_lamports_stored.load(Relaxed),
+            total_data_len: self.total_data_len.load(Relaxed),
+            num_executable_accounts: self.num_executable_accounts.load(Relaxed),
+        }
+    }
 }
 
 impl Bank {
@@ -2794,9 +2836,7 @@ impl Bank {
         assert!(!self.freeze_started());
         thread_pool.install(|| {
             stake_rewards.par_chunks(512).for_each(|chunk| {
-                self.rc
-                    .accounts
-                    .store_accounts_cached((slot, chunk), Some(&self.bank_hash_stats));
+                self.rc.accounts.store_accounts_cached((slot, chunk));
             })
         });
         metrics
@@ -4134,7 +4174,6 @@ impl Bank {
             self.rc.accounts.store_cached(
                 (self.slot(), accounts_to_store.as_slice()),
                 transactions.as_deref(),
-                Some(&self.bank_hash_stats),
             );
         });
 
@@ -5102,8 +5141,11 @@ impl Bank {
         assert!(!self.freeze_started());
         let mut m = Measure::start("stakes_cache.check_and_store");
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
+
+        let mut stats = BankHashStats::default();
         (0..accounts.len()).for_each(|i| {
             accounts.account(i, |account| {
+                stats.update(&account);
                 self.stakes_cache.check_and_store(
                     account.pubkey(),
                     &account,
@@ -5111,9 +5153,9 @@ impl Bank {
                 )
             })
         });
-        self.rc
-            .accounts
-            .store_accounts_cached(accounts, Some(&self.bank_hash_stats));
+        self.bank_hash_stats.accumulate(&stats);
+
+        self.rc.accounts.store_accounts_cached(accounts);
         m.stop();
         self.rc
             .accounts

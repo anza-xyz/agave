@@ -8087,7 +8087,6 @@ impl AccountsDb {
         transactions: Option<&'a [&'a SanitizedTransaction]>,
         reclaim: StoreReclaims,
         update_index_thread_selection: UpdateIndexThreadSelection,
-        bank_hash_stats: Option<&AtomicBankHashStats>,
     ) {
         // If all transactions in a batch are errored,
         // it's possible to get a store with no accounts.
@@ -8095,22 +8094,16 @@ impl AccountsDb {
             return;
         }
 
-        let mut stats = BankHashStats::default();
         let mut total_data = 0;
         (0..accounts.len()).for_each(|index| {
             accounts.account(index, |account| {
                 total_data += account.data().len();
-                stats.update(&account);
             })
         });
 
         self.stats
             .store_total_data
             .fetch_add(total_data as u64, Ordering::Relaxed);
-
-        if let Some(bank_hash_stats) = bank_hash_stats {
-            bank_hash_stats.accumulate(&stats);
-        }
 
         // we use default hashes for now since the same account may be stored to the cache multiple times
         self.store_accounts_unfrozen(

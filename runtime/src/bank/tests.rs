@@ -13449,7 +13449,7 @@ fn test_rehash_bad() {
     account.checked_add_lamports(ten_sol).unwrap();
     bank.rc
         .accounts
-        .store_accounts_cached((bank.slot(), [(&pubkey, &account)].as_slice()), None);
+        .store_accounts_cached((bank.slot(), [(&pubkey, &account)].as_slice()));
 
     // let the show begin
     bank.rehash();

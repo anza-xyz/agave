@@ -554,7 +554,6 @@ mod tests {
                 [(&keypair5.pubkey(), &prev_account5.clone().unwrap())].as_slice(),
             ),
             None,
-            None,
         );
 
         // freeze the bank to trigger update_accounts_lt_hash() to run
