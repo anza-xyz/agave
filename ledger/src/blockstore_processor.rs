@@ -182,6 +182,7 @@ pub fn execute_batch(
         pre_commit_callback.map(|f| {
             || {
                 if let Some(index) = f() {
+                    transaction_indexes = vec![index];
                     true
                 } else {
                     false
