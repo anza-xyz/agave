@@ -9,7 +9,7 @@ use {
         consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
         read_write_account_set::ReadWriteAccountSet,
         scheduler_messages::{
-            ConsumeWork, FinishedConsumeWork, MaxAge, TransactionBatchId, TransactionId,
+            ConsumeWork, FinishedConsumeWork, TransactionBatchId, TransactionId,
         },
         transaction_scheduler::{
             transaction_priority_id::TransactionPriorityId, transaction_state::TransactionState,
@@ -25,6 +25,7 @@ use {
     solana_sdk::{pubkey::Pubkey, saturating_add_assign},
     solana_svm_transaction::svm_message::SVMMessage,
 };
+use solana_sdk::scheduling::MaxAge;
 
 #[inline(always)]
 fn passthrough_priority(
