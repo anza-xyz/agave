@@ -188,7 +188,7 @@ pub fn execute_batch(
                     false
                 }
             }
-        })
+        }),
     ) else {
         return Err(TransactionError::CommitFailed);
     };
