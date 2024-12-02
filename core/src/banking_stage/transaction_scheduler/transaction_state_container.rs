@@ -190,7 +190,6 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
 mod tests {
     use {
         super::*,
-        crate::banking_stage::scheduler_messages::MaxAge,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
             compute_budget::ComputeBudgetInstruction,
@@ -203,6 +202,7 @@ mod tests {
             transaction::{SanitizedTransaction, Transaction},
         },
     };
+    use solana_sdk::scheduling::MaxAge;
 
     /// Returns (transaction_ttl, priority, cost)
     fn test_transaction(
