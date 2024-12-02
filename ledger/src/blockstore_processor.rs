@@ -2281,8 +2281,31 @@ pub enum RewardsMessage {
     Complete(Slot),
 }
 
+#[derive(Clone, Debug)]
+pub struct RewardsRecorderSender {
+    pub sender: Sender<RewardsMessage>,
+}
 pub type RewardsRecorderReceiver = Receiver<RewardsMessage>;
-pub type RewardsRecorderSender = Sender<RewardsMessage>;
+
+impl From<Sender<RewardsMessage>> for RewardsRecorderSender {
+    fn from(sender: Sender<RewardsMessage>) -> Self {
+        Self { sender }
+    }
+}
+
+impl RewardsRecorderSender {
+    pub fn send_rewards(&self, bank: &Bank) {
+        let rewards = bank.get_rewards_and_num_partitions();
+        if rewards.should_record() {
+            self.sender
+                .send(RewardsMessage::Batch((bank.slot(), rewards)))
+                .unwrap_or_else(|err| warn!("rewards_recorder_sender failed: {:?}", err));
+        }
+        self.sender
+            .send(RewardsMessage::Complete(bank.slot()))
+            .unwrap_or_else(|err| warn!("rewards_recorder_sender failed: {:?}", err));
+    }
+}
 
 // used for tests only
 pub fn fill_blockstore_slot_with_ticks(

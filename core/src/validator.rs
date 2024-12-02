@@ -2409,7 +2409,7 @@ fn initialize_rpc_transaction_history_services(
 
     let max_complete_rewards_slot = Arc::new(AtomicU64::new(blockstore.max_root()));
     let (rewards_recorder_sender, rewards_receiver) = unbounded();
-    let rewards_recorder_sender = Some(rewards_recorder_sender);
+    let rewards_recorder_sender = Some(rewards_recorder_sender.into());
     let rewards_recorder_service = Some(RewardsRecorderService::new(
         rewards_receiver,
         max_complete_rewards_slot.clone(),
