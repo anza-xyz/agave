@@ -451,23 +451,6 @@ impl<'a> MemoryChunkIterator<'a> {
         })
     }
 
-    fn is_account(&mut self, region: &MemoryRegion) -> bool {
-        loop {
-            if let Some(account) = self.accounts.get(self.account_index) {
-                let account_addr = account.vm_data_addr;
-                let resize_addr = account_addr.saturating_add(account.original_data_len as u64);
-
-                if resize_addr < region.vm_addr {
-                    self.account_index = self.account_index.saturating_add(1);
-                } else {
-                    return region.vm_addr == account_addr || region.vm_addr == resize_addr;
-                }
-            } else {
-                return false;
-            }
-        }
-    }
-
     fn region(&mut self, vm_addr: u64) -> Result<&'a MemoryRegion, Error> {
         match self.memory_mapping.region(self.access_type, vm_addr) {
             Ok(region) => Ok(region),
@@ -505,7 +488,27 @@ impl<'a> Iterator for MemoryChunkIterator<'a> {
             }
         };
 
-        let region_is_account = self.is_account(region);
+        let region_is_account;
+
+        loop {
+            if let Some(account) = self.accounts.get(self.account_index) {
+                let account_addr = account.vm_data_addr;
+                let resize_addr = account_addr.saturating_add(account.original_data_len as u64);
+
+                if resize_addr < region.vm_addr {
+                    // region is after this account, move on next one
+                    self.account_index = self.account_index.saturating_add(1);
+                } else {
+                    region_is_account =
+                        region.vm_addr == account_addr || region.vm_addr == resize_addr;
+                    break;
+                }
+            } else {
+                // address is after all the accounts
+                region_is_account = false;
+                break;
+            }
+        }
 
         match self.is_account {
             None => self.is_account = Some(region_is_account),
