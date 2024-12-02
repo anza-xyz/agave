@@ -29,7 +29,7 @@ bitflags! {
         // some root slot.
         //
         // A ledger that is updating with a cluster will have either begun at
-        // genesis or at at some snapshot slot.
+        // genesis or at some snapshot slot.
         // - Genesis is obviously a special case, and slot 0's parent is deemed
         //   to be connected in order to kick off the induction
         // - Snapshots are taken at rooted slots, and as such, the snapshot slot

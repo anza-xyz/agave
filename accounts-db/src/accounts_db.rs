@@ -9599,7 +9599,7 @@ pub mod test_utils {
             .get_slot_storage_entry(slot)
             .is_none()
         {
-            // Some callers relied on old behavior where the the file size was rounded up to the
+            // Some callers relied on old behavior where the file size was rounded up to the
             // next page size because they append to the storage file after it was written.
             // This behavior is not supported by a normal running validator.  Since this function
             // is only called by tests/benches, add some extra capacity to the file to not break

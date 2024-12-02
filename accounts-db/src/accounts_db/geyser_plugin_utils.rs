@@ -35,7 +35,7 @@ impl GeyserPluginNotifyAtSnapshotRestoreStats {
 }
 
 impl AccountsDb {
-    /// Notify the plugins of of account data when AccountsDb is restored from a snapshot. The data is streamed
+    /// Notify the plugins of account data when AccountsDb is restored from a snapshot. The data is streamed
     /// in the reverse order of the slots so that an account is only streamed once. At a slot, if the accounts is updated
     /// multiple times only the last write (with highest write_version) is notified.
     pub fn notify_account_restore_from_snapshot(&self) {
