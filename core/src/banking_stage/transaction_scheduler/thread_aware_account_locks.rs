@@ -421,12 +421,28 @@ impl ThreadSet {
 
     #[inline(always)]
     pub(crate) fn contained_threads_iter(self) -> impl Iterator<Item = ThreadId> {
-        (0..MAX_THREADS).filter(move |thread_id| self.contains(*thread_id))
+        ThreadSetIterator(self.0)
     }
 
     #[inline(always)]
     const fn as_flag(thread_id: ThreadId) -> u64 {
         0b1 << thread_id
+    }
+}
+
+struct ThreadSetIterator(u64);
+
+impl Iterator for ThreadSetIterator {
+    type Item = ThreadId;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.0 == 0 {
+            None
+        } else {
+            let thread_id = self.0.trailing_zeros() as ThreadId;
+            self.0 &= self.0 - 1;
+            Some(thread_id)
+        }
     }
 }
 
