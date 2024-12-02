@@ -700,8 +700,7 @@ pub trait TaskHandler: Send + Sync + Debug + Sized + 'static {
         result: &mut Result<()>,
         timings: &mut ExecuteTimings,
         scheduling_context: &SchedulingContext,
-        transaction: &RuntimeTransaction<SanitizedTransaction>,
-        index: TaskKey,
+        task: &Task,
         handler_context: &HandlerContext,
     );
 }
@@ -714,8 +713,7 @@ impl TaskHandler for DefaultTaskHandler {
         result: &mut Result<()>,
         timings: &mut ExecuteTimings,
         scheduling_context: &SchedulingContext,
-        transaction: &RuntimeTransaction<SanitizedTransaction>,
-        index: TaskKey,
+        task: &Task,
         handler_context: &HandlerContext,
     ) {
         let (cost, added_cost) =
@@ -1243,8 +1241,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             &mut executed_task.result_with_timings.0,
             &mut executed_task.result_with_timings.1,
             scheduling_context,
-            executed_task.task.transaction(),
-            executed_task.task.task_index(),
+            executed_task.task,
             handler_context,
         );
     }
@@ -2991,8 +2988,7 @@ mod tests {
             result: &mut Result<()>,
             _timings: &mut ExecuteTimings,
             _bank: &SchedulingContext,
-            _transaction: &RuntimeTransaction<SanitizedTransaction>,
-            _index: TaskKey,
+            _task: &Task,
             _handler_context: &HandlerContext,
         ) {
             *result = Err(TransactionError::AccountNotFound);
@@ -3103,8 +3099,7 @@ mod tests {
                 _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
                 _bank: &SchedulingContext,
-                _transaction: &RuntimeTransaction<SanitizedTransaction>,
-                _index: TaskKey,
+                _task: &Task,
                 _handler_context: &HandlerContext,
             ) {
                 *TASK_COUNT.lock().unwrap() += 1;
@@ -3470,10 +3465,10 @@ mod tests {
                 _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
                 _bank: &SchedulingContext,
-                _transaction: &RuntimeTransaction<SanitizedTransaction>,
-                index: TaskKey,
+                task: &Task,
                 _handler_context: &HandlerContext,
             ) {
+                let index = task.index();
                 if index == 0 {
                     sleepless_testing::at(PanickingHanlderCheckPoint::BeforeNotifiedPanic);
                 } else if index == 1 {
@@ -3550,10 +3545,10 @@ mod tests {
                 result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
                 _bank: &SchedulingContext,
-                _transaction: &RuntimeTransaction<SanitizedTransaction>,
-                index: TaskKey,
+                task: &Task,
                 _handler_context: &HandlerContext,
             ) {
+                let index = task.index();
                 *TASK_COUNT.lock().unwrap() += 1;
                 if index == 1 {
                     *result = Err(TransactionError::AccountNotFound);
@@ -3619,8 +3614,7 @@ mod tests {
                 result: &mut Result<()>,
                 timings: &mut ExecuteTimings,
                 bank: &SchedulingContext,
-                transaction: &RuntimeTransaction<SanitizedTransaction>,
-                index: TaskKey,
+                task: &Task,
                 handler_context: &HandlerContext,
             ) {
                 match index {
@@ -3632,8 +3626,7 @@ mod tests {
                     result,
                     timings,
                     bank,
-                    transaction,
-                    index,
+                    task,
                     handler_context,
                 );
             }
@@ -3704,8 +3697,7 @@ mod tests {
                 _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
                 bank: &SchedulingContext,
-                _transaction: &RuntimeTransaction<SanitizedTransaction>,
-                index: TaskKey,
+                task: &Task,
                 _handler_context: &HandlerContext,
             ) {
                 // The task index must always be matched to the slot.
