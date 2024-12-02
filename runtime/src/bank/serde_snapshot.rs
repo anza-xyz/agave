@@ -306,7 +306,7 @@ mod tests {
                     .clone()),
                 expected_accounts_lt_hash,
             );
-
+            assert_eq!(dbank.get_bank_hash_stats(), bank2.get_bank_hash_stats());
             assert_eq!(dbank, bank2);
         }
     }
