@@ -732,7 +732,7 @@ impl TaskHandler for DefaultTaskHandler {
 
                 if let Err(e) = scheduling_context
                     .bank()
-                    .refilter_prebuilt_block_production_transactions(
+                    .refilter_prebuilt_block_production_transaction(
                         transaction,
                         max_age,
                         move_precompile_verification_to_svm,

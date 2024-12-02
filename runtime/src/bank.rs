@@ -5003,7 +5003,7 @@ impl Bank {
         ))
     }
 
-    pub fn refilter_prebuilt_block_production_transactions(
+    pub fn refilter_prebuilt_block_production_transaction(
         &self,
         tx: &impl TransactionWithMeta,
         max_age: &MaxAge,
