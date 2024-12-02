@@ -25,7 +25,7 @@ use {
         hash::Hash,
         pubkey::Pubkey,
         system_transaction,
-        transaction::{Result, SanitizedTransaction},
+        transaction::Result,
     },
     solana_timings::ExecuteTimings,
     solana_unified_scheduler_pool::{
