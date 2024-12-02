@@ -3625,13 +3625,7 @@ mod tests {
                     BLOCKED_TRANSACTION_INDEX => {}
                     _ => unreachable!(),
                 };
-                DefaultTaskHandler::handle(
-                    result,
-                    timings,
-                    bank,
-                    task,
-                    handler_context,
-                );
+                DefaultTaskHandler::handle(result, timings, bank, task, handler_context);
             }
         }
 
@@ -3808,11 +3802,9 @@ mod tests {
                 let mut result = Ok(());
                 let mut timings = ExecuteTimings::default();
 
-                let task = SchedulingStateMachine::create_task(
-                    transaction,
-                    index,
-                    &mut |_| UsageQueue::default(),
-                );
+                let task = SchedulingStateMachine::create_task(transaction, index, &mut |_| {
+                    UsageQueue::default()
+                });
 
                 <DefaultTaskHandler as TaskHandler>::handle(
                     &mut result,
@@ -4037,11 +4029,7 @@ mod tests {
             transaction_recorder: TransactionRecorder::new_dummy(),
         };
 
-        let task = SchedulingStateMachine::create_task(
-            tx,
-            0,
-            &mut |_| UsageQueue::default(),
-        );
+        let task = SchedulingStateMachine::create_task(tx, 0, &mut |_| UsageQueue::default());
         DefaultTaskHandler::handle(result, timings, scheduling_context, &task, handler_context);
         assert_matches!(result, Err(TransactionError::AccountLoadedTwice));
     }
