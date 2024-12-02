@@ -579,7 +579,7 @@ impl TaskInner {
     }
 
     pub fn transaction(&self) -> &RuntimeTransaction<SanitizedTransaction> {
-        &self.packed_task_inner.lock_context_and_transaction.1
+        &self.packed_task_inner.lock_context_and_transaction.1.transaction
     }
 
     pub fn index(&self) -> TaskKey {
