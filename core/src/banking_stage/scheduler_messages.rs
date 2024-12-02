@@ -2,6 +2,7 @@ use {
     solana_sdk::clock::{Epoch, Slot},
     std::fmt::Display,
 };
+use solana_sdk::scheduling::MaxAge;
 
 /// A unique identifier for a transaction batch.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
