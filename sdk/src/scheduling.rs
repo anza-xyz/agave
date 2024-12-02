@@ -8,3 +8,17 @@ pub enum SchedulingMode {
 }
 
 pub type TaskKey = u128;
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct MaxAge {
+    pub sanitized_epoch: Epoch,
+    pub alt_invalidation_slot: Slot,
+}
+
+impl MaxAge {
+    pub const MAX: Self = Self {
+        sanitized_epoch: Epoch::MAX,
+        alt_invalidation_slot: Slot::MAX,
+    };
+}
+

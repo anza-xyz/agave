@@ -35,19 +35,6 @@ impl Display for TransactionId {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct MaxAge {
-    pub sanitized_epoch: Epoch,
-    pub alt_invalidation_slot: Slot,
-}
-
-impl MaxAge {
-    pub const MAX: Self = Self {
-        sanitized_epoch: Epoch::MAX,
-        alt_invalidation_slot: Slot::MAX,
-    };
-}
-
 /// Message: [Scheduler -> Worker]
 /// Transactions to be consumed (i.e. executed, recorded, and committed)
 pub struct ConsumeWork<Tx> {
