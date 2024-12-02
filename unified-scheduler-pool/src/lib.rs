@@ -762,7 +762,7 @@ impl TaskHandler for DefaultTaskHandler {
                         scheduling_context.slot(),
                         vec![transaction.to_versioned_transaction()],
                     );
-                    summary.result.is_ok()
+                    summary.result.and_then(|()| summary.starting_transaction_index)
                 }),
             };
 
