@@ -1244,7 +1244,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             &mut executed_task.result_with_timings.0,
             &mut executed_task.result_with_timings.1,
             scheduling_context,
-            executed_task.task,
+            &executed_task.task,
             handler_context,
         );
     }
