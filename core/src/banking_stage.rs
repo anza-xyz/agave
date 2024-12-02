@@ -63,7 +63,6 @@ use {
 };
 use crate::banking_stage::transaction_scheduler::receive_and_buffer::calculate_max_age;
 use solana_unified_scheduler_logic::TransactionContext;
-use solana_sdk::scheduling::MaxAge;
 
 // Below modules are pub to allow use by banking_stage bench
 pub mod committer;
