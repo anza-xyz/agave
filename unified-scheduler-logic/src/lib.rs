@@ -105,7 +105,7 @@ use {
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk::{
         pubkey::Pubkey,
-        scheduling::{SchedulingMode, TaskKey},
+        scheduling::{MaxAge, SchedulingMode, TaskKey},
         transaction::SanitizedTransaction,
     },
     static_assertions::const_assert_eq,
@@ -115,7 +115,6 @@ use {
         sync::Arc,
     },
 };
-use solana_sdk::scheduling::MaxAge;
 
 /// Internal utilities. Namely this contains [`ShortCounter`] and [`TokenCell`].
 mod utils {
@@ -533,10 +532,7 @@ impl CounterWithStatus {
 #[allow(clippy::type_complexity)]
 struct PackedTaskInner {
     index: TaskKey,
-    lock_context_and_transaction: Box<(
-        Vec<Compact<LockContext>>,
-        Box<TransactionWrapper>,
-    )>,
+    lock_context_and_transaction: Box<(Vec<Compact<LockContext>>, Box<TransactionWrapper>)>,
 }
 const_assert_eq!(mem::size_of::<PackedTaskInner>(), 24);
 
@@ -579,11 +575,19 @@ impl TaskInner {
     }
 
     pub fn transaction(&self) -> &RuntimeTransaction<SanitizedTransaction> {
-        &self.packed_task_inner.lock_context_and_transaction.1.transaction
+        &self
+            .packed_task_inner
+            .lock_context_and_transaction
+            .1
+            .transaction
     }
 
     pub fn context(&self) -> &TransactionContext {
-        &self.packed_task_inner.lock_context_and_transaction.1.context
+        &self
+            .packed_task_inner
+            .lock_context_and_transaction
+            .1
+            .context
     }
 
     pub fn index(&self) -> TaskKey {
@@ -1800,10 +1804,13 @@ impl SchedulingStateMachine {
 
         Task::new(TaskInner {
             packed_task_inner: PackedTaskInner {
-                lock_context_and_transaction: Box::new((lock_contexts, Box::new(TransactionWrapper {
-                    transaction,
-                    context,
-                }))),
+                lock_context_and_transaction: Box::new((
+                    lock_contexts,
+                    Box::new(TransactionWrapper {
+                        transaction,
+                        context,
+                    }),
+                )),
                 index,
             },
             blocked_usage_count: TokenCell::new(CounterWithStatus::new(pending_lock_contexts)),
@@ -1815,7 +1822,12 @@ impl SchedulingStateMachine {
         index: TaskKey,
         usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
     ) -> Task {
-        Self::do_create_task(transaction, TransactionContext::BlockVerification, index, usage_queue_loader)
+        Self::do_create_task(
+            transaction,
+            TransactionContext::BlockVerification,
+            index,
+            usage_queue_loader,
+        )
     }
 
     pub fn reset_task(&mut self, task: &Task) {

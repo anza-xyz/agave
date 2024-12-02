@@ -21,8 +21,9 @@ use {
             packet_deserializer::PacketDeserializer,
             transaction_scheduler::{
                 prio_graph_scheduler::PrioGraphScheduler,
-                receive_and_buffer::calculate_priority_and_cost,
-                scheduler_controller::SchedulerController, scheduler_error::SchedulerError,
+                receive_and_buffer::{calculate_max_age, calculate_priority_and_cost},
+                scheduler_controller::SchedulerController,
+                scheduler_error::SchedulerError,
             },
         },
         banking_trace::BankingPacketReceiver,
@@ -45,6 +46,7 @@ use {
     solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
     solana_sdk::{pubkey::Pubkey, scheduling::TaskKey, timing::AtomicInterval},
     solana_svm_transaction::svm_message::SVMMessage,
+    solana_unified_scheduler_logic::TransactionContext,
     solana_unified_scheduler_pool::{BankingStageAdapter, DefaultSchedulerPool},
     std::{
         cmp, env,
@@ -61,8 +63,6 @@ use {
         transaction_state_container::TransactionStateContainer,
     },
 };
-use crate::banking_stage::transaction_scheduler::receive_and_buffer::calculate_max_age;
-use solana_unified_scheduler_logic::TransactionContext;
 
 // Below modules are pub to allow use by banking_stage bench
 pub mod committer;
@@ -711,11 +711,13 @@ impl BankingStage {
                         let packets = PacketDeserializer::deserialize_packets_with_indexes(batch);
 
                         for (packet, packet_index) in packets {
-                            let Some((transaction, deactivation_slot)) = packet.build_sanitized_transaction(
-                                bank.vote_only_bank(),
-                                &bank,
-                                bank.get_reserved_account_keys(),
-                            ) else {
+                            let Some((transaction, deactivation_slot)) = packet
+                                .build_sanitized_transaction(
+                                    bank.vote_only_bank(),
+                                    &bank,
+                                    bank.get_reserved_account_keys(),
+                                )
+                            else {
                                 continue;
                             };
 
@@ -740,7 +742,11 @@ impl BankingStage {
                                 &bank,
                             );
 
-                            let context = TransactionContext::BlockProduction(calculate_max_age(sanitized_epoch, deactivation_slot, alt_resolved_slot));
+                            let context = TransactionContext::BlockProduction(calculate_max_age(
+                                sanitized_epoch,
+                                deactivation_slot,
+                                alt_resolved_slot,
+                            ));
 
                             let index = {
                                 let reversed_priority = (u64::MAX - priority) as TaskKey;
@@ -748,7 +754,8 @@ impl BankingStage {
                                 reversed_priority << const { TaskKey::BITS / 2 } | task_id
                             };
 
-                            let Some(task) = adapter.create_new_task(transaction, context, index) else {
+                            let Some(task) = adapter.create_new_task(transaction, context, index)
+                            else {
                                 continue;
                             };
                             task_submitter(task);

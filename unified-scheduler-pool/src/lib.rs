@@ -39,7 +39,9 @@ use {
         transaction::{Result, SanitizedTransaction, TransactionError},
     },
     solana_timings::ExecuteTimings,
-    solana_unified_scheduler_logic::{SchedulingStateMachine, ShortCounter, Task, UsageQueue},
+    solana_unified_scheduler_logic::{
+        SchedulingStateMachine, ShortCounter, Task, TransactionContext, UsageQueue,
+    },
     static_assertions::const_assert_eq,
     std::{
         fmt::Debug,
@@ -55,7 +57,6 @@ use {
     trait_set::trait_set,
     vec_extract_if_polyfill::MakeExtractIf,
 };
-use solana_unified_scheduler_logic::TransactionContext;
 
 #[derive(Clone)]
 pub struct BankingStageContext {
