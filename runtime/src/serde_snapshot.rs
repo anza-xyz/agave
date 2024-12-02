@@ -4,7 +4,7 @@ use {
     crate::{
         bank::{
             builtins::BuiltinPrototype, Bank, BankFieldsToDeserialize, BankFieldsToSerialize,
-            BankRc,
+            BankFullReplayFields, BankRc,
         },
         epoch_stakes::{EpochStakes, VersionedEpochStakes},
         runtime_config::RuntimeConfig,
@@ -145,7 +145,6 @@ struct DeserializableVersionedBank {
     parent_slot: Slot,
     hard_forks: HardForks,
     transaction_count: u64,
-    tick_height: u64,
     tick_height_for_vote_only: u64,
     signature_count: u64,
     capitalization: u64,
@@ -172,6 +171,7 @@ struct DeserializableVersionedBank {
     unused_accounts: UnusedAccounts,
     epoch_stakes: HashMap<Epoch, EpochStakes>,
     is_delta: bool,
+    full_replay_fields: Option<BankFullReplayFields>,
 }
 
 impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
@@ -189,7 +189,6 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
             parent_slot: dvb.parent_slot,
             hard_forks: dvb.hard_forks,
             transaction_count: dvb.transaction_count,
-            tick_height: dvb.tick_height,
             tick_height_for_vote_only: dvb.tick_height_for_vote_only,
             signature_count: dvb.signature_count,
             capitalization: dvb.capitalization,
@@ -215,6 +214,7 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
             is_delta: dvb.is_delta,
             incremental_snapshot_persistence: None,
             epoch_accounts_hash: None,
+            full_replay_fields: dvb.full_replay_fields,
         }
     }
 }
@@ -235,7 +235,6 @@ struct SerializableVersionedBank {
     parent_slot: Slot,
     hard_forks: HardForks,
     transaction_count: u64,
-    tick_height: u64,
     tick_height_for_vote_only: u64,
     signature_count: u64,
     capitalization: u64,
@@ -262,6 +261,7 @@ struct SerializableVersionedBank {
     unused_accounts: UnusedAccounts,
     epoch_stakes: HashMap<Epoch, EpochStakes>,
     is_delta: bool,
+    full_replay_fields: Option<BankFullReplayFields>,
 }
 
 impl From<BankFieldsToSerialize> for SerializableVersionedBank {
@@ -279,7 +279,6 @@ impl From<BankFieldsToSerialize> for SerializableVersionedBank {
             parent_slot: rhs.parent_slot,
             hard_forks: rhs.hard_forks,
             transaction_count: rhs.transaction_count,
-            tick_height: rhs.tick_height,
             tick_height_for_vote_only: rhs.tick_height_for_vote_only,
             signature_count: rhs.signature_count,
             capitalization: rhs.capitalization,
@@ -305,6 +304,7 @@ impl From<BankFieldsToSerialize> for SerializableVersionedBank {
             unused_accounts: UnusedAccounts::default(),
             epoch_stakes: rhs.epoch_stakes,
             is_delta: rhs.is_delta,
+            full_replay_fields: rhs.full_replay_fields,
         }
     }
 }

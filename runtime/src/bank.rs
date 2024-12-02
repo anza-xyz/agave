@@ -439,7 +439,6 @@ pub struct BankFieldsToDeserialize {
     pub(crate) parent_slot: Slot,
     pub(crate) hard_forks: HardForks,
     pub(crate) transaction_count: u64,
-    pub(crate) tick_height: u64,
     pub(crate) tick_height_for_vote_only: u64,
     pub(crate) signature_count: u64,
     pub(crate) capitalization: u64,
@@ -465,6 +464,7 @@ pub struct BankFieldsToDeserialize {
     pub(crate) accounts_data_len: u64,
     pub(crate) incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>,
     pub(crate) epoch_accounts_hash: Option<Hash>,
+    pub(crate) full_replay_fields: Option<BankFullReplayFields>,
 }
 
 /// Bank's common fields shared by all supported snapshot versions for serialization.
@@ -489,7 +489,6 @@ pub struct BankFieldsToSerialize {
     pub parent_slot: Slot,
     pub hard_forks: HardForks,
     pub transaction_count: u64,
-    pub tick_height: u64,
     pub tick_height_for_vote_only: u64,
     pub signature_count: u64,
     pub capitalization: u64,
@@ -514,6 +513,7 @@ pub struct BankFieldsToSerialize {
     pub is_delta: bool,
     pub accounts_data_len: u64,
     pub versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
+    pub full_replay_fields: Option<BankFullReplayFields>,
 }
 
 // Can't derive PartialEq because RwLock doesn't implement PartialEq
@@ -546,7 +546,6 @@ impl PartialEq for Bank {
             transaction_error_count: _,
             transaction_entries_count: _,
             transactions_per_entry_max: _,
-            tick_height,
             tick_height_for_vote_only,
             signature_count,
             capitalization,
@@ -597,6 +596,7 @@ impl PartialEq for Bank {
             compute_budget: _,
             transaction_account_lock_limit: _,
             fee_structure: _,
+            full_replay_fields,
             // Ignore new fields explicitly if they do not impact PartialEq.
             // Adding ".." will remove compile-time checks that if a new field
             // is added to the struct, this PartialEq is accordingly updated.
@@ -613,7 +613,6 @@ impl PartialEq for Bank {
             && parent_slot == &other.parent_slot
             && *hard_forks.read().unwrap() == *other.hard_forks.read().unwrap()
             && transaction_count.load(Relaxed) == other.transaction_count.load(Relaxed)
-            && tick_height.load(Relaxed) == other.tick_height.load(Relaxed)
             && tick_height_for_vote_only.load(Relaxed) == other.tick_height_for_vote_only.load(Relaxed)
             && signature_count.load(Relaxed) == other.signature_count.load(Relaxed)
             && capitalization.load(Relaxed) == other.capitalization.load(Relaxed)
@@ -640,6 +639,7 @@ impl PartialEq for Bank {
             // different Mutexes.
             && (Arc::ptr_eq(hash_overrides, &other.hash_overrides) ||
                 *hash_overrides.lock().unwrap() == *other.hash_overrides.lock().unwrap())
+            && *full_replay_fields.read().unwrap() == *other.full_replay_fields.read().unwrap()
     }
 }
 
@@ -661,7 +661,6 @@ impl BankFieldsToSerialize {
             parent_slot: Slot::default(),
             hard_forks: HardForks::default(),
             transaction_count: u64::default(),
-            tick_height: u64::default(),
             tick_height_for_vote_only: u64::default(),
             signature_count: u64::default(),
             capitalization: u64::default(),
@@ -686,6 +685,7 @@ impl BankFieldsToSerialize {
             is_delta: bool::default(),
             accounts_data_len: u64::default(),
             versioned_epoch_stakes: HashMap::default(),
+            full_replay_fields: None,
         }
     }
 }
@@ -758,9 +758,31 @@ struct HashOverride {
     bank_hash: Hash,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BankFullReplayFields {
+    /// Bank tick height
+    tick_height: AtomicU64,
+}
+
+impl Clone for BankFullReplayFields {
+    fn clone(&self) -> Self {
+        Self {
+            tick_height: AtomicU64::new(self.tick_height.load(Relaxed)),
+        }
+    }
+}
+
+impl PartialEq for BankFullReplayFields {
+    fn eq(&self, other: &Self) -> bool {
+        self.tick_height.load(Relaxed) == other.tick_height.load(Relaxed)
+    }
+}
+
 /// Manager for the state of all accounts and programs after processing its entries.
 #[derive(Debug)]
 pub struct Bank {
+    pub full_replay_fields: RwLock<Option<BankFullReplayFields>>,
+
     /// References to accounts, parent and signature status
     pub rc: BankRc,
 
@@ -819,9 +841,6 @@ pub struct Bank {
 
     /// The max number of transaction in an entry in this slot
     transactions_per_entry_max: AtomicU64,
-
-    /// Bank tick height
-    tick_height: AtomicU64,
 
     /// Bank tick height for vote only execution
     tick_height_for_vote_only: AtomicU64,
@@ -1037,7 +1056,6 @@ impl Bank {
             transaction_error_count: AtomicU64::default(),
             transaction_entries_count: AtomicU64::default(),
             transactions_per_entry_max: AtomicU64::default(),
-            tick_height: AtomicU64::default(),
             tick_height_for_vote_only: AtomicU64::default(),
             signature_count: AtomicU64::default(),
             capitalization: AtomicU64::default(),
@@ -1088,6 +1106,7 @@ impl Bank {
             fee_structure: FeeStructure::default(),
             #[cfg(feature = "dev-context-only-utils")]
             hash_overrides: Arc::new(Mutex::new(HashOverrides::default())),
+            full_replay_fields: RwLock::new(None),
         };
 
         bank.transaction_processor =
@@ -1317,7 +1336,6 @@ impl Bank {
             slot_hashes: RwLock::new(SlotHashes::new(&parent.slot_hashes.read().unwrap())),
             vote_only_hash: RwLock::new(Hash::default()),
             is_delta: AtomicBool::new(false),
-            tick_height: AtomicU64::new(parent.tick_height.load(Relaxed)),
             tick_height_for_vote_only: AtomicU64::new(
                 parent.tick_height_for_vote_only.load(Relaxed),
             ),
@@ -1356,6 +1374,7 @@ impl Bank {
             fee_structure: parent.fee_structure.clone(),
             #[cfg(feature = "dev-context-only-utils")]
             hash_overrides: parent.hash_overrides.clone(),
+            full_replay_fields: RwLock::new(None),
         };
 
         let (_, ancestors_time_us) = measure_us!({
@@ -1646,10 +1665,10 @@ impl Bank {
             .set_valid(epoch_accounts_hash, parent.slot());
 
         let parent_timestamp = parent.clock().unix_timestamp;
+        let parent_full_replay_fields = parent.full_replay_fields.read().unwrap().clone();
         let mut new = Bank::new_from_parent(parent, collector_id, slot);
         new.apply_feature_activations(ApplyFeatureActivationsCaller::WarpFromParent, false);
         new.update_epoch_stakes(new.epoch_schedule().get_epoch(slot));
-        new.tick_height.store(new.max_tick_height(), Relaxed);
         new.tick_height_for_vote_only
             .store(new.max_tick_height(), Relaxed);
 
@@ -1664,6 +1683,7 @@ impl Bank {
         });
         new.transaction_processor
             .fill_missing_sysvar_cache_entries(&new);
+        *new.full_replay_fields.write().unwrap() = parent_full_replay_fields;
         new.vote_only_freeze();
         new.freeze();
         new
@@ -1725,7 +1745,6 @@ impl Bank {
             transaction_error_count: AtomicU64::default(),
             transaction_entries_count: AtomicU64::default(),
             transactions_per_entry_max: AtomicU64::default(),
-            tick_height: AtomicU64::new(fields.tick_height),
             tick_height_for_vote_only: AtomicU64::new(fields.tick_height_for_vote_only),
             signature_count: AtomicU64::new(fields.signature_count),
             capitalization: AtomicU64::new(fields.capitalization),
@@ -1778,6 +1797,7 @@ impl Bank {
             fee_structure: FeeStructure::default(),
             #[cfg(feature = "dev-context-only-utils")]
             hash_overrides: Arc::new(Mutex::new(HashOverrides::default())),
+            full_replay_fields: RwLock::new(fields.full_replay_fields),
         };
 
         bank.transaction_processor =
@@ -1862,7 +1882,6 @@ impl Bank {
             parent_slot: self.parent_slot,
             hard_forks: self.hard_forks.read().unwrap().clone(),
             transaction_count: self.transaction_count.load(Relaxed),
-            tick_height: self.tick_height.load(Relaxed),
             tick_height_for_vote_only: self.tick_height_for_vote_only.load(Relaxed),
             signature_count: self.signature_count.load(Relaxed),
             capitalization: self.capitalization.load(Relaxed),
@@ -1887,6 +1906,7 @@ impl Bank {
             is_delta: self.is_delta.load(Relaxed),
             accounts_data_len: self.load_accounts_data_size(),
             versioned_epoch_stakes,
+            full_replay_fields: self.full_replay_fields.read().unwrap().clone(),
         }
     }
 
@@ -3476,7 +3496,13 @@ impl Bank {
         if vote_only_execution {
             self.tick_height_for_vote_only.fetch_add(1, Relaxed);
         } else {
-            self.tick_height.fetch_add(1, Relaxed);
+            self.full_replay_fields
+                .read()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .tick_height
+                .fetch_add(1, Relaxed);
         }
     }
 
@@ -6282,14 +6308,21 @@ impl Bank {
 
     pub fn update_data_from_parent(&self) {
         if let Some(parent) = self.parent() {
-            self.tick_height.store(parent.tick_height(), Relaxed);
+            assert!(parent.is_frozen());
+            let parent_full_replay_fields = parent.full_replay_fields.read().unwrap();
+            assert!(parent_full_replay_fields.is_some());
             *self.blockhash_queue.write().unwrap() = parent.blockhash_queue.read().unwrap().clone();
+            *self.full_replay_fields.write().unwrap() = parent_full_replay_fields.clone();
         }
     }
 
     /// Return the number of ticks since genesis.
     pub fn tick_height(&self) -> u64 {
-        self.tick_height.load(Relaxed)
+        self.full_replay_fields
+            .read()
+            .unwrap()
+            .as_ref()
+            .map_or(0, |fields| fields.tick_height.load(Relaxed))
     }
 
     pub fn tick_height_for_vote_only(&self) -> u64 {
@@ -6603,7 +6636,7 @@ impl Bank {
     }
 
     pub(crate) fn do_fill_bank_with_ticks_for_tests(&self, scheduler: &InstalledSchedulerRwLock) {
-        if self.tick_height.load(Relaxed) < self.max_tick_height {
+        if self.tick_height() < self.max_tick_height {
             let last_blockhash = self.last_blockhash();
             while self.last_blockhash() == last_blockhash {
                 self.register_tick(&Hash::new_unique(), scheduler, true);
