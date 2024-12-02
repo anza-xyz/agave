@@ -510,13 +510,12 @@ impl<'a> Iterator for MemoryChunkIterator<'a> {
             }
         }
 
-        match self.is_account {
-            None => self.is_account = Some(region_is_account),
-            Some(is_account) => {
-                if is_account != region_is_account {
-                    return Some(Err(SyscallError::InvalidLength.into()));
-                }
+        if let Some(is_account) = self.is_account {
+            if is_account != region_is_account {
+                return Some(Err(SyscallError::InvalidLength.into()));
             }
+        } else {
+            self.is_account = Some(region_is_account);
         }
 
         let vm_addr = self.vm_addr_start;
