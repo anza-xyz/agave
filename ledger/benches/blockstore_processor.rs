@@ -162,7 +162,7 @@ fn bench_execute_batch(
                 &mut timing,
                 None,
                 &prioritization_fee_cache,
-                None::<fn() -> Option<usize>>,
+                None::<fn() -> Option<Option<usize>>>,
             );
         }
     });
