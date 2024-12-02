@@ -2808,8 +2808,7 @@ mod tests {
                 _result: &mut Result<()>,
                 timings: &mut ExecuteTimings,
                 _bank: &SchedulingContext,
-                _transaction: &RuntimeTransaction<SanitizedTransaction>,
-                _index: TaskKey,
+                _task: &Task,
                 _handler_context: &HandlerContext,
             ) {
                 timings.metrics[ExecuteTimingType::CheckUs] += 123;
