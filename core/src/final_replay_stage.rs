@@ -223,10 +223,8 @@ impl FinalReplayStage {
                         let r_replay_progress = replay_stats.get(&bank_slot).unwrap();
                         let mut w_replay_stats = r_replay_progress.stats.write().unwrap();
                         let mut w_replay_progress = r_replay_progress.progress.write().unwrap();
-                        if w_replay_progress.num_shreds == 0 {
-                            // The bank may be created before parent is frozen, so we need to copy current data from parent.
-                            bank.update_data_from_parent();
-                        }
+                        // The bank may be created before parent is frozen, so we need to copy current data from parent.
+                        bank.update_data_from_parent();
                         if let Err(error) = blockstore_processor::confirm_slot(
                             blockstore,
                             &bank,

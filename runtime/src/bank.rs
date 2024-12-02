@@ -1672,7 +1672,8 @@ impl Bank {
         new_full_replay_fields
             .as_ref()
             .expect("parent must have full replay fields")
-            .tick_height.store(new.max_tick_height(), Relaxed);
+            .tick_height
+            .store(new.max_tick_height(), Relaxed);
         new.tick_height_for_vote_only
             .store(new.max_tick_height(), Relaxed);
 
@@ -6313,6 +6314,9 @@ impl Bank {
     pub fn update_data_from_parent(&self) {
         if let Some(parent) = self.parent() {
             assert!(parent.is_frozen());
+            if self.full_replay_fields.read().unwrap().is_some() {
+                return;
+            }
             let parent_full_replay_fields = parent.full_replay_fields.read().unwrap();
             assert!(parent_full_replay_fields.is_some());
             *self.blockhash_queue.write().unwrap() = parent.blockhash_queue.read().unwrap().clone();
