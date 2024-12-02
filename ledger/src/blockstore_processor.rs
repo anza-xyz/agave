@@ -335,7 +335,7 @@ fn execute_batches_internal(
                     &mut timings,
                     log_messages_bytes_limit,
                     prioritization_fee_cache,
-                    None::<fn() -> bool>,
+                    None::<fn() -> Option<usize>>,
                 ));
 
                 let thread_index = replay_tx_thread_pool.current_thread_index().unwrap();
