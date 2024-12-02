@@ -5009,7 +5009,7 @@ impl Bank {
         tx: &impl TransactionWithMeta,
         max_age: &MaxAge,
         move_precompile_verification_to_svm: bool,
-    ) -> Result<(), TransactionError> {
+    ) -> Result<()> {
         // If the transaction was sanitized before this bank's epoch,
         // additional checks are necessary.
         if self.epoch() != max_age.sanitized_epoch {
