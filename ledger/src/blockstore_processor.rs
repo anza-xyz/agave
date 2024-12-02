@@ -180,7 +180,7 @@ pub fn execute_batch(
         timings,
         log_messages_bytes_limit,
         pre_commit_callback.map(|f| {
-            true
+            || true
         })
     ) else {
         return Err(TransactionError::CommitFailed);
