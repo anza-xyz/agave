@@ -1,14 +1,14 @@
 const math = require("remark-math");
 const katex = require("rehype-katex");
 module.exports = {
-  title: "Solana Validator",
+  title: "Agave",
   tagline:
-    "Solana is an open source project implementing a new, high-performance, permissionless blockchain.",
+    "Agave is an open source project implementing a new, high-performance, permissionless blockchain.",
   url: "https://docs.solanalabs.com",
   baseUrl: "/",
   favicon: "img/favicon.ico",
-  organizationName: "solana-labs", // Usually your GitHub org/user name.
-  projectName: "solana", // Usually your repo name.
+  organizationName: "anza-xyz", // Usually your GitHub org/user name.
+  projectName: "agave", // Usually your repo name.
   onBrokenLinks: "throw",
   stylesheets: [
     {
@@ -50,7 +50,7 @@ module.exports = {
     },
     navbar: {
       logo: {
-        alt: "Solana Logo",
+        alt: "Anza Logo",
         src: "img/logo-horizontal.svg",
         srcDark: "img/logo-horizontal-dark.svg",
       },
@@ -141,7 +141,7 @@ module.exports = {
             },
             {
               label: "GitHub »",
-              href: "https://github.com/solana-labs/solana",
+              href: "https://github.com/anza-xyz/agave",
             },
             {
               label: "Discord »",
@@ -175,7 +175,7 @@ module.exports = {
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} Solana Labs`,
+      copyright: `Copyright © ${new Date().getFullYear()} Anza`,
     },
   },
   presets: [
