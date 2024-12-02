@@ -1,9 +1,10 @@
 pub(crate) mod core_bpf_migration;
-pub mod prototypes;
 
-pub use prototypes::{BuiltinPrototype, StatelessBuiltinPrototype};
 use {
-    solana_builtins::core_bpf_migration::{CoreBpfMigrationConfig, CoreBpfMigrationTargetType},
+    solana_builtins::{
+        core_bpf_migration::{CoreBpfMigrationConfig, CoreBpfMigrationTargetType},
+        prototype::{BuiltinPrototype, StatelessBuiltinPrototype},
+    },
     solana_feature_set as feature_set,
     solana_sdk::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable},
 };

@@ -66,15 +66,15 @@ mod tests {
 mod tests_core_bpf_migration {
     use {
         crate::bank::{
-            builtins::{
-                core_bpf_migration::tests::TestContext, BuiltinPrototype,
-                StatelessBuiltinPrototype, BUILTINS, STATELESS_BUILTINS,
-            },
+            builtins::{core_bpf_migration::tests::TestContext, BUILTINS, STATELESS_BUILTINS},
             test_utils::goto_end_of_slot,
             tests::{create_genesis_config, new_bank_from_parent_with_bank_forks},
             Bank,
         },
-        solana_builtins::core_bpf_migration::CoreBpfMigrationConfig,
+        solana_builtins::{
+            core_bpf_migration::CoreBpfMigrationConfig,
+            prototype::{BuiltinPrototype, StatelessBuiltinPrototype},
+        },
         solana_feature_set::FeatureSet,
         solana_program_runtime::loaded_programs::ProgramCacheEntry,
         solana_sdk::{

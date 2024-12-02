@@ -5012,6 +5012,7 @@ dependencies = [
 name = "solana-builtins"
 version = "2.2.0"
 dependencies = [
+ "solana-program-runtime",
  "solana-pubkey",
 ]
 

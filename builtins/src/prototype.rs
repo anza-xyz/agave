@@ -1,11 +1,11 @@
 use {
-    solana_builtins::core_bpf_migration::CoreBpfMigrationConfig,
-    solana_program_runtime::invoke_context::BuiltinFunctionWithContext, solana_sdk::pubkey::Pubkey,
+    crate::core_bpf_migration::CoreBpfMigrationConfig,
+    solana_program_runtime::invoke_context::BuiltinFunctionWithContext, solana_pubkey::Pubkey,
 };
 
 /// Transitions of built-in programs at epoch boundaries when features are activated.
 pub struct BuiltinPrototype {
-    pub(crate) core_bpf_migration_config: Option<CoreBpfMigrationConfig>,
+    pub core_bpf_migration_config: Option<CoreBpfMigrationConfig>,
     pub enable_feature_id: Option<Pubkey>,
     pub program_id: Pubkey,
     pub name: &'static str,
@@ -29,7 +29,7 @@ impl std::fmt::Debug for BuiltinPrototype {
 /// is reserved.
 #[derive(Debug)]
 pub struct StatelessBuiltinPrototype {
-    pub(crate) core_bpf_migration_config: Option<CoreBpfMigrationConfig>,
+    pub core_bpf_migration_config: Option<CoreBpfMigrationConfig>,
     pub program_id: Pubkey,
     pub name: &'static str,
 }

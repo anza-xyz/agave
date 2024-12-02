@@ -12,3 +12,4 @@
 //!   model.
 
 pub mod core_bpf_migration;
+pub mod prototype;
