@@ -411,8 +411,9 @@ pub fn load_and_process_ledger(
         &leader_schedule_cache,
         &process_options,
         transaction_status_sender.as_ref(),
-        None,
-        None, // Maybe support this later, though
+        None, // cache_block_meta_sender
+        None, // rewards_sender
+        None, // entry_notification_sender
         &accounts_background_request_sender,
     )
     .map(|_| LoadAndProcessLedgerOutput {

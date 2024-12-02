@@ -914,6 +914,7 @@ pub fn test_process_blockstore(
         None,
         None,
         None,
+        None,
         &abs_request_sender,
     )
     .unwrap();
@@ -979,6 +980,7 @@ pub fn process_blockstore_from_root(
     opts: &ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
+    rewards_sender: Option<&RewardsRecorderSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     accounts_background_request_sender: &AbsRequestSender,
 ) -> result::Result<(), BlockstoreProcessorError> {
@@ -1045,6 +1047,7 @@ pub fn process_blockstore_from_root(
             opts,
             transaction_status_sender,
             cache_block_meta_sender,
+            rewards_sender,
             entry_notification_sender,
             &mut timing,
             accounts_background_request_sender,
@@ -1859,6 +1862,7 @@ fn load_frozen_forks(
     opts: &ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
+    rewards_sender: Option<&RewardsRecorderSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     timing: &mut ExecuteTimings,
     accounts_background_request_sender: &AbsRequestSender,
@@ -1961,6 +1965,10 @@ fn load_frozen_forks(
             all_banks.insert(bank.slot(), bank.clone_with_scheduler());
             m.stop();
             process_single_slot_us += m.as_us();
+
+            rewards_sender
+                .as_ref()
+                .inspect(|sender| sender.send_rewards(&bank));
 
             let mut m = Measure::start("voting");
             // If we've reached the last known root in blockstore, start looking
@@ -4190,6 +4198,7 @@ pub mod tests {
             &bank_forks,
             &leader_schedule_cache,
             &opts,
+            None,
             None,
             None,
             None,
