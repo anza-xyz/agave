@@ -2,6 +2,7 @@
 mod serde_snapshot_tests {
     use {
         crate::{
+            bank::BankHashStats,
             serde_snapshot::{
                 deserialize_accounts_db_fields, reconstruct_accountsdb_from_fields,
                 remap_append_vec_file, SerializableAccountsDb, SnapshotAccountsDbFields,
@@ -15,9 +16,8 @@ mod serde_snapshot_tests {
             account_storage::{AccountStorageMap, AccountStorageReference},
             accounts::Accounts,
             accounts_db::{
-                get_temp_accounts_paths, stats::BankHashStats, test_utils::create_test_accounts,
-                AccountStorageEntry, AccountsDb, AtomicAccountsFileId,
-                VerifyAccountsHashAndLamportsConfig,
+                get_temp_accounts_paths, test_utils::create_test_accounts, AccountStorageEntry,
+                AccountsDb, AtomicAccountsFileId, VerifyAccountsHashAndLamportsConfig,
             },
             accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
             accounts_hash::AccountsHash,

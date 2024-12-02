@@ -1,6 +1,6 @@
 use {
     crate::{
-        bank::{Bank, BankFieldsToSerialize, BankSlotDelta},
+        bank::{Bank, BankFieldsToSerialize, BankHashStats, BankSlotDelta},
         serde_snapshot::BankIncrementalSnapshotPersistence,
         snapshot_hash::SnapshotHash,
     },
@@ -8,7 +8,7 @@ use {
     solana_accounts_db::{
         account_storage::meta::StoredMetaWriteVersion,
         accounts::Accounts,
-        accounts_db::{stats::BankHashStats, AccountStorageEntry},
+        accounts_db::AccountStorageEntry,
         accounts_hash::{AccountsDeltaHash, AccountsHash, AccountsHashKind},
         epoch_accounts_hash::EpochAccountsHash,
     },

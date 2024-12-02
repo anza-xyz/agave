@@ -539,9 +539,9 @@ mod tests {
     mod test_bank_serialize {
         use {
             super::*,
+            crate::bank::BankHashStats,
             solana_accounts_db::{
-                account_storage::meta::StoredMetaWriteVersion, accounts_db::stats::BankHashStats,
-                accounts_hash::AccountsLtHash,
+                account_storage::meta::StoredMetaWriteVersion, accounts_hash::AccountsLtHash,
             },
             solana_frozen_abi::abi_example::AbiExample,
             solana_lattice_hash::lt_hash::LtHash,
@@ -555,7 +555,7 @@ mod tests {
         // snapshot storages as well.
         //
         // It was avoided to impl AbiExample for Bank by wrapping it around PhantomData inside the
-        // spcecial wrapper called BankAbiTestWrapper. And internally, it creates an actual bank
+        // special wrapper called BankAbiTestWrapper. And internally, it creates an actual bank
         // from Bank::default_for_tests().
         //
         // In this way, frozen abi can increase the coverage of the serialization code path as much

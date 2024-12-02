@@ -4,7 +4,7 @@ use {
     crate::{
         bank::{
             builtins::BuiltinPrototype, Bank, BankFieldsToDeserialize, BankFieldsToSerialize,
-            BankRc,
+            BankHashStats, BankRc,
         },
         epoch_stakes::{EpochStakes, VersionedEpochStakes},
         runtime_config::RuntimeConfig,
@@ -19,8 +19,8 @@ use {
         account_storage::meta::StoredMetaWriteVersion,
         accounts::Accounts,
         accounts_db::{
-            stats::BankHashStats, AccountStorageEntry, AccountsDb, AccountsDbConfig,
-            AccountsFileId, AtomicAccountsFileId, DuplicatesLtHash, IndexGenerationInfo,
+            AccountStorageEntry, AccountsDb, AccountsDbConfig, AccountsFileId,
+            AtomicAccountsFileId, DuplicatesLtHash, IndexGenerationInfo,
         },
         accounts_file::{AccountsFile, StorageAccess},
         accounts_hash::{AccountsDeltaHash, AccountsHash},
