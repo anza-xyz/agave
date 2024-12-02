@@ -24,7 +24,6 @@ use {
     solana_sdk::{
         hash::Hash,
         pubkey::Pubkey,
-        scheduling::TaskKey,
         system_transaction,
         transaction::{Result, SanitizedTransaction},
     },
