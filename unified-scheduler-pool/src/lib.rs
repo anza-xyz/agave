@@ -732,7 +732,7 @@ impl TaskHandler for DefaultTaskHandler {
                     move_precompile_verification_to_svm,
                 ) {
                     *result = Err(e.into());
-                    break (None, false);
+                    (None, false)
                 } else {
                     use solana_cost_model::cost_model::CostModel;
                     let c =
