@@ -4935,7 +4935,7 @@ impl Bank {
             recording_config,
             timings,
             log_messages_bytes_limit,
-            None::<fn() -> Option<usize>>,
+            None::<fn() -> bool>,
         )
         .unwrap()
     }
