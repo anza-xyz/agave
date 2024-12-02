@@ -23,6 +23,7 @@ log = { workspace = true }
 scopeguard = { workspace = true }
 serde = { workspace = true }
 solana-cost-model = { workspace = true }
+solana-feature-set = { workspace = true }
 solana-ledger = { workspace = true }
 solana-perf = { workspace = true }
 solana-poh = { workspace = true }
