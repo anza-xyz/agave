@@ -171,6 +171,16 @@ pub fn execute_batch(
         vec![]
     };
 
+    let pre_commit_callback = pre_commit_callback.map(|original_callback| {
+        || {
+            if let Some(index) = original_callback() {
+                transaction_indexes = vec![index];
+                true
+            } else {
+                false
+            }
+        }
+    });
     let is_unified_scheduler_for_block_production = pre_commit_callback.is_some();
     let Some((commit_results, balances)) = batch.bank().do_load_execute_and_commit_transactions(
         batch,
@@ -179,16 +189,7 @@ pub fn execute_batch(
         ExecutionRecordingConfig::new_single_setting(transaction_status_sender.is_some()),
         timings,
         log_messages_bytes_limit,
-        pre_commit_callback.map(|f| {
-            || {
-                if let Some(index) = f() {
-                    transaction_indexes = vec![index];
-                    true
-                } else {
-                    false
-                }
-            }
-        }),
+        pre_commit_callback,
     ) else {
         return Err(TransactionError::CommitFailed);
     };
