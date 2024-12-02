@@ -1806,6 +1806,7 @@ impl SchedulingStateMachine {
         })
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn create_task_for_test(
         transaction: RuntimeTransaction<SanitizedTransaction>,
         index: TaskKey,
