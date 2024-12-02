@@ -717,6 +717,8 @@ impl TaskHandler for DefaultTaskHandler {
         handler_context: &HandlerContext,
     ) {
         let transaction = task.transaction();
+        let index = task.index();
+
         let (cost, added_cost) =
             if matches!(scheduling_context.mode(), SchedulingMode::BlockProduction) {
                 use solana_cost_model::cost_model::CostModel;
