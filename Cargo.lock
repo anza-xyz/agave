@@ -9559,6 +9559,7 @@ dependencies = [
  "scopeguard",
  "serde",
  "solana-cost-model",
+ "solana-feature-set",
  "solana-ledger",
  "solana-logger",
  "solana-perf",
