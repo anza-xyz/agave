@@ -733,28 +733,28 @@ impl TaskHandler for DefaultTaskHandler {
                 ) {
                     *result = Err(e.into());
                     break (None, false);
-                }
-
-                use solana_cost_model::cost_model::CostModel;
-                let c =
-                    CostModel::calculate_cost(transaction, &scheduling_context.bank().feature_set);
-                loop {
-                    let r = scheduling_context
-                        .bank()
-                        .write_cost_tracker()
-                        .unwrap()
-                        .try_add(&c);
-                    if let Err(e) = r {
-                        use solana_cost_model::cost_tracker::CostTrackerError;
-                        if matches!(e, CostTrackerError::WouldExceedAccountDataBlockLimit) {
-                            sleep(Duration::from_millis(10));
-                            continue;
+                } else {
+                    use solana_cost_model::cost_model::CostModel;
+                    let c =
+                        CostModel::calculate_cost(transaction, &scheduling_context.bank().feature_set);
+                    loop {
+                        let r = scheduling_context
+                            .bank()
+                            .write_cost_tracker()
+                            .unwrap()
+                            .try_add(&c);
+                        if let Err(e) = r {
+                            use solana_cost_model::cost_tracker::CostTrackerError;
+                            if matches!(e, CostTrackerError::WouldExceedAccountDataBlockLimit) {
+                                sleep(Duration::from_millis(10));
+                                continue;
+                            } else {
+                                *result = Err(e.into());
+                                break (Some(c), false);
+                            }
                         } else {
-                            *result = Err(e.into());
-                            break (Some(c), false);
+                            break (Some(c), true);
                         }
-                    } else {
-                        break (Some(c), true);
                     }
                 }
             } else {
