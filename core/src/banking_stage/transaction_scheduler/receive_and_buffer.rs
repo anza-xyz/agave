@@ -422,8 +422,8 @@ impl TransactionViewReceiveAndBuffer {
 
                     match Self::try_handle_packet(
                         bytes.clone(),
-                        &root_bank,
-                        &working_bank,
+                        root_bank,
+                        working_bank,
                         alt_resolved_slot,
                         sanitized_epoch,
                         transaction_account_lock_limit,
