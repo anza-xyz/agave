@@ -880,7 +880,7 @@ fn handle_connection_error(e: quinn::ConnectionError, stats: &StreamerStats, fro
 }
 
 // Holder(s) of the AsyncSender<PacketAccumulator> on the other end should not
-// wait for this function to exit to exit
+// wait for this function to exit
 async fn packet_batch_sender(
     packet_sender: Sender<PacketBatch>,
     packet_receiver: AsyncReceiver<PacketAccumulator>,
