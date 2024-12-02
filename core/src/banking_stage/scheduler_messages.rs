@@ -1,5 +1,4 @@
 use {
-    solana_sdk::clock::{Epoch, Slot},
     std::fmt::Display,
 };
 use solana_sdk::scheduling::MaxAge;
