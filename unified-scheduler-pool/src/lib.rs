@@ -724,7 +724,7 @@ impl TaskHandler for DefaultTaskHandler {
                 let move_precompile_verification_to_svm = scheduling_context.bank()
                     .feature_set
                     .is_active(&feature_set::move_precompile_verification_to_svm::id());
-                let TransactionContext::BlcokProduction(max_age) = task.context() else { panic!() };
+                let TransactionContext::BlockProduction(max_age) = task.context() else { panic!() };
 
                 if let Err(e) = scheduling_context.bank().refilter_prebuilt_block_production_transactions(
                     transaction,
