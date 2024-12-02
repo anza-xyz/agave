@@ -178,7 +178,7 @@ pub fn execute_batch(
         ExecutionRecordingConfig::new_single_setting(transaction_status_sender.is_some()),
         timings,
         log_messages_bytes_limit,
-        pre_commit_callback,
+        || true, //pre_commit_callback,
     ) else {
         return Err(TransactionError::CommitFailed);
     };
