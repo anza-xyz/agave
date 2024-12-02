@@ -750,9 +750,14 @@ impl TaskHandler for DefaultTaskHandler {
             let batch = scheduling_context
                 .bank()
                 .prepare_unlocked_batch_from_single_tx(transaction);
+            const DUMMY_INDEX: usize = 0;
+            let index = match scheduling_context.mode() {
+                SchedulingMode::BlockVerification => index.try_into().unwrap(),
+                SchedulingMode::BlockProduction => DUMMY_INDEX,
+            };
             let batch_with_indexes = TransactionBatchWithIndexes {
                 batch,
-                transaction_indexes: vec![(index as usize)],
+                transaction_indexes: vec![index],
             };
 
             let pre_commit_callback = match scheduling_context.mode() {
