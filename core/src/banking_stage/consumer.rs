@@ -817,40 +817,6 @@ impl Consumer {
     }
 }
 
-pub(crate) fn refilter_prebuilt_transactions(
-    bank: &Arc<Bank>,
-    tx: &impl TransactionWithMeta,
-    max_age: &MaxAge,
-    move_precompile_verification_to_svm: bool,
-) -> Result<(), TransactionError> {
-    // If the transaction was sanitized before this bank's epoch,
-    // additional checks are necessary.
-    if bank.epoch() != max_age.sanitized_epoch {
-        // Reserved key set may have changed, so we must verify that
-        // no writable keys are reserved.
-        bank.check_reserved_keys(tx)?;
-    }
-
-    if bank.slot() > max_age.alt_invalidation_slot {
-        // The address table lookup **may** have expired, but the
-        // expiration is not guaranteed since there may have been
-        // skipped slot.
-        // If the addresses still resolve here, then the transaction is still
-        // valid, and we can continue with processing.
-        // If they do not, then the ATL has expired and the transaction
-        // can be dropped.
-        let (_addresses, _deactivation_slot) =
-            bank.load_addresses_from_ref(tx.message_address_table_lookups())?;
-    }
-
-    // Verify pre-compiles.
-    if !move_precompile_verification_to_svm {
-        verify_precompiles(tx, &bank.feature_set)?;
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use {

@@ -718,6 +718,18 @@ impl TaskHandler for DefaultTaskHandler {
     ) {
         let transaction = task.transaction();
         let index = task.index();
+        /*
+                    let move_precompile_verification_to_svm = bank
+                        .feature_set
+                        .is_active(&feature_set::move_precompile_verification_to_svm::id());
+                            let Ok(()) = refilter_prebuilt_transactions(
+                                bank,
+                                transaction,
+                                max_age,
+                                move_precompile_verification_to_svm,
+                            );
+                            */
+
 
         let (cost, added_cost) =
             if matches!(scheduling_context.mode(), SchedulingMode::BlockProduction) {
