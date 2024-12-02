@@ -670,7 +670,7 @@ pub(crate) fn sample_storages_and_account_in_slot(
     accounts.store_for_tests(slot, &to_store[..]);
     accounts.add_root_and_flush_write_cache(slot);
 
-    let (storages, slots) = accounts.get_snapshot_storages(..=slot);
+    let (storages, slots) = accounts.get_storages(..=slot);
     assert_eq!(storages.len(), slots.len());
     storages
         .iter()
@@ -2623,7 +2623,7 @@ fn test_storage_finder() {
 #[test]
 fn test_get_snapshot_storages_empty() {
     let db = AccountsDb::new_single_for_tests();
-    assert!(db.get_snapshot_storages(..=0).0.is_empty());
+    assert!(db.get_storages(..=0).0.is_empty());
 }
 
 #[test]
@@ -2638,10 +2638,10 @@ fn test_get_snapshot_storages_only_older_than_or_equal_to_snapshot_slot() {
 
     db.store_for_tests(base_slot, &[(&key, &account)]);
     db.add_root_and_flush_write_cache(base_slot);
-    assert!(db.get_snapshot_storages(..=before_slot).0.is_empty());
+    assert!(db.get_storages(..=before_slot).0.is_empty());
 
-    assert_eq!(1, db.get_snapshot_storages(..=base_slot).0.len());
-    assert_eq!(1, db.get_snapshot_storages(..=after_slot).0.len());
+    assert_eq!(1, db.get_storages(..=base_slot).0.len());
+    assert_eq!(1, db.get_storages(..=after_slot).0.len());
 }
 
 #[test]
@@ -2658,13 +2658,13 @@ fn test_get_snapshot_storages_only_non_empty() {
         if pass == 0 {
             db.add_root_and_flush_write_cache(base_slot);
             db.storage.remove(&base_slot, false);
-            assert!(db.get_snapshot_storages(..=after_slot).0.is_empty());
+            assert!(db.get_storages(..=after_slot).0.is_empty());
             continue;
         }
 
         db.store_for_tests(base_slot, &[(&key, &account)]);
         db.add_root_and_flush_write_cache(base_slot);
-        assert_eq!(1, db.get_snapshot_storages(..=after_slot).0.len());
+        assert_eq!(1, db.get_storages(..=after_slot).0.len());
     }
 }
 
@@ -2678,10 +2678,10 @@ fn test_get_snapshot_storages_only_roots() {
     let after_slot = base_slot + 1;
 
     db.store_for_tests(base_slot, &[(&key, &account)]);
-    assert!(db.get_snapshot_storages(..=after_slot).0.is_empty());
+    assert!(db.get_storages(..=after_slot).0.is_empty());
 
     db.add_root_and_flush_write_cache(base_slot);
-    assert_eq!(1, db.get_snapshot_storages(..=after_slot).0.len());
+    assert_eq!(1, db.get_storages(..=after_slot).0.len());
 }
 
 #[test]
@@ -2695,13 +2695,13 @@ fn test_get_snapshot_storages_exclude_empty() {
 
     db.store_for_tests(base_slot, &[(&key, &account)]);
     db.add_root_and_flush_write_cache(base_slot);
-    assert_eq!(1, db.get_snapshot_storages(..=after_slot).0.len());
+    assert_eq!(1, db.get_storages(..=after_slot).0.len());
 
     db.storage
         .get_slot_storage_entry(0)
         .unwrap()
         .remove_accounts(0, true, 1);
-    assert!(db.get_snapshot_storages(..=after_slot).0.is_empty());
+    assert!(db.get_storages(..=after_slot).0.is_empty());
 }
 
 #[test]
@@ -2714,8 +2714,8 @@ fn test_get_snapshot_storages_with_base_slot() {
     let slot = 10;
     db.store_for_tests(slot, &[(&key, &account)]);
     db.add_root_and_flush_write_cache(slot);
-    assert_eq!(0, db.get_snapshot_storages(slot + 1..=slot + 1).0.len());
-    assert_eq!(1, db.get_snapshot_storages(slot..=slot + 1).0.len());
+    assert_eq!(0, db.get_storages(slot + 1..=slot + 1).0.len());
+    assert_eq!(1, db.get_storages(slot..=slot + 1).0.len());
 }
 
 define_accounts_db_test!(
@@ -2812,7 +2812,7 @@ fn do_full_clean_refcount(mut accounts: AccountsDb, store1_first: bool, store_si
     accounts.store_for_tests(current_slot, &[(&pubkey2, &zero_lamport_account)]);
     accounts.store_for_tests(current_slot, &[(&pubkey3, &zero_lamport_account)]);
 
-    let snapshot_stores = accounts.get_snapshot_storages(..=current_slot).0;
+    let snapshot_stores = accounts.get_storages(..=current_slot).0;
     let total_accounts: usize = snapshot_stores.iter().map(|s| s.accounts_count()).sum();
     assert!(!snapshot_stores.is_empty());
     assert!(total_accounts > 0);
@@ -8068,7 +8068,7 @@ define_accounts_db_test!(test_calculate_incremental_accounts_hash, |accounts_db|
             &EpochSchedule::default(),
             OldStoragesPolicy::Leave,
         );
-        let (storages, _) = accounts_db.get_snapshot_storages(..=slot);
+        let (storages, _) = accounts_db.get_storages(..=slot);
         let storages = SortedStorages::new(&storages);
         accounts_db.calculate_accounts_hash(
             &CalcAccountsHashConfig::default(),
@@ -8139,7 +8139,7 @@ define_accounts_db_test!(test_calculate_incremental_accounts_hash, |accounts_db|
             &EpochSchedule::default(),
             OldStoragesPolicy::Leave,
         );
-        let (storages, _) = accounts_db.get_snapshot_storages(full_accounts_hash_slot + 1..=slot);
+        let (storages, _) = accounts_db.get_storages(full_accounts_hash_slot + 1..=slot);
         let storages = SortedStorages::new(&storages);
         accounts_db.calculate_incremental_accounts_hash(
             &CalcAccountsHashConfig::default(),
