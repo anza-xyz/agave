@@ -442,7 +442,7 @@ impl Consumer {
             // Need to filter out transactions since they were sanitized earlier.
             // This means that the transaction may cross and epoch boundary (not allowed),
             //  or account lookup tables may have been closed.
-            refilter_prebuilt_transactions(bank, tx, max_age, move_precompile_verification_to_svm) 
+            refilter_prebuilt_transactions(bank, tx, max_age, move_precompile_verification_to_svm)
         });
         self.process_and_record_transactions_with_pre_results(bank, txs, 0, pre_results)
     }
@@ -817,7 +817,12 @@ impl Consumer {
     }
 }
 
-pub(crate) fn refilter_prebuilt_transactions(bank: &Arc<Bank>, tx: &impl TransactionWithMeta, max_age: &MaxAge, move_precompile_verification_to_svm: bool) -> Result<(), TransactionError> {
+pub(crate) fn refilter_prebuilt_transactions(
+    bank: &Arc<Bank>,
+    tx: &impl TransactionWithMeta,
+    max_age: &MaxAge,
+    move_precompile_verification_to_svm: bool,
+) -> Result<(), TransactionError> {
     // If the transaction was sanitized before this bank's epoch,
     // additional checks are necessary.
     if bank.epoch() != max_age.sanitized_epoch {
