@@ -1737,7 +1737,7 @@ impl SchedulingStateMachine {
     /// shared owndership of `UsageQueue`s are released and UsageQueue state is identical to just
     /// after created, if `has_no_alive_task()` is `true`. Also note that this is desired for
     /// separation of concern.
-    pub fn create_task(
+    pub fn do_create_task(
         transaction: RuntimeTransaction<SanitizedTransaction>,
         context: TransactionContext,
         index: TaskKey,
@@ -1806,13 +1806,12 @@ impl SchedulingStateMachine {
         })
     }
 
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn create_task_for_test(
+    pub fn create_task(
         transaction: RuntimeTransaction<SanitizedTransaction>,
         index: TaskKey,
         usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
     ) -> Task {
-        Self::create_task(transaction, TransactionContext::BlockVerification(index), index, usage_queue_loader)
+        Self::do_create_task(transaction, TransactionContext::BlockVerification(index), index, usage_queue_loader)
     }
 
     pub fn reset_task(&mut self, task: &Task) {
@@ -2058,7 +2057,7 @@ mod tests {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
         };
         let address_loader = &mut create_address_loader(None);
-        let task = SchedulingStateMachine::create_task_for_test(simplest_transaction(), 3, address_loader);
+        let task = SchedulingStateMachine::create_task(simplest_transaction(), 3, address_loader);
         state_machine.schedule_task(task).unwrap();
         state_machine.reinitialize_for_test();
     }
@@ -2068,7 +2067,7 @@ mod tests {
         let sanitized = simplest_transaction();
         let signature = *sanitized.signature();
         let task =
-            SchedulingStateMachine::create_task_for_test(sanitized, 3, &mut |_| UsageQueue::default());
+            SchedulingStateMachine::create_task(sanitized, 3, &mut |_| UsageQueue::default());
         assert_eq!(task.task_index(), 3);
         assert_eq!(task.transaction().signature(), &signature);
     }
@@ -2077,7 +2076,7 @@ mod tests {
     fn test_non_conflicting_task_related_counts() {
         let sanitized = simplest_transaction();
         let address_loader = &mut create_address_loader(None);
-        let task = SchedulingStateMachine::create_task_for_test(sanitized, 3, address_loader);
+        let task = SchedulingStateMachine::create_task(sanitized, 3, address_loader);
 
         let mut state_machine = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
@@ -2095,9 +2094,9 @@ mod tests {
     fn test_conflicting_task_related_counts() {
         let sanitized = simplest_transaction();
         let address_loader = &mut create_address_loader(None);
-        let task1 = SchedulingStateMachine::create_task_for_test(sanitized.clone(), 101, address_loader);
-        let task2 = SchedulingStateMachine::create_task_for_test(sanitized.clone(), 102, address_loader);
-        let task3 = SchedulingStateMachine::create_task_for_test(sanitized.clone(), 103, address_loader);
+        let task1 = SchedulingStateMachine::create_task(sanitized.clone(), 101, address_loader);
+        let task2 = SchedulingStateMachine::create_task(sanitized.clone(), 102, address_loader);
+        let task3 = SchedulingStateMachine::create_task(sanitized.clone(), 103, address_loader);
 
         let mut state_machine = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
@@ -2147,9 +2146,9 @@ mod tests {
     fn test_existing_blocking_task_then_newly_scheduled_task() {
         let sanitized = simplest_transaction();
         let address_loader = &mut create_address_loader(None);
-        let task1 = SchedulingStateMachine::create_task_for_test(sanitized.clone(), 101, address_loader);
-        let task2 = SchedulingStateMachine::create_task_for_test(sanitized.clone(), 102, address_loader);
-        let task3 = SchedulingStateMachine::create_task_for_test(sanitized.clone(), 103, address_loader);
+        let task1 = SchedulingStateMachine::create_task(sanitized.clone(), 101, address_loader);
+        let task2 = SchedulingStateMachine::create_task(sanitized.clone(), 102, address_loader);
+        let task3 = SchedulingStateMachine::create_task(sanitized.clone(), 103, address_loader);
 
         let mut state_machine = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
@@ -2199,8 +2198,8 @@ mod tests {
         let sanitized1 = transaction_with_readonly_address(conflicting_address);
         let sanitized2 = transaction_with_readonly_address(conflicting_address);
         let address_loader = &mut create_address_loader(None);
-        let task1 = SchedulingStateMachine::create_task_for_test(sanitized1, 101, address_loader);
-        let task2 = SchedulingStateMachine::create_task_for_test(sanitized2, 102, address_loader);
+        let task1 = SchedulingStateMachine::create_task(sanitized1, 101, address_loader);
+        let task2 = SchedulingStateMachine::create_task(sanitized2, 102, address_loader);
 
         let mut state_machine = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
@@ -2239,9 +2238,9 @@ mod tests {
         let sanitized2 = transaction_with_readonly_address(conflicting_address);
         let sanitized3 = transaction_with_writable_address(conflicting_address);
         let address_loader = &mut create_address_loader(None);
-        let task1 = SchedulingStateMachine::create_task_for_test(sanitized1, 101, address_loader);
-        let task2 = SchedulingStateMachine::create_task_for_test(sanitized2, 102, address_loader);
-        let task3 = SchedulingStateMachine::create_task_for_test(sanitized3, 103, address_loader);
+        let task1 = SchedulingStateMachine::create_task(sanitized1, 101, address_loader);
+        let task2 = SchedulingStateMachine::create_task(sanitized2, 102, address_loader);
+        let task3 = SchedulingStateMachine::create_task(sanitized3, 103, address_loader);
 
         let mut state_machine = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
@@ -2290,9 +2289,9 @@ mod tests {
         let sanitized2 = transaction_with_writable_address(conflicting_address);
         let sanitized3 = transaction_with_readonly_address(conflicting_address);
         let address_loader = &mut create_address_loader(None);
-        let task1 = SchedulingStateMachine::create_task_for_test(sanitized1, 101, address_loader);
-        let task2 = SchedulingStateMachine::create_task_for_test(sanitized2, 102, address_loader);
-        let task3 = SchedulingStateMachine::create_task_for_test(sanitized3, 103, address_loader);
+        let task1 = SchedulingStateMachine::create_task(sanitized1, 101, address_loader);
+        let task2 = SchedulingStateMachine::create_task(sanitized2, 102, address_loader);
+        let task3 = SchedulingStateMachine::create_task(sanitized3, 103, address_loader);
 
         let mut state_machine = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
@@ -2333,8 +2332,8 @@ mod tests {
         let sanitized1 = transaction_with_readonly_address(conflicting_address);
         let sanitized2 = transaction_with_writable_address(conflicting_address);
         let address_loader = &mut create_address_loader(None);
-        let task1 = SchedulingStateMachine::create_task_for_test(sanitized1, 101, address_loader);
-        let task2 = SchedulingStateMachine::create_task_for_test(sanitized2, 102, address_loader);
+        let task1 = SchedulingStateMachine::create_task(sanitized1, 101, address_loader);
+        let task2 = SchedulingStateMachine::create_task(sanitized2, 102, address_loader);
 
         let mut state_machine = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
@@ -2367,10 +2366,10 @@ mod tests {
         let sanitized3 = transaction_with_readonly_address(conflicting_address);
         let sanitized4 = transaction_with_writable_address(conflicting_address);
         let address_loader = &mut create_address_loader(None);
-        let task1 = SchedulingStateMachine::create_task_for_test(sanitized1, 101, address_loader);
-        let task2 = SchedulingStateMachine::create_task_for_test(sanitized2, 102, address_loader);
-        let task3 = SchedulingStateMachine::create_task_for_test(sanitized3, 103, address_loader);
-        let task4 = SchedulingStateMachine::create_task_for_test(sanitized4, 104, address_loader);
+        let task1 = SchedulingStateMachine::create_task(sanitized1, 101, address_loader);
+        let task2 = SchedulingStateMachine::create_task(sanitized2, 102, address_loader);
+        let task3 = SchedulingStateMachine::create_task(sanitized3, 103, address_loader);
+        let task4 = SchedulingStateMachine::create_task(sanitized4, 104, address_loader);
 
         let mut state_machine = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
@@ -2425,8 +2424,8 @@ mod tests {
         let sanitized2 = transaction_with_writable_address(conflicting_address);
         let usage_queues = Rc::new(RefCell::new(HashMap::new()));
         let address_loader = &mut create_address_loader(Some(usage_queues.clone()));
-        let task1 = SchedulingStateMachine::create_task_for_test(sanitized1, 101, address_loader);
-        let task2 = SchedulingStateMachine::create_task_for_test(sanitized2, 102, address_loader);
+        let task1 = SchedulingStateMachine::create_task(sanitized1, 101, address_loader);
+        let task2 = SchedulingStateMachine::create_task(sanitized2, 102, address_loader);
 
         let mut state_machine = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
@@ -2477,10 +2476,10 @@ mod tests {
         //let sanitized0_2 = transaction_with_writable_address(
         let usage_queues = Rc::new(RefCell::new(HashMap::new()));
         let address_loader = &mut create_address_loader(Some(usage_queues.clone()));
-        let task0_1 = SchedulingStateMachine::create_task_for_test(sanitized0_1, 50, address_loader);
-        //let task0_2 = SchedulingStateMachine::create_task_for_test(sanitized0_2, 51, address_loader);
-        let task1 = SchedulingStateMachine::create_task_for_test(sanitized1, 101, address_loader);
-        let task2 = SchedulingStateMachine::create_task_for_test(sanitized2, 99, address_loader);
+        let task0_1 = SchedulingStateMachine::create_task(sanitized0_1, 50, address_loader);
+        //let task0_2 = SchedulingStateMachine::create_task(sanitized0_2, 51, address_loader);
+        let task1 = SchedulingStateMachine::create_task(sanitized1, 101, address_loader);
+        let task2 = SchedulingStateMachine::create_task(sanitized2, 99, address_loader);
 
         let mut state_machine = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
@@ -2562,10 +2561,10 @@ mod tests {
         //let sanitized0_2 = transaction_with_writable_address(
         let usage_queues = Rc::new(RefCell::new(HashMap::new()));
         let address_loader = &mut create_address_loader(Some(usage_queues.clone()));
-        let task0_1 = SchedulingStateMachine::create_task_for_test(sanitized0_1, 50, address_loader);
-        //let task0_2 = SchedulingStateMachine::create_task_for_test(sanitized0_2, 51, address_loader);
-        let task1 = SchedulingStateMachine::create_task_for_test(sanitized1, 101, address_loader);
-        let task2 = SchedulingStateMachine::create_task_for_test(sanitized2, 99, address_loader);
+        let task0_1 = SchedulingStateMachine::create_task(sanitized0_1, 50, address_loader);
+        //let task0_2 = SchedulingStateMachine::create_task(sanitized0_2, 51, address_loader);
+        let task1 = SchedulingStateMachine::create_task(sanitized1, 101, address_loader);
+        let task2 = SchedulingStateMachine::create_task(sanitized2, 99, address_loader);
 
         let mut state_machine = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
@@ -2647,10 +2646,10 @@ mod tests {
         //let sanitized0_2 = transaction_with_writable_address(
         let usage_queues = Rc::new(RefCell::new(HashMap::new()));
         let address_loader = &mut create_address_loader(Some(usage_queues.clone()));
-        let task0_1 = SchedulingStateMachine::create_task_for_test(sanitized0_1, 50, address_loader);
-        //let task0_2 = SchedulingStateMachine::create_task_for_test(sanitized0_2, 51, address_loader);
-        let task1 = SchedulingStateMachine::create_task_for_test(sanitized1, 101, address_loader);
-        let task2 = SchedulingStateMachine::create_task_for_test(sanitized2, 99, address_loader);
+        let task0_1 = SchedulingStateMachine::create_task(sanitized0_1, 50, address_loader);
+        //let task0_2 = SchedulingStateMachine::create_task(sanitized0_2, 51, address_loader);
+        let task1 = SchedulingStateMachine::create_task(sanitized1, 101, address_loader);
+        let task2 = SchedulingStateMachine::create_task(sanitized2, 99, address_loader);
 
         let mut state_machine = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
@@ -2738,12 +2737,12 @@ mod tests {
         //let sanitized0_2 = transaction_with_writable_address(
         let usage_queues = Rc::new(RefCell::new(HashMap::new()));
         let address_loader = &mut create_address_loader(Some(usage_queues.clone()));
-        let task0_1 = SchedulingStateMachine::create_task_for_test(sanitized0_1, 50, address_loader);
-        //let task0_2 = SchedulingStateMachine::create_task_for_test(sanitized0_2, 51, address_loader);
-        let task1 = SchedulingStateMachine::create_task_for_test(sanitized1, 101, address_loader);
-        let task1_2 = SchedulingStateMachine::create_task_for_test(sanitized1_2, 103, address_loader);
-        let task1_3 = SchedulingStateMachine::create_task_for_test(sanitized1_3, 104, address_loader);
-        let task2 = SchedulingStateMachine::create_task_for_test(sanitized2, 99, address_loader);
+        let task0_1 = SchedulingStateMachine::create_task(sanitized0_1, 50, address_loader);
+        //let task0_2 = SchedulingStateMachine::create_task(sanitized0_2, 51, address_loader);
+        let task1 = SchedulingStateMachine::create_task(sanitized1, 101, address_loader);
+        let task1_2 = SchedulingStateMachine::create_task(sanitized1_2, 103, address_loader);
+        let task1_3 = SchedulingStateMachine::create_task(sanitized1_3, 104, address_loader);
+        let task2 = SchedulingStateMachine::create_task(sanitized2, 99, address_loader);
 
         let mut state_machine = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test()
@@ -2853,9 +2852,9 @@ mod tests {
             transaction_with_writable_address2(conflicting_address3, conflicting_address4);
         let usage_queues = Rc::new(RefCell::new(HashMap::new()));
         let address_loader = &mut create_address_loader(Some(usage_queues.clone()));
-        let task1 = SchedulingStateMachine::create_task_for_test(sanitized1, 101, address_loader);
-        let task2 = SchedulingStateMachine::create_task_for_test(sanitized2, 102, address_loader);
-        let task3 = SchedulingStateMachine::create_task_for_test(sanitized3, 103, address_loader);
+        let task1 = SchedulingStateMachine::create_task(sanitized1, 101, address_loader);
+        let task2 = SchedulingStateMachine::create_task(sanitized2, 102, address_loader);
+        let task3 = SchedulingStateMachine::create_task(sanitized3, 103, address_loader);
 
         let mut state_machine = unsafe {
             SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling_for_test2()
@@ -2980,7 +2979,7 @@ mod tests {
         };
         let usage_queue = UsageQueue::default();
         let sanitized = simplest_transaction();
-        let task = SchedulingStateMachine::create_task_for_test(sanitized.clone(), 3, &mut |_| {
+        let task = SchedulingStateMachine::create_task(sanitized.clone(), 3, &mut |_| {
             UsageQueue::default()
         });
         let lock_context = LockContext::new(usage_queue.clone(), RequestedUsage::Readonly);
@@ -3004,7 +3003,7 @@ mod tests {
         };
         let usage_queue = UsageQueue::default();
         let sanitized = simplest_transaction();
-        let task = SchedulingStateMachine::create_task_for_test(sanitized.clone(), 3, &mut |_| {
+        let task = SchedulingStateMachine::create_task(sanitized.clone(), 3, &mut |_| {
             UsageQueue::default()
         });
         usage_queue
