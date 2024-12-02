@@ -540,11 +540,13 @@ struct PackedTaskInner {
 }
 const_assert_eq!(mem::size_of::<PackedTaskInner>(), 24);
 
+#[derive(Debug)]
 struct TransactionWrapper {
     transaction: RuntimeTransaction<SanitizedTransaction>,
     context: TransactionContext,
 }
 
+#[derive(Debug)]
 enum TransactionContext {
     BlockVerification(TaskKey),
     BlockProduction(MaxAge),
