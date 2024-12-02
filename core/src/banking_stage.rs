@@ -25,15 +25,12 @@ use {
             },
         },
         banking_trace::BankingPacketReceiver,
-        forwarder_client::{
-            ForwarderClient, ForwarderConnectionCacheClient, ForwarderLeaderUpdater,
-        },
+        forwarder_client::ForwarderClient,
         tracer_packet_stats::TracerPacketStats,
         validator::BlockProductionMethod,
     },
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     histogram::Histogram,
-    solana_client::connection_cache::ConnectionCache,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     solana_ledger::blockstore_processor::TransactionStatusSender,
     solana_measure::measure_us,
@@ -349,7 +346,7 @@ impl LikeClusterInfo for Arc<ClusterInfo> {
 impl BankingStage {
     /// Create the stage using `bank`. Exit when `verified_receiver` is dropped.
     #[allow(clippy::too_many_arguments)]
-    pub fn new<Client: ForwarderClient>(
+    pub(crate) fn new<Client: ForwarderClient>(
         block_production_method: BlockProductionMethod,
         cluster_info: &impl LikeClusterInfo,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
@@ -383,7 +380,7 @@ impl BankingStage {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn new_num_threads<Client: ForwarderClient>(
+    pub(crate) fn new_num_threads<Client: ForwarderClient>(
         block_production_method: BlockProductionMethod,
         cluster_info: &impl LikeClusterInfo,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
@@ -435,7 +432,7 @@ impl BankingStage {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn new_thread_local_multi_iterator<Client: ForwarderClient>(
+    pub(crate) fn new_thread_local_multi_iterator<Client: ForwarderClient>(
         cluster_info: &impl LikeClusterInfo,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         non_vote_receiver: BankingPacketReceiver,
@@ -497,10 +494,6 @@ impl BankingStage {
                     ),
                 };
 
-                //let leader_updater =
-                //    ForwarderLeaderUpdater::new(cluster_info.clone(), poh_recorder.clone());
-                //let client =
-                //    ForwarderConnectionCacheClient::new(connection_cache.clone(), leader_updater);
                 let forwarder =
                     Forwarder::new(client.clone(), bank_forks.clone(), data_budget.clone());
 
@@ -520,7 +513,7 @@ impl BankingStage {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn new_central_scheduler<Client: ForwarderClient>(
+    pub(crate) fn new_central_scheduler<Client: ForwarderClient>(
         cluster_info: &impl LikeClusterInfo,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         non_vote_receiver: BankingPacketReceiver,
@@ -557,9 +550,6 @@ impl BankingStage {
         // + 1 for the central scheduler thread
         let mut bank_thread_hdls = Vec::with_capacity(num_threads as usize + 1);
 
-        //let leader_updater =
-        //    ForwarderLeaderUpdater::new(cluster_info.clone(), poh_recorder.clone());
-        //let client = ForwarderConnectionCacheClient::new(connection_cache.clone(), leader_updater);
         // Spawn legacy voting threads first: 1 gossip, 1 tpu
         for (id, packet_receiver, vote_source) in [
             (0, gossip_vote_receiver, VoteSource::Gossip),

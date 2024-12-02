@@ -1,6 +1,7 @@
 //! The `validator` module hosts all the validator microservices.
 
 pub use solana_perf::report_target_features;
+
 use {
     crate::{
         accounts_hash_verifier::AccountsHashVerifier,
@@ -13,6 +14,9 @@ use {
             reconcile_blockstore_roots_with_external_source,
             tower_storage::{NullTowerStorage, TowerStorage},
             ExternalRootSource, Tower,
+        },
+        forwarder_client::{
+            ForwarderConnectionCacheClient, ForwarderLeaderUpdater, ForwarderTpuClientNextClient,
         },
         poh_timing_report_service::PohTimingReportService,
         repair::{
@@ -1532,71 +1536,110 @@ impl Validator {
             return Err(ValidatorError::WenRestartFinished.into());
         }
 
-        /*
-        let forwarder_client: Box<dyn TransactionClient> = if config.use_tpu_client_next {
-            TpuClientNextClient::new(
-                get_runtime_handle(),
-                my_tpu_address,
-                config.send_transaction_service_config.tpu_peers.clone(),
-                Some(leader_info),
-                config.send_transaction_service_config.leader_forward_count,
-                Some(&*identity_keypair),
+        let leader_updater =
+            ForwarderLeaderUpdater::new(cluster_info.clone(), poh_recorder.clone());
+        // TODO: maybe wrap client with enum and implement the same interfaces for this enum?
+        let (tpu, mut key_notifies) = if config.use_tpu_client_next {
+            let client =
+                ForwarderConnectionCacheClient::new(connection_cache.clone(), leader_updater);
+
+            Tpu::new(
+                &cluster_info,
+                &poh_recorder,
+                entry_receiver,
+                retransmit_slots_receiver,
+                TpuSockets {
+                    transactions: node.sockets.tpu,
+                    transaction_forwards: node.sockets.tpu_forwards,
+                    vote: node.sockets.tpu_vote,
+                    broadcast: node.sockets.broadcast,
+                    transactions_quic: node.sockets.tpu_quic,
+                    transactions_forwards_quic: node.sockets.tpu_forwards_quic,
+                    vote_quic: node.sockets.tpu_vote_quic,
+                },
+                &rpc_subscriptions,
+                transaction_status_sender,
+                entry_notification_sender,
+                blockstore.clone(),
+                &config.broadcast_stage_type,
+                exit,
+                node.info.shred_version(),
+                vote_tracker,
+                bank_forks.clone(),
+                verified_vote_sender,
+                gossip_verified_vote_hash_sender,
+                replay_vote_receiver,
+                replay_vote_sender,
+                bank_notification_sender.map(|sender| sender.sender),
+                config.tpu_coalesce,
+                duplicate_confirmed_slot_sender,
+                client,
+                turbine_quic_endpoint_sender,
+                &identity_keypair,
+                config.runtime_config.log_messages_bytes_limit,
+                &staked_nodes,
+                config.staked_nodes_overrides.clone(),
+                banking_tracer,
+                tracer_thread,
+                tpu_enable_udp,
+                tpu_max_connections_per_ipaddr_per_minute,
+                &prioritization_fee_cache,
+                config.block_production_method.clone(),
+                config.enable_block_production_forwarding,
+                config.generator_config.clone(),
             )
         } else {
-            ConnectionCacheClient::new(
-                connection_cache.clone(),
-                my_tpu_address,
-                config.send_transaction_service_config.tpu_peers.clone(),
-                Some(leader_info),
-                config.send_transaction_service_config.leader_forward_count,
+            let client = ForwarderTpuClientNextClient::new(
+                get_runtime_handle(),
+                leader_updater,
+                Some(&*identity_keypair),
+            );
+            Tpu::new(
+                &cluster_info,
+                &poh_recorder,
+                entry_receiver,
+                retransmit_slots_receiver,
+                TpuSockets {
+                    transactions: node.sockets.tpu,
+                    transaction_forwards: node.sockets.tpu_forwards,
+                    vote: node.sockets.tpu_vote,
+                    broadcast: node.sockets.broadcast,
+                    transactions_quic: node.sockets.tpu_quic,
+                    transactions_forwards_quic: node.sockets.tpu_forwards_quic,
+                    vote_quic: node.sockets.tpu_vote_quic,
+                },
+                &rpc_subscriptions,
+                transaction_status_sender,
+                entry_notification_sender,
+                blockstore.clone(),
+                &config.broadcast_stage_type,
+                exit,
+                node.info.shred_version(),
+                vote_tracker,
+                bank_forks.clone(),
+                verified_vote_sender,
+                gossip_verified_vote_hash_sender,
+                replay_vote_receiver,
+                replay_vote_sender,
+                bank_notification_sender.map(|sender| sender.sender),
+                config.tpu_coalesce,
+                duplicate_confirmed_slot_sender,
+                client,
+                turbine_quic_endpoint_sender,
+                &identity_keypair,
+                config.runtime_config.log_messages_bytes_limit,
+                &staked_nodes,
+                config.staked_nodes_overrides.clone(),
+                banking_tracer,
+                tracer_thread,
+                tpu_enable_udp,
+                tpu_max_connections_per_ipaddr_per_minute,
+                &prioritization_fee_cache,
+                config.block_production_method.clone(),
+                config.enable_block_production_forwarding,
+                config.generator_config.clone(),
             )
-        };*/
-
-        let (tpu, mut key_notifies) = Tpu::new(
-            &cluster_info,
-            &poh_recorder,
-            entry_receiver,
-            retransmit_slots_receiver,
-            TpuSockets {
-                transactions: node.sockets.tpu,
-                transaction_forwards: node.sockets.tpu_forwards,
-                vote: node.sockets.tpu_vote,
-                broadcast: node.sockets.broadcast,
-                transactions_quic: node.sockets.tpu_quic,
-                transactions_forwards_quic: node.sockets.tpu_forwards_quic,
-                vote_quic: node.sockets.tpu_vote_quic,
-            },
-            &rpc_subscriptions,
-            transaction_status_sender,
-            entry_notification_sender,
-            blockstore.clone(),
-            &config.broadcast_stage_type,
-            exit,
-            node.info.shred_version(),
-            vote_tracker,
-            bank_forks.clone(),
-            verified_vote_sender,
-            gossip_verified_vote_hash_sender,
-            replay_vote_receiver,
-            replay_vote_sender,
-            bank_notification_sender.map(|sender| sender.sender),
-            config.tpu_coalesce,
-            duplicate_confirmed_slot_sender,
-            client,
-            turbine_quic_endpoint_sender,
-            &identity_keypair,
-            config.runtime_config.log_messages_bytes_limit,
-            &staked_nodes,
-            config.staked_nodes_overrides.clone(),
-            banking_tracer,
-            tracer_thread,
-            tpu_enable_udp,
-            tpu_max_connections_per_ipaddr_per_minute,
-            &prioritization_fee_cache,
-            config.block_production_method.clone(),
-            config.enable_block_production_forwarding,
-            config.generator_config.clone(),
-        );
+        };
 
         datapoint_info!(
             "validator-new",

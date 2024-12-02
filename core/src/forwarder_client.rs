@@ -146,18 +146,13 @@ pub struct ForwarderTpuClientNextClient<T: LikeClusterInfo> {
 impl<T: LikeClusterInfo> ForwarderTpuClientNextClient<T> {
     pub fn new(
         runtime_handle: Handle,
-        cluster_info: T,
-        poh_recorder: Arc<RwLock<PohRecorder>>,
+        leader_updater: ForwarderLeaderUpdater<T>,
         validator_identity: Option<&Keypair>,
     ) -> Self {
         let (sender, receiver) = mpsc::channel(128);
 
         let cancel = CancellationToken::new();
 
-        let leader_updater = ForwarderLeaderUpdater {
-            cluster_info,
-            poh_recorder,
-        };
         let config = Self::create_config(validator_identity);
         let handle = runtime_handle.spawn(ConnectionWorkersScheduler::run(
             config,
