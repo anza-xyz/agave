@@ -442,7 +442,11 @@ impl Consumer {
             // Need to filter out transactions since they were sanitized earlier.
             // This means that the transaction may cross and epoch boundary (not allowed),
             //  or account lookup tables may have been closed.
-            bank.refilter_prebuilt_block_production_transactions(tx, max_age, move_precompile_verification_to_svm)
+            bank.refilter_prebuilt_block_production_transactions(
+                tx,
+                max_age,
+                move_precompile_verification_to_svm,
+            )
         });
         self.process_and_record_transactions_with_pre_results(bank, txs, 0, pre_results)
     }

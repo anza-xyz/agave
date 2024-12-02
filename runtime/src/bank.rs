@@ -144,6 +144,7 @@ use {
         rent_debits::RentDebits,
         reserved_account_keys::ReservedAccountKeys,
         reward_info::RewardInfo,
+        scheduling::MaxAge,
         signature::{Keypair, Signature},
         slot_hashes::SlotHashes,
         slot_history::{Check, SlotHistory},
@@ -201,7 +202,6 @@ use {
         time::{Duration, Instant},
     },
 };
-use solana_sdk::scheduling::MaxAge;
 pub use {
     partitioned_epoch_rewards::KeyedRewardsAndNumPartitions, solana_sdk::reward_type::RewardType,
 };
@@ -5003,7 +5003,6 @@ impl Bank {
         ))
     }
 
-
     pub fn refilter_prebuilt_block_production_transactions(
         &self,
         tx: &impl TransactionWithMeta,
@@ -5037,7 +5036,6 @@ impl Bank {
 
         Ok(())
     }
-
 
     /// Process a Transaction. This is used for unit tests and simply calls the vector
     /// Bank::process_transactions method.

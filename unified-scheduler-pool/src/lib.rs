@@ -16,6 +16,7 @@ use {
     dyn_clone::{clone_trait_object, DynClone},
     log::*,
     scopeguard::defer,
+    solana_feature_set as feature_set,
     solana_ledger::blockstore_processor::{
         execute_batch, TransactionBatchWithIndexes, TransactionStatusSender,
     },
@@ -57,7 +58,6 @@ use {
     trait_set::trait_set,
     vec_extract_if_polyfill::MakeExtractIf,
 };
-use solana_feature_set as feature_set;
 
 #[derive(Clone)]
 pub struct BankingStageContext {
@@ -722,22 +722,30 @@ impl TaskHandler for DefaultTaskHandler {
 
         let (cost, added_cost) =
             if matches!(scheduling_context.mode(), SchedulingMode::BlockProduction) {
-                let move_precompile_verification_to_svm = scheduling_context.bank()
+                let move_precompile_verification_to_svm = scheduling_context
+                    .bank()
                     .feature_set
                     .is_active(&feature_set::move_precompile_verification_to_svm::id());
-                let TransactionContext::BlockProduction(max_age) = task.context() else { panic!() };
+                let TransactionContext::BlockProduction(max_age) = task.context() else {
+                    panic!()
+                };
 
-                if let Err(e) = scheduling_context.bank().refilter_prebuilt_block_production_transactions(
-                    transaction,
-                    max_age,
-                    move_precompile_verification_to_svm,
-                ) {
+                if let Err(e) = scheduling_context
+                    .bank()
+                    .refilter_prebuilt_block_production_transactions(
+                        transaction,
+                        max_age,
+                        move_precompile_verification_to_svm,
+                    )
+                {
                     *result = Err(e);
                     (None, false)
                 } else {
                     use solana_cost_model::cost_model::CostModel;
-                    let c =
-                        CostModel::calculate_cost(transaction, &scheduling_context.bank().feature_set);
+                    let c = CostModel::calculate_cost(
+                        transaction,
+                        &scheduling_context.bank().feature_set,
+                    );
                     loop {
                         let r = scheduling_context
                             .bank()
