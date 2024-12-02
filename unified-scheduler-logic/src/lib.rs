@@ -582,6 +582,10 @@ impl TaskInner {
         &self.packed_task_inner.lock_context_and_transaction.1.transaction
     }
 
+    pub fn context(&self) -> &TransactionContext {
+        &self.packed_task_inner.lock_context_and_transaction.1.context
+    }
+
     pub fn index(&self) -> TaskKey {
         self.packed_task_inner.index
     }
