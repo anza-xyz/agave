@@ -23,4 +23,3 @@ impl MaxAge {
         alt_invalidation_slot: Slot::MAX,
     };
 }
-

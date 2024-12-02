@@ -776,6 +776,7 @@ mod tests {
             },
             poh_config::PohConfig,
             pubkey::Pubkey,
+            scheduling::MaxAge,
             signature::Keypair,
             signer::Signer,
             system_instruction, system_transaction,
@@ -791,7 +792,6 @@ mod tests {
         },
         tempfile::TempDir,
     };
-    use solana_sdk::scheduling::MaxAge;
 
     // Helper struct to create tests that hold channels, files, etc.
     // such that our tests can be more easily set up and run.

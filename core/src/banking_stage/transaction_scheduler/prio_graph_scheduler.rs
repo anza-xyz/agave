@@ -8,9 +8,7 @@ use {
     crate::banking_stage::{
         consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
         read_write_account_set::ReadWriteAccountSet,
-        scheduler_messages::{
-            ConsumeWork, FinishedConsumeWork, TransactionBatchId, TransactionId,
-        },
+        scheduler_messages::{ConsumeWork, FinishedConsumeWork, TransactionBatchId, TransactionId},
         transaction_scheduler::{
             transaction_priority_id::TransactionPriorityId, transaction_state::TransactionState,
             transaction_state_container::StateContainer,
@@ -22,10 +20,9 @@ use {
     solana_cost_model::block_cost_limits::MAX_BLOCK_UNITS,
     solana_measure::measure_us,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
-    solana_sdk::{pubkey::Pubkey, saturating_add_assign},
+    solana_sdk::{pubkey::Pubkey, saturating_add_assign, scheduling::MaxAge},
     solana_svm_transaction::svm_message::SVMMessage,
 };
-use solana_sdk::scheduling::MaxAge;
 
 #[inline(always)]
 fn passthrough_priority(

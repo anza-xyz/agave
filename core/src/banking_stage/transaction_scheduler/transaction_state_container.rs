@@ -196,13 +196,13 @@ mod tests {
             hash::Hash,
             message::Message,
             packet::Packet,
+            scheduling::MaxAge,
             signature::Keypair,
             signer::Signer,
             system_instruction,
             transaction::{SanitizedTransaction, Transaction},
         },
     };
-    use solana_sdk::scheduling::MaxAge;
 
     /// Returns (transaction_ttl, priority, cost)
     fn test_transaction(

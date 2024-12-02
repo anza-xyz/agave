@@ -27,12 +27,12 @@ use {
         clock::{Epoch, Slot, MAX_PROCESSING_AGE},
         fee::FeeBudgetLimits,
         saturating_add_assign,
+        scheduling::MaxAge,
         transaction::SanitizedTransaction,
     },
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     std::sync::{Arc, RwLock},
 };
-use solana_sdk::scheduling::MaxAge;
 
 pub(crate) trait ReceiveAndBuffer {
     type Transaction: TransactionWithMeta;

@@ -31,6 +31,7 @@ use {
         clock::{FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, MAX_PROCESSING_AGE},
         fee::FeeBudgetLimits,
         saturating_add_assign,
+        scheduling::MaxAge,
         timing::timestamp,
         transaction::{self, TransactionError},
     },
@@ -47,7 +48,6 @@ use {
         time::Instant,
     },
 };
-use solana_sdk::scheduling::MaxAge;
 
 /// Consumer will create chunks of transactions from buffer with up to this size.
 pub const TARGET_NUM_TRANSACTIONS_PER_BATCH: usize = 64;

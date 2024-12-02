@@ -1,7 +1,4 @@
-use {
-    std::fmt::Display,
-};
-use solana_sdk::scheduling::MaxAge;
+use {solana_sdk::scheduling::MaxAge, std::fmt::Display};
 
 /// A unique identifier for a transaction batch.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
