@@ -52,50 +52,6 @@ impl BankHashStats {
 }
 
 #[derive(Debug, Default)]
-pub struct AtomicBankHashStats {
-    pub num_updated_accounts: AtomicU64,
-    pub num_removed_accounts: AtomicU64,
-    pub num_lamports_stored: AtomicU64,
-    pub total_data_len: AtomicU64,
-    pub num_executable_accounts: AtomicU64,
-}
-
-impl AtomicBankHashStats {
-    pub fn new(stat: &BankHashStats) -> Self {
-        AtomicBankHashStats {
-            num_updated_accounts: AtomicU64::new(stat.num_updated_accounts),
-            num_removed_accounts: AtomicU64::new(stat.num_removed_accounts),
-            num_lamports_stored: AtomicU64::new(stat.num_lamports_stored),
-            total_data_len: AtomicU64::new(stat.total_data_len),
-            num_executable_accounts: AtomicU64::new(stat.num_executable_accounts),
-        }
-    }
-
-    pub fn accumulate(&self, other: &BankHashStats) {
-        self.num_updated_accounts
-            .fetch_add(other.num_updated_accounts, Ordering::Relaxed);
-        self.num_removed_accounts
-            .fetch_add(other.num_removed_accounts, Ordering::Relaxed);
-        self.total_data_len
-            .fetch_add(other.total_data_len, Ordering::Relaxed);
-        self.num_lamports_stored
-            .fetch_add(other.num_lamports_stored, Ordering::Relaxed);
-        self.num_executable_accounts
-            .fetch_add(other.num_executable_accounts, Ordering::Relaxed);
-    }
-
-    pub fn load(&self) -> BankHashStats {
-        BankHashStats {
-            num_updated_accounts: self.num_updated_accounts.load(Ordering::Relaxed),
-            num_removed_accounts: self.num_removed_accounts.load(Ordering::Relaxed),
-            num_lamports_stored: self.num_lamports_stored.load(Ordering::Relaxed),
-            total_data_len: self.total_data_len.load(Ordering::Relaxed),
-            num_executable_accounts: self.num_executable_accounts.load(Ordering::Relaxed),
-        }
-    }
-}
-
-#[derive(Debug, Default)]
 pub struct AccountsStats {
     pub delta_hash_scan_time_total_us: AtomicU64,
     pub delta_hash_accumulate_time_total_us: AtomicU64,

@@ -33,8 +33,8 @@ use {
         },
         accounts_cache::{AccountsCache, CachedAccount, SlotCache},
         accounts_db::stats::{
-            AccountsStats, AtomicBankHashStats, BankHashStats, CleanAccountsStats, FlushStats,
-            PurgeStats, ShrinkAncientStats, ShrinkStats, ShrinkStatsSub, StoreAccountsTiming,
+            AccountsStats, CleanAccountsStats, FlushStats, PurgeStats, ShrinkAncientStats,
+            ShrinkStats, ShrinkStatsSub, StoreAccountsTiming,
         },
         accounts_file::{
             AccountsFile, AccountsFileError, AccountsFileProvider, MatchAccountOwnerError,
@@ -1865,7 +1865,7 @@ impl solana_frozen_abi::abi_example::AbiExample for AccountsDb {
         let some_data_len = 5;
         let some_slot: Slot = 0;
         let account = AccountSharedData::new(1, some_data_len, &key);
-        accounts_db.store_uncached(some_slot, &[(&key, &account)], None);
+        accounts_db.store_uncached(some_slot, &[(&key, &account)]);
         accounts_db.add_root(0);
 
         accounts_db
@@ -8033,7 +8033,6 @@ impl AccountsDb {
         &self,
         accounts: impl StorableAccounts<'a>,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
-        bank_hash_stat: Option<&AtomicBankHashStats>,
     ) {
         self.store(
             accounts,
@@ -8041,7 +8040,6 @@ impl AccountsDb {
             transactions,
             StoreReclaims::Default,
             UpdateIndexThreadSelection::PoolWithThreshold,
-            bank_hash_stat,
         );
     }
 
@@ -8049,7 +8047,6 @@ impl AccountsDb {
         &self,
         accounts: impl StorableAccounts<'a>,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
-        bank_hash_stat: Option<&AtomicBankHashStats>,
     ) {
         self.store(
             accounts,
@@ -8057,18 +8054,12 @@ impl AccountsDb {
             transactions,
             StoreReclaims::Default,
             UpdateIndexThreadSelection::Inline,
-            bank_hash_stat,
         );
     }
 
     /// Store the account update.
     /// only called by tests
-    pub fn store_uncached(
-        &self,
-        slot: Slot,
-        accounts: &[(&Pubkey, &AccountSharedData)],
-        bank_hash_stat: Option<&AtomicBankHashStats>,
-    ) {
+    pub fn store_uncached(&self, slot: Slot, accounts: &[(&Pubkey, &AccountSharedData)]) {
         let storage = self.find_storage_candidate(slot);
         self.store(
             (slot, accounts),
@@ -8076,7 +8067,6 @@ impl AccountsDb {
             None,
             StoreReclaims::Default,
             UpdateIndexThreadSelection::PoolWithThreshold,
-            bank_hash_stat,
         );
     }
 
@@ -9379,7 +9369,6 @@ impl AccountsDb {
             None,
             StoreReclaims::Default,
             UpdateIndexThreadSelection::PoolWithThreshold,
-            None,
         );
     }
 
@@ -9572,7 +9561,7 @@ pub mod test_utils {
                 data_size,
                 AccountSharedData::default().owner(),
             );
-            accounts.store_slow_uncached(slot, &pubkey, &account, None);
+            accounts.store_slow_uncached(slot, &pubkey, &account);
             pubkeys.push(pubkey);
         }
     }
@@ -9583,7 +9572,7 @@ pub mod test_utils {
         for pubkey in pubkeys {
             let amount = thread_rng().gen_range(0..10);
             let account = AccountSharedData::new(amount, 0, AccountSharedData::default().owner());
-            accounts.store_slow_uncached(slot, pubkey, &account, None);
+            accounts.store_slow_uncached(slot, pubkey, &account);
         }
     }
 }
