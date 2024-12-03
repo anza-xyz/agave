@@ -234,8 +234,7 @@ impl BankingTracer {
             (non_vote_sender, non_vote_receiver),
             (tpu_vote_sender, tpu_vote_receiver),
             (gossip_vote_sender, gossip_vote_receiver),
-        ) =
-        if let Some(true) = pool.map(|pool| pool.block_production_supported()) {
+        ) = if let Some(true) = pool.map(|pool| pool.block_production_supported()) {
             (
                 self.create_channel_non_vote(),
                 self.create_unified_channel_tpu_vote(&non_vote_sender, &non_vote_receiver),
@@ -246,8 +245,8 @@ impl BankingTracer {
                 self.create_channel_non_vote(),
                 self.create_channel_tpu_vote(),
                 self.create_channel_gossip_vote(),
-            }
-        }
+            )
+        };
 
         Channels {
             non_vote_sender,
