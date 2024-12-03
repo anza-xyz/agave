@@ -727,9 +727,9 @@ impl TaskHandler for DefaultTaskHandler {
                     *result = Err(error);
                     (None, false)
                 } else {
-                    let c = CostModel::calculate_cost(transaction, &bank.feature_set);
+                    let cost = CostModel::calculate_cost(transaction, &bank.feature_set);
                     loop {
-                        let r = bank.write_cost_tracker().unwrap().try_add(&c);
+                        let r = bank.write_cost_tracker().unwrap().try_add(&cost);
                         if let Err(e) = r {
                             use solana_cost_model::cost_tracker::CostTrackerError;
                             if matches!(e, CostTrackerError::WouldExceedAccountDataBlockLimit) {
@@ -737,10 +737,10 @@ impl TaskHandler for DefaultTaskHandler {
                                 continue;
                             } else {
                                 *result = Err(e.into());
-                                break (Some(c), false);
+                                break (Some(cost), false);
                             }
                         } else {
-                            break (Some(c), true);
+                            break (Some(cost), true);
                         }
                     }
                 }
