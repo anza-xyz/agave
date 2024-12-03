@@ -239,10 +239,10 @@ pub type BankingPacketReceiver = crossbeam_channel::Receiver<
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SigverifyTracerPacketStats {
     pub total_removed_before_sigverify_stage: Saturating<usize>,
-    pub total_tracer_packets_received_in_sigverify_stage: usize,
-    pub total_tracer_packets_deduped: usize,
-    pub total_excess_tracer_packets: usize,
-    pub total_tracker_packets_passed_sigverify: usize,
+    pub total_tracer_packets_received_in_sigverify_stage: Saturating<usize>,
+    pub total_tracer_packets_deduped: Saturating<usize>,
+    pub total_excess_tracer_packets: Saturating<usize>,
+    pub total_tracker_packets_passed_sigverify: Saturating<usize>,
 }
 
 impl SigverifyTracerPacketStats {
