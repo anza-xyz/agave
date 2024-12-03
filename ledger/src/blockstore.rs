@@ -1241,7 +1241,7 @@ impl Blockstore {
         metrics.commit_working_sets_elapsed_us += start.as_us();
 
         let mut start = Measure::start("Write Batch");
-        self.db.write(write_batch)?;
+        self.db.write_no_wal(write_batch)?;
         start.stop();
         metrics.write_batch_elapsed_us += start.as_us();
 

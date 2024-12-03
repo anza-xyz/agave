@@ -21,7 +21,8 @@ use {
         compaction_filter_factory::{CompactionFilterContext, CompactionFilterFactory},
         properties as RocksProperties, ColumnFamily, ColumnFamilyDescriptor, CompactionDecision,
         DBCompressionType, DBIterator, DBPinnableSlice, DBRawIterator,
-        IteratorMode as RocksIteratorMode, LiveFile, Options, WriteBatch as RWriteBatch, DB,
+        IteratorMode as RocksIteratorMode, LiveFile, Options, WriteBatch as RWriteBatch,
+        WriteOptions, DB,
     },
     serde::{de::DeserializeOwned, Serialize},
     solana_accounts_db::hardened_unpack::UnpackError,
@@ -720,12 +721,22 @@ impl Rocks {
         RWriteBatch::default()
     }
 
+    fn write_no_wal(&self, batch: RWriteBatch) -> Result<()> {
+        let mut write_options = WriteOptions::default();
+        write_options.disable_wal(true);
+        self.write_opt(batch, &write_options)
+    }
+
     fn write(&self, batch: RWriteBatch) -> Result<()> {
+        self.write_opt(batch, &WriteOptions::default())
+    }
+
+    fn write_opt(&self, batch: RWriteBatch, opts: &WriteOptions) -> Result<()> {
         let op_start_instant = maybe_enable_rocksdb_perf(
             self.column_options.rocks_perf_sample_interval,
             &self.write_batch_perf_status,
         );
-        let result = self.db.write(batch);
+        let result = self.db.write_opt(batch, opts);
         if let Some(op_start_instant) = op_start_instant {
             report_rocksdb_write_perf(
                 PERF_METRIC_OP_NAME_WRITE_BATCH, // We use write_batch as cf_name for write batch.
@@ -1471,6 +1482,10 @@ impl Database {
 
     pub fn write(&self, batch: WriteBatch) -> Result<()> {
         self.backend.write(batch.write_batch)
+    }
+
+    pub fn write_no_wal(&self, batch: WriteBatch) -> Result<()> {
+        self.backend.write_no_wal(batch.write_batch)
     }
 
     pub fn storage_size(&self) -> Result<u64> {
