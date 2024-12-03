@@ -186,7 +186,9 @@ impl BlockVerificationMethod {
     }
 }
 
-#[derive(Clone, EnumString, EnumVariantNames, Default, IntoStaticStr, Display)]
+#[derive(
+    Clone, EnumCount, EnumIter, EnumString, EnumVariantNames, Default, IntoStaticStr, Display,
+)]
 #[strum(serialize_all = "kebab-case")]
 pub enum BlockProductionMethod {
     CentralScheduler,
