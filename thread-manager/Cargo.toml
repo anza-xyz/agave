@@ -1,0 +1,21 @@
+[package]
+name = "agave-thread-manager"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+
+[dependencies]
+affinity = "0.1.2"
+anyhow = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+thread-priority = "1.2.0"
+tokio = { workspace = true, features = ["time", "rt-multi-thread"] }
+rayon = { workspace = true }
+
+[dev-dependencies]
+axum = "0.7.9"
+serde_json = { workspace = true }
