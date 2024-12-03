@@ -523,7 +523,6 @@ fn main() {
         block_production_method,
         BlockProductionMethod::UnifiedScheduler
     ) {
-        sleep(Duration::from_millis(111));
         bank_forks
             .write()
             .unwrap()
@@ -534,11 +533,6 @@ fn main() {
             .working_bank_with_scheduler()
             .clone_with_scheduler()
     }
-    // todo: proper assert!
-    let _ = poh_recorder
-        .write()
-        .unwrap()
-        .reset(bank.clone(), Some((bank.slot(), bank.slot() + 1)));
 
     // This is so that the signal_receiver does not go out of scope after the closure.
     // If it is dropped before poh_service, then poh_service will error when
