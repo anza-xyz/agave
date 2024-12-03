@@ -347,14 +347,14 @@ where
                             now.duration_since(*registered_at) > timeout_duration
                         },
                     ));
-                    let r = timeout_listeners.len();
+                    let not_expired_count = timeout_listeners.len();
                     drop(timeout_listeners);
 
-                    let count = expired_listeners.len();
+                    let expired_count = expired_listeners.len();
                     for (timeout_listener, _registered_at) in expired_listeners {
                         timeout_listener.trigger(scheduler_pool.clone());
                     }
-                    (count, r)
+                    (expired_count, not_expired_count)
                 };
 
                 info!("Scheduler pool cleaner: block_production_scheduler_inner!!!",);
