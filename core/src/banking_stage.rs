@@ -950,7 +950,7 @@ pub(crate) fn update_bank_forks_and_poh_recorder_for_new_tpu_bank(
     // A write lock for the poh recorder must be grabbed for the entire duration of inserting new
     // tpu bank into the bank forks. That's because any buffered transactions could immediately be
     // executed after the bank forks update, when unified scheduler is enabled for block
-    // production. And then, the unified scheduler would be hit with false errors due having no
+    // production. And then, the unified scheduler would be hit with false errors due to having no
     // bank in the poh recorder otherwise.
     let mut poh_recorder = poh_recorder.write().unwrap();
 
