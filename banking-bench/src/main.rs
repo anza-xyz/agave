@@ -611,7 +611,7 @@ fn main() {
             if let Some((result, _timings)) = bank.wait_for_completed_scheduler() {
                 assert_matches!(result, Ok(_));
             }
-            let new_bank = Bank::new_from_parent(bank, &collector, new_slot);
+            let new_bank = Bank::new_from_parent(bank.clone(), &collector, new_slot);
             new_bank_time.stop();
 
             let mut insert_time = Measure::start("insert_time");
