@@ -17,7 +17,7 @@ mimalloc = { workspace = true }
 rand = { workspace = true }
 rayon = { workspace = true }
 solana-client = { workspace = true }
-solana-core = { workspace = true }
+solana-core = { workspace = true, features = ["dev-context-only-utils"] }
 solana-gossip = { workspace = true }
 solana-ledger = { workspace = true }
 solana-logger = { workspace = true }
