@@ -1,5 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
+    assert_matches::assert_matches,
     clap::{crate_description, crate_name, Arg, ArgEnum, Command},
     crossbeam_channel::{unbounded, Receiver},
     log::*,
@@ -46,7 +47,6 @@ use {
         time::{Duration, Instant},
     },
 };
-use assert_matches::assert_matches;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
