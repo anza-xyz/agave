@@ -203,6 +203,7 @@ impl SendTransactionService {
     }
 
     /// Thread responsible for receiving transactions from RPC clients.
+    #[allow(clippy::too_many_arguments)]
     fn receive_txn_thread<Client: TransactionClient + std::marker::Send + 'static>(
         receiver: Receiver<TransactionInfo>,
         client: Client,
