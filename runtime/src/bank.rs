@@ -467,6 +467,7 @@ pub struct BankFieldsToDeserialize {
     pub(crate) epoch_accounts_hash: Option<Hash>,
     // When removing the accounts lt hash featurization code, also remove this Option wrapper
     pub(crate) accounts_lt_hash: Option<AccountsLtHash>,
+    pub(crate) bank_hash_stats: BankHashStats,
 }
 
 /// Bank's common fields shared by all supported snapshot versions for serialization.
@@ -1740,7 +1741,6 @@ impl Bank {
         additional_builtins: Option<&[BuiltinPrototype]>,
         debug_do_not_add_builtins: bool,
         accounts_data_size_initial: u64,
-        bank_hash_stats: &BankHashStats,
     ) -> Self {
         let now = Instant::now();
         let ancestors = Ancestors::from(&fields.ancestors);
@@ -1836,7 +1836,7 @@ impl Bank {
             cache_for_accounts_lt_hash: RwLock::new(AHashMap::new()),
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
-            bank_hash_stats: AtomicBankHashStats::new(bank_hash_stats),
+            bank_hash_stats: AtomicBankHashStats::new(&fields.bank_hash_stats),
         };
 
         bank.transaction_processor =

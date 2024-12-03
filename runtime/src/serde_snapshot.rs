@@ -203,6 +203,7 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
             incremental_snapshot_persistence: None,
             epoch_accounts_hash: None,
             accounts_lt_hash: None, // populated from ExtraFieldsToDeserialize
+            bank_hash_stats: BankHashStats::default(), // populated from AccountsDbFields
         }
     }
 }
@@ -870,7 +871,7 @@ where
             .as_ref()
             .map(|bank_fields| bank_fields.capitalization),
     );
-    let bank_fields = bank_fields.collapse_into();
+    let mut bank_fields = bank_fields.collapse_into();
     let (accounts_db, reconstructed_accounts_db_info) = reconstruct_accountsdb_from_fields(
         snapshot_accounts_db_fields,
         account_paths,
@@ -886,6 +887,7 @@ where
         bank_fields.incremental_snapshot_persistence.as_ref(),
         bank_fields.accounts_lt_hash.is_some(),
     )?;
+    bank_fields.bank_hash_stats = reconstructed_accounts_db_info.bank_hash_stats;
 
     let bank_rc = BankRc::new(Accounts::new(Arc::new(accounts_db)));
     let runtime_config = Arc::new(runtime_config.clone());
@@ -901,7 +903,6 @@ where
         additional_builtins,
         debug_do_not_add_builtins,
         reconstructed_accounts_db_info.accounts_data_len,
-        &reconstructed_accounts_db_info.bank_hash_stats,
     );
 
     info!("rent_collector: {:?}", bank.rent_collector());
