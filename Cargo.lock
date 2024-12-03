@@ -7652,6 +7652,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-offchain-message"
+version = "2.2.0"
+dependencies = [
+ "num_enum",
+ "solana-hash",
+ "solana-keypair",
+ "solana-offchain-message",
+ "solana-packet",
+ "solana-pubkey",
+ "solana-sanitize",
+ "solana-sha256-hasher",
+ "solana-signature",
+ "solana-signer",
+ "static_assertions",
+]
+
+[[package]]
 name = "solana-package-metadata"
 version = "2.2.0"
 dependencies = [
@@ -8129,7 +8146,10 @@ dependencies = [
  "qstring",
  "semver 1.0.23",
  "solana-derivation-path",
- "solana-sdk",
+ "solana-offchain-message",
+ "solana-pubkey",
+ "solana-signature",
+ "solana-signer",
  "thiserror 2.0.3",
  "uriparse",
 ]
@@ -8497,7 +8517,6 @@ dependencies = [
  "memmap2",
  "num-derive",
  "num-traits",
- "num_enum",
  "qualifier_attr",
  "rand 0.7.3",
  "rand 0.8.5",
@@ -8527,6 +8546,7 @@ dependencies = [
  "solana-keypair",
  "solana-logger",
  "solana-native-token",
+ "solana-offchain-message",
  "solana-packet",
  "solana-precompile-error",
  "solana-precompiles",
