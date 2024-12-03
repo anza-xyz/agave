@@ -391,9 +391,7 @@ where
                     triggered_timeout_listener_count,
                 ));
 
-                if exiting
-                        && active_timeout_listener_count == 0
-                {
+                if exiting && active_timeout_listener_count == 0 {
                     error!("proper exit!");
                     // Wait a bit to ensure the replay stage has gone.
                     sleep(Duration::from_secs(1));
@@ -619,7 +617,6 @@ where
         self.block_production_scheduler_condvar.notify_all();
         info!("flash session: end!");
     }
-
 
     pub fn default_handler_count() -> usize {
         Self::calculate_default_handler_count(
