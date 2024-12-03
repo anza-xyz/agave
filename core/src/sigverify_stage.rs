@@ -603,8 +603,8 @@ mod tests {
                                     .total_tracer_packets_received_in_sigverify_stage)
                     );
                     assert!(
-                        (tracer_packet_stats.total_tracker_packets_passed_sigverify == 1)
-                            || (tracer_packet_stats.total_tracker_packets_passed_sigverify == 0)
+                        (tracer_packet_stats.total_tracker_packets_passed_sigverify.0 == 1)
+                            || (tracer_packet_stats.total_tracker_packets_passed_sigverify.0 == 0)
                     );
                 } else {
                     assert_eq!(tracer_packet_stats.total_tracer_packets_deduped.0, 0);
