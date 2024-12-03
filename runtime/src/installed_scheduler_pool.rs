@@ -620,12 +620,12 @@ impl BankWithSchedulerInner {
                 // Return the installed scheduler back to the scheduler pool as soon as the
                 // scheduler gets idle after executing all currently-scheduled transactions.
 
-                id = scheduler.id();
+                id = Some(scheduler.id());
                 let (result_with_timings, uninstalled_scheduler) =
                     scheduler.wait_for_termination(false);
                 uninstalled_scheduler.return_to_pool();
                 info!(
-                    "timeout_listener: bank (slot: {}) got stale, returned scheduler (id: {})",
+                    "timeout_listener: bank (slot: {}) got stale, returned scheduler (id: {:?})",
                     bank.bank.slot(),
                     id,
                 );
