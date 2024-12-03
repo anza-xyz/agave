@@ -1,6 +1,5 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    assert_matches::assert_matches,
     clap::{crate_description, crate_name, Arg, ArgEnum, Command},
     crossbeam_channel::{unbounded, Receiver},
     log::*,
@@ -47,6 +46,7 @@ use {
         time::{Duration, Instant},
     },
 };
+use assert_matches::assert_matches;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -607,10 +607,10 @@ fn main() {
             poh_time.stop();
 
             let mut new_bank_time = Measure::start("new_bank");
-            let new_slot = bank.slot() + 1;
             if let Some((result, _timings)) = bank.wait_for_completed_scheduler() {
                 assert_matches!(result, Ok(_));
             }
+            let new_slot = bank.slot() + 1;
             let new_bank = Bank::new_from_parent(bank.clone(), &collector, new_slot);
             new_bank_time.stop();
 
