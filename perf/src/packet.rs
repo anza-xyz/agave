@@ -237,7 +237,7 @@ pub type BankingPacketReceiver = crossbeam_channel::Receiver<
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SigverifyTracerPacketStats {
-    pub total_removed_before_sigverify_stage: usize,
+    pub total_removed_before_sigverify_stage: Saturating<usize>,
     pub total_tracer_packets_received_in_sigverify_stage: usize,
     pub total_tracer_packets_deduped: usize,
     pub total_excess_tracer_packets: usize,
