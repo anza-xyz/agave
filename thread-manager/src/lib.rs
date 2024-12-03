@@ -1,21 +1,13 @@
 use {
-    affinity::*,
     anyhow::Ok,
     serde::{Deserialize, Serialize},
-    std::{
-        collections::HashMap,
-        sync::{
-            atomic::{AtomicUsize, Ordering},
-            Mutex,
-        },
-    },
-    thread_priority::*,
+    std::collections::HashMap,
 };
 
-mod native_thread_runtime;
-mod policy;
-mod rayon_runtime;
-mod tokio_runtime;
+pub mod native_thread_runtime;
+pub mod policy;
+pub mod rayon_runtime;
+pub mod tokio_runtime;
 
 pub use {
     native_thread_runtime::{NativeConfig, NativeThreadRuntime},
@@ -32,15 +24,23 @@ pub struct RuntimeManager {
 
     pub native_thread_runtimes: HashMap<ConstString, NativeThreadRuntime>,
     pub native_runtime_mapping: HashMap<ConstString, ConstString>,
+
+    pub rayon_runtimes: HashMap<ConstString, RayonRuntime>,
+    pub rayon_runtime_mapping: HashMap<ConstString, ConstString>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RuntimeManagerConfig {
+    pub native_configs: HashMap<String, NativeConfig>,
+    pub native_runtime_mapping: HashMap<String, String>,
+
+    pub rayon_configs: HashMap<String, RayonConfig>,
+    pub rayon_runtime_mapping: HashMap<String, String>,
+
     pub tokio_configs: HashMap<String, TokioConfig>,
     pub tokio_runtime_mapping: HashMap<String, String>,
-    pub native_runtime_mapping: HashMap<String, String>,
-    pub native_configs: HashMap<String, NativeConfig>,
+
     pub default_core_allocation: CoreAllocation,
 }
 
@@ -48,6 +48,10 @@ impl RuntimeManager {
     pub fn get_native(&self, name: &str) -> Option<&NativeThreadRuntime> {
         let n = self.native_runtime_mapping.get(name)?;
         self.native_thread_runtimes.get(n)
+    }
+    pub fn get_rayon(&self, name: &str) -> Option<&RayonRuntime> {
+        let n = self.rayon_runtime_mapping.get(name)?;
+        self.rayon_runtimes.get(n)
     }
     pub fn get_tokio(&self, name: &str) -> Option<&TokioRuntime> {
         let n = self.tokio_runtime_mapping.get(name)?;
@@ -62,7 +66,7 @@ impl RuntimeManager {
             }
         };
 
-        if let Err(e) = set_thread_affinity(&chosen_cores_mask) {
+        if let Err(e) = affinity::set_thread_affinity(&chosen_cores_mask) {
             anyhow::bail!(e.to_string())
         }
         Ok(chosen_cores_mask)
@@ -84,12 +88,23 @@ impl RuntimeManager {
                 .native_runtime_mapping
                 .insert(k.clone().into_boxed_str(), v.clone().into_boxed_str());
         }
+        for (k, v) in config.rayon_runtime_mapping.iter() {
+            manager
+                .rayon_runtime_mapping
+                .insert(k.clone().into_boxed_str(), v.clone().into_boxed_str());
+        }
 
         for (name, cfg) in config.native_configs.iter() {
             let nrt = NativeThreadRuntime::new(cfg.clone());
             manager
                 .native_thread_runtimes
                 .insert(name.clone().into_boxed_str(), nrt);
+        }
+        for (name, cfg) in config.rayon_configs.iter() {
+            let rrt = RayonRuntime::new(cfg.clone())?;
+            manager
+                .rayon_runtimes
+                .insert(name.clone().into_boxed_str(), rrt);
         }
 
         for (name, cfg) in config.tokio_configs.iter() {
@@ -110,7 +125,7 @@ impl RuntimeManager {
 #[cfg(test)]
 mod tests {
     use {
-        crate::{CoreAllocation, NativeConfig, RuntimeManager, RuntimeManagerConfig},
+        crate::{CoreAllocation, NativeConfig, RayonConfig, RuntimeManager, RuntimeManagerConfig},
         std::collections::HashMap,
     };
 
@@ -170,8 +185,19 @@ mod tests {
                     ..Default::default()
                 },
             )]),
+            rayon_configs: HashMap::from([(
+                "rayon1".to_owned(),
+                RayonConfig {
+                    core_allocation: CoreAllocation::DedicatedCoreSet { min: 1, max: 4 },
+                    worker_threads: 3,
+                    priority: 0,
+                    ..Default::default()
+                },
+            )]),
             default_core_allocation: CoreAllocation::DedicatedCoreSet { min: 4, max: 8 },
             native_runtime_mapping: HashMap::from([("test".to_owned(), "pool1".to_owned())]),
+
+            rayon_runtime_mapping: HashMap::from([("test".to_owned(), "rayon1".to_owned())]),
             ..Default::default()
         };
 
@@ -184,25 +210,19 @@ mod tests {
                 assert_eq!(aff, [0, 1, 2, 3], "Managed thread allocation should be 0-3");
             })
             .unwrap();
+        let rrt = rtm.get_rayon("test").unwrap();
 
-        let rayon_pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(3)
-            .start_handler(|idx| {
-                affinity::set_thread_affinity([1, 2, 3]).unwrap();
-            })
-            /*.spawn_handler(|thread| {
-                let mut b = std::thread::Builder::new();
-                if let Some(name) = thread.name() {
-                    b = b.name(name.to_owned());
-                }
-                if let Some(stack_size) = thread.stack_size() {
-                    b = b.stack_size(stack_size);
-                }
-                b.spawn(|| thread.run())?;
-                Ok(())
-            })*/
-            .build()
-            .unwrap();
+        /*.spawn_handler(|thread| {
+            let mut b = std::thread::Builder::new();
+            if let Some(name) = thread.name() {
+                b = b.name(name.to_owned());
+            }
+            if let Some(stack_size) = thread.stack_size() {
+                b = b.stack_size(stack_size);
+            }
+            b.spawn(|| thread.run())?;
+            Ok(())
+        })*/
 
         let t = std::thread::spawn(|| {
             let aff = affinity::get_thread_affinity().unwrap();
@@ -218,7 +238,7 @@ mod tests {
             });
             tt.join().unwrap();
         });
-        let _rr = rayon_pool.broadcast(|ctx| {
+        let _rr = rrt.rayon_pool.broadcast(|ctx| {
             let aff = affinity::get_thread_affinity().unwrap();
             println!("Rayon thread {} reporting", ctx.index());
             assert_eq!(

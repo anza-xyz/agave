@@ -1,10 +1,10 @@
 use {
-    crate::policy::CoreAllocation,
+    crate::policy::{apply_policy, CoreAllocation},
     anyhow::bail,
     serde::{Deserialize, Serialize},
     std::sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc,
+        Arc, Mutex,
     },
 };
 
@@ -13,7 +13,7 @@ use {
 pub struct NativeConfig {
     pub core_allocation: CoreAllocation,
     pub max_threads: usize,
-    pub priority: usize,
+    pub priority: u8,
     pub name_base: String,
     pub stack_size_bytes: usize,
 }
@@ -97,20 +97,16 @@ impl NativeThreadRuntime {
         if spawned >= self.config.max_threads {
             bail!("All allowed threads in this pool are already spawned");
         }
-        let core_set: Vec<_> = match self.config.core_allocation {
-            CoreAllocation::PinnedCores { min: _, max: _ } => {
-                todo!("Need to store pinning mask somewhere");
-            }
-            CoreAllocation::DedicatedCoreSet { min, max } => (min..max).collect(),
-            CoreAllocation::OsDefault => (0..affinity::get_core_num()).collect(),
-        };
 
+        let core_alloc = self.config.core_allocation.clone();
+        let priority = self.config.priority;
+        let chosen_cores_mask = Mutex::new(self.config.core_allocation.as_core_mask_vector());
         let n = self.id_count.fetch_add(1, Ordering::SeqCst);
         let jh = std::thread::Builder::new()
             .name(format!("{}-{}", &self.config.name_base, n))
             .stack_size(self.config.stack_size_bytes)
             .spawn(move || {
-                affinity::set_thread_affinity(core_set).expect("Can not set thread affinity");
+                apply_policy(&core_alloc, priority, &chosen_cores_mask);
                 f()
             })?;
         self.running_count.fetch_add(1, Ordering::SeqCst);

@@ -1,5 +1,5 @@
 use {
-    crate::policy::CoreAllocation,
+    crate::policy::{apply_policy, CoreAllocation},
     serde::{Deserialize, Serialize},
     std::{
         future::Future,
@@ -18,7 +18,7 @@ pub struct TokioConfig {
     pub worker_threads: usize,
     ///max number of blocking threads tokio is allowed to spawn
     pub max_blocking_threads: usize,
-    pub priority: u32,
+    pub priority: u8,
     pub stack_size_bytes: usize,
     pub event_interval: u32,
     pub core_allocation: CoreAllocation,
@@ -83,35 +83,10 @@ impl TokioRuntime {
             let _tid = cur_thread
                 .get_native_id()
                 .expect("Can not get thread id for newly created thread");
-            let tname = cur_thread.name().unwrap();
+            // todo - tracing
+            //let tname = cur_thread.name().unwrap();
             //println!("thread {tname} id {tid} started");
-            std::thread::current()
-                .set_priority(thread_priority::ThreadPriority::Crossplatform(
-                    (c.priority as u8).try_into().unwrap(),
-                ))
-                .expect("Can not set thread priority!");
-
-            match c.core_allocation {
-                CoreAllocation::PinnedCores { min: _, max: _ } => {
-                    let mut lg = chosen_cores_mask
-                        .lock()
-                        .expect("Can not lock core mask mutex");
-                    let core = lg
-                        .pop()
-                        .expect("Not enough cores provided for pinned allocation");
-                    println!("Pinning worker {tname} to core {core}");
-                    affinity::set_thread_affinity([core])
-                        .expect("Can not set thread affinity for runtime worker");
-                }
-                CoreAllocation::DedicatedCoreSet { min: _, max: _ } => {
-                    let lg = chosen_cores_mask
-                        .lock()
-                        .expect("Can not lock core mask mutex");
-                    affinity::set_thread_affinity(&(*lg))
-                        .expect("Can not set thread affinity for runtime worker");
-                }
-                CoreAllocation::OsDefault => {}
-            }
+            apply_policy(&c.core_allocation, c.priority, &chosen_cores_mask);
         });
         Ok(TokioRuntime {
             tokio: builder.build()?,
