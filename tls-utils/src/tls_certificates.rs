@@ -36,11 +36,11 @@ pub fn new_dummy_x509_certificate(
         if keypair_secret_len != 32 {
             panic!("Unexpected secret key length!");
         }
-        let need_buffer = PKCS8_PREFIX
+        let buffer_size = PKCS8_PREFIX
             .len()
             .checked_add(keypair_secret_len) //clippy being overly guarded here but optimizer will elide checked_add
             .expect("Unexpected secret key length!");
-        let mut key_pkcs8_der = Vec::<u8>::with_capacity(need_buffer);
+        let mut key_pkcs8_der = Vec::<u8>::with_capacity(buffer_size);
         key_pkcs8_der.extend_from_slice(&PKCS8_PREFIX);
         key_pkcs8_der.extend_from_slice(keypair_secret_bytes);
         key_pkcs8_der
