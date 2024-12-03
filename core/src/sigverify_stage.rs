@@ -614,7 +614,7 @@ mod tests {
                                 .total_tracer_packets_received_in_sigverify_stage)
                     );
                 }
-                assert_eq!(tracer_packet_stats.total_excess_tracer_packets, 0);
+                assert_eq!(tracer_packet_stats.total_excess_tracer_packets.0, 0);
                 received += verifieds.iter().map(|batch| batch.len()).sum::<usize>();
             }
 
