@@ -607,7 +607,7 @@ mod tests {
                             || (tracer_packet_stats.total_tracker_packets_passed_sigverify == 0)
                     );
                 } else {
-                    assert_eq!(tracer_packet_stats.total_tracer_packets_deduped, 0);
+                    assert_eq!(tracer_packet_stats.total_tracer_packets_deduped.0, 0);
                     assert!(
                         (tracer_packet_stats.total_tracker_packets_passed_sigverify
                             == tracer_packet_stats
