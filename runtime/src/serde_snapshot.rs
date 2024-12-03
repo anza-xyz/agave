@@ -871,22 +871,21 @@ where
             .map(|bank_fields| bank_fields.capitalization),
     );
     let bank_fields = bank_fields.collapse_into();
-    let (accounts_db, reconstructed_accounts_db_info, bank_hash_stats) =
-        reconstruct_accountsdb_from_fields(
-            snapshot_accounts_db_fields,
-            account_paths,
-            storage_and_next_append_vec_id,
-            genesis_config,
-            limit_load_slot_count_from_snapshot,
-            verify_index,
-            accounts_db_config,
-            accounts_update_notifier,
-            exit,
-            bank_fields.epoch_accounts_hash,
-            capitalizations,
-            bank_fields.incremental_snapshot_persistence.as_ref(),
-            bank_fields.accounts_lt_hash.is_some(),
-        )?;
+    let (accounts_db, reconstructed_accounts_db_info) = reconstruct_accountsdb_from_fields(
+        snapshot_accounts_db_fields,
+        account_paths,
+        storage_and_next_append_vec_id,
+        genesis_config,
+        limit_load_slot_count_from_snapshot,
+        verify_index,
+        accounts_db_config,
+        accounts_update_notifier,
+        exit,
+        bank_fields.epoch_accounts_hash,
+        capitalizations,
+        bank_fields.incremental_snapshot_persistence.as_ref(),
+        bank_fields.accounts_lt_hash.is_some(),
+    )?;
 
     let bank_rc = BankRc::new(Accounts::new(Arc::new(accounts_db)));
     let runtime_config = Arc::new(runtime_config.clone());
@@ -902,7 +901,7 @@ where
         additional_builtins,
         debug_do_not_add_builtins,
         reconstructed_accounts_db_info.accounts_data_len,
-        &bank_hash_stats,
+        &reconstructed_accounts_db_info.bank_hash_stats,
     );
 
     info!("rent_collector: {:?}", bank.rent_collector());
@@ -1035,6 +1034,7 @@ pub(crate) fn remap_and_reconstruct_single_storage(
 pub struct ReconstructedAccountsDbInfo {
     pub accounts_data_len: u64,
     pub duplicates_lt_hash: Option<Box<DuplicatesLtHash>>,
+    pub bank_hash_stats: BankHashStats,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1052,7 +1052,7 @@ fn reconstruct_accountsdb_from_fields<E>(
     capitalizations: (u64, Option<u64>),
     incremental_snapshot_persistence: Option<&BankIncrementalSnapshotPersistence>,
     has_accounts_lt_hash: bool,
-) -> Result<(AccountsDb, ReconstructedAccountsDbInfo, BankHashStats), Error>
+) -> Result<(AccountsDb, ReconstructedAccountsDbInfo), Error>
 where
     E: SerializableStorage + std::marker::Sync,
 {
@@ -1263,8 +1263,8 @@ where
         ReconstructedAccountsDbInfo {
             accounts_data_len,
             duplicates_lt_hash,
+            bank_hash_stats: snapshot_bank_hash_info.stats,
         },
-        snapshot_bank_hash_info.stats,
     ))
 }
 
