@@ -463,10 +463,10 @@ where
                 .push(scheduler);
 
             if is_block_production_scheduler_returned && self.should_respawn() {
-                info!("respawning on trashd scheduler...");
+                info!("respawning scheduler after being trashed...");
                 id_and_inner.0.take();
                 self.spawn_block_production_scheduler(&mut id_and_inner);
-                info!("respawned on trashd scheduler...");
+                info!("respawned scheduler after being trashed.");
             }
             drop(id_and_inner);
         } else {
