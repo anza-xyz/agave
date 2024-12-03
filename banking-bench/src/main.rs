@@ -523,15 +523,12 @@ fn main() {
         block_production_method,
         BlockProductionMethod::UnifiedScheduler
     ) {
+        let mut bank_forks = bank_forks.write().unwrap();
         bank_forks
-            .write()
-            .unwrap()
             .reinstall_schedulers(SchedulingMode::BlockProduction);
         bank = bank_forks
-            .read()
-            .unwrap()
             .working_bank_with_scheduler()
-            .clone_with_scheduler()
+            .clone_with_scheduler();
     }
 
     // This is so that the signal_receiver does not go out of scope after the closure.
