@@ -596,7 +596,7 @@ mod tests {
                     assert!(
                         (tracer_packet_stats.total_tracer_packets_deduped
                             == tracer_packet_stats
-                                .total_tracer_packets_received_in_sigverify_stage
+                                .total_tracer_packets_received_in_sigverify_stage.0
                                 - 1)
                             || (tracer_packet_stats.total_tracer_packets_deduped
                                 == tracer_packet_stats
