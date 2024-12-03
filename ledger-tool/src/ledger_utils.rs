@@ -345,10 +345,6 @@ pub fn load_and_process_ledger(
         BlockVerificationMethod
     )
     .unwrap_or_default();
-    info!(
-        "Using: block-verification-method: {}",
-        block_verification_method,
-    );
     let block_production_method = value_t!(
         arg_matches,
         "block_production_method",
@@ -366,8 +362,8 @@ pub fn load_and_process_ledger(
     })
     .unwrap_or_default();
     info!(
-        "Using: block-production-method: {}",
-        block_production_method,
+        "Using: block-verification-method: {}, block-production-method: {}",
+        block_verification_method, block_production_method
     );
     let unified_scheduler_handler_threads =
         value_t!(arg_matches, "unified_scheduler_handler_threads", usize).ok();
