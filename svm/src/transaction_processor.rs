@@ -567,12 +567,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         rent_collector: &dyn SVMRentCollector,
         error_counters: &mut TransactionErrorMetrics,
     ) -> transaction::Result<ValidatedTransactionDetails> {
-        let compute_budget_limits = process_compute_budget_instructions(
-            message.program_instructions_iter(),
-        )
-        .inspect_err(|_err| {
-            error_counters.invalid_compute_budget += 1;
-        })?;
+        let compute_budget_limits =
+            process_compute_budget_instructions(message, &account_loader.feature_set).inspect_err(
+                |_err| {
+                    error_counters.invalid_compute_budget += 1;
+                },
+            )?;
 
         let fee_payer_address = message.fee_payer();
 

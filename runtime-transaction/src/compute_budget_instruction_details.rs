@@ -1,9 +1,13 @@
 use {
-    crate::compute_budget_program_id_filter::ComputeBudgetProgramIdFilter,
+    crate::{
+        builtin_program_id_filter::{BuiltinProgramIdFilter, ProgramKind},
+        compute_budget_program_id_filter::ComputeBudgetProgramIdFilter,
+    },
     solana_compute_budget::compute_budget_limits::*,
     solana_sdk::{
         borsh1::try_from_slice_unchecked,
         compute_budget::ComputeBudgetInstruction,
+        feature_set::{self, FeatureSet},
         instruction::InstructionError,
         pubkey::Pubkey,
         saturating_add_assign,
@@ -47,7 +51,11 @@ impl ComputeBudgetInstructionDetails {
         Ok(compute_budget_instruction_details)
     }
 
-    pub fn sanitize_and_convert_to_compute_budget_limits(&self) -> Result<ComputeBudgetLimits> {
+    pub fn sanitize_and_convert_to_compute_budget_limits<'a>(
+        &self,
+        instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)>,
+        feature_set: &FeatureSet,
+    ) -> Result<ComputeBudgetLimits> {
         // Sanitize requested heap size
         let updated_heap_bytes =
             if let Some((index, requested_heap_size)) = self.requested_heap_size {
@@ -68,10 +76,7 @@ impl ComputeBudgetInstructionDetails {
         let compute_unit_limit = self
             .requested_compute_unit_limit
             .map_or_else(
-                || {
-                    self.num_non_compute_budget_instructions
-                        .saturating_mul(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT)
-                },
+                || self.calculate_default_compute_unit_limit(instructions, feature_set),
                 |(_index, requested_compute_unit_limit)| requested_compute_unit_limit,
             )
             .min(MAX_COMPUTE_UNIT_LIMIT);
@@ -139,6 +144,49 @@ impl ComputeBudgetInstructionDetails {
 
     fn sanitize_requested_heap_size(bytes: u32) -> bool {
         (MIN_HEAP_FRAME_BYTES..=MAX_HEAP_FRAME_BYTES).contains(&bytes) && bytes % 1024 == 0
+    }
+
+    fn calculate_default_compute_unit_limit<'a>(
+        &self,
+        instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)>,
+        feature_set: &FeatureSet,
+    ) -> u32 {
+        if feature_set.is_active(&feature_set::reserve_minimal_cus_for_builtin_instructions::id()) {
+            let mut filter = BuiltinProgramIdFilter::new();
+            let mut num_builtin_instructions: u32 = 0;
+            let mut num_non_builtin_instructions: u32 = 0;
+
+            // count builtins
+            for (program_id, instruction) in instructions {
+                match filter.get_program_kind(instruction.program_id_index as usize, program_id) {
+                    ProgramKind::Builtin => {
+                        saturating_add_assign!(num_builtin_instructions, 1);
+                    }
+                    ProgramKind::NotBuiltin => {
+                        saturating_add_assign!(num_non_builtin_instructions, 1);
+                    }
+                    ProgramKind::MigratingBuiltin {
+                        core_bpf_migration_feature_id,
+                    } => {
+                        if feature_set.is_active(&core_bpf_migration_feature_id) {
+                            saturating_add_assign!(num_builtin_instructions, 1);
+                        } else {
+                            saturating_add_assign!(num_non_builtin_instructions, 1);
+                        }
+                    }
+                }
+            }
+
+            num_builtin_instructions
+                .saturating_mul(MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT)
+                .saturating_add(
+                    num_non_builtin_instructions
+                        .saturating_mul(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT),
+                )
+        } else {
+            self.num_non_compute_budget_instructions
+                .saturating_mul(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT)
+        }
     }
 }
 

@@ -29,6 +29,7 @@ use {
         transaction::SanitizedTransaction,
     },
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
+    solana_svm_transaction::svm_message::SVMMessage,
     std::sync::{Arc, RwLock},
 };
 
@@ -196,7 +197,10 @@ impl SanitizedTransactionReceiveAndBuffer {
                 })
                 .filter_map(|(packet, tx, deactivation_slot)| {
                     tx.compute_budget_instruction_details()
-                        .sanitize_and_convert_to_compute_budget_limits()
+                        .sanitize_and_convert_to_compute_budget_limits(
+                            tx.program_instructions_iter(),
+                            &working_bank.feature_set,
+                        )
                         .map(|compute_budget| {
                             (packet, tx, deactivation_slot, compute_budget.into())
                         })

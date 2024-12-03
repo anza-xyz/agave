@@ -162,6 +162,16 @@ pub fn get_builtin_instruction_cost<'a>(
         .map(|builtin_cost| builtin_cost.native_cost)
 }
 
+/// Given a program pubkey, returns:
+/// - None, if it is not in BUILTIN_INSTRUCTION_COSTS dictionary;
+/// - Some<None>, is builtin, but no associated migration feature ID;
+/// - Some<Pubkey>, is builtin, and its associated migration feature ID
+pub fn get_builtin_migration_feature_id(program_id: &Pubkey) -> Option<Option<Pubkey>> {
+    BUILTIN_INSTRUCTION_COSTS
+        .get(program_id)
+        .map(|builtin_cost| builtin_cost.core_bpf_migration_feature)
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

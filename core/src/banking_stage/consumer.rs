@@ -578,7 +578,10 @@ impl Consumer {
             .filter_map(|transaction| {
                 transaction
                     .compute_budget_instruction_details()
-                    .sanitize_and_convert_to_compute_budget_limits()
+                    .sanitize_and_convert_to_compute_budget_limits(
+                        transaction.program_instructions_iter(),
+                        &bank.feature_set,
+                    )
                     .ok()
                     .map(|limits| limits.compute_unit_price)
             })
@@ -759,7 +762,8 @@ impl Consumer {
     ) -> Result<(), TransactionError> {
         let fee_payer = message.fee_payer();
         let fee_budget_limits = FeeBudgetLimits::from(process_compute_budget_instructions(
-            message.program_instructions_iter(),
+            message,
+            &bank.feature_set,
         )?);
         let fee = solana_fee::calculate_fee(
             message,

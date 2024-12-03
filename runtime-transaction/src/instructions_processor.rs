@@ -1,8 +1,8 @@
 use {
     crate::compute_budget_instruction_details::*,
     solana_compute_budget::compute_budget_limits::*,
-    solana_sdk::{pubkey::Pubkey, transaction::TransactionError},
-    solana_svm_transaction::instruction::SVMInstruction,
+    solana_sdk::{feature_set::FeatureSet, transaction::TransactionError},
+    solana_svm_transaction::svm_message::SVMMessage,
 };
 
 /// Processing compute_budget could be part of tx sanitizing, failed to process
@@ -10,11 +10,15 @@ use {
 /// may as well fail it early.
 /// If succeeded, the transaction's specific limits/requests (could be default)
 /// are retrieved and returned,
-pub fn process_compute_budget_instructions<'a>(
-    instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)>,
+pub fn process_compute_budget_instructions(
+    message: &impl SVMMessage,
+    feature_set: &FeatureSet,
 ) -> Result<ComputeBudgetLimits, TransactionError> {
-    ComputeBudgetInstructionDetails::try_from(instructions)?
-        .sanitize_and_convert_to_compute_budget_limits()
+    ComputeBudgetInstructionDetails::try_from(message.program_instructions_iter())?
+        .sanitize_and_convert_to_compute_budget_limits(
+            message.program_instructions_iter(),
+            feature_set,
+        )
 }
 
 #[cfg(test)]

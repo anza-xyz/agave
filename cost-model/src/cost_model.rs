@@ -155,6 +155,24 @@ impl CostModel {
         transaction: &impl TransactionWithMeta,
         feature_set: &FeatureSet,
     ) -> (u64, u64, u64) {
+        if feature_set.is_active(&feature_set::reserve_minimal_cus_for_builtin_instructions::id()) {
+            let data_bytes_cost = Self::get_instructions_data_cost(transaction);
+            let (programs_execution_cost, loaded_accounts_data_size_cost) =
+                Self::get_estimated_execution_cost(transaction, feature_set);
+            (
+                programs_execution_cost,
+                loaded_accounts_data_size_cost,
+                data_bytes_cost,
+            )
+        } else {
+            Self::get_transaction_cost_without_minimal_builtin_cus(transaction, feature_set)
+        }
+    }
+
+    fn get_transaction_cost_without_minimal_builtin_cus(
+        transaction: &impl TransactionWithMeta,
+        feature_set: &FeatureSet,
+    ) -> (u64, u64, u64) {
         let mut programs_execution_costs = 0u64;
         let mut loaded_accounts_data_size_cost = 0u64;
         let mut data_bytes_len_total = 0u64;
@@ -191,8 +209,10 @@ impl CostModel {
         // as no execution cost by cost model.
         match transaction
             .compute_budget_instruction_details()
-            .sanitize_and_convert_to_compute_budget_limits()
-        {
+            .sanitize_and_convert_to_compute_budget_limits(
+                transaction.program_instructions_iter(),
+                feature_set,
+            ) {
             Ok(compute_budget_limits) => {
                 // if tx contained user-space instructions and a more accurate
                 // estimate available correct it, where
@@ -222,6 +242,32 @@ impl CostModel {
             loaded_accounts_data_size_cost,
             data_bytes_len_total / INSTRUCTION_DATA_BYTES_COST,
         )
+    }
+
+    /// Return (programs_execution_cost, loaded_accounts_data_size_cost)
+    fn get_estimated_execution_cost(
+        transaction: &impl TransactionWithMeta,
+        feature_set: &FeatureSet,
+    ) -> (u64, u64) {
+        // if failed to process compute_budget instructions, the transaction will not be executed
+        // by `bank`, therefore it should be considered as no execution cost by cost model.
+        let (programs_execution_costs, loaded_accounts_data_size_cost) = match transaction
+            .compute_budget_instruction_details()
+            .sanitize_and_convert_to_compute_budget_limits(
+                transaction.program_instructions_iter(),
+                feature_set,
+            ) {
+            Ok(compute_budget_limits) => (
+                u64::from(compute_budget_limits.compute_unit_limit),
+                Self::calculate_loaded_accounts_data_size_cost(
+                    compute_budget_limits.loaded_accounts_bytes.get(),
+                    feature_set,
+                ),
+            ),
+            Err(_) => (0, 0),
+        };
+
+        (programs_execution_costs, loaded_accounts_data_size_cost)
     }
 
     /// Return the instruction data bytes cost.
