@@ -176,7 +176,8 @@ pub fn execute_batch(
         || {
             if let Some(maybe_index) = original_callback() {
                 if let Some(index) = maybe_index {
-                    transaction_indexes = vec![index];
+                    assert!(transaction_indexes.is_empty());
+                    transaction_indexes.push(index);
                 }
                 true
             } else {

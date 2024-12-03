@@ -717,6 +717,9 @@ impl TaskHandler for DefaultTaskHandler {
         task: &Task,
         handler_context: &HandlerContext,
     ) {
+        // scheduler must properly prevent conflicting tx executions. thus, task handler isn't
+        // responsible for locking.
+
         let transaction = task.transaction();
         let index = task.index();
 
@@ -771,19 +774,23 @@ impl TaskHandler for DefaultTaskHandler {
             };
 
         if result.is_ok() {
-            // scheduler must properly prevent conflicting tx executions. thus, task handler isn't
-            // responsible for locking.
             let batch = scheduling_context
                 .bank()
                 .prepare_unlocked_batch_from_single_tx(transaction);
-            const DUMMY_INDEX: usize = 0;
-            let index = match scheduling_context.mode() {
-                SchedulingMode::BlockVerification => index.try_into().unwrap(),
-                SchedulingMode::BlockProduction => DUMMY_INDEX,
+            let transaction_indexes = match scheduling_context.mode() {
+                SchedulingMode::BlockVerification => vec![index.try_into().unwrap()],
+                SchedulingMode::BlockProduction => {
+                    if handler_context.transaction_status_sender.is_some() {
+                        // will be filled inside execute_batch()
+                        Vec::with_capacity(1)
+                    } else {
+                        vec![]
+                    }
+                }
             };
             let batch_with_indexes = TransactionBatchWithIndexes {
                 batch,
-                transaction_indexes: vec![index],
+                transaction_indexes,
             };
 
             let pre_commit_callback = match scheduling_context.mode() {
