@@ -1761,7 +1761,6 @@ fn process_bank_0(
     entry_notification_sender: Option<&EntryNotifierSender>,
 ) {
     assert_eq!(bank0.slot(), 0);
-    *bank0.full_replay_fields.write().unwrap() = Some(BankFullReplayFields::default());
     let last_blockhash = bank0.last_blockhash();
     let mut progress = ConfirmationProgress::new(last_blockhash);
     confirm_full_slot(
