@@ -107,23 +107,22 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
             iov_len: buffer.len(),
         });
 
-        let mut msg_hdr: msghdr;
         #[cfg(not(target_env = "musl"))]
-        {
-            msg_hdr = msghdr {
-                msg_name: addr.as_mut_ptr() as *mut _,
-                msg_namelen: SOCKADDR_STORAGE_SIZE as socklen_t,
-                msg_iov: iov.as_mut_ptr(),
-                msg_iovlen: 1,
-                msg_control: ptr::null::<libc::c_void>() as *mut _,
-                msg_controllen: 0,
-                msg_flags: 0,
-            };
-        }
+        let msg_hdr = msghdr {
+            msg_name: addr.as_mut_ptr() as *mut _,
+            msg_namelen: SOCKADDR_STORAGE_SIZE as socklen_t,
+            msg_iov: iov.as_mut_ptr(),
+            msg_iovlen: 1,
+            msg_control: ptr::null::<libc::c_void>() as *mut _,
+            msg_controllen: 0,
+            msg_flags: 0,
+        };
 
         #[cfg(target_env = "musl")]
-        {
-            msg_hdr = unsafe { std::mem::zeroed() };
+        let msg_hdr = {
+            // Cannot construct msghdr directly on musl
+            // See https://github.com/rust-lang/libc/issues/2344 for more info
+            let mut msg_hdr: msghdr = unsafe { std::mem::zeroed() };
             msg_hdr.msg_name = addr.as_mut_ptr() as *mut _;
             msg_hdr.msg_namelen = SOCKADDR_STORAGE_SIZE as socklen_t;
             msg_hdr.msg_iov = iov.as_mut_ptr();
@@ -131,11 +130,12 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
             msg_hdr.msg_control = ptr::null::<libc::c_void>() as *mut _;
             msg_hdr.msg_controllen = 0;
             msg_hdr.msg_flags = 0;
-        }
+            msg_hdr
+        };
 
         hdr.write(mmsghdr {
             msg_len: 0,
-            msg_hdr: msg_hdr,
+            msg_hdr,
         });
     }
 
