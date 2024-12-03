@@ -7215,10 +7215,6 @@ impl Bank {
     pub fn get_bank_hash_stats(&self) -> BankHashStats {
         self.bank_hash_stats.load()
     }
-
-    pub fn set_bank_hash_stats(&mut self, bank_hash_stats: &BankHashStats) {
-        self.bank_hash_stats = AtomicBankHashStats::new(bank_hash_stats);
-    }
 }
 
 impl TransactionProcessingCallback for Bank {
