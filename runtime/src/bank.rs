@@ -79,7 +79,7 @@ use {
         },
         accounts_hash::{
             AccountHash, AccountsHash, AccountsLtHash, CalcAccountsHashConfig, HashStats,
-            IncrementalAccountsHash,
+            IncrementalAccountsHash, MerkleOrLatticeAccountsHash,
         },
         accounts_index::{IndexKey, ScanConfig, ScanResult},
         accounts_partition::{self, Partition, PartitionIndex},
@@ -6223,20 +6223,52 @@ impl Bank {
     ///
     /// # Panics
     ///
-    /// Panics if there is both-or-neither of an `AccountsHash` and an `IncrementalAccountsHash`
-    /// for this bank's slot.  There may only be one or the other.
+    /// If the snapshots lt hash feature is not enabled, panics if there is both-or-neither of an
+    /// `AccountsHash` and an `IncrementalAccountsHash` for this bank's slot.  There may only be
+    /// one or the other.
     pub fn get_snapshot_hash(&self) -> SnapshotHash {
+        if self.is_snapshots_lt_hash_enabled() {
+            self.get_lattice_snapshot_hash()
+        } else {
+            self.get_merkle_snapshot_hash()
+        }
+    }
+
+    /// Returns the merkle-based `SnapshotHash` for this bank's slot
+    ///
+    /// This fn is used at startup to verify the bank was rebuilt correctly.
+    ///
+    /// # Panics
+    ///
+    /// If the snapshots lt hash feature is not enabled, panics if there is both-or-neither of an
+    /// `AccountsHash` and an `IncrementalAccountsHash` for this bank's slot.  There may only be
+    /// one or the other.
+    pub fn get_merkle_snapshot_hash(&self) -> SnapshotHash {
         let accounts_hash = self.get_accounts_hash();
         let incremental_accounts_hash = self.get_incremental_accounts_hash();
-
-        let accounts_hash = match (accounts_hash, incremental_accounts_hash) {
+        let accounts_hash_kind = match (accounts_hash, incremental_accounts_hash) {
             (Some(_), Some(_)) => panic!("Both full and incremental accounts hashes are present for slot {}; it is ambiguous which one to use for the snapshot hash!", self.slot()),
             (Some(accounts_hash), None) => accounts_hash.into(),
             (None, Some(incremental_accounts_hash)) => incremental_accounts_hash.into(),
             (None, None) => panic!("accounts hash is required to get snapshot hash"),
         };
         let epoch_accounts_hash = self.get_epoch_accounts_hash_to_serialize();
-        SnapshotHash::new(&accounts_hash, epoch_accounts_hash.as_ref())
+        SnapshotHash::new(
+            &MerkleOrLatticeAccountsHash::Merkle(accounts_hash_kind),
+            epoch_accounts_hash.as_ref(),
+            None,
+        )
+    }
+
+    /// Returns the lattice-based `SnapshotHash` for this bank's slot
+    ///
+    /// This fn is used at startup to verify the bank was rebuilt correctly.
+    pub fn get_lattice_snapshot_hash(&self) -> SnapshotHash {
+        SnapshotHash::new(
+            &MerkleOrLatticeAccountsHash::Lattice,
+            self.get_epoch_accounts_hash_to_serialize().as_ref(),
+            Some(self.accounts_lt_hash.lock().unwrap().0.checksum()),
+        )
     }
 
     pub fn load_account_into_read_cache(&self, key: &Pubkey) {

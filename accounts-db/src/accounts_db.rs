@@ -512,6 +512,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormalWithVerify,
     enable_experimental_accumulator_hash: false,
     verify_experimental_accumulator_hash: false,
+    snapshots_use_experimental_accumulator_hash: false,
     num_clean_threads: None,
     num_foreground_threads: None,
     num_hash_threads: None,
@@ -538,6 +539,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormalWithVerify,
     enable_experimental_accumulator_hash: false,
     verify_experimental_accumulator_hash: false,
+    snapshots_use_experimental_accumulator_hash: false,
     num_clean_threads: None,
     num_foreground_threads: None,
     num_hash_threads: None,
@@ -666,6 +668,7 @@ pub struct AccountsDbConfig {
     pub scan_filter_for_shrinking: ScanFilter,
     pub enable_experimental_accumulator_hash: bool,
     pub verify_experimental_accumulator_hash: bool,
+    pub snapshots_use_experimental_accumulator_hash: bool,
     /// Number of threads for background cleaning operations (`thread_pool_clean')
     pub num_clean_threads: Option<NonZeroUsize>,
     /// Number of threads for foreground operations (`thread_pool`)
@@ -1627,6 +1630,10 @@ pub struct AccountsDb {
     /// (For R&D only)
     pub verify_experimental_accumulator_hash: bool,
 
+    /// Flag to indicate if the experimental accounts lattice hash is used for snapshots.
+    /// (For R&D only; a feature-gate also exists to turn this on.)
+    pub snapshots_use_experimental_accumulator_hash: AtomicBool,
+
     /// These are the ancient storages that could be valuable to
     /// shrink, sorted by amount of dead bytes.  The elements
     /// are sorted from the largest dead bytes to the smallest.
@@ -2046,6 +2053,9 @@ impl AccountsDb {
                 .into(),
             verify_experimental_accumulator_hash: accounts_db_config
                 .verify_experimental_accumulator_hash,
+            snapshots_use_experimental_accumulator_hash: accounts_db_config
+                .snapshots_use_experimental_accumulator_hash
+                .into(),
             thread_pool,
             thread_pool_clean,
             thread_pool_hash,
@@ -2133,6 +2143,18 @@ impl AccountsDb {
     /// Sets if the experimental accounts lattice hash is enabled
     pub fn set_is_experimental_accumulator_hash_enabled(&self, is_enabled: bool) {
         self.is_experimental_accumulator_hash_enabled
+            .store(is_enabled, Ordering::Release);
+    }
+
+    /// Returns if snapshots use the experimental accounts lattice hash
+    pub fn snapshots_use_experimental_accumulator_hash(&self) -> bool {
+        self.snapshots_use_experimental_accumulator_hash
+            .load(Ordering::Acquire)
+    }
+
+    /// Sets if snapshots use the experimental accounts lattice hash
+    pub fn set_snapshots_use_experimental_accumulator_hash(&self, is_enabled: bool) {
+        self.snapshots_use_experimental_accumulator_hash
             .store(is_enabled, Ordering::Release);
     }
 

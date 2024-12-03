@@ -7,7 +7,7 @@ use {
         accounts_db::CalcAccountsHashKind,
         accounts_hash::{
             AccountsHash, AccountsHashKind, CalcAccountsHashConfig, HashStats,
-            IncrementalAccountsHash,
+            IncrementalAccountsHash, MerkleOrLatticeAccountsHash,
         },
         sorted_storages::SortedStorages,
     },
@@ -16,7 +16,8 @@ use {
         serde_snapshot::BankIncrementalSnapshotPersistence,
         snapshot_config::SnapshotConfig,
         snapshot_package::{
-            self, AccountsPackage, AccountsPackageKind, SnapshotKind, SnapshotPackage,
+            self, AccountsHashAlgorithm, AccountsPackage, AccountsPackageKind, SnapshotKind,
+            SnapshotPackage,
         },
         snapshot_utils,
     },
@@ -215,10 +216,10 @@ impl AccountsHashVerifier {
         pending_snapshot_packages: &Mutex<PendingSnapshotPackages>,
         snapshot_config: &SnapshotConfig,
     ) -> IoResult<()> {
-        let (accounts_hash_kind, bank_incremental_snapshot_persistence) =
+        let (merkle_or_lattice_accounts_hash, bank_incremental_snapshot_persistence) =
             Self::calculate_and_verify_accounts_hash(&accounts_package, snapshot_config)?;
 
-        Self::save_epoch_accounts_hash(&accounts_package, accounts_hash_kind);
+        Self::save_epoch_accounts_hash(&accounts_package, &merkle_or_lattice_accounts_hash);
 
         Self::purge_old_accounts_hashes(&accounts_package, snapshot_config);
 
@@ -226,7 +227,7 @@ impl AccountsHashVerifier {
             accounts_package,
             pending_snapshot_packages,
             snapshot_config,
-            accounts_hash_kind,
+            merkle_or_lattice_accounts_hash,
             bank_incremental_snapshot_persistence,
         );
 
@@ -237,7 +238,26 @@ impl AccountsHashVerifier {
     fn calculate_and_verify_accounts_hash(
         accounts_package: &AccountsPackage,
         snapshot_config: &SnapshotConfig,
-    ) -> IoResult<(AccountsHashKind, Option<BankIncrementalSnapshotPersistence>)> {
+    ) -> IoResult<(
+        MerkleOrLatticeAccountsHash,
+        Option<BankIncrementalSnapshotPersistence>,
+    )> {
+        match accounts_package.accounts_hash_algorithm {
+            AccountsHashAlgorithm::Merkle => {
+                debug!(
+                    "calculate_and_verify_accounts_hash(): snapshots lt hash is disabled, \
+                     DO merkle-based accounts hash calculation",
+                );
+            }
+            AccountsHashAlgorithm::Lattice => {
+                debug!(
+                    "calculate_and_verify_accounts_hash(): snapshots lt hash is enabled, \
+                     SKIP merkle-based accounts hash calculation",
+                );
+                return Ok((MerkleOrLatticeAccountsHash::Lattice, None));
+            }
+        }
+
         let accounts_hash_calculation_kind = match accounts_package.package_kind {
             AccountsPackageKind::AccountsHashVerifier => CalcAccountsHashKind::Full,
             AccountsPackageKind::EpochAccountsHash => CalcAccountsHashKind::Full,
@@ -297,7 +317,10 @@ impl AccountsHashVerifier {
                 }
             };
 
-        Ok((accounts_hash_kind, bank_incremental_snapshot_persistence))
+        Ok((
+            MerkleOrLatticeAccountsHash::Merkle(accounts_hash_kind),
+            bank_incremental_snapshot_persistence,
+        ))
     }
 
     fn _calculate_full_accounts_hash(
@@ -412,11 +435,13 @@ impl AccountsHashVerifier {
 
     fn save_epoch_accounts_hash(
         accounts_package: &AccountsPackage,
-        accounts_hash: AccountsHashKind,
+        merkle_or_lattice_accounts_hash: &MerkleOrLatticeAccountsHash,
     ) {
         if accounts_package.package_kind == AccountsPackageKind::EpochAccountsHash {
-            let AccountsHashKind::Full(accounts_hash) = accounts_hash else {
-                panic!("EAH requires a full accounts hash!");
+            let MerkleOrLatticeAccountsHash::Merkle(AccountsHashKind::Full(accounts_hash)) =
+                merkle_or_lattice_accounts_hash
+            else {
+                panic!("EAH requires a full accounts hash, but was given {merkle_or_lattice_accounts_hash:?}");
             };
             info!(
                 "saving epoch accounts hash, slot: {}, hash: {}",
@@ -426,7 +451,7 @@ impl AccountsHashVerifier {
                 .accounts
                 .accounts_db
                 .epoch_accounts_hash_manager
-                .set_valid(accounts_hash.into(), accounts_package.slot);
+                .set_valid((*accounts_hash).into(), accounts_package.slot);
         }
     }
 
@@ -465,7 +490,7 @@ impl AccountsHashVerifier {
         accounts_package: AccountsPackage,
         pending_snapshot_packages: &Mutex<PendingSnapshotPackages>,
         snapshot_config: &SnapshotConfig,
-        accounts_hash_kind: AccountsHashKind,
+        merkle_or_lattice_accounts_hash: MerkleOrLatticeAccountsHash,
         bank_incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>,
     ) {
         if !snapshot_config.should_generate_snapshots()
@@ -479,7 +504,7 @@ impl AccountsHashVerifier {
 
         let snapshot_package = SnapshotPackage::new(
             accounts_package,
-            accounts_hash_kind,
+            merkle_or_lattice_accounts_hash,
             bank_incremental_snapshot_persistence,
         );
         pending_snapshot_packages

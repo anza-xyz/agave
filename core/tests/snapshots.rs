@@ -628,17 +628,24 @@ enum VerifyAccountsKind {
     Merkle,
     Lattice,
 }
+#[derive(Debug, Eq, PartialEq)]
+enum VerifySnapshotHashKind {
+    Merkle,
+    Lattice,
+}
 
 /// Spin up the background services fully then test taking & verifying snapshots
 #[test_matrix(
     V1_2_0,
     [Development, Devnet, Testnet, MainnetBeta],
-    [VerifyAccountsKind::Merkle, VerifyAccountsKind::Lattice]
+    [VerifyAccountsKind::Merkle, VerifyAccountsKind::Lattice],
+    [VerifySnapshotHashKind::Merkle, VerifySnapshotHashKind::Lattice]
 )]
 fn test_snapshots_with_background_services(
     snapshot_version: SnapshotVersion,
     cluster_type: ClusterType,
     verify_accounts_kind: VerifyAccountsKind,
+    verify_snapshot_hash_kind: VerifySnapshotHashKind,
 ) {
     solana_logger::setup();
 
@@ -825,6 +832,8 @@ fn test_snapshots_with_background_services(
     let (_tmp_dir, temporary_accounts_dir) = create_tmp_accounts_dir_for_tests();
     let accounts_db_config = AccountsDbConfig {
         enable_experimental_accumulator_hash: verify_accounts_kind == VerifyAccountsKind::Lattice,
+        snapshots_use_experimental_accumulator_hash: verify_snapshot_hash_kind
+            == VerifySnapshotHashKind::Lattice,
         ..ACCOUNTS_DB_CONFIG_FOR_TESTING
     };
     let (deserialized_bank, ..) = snapshot_bank_utils::bank_from_latest_snapshot_archives(
