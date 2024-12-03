@@ -532,7 +532,7 @@ where
                 .unwrap();
             let Some(inner) = id_and_inner.1.take() else {
                 panic!("double take: {}, {}", context.slot(), context.mode());
-            }
+            };
             S::from_inner(inner, context, result_with_timings)
         }
     }
