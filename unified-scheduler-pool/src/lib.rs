@@ -394,14 +394,12 @@ where
                 sleepless_testing::at(CheckPoint::TimeoutListenerTriggered(
                     triggered_timeout_listener_count,
                 ));
+
                 if exiting
-                        && idle_inner_count == 0
-                        //&& active_inner_count == 0
-                        && trashed_inner_count == 0
-                        && triggered_timeout_listener_count == 0
                         && active_timeout_listener_count == 0
                 {
                     error!("proper exit!");
+                    // Wait a bit to ensure the replay stage has gone.
                     sleep(Duration::from_secs(1));
                     let mut id_and_inner = scheduler_pool
                         .block_production_scheduler_inner
