@@ -524,8 +524,7 @@ fn main() {
         BlockProductionMethod::UnifiedScheduler
     ) {
         let mut bank_forks = bank_forks.write().unwrap();
-        bank_forks
-            .reinstall_schedulers(SchedulingMode::BlockProduction);
+        bank_forks.reinstall_schedulers(SchedulingMode::BlockProduction);
         bank = bank_forks
             .working_bank_with_scheduler()
             .clone_with_scheduler();
