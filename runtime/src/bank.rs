@@ -2875,12 +2875,9 @@ impl Bank {
         assert!(!self.freeze_started());
         thread_pool.install(|| {
             stake_rewards.par_chunks(512).for_each(|chunk| {
-                let mut stats = BankHashStats::default();
-                for stake_reward in chunk {
-                    stats.update(&stake_reward.stake_account);
-                }
-                self.bank_hash_stats.accumulate(&stats);
-                self.rc.accounts.store_accounts_cached((slot, chunk))
+                let to_store = (slot, chunk);
+                self.update_bank_hash_stats(&to_store);
+                self.rc.accounts.store_accounts_cached(to_store);
             })
         });
         metrics
@@ -4158,6 +4155,16 @@ impl Bank {
             .accumulate(&accumulated_fee_details);
     }
 
+    fn update_bank_hash_stats<'a>(&self, accounts: &impl StorableAccounts<'a>) {
+        let mut stats = BankHashStats::default();
+        (0..accounts.len()).for_each(|i| {
+            accounts.account(i, |account| {
+                stats.update(&account);
+            })
+        });
+        self.bank_hash_stats.accumulate(&stats);
+    }
+
     pub fn commit_transactions(
         &self,
         sanitized_txs: &[impl TransactionWithMeta],
@@ -4216,16 +4223,11 @@ impl Bank {
                 &processing_results,
             );
 
-            self.rc.accounts.store_cached(
-                (self.slot(), accounts_to_store.as_slice()),
-                transactions.as_deref(),
-            );
-
-            let mut stats = BankHashStats::default();
-            for (_, account) in accounts_to_store {
-                stats.update(account);
-            }
-            self.bank_hash_stats.accumulate(&stats);
+            let to_store = (self.slot(), accounts_to_store.as_slice());
+            self.update_bank_hash_stats(&to_store);
+            self.rc
+                .accounts
+                .store_cached(to_store, transactions.as_deref());
         });
 
         self.collect_rent(&processing_results);
@@ -5193,10 +5195,8 @@ impl Bank {
         let mut m = Measure::start("stakes_cache.check_and_store");
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
 
-        let mut stats = BankHashStats::default();
         (0..accounts.len()).for_each(|i| {
             accounts.account(i, |account| {
-                stats.update(&account);
                 self.stakes_cache.check_and_store(
                     account.pubkey(),
                     &account,
@@ -5204,8 +5204,7 @@ impl Bank {
                 )
             })
         });
-        self.bank_hash_stats.accumulate(&stats);
-
+        self.update_bank_hash_stats(&accounts);
         self.rc.accounts.store_accounts_cached(accounts);
         m.stop();
         self.rc
