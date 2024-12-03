@@ -12,8 +12,9 @@ use {
         timing::timestamp,
     },
     std::{
+        mem::ManuallyDrop,
         sync::{
-            atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering},
+            atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
             Arc, Mutex,
         },
         thread,
@@ -74,7 +75,7 @@ pub(crate) struct ReadOnlyAccountsCache {
     /// LRU eviction, cache entries are evicted from the front of the queue.
     queue: Arc<Mutex<IndexList<ReadOnlyCacheKey>>>,
     _max_data_size_lo: usize,
-    max_data_size_hi: usize,
+    _max_data_size_hi: usize,
     data_size: Arc<AtomicUsize>,
     // read only cache does not update lru on read of an entry unless it has been at least this many ms since the last lru update
     ms_to_skip_lru_update: u32,
@@ -83,14 +84,12 @@ pub(crate) struct ReadOnlyAccountsCache {
     stats: Arc<AtomicReadOnlyCacheStats>,
     highest_slot_stored: AtomicU64,
 
-    /// Channel to send eviction requests
-    ///
-    /// NOTE: This field must be above `evictor` to ensure it is dropped before `evictor`.
-    evict_sender: crossbeam_channel::Sender<()>,
     /// To the evictor goes the spoiled [sic]
     ///
     /// Evict from the cache in the background.
-    _evictor: thread::JoinHandle<()>,
+    evictor_thread_handle: ManuallyDrop<thread::JoinHandle<()>>,
+    /// Flag to stop the evictor
+    evictor_exit_flag: Arc<AtomicBool>,
 }
 
 impl ReadOnlyAccountsCache {
@@ -104,9 +103,9 @@ impl ReadOnlyAccountsCache {
         let queue = Arc::new(Mutex::<IndexList<ReadOnlyCacheKey>>::default());
         let data_size = Arc::new(AtomicUsize::default());
         let stats = Arc::new(AtomicReadOnlyCacheStats::default());
-        let (evict_sender, evict_receiver) = crossbeam_channel::bounded::<()>(1);
-        let evictor = Self::spawn_evictor(
-            evict_receiver,
+        let evictor_exit_flag = Arc::new(AtomicBool::new(false));
+        let evictor_thread_handle = Self::spawn_evictor(
+            evictor_exit_flag.clone(),
             max_data_size_lo,
             max_data_size_hi,
             data_size.clone(),
@@ -118,14 +117,14 @@ impl ReadOnlyAccountsCache {
         Self {
             highest_slot_stored: AtomicU64::default(),
             _max_data_size_lo: max_data_size_lo,
-            max_data_size_hi,
+            _max_data_size_hi: max_data_size_hi,
             cache,
             queue,
             data_size,
             ms_to_skip_lru_update,
             stats,
-            evict_sender,
-            _evictor: evictor,
+            evictor_thread_handle: ManuallyDrop::new(evictor_thread_handle),
+            evictor_exit_flag,
         }
     }
 
@@ -202,10 +201,6 @@ impl ReadOnlyAccountsCache {
                 entry.set_index(queue.insert_last(pubkey));
             }
         };
-
-        if self.data_size() > self.max_data_size_hi {
-            self.send_evict();
-        }
         let store_us = measure_store.end_as_us();
         self.stats.store_us.fetch_add(store_us, Ordering::Relaxed);
     }
@@ -280,20 +275,9 @@ impl ReadOnlyAccountsCache {
         }
     }
 
-    /// Sends a message to the evictor to trigger evictions
-    fn send_evict(&self) {
-        let res = self.evict_sender.try_send(());
-        if let Err(err) = res {
-            // It's possible multiple threads tried to send the evict message at the same time.
-            // Since the channel's size is bounded to 1, only a single message will be sent,
-            // which is fine.
-            trace!("Failed to send accounts read cache eviction request: {err}");
-        }
-    }
-
     /// Spawns the background thread to handle evictions
     fn spawn_evictor(
-        receiver: crossbeam_channel::Receiver<()>,
+        exit: Arc<AtomicBool>,
         max_data_size_lo: usize,
         max_data_size_hi: usize,
         data_size: Arc<AtomicUsize>,
@@ -306,32 +290,17 @@ impl ReadOnlyAccountsCache {
             .spawn(move || {
                 info!("AccountsReadCacheEvictor has started");
                 loop {
-                    // Note: We use `try_recv()` here to avoid registering a Waker.
-                    // This ensures the sender doesn't need to grab a lock to wake us up.
-                    let res = receiver.try_recv();
-                    match res {
-                        Ok(_) => {
-                            // Evict request received!
-                        }
-                        Err(crossbeam_channel::TryRecvError::Empty) => {
-                            // No requests to evict were received, so sleep and check again.
-                            // Note: We don't need/want to evict often.  100 ms is already four
-                            // times per slot, which should be plenty.
-                            thread::sleep(Duration::from_millis(100));
-                        }
-                        Err(crossbeam_channel::TryRecvError::Disconnected) => {
-                            // Disconnecting the channel is the intended way to stop the evictor.
-                            break;
-                        }
+                    if exit.load(Ordering::Relaxed) {
+                        break;
                     }
+
+                    // We shouldn't need to evict often, so sleep to reduce the frequency.
+                    // 100 ms is already four times per slot, which should be plenty.
+                    thread::sleep(Duration::from_millis(100));
                     stats
                         .evictor_wakeup_count_all
                         .fetch_add(1, Ordering::Relaxed);
 
-                    // If a message was sent to the channel *while we were already evicting*, then
-                    // when we loop around we'll find a message that we should evict again.
-                    // However the current data size likely is not higher than the high water mark.
-                    // So, check the current size to see if this was a spurious wakeup.
                     if data_size.load(Ordering::Relaxed) <= max_data_size_hi {
                         continue;
                     }
@@ -369,6 +338,17 @@ impl ReadOnlyAccountsCache {
             num_evicts += 1;
         }
         num_evicts
+    }
+}
+
+impl Drop for ReadOnlyAccountsCache {
+    fn drop(&mut self) {
+        self.evictor_exit_flag.store(true, Ordering::Relaxed);
+        // SAFETY: We are dropping, so we will never use `evictor_thread_handle` again.
+        let evictor_thread_handle = unsafe { ManuallyDrop::take(&mut self.evictor_thread_handle) };
+        evictor_thread_handle
+            .join()
+            .expect("join accounts read cache evictor thread");
     }
 }
 
