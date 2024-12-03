@@ -22,7 +22,6 @@ use {
 
 pub type BankingPacketBatch = Arc<(Vec<PacketBatch>, Option<SigverifyTracerPacketStats>)>;
 pub type BankingPacketSender = TracedSender;
-pub type RealBankingPacketSender = Sender<BankingPacketBatch>;
 pub type BankingPacketReceiver = Receiver<BankingPacketBatch>;
 pub type TracerThreadResult = Result<(), TraceError>;
 pub type TracerThread = Option<JoinHandle<TracerThreadResult>>;
@@ -338,7 +337,7 @@ impl BankingTracer {
     fn channel_inner(
         label: ChannelLabel,
         active_tracer: Option<ActiveTracer>,
-        sender: RealBankingPacketSender,
+        sender: Sender<BankingPacketBatch>,
         receiver: BankingPacketReceiver,
     ) -> (TracedSender, Receiver<BankingPacketBatch>) {
         (TracedSender::new(label, sender, active_tracer), receiver)
