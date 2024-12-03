@@ -185,8 +185,9 @@ fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
             if let Ok(message) = verified_r.recv_timeout(Duration::from_millis(10)) {
                 let (verifieds, tracer_packet_stats) = (&message.0, message.1.as_ref().unwrap());
                 received += verifieds.iter().map(|batch| batch.len()).sum::<usize>();
-                total_tracer_packets_received_in_sigverify_stage +=
-                    tracer_packet_stats.total_tracer_packets_received_in_sigverify_stage.0;
+                total_tracer_packets_received_in_sigverify_stage += tracer_packet_stats
+                    .total_tracer_packets_received_in_sigverify_stage
+                    .0;
                 test::black_box(message);
                 if total_tracer_packets_received_in_sigverify_stage >= sent_len {
                     break;

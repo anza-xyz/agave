@@ -8,12 +8,12 @@ use {
     std::{
         io::Read,
         net::SocketAddr,
+        num::Saturating,
         ops::{Index, IndexMut},
         slice::{Iter, IterMut, SliceIndex},
+        sync::Arc,
     },
 };
-use std::sync::Arc;
-use std::num::Saturating;
 
 pub const NUM_PACKETS: usize = 1024 * 8;
 
@@ -251,16 +251,12 @@ impl SigverifyTracerPacketStats {
     }
 
     pub fn aggregate(&mut self, other: &SigverifyTracerPacketStats) {
-        self.total_removed_before_sigverify_stage +=
-            other.total_removed_before_sigverify_stage;
+        self.total_removed_before_sigverify_stage += other.total_removed_before_sigverify_stage;
         self.total_tracer_packets_received_in_sigverify_stage +=
             other.total_tracer_packets_received_in_sigverify_stage;
-        self.total_tracer_packets_deduped +=
-            other.total_tracer_packets_deduped;
-        self.total_excess_tracer_packets += 
-            other.total_excess_tracer_packets;
-        self.total_tracker_packets_passed_sigverify += 
-            other.total_tracker_packets_passed_sigverify;
+        self.total_tracer_packets_deduped += other.total_tracer_packets_deduped;
+        self.total_excess_tracer_packets += other.total_excess_tracer_packets;
+        self.total_tracker_packets_passed_sigverify += other.total_tracker_packets_passed_sigverify;
     }
 }
 
