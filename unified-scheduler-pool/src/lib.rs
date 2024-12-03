@@ -554,7 +554,7 @@ where
     }
 
     fn unregister_banking_stage(&self) {
-        assert!(self.block_production_scheduler_respawner.lock().unwrap().replace(None).is_some());
+        assert!(self.block_production_scheduler_respawner.lock().unwrap().take().is_some());
     }
 
     fn banking_stage_status(&self) -> Option<BankingStageStatus> {
