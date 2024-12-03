@@ -700,7 +700,7 @@ impl TaskHandler for DefaultTaskHandler {
     ) {
         // scheduler must properly prevent conflicting tx executions. thus, task handler isn't
         // responsible for locking.
-        let bank = scheduling_context().bank();
+        let bank = scheduling_context.bank();
         let transaction = task.transaction();
         let index = task.index();
 
