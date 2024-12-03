@@ -2,6 +2,7 @@
 
 use solana_program::{
     account_info::AccountInfo,
+    blake3,
     entrypoint::ProgramResult,
     program_error::ProgramError,
     program_memory::{sol_memcmp, sol_memcpy, sol_memmove, sol_memset},
@@ -109,6 +110,30 @@ pub fn process_instruction(
             unsafe { sol_memmove(too_early(3).as_mut_ptr(), buf.as_ptr(), 10) };
         }
 
+        20 => {
+            use solana_program::hash::{hashv, Hasher};
+
+            let mut hasher = Hasher::default();
+            hasher.hashv(&[data]);
+
+            assert_eq!(hashv(&[data]), hasher.result());
+        }
+
+        21 => {
+            use solana_program::keccak::{hashv, Hasher};
+
+            let mut hasher = Hasher::default();
+            hasher.hashv(&[data]);
+
+            assert_eq!(hashv(&[data]), hasher.result());
+        }
+
+        22 => {
+            use solana_program::blake3::hashv;
+
+            let hash = blake3::hash(data);
+            assert_eq!(hashv(&[data]).0, hash.to_bytes());
+        }
         _ => {}
     }
 
