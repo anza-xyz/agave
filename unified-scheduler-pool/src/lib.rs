@@ -554,7 +554,12 @@ where
     }
 
     fn unregister_banking_stage(&self) {
-        assert!(self.block_production_scheduler_respawner.lock().unwrap().take().is_some());
+        assert!(self
+            .block_production_scheduler_respawner
+            .lock()
+            .unwrap()
+            .take()
+            .is_some());
     }
 
     fn banking_stage_status(&self) -> Option<BankingStageStatus> {
@@ -714,24 +719,17 @@ impl TaskHandler for DefaultTaskHandler {
                     .feature_set
                     .is_active(&feature_set::move_precompile_verification_to_svm::id());
                 if let Err(error) = bank.refilter_prebuilt_block_production_transaction(
-                        transaction,
-                        max_age,
-                        move_precompile_verification_to_svm,
-                    )
-                {
+                    transaction,
+                    max_age,
+                    move_precompile_verification_to_svm,
+                ) {
                     *result = Err(error);
                     (None, false)
                 } else {
                     use solana_cost_model::cost_model::CostModel;
-                    let c = CostModel::calculate_cost(
-                        transaction,
-                        &bank.feature_set,
-                    );
+                    let c = CostModel::calculate_cost(transaction, &bank.feature_set);
                     loop {
-                        let r = bank
-                            .write_cost_tracker()
-                            .unwrap()
-                            .try_add(&c);
+                        let r = bank.write_cost_tracker().unwrap().try_add(&c);
                         if let Err(e) = r {
                             use solana_cost_model::cost_tracker::CostTrackerError;
                             if matches!(e, CostTrackerError::WouldExceedAccountDataBlockLimit) {
@@ -797,10 +795,7 @@ impl TaskHandler for DefaultTaskHandler {
         if result.is_err() {
             if let Some(cost2) = cost {
                 if added_cost {
-                    bank
-                        .write_cost_tracker()
-                        .unwrap()
-                        .remove(&cost2);
+                    bank.write_cost_tracker().unwrap().remove(&cost2);
                 }
             }
         }
