@@ -282,7 +282,7 @@ where
             let mut exiting = false;
             move || loop {
                 sleep(pool_cleaner_interval);
-                info!("Scheduler pool cleaner: start!!!",);
+                trace!("Scheduler pool cleaner: start!!!",);
 
                 let Some(scheduler_pool) = weak_scheduler_pool.upgrade() else {
                     break;
@@ -394,6 +394,7 @@ where
                 if exiting && active_timeout_listener_count == 0 {
                     // Wait a bit to ensure the replay stage has gone.
                     sleep(Duration::from_secs(1));
+
                     let mut id_and_inner = scheduler_pool
                         .block_production_scheduler_inner
                         .lock()
@@ -575,7 +576,7 @@ where
         &self,
         id_and_inner: &mut MutexGuard<'_, (Option<SchedulerId>, Option<S::Inner>)>,
     ) {
-        info!("flash session: start!");
+        trace!("spawn block production scheduler: start!");
         let (handler_count, banking_stage_context) = {
             let mut respawner_write = self.block_production_scheduler_respawner.lock().unwrap();
             let BlockProductionSchedulerRespawner {
@@ -614,7 +615,7 @@ where
         assert!(id_and_inner.0.replace(inner.id()).is_none());
         assert!(id_and_inner.1.replace(inner).is_none());
         self.block_production_scheduler_condvar.notify_all();
-        info!("flash session: end!");
+        trace!("spawn block production scheduler: end!");
     }
 
     pub fn default_handler_count() -> usize {
@@ -699,39 +700,35 @@ impl TaskHandler for DefaultTaskHandler {
     ) {
         // scheduler must properly prevent conflicting tx executions. thus, task handler isn't
         // responsible for locking.
-
+        let bank = scheduling_context().bank();
         let transaction = task.transaction();
         let index = task.index();
 
         let (cost, added_cost) =
             if matches!(scheduling_context.mode(), SchedulingMode::BlockProduction) {
-                let move_precompile_verification_to_svm = scheduling_context
-                    .bank()
-                    .feature_set
-                    .is_active(&feature_set::move_precompile_verification_to_svm::id());
                 let TransactionContext::BlockProduction(max_age) = task.context() else {
                     panic!()
                 };
 
-                if let Err(e) = scheduling_context
-                    .bank()
-                    .refilter_prebuilt_block_production_transaction(
+                let move_precompile_verification_to_svm = bank
+                    .feature_set
+                    .is_active(&feature_set::move_precompile_verification_to_svm::id());
+                if let Err(error) = bank.refilter_prebuilt_block_production_transaction(
                         transaction,
                         max_age,
                         move_precompile_verification_to_svm,
                     )
                 {
-                    *result = Err(e);
+                    *result = Err(error);
                     (None, false)
                 } else {
                     use solana_cost_model::cost_model::CostModel;
                     let c = CostModel::calculate_cost(
                         transaction,
-                        &scheduling_context.bank().feature_set,
+                        &bank.feature_set,
                     );
                     loop {
-                        let r = scheduling_context
-                            .bank()
+                        let r = bank
                             .write_cost_tracker()
                             .unwrap()
                             .try_add(&c);
@@ -754,9 +751,7 @@ impl TaskHandler for DefaultTaskHandler {
             };
 
         if result.is_ok() {
-            let batch = scheduling_context
-                .bank()
-                .prepare_unlocked_batch_from_single_tx(transaction);
+            let batch = bank.prepare_unlocked_batch_from_single_tx(transaction);
             let transaction_indexes = match scheduling_context.mode() {
                 SchedulingMode::BlockVerification => vec![index.try_into().unwrap()],
                 SchedulingMode::BlockProduction => {
@@ -789,7 +784,7 @@ impl TaskHandler for DefaultTaskHandler {
 
             *result = execute_batch(
                 &batch_with_indexes,
-                scheduling_context.bank(),
+                bank,
                 handler_context.transaction_status_sender.as_ref(),
                 handler_context.replay_vote_sender.as_ref(),
                 timings,
@@ -802,8 +797,7 @@ impl TaskHandler for DefaultTaskHandler {
         if result.is_err() {
             if let Some(cost2) = cost {
                 if added_cost {
-                    scheduling_context
-                        .bank()
+                    bank
                         .write_cost_tracker()
                         .unwrap()
                         .remove(&cost2);
