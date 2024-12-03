@@ -16,6 +16,7 @@ use {
     dyn_clone::{clone_trait_object, DynClone},
     log::*,
     scopeguard::defer,
+    solana_cost_model::cost_model::CostModel,
     solana_feature_set as feature_set,
     solana_ledger::blockstore_processor::{
         execute_batch, TransactionBatchWithIndexes, TransactionStatusSender,
@@ -58,7 +59,6 @@ use {
     trait_set::trait_set,
     vec_extract_if_polyfill::MakeExtractIf,
 };
-use solana_cost_model::cost_model::CostModel;
 
 #[derive(Clone)]
 pub struct BankingStageContext {
