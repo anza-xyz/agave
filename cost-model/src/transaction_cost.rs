@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use solana_runtime_transaction::compute_budget_instruction_details::ComputeBudgetInstructionDetails;
 use {
     crate::block_cost_limits,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
@@ -248,13 +250,8 @@ impl solana_runtime_transaction::transaction_meta::StaticMeta for WritableKeysTr
         &DUMMY
     }
 
-    fn compute_budget_limits(
-        &self,
-        _feature_set: &solana_feature_set::FeatureSet,
-    ) -> solana_sdk::transaction::Result<
-        solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
-    > {
-        unimplemented!("WritableKeysTransaction::compute_budget_limits")
+    fn compute_budget_instruction_details(&self) -> &ComputeBudgetInstructionDetails {
+        unimplemented!("WritableKeysTransaction::compute_budget_instruction_details")
     }
 }
 

@@ -1,12 +1,11 @@
 #[cfg(not(target_os = "solana"))]
 use crate::{
-    address_lookup_table::AddressLookupTableAccount,
-    message::v0::{LoadedAddresses, MessageAddressTableLookup},
+    v0::{LoadedAddresses, MessageAddressTableLookup},
+    AddressLookupTableAccount,
 };
 use {
-    crate::{instruction::Instruction, message::MessageHeader, pubkey::Pubkey},
+    crate::MessageHeader, core::fmt, solana_instruction::Instruction, solana_pubkey::Pubkey,
     std::collections::BTreeMap,
-    thiserror::Error,
 };
 
 /// A helper struct to collect pubkeys compiled for a set of instructions
@@ -17,14 +16,30 @@ pub(crate) struct CompiledKeys {
 }
 
 #[cfg_attr(target_os = "solana", allow(dead_code))]
-#[derive(PartialEq, Debug, Error, Eq, Clone)]
+#[derive(PartialEq, Debug, Eq, Clone)]
 pub enum CompileError {
-    #[error("account index overflowed during compilation")]
     AccountIndexOverflow,
-    #[error("address lookup table index overflowed during compilation")]
     AddressTableLookupIndexOverflow,
-    #[error("encountered unknown account key `{0}` during instruction compilation")]
     UnknownInstructionKey(Pubkey),
+}
+
+impl std::error::Error for CompileError {}
+
+impl fmt::Display for CompileError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            CompileError::AccountIndexOverflow => {
+                f.write_str("account index overflowed during compilation")
+            }
+            CompileError::AddressTableLookupIndexOverflow => {
+                f.write_str("address lookup table index overflowed during compilation")
+            }
+            CompileError::UnknownInstructionKey(key) => f.write_fmt(format_args!(
+                "encountered unknown account key `{0}` during instruction compilation",
+                key,
+            )),
+        }
+    }
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
@@ -184,7 +199,7 @@ impl CompiledKeys {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::instruction::AccountMeta, bitflags::bitflags};
+    use {super::*, bitflags::bitflags, solana_instruction::AccountMeta};
 
     bitflags! {
         #[derive(Clone, Copy)]

@@ -1,4 +1,4 @@
-use super::v0::{LoadedAddresses, MessageAddressTableLookup};
+use crate::v0::{LoadedAddresses, MessageAddressTableLookup};
 #[deprecated(
     since = "2.1.0",
     note = "Use solana_transaction_error::AddressLoaderError instead"

@@ -1,12 +1,12 @@
-//! The `Instructions` struct is a workaround for the lack of Vec<T> support in wasm-bindgen
+//! The `Instructions` struct is a legacy workaround
+//! from when wasm-bindgen lacked Vec<T> support
 //! (ref: https://github.com/rustwasm/wasm-bindgen/issues/111)
-#![cfg(target_arch = "wasm32")]
-use {crate::instruction::Instruction, wasm_bindgen::prelude::*};
+use {crate::Instruction, wasm_bindgen::prelude::*};
 
 #[wasm_bindgen]
 #[derive(Default)]
 pub struct Instructions {
-    instructions: Vec<Instruction>,
+    instructions: std::vec::Vec<Instruction>,
 }
 
 #[wasm_bindgen]
@@ -21,7 +21,7 @@ impl Instructions {
     }
 }
 
-impl From<Instructions> for Vec<Instruction> {
+impl From<Instructions> for std::vec::Vec<Instruction> {
     fn from(instructions: Instructions) -> Self {
         instructions.instructions
     }

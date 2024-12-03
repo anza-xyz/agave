@@ -577,7 +577,8 @@ impl Consumer {
             .iter()
             .filter_map(|transaction| {
                 transaction
-                    .compute_budget_limits(&bank.feature_set)
+                    .compute_budget_instruction_details()
+                    .sanitize_and_convert_to_compute_budget_limits()
                     .ok()
                     .map(|limits| limits.compute_unit_price)
             })

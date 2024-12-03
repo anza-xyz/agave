@@ -189,7 +189,7 @@ annotateBlockexplorerUrl() {
 }
 
 build() {
-  supported=("20.04")
+  supported=("22.04")
   declare MAYBE_DOCKER=
   if [[ $(uname) != Linux || ! " ${supported[*]} " =~ $(lsb_release -sr) ]]; then
     # shellcheck source=ci/docker/env.sh

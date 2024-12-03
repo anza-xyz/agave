@@ -1,6 +1,8 @@
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 //! Sequences of [`Instruction`]s executed within a single transaction.
 //!
-//! [`Instruction`]: crate::instruction::Instruction
+//! [`Instruction`]: https://docs.rs/solana-instruction/latest/solana_instruction/struct.Instruction.html
 //!
 //! In Solana, programs execute instructions, and clients submit sequences
 //! of instructions to the network to be atomically executed as [`Transaction`]s.
@@ -37,8 +39,13 @@
 //! types continue to be exposed to Solana programs, for backwards compatibility
 //! reasons.
 
+pub mod compiled_instruction;
 mod compiled_keys;
 pub mod legacy;
+#[cfg(feature = "serde")]
+use serde_derive::{Deserialize, Serialize};
+#[cfg(feature = "frozen-abi")]
+use solana_frozen_abi_macro::AbiExample;
 
 #[cfg(not(target_os = "solana"))]
 #[path = ""]
@@ -73,8 +80,8 @@ pub const MESSAGE_HEADER_LENGTH: usize = 3;
 /// `CompiledInstruction`s then reference by index the accounts they require in
 /// the single shared account list.
 ///
-/// [`Instruction`]: crate::instruction::Instruction
-/// [`CompiledInstruction`]: crate::instruction::CompiledInstruction
+/// [`Instruction`]: https://docs.rs/solana-instruction/latest/solana_instruction/struct.Instruction.html
+/// [`CompiledInstruction`]: crate::compiled_instruction::CompiledInstruction
 ///
 /// The shared account list is ordered by the permissions required of the accounts:
 ///
@@ -92,8 +99,12 @@ pub const MESSAGE_HEADER_LENGTH: usize = 3;
 ///
 /// [PoH]: https://docs.solanalabs.com/consensus/synchronization
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone, Copy)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(
+    feature = "serde",
+    derive(Deserialize, Serialize),
+    serde(rename_all = "camelCase")
+)]
+#[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
 pub struct MessageHeader {
     /// The number of signatures required for this message to be considered
     /// valid. The signers of those signatures must match the first
@@ -108,4 +119,13 @@ pub struct MessageHeader {
     /// The last `num_readonly_unsigned_accounts` of the unsigned keys are
     /// read-only accounts.
     pub num_readonly_unsigned_accounts: u8,
+}
+
+/// The definition of address lookup table accounts.
+///
+/// As used by the `crate::v0` message format.
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct AddressLookupTableAccount {
+    pub key: solana_pubkey::Pubkey,
+    pub addresses: Vec<solana_pubkey::Pubkey>,
 }

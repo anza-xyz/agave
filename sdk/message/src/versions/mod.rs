@@ -1,19 +1,23 @@
+#[cfg(feature = "frozen-abi")]
+use solana_frozen_abi_macro::{frozen_abi, AbiEnumVisitor, AbiExample};
 use {
     crate::{
-        hash::Hash,
-        instruction::CompiledInstruction,
-        message::{legacy::Message as LegacyMessage, v0::MessageAddressTableLookup, MessageHeader},
-        pubkey::Pubkey,
+        compiled_instruction::CompiledInstruction, legacy::Message as LegacyMessage,
+        v0::MessageAddressTableLookup, MessageHeader,
     },
+    solana_hash::Hash,
+    solana_pubkey::Pubkey,
+    solana_sanitize::{Sanitize, SanitizeError},
+    std::collections::HashSet,
+};
+#[cfg(feature = "serde")]
+use {
     serde::{
         de::{self, Deserializer, SeqAccess, Unexpected, Visitor},
         ser::{SerializeTuple, Serializer},
     },
     serde_derive::{Deserialize, Serialize},
-    solana_hash::HASH_BYTES,
-    solana_sanitize::{Sanitize, SanitizeError},
-    solana_short_vec as short_vec,
-    std::{collections::HashSet, fmt},
+    std::fmt,
 };
 
 mod sanitized;
@@ -34,7 +38,7 @@ pub const MESSAGE_VERSION_PREFIX: u8 = 0x80;
 /// format.
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "EjjHMjAnRrd86DuTgysFXRicMiAQv3vTvzRzcMJCjYfC"),
+    frozen_abi(digest = "2RTtea34NPrb8p9mWHCWjFh76cwP3MbjSmeoj5CXEBwN"),
     derive(AbiEnumVisitor, AbiExample)
 )]
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -146,23 +150,26 @@ impl VersionedMessage {
         }
     }
 
+    #[cfg(feature = "bincode")]
     pub fn serialize(&self) -> Vec<u8> {
         bincode::serialize(self).unwrap()
     }
 
+    #[cfg(all(feature = "bincode", feature = "blake3"))]
     /// Compute the blake3 hash of this transaction's message
     pub fn hash(&self) -> Hash {
         let message_bytes = self.serialize();
         Self::hash_raw_message(&message_bytes)
     }
 
+    #[cfg(feature = "blake3")]
     /// Compute the blake3 hash of a raw transaction message
     pub fn hash_raw_message(message_bytes: &[u8]) -> Hash {
         use blake3::traits::digest::Digest;
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"solana-tx-message-v1");
         hasher.update(message_bytes);
-        let hash_bytes: [u8; HASH_BYTES] = hasher.finalize().into();
+        let hash_bytes: [u8; solana_hash::HASH_BYTES] = hasher.finalize().into();
         hash_bytes.into()
     }
 }
@@ -173,6 +180,7 @@ impl Default for VersionedMessage {
     }
 }
 
+#[cfg(feature = "serde")]
 impl serde::Serialize for VersionedMessage {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -194,11 +202,13 @@ impl serde::Serialize for VersionedMessage {
     }
 }
 
+#[cfg(feature = "serde")]
 enum MessagePrefix {
     Legacy(u8),
     Versioned(u8),
 }
 
+#[cfg(feature = "serde")]
 impl<'de> serde::Deserialize<'de> for MessagePrefix {
     fn deserialize<D>(deserializer: D) -> Result<MessagePrefix, D::Error>
     where
@@ -235,6 +245,7 @@ impl<'de> serde::Deserialize<'de> for MessagePrefix {
     }
 }
 
+#[cfg(feature = "serde")]
 impl<'de> serde::Deserialize<'de> for VersionedMessage {
     fn deserialize<D>(deserializer: D) -> Result<VersionedMessage, D::Error>
     where
@@ -264,10 +275,10 @@ impl<'de> serde::Deserialize<'de> for VersionedMessage {
                         struct RemainingLegacyMessage {
                             pub num_readonly_signed_accounts: u8,
                             pub num_readonly_unsigned_accounts: u8,
-                            #[serde(with = "short_vec")]
+                            #[cfg_attr(feature = "serde", serde(with = "solana_short_vec"))]
                             pub account_keys: Vec<Pubkey>,
                             pub recent_blockhash: Hash,
-                            #[serde(with = "short_vec")]
+                            #[cfg_attr(feature = "serde", serde(with = "solana_short_vec"))]
                             pub instructions: Vec<CompiledInstruction>,
                         }
 
@@ -324,10 +335,8 @@ impl<'de> serde::Deserialize<'de> for VersionedMessage {
 mod tests {
     use {
         super::*,
-        crate::{
-            instruction::{AccountMeta, Instruction},
-            message::v0::MessageAddressTableLookup,
-        },
+        crate::v0::MessageAddressTableLookup,
+        solana_instruction::{AccountMeta, Instruction},
     };
 
     #[test]

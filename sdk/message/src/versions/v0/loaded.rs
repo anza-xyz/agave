@@ -1,9 +1,9 @@
+#[cfg(feature = "serde")]
+use serde_derive::{Deserialize, Serialize};
 use {
-    crate::{
-        bpf_loader_upgradeable,
-        message::{v0, AccountKeys},
-        pubkey::Pubkey,
-    },
+    crate::{v0, AccountKeys},
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::bpf_loader_upgradeable,
     std::{borrow::Cow, collections::HashSet},
 };
 
@@ -21,7 +21,8 @@ pub struct LoadedMessage<'a> {
 
 /// Collection of addresses loaded from on-chain lookup tables, split
 /// by readonly and writable.
-#[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct LoadedAddresses {
     /// List of addresses for writable loaded accounts
     pub writable: Vec<Pubkey>,
@@ -187,8 +188,9 @@ impl<'a> LoadedMessage<'a> {
 mod tests {
     use {
         super::*,
-        crate::{instruction::CompiledInstruction, message::MessageHeader, system_program, sysvar},
+        crate::{compiled_instruction::CompiledInstruction, MessageHeader},
         itertools::Itertools,
+        solana_sdk_ids::{system_program, sysvar},
     };
 
     fn check_test_loaded_message() -> (LoadedMessage<'static>, [Pubkey; 6]) {
@@ -270,8 +272,6 @@ mod tests {
 
     #[test]
     fn test_is_writable() {
-        solana_logger::setup();
-
         let reserved_account_keys = HashSet::from_iter([sysvar::clock::id(), system_program::id()]);
         let create_message_with_keys = |keys: Vec<Pubkey>| {
             LoadedMessage::new(

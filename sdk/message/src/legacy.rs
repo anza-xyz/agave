@@ -5,29 +5,57 @@
 //! `v0` is a [future message format] that encodes more account keys into a
 //! transaction than the legacy format.
 //!
-//! [`legacy`]: crate::message::legacy
-//! [`v0`]: crate::message::v0
+//! [`legacy`]: crate::legacy
+//! [`v0`]: crate::v0
 //! [future message format]: https://docs.solanalabs.com/proposals/versioned-transactions
 
 #![allow(clippy::arithmetic_side_effects)]
 
-#[cfg(target_arch = "wasm32")]
-use crate::wasm_bindgen;
 #[allow(deprecated)]
 pub use builtins::{BUILTIN_PROGRAMS_KEYS, MAYBE_BUILTIN_KEY_OR_SYSVAR};
+#[cfg(feature = "serde")]
+use serde_derive::{Deserialize, Serialize};
+#[cfg(feature = "frozen-abi")]
+use solana_frozen_abi_macro::{frozen_abi, AbiExample};
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::wasm_bindgen;
 use {
     crate::{
-        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
-        hash::Hash,
-        instruction::{CompiledInstruction, Instruction},
-        message::{compiled_keys::CompiledKeys, MessageHeader},
-        pubkey::Pubkey,
-        system_instruction, system_program, sysvar,
+        compiled_instruction::CompiledInstruction, compiled_keys::CompiledKeys, MessageHeader,
     },
+    solana_hash::Hash,
+    solana_instruction::Instruction,
+    solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
-    solana_short_vec as short_vec,
+    solana_sdk_ids::{
+        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, system_program, sysvar,
+    },
     std::{collections::HashSet, convert::TryFrom, str::FromStr},
 };
+
+// copied from deprecated code in solana_program::sysvar to avoid a dependency.
+// This should be removed when the items that depend on it are removed.
+lazy_static::lazy_static! {
+    // This will be deprecated and so this list shouldn't be modified
+    static ref ALL_IDS: Vec<Pubkey> = vec![
+        sysvar::clock::id(),
+        sysvar::epoch_schedule::id(),
+        sysvar::fees::id(),
+        sysvar::recent_blockhashes::id(),
+        sysvar::rent::id(),
+        sysvar::rewards::id(),
+        sysvar::slot_hashes::id(),
+        sysvar::slot_history::id(),
+        sysvar::stake_history::id(),
+        sysvar::instructions::id(),
+    ];
+}
+
+// copied from deprecated code in solana_program::sysvar to avoid a dependency.
+// This should be removed when the items that depend on it are removed.
+fn is_sysvar_id(id: &Pubkey) -> bool {
+    ALL_IDS.iter().any(|key| key == id)
+}
 
 #[deprecated(
     since = "2.0.0",
@@ -64,7 +92,7 @@ mod builtins {
         pub static ref MAYBE_BUILTIN_KEY_OR_SYSVAR: [bool; 256] = {
             let mut temp_table: [bool; 256] = [false; 256];
             BUILTIN_PROGRAMS_KEYS.iter().for_each(|key| temp_table[key.as_ref()[0] as usize] = true);
-            sysvar::ALL_IDS.iter().for_each(|key| temp_table[key.as_ref()[0] as usize] = true);
+            ALL_IDS.iter().for_each(|key| temp_table[key.as_ref()[0] as usize] = true);
             temp_table
         };
     }
@@ -77,7 +105,7 @@ mod builtins {
 #[allow(deprecated)]
 pub fn is_builtin_key_or_sysvar(key: &Pubkey) -> bool {
     if MAYBE_BUILTIN_KEY_OR_SYSVAR[key.as_ref()[0] as usize] {
-        return sysvar::is_sysvar_id(key) || BUILTIN_PROGRAMS_KEYS.contains(key);
+        return is_sysvar_id(key) || BUILTIN_PROGRAMS_KEYS.contains(key);
     }
     false
 }
@@ -106,9 +134,7 @@ fn compile_instructions(ixs: &[Instruction], keys: &[Pubkey]) -> Vec<CompiledIns
 
 /// A Solana transaction message (legacy).
 ///
-/// See the [`message`] module documentation for further description.
-///
-/// [`message`]: crate::message
+/// See the crate documentation for further description.
 ///
 /// Some constructors accept an optional `payer`, the account responsible for
 /// paying the cost of executing a transaction. In most cases, callers should
@@ -123,18 +149,22 @@ fn compile_instructions(ixs: &[Instruction], keys: &[Pubkey]) -> Vec<CompiledIns
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "4kL6EbLGU25m5eMk4H1cW9YGhA5LejHSgj2w2fhY1NGp"),
+    frozen_abi(digest = "2THeaWnXSGDTsiadKytJTcbjrk4KjfMww9arRLZcwGnw"),
     derive(AbiExample)
 )]
-#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(
+    feature = "serde",
+    derive(Deserialize, Serialize),
+    serde(rename_all = "camelCase")
+)]
+#[derive(Default, Debug, PartialEq, Eq, Clone)]
 pub struct Message {
     /// The message header, identifying signed and read-only `account_keys`.
     // NOTE: Serialization-related changes must be paired with the direct read at sigverify.
     pub header: MessageHeader,
 
     /// All the account keys used by this transaction.
-    #[serde(with = "short_vec")]
+    #[cfg_attr(feature = "serde", serde(with = "solana_short_vec"))]
     pub account_keys: Vec<Pubkey>,
 
     /// The id of a recent ledger entry.
@@ -142,7 +172,7 @@ pub struct Message {
 
     /// Programs that will be executed in sequence and committed in one atomic transaction if all
     /// succeed.
-    #[serde(with = "short_vec")]
+    #[cfg_attr(feature = "serde", serde(with = "solana_short_vec"))]
     pub instructions: Vec<CompiledInstruction>,
 }
 
@@ -153,24 +183,28 @@ pub struct Message {
 #[wasm_bindgen]
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "4kL6EbLGU25m5eMk4H1cW9YGhA5LejHSgj2w2fhY1NGp"),
+    frozen_abi(digest = "2THeaWnXSGDTsiadKytJTcbjrk4KjfMww9arRLZcwGnw"),
     derive(AbiExample)
 )]
-#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(
+    feature = "serde",
+    derive(Deserialize, Serialize),
+    serde(rename_all = "camelCase")
+)]
+#[derive(Default, Debug, PartialEq, Eq, Clone)]
 pub struct Message {
     #[wasm_bindgen(skip)]
     pub header: MessageHeader,
 
     #[wasm_bindgen(skip)]
-    #[serde(with = "short_vec")]
+    #[cfg_attr(feature = "serde", serde(with = "solana_short_vec"))]
     pub account_keys: Vec<Pubkey>,
 
     /// The id of a recent ledger entry.
     pub recent_blockhash: Hash,
 
     #[wasm_bindgen(skip)]
-    #[serde(with = "short_vec")]
+    #[cfg_attr(feature = "serde", serde(with = "solana_short_vec"))]
     pub instructions: Vec<CompiledInstruction>,
 }
 
@@ -226,11 +260,11 @@ impl Message {
     /// # use solana_program::example_mocks::solana_rpc_client;
     /// use anyhow::Result;
     /// use borsh::{BorshSerialize, BorshDeserialize};
+    /// use solana_instruction::Instruction;
+    /// use solana_message::Message;
+    /// use solana_pubkey::Pubkey;
     /// use solana_rpc_client::rpc_client::RpcClient;
     /// use solana_sdk::{
-    ///     instruction::Instruction,
-    ///     message::Message,
-    ///     pubkey::Pubkey,
     ///     signature::{Keypair, Signer},
     ///     transaction::Transaction,
     /// };
@@ -298,11 +332,11 @@ impl Message {
     /// # use solana_program::example_mocks::solana_rpc_client;
     /// use anyhow::Result;
     /// use borsh::{BorshSerialize, BorshDeserialize};
+    /// use solana_instruction::Instruction;
+    /// use solana_message::Message;
+    /// use solana_pubkey::Pubkey;
     /// use solana_rpc_client::rpc_client::RpcClient;
     /// use solana_sdk::{
-    ///     instruction::Instruction,
-    ///     message::Message,
-    ///     pubkey::Pubkey,
     ///     signature::{Keypair, Signer},
     ///     transaction::Transaction,
     /// };
@@ -395,17 +429,16 @@ impl Message {
     /// # use solana_program::example_mocks::solana_rpc_client;
     /// use anyhow::Result;
     /// use borsh::{BorshSerialize, BorshDeserialize};
+    /// use solana_hash::Hash;
+    /// use solana_instruction::Instruction;
+    /// use solana_message::Message;
+    /// use solana_pubkey::Pubkey;
     /// use solana_rpc_client::rpc_client::RpcClient;
     /// use solana_sdk::{
-    ///     hash::Hash,
-    ///     instruction::Instruction,
-    ///     message::Message,
-    ///     nonce,
-    ///     pubkey::Pubkey,
     ///     signature::{Keypair, Signer},
-    ///     system_instruction,
     ///     transaction::Transaction,
     /// };
+    /// use solana_system_interface::instruction::create_nonce_account;
     ///
     /// // A custom program instruction. This would typically be defined in
     /// // another crate so it can be shared between the on-chain program and
@@ -455,12 +488,12 @@ impl Message {
     ///     -> Result<Pubkey>
     /// {
     ///     let nonce_account_address = Keypair::new();
-    ///     let nonce_account_size = nonce::State::size();
+    ///     let nonce_account_size = solana_nonce::state::State::size();
     ///     let nonce_rent = client.get_minimum_balance_for_rent_exemption(nonce_account_size)?;
     ///
     ///     // Assigning the nonce authority to the payer so they can sign for the withdrawal,
     ///     // and we can throw away the nonce address secret key.
-    ///     let create_nonce_instr = system_instruction::create_nonce_account(
+    ///     let create_nonce_instr = create_nonce_account(
     ///         &payer.pubkey(),
     ///         &nonce_account_address.pubkey(),
     ///         &payer.pubkey(),
@@ -481,14 +514,17 @@ impl Message {
     /// # create_offline_initialize_tx(&client, program_id, &payer)?;
     /// # Ok::<(), anyhow::Error>(())
     /// ```
+    #[cfg(feature = "bincode")]
     pub fn new_with_nonce(
         mut instructions: Vec<Instruction>,
         payer: Option<&Pubkey>,
         nonce_account_pubkey: &Pubkey,
         nonce_authority_pubkey: &Pubkey,
     ) -> Self {
-        let nonce_ix =
-            system_instruction::advance_nonce_account(nonce_account_pubkey, nonce_authority_pubkey);
+        let nonce_ix = solana_system_interface::instruction::advance_nonce_account(
+            nonce_account_pubkey,
+            nonce_authority_pubkey,
+        );
         instructions.insert(0, nonce_ix);
         Self::new(&instructions, payer)
     }
@@ -514,14 +550,14 @@ impl Message {
     }
 
     /// Compute the blake3 hash of this transaction's message.
-    #[cfg(not(target_os = "solana"))]
+    #[cfg(all(not(target_os = "solana"), feature = "bincode", feature = "blake3"))]
     pub fn hash(&self) -> Hash {
         let message_bytes = self.serialize();
         Self::hash_raw_message(&message_bytes)
     }
 
     /// Compute the blake3 hash of a raw transaction message.
-    #[cfg(not(target_os = "solana"))]
+    #[cfg(all(not(target_os = "solana"), feature = "blake3"))]
     pub fn hash_raw_message(message_bytes: &[u8]) -> Hash {
         use {blake3::traits::digest::Digest, solana_hash::HASH_BYTES};
         let mut hasher = blake3::Hasher::new();
@@ -535,6 +571,7 @@ impl Message {
         compile_instruction(ix, &self.account_keys)
     }
 
+    #[cfg(feature = "bincode")]
     pub fn serialize(&self) -> Vec<u8> {
         bincode::serialize(self).unwrap()
     }
@@ -699,9 +736,8 @@ impl Message {
 mod tests {
     #![allow(deprecated)]
     use {
-        super::*,
-        crate::{hash, instruction::AccountMeta, message::MESSAGE_HEADER_LENGTH},
-        std::collections::HashSet,
+        super::*, crate::MESSAGE_HEADER_LENGTH, solana_instruction::AccountMeta,
+        solana_sha256_hasher::hash, std::collections::HashSet,
     };
 
     #[test]
@@ -720,7 +756,7 @@ mod tests {
         // BUILTIN_PROGRAMS_KEYS without the risk of breaking consensus.
         let builtins = format!("{:?}", *BUILTIN_PROGRAMS_KEYS);
         assert_eq!(
-            format!("{}", hash::hash(builtins.as_bytes())),
+            format!("{}", hash(builtins.as_bytes())),
             "ACqmMkYbo9eqK6QrRSrB3HLyR6uHhLf31SCfGUAJjiWj"
         );
     }
@@ -981,5 +1017,10 @@ mod tests {
             message.hash(),
             Hash::from_str("7VWCF4quo2CcWQFNUayZiorxpiR5ix8YzLebrXKf3fMF").unwrap()
         )
+    }
+
+    #[test]
+    fn test_inline_all_ids() {
+        assert_eq!(solana_sysvar::ALL_IDS.to_vec(), ALL_IDS.to_vec());
     }
 }

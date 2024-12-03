@@ -270,10 +270,7 @@ impl<'a> SnapshotMinimizer<'a> {
         &self,
         minimized_slot_set: DashSet<Slot>,
     ) -> (Vec<Slot>, Vec<Arc<AccountStorageEntry>>) {
-        let snapshot_storages = self
-            .accounts_db()
-            .get_snapshot_storages(..=self.starting_slot)
-            .0;
+        let snapshot_storages = self.accounts_db().get_storages(..=self.starting_slot).0;
 
         let dead_slots = Mutex::new(Vec::new());
         let dead_storages = Mutex::new(Vec::new());
@@ -656,7 +653,7 @@ mod tests {
         };
         minimizer.minimize_accounts_db();
 
-        let snapshot_storages = accounts.get_snapshot_storages(..=current_slot).0;
+        let snapshot_storages = accounts.get_storages(..=current_slot).0;
         assert_eq!(snapshot_storages.len(), 3);
 
         let mut account_count = 0;

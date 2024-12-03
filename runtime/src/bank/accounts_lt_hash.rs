@@ -875,11 +875,7 @@ mod tests {
         let expected_accounts_lt_hash = bank.accounts_lt_hash.lock().unwrap().clone();
 
         // go through the storages to find the duplicates
-        let (mut storages, _slots) = bank
-            .rc
-            .accounts
-            .accounts_db
-            .get_snapshot_storages(RangeFull);
+        let (mut storages, _slots) = bank.rc.accounts.accounts_db.get_storages(RangeFull);
         // sort the storages in slot-descending order
         // this makes skipping the latest easier
         storages.sort_unstable_by_key(|storage| cmp::Reverse(storage.slot()));

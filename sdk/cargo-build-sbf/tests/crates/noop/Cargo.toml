@@ -15,4 +15,9 @@ solana-program = { path = "../../../../program", version = "=2.2.0" }
 [lib]
 crate-type = ["cdylib"]
 
+[patch.crates-io]
+solana-decode-error = { path = "../../../../decode-error" }
+solana-instruction = { path = "../../../../instruction" }
+solana-pubkey = { path = "../../../../pubkey" }
+
 [workspace]

@@ -16,7 +16,7 @@ use {
 #[cfg_attr(test, derive(Eq, PartialEq))]
 #[cfg_attr(feature = "dev-context-only-utils", derive(Clone))]
 #[derive(Default, Debug)]
-pub(crate) struct ComputeBudgetInstructionDetails {
+pub struct ComputeBudgetInstructionDetails {
     // compute-budget instruction details:
     // the first field in tuple is instruction index, second field is the unsanitized value set by user
     requested_compute_unit_limit: Option<(u8, u32)>,

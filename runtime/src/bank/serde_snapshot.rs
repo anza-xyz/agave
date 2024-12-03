@@ -52,7 +52,7 @@ mod tests {
         output_dir: P,
         storage_access: StorageAccess,
     ) -> Result<StorageAndNextAccountsFileId, AccountsFileError> {
-        let storage_entries = accounts_db.get_snapshot_storages(RangeFull).0;
+        let storage_entries = accounts_db.get_storages(RangeFull).0;
         let storage: AccountStorageMap = AccountStorageMap::with_capacity(storage_entries.len());
         let mut next_append_vec_id = 0;
         for storage_entry in storage_entries.into_iter() {
@@ -583,7 +583,7 @@ mod tests {
             S: serde::Serializer,
         {
             let bank = Bank::default_for_tests();
-            let snapshot_storages = AccountsDb::example().get_snapshot_storages(0..1).0;
+            let snapshot_storages = AccountsDb::example().get_storages(0..1).0;
             // ensure there is at least one snapshot storage example for ABI digesting
             assert!(!snapshot_storages.is_empty());
 

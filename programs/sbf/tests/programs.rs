@@ -17,8 +17,9 @@ use {
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_feature_set::{self as feature_set, FeatureSet},
     solana_ledger::token_balances::collect_token_balances,
-    solana_program_runtime::invoke_context::mock_process_instruction,
-    solana_rbpf::vm::ContextObject,
+    solana_program_runtime::{
+        invoke_context::mock_process_instruction, solana_rbpf::vm::ContextObject,
+    },
     solana_runtime::{
         bank::{Bank, TransactionBalancesSet},
         bank_client::BankClient,
@@ -5439,4 +5440,66 @@ fn test_function_call_args() {
     );
     assert_eq!(decoded.many_args_1, verify_many_args(&input_data));
     assert_eq!(decoded.many_args_2, verify_many_args(&input_data));
+}
+
+#[test]
+#[cfg(feature = "sbf_rust")]
+fn test_mem_syscalls_overlap_account_begin_or_end() {
+    solana_logger::setup();
+
+    for direct_mapping in [false, true] {
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(100_123_456_789);
+
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        let mut feature_set = FeatureSet::all_enabled();
+        if !direct_mapping {
+            feature_set.deactivate(&feature_set::bpf_account_data_direct_mapping::id());
+        }
+
+        let account_keypair = Keypair::new();
+
+        bank.feature_set = Arc::new(feature_set);
+        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+        let mut bank_client = BankClient::new_shared(bank);
+        let authority_keypair = Keypair::new();
+
+        let (bank, program_id) = load_upgradeable_program_and_advance_slot(
+            &mut bank_client,
+            bank_forks.as_ref(),
+            &mint_keypair,
+            &authority_keypair,
+            "solana_sbf_rust_account_mem",
+        );
+
+        let mint_pubkey = mint_keypair.pubkey();
+        let account_metas = vec![
+            AccountMeta::new(mint_pubkey, true),
+            AccountMeta::new_readonly(program_id, false),
+            AccountMeta::new(account_keypair.pubkey(), false),
+        ];
+
+        let account = AccountSharedData::new(42, 1024, &program_id);
+        bank.store_account(&account_keypair.pubkey(), &account);
+
+        for instr in 0..=13 {
+            println!("Testing direct_mapping:{direct_mapping} instruction:{instr}");
+            let instruction =
+                Instruction::new_with_bytes(program_id, &[instr], account_metas.clone());
+
+            let message = Message::new(&[instruction], Some(&mint_pubkey));
+            let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
+            let (result, _, logs) = process_transaction_and_record_inner(&bank, tx);
+
+            if direct_mapping {
+                assert!(logs.last().unwrap().ends_with(" failed: InvalidLength"));
+            } else if result.is_err() {
+                // without direct mapping, we should never get the InvalidLength error
+                assert!(!logs.last().unwrap().ends_with(" failed: InvalidLength"));
+            }
+        }
+    }
 }

@@ -490,7 +490,6 @@ pub mod loader_upgradeable_instruction;
 pub mod loader_v4;
 pub mod loader_v4_instruction;
 pub mod log;
-pub mod message;
 pub mod nonce;
 pub mod program;
 pub mod program_error;
@@ -524,6 +523,8 @@ pub use solana_fee_calculator as fee_calculator;
 pub use solana_keccak_hasher as keccak;
 #[deprecated(since = "2.1.0", note = "Use `solana-last-restart-slot` crate instead")]
 pub use solana_last_restart_slot as last_restart_slot;
+#[deprecated(since = "2.2.0", note = "Use `solana-message` crate instead")]
+pub use solana_message as message;
 #[deprecated(since = "2.1.0", note = "Use `solana-program-memory` crate instead")]
 pub use solana_program_memory as program_memory;
 #[deprecated(since = "2.1.0", note = "Use `solana-program-pack` crate instead")]
