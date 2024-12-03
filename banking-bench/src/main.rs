@@ -47,6 +47,7 @@ use {
         time::{Duration, Instant},
     },
 };
+use solana_core::banking_stage::update_bank_forks_and_poh_recorder_for_new_tpu_bank;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -605,11 +606,12 @@ fn main() {
             new_bank_time.stop();
 
             let mut insert_time = Measure::start("insert_time");
-            let mut poh_recorder_write = poh_recorder.write().unwrap();
-            bank_forks
-                .write()
-                .unwrap()
-                .insert_with_scheduling_mode(SchedulingMode::BlockProduction, new_bank);
+            update_bank_forks_and_poh_recorder_for_new_tpu_bank(
+                &bank_forks,
+                &poh_recorder,
+                new_bank,
+                false,
+            );
             bank = bank_forks
                 .read()
                 .unwrap()
@@ -617,14 +619,6 @@ fn main() {
                 .clone_with_scheduler();
             insert_time.stop();
 
-            // set cost tracker limits to MAX so it will not filter out TXs
-            bank.write_cost_tracker()
-                .unwrap()
-                .set_limits(u64::MAX, u64::MAX, u64::MAX);
-
-            assert!(poh_recorder_write.bank().is_none());
-            poh_recorder_write.set_bank_for_test(bank.clone());
-            assert!(poh_recorder_write.bank().is_some());
             debug!(
                 "new_bank_time: {}us insert_time: {}us poh_time: {}us",
                 new_bank_time.as_us(),

@@ -35,7 +35,7 @@ use {
     },
     solana_sdk::{
         clock::Slot, genesis_config::GenesisConfig, pubkey::Pubkey,
-        scheduling::SchedulingMode::BlockProduction, shred_version::compute_shred_version,
+        shred_version::compute_shred_version,
         signature::Signer, signer::keypair::Keypair,
     },
     solana_streamer::socket::SocketAddrSpace,
@@ -56,6 +56,7 @@ use {
     },
     thiserror::Error,
 };
+use crate::banking_stage::update_bank_forks_and_poh_recorder_for_new_tpu_bank;
 
 /// This creates a simulated environment around `BankingStage` to produce leader's blocks based on
 /// recorded banking trace events (`TimedTracedEvent`).
@@ -518,10 +519,12 @@ impl SimulatorLoop {
                     logger.log_frozen_bank_cost(&bank, bank_created.elapsed());
                 }
                 self.retransmit_slots_sender.send(bank.slot()).unwrap();
-                self.bank_forks
-                    .write()
-                    .unwrap()
-                    .insert_with_scheduling_mode(BlockProduction, new_bank);
+                update_bank_forks_and_poh_recorder_for_new_tpu_bank(
+                    &self.bank_forks,
+                    &self.poh_recorder,
+                    new_bank,
+                    false,
+                );
                 (bank, bank_created) = (
                     self.bank_forks
                         .read()
@@ -531,10 +534,6 @@ impl SimulatorLoop {
                     Instant::now(),
                 );
                 logger.log_ongoing_bank_cost(&bank, bank_created.elapsed());
-                self.poh_recorder
-                    .write()
-                    .unwrap()
-                    .set_bank(bank.clone_with_scheduler(), false);
             } else {
                 logger.log_ongoing_bank_cost(&bank, bank_created.elapsed());
             }

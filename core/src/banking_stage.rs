@@ -63,6 +63,10 @@ use {
         transaction_state_container::TransactionStateContainer,
     },
 };
+use solana_runtime::bank::Bank;
+use solana_sdk::scheduling::SchedulingMode;
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 
 // Below modules are pub to allow use by banking_stage bench
 pub mod committer;
@@ -932,6 +936,22 @@ impl BankingStage {
         }
         Ok(())
     }
+}
+
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+pub(crate) fn update_bank_forks_and_poh_recorder_for_new_tpu_bank(
+    bank_forks: &RwLock<BankForks>,
+    poh_recorder: &RwLock<PohRecorder>,
+    tpu_bank: Bank,
+    track_transaction_indexes: bool,
+) {
+    let mut poh_recorder = poh_recorder.write().unwrap();
+
+    let tpu_bank = bank_forks
+        .write()
+        .unwrap()
+        .insert_with_scheduling_mode(SchedulingMode::BlockProduction, tpu_bank);
+    poh_recorder.set_bank(tpu_bank, track_transaction_indexes);
 }
 
 #[cfg(test)]

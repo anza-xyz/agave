@@ -90,6 +90,7 @@ use {
         time::{Duration, Instant},
     },
 };
+use crate::banking_stage::update_bank_forks_and_poh_recorder_for_new_tpu_bank;
 
 pub const MAX_ENTRY_RECV_PER_ITER: usize = 512;
 pub const SUPERMINORITY_THRESHOLD: f64 = 1f64 / 3f64;
@@ -2222,14 +2223,12 @@ impl ReplayStage {
             // new()-ing of its child bank
             banking_tracer.hash_event(parent.slot(), &parent.last_blockhash(), &parent.hash());
 
-            let tpu_bank = bank_forks
-                .write()
-                .unwrap()
-                .insert_with_scheduling_mode(SchedulingMode::BlockProduction, tpu_bank);
-            poh_recorder
-                .write()
-                .unwrap()
-                .set_bank(tpu_bank, track_transaction_indexes);
+            update_bank_forks_and_poh_recorder_for_new_tpu_bank(
+                bank_forks,
+                poh_recorder,
+                tpu_bank,
+                track_transaction_indexes,
+            );
             true
         } else {
             error!("{} No next leader found", my_pubkey);
