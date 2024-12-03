@@ -46,6 +46,7 @@ use {
         time::{Duration, Instant},
     },
 };
+use assert_matches::assert_matches;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
