@@ -34,7 +34,7 @@ solana-packet = { workspace = true, features = ["bincode"] }
 solana-program = { workspace = true, default-features = false }
 solana-pubkey = { workspace = true, default-features = false }
 solana-rayon-threadlimit = { workspace = true }
-solana-sdk = { workspace = true }
+solana-sdk = { workspace = true, optional = true }
 solana-short-vec = { workspace = true }
 solana-signature = { workspace = true, features = ["verify"] }
 solana-time-utils = { workspace = true }
@@ -56,7 +56,7 @@ solana-perf = { path = ".", features = ["dev-context-only-utils"] }
 test-case = { workspace = true }
 
 [features]
-dev-context-only-utils = ["dep:solana-vote-program"]
+dev-context-only-utils = ["dep:solana-vote-program", "dep:solana-sdk"]
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
