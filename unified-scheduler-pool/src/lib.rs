@@ -316,9 +316,9 @@ where
                 };
 
                 let banking_stage_status = scheduler_pool.banking_stage_status();
-                if matches!(banking_stage_status, Some(BankingStageStatus::Exited)) {
-                    scheduler_pool.unregister_banking_stage();
+                if !exiting && matches!(banking_stage_status, Some(BankingStageStatus::Exited)) {
                     exiting = true;
+                    scheduler_pool.unregister_banking_stage();
                 }
 
                 let trashed_inner_count = {
@@ -554,7 +554,7 @@ where
     }
 
     fn unregister_banking_stage(&self) {
-        *self.block_production_scheduler_respawner.lock().unwrap() = None;
+        assert!(self.block_production_scheduler_respawner.lock().unwrap().replace(None).is_some());
     }
 
     fn banking_stage_status(&self) -> Option<BankingStageStatus> {
