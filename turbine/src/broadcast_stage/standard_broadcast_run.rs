@@ -523,6 +523,7 @@ mod test {
             blockstore::Blockstore, genesis_utils::create_genesis_config, get_tmp_ledger_path,
             shred::max_ticks_per_n_shreds,
         },
+        solana_net_utils::bind_to_unspecified,
         solana_runtime::bank::Bank,
         solana_sdk::{
             genesis_config::GenesisConfig,
@@ -558,7 +559,7 @@ mod test {
             leader_keypair.clone(),
             SocketAddrSpace::Unspecified,
         ));
-        let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
+        let socket = bind_to_unspecified().unwrap();
         let mut genesis_config = create_genesis_config(10_000).genesis_config;
         genesis_config.ticks_per_slot = max_ticks_per_n_shreds(num_shreds_per_slot, None) + 1;
 

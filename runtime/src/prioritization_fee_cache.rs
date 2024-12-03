@@ -1,6 +1,6 @@
 use {
     crate::{bank::Bank, prioritization_fee::*},
-    crossbeam_channel::{unbounded, Receiver, Sender},
+    crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError},
     log::*,
     solana_accounts_db::account_locks::validate_account_locks,
     solana_measure::measure_us,
@@ -15,7 +15,8 @@ use {
             atomic::{AtomicU64, Ordering},
             Arc, RwLock,
         },
-        thread::{Builder, JoinHandle},
+        thread::{sleep, Builder, JoinHandle},
+        time::Duration,
     },
 };
 
@@ -358,7 +359,18 @@ impl PrioritizationFeeCache {
         // for a slot. The updates are tracked and finalized by bank_id.
         let mut unfinalized = UnfinalizedPrioritizationFees::new();
 
-        for update in receiver.iter() {
+        loop {
+            let update = match receiver.try_recv() {
+                Ok(update) => update,
+                Err(TryRecvError::Empty) => {
+                    sleep(Duration::from_millis(5));
+                    continue;
+                }
+                Err(err @ TryRecvError::Disconnected) => {
+                    info!("PrioritizationFeeCache::service_loop() is stopping because: {err}");
+                    break;
+                }
+            };
             match update {
                 CacheServiceUpdate::TransactionUpdate {
                     slot,

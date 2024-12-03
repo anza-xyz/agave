@@ -752,7 +752,7 @@ mod tests {
         crate::banking_stage::{
             committer::Committer,
             qos_service::QosService,
-            scheduler_messages::{TransactionBatchId, TransactionId},
+            scheduler_messages::TransactionBatchId,
             tests::{create_slow_genesis_config, sanitize_transactions, simulate_poh},
         },
         crossbeam_channel::unbounded,
@@ -903,7 +903,7 @@ mod tests {
             genesis_config.hash(),
         )]);
         let bid = TransactionBatchId::new(0);
-        let id = TransactionId::new(0);
+        let id = 0;
         let max_age = MaxAge {
             sanitized_epoch: bank.epoch(),
             alt_invalidation_slot: bank.slot(),
@@ -952,7 +952,7 @@ mod tests {
             genesis_config.hash(),
         )]);
         let bid = TransactionBatchId::new(0);
-        let id = TransactionId::new(0);
+        let id = 0;
         let max_age = MaxAge {
             sanitized_epoch: bank.epoch(),
             alt_invalidation_slot: bank.slot(),
@@ -1001,8 +1001,8 @@ mod tests {
         ]);
 
         let bid = TransactionBatchId::new(0);
-        let id1 = TransactionId::new(1);
-        let id2 = TransactionId::new(0);
+        let id1 = 1;
+        let id2 = 0;
         let max_age = MaxAge {
             sanitized_epoch: bank.epoch(),
             alt_invalidation_slot: bank.slot(),
@@ -1062,8 +1062,8 @@ mod tests {
 
         let bid1 = TransactionBatchId::new(0);
         let bid2 = TransactionBatchId::new(1);
-        let id1 = TransactionId::new(1);
-        let id2 = TransactionId::new(0);
+        let id1 = 1;
+        let id2 = 0;
         let max_age = MaxAge {
             sanitized_epoch: bank.epoch(),
             alt_invalidation_slot: bank.slot(),
@@ -1193,14 +1193,7 @@ mod tests {
         consume_sender
             .send(ConsumeWork {
                 batch_id: TransactionBatchId::new(1),
-                ids: vec![
-                    TransactionId::new(0),
-                    TransactionId::new(1),
-                    TransactionId::new(2),
-                    TransactionId::new(3),
-                    TransactionId::new(4),
-                    TransactionId::new(5),
-                ],
+                ids: vec![0, 1, 2, 3, 4, 5],
                 transactions: txs,
                 max_ages: vec![
                     MaxAge {

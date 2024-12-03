@@ -45,6 +45,7 @@ rustls = { workspace = true }
 serde = { workspace = true }
 serde_bytes = { workspace = true }
 serde_derive = { workspace = true }
+slab = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-bloom = { workspace = true }
 solana-builtins-default-costs = { workspace = true }
@@ -110,6 +111,7 @@ solana-core = { path = ".", features = ["dev-context-only-utils"] }
 solana-cost-model = { workspace = true, features = ["dev-context-only-utils"] }
 solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
 solana-logger = { workspace = true }
+solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
 solana-poh = { workspace = true, features = ["dev-context-only-utils"] }
 solana-program-runtime = { workspace = true }
 solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }

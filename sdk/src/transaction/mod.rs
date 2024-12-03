@@ -14,7 +14,7 @@
 //! `Transaction` type has constructors that build the `Message` so that clients
 //! don't need to interact with them directly.
 //!
-//! Prior to submission to the network, transactions must be signed by one or or
+//! Prior to submission to the network, transactions must be signed by one or
 //! more keypairs, and this signing is typically performed by an abstract
 //! [`Signer`], which may be a [`Keypair`] but may also be other types of
 //! signers including remote wallets, such as Ledger devices, as represented by
@@ -178,7 +178,7 @@ pub enum TransactionVerificationMode {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "GESn6AYYNhpNfzJXdQ6kGjqz4VjpMw3ye9rghqaEqks7")
+    frozen_abi(digest = "76BDTr3Xm3VP7h4eSiw6pZHKc5yYewDufyia3Yedh6GG")
 )]
 #[derive(Debug, PartialEq, Default, Eq, Clone, Serialize, Deserialize)]
 pub struct Transaction {

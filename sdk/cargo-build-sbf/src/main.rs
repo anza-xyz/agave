@@ -33,6 +33,7 @@ struct Config<'a> {
     dump: bool,
     features: Vec<String>,
     force_tools_install: bool,
+    skip_tools_install: bool,
     generate_child_script_on_failure: bool,
     no_default_features: bool,
     offline: bool,
@@ -61,6 +62,7 @@ impl Default for Config<'_> {
             dump: false,
             features: vec![],
             force_tools_install: false,
+            skip_tools_install: false,
             generate_child_script_on_failure: false,
             no_default_features: false,
             offline: false,
@@ -661,40 +663,43 @@ fn build_solana_package(
     } else {
         "x86_64"
     };
-    let platform_tools_download_file_name = if cfg!(target_os = "windows") {
-        format!("platform-tools-windows-{arch}.tar.bz2")
-    } else if cfg!(target_os = "macos") {
-        format!("platform-tools-osx-{arch}.tar.bz2")
-    } else {
-        format!("platform-tools-linux-{arch}.tar.bz2")
-    };
-    let package = "platform-tools";
-    let target_path = make_platform_tools_path_for_version(package, &platform_tools_version);
-    install_if_missing(
-        config,
-        package,
-        "https://github.com/anza-xyz/platform-tools/releases/download",
-        platform_tools_download_file_name.as_str(),
-        &platform_tools_version,
-        &target_path,
-    )
-    .unwrap_or_else(|err| {
-        // The package version directory doesn't contain a valid
-        // installation, and it should be removed.
-        let target_path_parent = target_path.parent().expect("Invalid package path");
-        if target_path_parent.exists() {
-            fs::remove_dir_all(target_path_parent).unwrap_or_else(|err| {
-                error!(
-                    "Failed to remove {} while recovering from installation failure: {}",
-                    target_path_parent.to_string_lossy(),
-                    err,
-                );
-                exit(1);
-            });
-        }
-        error!("Failed to install platform-tools: {}", err);
-        exit(1);
-    });
+
+    if !config.skip_tools_install {
+        let platform_tools_download_file_name = if cfg!(target_os = "windows") {
+            format!("platform-tools-windows-{arch}.tar.bz2")
+        } else if cfg!(target_os = "macos") {
+            format!("platform-tools-osx-{arch}.tar.bz2")
+        } else {
+            format!("platform-tools-linux-{arch}.tar.bz2")
+        };
+        let package = "platform-tools";
+        let target_path = make_platform_tools_path_for_version(package, &platform_tools_version);
+        install_if_missing(
+            config,
+            package,
+            "https://github.com/anza-xyz/platform-tools/releases/download",
+            platform_tools_download_file_name.as_str(),
+            &platform_tools_version,
+            &target_path,
+        )
+        .unwrap_or_else(|err| {
+            // The package version directory doesn't contain a valid
+            // installation, and it should be removed.
+            let target_path_parent = target_path.parent().expect("Invalid package path");
+            if target_path_parent.exists() {
+                fs::remove_dir_all(target_path_parent).unwrap_or_else(|err| {
+                    error!(
+                        "Failed to remove {} while recovering from installation failure: {}",
+                        target_path_parent.to_string_lossy(),
+                        err,
+                    );
+                    exit(1);
+                });
+            }
+            error!("Failed to install platform-tools: {}", err);
+            exit(1);
+        });
+    }
     link_solana_toolchain(config);
 
     let llvm_bin = config
@@ -1034,7 +1039,15 @@ fn main() {
             Arg::new("force_tools_install")
                 .long("force-tools-install")
                 .takes_value(false)
+                .conflicts_with("skip_tools_install")
                 .help("Download and install platform-tools even when existing tools are located"),
+        )
+        .arg(
+            Arg::new("skip_tools_install")
+                .long("skip-tools-install")
+                .takes_value(false)
+                .conflicts_with("force_tools_install")
+                .help("Skip downloading and installing platform-tools, assuming they are properly mounted"),
         )
         .arg(
             Arg::new("generate_child_script_on_failure")
@@ -1159,6 +1172,7 @@ fn main() {
         dump: matches.is_present("dump"),
         features: matches.values_of_t("features").ok().unwrap_or_default(),
         force_tools_install: matches.is_present("force_tools_install"),
+        skip_tools_install: matches.is_present("skip_tools_install"),
         generate_child_script_on_failure: matches.is_present("generate_child_script_on_failure"),
         no_default_features: matches.is_present("no_default_features"),
         remap_cwd: !matches.is_present("remap_cwd"),

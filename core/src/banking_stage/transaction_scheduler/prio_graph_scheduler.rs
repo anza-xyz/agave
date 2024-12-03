@@ -137,7 +137,7 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
                 *window_budget = window_budget.saturating_sub(chunk_size);
 
                 ids.iter().for_each(|id| {
-                    let transaction = container.get_transaction_ttl(&id.id).unwrap();
+                    let transaction = container.get_transaction_ttl(id.id).unwrap();
                     txs.push(&transaction.transaction);
                 });
 
@@ -147,14 +147,14 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
 
                 for (id, filter_result) in ids.iter().zip(&filter_array[..chunk_size]) {
                     if *filter_result {
-                        let transaction = container.get_transaction_ttl(&id.id).unwrap();
+                        let transaction = container.get_transaction_ttl(id.id).unwrap();
                         prio_graph.insert_transaction(
                             *id,
                             Self::get_transaction_account_access(transaction),
                         );
                     } else {
                         saturating_add_assign!(num_filtered_out, 1);
-                        container.remove_by_id(&id.id);
+                        container.remove_by_id(id.id);
                     }
                 }
 
@@ -185,7 +185,7 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
 
                 // Should always be in the container, during initial testing phase panic.
                 // Later, we can replace with a continue in case this does happen.
-                let Some(transaction_state) = container.get_mut_transaction_state(&id.id) else {
+                let Some(transaction_state) = container.get_mut_transaction_state(id.id) else {
                     panic!("transaction state must exist")
                 };
 
@@ -208,7 +208,7 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
 
                 match maybe_schedule_info {
                     Err(TransactionSchedulingError::Filtered) => {
-                        container.remove_by_id(&id.id);
+                        container.remove_by_id(id.id);
                     }
                     Err(TransactionSchedulingError::UnschedulableConflicts) => {
                         unschedulable_ids.push(id);
@@ -356,7 +356,7 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
                             continue;
                         }
                     }
-                    container.remove_by_id(&id);
+                    container.remove_by_id(id);
                 }
 
                 Ok((num_transactions, num_retryable))
@@ -624,18 +624,6 @@ mod tests {
         std::{borrow::Borrow, sync::Arc},
     };
 
-    macro_rules! txid {
-        ($value:expr) => {
-            TransactionId::new($value)
-        };
-    }
-
-    macro_rules! txids {
-        ([$($element:expr),*]) => {
-            vec![ $(txid!($element)),* ]
-        };
-    }
-
     #[allow(clippy::type_complexity)]
     fn create_test_frame(
         num_threads: usize,
@@ -687,10 +675,7 @@ mod tests {
         >,
     ) -> TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>> {
         let mut container = TransactionStateContainer::with_capacity(10 * 1024);
-        for (index, (from_keypair, to_pubkeys, lamports, compute_unit_price)) in
-            tx_infos.into_iter().enumerate()
-        {
-            let id = TransactionId::new(index as u64);
+        for (from_keypair, to_pubkeys, lamports, compute_unit_price) in tx_infos.into_iter() {
             let transaction = prioritized_tranfers(
                 from_keypair.borrow(),
                 to_pubkeys,
@@ -709,7 +694,6 @@ mod tests {
             };
             const TEST_TRANSACTION_COST: u64 = 5000;
             container.insert_new_transaction(
-                id,
                 transaction_ttl,
                 packet,
                 compute_unit_price,
@@ -771,7 +755,7 @@ mod tests {
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 2);
         assert_eq!(scheduling_summary.num_unschedulable, 0);
-        assert_eq!(collect_work(&work_receivers[0]).1, vec![txids!([1, 0])]);
+        assert_eq!(collect_work(&work_receivers[0]).1, vec![vec![1, 0]]);
     }
 
     #[test]
@@ -788,10 +772,7 @@ mod tests {
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 2);
         assert_eq!(scheduling_summary.num_unschedulable, 0);
-        assert_eq!(
-            collect_work(&work_receivers[0]).1,
-            vec![txids!([1]), txids!([0])]
-        );
+        assert_eq!(collect_work(&work_receivers[0]).1, vec![vec![1], vec![0]]);
     }
 
     #[test]
@@ -830,8 +811,8 @@ mod tests {
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 4);
         assert_eq!(scheduling_summary.num_unschedulable, 0);
-        assert_eq!(collect_work(&work_receivers[0]).1, [txids!([3, 1])]);
-        assert_eq!(collect_work(&work_receivers[1]).1, [txids!([2, 0])]);
+        assert_eq!(collect_work(&work_receivers[0]).1, [vec![3, 1]]);
+        assert_eq!(collect_work(&work_receivers[1]).1, [vec![2, 0]]);
     }
 
     #[test]
@@ -872,11 +853,8 @@ mod tests {
         assert_eq!(scheduling_summary.num_scheduled, 4);
         assert_eq!(scheduling_summary.num_unschedulable, 2);
         let (thread_0_work, thread_0_ids) = collect_work(&work_receivers[0]);
-        assert_eq!(thread_0_ids, [txids!([0]), txids!([2])]);
-        assert_eq!(
-            collect_work(&work_receivers[1]).1,
-            [txids!([1]), txids!([3])]
-        );
+        assert_eq!(thread_0_ids, [vec![0], vec![2]]);
+        assert_eq!(collect_work(&work_receivers[1]).1, [vec![1], vec![3]]);
 
         // Cannot schedule even on next pass because of lock conflicts
         let scheduling_summary = scheduler
@@ -899,10 +877,7 @@ mod tests {
         assert_eq!(scheduling_summary.num_scheduled, 2);
         assert_eq!(scheduling_summary.num_unschedulable, 0);
 
-        assert_eq!(
-            collect_work(&work_receivers[1]).1,
-            [txids!([4]), txids!([5])]
-        );
+        assert_eq!(collect_work(&work_receivers[1]).1, [vec![4], vec![5]]);
     }
 
     #[test]
@@ -925,9 +900,6 @@ mod tests {
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 2);
         assert_eq!(scheduling_summary.num_unschedulable, 0);
-        assert_eq!(
-            collect_work(&work_receivers[0]).1,
-            vec![txids!([2]), txids!([0])]
-        );
+        assert_eq!(collect_work(&work_receivers[0]).1, vec![vec![2], vec![0]]);
     }
 }

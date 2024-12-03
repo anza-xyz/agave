@@ -38,11 +38,11 @@ env:
 
 jobs:
   test:
+    if: github.repository == 'anza-xyz/agave'
     runs-on: ubuntu-latest
     strategy:
       matrix:
         version: ["master"]
-    if: false # Re-enable once new major versions for spl-token-2022 and spl-pod are out
     steps:
       - uses: actions/checkout@v4
 

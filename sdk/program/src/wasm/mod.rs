@@ -3,7 +3,9 @@
 use wasm_bindgen::prelude::*;
 
 pub mod instructions;
-pub mod system_instruction;
+// This module is intentionally left empty. The wasm system instruction impl can be
+// found in the `solana-system-interface` crate.
+pub mod system_instruction {}
 
 /// Initialize Javascript logging and panic handler
 #[wasm_bindgen]

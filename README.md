@@ -57,6 +57,9 @@ $ cd agave
 $ ./cargo build
 ```
 
+> [!NOTE]
+> Note that this builds a debug version that is **not suitable for running a testnet or mainnet validator**. Please read [`docs/src/cli/install.md`](docs/src/cli/install.md#build-from-source) for instructions to build a release version for test and production uses.
+
 # Testing
 
 **Run the test suite:**

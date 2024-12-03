@@ -9,13 +9,13 @@ use {
         scheduler_metrics::{
             SchedulerCountMetrics, SchedulerLeaderDetectionMetrics, SchedulerTimingMetrics,
         },
-        transaction_state_container::StateContainer,
     },
     crate::banking_stage::{
         consume_worker::ConsumeWorkerMetrics,
         consumer::Consumer,
         decision_maker::{BufferedPacketsDecision, DecisionMaker},
         forwarder::Forwarder,
+        transaction_scheduler::transaction_state_container::StateContainer,
         ForwardOption, LikeClusterInfo, TOTAL_BUFFERED_PACKETS,
     },
     solana_measure::measure_us,
@@ -259,7 +259,7 @@ impl<C: LikeClusterInfo, R: ReceiveAndBuffer> SchedulerController<C, R> {
             }
             let chunk_size = ids.len();
             ids.iter().for_each(|id| {
-                let transaction = self.container.get_transaction_ttl(&id.id).unwrap();
+                let transaction = self.container.get_transaction_ttl(id.id).unwrap();
                 txs.push(&transaction.transaction);
             });
 
@@ -275,12 +275,12 @@ impl<C: LikeClusterInfo, R: ReceiveAndBuffer> SchedulerController<C, R> {
 
             for (id, filter_result) in ids.iter().zip(&filter_array[..chunk_size]) {
                 if !*filter_result {
-                    self.container.remove_by_id(&id.id);
+                    self.container.remove_by_id(id.id);
                     continue;
                 }
 
                 ids_to_add_back.push(*id); // add back to the queue at end
-                let state = self.container.get_mut_transaction_state(&id.id).unwrap();
+                let state = self.container.get_mut_transaction_state(id.id).unwrap();
                 let sanitized_transaction = &state.transaction_ttl().transaction;
                 let immutable_packet = state.packet().clone();
 
@@ -312,7 +312,7 @@ impl<C: LikeClusterInfo, R: ReceiveAndBuffer> SchedulerController<C, R> {
         // leader slot.
         if max_time_reached {
             while let Some(id) = self.container.pop() {
-                self.container.remove_by_id(&id.id);
+                self.container.remove_by_id(id.id);
             }
         }
 
@@ -322,7 +322,7 @@ impl<C: LikeClusterInfo, R: ReceiveAndBuffer> SchedulerController<C, R> {
             }
         } else {
             for priority_id in ids_to_add_back {
-                self.container.remove_by_id(&priority_id.id);
+                self.container.remove_by_id(priority_id.id);
             }
         }
 
@@ -336,7 +336,7 @@ impl<C: LikeClusterInfo, R: ReceiveAndBuffer> SchedulerController<C, R> {
     fn clear_container(&mut self) {
         let mut num_dropped_on_clear: usize = 0;
         while let Some(id) = self.container.pop() {
-            self.container.remove_by_id(&id.id);
+            self.container.remove_by_id(id.id);
             saturating_add_assign!(num_dropped_on_clear, 1);
         }
 
@@ -370,7 +370,7 @@ impl<C: LikeClusterInfo, R: ReceiveAndBuffer> SchedulerController<C, R> {
                 .map(|id| {
                     &self
                         .container
-                        .get_transaction_ttl(&id.id)
+                        .get_transaction_ttl(id.id)
                         .expect("transaction must exist")
                         .transaction
                 })
@@ -386,7 +386,7 @@ impl<C: LikeClusterInfo, R: ReceiveAndBuffer> SchedulerController<C, R> {
             for (result, id) in check_results.into_iter().zip(chunk.iter()) {
                 if result.is_err() {
                     saturating_add_assign!(num_dropped_on_age_and_status, 1);
-                    self.container.remove_by_id(&id.id);
+                    self.container.remove_by_id(id.id);
                 } else {
                     self.container.push_id_into_queue(*id);
                 }

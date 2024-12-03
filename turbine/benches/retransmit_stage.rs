@@ -18,6 +18,7 @@ use {
         shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
     },
     solana_measure::measure::Measure,
+    solana_net_utils::bind_to_unspecified,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_sdk::{
         hash::Hash,
@@ -30,7 +31,7 @@ use {
     solana_turbine::retransmit_stage::retransmitter,
     std::{
         iter::repeat_with,
-        net::{Ipv4Addr, UdpSocket},
+        net::Ipv4Addr,
         sync::{
             atomic::{AtomicUsize, Ordering},
             Arc,
@@ -59,7 +60,7 @@ fn bench_retransmitter(bencher: &mut Bencher) {
     const NUM_PEERS: usize = 4;
     let peer_sockets: Vec<_> = repeat_with(|| {
         let id = Pubkey::new_unique();
-        let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
+        let socket = bind_to_unspecified().unwrap();
         let mut contact_info = ContactInfo::new_localhost(&id, timestamp());
         let port = socket.local_addr().unwrap().port();
         contact_info.set_tvu((Ipv4Addr::LOCALHOST, port)).unwrap();
@@ -80,7 +81,7 @@ fn bench_retransmitter(bencher: &mut Bencher) {
     let (shreds_sender, shreds_receiver) = unbounded();
     const NUM_THREADS: usize = 2;
     let sockets = (0..NUM_THREADS)
-        .map(|_| UdpSocket::bind("0.0.0.0:0").unwrap())
+        .map(|_| bind_to_unspecified().unwrap())
         .collect();
 
     let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));

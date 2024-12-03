@@ -1075,6 +1075,7 @@ mod test {
             get_tmp_ledger_path_auto_delete,
             shred::max_ticks_per_n_shreds,
         },
+        solana_net_utils::{bind_to_localhost, bind_to_unspecified},
         solana_runtime::bank::Bank,
         solana_sdk::{
             signature::{Keypair, Signer},
@@ -1097,9 +1098,9 @@ mod test {
         let pubkey = cluster_info.id();
         let slot = 100;
         let shred_index = 50;
-        let reader = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let reader = bind_to_localhost().expect("bind");
         let address = reader.local_addr().unwrap();
-        let sender = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let sender = bind_to_localhost().expect("bind");
         let outstanding_repair_requests = Arc::new(RwLock::new(OutstandingShredRepairs::default()));
 
         // Send a repair request
@@ -1452,7 +1453,7 @@ mod test {
         );
         let mut duplicate_slot_repair_statuses = HashMap::new();
         let dead_slot = 9;
-        let receive_socket = &UdpSocket::bind("0.0.0.0:0").unwrap();
+        let receive_socket = &bind_to_unspecified().unwrap();
         let duplicate_status = DuplicateSlotRepairStatus {
             correct_ancestor_to_repair: (dead_slot, Hash::default()),
             start_ts: u64::MAX,
@@ -1481,7 +1482,7 @@ mod test {
             &blockstore,
             &serve_repair,
             &mut RepairStats::default(),
-            &UdpSocket::bind("0.0.0.0:0").unwrap(),
+            &bind_to_unspecified().unwrap(),
             &None,
             &RwLock::new(OutstandingRequests::default()),
             &identity_keypair,
@@ -1507,7 +1508,7 @@ mod test {
             &blockstore,
             &serve_repair,
             &mut RepairStats::default(),
-            &UdpSocket::bind("0.0.0.0:0").unwrap(),
+            &bind_to_unspecified().unwrap(),
             &None,
             &RwLock::new(OutstandingRequests::default()),
             &identity_keypair,
@@ -1526,7 +1527,7 @@ mod test {
             &blockstore,
             &serve_repair,
             &mut RepairStats::default(),
-            &UdpSocket::bind("0.0.0.0:0").unwrap(),
+            &bind_to_unspecified().unwrap(),
             &None,
             &RwLock::new(OutstandingRequests::default()),
             &identity_keypair,
@@ -1541,7 +1542,7 @@ mod test {
         let bank_forks = BankForks::new_rw_arc(bank);
         let dummy_addr = Some((
             Pubkey::default(),
-            UdpSocket::bind("0.0.0.0:0").unwrap().local_addr().unwrap(),
+            bind_to_unspecified().unwrap().local_addr().unwrap(),
         ));
         let cluster_info = Arc::new(new_test_cluster_info());
         let serve_repair = ServeRepair::new(

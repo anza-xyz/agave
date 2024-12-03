@@ -73,7 +73,7 @@ use {
         u64_align, utils,
         verify_accounts_hash_in_background::VerifyAccountsHashInBackground,
     },
-    crossbeam_channel::{unbounded, Receiver, Sender},
+    crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError},
     dashmap::{DashMap, DashSet},
     log::*,
     rand::{thread_rng, Rng},
@@ -2344,7 +2344,7 @@ impl AccountsDb {
     fn background_hasher(receiver: Receiver<Vec<CachedAccount>>) {
         info!("Background account hasher has started");
         loop {
-            let result = receiver.recv();
+            let result = receiver.try_recv();
             match result {
                 Ok(accounts) => {
                     for account in accounts {
@@ -2355,7 +2355,10 @@ impl AccountsDb {
                         };
                     }
                 }
-                Err(err) => {
+                Err(TryRecvError::Empty) => {
+                    sleep(Duration::from_millis(5));
+                }
+                Err(err @ TryRecvError::Disconnected) => {
                     info!("Background account hasher is stopping because: {err}");
                     break;
                 }
@@ -8475,20 +8478,9 @@ impl AccountsDb {
         requested_slots: impl RangeBounds<Slot> + Sync,
     ) -> (Vec<Arc<AccountStorageEntry>>, Vec<Slot>) {
         let start = Instant::now();
-        let max_alive_root_exclusive = self
-            .accounts_index
-            .roots_tracker
-            .read()
-            .unwrap()
-            .alive_roots
-            .max_exclusive();
         let (slots, storages) = self
             .storage
-            .get_if(|slot, storage| {
-                (*slot < max_alive_root_exclusive)
-                    && requested_slots.contains(slot)
-                    && storage.has_accounts()
-            })
+            .get_if(|slot, storage| requested_slots.contains(slot) && storage.has_accounts())
             .into_vec()
             .into_iter()
             .unzip();
@@ -9599,7 +9591,7 @@ pub mod test_utils {
             .get_slot_storage_entry(slot)
             .is_none()
         {
-            // Some callers relied on old behavior where the the file size was rounded up to the
+            // Some callers relied on old behavior where the file size was rounded up to the
             // next page size because they append to the storage file after it was written.
             // This behavior is not supported by a normal running validator.  Since this function
             // is only called by tests/benches, add some extra capacity to the file to not break
