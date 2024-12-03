@@ -73,7 +73,7 @@ use {
         u64_align, utils,
         verify_accounts_hash_in_background::VerifyAccountsHashInBackground,
     },
-    crossbeam_channel::{unbounded, Receiver, Sender},
+    crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError},
     dashmap::{DashMap, DashSet},
     log::*,
     rand::{thread_rng, Rng},
@@ -2344,7 +2344,7 @@ impl AccountsDb {
     fn background_hasher(receiver: Receiver<Vec<CachedAccount>>) {
         info!("Background account hasher has started");
         loop {
-            let result = receiver.recv();
+            let result = receiver.try_recv();
             match result {
                 Ok(accounts) => {
                     for account in accounts {
@@ -2355,7 +2355,10 @@ impl AccountsDb {
                         };
                     }
                 }
-                Err(err) => {
+                Err(TryRecvError::Empty) => {
+                    sleep(Duration::from_millis(5));
+                }
+                Err(err @ TryRecvError::Disconnected) => {
                     info!("Background account hasher is stopping because: {err}");
                     break;
                 }
@@ -2555,7 +2558,7 @@ impl AccountsDb {
             let acceptable_straggler_slot_count = 100;
             let old_slot_cutoff =
                 slot_one_epoch_old.saturating_sub(acceptable_straggler_slot_count);
-            let (old_storages, old_slots) = self.get_snapshot_storages(..old_slot_cutoff);
+            let (old_storages, old_slots) = self.get_storages(..old_slot_cutoff);
             let num_old_storages = old_storages.len();
             self.accounts_index
                 .add_uncleaned_roots(old_slots.iter().copied());
@@ -6936,7 +6939,7 @@ impl AccountsDb {
                 }
 
                 let mut collect_time = Measure::start("collect");
-                let (combined_maps, slots) = self.get_snapshot_storages(..=slot);
+                let (combined_maps, slots) = self.get_storages(..=slot);
                 collect_time.stop();
 
                 let mut sort_time = Measure::start("sort_storages");
@@ -8469,26 +8472,15 @@ impl AccountsDb {
         }
     }
 
-    /// Get storages to use for snapshots, for the requested slots
-    pub fn get_snapshot_storages(
+    /// Returns storages for `requested_slots`
+    pub fn get_storages(
         &self,
         requested_slots: impl RangeBounds<Slot> + Sync,
     ) -> (Vec<Arc<AccountStorageEntry>>, Vec<Slot>) {
         let start = Instant::now();
-        let max_alive_root_exclusive = self
-            .accounts_index
-            .roots_tracker
-            .read()
-            .unwrap()
-            .alive_roots
-            .max_exclusive();
         let (slots, storages) = self
             .storage
-            .get_if(|slot, storage| {
-                (*slot < max_alive_root_exclusive)
-                    && requested_slots.contains(slot)
-                    && storage.has_accounts()
-            })
+            .get_if(|slot, storage| requested_slots.contains(slot) && storage.has_accounts())
             .into_vec()
             .into_iter()
             .unzip();
@@ -9543,7 +9535,7 @@ impl AccountsDb {
         total_lamports: u64,
         config: VerifyAccountsHashAndLamportsConfig,
     ) -> Result<(), AccountsHashVerificationError> {
-        let snapshot_storages = self.get_snapshot_storages(..);
+        let snapshot_storages = self.get_storages(..);
         let snapshot_storages_and_slots = (
             snapshot_storages.0.as_slice(),
             snapshot_storages.1.as_slice(),

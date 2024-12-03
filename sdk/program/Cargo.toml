@@ -56,6 +56,7 @@ solana-instruction = { workspace = true, default-features = false, features = [
 ] }
 solana-keccak-hasher = { workspace = true, features = ["sha3"] }
 solana-last-restart-slot = { workspace = true, features = ["serde", "sysvar"] }
+solana-message = { workspace = true, features = ["bincode", "blake3"] }
 solana-msg = { workspace = true }
 solana-native-token = { workspace = true }
 solana-nonce = { workspace = true, features = ["serde"] }
@@ -77,6 +78,7 @@ solana-short-vec = { workspace = true }
 solana-slot-hashes = { workspace = true, features = ["serde", "sysvar"] }
 solana-slot-history = { workspace = true, features = ["serde", "sysvar"] }
 solana-stable-layout = { workspace = true }
+solana-system-interface = { workspace = true, features = ["bincode"] }
 solana-sysvar = { workspace = true, features = ["bincode", "bytemuck"] }
 solana-sysvar-id = { workspace = true }
 thiserror = { workspace = true }
@@ -152,6 +154,7 @@ frozen-abi = [
     "solana-fee-calculator/frozen-abi",
     "solana-hash/frozen-abi",
     "solana-instruction/frozen-abi",
+    "solana-message/frozen-abi",
     "solana-pubkey/frozen-abi",
     "solana-rent/frozen-abi",
     "solana-short-vec/frozen-abi",

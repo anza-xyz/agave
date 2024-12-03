@@ -1,9 +1,7 @@
 use {
-    crate::{
-        instruction::{CompiledInstruction, Instruction},
-        message::{v0::LoadedAddresses, CompileError},
-        pubkey::Pubkey,
-    },
+    crate::{compiled_instruction::CompiledInstruction, v0::LoadedAddresses, CompileError},
+    solana_instruction::Instruction,
+    solana_pubkey::Pubkey,
     std::{collections::BTreeMap, iter::zip, ops::Index},
 };
 
@@ -152,7 +150,7 @@ impl PartialEq for AccountKeys<'_> {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::instruction::AccountMeta};
+    use {super::*, solana_instruction::AccountMeta};
 
     fn test_account_keys() -> [Pubkey; 6] {
         let key0 = Pubkey::new_unique();

@@ -131,6 +131,7 @@ members = [
     "sdk/keypair",
     "sdk/logger",
     "sdk/macro",
+    "sdk/message",
     "sdk/msg",
     "sdk/native-token",
     "sdk/nonce",
@@ -320,14 +321,14 @@ humantime = "2.0.1"
 hyper = "0.14.31"
 hyper-proxy = "0.9.1"
 im = "15.1.0"
-index_list = "0.2.13"
-indexmap = "2.6.0"
+index_list = "0.2.14"
+indexmap = "2.7.0"
 indicatif = "0.17.9"
 itertools = "0.12.1"
 jemallocator = { package = "tikv-jemallocator", version = "0.4.1", features = [
     "unprefixed_malloc_on_supported_platforms",
 ] }
-js-sys = "0.3.72"
+js-sys = "0.3.74"
 json5 = "0.4.1"
 jsonrpc-core = "18.0.0"
 jsonrpc-core-client = "18.0.0"
@@ -337,7 +338,7 @@ jsonrpc-ipc-server = "18.0.0"
 jsonrpc-pubsub = "18.0.0"
 lazy-lru = "0.1.3"
 lazy_static = "1.5.0"
-libc = "0.2.166"
+libc = "0.2.167"
 libloading = "0.7.4"
 libsecp256k1 = { version = "0.6.0", default-features = false, features = [
     "std",
@@ -488,6 +489,7 @@ solana-log-collector = { path = "log-collector", version = "=2.2.0" }
 solana-logger = { path = "sdk/logger", version = "=2.2.0" }
 solana-measure = { path = "measure", version = "=2.2.0" }
 solana-merkle-tree = { path = "merkle-tree", version = "=2.2.0" }
+solana-message = { path = "sdk/message", version = "=2.2.0" }
 solana-metrics = { path = "metrics", version = "=2.2.0" }
 solana-msg = { path = "sdk/msg", version = "=2.2.0" }
 solana-native-token = { path = "sdk/native-token", version = "=2.2.0" }
@@ -559,6 +561,7 @@ solana-svm = { path = "svm", version = "=2.2.0" }
 solana-svm-conformance = { path = "svm-conformance", version = "=2.2.0" }
 solana-svm-rent-collector = { path = "svm-rent-collector", version = "=2.2.0" }
 solana-svm-transaction = { path = "svm-transaction", version = "=2.2.0" }
+solana-system-interface = "1.0"
 solana-system-program = { path = "programs/system", version = "=2.2.0" }
 solana-sysvar = { path = "sdk/sysvar", version = "=2.2.0" }
 solana-sysvar-id = { path = "sdk/sysvar-id", version = "=2.2.0" }

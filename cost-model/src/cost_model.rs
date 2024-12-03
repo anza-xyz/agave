@@ -189,7 +189,10 @@ impl CostModel {
         // if failed to process compute budget instructions, the transaction
         // will not be executed by `bank`, therefore it should be considered
         // as no execution cost by cost model.
-        match transaction.compute_budget_limits(feature_set) {
+        match transaction
+            .compute_budget_instruction_details()
+            .sanitize_and_convert_to_compute_budget_limits()
+        {
             Ok(compute_budget_limits) => {
                 // if tx contained user-space instructions and a more accurate
                 // estimate available correct it, where
