@@ -594,7 +594,7 @@ mod tests {
                     // Also have to account for the fact that deduper could be cleared periodically,
                     // in which case the first transaction in the next batch won't be deduped
                     assert!(
-                        (tracer_packet_stats.total_tracer_packets_deduped
+                        (tracer_packet_stats.total_tracer_packets_deduped.0
                             == tracer_packet_stats
                                 .total_tracer_packets_received_in_sigverify_stage.0
                                 - 1)
