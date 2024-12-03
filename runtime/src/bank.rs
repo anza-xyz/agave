@@ -5009,6 +5009,10 @@ impl Bank {
         max_age: &MaxAge,
         move_precompile_verification_to_svm: bool,
     ) -> Result<()> {
+        // Need to filter out transactions since they were sanitized earlier.
+        // This means that the transaction may cross and epoch boundary (not allowed),
+        //  or account lookup tables may have been closed.
+
         // If the transaction was sanitized before this bank's epoch,
         // additional checks are necessary.
         if self.epoch() != max_age.sanitized_epoch {

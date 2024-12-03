@@ -439,9 +439,6 @@ impl Consumer {
             .is_active(&feature_set::move_precompile_verification_to_svm::id());
 
         let pre_results = txs.iter().zip(max_ages).map(|(tx, max_age)| {
-            // Need to filter out transactions since they were sanitized earlier.
-            // This means that the transaction may cross and epoch boundary (not allowed),
-            //  or account lookup tables may have been closed.
             bank.refilter_prebuilt_block_production_transaction(
                 tx,
                 max_age,
