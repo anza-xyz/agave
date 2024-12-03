@@ -2,8 +2,10 @@ use {
     crate::policy::CoreAllocation,
     anyhow::bail,
     serde::{Deserialize, Serialize},
-    std::sync::atomic::{AtomicUsize, Ordering},
-    std::sync::Arc,
+    std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

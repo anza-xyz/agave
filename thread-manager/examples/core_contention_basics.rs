@@ -35,8 +35,7 @@ async fn axum_main(port: u16) {
         }
     }
 }
-use affinity::*;
-use agave_thread_manager::*;
+use {affinity::*, agave_thread_manager::*};
 
 fn main() -> anyhow::Result<()> {
     println!(

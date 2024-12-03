@@ -23,4 +23,4 @@ impl CoreAllocation {
 }
 
 ///Applies policy to the calling thread
-pub fn apply_policy(alloc: CoreAllocation, priority: u32) {}
+pub fn apply_policy(alloc: &CoreAllocation, priority: u32) {}
