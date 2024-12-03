@@ -128,14 +128,14 @@ impl TracerPacketStats {
                         "total_removed_before_sigverify",
                         modifiable_tracer_packet_stats
                             .sigverify_tracer_packet_stats
-                            .total_removed_before_sigverify_stage as i64,
+                            .total_removed_before_sigverify_stage.0 as i64,
                         i64
                     ),
                     (
                         "total_tracer_packets_received_in_sigverify",
                         modifiable_tracer_packet_stats
                             .sigverify_tracer_packet_stats
-                            .total_tracer_packets_received_in_sigverify_stage
+                            .total_tracer_packets_received_in_sigverify_stage.0
                             as i64,
                         i64
                     ),
@@ -143,21 +143,21 @@ impl TracerPacketStats {
                         "total_tracer_packets_deduped_in_sigverify",
                         modifiable_tracer_packet_stats
                             .sigverify_tracer_packet_stats
-                            .total_tracer_packets_deduped as i64,
+                            .total_tracer_packets_deduped.0 as i64,
                         i64
                     ),
                     (
                         "total_excess_tracer_packets_discarded_in_sigverify",
                         modifiable_tracer_packet_stats
                             .sigverify_tracer_packet_stats
-                            .total_excess_tracer_packets as i64,
+                            .total_excess_tracer_packets.0 as i64,
                         i64
                     ),
                     (
                         "total_tracker_packets_passed_sigverify",
                         modifiable_tracer_packet_stats
                             .sigverify_tracer_packet_stats
-                            .total_tracker_packets_passed_sigverify as i64,
+                            .total_tracker_packets_passed_sigverify.0 as i64,
                         i64
                     ),
                     (
