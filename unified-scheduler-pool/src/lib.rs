@@ -58,6 +58,7 @@ use {
     trait_set::trait_set,
     vec_extract_if_polyfill::MakeExtractIf,
 };
+use solana_cost_model::cost_model::CostModel;
 
 #[derive(Clone)]
 pub struct BankingStageContext {
@@ -726,7 +727,6 @@ impl TaskHandler for DefaultTaskHandler {
                     *result = Err(error);
                     (None, false)
                 } else {
-                    use solana_cost_model::cost_model::CostModel;
                     let c = CostModel::calculate_cost(transaction, &bank.feature_set);
                     loop {
                         let r = bank.write_cost_tracker().unwrap().try_add(&c);
