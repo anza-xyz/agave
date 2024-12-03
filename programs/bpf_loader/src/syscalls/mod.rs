@@ -3,7 +3,7 @@ pub use self::{
     logging::{
         SyscallLog, SyscallLogBpfComputeUnits, SyscallLogData, SyscallLogPubkey, SyscallLogU64,
     },
-    mem_ops::{SyscallMemcmp, SyscallMemcpy, SyscallMemmove, SyscallMemset},
+    mem_ops::{MemoryChunkIterator, SyscallMemcmp, SyscallMemcpy, SyscallMemmove, SyscallMemset},
     sysvar::{
         SyscallGetClockSysvar, SyscallGetEpochRewardsSysvar, SyscallGetEpochScheduleSysvar,
         SyscallGetFeesSysvar, SyscallGetLastRestartSlotSysvar, SyscallGetRentSysvar,
@@ -2009,6 +2009,9 @@ declare_builtin_function!(
             std::mem::size_of::<H::Output>() as u64,
             invoke_context.get_check_aligned(),
         )?;
+        let direct_mapping = invoke_context
+            .get_feature_set()
+            .is_active(&solana_feature_set::bpf_account_data_direct_mapping::id());
         let mut hasher = H::create_hasher();
         if vals_len > 0 {
             let vals = translate_slice::<&[u8]>(
@@ -2018,12 +2021,32 @@ declare_builtin_function!(
                 invoke_context.get_check_aligned(),
             )?;
             for val in vals.iter() {
-                let bytes = translate_slice::<u8>(
-                    memory_mapping,
-                    val.as_ptr() as u64,
-                    val.len() as u64,
-                    invoke_context.get_check_aligned(),
-                )?;
+                if direct_mapping {
+                    let syscall_context = invoke_context.get_syscall_context()?;
+
+                    let chunk_iter = MemoryChunkIterator::new(memory_mapping, &syscall_context.accounts_metadata, AccessType::Load, val.as_ptr() as u64, val.len() as u64)?;
+
+                    for item in chunk_iter {
+                        let (region, src_addr, chunk_len) = item?;
+
+                        let addr = Result::from(region.vm_to_host(src_addr, chunk_len as u64))?;
+
+                        let bytes = unsafe {
+                            std::slice::from_raw_parts(addr as *const u8, chunk_len)
+                        };
+
+                        hasher.hash(bytes);
+                    }
+                } else {
+                    let bytes = translate_slice::<u8>(
+                        memory_mapping,
+                        val.as_ptr() as u64,
+                        val.len() as u64,
+                        invoke_context.get_check_aligned(),
+                    )?;
+                    hasher.hash(bytes);
+                }
+
                 let cost = compute_budget.mem_op_base_cost.max(
                     hash_byte_cost.saturating_mul(
                         (val.len() as u64)
@@ -2032,8 +2055,8 @@ declare_builtin_function!(
                     ),
                 );
                 consume_compute_meter(invoke_context, cost)?;
-                hasher.hash(bytes);
-            }
+        }
+
         }
         hash_result.copy_from_slice(hasher.result().as_ref());
         Ok(0)
@@ -2119,7 +2142,10 @@ mod tests {
         crate::mock_create_vm,
         assert_matches::assert_matches,
         core::slice,
-        solana_program_runtime::{invoke_context::InvokeContext, with_mock_invoke_context},
+        solana_program_runtime::{
+            invoke_context::{BpfAllocator, InvokeContext, SyscallContext},
+            with_mock_invoke_context,
+        },
         solana_rbpf::{
             error::EbpfError, memory_region::MemoryRegion, program::SBPFVersion, vm::Config,
         },
@@ -2675,6 +2701,13 @@ mod tests {
     fn test_syscall_sha256() {
         let config = Config::default();
         prepare_mockup!(invoke_context, program_id, bpf_loader_deprecated::id());
+        invoke_context
+            .set_syscall_context(SyscallContext {
+                allocator: BpfAllocator::new(32168),
+                accounts_metadata: Vec::new(),
+                trace_log: Vec::new(),
+            })
+            .unwrap();
 
         let bytes1 = "Gaggablaghblagh!";
         let bytes2 = "flurbos";

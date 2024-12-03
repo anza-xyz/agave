@@ -410,7 +410,7 @@ where
     Ok(T::default())
 }
 
-struct MemoryChunkIterator<'a> {
+pub struct MemoryChunkIterator<'a> {
     memory_mapping: &'a MemoryMapping<'a>,
     accounts: &'a [SerializedAccountMetadata],
     access_type: AccessType,
@@ -424,7 +424,7 @@ struct MemoryChunkIterator<'a> {
 }
 
 impl<'a> MemoryChunkIterator<'a> {
-    fn new(
+    pub fn new(
         memory_mapping: &'a MemoryMapping,
         accounts: &'a [SerializedAccountMetadata],
         access_type: AccessType,
