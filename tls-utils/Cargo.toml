@@ -4,16 +4,16 @@ description = "Solana TLS utilities"
 documentation = "https://docs.rs/solana-tls-utils"
 publish = false
 
-version.workspace = true
-authors.workspace = true
-repository.workspace = true
-homepage.workspace = true
-license.workspace = true
-edition.workspace = true
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
 
 [dependencies]
 
-rustls = { workspace = true, features=["ring"] }
+rustls = { workspace = true, features = ["ring"] }
 solana-keypair = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sdk = { workspace = true }

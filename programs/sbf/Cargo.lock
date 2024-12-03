@@ -7778,6 +7778,7 @@ dependencies = [
  "solana-rpc-client",
  "solana-sdk",
  "solana-streamer",
+ "solana-tls-utils",
  "solana-tpu-client",
  "thiserror 2.0.3",
  "tokio",
