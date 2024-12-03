@@ -464,7 +464,7 @@ where
 
             if is_block_production_scheduler_returned && self.should_respawn() {
                 info!("respawning scheduler after being trashed...");
-                id_and_inner.0.take();
+                assert_eq!(id_and_inner.0.take(), Some(id));
                 self.spawn_block_production_scheduler(&mut id_and_inner);
                 info!("respawned scheduler after being trashed.");
             }
