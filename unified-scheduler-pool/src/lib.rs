@@ -429,11 +429,6 @@ where
         scheduler_pool
     }
 
-    pub fn block_production_supported(&self) -> bool {
-        self.supported_scheduling_mode
-            .is_supported(SchedulingMode::BlockProduction)
-    }
-
     // See a comment at the weak_self field for justification of this method's existence.
     fn self_arc(&self) -> Arc<Self> {
         self.weak_self
@@ -537,6 +532,16 @@ where
         }
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn pooled_scheduler_count(&self) -> usize {
+        self.scheduler_inners.lock().expect("not poisoned").len()
+    }
+
+    pub fn block_production_supported(&self) -> bool {
+        self.supported_scheduling_mode
+            .is_supported(SchedulingMode::BlockProduction)
+    }
+
     pub fn register_banking_stage(
         &self,
         banking_packet_receiver: BankingPacketReceiver,
@@ -621,10 +626,6 @@ where
         info!("flash session: end!");
     }
 
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn pooled_scheduler_count(&self) -> usize {
-        self.scheduler_inners.lock().expect("not poisoned").len()
-    }
 
     pub fn default_handler_count() -> usize {
         Self::calculate_default_handler_count(
