@@ -467,8 +467,8 @@ where
                 id_and_inner.0.take();
                 self.spawn_block_production_scheduler(&mut id_and_inner);
                 info!("respawned on trashd scheduler...");
-                drop(id_and_inner);
             }
+            drop(id_and_inner);
         } else {
             drop(id_and_inner);
             if !is_block_production_scheduler_returned {
