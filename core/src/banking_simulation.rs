@@ -521,7 +521,7 @@ impl SimulatorLoop {
                     .write()
                     .unwrap()
                     .insert_with_scheduling_mode(
-                        solana_sdk::scheduling::SchedulingMode::BlockProduction,
+                        BlockProduction,
                         new_bank,
                     );
                 (bank, bank_created) = (
