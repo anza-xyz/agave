@@ -10,16 +10,13 @@ pub struct QuicClientCertificate {
 }
 
 impl QuicClientCertificate {
-    pub fn with_option(keypair: Option<&Keypair>) -> Self {
+    pub fn new(keypair: Option<&Keypair>) -> Self {
         if let Some(keypair) = keypair {
-            QuicClientCertificate::new(keypair)
+            let (certificate, key) = new_dummy_x509_certificate(keypair);
+            Self { certificate, key }
         } else {
-            QuicClientCertificate::new(&Keypair::new())
+            let (certificate, key) = new_dummy_x509_certificate(&Keypair::new());
+            Self { certificate, key }
         }
-    }
-
-    pub fn new(keypair: &Keypair) -> Self {
-        let (certificate, key) = new_dummy_x509_certificate(keypair);
-        Self { certificate, key }
     }
 }

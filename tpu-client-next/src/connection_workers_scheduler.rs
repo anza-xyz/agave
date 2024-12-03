@@ -197,7 +197,7 @@ impl ConnectionWorkersScheduler {
         bind: SocketAddr,
         identity: Option<&Keypair>,
     ) -> Result<Endpoint, ConnectionWorkersSchedulerError> {
-        let client_certificate = QuicClientCertificate::with_option(identity);
+        let client_certificate = QuicClientCertificate::new(identity);
         let client_config = create_client_config(client_certificate);
         let endpoint = create_client_endpoint(bind, client_config)?;
         Ok(endpoint)
