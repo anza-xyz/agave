@@ -323,18 +323,19 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
         let start = Instant::now();
         let mut received_message = false;
 
-        // If not leader, do a blocking-receive initially. This lets the thread
-        // sleep when there is not work to do.
-        // TODO: Is it better to manually sleep instead, avoiding the locking
-        //       overhead for wakers? But then risk not waking up when message
-        //       received - as long as sleep is somewhat short, this should be
-        //       fine.
-        if matches!(
-            decision,
-            BufferedPacketsDecision::Forward
-                | BufferedPacketsDecision::ForwardAndHold
-                | BufferedPacketsDecision::Hold
-        ) {
+        // If not leader/unknown, do a blocking-receive initially. This lets
+        // the thread sleep until a message is received, or until the timeout.
+        // Additionally, only sleep if the container is empty.
+        if container.is_empty()
+            && matches!(
+                decision,
+                BufferedPacketsDecision::Forward | BufferedPacketsDecision::ForwardAndHold
+            )
+        {
+            // TODO: Is it better to manually sleep instead, avoiding the locking
+            //       overhead for wakers? But then risk not waking up when message
+            //       received - as long as sleep is somewhat short, this should be
+            //       fine.
             match self.receiver.recv_timeout(TIMEOUT) {
                 Ok(packet_batch_message) => {
                     received_message = true;
