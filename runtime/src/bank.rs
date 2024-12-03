@@ -2874,9 +2874,14 @@ impl Bank {
         );
         assert!(!self.freeze_started());
         thread_pool.install(|| {
-            stake_rewards
-                .par_chunks(512)
-                .for_each(|chunk| self.rc.accounts.store_accounts_cached((slot, chunk)))
+            stake_rewards.par_chunks(512).for_each(|chunk| {
+                let mut stats = BankHashStats::default();
+                for stake_reward in chunk {
+                    stats.update(&stake_reward.stake_account);
+                }
+                self.bank_hash_stats.accumulate(&stats);
+                self.rc.accounts.store_accounts_cached((slot, chunk))
+            })
         });
         metrics
             .store_stake_accounts_us
@@ -4210,10 +4215,17 @@ impl Bank {
                 &maybe_transaction_refs,
                 &processing_results,
             );
+
             self.rc.accounts.store_cached(
                 (self.slot(), accounts_to_store.as_slice()),
                 transactions.as_deref(),
             );
+
+            let mut stats = BankHashStats::default();
+            for (_, account) in accounts_to_store {
+                stats.update(account);
+            }
+            self.bank_hash_stats.accumulate(&stats);
         });
 
         self.collect_rent(&processing_results);
