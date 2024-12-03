@@ -8,7 +8,7 @@ use {
     rayon::prelude::*,
     solana_client::connection_cache::ConnectionCache,
     solana_core::{
-        banking_stage::BankingStage,
+        banking_stage::{update_bank_forks_and_poh_recorder_for_new_tpu_bank, BankingStage},
         banking_trace::{
             BankingPacketBatch, BankingTracer, Channels, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
         },
@@ -47,7 +47,6 @@ use {
         time::{Duration, Instant},
     },
 };
-use solana_core::banking_stage::update_bank_forks_and_poh_recorder_for_new_tpu_bank;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;

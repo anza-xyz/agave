@@ -1,7 +1,9 @@
 #![cfg(feature = "dev-context-only-utils")]
 use {
     crate::{
-        banking_stage::{BankingStage, LikeClusterInfo},
+        banking_stage::{
+            update_bank_forks_and_poh_recorder_for_new_tpu_bank, BankingStage, LikeClusterInfo,
+        },
         banking_trace::{
             BankingPacketBatch, BankingTracer, ChannelLabel, Channels, TimedTracedEvent,
             TracedEvent, TracedSender, TracerThread, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
@@ -35,8 +37,7 @@ use {
     },
     solana_sdk::{
         clock::Slot, genesis_config::GenesisConfig, pubkey::Pubkey,
-        shred_version::compute_shred_version,
-        signature::Signer, signer::keypair::Keypair,
+        shred_version::compute_shred_version, signature::Signer, signer::keypair::Keypair,
     },
     solana_streamer::socket::SocketAddrSpace,
     solana_turbine::broadcast_stage::{BroadcastStage, BroadcastStageType},
@@ -56,7 +57,6 @@ use {
     },
     thiserror::Error,
 };
-use crate::banking_stage::update_bank_forks_and_poh_recorder_for_new_tpu_bank;
 
 /// This creates a simulated environment around `BankingStage` to produce leader's blocks based on
 /// recorded banking trace events (`TimedTracedEvent`).

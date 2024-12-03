@@ -2,6 +2,7 @@
 
 use {
     crate::{
+        banking_stage::update_bank_forks_and_poh_recorder_for_new_tpu_bank,
         banking_trace::BankingTracer,
         cache_block_meta_service::CacheBlockMetaSender,
         cluster_info_vote_listener::{
@@ -90,7 +91,6 @@ use {
         time::{Duration, Instant},
     },
 };
-use crate::banking_stage::update_bank_forks_and_poh_recorder_for_new_tpu_bank;
 
 pub const MAX_ENTRY_RECV_PER_ITER: usize = 512;
 pub const SUPERMINORITY_THRESHOLD: f64 = 1f64 / 3f64;
