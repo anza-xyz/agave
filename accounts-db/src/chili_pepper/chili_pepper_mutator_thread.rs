@@ -35,7 +35,7 @@ pub struct ChiliPepperStat {
 }
 
 impl ChiliPepperStat {
-    fn report(&mut self, store: &ChiliPepperStoreWrapper) {
+    fn report(&mut self, store: &ChiliPepperStoreWrapper, channel_len: usize) {
         if self.last_report.should_update(1000) {
             self.len = store.len().unwrap_or(0);
             self.bytes = match store.stat() {
@@ -50,6 +50,7 @@ impl ChiliPepperStat {
                 ("insert_time", self.insert_time, i64),
                 ("clean_time", self.clean_time, i64),
                 ("snapshot_time", self.snapshot_time, i64),
+                ("channel_len", channel_len, i64),
             );
 
             self.reset();
@@ -84,7 +85,11 @@ impl ChiliPepperMutatorThread {
                     if exit.load(Ordering::Relaxed) {
                         break;
                     }
-                    stat.report(&store);
+                    let channel_len = receiver.len();
+                    stat.report(&store, channel_len);
+
+                    info!("ChiliPepperChannelLen: {}", receiver.len());
+
                     // sleep wait on the channel for 200ms half of the block time
                     match receiver.recv_timeout(Duration::from_millis(200)) {
                         Ok(command) => match command {
@@ -125,7 +130,7 @@ impl ChiliPepperMutatorThread {
                                 // TOD handle savepoint error
                                 let savepoint_id = store
                                     .create_savepoint()
-                                    .expect("chiili pepper store create savepoint failed");
+                                    .expect("chili pepper store create savepoint failed");
                                 sender.send(savepoint_id).unwrap();
                             }
                             ChiliPepperMutatorThreadCommand::DeleteSavePoint(savepoint_id) => {
