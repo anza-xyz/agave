@@ -2,13 +2,14 @@ use {
     crate::policy::{apply_policy, CoreAllocation},
     anyhow::Ok,
     serde::{Deserialize, Serialize},
+    std::sync::Mutex,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RayonConfig {
     pub worker_threads: usize,
-    pub priority: u32,
+    pub priority: u8,
     pub stack_size_bytes: usize,
     pub core_allocation: CoreAllocation,
 }
@@ -31,13 +32,14 @@ pub struct RayonRuntime {
 }
 
 impl RayonRuntime {
-    fn new(config: RayonConfig) -> anyhow::Result<Self> {
+    pub fn new(config: RayonConfig) -> anyhow::Result<Self> {
         let policy = config.core_allocation.clone();
+        let chosen_cores_mask = Mutex::new(policy.as_core_mask_vector());
         let priority = config.priority;
         let rayon_pool = rayon::ThreadPoolBuilder::new()
             .num_threads(config.worker_threads)
-            .start_handler(move |idx| {
-                apply_policy(&policy, priority);
+            .start_handler(move |_idx| {
+                apply_policy(&policy, priority, &chosen_cores_mask);
             })
             .build()?;
         Ok(Self { rayon_pool, config })

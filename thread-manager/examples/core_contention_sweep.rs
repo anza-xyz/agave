@@ -38,12 +38,12 @@ async fn axum_main(port: u16) {
 }
 use agave_thread_manager::*;
 fn make_config_shared(cc: usize) -> RuntimeManagerConfig {
-    let mut tokio_cfg_1 = TokioConfig::default();
-    tokio_cfg_1.core_allocation = CoreAllocation::DedicatedCoreSet { min: 0, max: cc };
-    tokio_cfg_1.worker_threads = cc;
-    let mut tokio_cfg_2 = TokioConfig::default();
-    tokio_cfg_2.core_allocation = CoreAllocation::DedicatedCoreSet { min: 0, max: cc };
-    tokio_cfg_2.worker_threads = cc;
+    let tokio_cfg_1 = TokioConfig {
+        core_allocation: CoreAllocation::DedicatedCoreSet { min: 0, max: cc },
+        worker_threads: cc,
+        ..Default::default()
+    };
+    let tokio_cfg_2 = tokio_cfg_1.clone();
     RuntimeManagerConfig {
         tokio_configs: HashMap::from([
             ("tokio1".into(), tokio_cfg_1),
@@ -57,18 +57,22 @@ fn make_config_shared(cc: usize) -> RuntimeManagerConfig {
     }
 }
 fn make_config_dedicated(cc: usize) -> RuntimeManagerConfig {
-    let mut tokio_cfg_1 = TokioConfig::default();
-    tokio_cfg_1.core_allocation = CoreAllocation::DedicatedCoreSet {
-        min: 0,
-        max: cc / 2,
+    let tokio_cfg_1 = TokioConfig {
+        core_allocation: CoreAllocation::DedicatedCoreSet {
+            min: 0,
+            max: cc / 2,
+        },
+        worker_threads: cc / 2,
+        ..Default::default()
     };
-    tokio_cfg_1.worker_threads = cc / 2;
-    let mut tokio_cfg_2 = TokioConfig::default();
-    tokio_cfg_2.core_allocation = CoreAllocation::DedicatedCoreSet {
-        min: cc / 2,
-        max: cc,
+    let tokio_cfg_2 = TokioConfig {
+        core_allocation: CoreAllocation::DedicatedCoreSet {
+            min: cc / 2,
+            max: cc,
+        },
+        worker_threads: cc / 2,
+        ..Default::default()
     };
-    tokio_cfg_2.worker_threads = cc / 2;
     RuntimeManagerConfig {
         tokio_configs: HashMap::from([
             ("tokio1".into(), tokio_cfg_1),

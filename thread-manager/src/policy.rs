@@ -1,4 +1,7 @@
-use serde::{Deserialize, Serialize};
+use {
+    serde::{Deserialize, Serialize},
+    thread_priority::ThreadExt,
+};
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub enum CoreAllocation {
@@ -23,4 +26,35 @@ impl CoreAllocation {
 }
 
 ///Applies policy to the calling thread
-pub fn apply_policy(alloc: &CoreAllocation, priority: u32) {}
+pub fn apply_policy(
+    alloc: &CoreAllocation,
+    priority: u8,
+    chosen_cores_mask: &std::sync::Mutex<Vec<usize>>,
+) {
+    std::thread::current()
+        .set_priority(thread_priority::ThreadPriority::Crossplatform(
+            (priority).try_into().unwrap(),
+        ))
+        .expect("Can not set thread priority!");
+
+    match alloc {
+        CoreAllocation::PinnedCores { min: _, max: _ } => {
+            let mut lg = chosen_cores_mask
+                .lock()
+                .expect("Can not lock core mask mutex");
+            let core = lg
+                .pop()
+                .expect("Not enough cores provided for pinned allocation");
+            affinity::set_thread_affinity([core])
+                .expect("Can not set thread affinity for runtime worker");
+        }
+        CoreAllocation::DedicatedCoreSet { min: _, max: _ } => {
+            let lg = chosen_cores_mask
+                .lock()
+                .expect("Can not lock core mask mutex");
+            affinity::set_thread_affinity(&(*lg))
+                .expect("Can not set thread affinity for runtime worker");
+        }
+        CoreAllocation::OsDefault => {}
+    }
+}
