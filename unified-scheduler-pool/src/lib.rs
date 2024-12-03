@@ -528,23 +528,12 @@ where
                 .expect("not poisoned");
             id_and_inner = self
                 .block_production_scheduler_condvar
-                .wait_while(id_and_inner, |id_and_inner| {
-                    let not_yet = id_and_inner.0.is_none();
-                    if not_yet {
-                        error!(
-                            "will wait for bps..., slot: {}, mode: {:?}",
-                            context.slot(),
-                            context.mode()
-                        );
-                    }
-                    not_yet
-                })
+                .wait_while(id_and_inner, |id_and_inner| id_and_inner.0.is_none())
                 .unwrap();
-            if let Some(inner) = id_and_inner.1.take() {
-                S::from_inner(inner, context, result_with_timings)
-            } else {
-                panic!("double take: {}", context.slot());
+            let Some(inner) = id_and_inner.1.take() else {
+                panic!("double take: {}, {}", context.slot(), context.mode());
             }
+            S::from_inner(inner, context, result_with_timings)
         }
     }
 
