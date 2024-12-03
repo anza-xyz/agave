@@ -230,32 +230,34 @@ impl BankingTracer {
     }
 
     pub fn create_channels(&self, pool: Option<&Arc<DefaultSchedulerPool>>) -> Channels {
-        let (
-            (tpu_vote_sender, tpu_vote_receiver),
-            (gossip_vote_sender, gossip_vote_receiver),
-            (non_vote_sender, non_vote_receiver),
-        ) = if let Some(true) = pool.map(|pool| pool.block_production_supported()) {
+        if let Some(true) = pool.map(|pool| pool.block_production_supported()) {
             let (non_vote_sender, non_vote_receiver) = self.create_channel_non_vote();
-            (
-                self.create_unified_channel_tpu_vote(&non_vote_sender, &non_vote_receiver),
-                self.create_unified_channel_gossip_vote(&non_vote_sender, &non_vote_receiver),
-                (non_vote_sender, non_vote_receiver),
-            )
-        } else {
-            (
-                self.create_channel_tpu_vote(),
-                self.create_channel_gossip_vote(),
-                self.create_channel_non_vote(),
-            )
-        };
+            let (tpu_vote_sender, tpu_vote_receiver) =
+                self.create_unified_channel_tpu_vote(&non_vote_sender, &non_vote_receiver);
+            let (gossip_vote_sender, gossip_vote_receiver) =
+                self.create_unified_channel_gossip_vote(&non_vote_sender, &non_vote_receiver);
 
-        Channels {
-            non_vote_sender,
-            non_vote_receiver,
-            tpu_vote_sender,
-            tpu_vote_receiver,
-            gossip_vote_sender,
-            gossip_vote_receiver,
+            Channels {
+                non_vote_sender,
+                non_vote_receiver,
+                tpu_vote_sender,
+                tpu_vote_receiver,
+                gossip_vote_sender,
+                gossip_vote_receiver,
+            }
+        } else {
+            let (non_vote_sender, non_vote_receiver) = self.create_channel_non_vote();
+            let (tpu_vote_sender, tpu_vote_receiver) = self.create_channel_tpu_vote();
+            let (gossip_vote_sender, gossip_vote_receiver) = self.create_channel_gossip_vote();
+
+            Channels {
+                non_vote_sender,
+                non_vote_receiver,
+                tpu_vote_sender,
+                tpu_vote_receiver,
+                gossip_vote_sender,
+                gossip_vote_receiver,
+            }
         }
     }
 
