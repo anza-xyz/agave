@@ -35,7 +35,8 @@ use {
     },
     solana_sdk::{
         clock::Slot, genesis_config::GenesisConfig, pubkey::Pubkey,
-        shred_version::compute_shred_version, signature::Signer, signer::keypair::Keypair,
+        scheduling::SchedulingMode::BlockProduction, shred_version::compute_shred_version,
+        signature::Signer, signer::keypair::Keypair,
     },
     solana_streamer::socket::SocketAddrSpace,
     solana_turbine::broadcast_stage::{BroadcastStage, BroadcastStageType},
@@ -55,7 +56,6 @@ use {
     },
     thiserror::Error,
 };
-use solana_sdk::scheduling::SchedulingMode::BlockProduction;
 
 /// This creates a simulated environment around `BankingStage` to produce leader's blocks based on
 /// recorded banking trace events (`TimedTracedEvent`).
@@ -521,10 +521,7 @@ impl SimulatorLoop {
                 self.bank_forks
                     .write()
                     .unwrap()
-                    .insert_with_scheduling_mode(
-                        BlockProduction,
-                        new_bank,
-                    );
+                    .insert_with_scheduling_mode(BlockProduction, new_bank);
                 (bank, bank_created) = (
                     self.bank_forks
                         .read()
