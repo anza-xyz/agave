@@ -1,5 +1,5 @@
 use {
-    crate::policy::CoreAllocation,
+    crate::policy::{apply_policy, CoreAllocation},
     anyhow::Ok,
     serde::{Deserialize, Serialize},
 };
@@ -32,11 +32,12 @@ pub struct RayonRuntime {
 
 impl RayonRuntime {
     fn new(config: RayonConfig) -> anyhow::Result<Self> {
-        let policy = config.core_allocation;
+        let policy = config.core_allocation.clone();
+        let priority = config.priority;
         let rayon_pool = rayon::ThreadPoolBuilder::new()
             .num_threads(config.worker_threads)
             .start_handler(move |idx| {
-                affinity::set_thread_affinity([1, 2, 3]).unwrap();
+                apply_policy(&policy, priority);
             })
             .build()?;
         Ok(Self { rayon_pool, config })
