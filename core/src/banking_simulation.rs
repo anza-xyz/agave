@@ -55,6 +55,7 @@ use {
     },
     thiserror::Error,
 };
+use solana_sdk::scheduling::SchedulingMode::BlockProduction;
 
 /// This creates a simulated environment around `BankingStage` to produce leader's blocks based on
 /// recorded banking trace events (`TimedTracedEvent`).
