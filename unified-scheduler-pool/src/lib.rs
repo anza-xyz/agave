@@ -792,11 +792,9 @@ impl TaskHandler for DefaultTaskHandler {
             );
         }
 
-        if result.is_err() {
+        if result.is_err() && added_cost {
             if let Some(cost2) = cost {
-                if added_cost {
-                    bank.write_cost_tracker().unwrap().remove(&cost2);
-                }
+                bank.write_cost_tracker().unwrap().remove(&cost2);
             }
         }
 
