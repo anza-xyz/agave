@@ -1,0 +1,31 @@
+{
+    "tokio_configs": {
+        "tokio1": {
+            "worker_threads": 4,
+            "max_blocking_threads": 1,
+            "priority": 0,
+            "core_allocation": {
+                "DedicatedCoreSet": {
+                    "min": 0,
+                    "max": 4
+                }
+            }
+        },
+        "tokio2": {
+            "worker_threads": 4,
+            "max_blocking_threads": 1,
+            "priority": 0,
+            "core_allocation": {
+                "DedicatedCoreSet": {
+                    "min": 4,
+                    "max": 8
+                }
+            }
+        }
+    },
+    "tokio_runtime_mapping": {
+        "axum2": "tokio2",
+        "axum1": "tokio1"
+    },
+    "native_configs": {}
+}
