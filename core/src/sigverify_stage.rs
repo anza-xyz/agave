@@ -579,8 +579,8 @@ mod tests {
         loop {
             if let Ok(message) = verified_r.recv() {
                 let (verifieds, tracer_packet_stats) = (&message.0, message.1.as_ref().unwrap());
-                total_tracer_packets_received_in_sigverify_stage.0 +=
-                    tracer_packet_stats.total_tracer_packets_received_in_sigverify_stage;
+                total_tracer_packets_received_in_sigverify_stage +=
+                    tracer_packet_stats.total_tracer_packets_received_in_sigverify_stage.0;
                 assert_eq!(
                     tracer_packet_stats.total_tracer_packets_received_in_sigverify_stage.0
                         % packets_per_batch,
