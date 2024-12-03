@@ -290,7 +290,7 @@ where
 
                 let now = Instant::now();
 
-                let (idle_inner_count, active_inner_count) = {
+                let idle_inner_count = {
                     // Pre-allocate rather large capacity to avoid reallocation inside the lock.
                     let mut idle_inners = Vec::with_capacity(128);
 
@@ -308,12 +308,11 @@ where
                     idle_inners.extend(scheduler_inners.extract_if(|(_inner, pooled_at)| {
                         now.duration_since(*pooled_at) > max_pooling_duration
                     }));
-                    let r = scheduler_inners.len();
                     drop(scheduler_inners);
 
                     let idle_inner_count = idle_inners.len();
                     drop(idle_inners);
-                    (idle_inner_count, r)
+                    idle_inner_count
                 };
 
                 let banking_stage_status = scheduler_pool.banking_stage_status();
