@@ -582,7 +582,7 @@ mod tests {
                 total_tracer_packets_received_in_sigverify_stage +=
                     tracer_packet_stats.total_tracer_packets_received_in_sigverify_stage;
                 assert_eq!(
-                    tracer_packet_stats.total_tracer_packets_received_in_sigverify_stage
+                    tracer_packet_stats.total_tracer_packets_received_in_sigverify_stage.0
                         % packets_per_batch,
                     0,
                 );
