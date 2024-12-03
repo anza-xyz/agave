@@ -20,7 +20,7 @@ solana-sdk-ids = { workspace = true }
 
 [dev-dependencies]
 hex = { workspace = true }
-rand0-7 = { workspace = true }
+rand = { workspace = true }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
 solana-logger = { workspace = true }
