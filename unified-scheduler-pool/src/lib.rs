@@ -531,7 +531,7 @@ where
                 .wait_while(id_and_inner, |id_and_inner| id_and_inner.0.is_none())
                 .unwrap();
             let Some(inner) = id_and_inner.1.take() else {
-                panic!("double take: {}, {}", context.slot(), context.mode());
+                panic!("double take: {}, {:?}", context.slot(), context.mode());
             };
             S::from_inner(inner, context, result_with_timings)
         }
