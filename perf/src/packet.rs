@@ -12,6 +12,7 @@ use {
         slice::{Iter, IterMut, SliceIndex},
     },
 };
+use std::sync::Arc;
 
 pub const NUM_PACKETS: usize = 1024 * 8;
 
@@ -226,7 +227,6 @@ pub fn to_packet_batches<T: Serialize>(items: &[T], chunk_size: usize) -> Vec<Pa
         .collect()
 }
 
-use {solana_sdk::saturating_add_assign, std::sync::Arc};
 pub type BankingPacketBatch = Arc<(Vec<PacketBatch>, Option<SigverifyTracerPacketStats>)>;
 pub type BankingPacketReceiver = crossbeam_channel::Receiver<
     std::sync::Arc<(
