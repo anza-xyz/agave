@@ -392,7 +392,6 @@ where
                 ));
 
                 if exiting && active_timeout_listener_count == 0 {
-                    error!("proper exit!");
                     // Wait a bit to ensure the replay stage has gone.
                     sleep(Duration::from_secs(1));
                     let mut id_and_inner = scheduler_pool
