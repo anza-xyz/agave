@@ -14,13 +14,15 @@ use {
 
 mod native_thread_runtime;
 mod policy;
-mod tokio_runtime;
 mod rayon_runtime;
+mod tokio_runtime;
 
-pub use rayon_runtime::{RayonConfig, RayonRuntime}
-pub use native_thread_runtime::{NativeConfig, NativeThreadRuntime};
-pub use policy::CoreAllocation;
-pub use tokio_runtime::{TokioConfig, TokioRuntime};
+pub use {
+    native_thread_runtime::{NativeConfig, NativeThreadRuntime},
+    policy::CoreAllocation,
+    rayon_runtime::{RayonConfig, RayonRuntime},
+    tokio_runtime::{TokioConfig, TokioRuntime},
+};
 pub type ConstString = Box<str>;
 
 #[derive(Default, Debug)]
@@ -93,11 +95,13 @@ impl RuntimeManager {
         for (name, cfg) in config.tokio_configs.iter() {
             let tokiort = TokioRuntime::new(name.clone(), cfg.clone())?;
 
-            core_allocations.insert(name.clone().into_boxed_str(), cfg.core_allocation.as_core_mask_vector());
-            manager.tokio_runtimes.insert(
+            core_allocations.insert(
                 name.clone().into_boxed_str(),
-                tokiort
+                cfg.core_allocation.as_core_mask_vector(),
             );
+            manager
+                .tokio_runtimes
+                .insert(name.clone().into_boxed_str(), tokiort);
         }
         Ok(manager)
     }
@@ -105,9 +109,10 @@ impl RuntimeManager {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
-    use crate::{CoreAllocation, NativeConfig, RuntimeManager, RuntimeManagerConfig};
+    use {
+        crate::{CoreAllocation, NativeConfig, RuntimeManager, RuntimeManagerConfig},
+        std::collections::HashMap,
+    };
 
     #[test]
     fn process_affinity() {

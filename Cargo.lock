@@ -2770,7 +2770,7 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "futures-util",
- "http",
+ "http 0.2.12",
  "indexmap 2.7.0",
  "slab",
  "tokio",
