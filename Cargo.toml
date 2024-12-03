@@ -586,7 +586,7 @@ solana-zk-keygen = { path = "zk-keygen", version = "=2.2.0" }
 solana-zk-sdk = { path = "zk-sdk", version = "=2.2.0" }
 solana-zk-token-proof-program = { path = "programs/zk-token-proof", version = "=2.2.0" }
 solana-zk-token-sdk = { path = "zk-token-sdk", version = "=2.2.0" }
-solana_rbpf = "=0.8.5"
+solana_rbpf = { git = "https://github.com/solana-labs/rbpf.git" }
 spl-associated-token-account = "=6.0.0"
 spl-instruction-padding = "0.3"
 spl-memo = "=6.0.0"

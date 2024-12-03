@@ -331,7 +331,7 @@ macro_rules! mock_create_vm {
         let executable = solana_rbpf::elf::Executable::<InvokeContext>::from_text_bytes(
             &[0x95, 0, 0, 0, 0, 0, 0, 0],
             loader,
-            SBPFVersion::V2,
+            SBPFVersion::V3,
             function_registry,
         )
         .unwrap();
