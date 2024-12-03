@@ -502,6 +502,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     shrink_paths: None,
     shrink_ratio: DEFAULT_ACCOUNTS_SHRINK_THRESHOLD_OPTION,
     read_cache_limit_bytes: None,
+    read_cache_evict_sample_size: None,
     write_cache_limit_bytes: None,
     ancient_append_vec_offset: None,
     ancient_storage_ideal_size: None,
@@ -529,6 +530,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     shrink_paths: None,
     shrink_ratio: DEFAULT_ACCOUNTS_SHRINK_THRESHOLD_OPTION,
     read_cache_limit_bytes: None,
+    read_cache_evict_sample_size: None,
     write_cache_limit_bytes: None,
     ancient_append_vec_offset: None,
     ancient_storage_ideal_size: None,
@@ -654,6 +656,9 @@ pub struct AccountsDbConfig {
     /// The low and high watermark sizes for the read cache, in bytes.
     /// If None, defaults will be used.
     pub read_cache_limit_bytes: Option<(usize, usize)>,
+    /// The number of elements that will be randomly sampled at eviction time,
+    /// the oldest of which will get evicted.
+    pub read_cache_evict_sample_size: Option<usize>,
     pub write_cache_limit_bytes: Option<u64>,
     /// if None, ancient append vecs are set to ANCIENT_APPEND_VEC_DEFAULT_OFFSET
     /// Some(offset) means include slots up to (max_slot - (slots_per_epoch - 'offset'))
@@ -1891,16 +1896,16 @@ pub struct PubkeyHashAccount {
 impl AccountsDb {
     pub const DEFAULT_ACCOUNTS_HASH_CACHE_DIR: &'static str = "accounts_hash_cache";
 
-    // read only cache does not update lru on read of an entry unless it has been at least this many ms since the last lru update
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    const READ_ONLY_CACHE_MS_TO_SKIP_LRU_UPDATE: u32 = 100;
-
     // The default high and low watermark sizes for the accounts read cache.
     // If the cache size exceeds MAX_SIZE_HI, it'll evict entries until the size is <= MAX_SIZE_LO.
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     const DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_LO: usize = 400 * 1024 * 1024;
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     const DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI: usize = 410 * 1024 * 1024;
+
+    // See AccountsDbConfig::read_cache_evict_sample_size.
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    const DEFAULT_READ_ONLY_CACHE_EVICT_SAMPLE_SIZE: usize = 8;
 
     pub fn default_for_tests() -> Self {
         Self::new_single_for_tests()
@@ -1979,6 +1984,9 @@ impl AccountsDb {
             Self::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_LO,
             Self::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI,
         ));
+        let read_cache_evict_sample_size = accounts_db_config
+            .read_cache_evict_sample_size
+            .unwrap_or(Self::DEFAULT_READ_ONLY_CACHE_EVICT_SAMPLE_SIZE);
 
         // Increase the stack for foreground threads
         // rayon needs a lot of stack
@@ -2034,7 +2042,7 @@ impl AccountsDb {
             read_only_accounts_cache: ReadOnlyAccountsCache::new(
                 read_cache_size.0,
                 read_cache_size.1,
-                Self::READ_ONLY_CACHE_MS_TO_SKIP_LRU_UPDATE,
+                read_cache_evict_sample_size,
             ),
             write_cache_limit_bytes: accounts_db_config.write_cache_limit_bytes,
             partitioned_epoch_rewards_config: accounts_db_config.partitioned_epoch_rewards_config,
