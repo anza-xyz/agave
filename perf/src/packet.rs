@@ -251,26 +251,16 @@ impl SigverifyTracerPacketStats {
     }
 
     pub fn aggregate(&mut self, other: &SigverifyTracerPacketStats) {
-        saturating_add_assign!(
-            self.total_removed_before_sigverify_stage,
-            other.total_removed_before_sigverify_stage
-        );
-        saturating_add_assign!(
-            self.total_tracer_packets_received_in_sigverify_stage,
-            other.total_tracer_packets_received_in_sigverify_stage
-        );
-        saturating_add_assign!(
-            self.total_tracer_packets_deduped,
-            other.total_tracer_packets_deduped
-        );
-        saturating_add_assign!(
-            self.total_excess_tracer_packets,
-            other.total_excess_tracer_packets
-        );
-        saturating_add_assign!(
-            self.total_tracker_packets_passed_sigverify,
-            other.total_tracker_packets_passed_sigverify
-        );
+        self.total_removed_before_sigverify_stage +=
+            other.total_removed_before_sigverify_stage;
+        self.total_tracer_packets_received_in_sigverify_stage +=
+            other.total_tracer_packets_received_in_sigverify_stage;
+        self.total_tracer_packets_deduped +=
+            other.total_tracer_packets_deduped;
+        self.total_excess_tracer_packets += 
+            other.total_excess_tracer_packets;
+        self.total_tracker_packets_passed_sigverify += 
+            other.total_tracker_packets_passed_sigverify;
     }
 }
 
