@@ -978,7 +978,7 @@ impl ReplayStage {
                 let mut reset_bank_time = Measure::start("reset_bank");
                 // Reset onto a fork
                 if let Some(reset_bank) = reset_bank {
-                    if last_reset == reset_bank.last_blockhash() {
+                    if last_reset == reset_bank.last_vote_only_blockhash() {
                         let reset_bank_descendants =
                             Self::get_active_descendants(reset_bank.slot(), &progress, &blockstore);
                         if reset_bank_descendants != last_reset_bank_descendants {
@@ -1045,7 +1045,7 @@ impl ReplayStage {
                             &poh_recorder,
                             &leader_schedule_cache,
                         );
-                        last_reset = reset_bank.last_blockhash();
+                        last_reset = reset_bank.last_vote_only_blockhash();
                         last_reset_bank_descendants = vec![];
                         tpu_has_bank = false;
 
@@ -2186,7 +2186,7 @@ impl ReplayStage {
             tpu_bank.update_data_from_parent();
             // make sure parent is frozen for finalized hashes via the above
             // new()-ing of its child bank
-            banking_tracer.hash_event(parent.slot(), &parent.last_blockhash(), &parent.hash());
+            banking_tracer.hash_event(parent.slot(), &parent.last_vote_only_blockhash(), &parent.hash());
 
             let tpu_bank = bank_forks.write().unwrap().insert(tpu_bank);
             poh_recorder
@@ -2579,7 +2579,7 @@ impl ReplayStage {
 
         let mut vote_tx = Transaction::new_with_payer(&[vote_ix], Some(&node_keypair.pubkey()));
 
-        let blockhash = bank.last_blockhash();
+        let blockhash = bank.last_vote_only_blockhash();
         vote_tx.partial_sign(&[node_keypair], blockhash);
         vote_tx.partial_sign(&[authorized_voter_keypair.as_ref()], blockhash);
 
@@ -4215,7 +4215,7 @@ pub(crate) mod tests {
         let poh_recorder = RwLock::new(
             PohRecorder::new(
                 working_bank.tick_height(),
-                working_bank.last_blockhash(),
+                working_bank.last_vote_only_blockhash(),
                 working_bank.clone(),
                 None,
                 working_bank.ticks_per_slot(),
