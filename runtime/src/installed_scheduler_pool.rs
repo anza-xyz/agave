@@ -614,12 +614,13 @@ impl BankWithSchedulerInner {
                 return;
             };
 
+            let mut id = None;
             scheduler.maybe_transition_from_active_to_stale(|scheduler| {
                 // The scheduler hasn't still been wait_for_termination()-ed after awhile...
                 // Return the installed scheduler back to the scheduler pool as soon as the
                 // scheduler gets idle after executing all currently-scheduled transactions.
 
-                let id = scheduler.id();
+                id = scheduler.id();
                 let (result_with_timings, uninstalled_scheduler) =
                     scheduler.wait_for_termination(false);
                 uninstalled_scheduler.return_to_pool();
@@ -630,7 +631,7 @@ impl BankWithSchedulerInner {
                 );
                 (pool, result_with_timings)
             });
-            trace!("timeout_listener: ???");
+            trace!("timeout_listener: {:?}", id);
         })
     }
 
