@@ -23,6 +23,7 @@ impl Bank {
     /// Create EpochRewards sysvar with calculated rewards
     /// This method must be called before a new Bank advances its
     /// last_blockhash.
+    /// TODO(wen): move this to final replay stage.
     pub(in crate::bank) fn create_epoch_rewards_sysvar(
         &self,
         total_rewards: u64,
@@ -43,7 +44,7 @@ impl Bank {
         };
         assert!(total_rewards >= distributed_rewards);
 
-        let parent_blockhash = self.last_blockhash();
+        let parent_blockhash = self.last_vote_only_blockhash();
 
         let epoch_rewards = sysvar::epoch_rewards::EpochRewards {
             distribution_starting_block_height,
