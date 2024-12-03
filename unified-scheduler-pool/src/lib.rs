@@ -357,8 +357,6 @@ where
                     (expired_count, not_expired_count)
                 };
 
-                info!("Scheduler pool cleaner: block_production_scheduler_inner!!!",);
-
                 if matches!(banking_stage_status, Some(BankingStageStatus::Inactive)) {
                     let mut id_and_inner = scheduler_pool
                         .block_production_scheduler_inner
