@@ -202,6 +202,7 @@ pub enum SlotUpdate {
         slot: Slot,
         timestamp: u64,
         stats: SlotTransactionStats,
+        hash: String,
     },
     Dead {
         slot: Slot,
