@@ -807,7 +807,7 @@ $(
     install-earlyoom.sh \
     install-iftop.sh \
     install-jq.sh \
-    install-libssl-compatability.sh \
+    install-libssl.sh \
     install-rsync.sh \
     install-perf.sh \
     localtime.sh \

@@ -7,4 +7,3 @@ set -ex
 # Install libssl-dev to be compatible with binaries built on an Ubuntu machine...
 apt-get update
 apt-get --assume-yes install libssl-dev
-
