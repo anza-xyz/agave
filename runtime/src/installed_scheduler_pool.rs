@@ -252,7 +252,7 @@ impl SchedulingContext {
     }
 
     pub fn slot(&self) -> Option<Slot> {
-        self.bank.as_ref().map(|bank| bank.slot()).unwrap_or_default()
+        self.bank.as_ref().map(|bank| bank.slot())
     }
 }
 
