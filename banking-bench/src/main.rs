@@ -457,7 +457,7 @@ fn main() {
         block_production_method,
         BlockProductionMethod::UnifiedScheduler
     ) {
-        let scheduler_pool = DefaultSchedulerPool::new(
+        let pool = DefaultSchedulerPool::new(
             SupportedSchedulingMode::Either(SchedulingMode::BlockProduction),
             None,
             None,
@@ -469,8 +469,8 @@ fn main() {
         bank_forks
             .write()
             .unwrap()
-            .install_scheduler_pool(scheduler_pool.clone());
-        Some(scheduler_pool)
+            .install_scheduler_pool(pool.clone());
+        Some(pool)
     } else {
         None
     };
@@ -523,11 +523,10 @@ fn main() {
         block_production_method,
         BlockProductionMethod::UnifiedScheduler
     ) {
-        let mut bank_forks = bank_forks.write().unwrap();
-        bank_forks.reinstall_block_production_scheduler_into_working_genesis_bank();
         bank = bank_forks
-            .working_bank_with_scheduler()
-            .clone_with_scheduler();
+            .write()
+            .unwrap()
+            .reinstall_block_production_scheduler_into_working_genesis_bank();
     }
 
     // This is so that the signal_receiver does not go out of scope after the closure.

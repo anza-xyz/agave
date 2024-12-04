@@ -278,14 +278,19 @@ impl BankForks {
     }
 
     #[cfg(feature = "dev-context-only-utils")]
-    pub fn reinstall_block_production_scheduler_into_working_genesis_bank(&mut self) {
+    pub fn reinstall_block_production_scheduler_into_working_genesis_bank(
+        &mut self,
+    ) -> BankWithScheduler {
         let bank = self.working_bank();
         assert!(self.banks.len() == 1 && bank.slot() == 0 && !bank.is_frozen());
         let pool = self.scheduler_pool.as_ref().unwrap();
         let mode = SchedulingMode::BlockProduction;
-        let bank = Self::install_scheduler_into_bank(pool,mode ,bank, true);
-        let removed = self.banks.insert(self.highest_slot(), bank);
+        let bank = Self::install_scheduler_into_bank(pool, mode, bank, true);
+        let removed = self
+            .banks
+            .insert(self.highest_slot(), bank.clone_with_scheduler());
         assert!(removed.is_some());
+        bank
     }
 
     pub fn insert_from_ledger(&mut self, bank: Bank) -> BankWithScheduler {
