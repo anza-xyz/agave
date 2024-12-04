@@ -144,6 +144,7 @@ use {
         rent_debits::RentDebits,
         reserved_account_keys::ReservedAccountKeys,
         reward_info::RewardInfo,
+        scheduling::MaxAge,
         signature::{Keypair, Signature},
         slot_hashes::SlotHashes,
         slot_history::{Check, SlotHistory},
@@ -256,7 +257,7 @@ struct RentMetrics {
 pub type BankStatusCache = StatusCache<Result<()>>;
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "BHg4qpwegtaJypLUqAdjQYzYeLfEGf6tA4U5cREbHMHi")
+    frozen_abi(digest = "Fj6ATu6Rr5ossAykzbRSkCsuUzjdAZbYo5JaqfR1A72G")
 )]
 pub type BankSlotDelta = SlotDelta<Result<()>>;
 
@@ -4074,7 +4075,8 @@ impl Bank {
     ) -> Vec<TransactionCommitResult> {
         assert!(
             !self.freeze_started(),
-            "commit_transactions() working on a bank that is already frozen or is undergoing freezing!"
+            "commit_transactions() working on a bank (slot: {}) that is already frozen or is undergoing freezing!",
+            self.slot(),
         );
 
         let ProcessedTransactionCounts {
@@ -4927,6 +4929,29 @@ impl Bank {
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
     ) -> (Vec<TransactionCommitResult>, TransactionBalancesSet) {
+        self.do_load_execute_and_commit_transactions(
+            batch,
+            max_age,
+            collect_balances,
+            recording_config,
+            timings,
+            log_messages_bytes_limit,
+            None::<fn() -> bool>,
+        )
+        .unwrap()
+    }
+
+    #[must_use]
+    pub fn do_load_execute_and_commit_transactions(
+        &self,
+        batch: &TransactionBatch<impl TransactionWithMeta>,
+        max_age: usize,
+        collect_balances: bool,
+        recording_config: ExecutionRecordingConfig,
+        timings: &mut ExecuteTimings,
+        log_messages_bytes_limit: Option<usize>,
+        pre_commit_callback: Option<impl FnOnce() -> bool>,
+    ) -> Option<(Vec<TransactionCommitResult>, TransactionBalancesSet)> {
         let pre_balances = if collect_balances {
             self.collect_balances(batch)
         } else {
@@ -4952,6 +4977,15 @@ impl Bank {
             },
         );
 
+        if let Some(pre_commit_callback) = pre_commit_callback {
+            if let Some(e) = processing_results.first() {
+                assert_eq!(processing_results.len(), 1);
+                if e.is_ok() && !pre_commit_callback() {
+                    return None;
+                }
+            }
+        }
+
         let commit_results = self.commit_transactions(
             batch.sanitized_transactions(),
             processing_results,
@@ -4963,10 +4997,48 @@ impl Bank {
         } else {
             vec![]
         };
-        (
+        Some((
             commit_results,
             TransactionBalancesSet::new(pre_balances, post_balances),
-        )
+        ))
+    }
+
+    pub fn refilter_prebuilt_block_production_transaction(
+        &self,
+        tx: &impl TransactionWithMeta,
+        max_age: &MaxAge,
+        move_precompile_verification_to_svm: bool,
+    ) -> Result<()> {
+        // Need to filter out transactions since they were sanitized earlier.
+        // This means that the transaction may cross and epoch boundary (not allowed),
+        //  or account lookup tables may have been closed.
+
+        // If the transaction was sanitized before this bank's epoch,
+        // additional checks are necessary.
+        if self.epoch() != max_age.sanitized_epoch {
+            // Reserved key set may have changed, so we must verify that
+            // no writable keys are reserved.
+            self.check_reserved_keys(tx)?;
+        }
+
+        if self.slot() > max_age.alt_invalidation_slot {
+            // The address table lookup **may** have expired, but the
+            // expiration is not guaranteed since there may have been
+            // skipped slot.
+            // If the addresses still resolve here, then the transaction is still
+            // valid, and we can continue with processing.
+            // If they do not, then the ATL has expired and the transaction
+            // can be dropped.
+            let (_addresses, _deactivation_slot) =
+                self.load_addresses_from_ref(tx.message_address_table_lookups())?;
+        }
+
+        // Verify pre-compiles.
+        if !move_precompile_verification_to_svm {
+            verify_precompiles(tx, &self.feature_set)?;
+        }
+
+        Ok(())
     }
 
     /// Process a Transaction. This is used for unit tests and simply calls the vector
@@ -5649,6 +5721,10 @@ impl Bank {
             accounts_hash_info.unwrap_or_default(),
         );
         hash
+    }
+
+    pub fn collector_fees(&self) -> u64 {
+        self.collector_fees.load(Relaxed)
     }
 
     /// The epoch accounts hash is hashed into the bank's hash once per epoch at a predefined slot.

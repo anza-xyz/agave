@@ -210,13 +210,13 @@ impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
 mod tests {
     use {
         super::*,
-        crate::banking_stage::scheduler_messages::MaxAge,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
             compute_budget::ComputeBudgetInstruction,
             hash::Hash,
             message::Message,
             packet::Packet,
+            scheduling::MaxAge,
             signature::Keypair,
             signer::Signer,
             system_instruction,

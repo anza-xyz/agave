@@ -752,7 +752,7 @@ mod tests {
         crate::banking_stage::{
             committer::Committer,
             qos_service::QosService,
-            scheduler_messages::{MaxAge, TransactionBatchId},
+            scheduler_messages::TransactionBatchId,
             tests::{create_slow_genesis_config, sanitize_transactions, simulate_poh},
         },
         crossbeam_channel::unbounded,
@@ -776,6 +776,7 @@ mod tests {
             },
             poh_config::PohConfig,
             pubkey::Pubkey,
+            scheduling::MaxAge,
             signature::Keypair,
             signer::Signer,
             system_instruction, system_transaction,
