@@ -186,8 +186,12 @@ fn consume_scan_should_process_packet(
         // because the priority guard requires that we always take locks
         // except in the cases of discarding transactions (i.e. `Never`).
         if payload.account_locks.check_locks(message)
-            && Consumer::check_fee_payer_unlocked(bank, message, &mut payload.error_counters)
-                .is_err()
+            && Consumer::check_fee_payer_unlocked(
+                bank,
+                &sanitized_transaction,
+                &mut payload.error_counters,
+            )
+            .is_err()
         {
             payload
                 .message_hash_to_transaction
