@@ -394,7 +394,7 @@ impl Consumer {
             &pre_results,
             MAX_PROCESSING_AGE,
             &mut error_counters,
-            false,
+            true,
         );
         // If checks passed, verify pre-compiles and continue processing on success.
         let move_precompile_verification_to_svm = bank
