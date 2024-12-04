@@ -772,12 +772,14 @@ mod tests {
         bank: Arc<Bank>,
         is_dropped_flags: impl Iterator<Item = bool>,
         f: Option<impl Fn(&mut MockInstalledScheduler)>,
+        extra_context_use: usize,
     ) -> InstalledSchedulerBox {
         let mut mock = MockInstalledScheduler::new();
         let seq = Arc::new(Mutex::new(Sequence::new()));
 
+        // Could be used for assertions in BankWithScheduler::{new, schedule_transaction_executions}
         mock.expect_context()
-            .times(1)
+            .times(1 + extra_context_use)
             .in_sequence(&mut seq.lock().unwrap())
             .return_const(SchedulingContext::for_verification(bank));
 
@@ -816,6 +818,7 @@ mod tests {
             bank,
             is_dropped_flags,
             None::<fn(&mut MockInstalledScheduler) -> ()>,
+            0,
         )
     }
 
@@ -877,6 +880,7 @@ mod tests {
                         .times(1)
                         .returning(|| ());
                 }),
+                0,
             )),
         );
         goto_end_of_slot_with_scheduler(&bank);
@@ -918,6 +922,7 @@ mod tests {
                         .returning(|| TransactionError::InsufficientFundsForFee);
                 }
             }),
+            1,
         );
 
         let bank = BankWithScheduler::new(bank, Some(mocked_scheduler));
