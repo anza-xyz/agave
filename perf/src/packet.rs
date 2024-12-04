@@ -8,8 +8,10 @@ use {
     std::{
         io::Read,
         net::SocketAddr,
+        num::Saturating,
         ops::{Index, IndexMut},
         slice::{Iter, IterMut, SliceIndex},
+        sync::Arc,
     },
 };
 
@@ -224,6 +226,38 @@ pub fn to_packet_batches<T: Serialize>(items: &[T], chunk_size: usize) -> Vec<Pa
             batch
         })
         .collect()
+}
+
+pub type BankingPacketBatch = Arc<(Vec<PacketBatch>, Option<SigverifyTracerPacketStats>)>;
+pub type BankingPacketReceiver = crossbeam_channel::Receiver<
+    std::sync::Arc<(
+        Vec<PacketBatch>,
+        std::option::Option<SigverifyTracerPacketStats>,
+    )>,
+>;
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SigverifyTracerPacketStats {
+    pub total_removed_before_sigverify_stage: Saturating<usize>,
+    pub total_tracer_packets_received_in_sigverify_stage: Saturating<usize>,
+    pub total_tracer_packets_deduped: Saturating<usize>,
+    pub total_excess_tracer_packets: Saturating<usize>,
+    pub total_tracker_packets_passed_sigverify: Saturating<usize>,
+}
+
+impl SigverifyTracerPacketStats {
+    pub fn is_default(&self) -> bool {
+        *self == SigverifyTracerPacketStats::default()
+    }
+
+    pub fn aggregate(&mut self, other: &SigverifyTracerPacketStats) {
+        self.total_removed_before_sigverify_stage += other.total_removed_before_sigverify_stage;
+        self.total_tracer_packets_received_in_sigverify_stage +=
+            other.total_tracer_packets_received_in_sigverify_stage;
+        self.total_tracer_packets_deduped += other.total_tracer_packets_deduped;
+        self.total_excess_tracer_packets += other.total_excess_tracer_packets;
+        self.total_tracker_packets_passed_sigverify += other.total_tracker_packets_passed_sigverify;
+    }
 }
 
 #[cfg(test)]
