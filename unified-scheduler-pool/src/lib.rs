@@ -1665,7 +1665,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     state_machine.do_schedule_task(task, true);
                                 }
                                 drop(executed_task);
-                                if should_pause && !session_pausing && slot != 282254387/*00*/ {
+                                if should_pause && !session_pausing && slot != Some(282254387/*00*/) {
                                     session_pausing = true;
                                     "pausing"
                                 } else {
