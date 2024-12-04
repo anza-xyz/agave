@@ -28,6 +28,8 @@ solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sdk = { workspace = true }
 solana-streamer = { workspace = true }
 solana-tpu-client = { workspace = true }
+solana-unified-scheduler-logic = { workspace = true }
+solana-unified-scheduler-pool = { workspace = true }
 solana-version = { workspace = true }
 
 [features]

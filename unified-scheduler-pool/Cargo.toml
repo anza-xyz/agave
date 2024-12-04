@@ -10,23 +10,27 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-banking-stage-ingress-types = { workspace = true }
 assert_matches = { workspace = true }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true }
 derive-where = { workspace = true }
+derive_more = { workspace = true }
+dyn-clone = { workspace = true }
 log = { workspace = true }
-qualifier_attr = { workspace = true }
 scopeguard = { workspace = true }
 solana-ledger = { workspace = true }
 solana-poh = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-runtime = { workspace = true }
 solana-runtime-transaction = { workspace = true }
+solana-sdk = { workspace = true }
 solana-timings = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-unified-scheduler-logic = { workspace = true }
 static_assertions = { workspace = true }
+trait-set = { workspace = true }
 vec_extract_if_polyfill = { workspace = true }
 
 [dev-dependencies]
@@ -39,6 +43,8 @@ solana-keypair = { workspace = true }
 solana-logger = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-system-transaction = { workspace = true }
+# See order-crates-for-publishing.py for using this unusual `path = "."`
+solana-unified-scheduler-pool = { path = ".", features = ["dev-context-only-utils"] }
 test-case = { workspace = true }
 
 [features]

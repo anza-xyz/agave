@@ -76,6 +76,7 @@ use {
         transaction::Transaction,
     },
     solana_timings::ExecuteTimings,
+    solana_unified_scheduler_logic::SchedulingMode,
     solana_vote_program::vote_state::{VoteState, VoteTransaction},
     std::{
         collections::{HashMap, HashSet},
@@ -2803,6 +2804,28 @@ impl ReplayStage {
         }
     }
 
+    fn wait_for_cleared_bank(bank: BankWithScheduler) {
+        if matches!(
+            bank.scheduling_mode(),
+            Some(SchedulingMode::BlockProduction)
+        ) {
+            info!("Reaping cleared tpu_bank: {}...", bank.slot());
+            if let Some((result, _completed_execute_timings)) = bank.wait_for_completed_scheduler()
+            {
+                info!(
+                    "Reaped aborted tpu_bank with unified scheduler: {} {:?}",
+                    bank.slot(),
+                    result
+                );
+            } else {
+                info!(
+                    "Skipped to reap a tpu_bank (seems unified scheduler is disabled): {}",
+                    bank.slot()
+                );
+            }
+        }
+    }
+
     fn reset_poh_recorder(
         my_pubkey: &Pubkey,
         blockstore: &Blockstore,
@@ -2821,7 +2844,10 @@ impl ReplayStage {
             GRACE_TICKS_FACTOR * MAX_GRACE_SLOTS,
         );
 
-        poh_recorder.write().unwrap().reset(bank, next_leader_slot);
+        let cleared_bank = poh_recorder.write().unwrap().reset(bank, next_leader_slot);
+        if let Some(cleared_bank) = cleared_bank {
+            Self::wait_for_cleared_bank(cleared_bank);
+        }
 
         let next_leader_msg = if let Some(next_leader_slot) = next_leader_slot {
             format!("My next leader slot is {}", next_leader_slot.0)

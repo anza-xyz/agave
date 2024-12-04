@@ -150,6 +150,13 @@ impl TransactionRecorder {
         }
     }
 
+    pub fn new_dummy() -> Self {
+        Self {
+            record_sender: crossbeam_channel::unbounded().0,
+            is_exited: Arc::new(AtomicBool::default()),
+        }
+    }
+
     /// Hashes `transactions` and sends to PoH service for recording. Waits for response up to 1s.
     /// Panics on unexpected (non-`MaxHeightReached`) errors.
     pub fn record_transactions(
@@ -308,8 +315,11 @@ pub struct PohRecorder {
     pub is_exited: Arc<AtomicBool>,
 }
 
+pub type NewPohRecorder = (PohRecorder, Receiver<WorkingBankEntry>, Receiver<Record>);
+
 impl PohRecorder {
-    fn clear_bank(&mut self) {
+    fn clear_bank(&mut self) -> Option<BankWithScheduler> {
+        let mut cleared_bank = None;
         if let Some(WorkingBank { bank, start, .. }) = self.working_bank.take() {
             self.leader_bank_notifier.set_completed(bank.slot());
             let next_leader_slot = self.leader_schedule_cache.next_leader_slot(
@@ -335,6 +345,7 @@ impl PohRecorder {
                 ("slot", bank.slot(), i64),
                 ("elapsed", start.elapsed().as_millis(), i64),
             );
+            cleared_bank = Some(bank);
         }
 
         if let Some(ref signal) = self.clear_bank_signal {
@@ -348,6 +359,7 @@ impl PohRecorder {
                 }
             }
         }
+        cleared_bank
     }
 
     pub fn would_be_leader(&self, within_next_n_ticks: u64) -> bool {
@@ -656,8 +668,12 @@ impl PohRecorder {
     }
 
     // synchronize PoH with a bank
-    pub fn reset(&mut self, reset_bank: Arc<Bank>, next_leader_slot: Option<(Slot, Slot)>) {
-        self.clear_bank();
+    pub fn reset(
+        &mut self,
+        reset_bank: Arc<Bank>,
+        next_leader_slot: Option<(Slot, Slot)>,
+    ) -> Option<BankWithScheduler> {
+        let cleared_bank = self.clear_bank();
         self.reset_poh(reset_bank, true);
 
         if let Some(ref sender) = self.poh_timing_point_sender {
@@ -678,6 +694,7 @@ impl PohRecorder {
         self.leader_first_tick_height_including_grace_ticks =
             leader_first_tick_height_including_grace_ticks;
         self.leader_last_tick_height = leader_last_tick_height;
+        cleared_bank
     }
 
     pub fn set_bank(&mut self, bank: BankWithScheduler, track_transaction_indexes: bool) {
@@ -1023,7 +1040,7 @@ impl PohRecorder {
         poh_config: &PohConfig,
         poh_timing_point_sender: Option<PohTimingSender>,
         is_exited: Arc<AtomicBool>,
-    ) -> (Self, Receiver<WorkingBankEntry>, Receiver<Record>) {
+    ) -> NewPohRecorder {
         let tick_number = 0;
         let poh = Arc::new(Mutex::new(Poh::new_with_slot_info(
             last_entry_hash,
@@ -1093,7 +1110,7 @@ impl PohRecorder {
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
         poh_config: &PohConfig,
         is_exited: Arc<AtomicBool>,
-    ) -> (Self, Receiver<WorkingBankEntry>, Receiver<Record>) {
+    ) -> NewPohRecorder {
         let delay_leader_block_for_pending_fork = false;
         Self::new_with_clear_signal(
             tick_height,

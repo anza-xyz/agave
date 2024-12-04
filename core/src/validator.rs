@@ -104,6 +104,7 @@ use {
         bank_forks::BankForks,
         commitment::BlockCommitmentCache,
         prioritization_fee_cache::PrioritizationFeeCache,
+        root_bank_cache::RootBankCache,
         runtime_config::RuntimeConfig,
         snapshot_archive_info::SnapshotArchiveInfoGetter,
         snapshot_bank_utils::{self, DISABLED_SNAPSHOT_ARCHIVE_INTERVAL},
@@ -126,7 +127,8 @@ use {
     solana_send_transaction_service::send_transaction_service,
     solana_streamer::{socket::SocketAddrSpace, streamer::StakedNodes},
     solana_turbine::{self, broadcast_stage::BroadcastStageType},
-    solana_unified_scheduler_pool::DefaultSchedulerPool,
+    solana_unified_scheduler_logic::SchedulingMode,
+    solana_unified_scheduler_pool::{DefaultSchedulerPool, SupportedSchedulingMode},
     solana_vote_program::vote_state,
     solana_wen_restart::wen_restart::{wait_for_wen_restart, WenRestartConfig},
     std::{
@@ -183,11 +185,14 @@ impl BlockVerificationMethod {
     }
 }
 
-#[derive(Clone, EnumString, EnumVariantNames, Default, IntoStaticStr, Display)]
+#[derive(
+    Clone, EnumCount, EnumIter, EnumString, EnumVariantNames, Default, IntoStaticStr, Display,
+)]
 #[strum(serialize_all = "kebab-case")]
 pub enum BlockProductionMethod {
-    #[default]
     CentralScheduler,
+    #[default]
+    UnifiedScheduler,
 }
 
 impl BlockProductionMethod {
@@ -204,6 +209,23 @@ impl BlockProductionMethod {
         };
 
         &MESSAGE
+    }
+}
+
+pub fn supported_scheduling_mode(
+    (verification, production): (&BlockVerificationMethod, &BlockProductionMethod),
+) -> SupportedSchedulingMode {
+    match (verification, production) {
+        (BlockVerificationMethod::UnifiedScheduler, BlockProductionMethod::UnifiedScheduler) => {
+            SupportedSchedulingMode::Both
+        }
+        (BlockVerificationMethod::UnifiedScheduler, _) => {
+            SupportedSchedulingMode::Either(SchedulingMode::BlockVerification)
+        }
+        (_, BlockProductionMethod::UnifiedScheduler) => {
+            SupportedSchedulingMode::Either(SchedulingMode::BlockProduction)
+        }
+        _ => unreachable!("seems unified scheduler is disabled"),
     }
 }
 
@@ -901,30 +923,38 @@ impl Validator {
         };
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
-        match &config.block_verification_method {
-            BlockVerificationMethod::BlockstoreProcessor => {
-                info!("no scheduler pool is installed for block verification...");
+        let unified_scheduler_pool = match (
+            &config.block_verification_method,
+            &config.block_production_method,
+        ) {
+            methods @ (BlockVerificationMethod::UnifiedScheduler, _)
+            | methods @ (_, BlockProductionMethod::UnifiedScheduler) => {
+                let pool = DefaultSchedulerPool::new(
+                    supported_scheduling_mode(methods),
+                    config.unified_scheduler_handler_threads,
+                    config.runtime_config.log_messages_bytes_limit,
+                    transaction_status_sender.clone(),
+                    Some(replay_vote_sender.clone()),
+                    prioritization_fee_cache.clone(),
+                    poh_recorder.read().unwrap().new_recorder(),
+                );
+                bank_forks
+                    .write()
+                    .unwrap()
+                    .install_scheduler_pool(pool.clone());
+                Some(pool)
+            }
+            _ => {
+                info!("no scheduler pool is installed for block verification/production...");
                 if let Some(count) = config.unified_scheduler_handler_threads {
                     warn!(
                         "--unified-scheduler-handler-threads={count} is ignored because unified \
                          scheduler isn't enabled"
                     );
                 }
+                None
             }
-            BlockVerificationMethod::UnifiedScheduler => {
-                let scheduler_pool = DefaultSchedulerPool::new_dyn(
-                    config.unified_scheduler_handler_threads,
-                    config.runtime_config.log_messages_bytes_limit,
-                    transaction_status_sender.clone(),
-                    Some(replay_vote_sender.clone()),
-                    prioritization_fee_cache.clone(),
-                );
-                bank_forks
-                    .write()
-                    .unwrap()
-                    .install_scheduler_pool(scheduler_pool);
-            }
-        }
+        };
 
         let entry_notification_sender = entry_notifier_service
             .as_ref()
@@ -1398,6 +1428,7 @@ impl Validator {
         let cluster_slots =
             Arc::new(crate::cluster_slots_service::cluster_slots::ClusterSlots::default());
 
+        let root_bank_cache = RootBankCache::new(bank_forks.clone());
         let tvu = Tvu::new(
             vote_account,
             authorized_voter_keypairs,
@@ -1505,6 +1536,7 @@ impl Validator {
             node.info.shred_version(),
             vote_tracker,
             bank_forks.clone(),
+            root_bank_cache,
             verified_vote_sender,
             gossip_verified_vote_hash_sender,
             replay_vote_receiver,
@@ -1526,6 +1558,7 @@ impl Validator {
             config.block_production_method.clone(),
             config.enable_block_production_forwarding,
             config.generator_config.clone(),
+            unified_scheduler_pool,
         );
 
         datapoint_info!(

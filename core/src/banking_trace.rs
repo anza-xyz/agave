@@ -5,6 +5,7 @@ use {
     crossbeam_channel::{unbounded, Receiver, SendError, Sender, TryRecvError},
     rolling_file::{RollingCondition, RollingConditionBasic, RollingFileAppender},
     solana_sdk::{hash::Hash, slot_history::Slot},
+    solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{
         fs::{create_dir_all, remove_dir_all},
         io::{self, Write},
@@ -59,6 +60,11 @@ pub struct BankingTracer {
     active_tracer: Option<ActiveTracer>,
 }
 
+#[cfg_attr(
+    feature = "frozen-abi",
+    derive(AbiExample),
+    frozen_abi(digest = "DAdZnX6ijBWaxKAyksq4nJa6PAZqT4RShZqLWTtNvyAM")
+)]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct TimedTracedEvent(pub std::time::SystemTime, pub TracedEvent);
 
@@ -256,6 +262,16 @@ impl BankingTracer {
                 gossip_vote_receiver,
             }
         }
+    }
+
+    pub fn create_channels_for_scheduler_pool(
+        &self,
+        pool: Option<&Arc<DefaultSchedulerPool>>,
+    ) -> Channels {
+        self.create_channels(
+            pool.map(|pool| pool.block_production_supported())
+                .unwrap_or_default(),
+        )
     }
 
     fn create_channel(&self, label: ChannelLabel) -> (BankingPacketSender, BankingPacketReceiver) {

@@ -33,6 +33,7 @@ use {
     solana_runtime::{
         bank_forks::BankForks,
         prioritization_fee_cache::PrioritizationFeeCache,
+        root_bank_cache::RootBankCache,
         vote_sender_types::{ReplayVoteReceiver, ReplayVoteSender},
     },
     solana_sdk::{clock::Slot, pubkey::Pubkey, quic::NotifyKeyUpdate, signature::Keypair},
@@ -44,6 +45,7 @@ use {
         streamer::StakedNodes,
     },
     solana_turbine::broadcast_stage::{BroadcastStage, BroadcastStageType},
+    solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{
         collections::HashMap,
         net::{SocketAddr, UdpSocket},
@@ -99,6 +101,7 @@ impl Tpu {
         shred_version: u16,
         vote_tracker: Arc<VoteTracker>,
         bank_forks: Arc<RwLock<BankForks>>,
+        root_bank_cache: RootBankCache,
         verified_vote_sender: VerifiedVoteSender,
         gossip_verified_vote_hash_sender: GossipVerifiedVoteHashSender,
         replay_vote_receiver: ReplayVoteReceiver,
@@ -120,6 +123,7 @@ impl Tpu {
         block_production_method: BlockProductionMethod,
         enable_block_production_forwarding: bool,
         _generator_config: Option<GeneratorConfig>, /* vestigial code for replay invalidator */
+        unified_scheduler_pool: Option<Arc<DefaultSchedulerPool>>,
     ) -> (Self, Vec<Arc<dyn NotifyKeyUpdate + Sync + Send>>) {
         let TpuSockets {
             transactions: transactions_sockets,
@@ -163,7 +167,7 @@ impl Tpu {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = banking_tracer.create_channels(false);
+        } = banking_tracer.create_channels_for_scheduler_pool(unified_scheduler_pool.as_ref());
 
         // Streamer for Votes:
         let SpawnServerResult {
@@ -258,6 +262,7 @@ impl Tpu {
             gossip_vote_sender,
             vote_tracker,
             bank_forks.clone(),
+            root_bank_cache,
             subscriptions.clone(),
             verified_vote_sender,
             gossip_verified_vote_hash_sender,
@@ -281,6 +286,7 @@ impl Tpu {
             bank_forks.clone(),
             prioritization_fee_cache,
             enable_block_production_forwarding,
+            unified_scheduler_pool,
         );
 
         let (entry_receiver, tpu_entry_notifier) =

@@ -38,6 +38,8 @@ use {
     },
     solana_streamer::socket::SocketAddrSpace,
     solana_tpu_client::tpu_client::DEFAULT_TPU_CONNECTION_POOL_SIZE,
+    solana_unified_scheduler_logic::SchedulingMode,
+    solana_unified_scheduler_pool::{DefaultSchedulerPool, SupportedSchedulingMode},
     std::{
         sync::{atomic::Ordering, Arc, RwLock},
         thread::sleep,
@@ -442,6 +444,28 @@ fn main() {
             BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
         )))
         .unwrap();
+    let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
+    let scheduler_pool = if matches!(
+        block_production_method,
+        BlockProductionMethod::UnifiedScheduler
+    ) {
+        let pool = DefaultSchedulerPool::new(
+            SupportedSchedulingMode::Either(SchedulingMode::BlockProduction),
+            None,
+            None,
+            None,
+            Some(replay_vote_sender.clone()),
+            prioritization_fee_cache.clone(),
+            poh_recorder.read().unwrap().new_recorder(),
+        );
+        bank_forks
+            .write()
+            .unwrap()
+            .install_scheduler_pool(pool.clone());
+        Some(pool)
+    } else {
+        None
+    };
     let Channels {
         non_vote_sender,
         non_vote_receiver,
@@ -449,7 +473,7 @@ fn main() {
         tpu_vote_receiver,
         gossip_vote_sender,
         gossip_vote_receiver,
-    } = banking_tracer.create_channels(false);
+    } = banking_tracer.create_channels_for_scheduler_pool(scheduler_pool.as_ref());
     let cluster_info = {
         let keypair = Arc::new(Keypair::new());
         let node = Node::new_localhost_with_pubkey(&keypair.pubkey());
@@ -469,7 +493,7 @@ fn main() {
         )
     };
     let banking_stage = BankingStage::new_num_threads(
-        block_production_method,
+        block_production_method.clone(),
         &cluster_info,
         &poh_recorder,
         non_vote_receiver,
@@ -481,9 +505,22 @@ fn main() {
         None,
         Arc::new(connection_cache),
         bank_forks.clone(),
-        &Arc::new(PrioritizationFeeCache::new(0u64)),
+        &prioritization_fee_cache,
         false,
+        scheduler_pool,
     );
+
+    // This bench processes transactions, starting from the very first bank, so special-casing is
+    // needed for unified scheduler.
+    if matches!(
+        block_production_method,
+        BlockProductionMethod::UnifiedScheduler
+    ) {
+        bank = bank_forks
+            .write()
+            .unwrap()
+            .reinstall_block_production_scheduler_into_working_genesis_bank();
+    }
 
     // This is so that the signal_receiver does not go out of scope after the closure.
     // If it is dropped before poh_service, then poh_service will error when
@@ -545,10 +582,11 @@ fn main() {
             tx_total_us += now.elapsed().as_micros() as u64;
 
             let mut poh_time = Measure::start("poh_time");
-            poh_recorder
+            let cleared_bank = poh_recorder
                 .write()
                 .unwrap()
                 .reset(bank.clone(), Some((bank.slot(), bank.slot() + 1)));
+            assert_matches!(cleared_bank, None);
             poh_time.stop();
 
             let mut new_bank_time = Measure::start("new_bank");

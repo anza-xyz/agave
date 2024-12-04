@@ -5034,16 +5034,17 @@ pub mod tests {
             ..
         } = create_genesis_config_with_leader(500, &dummy_leader_pubkey, 100);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
-        let context = SchedulingContext::new(bank.clone());
+        let context = SchedulingContext::for_verification(bank.clone());
 
         let txs = create_test_transactions(&mint_keypair, &genesis_config.hash());
 
         let mut mocked_scheduler = MockInstalledScheduler::new();
         let seq = Arc::new(Mutex::new(mockall::Sequence::new()));
         let seq_cloned = seq.clone();
+        // Used for assertions in BankWithScheduler::{new, schedule_transaction_executions}
         mocked_scheduler
             .expect_context()
-            .times(1)
+            .times(2)
             .in_sequence(&mut seq.lock().unwrap())
             .return_const(context);
         if should_succeed {
