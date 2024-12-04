@@ -75,6 +75,7 @@ pull_request_rules:
             - status-success=cargo-test-sbf (name-service/program)
             - status-success=cargo-test-sbf (stake-pool/program)
             - status-success=cargo-test-sbf (single-pool/program)
+            - status-success=check
     actions:
       merge:
         method: squash
