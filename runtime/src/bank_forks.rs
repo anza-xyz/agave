@@ -290,7 +290,7 @@ impl BankForks {
             bank,
             true,
         ));
-        assert!(inserted);
+        assert!(inserted.is_some());
     }
 
     pub fn insert_from_ledger(&mut self, bank: Bank) -> BankWithScheduler {
