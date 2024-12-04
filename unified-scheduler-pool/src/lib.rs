@@ -770,7 +770,7 @@ impl TaskHandler for DefaultTaskHandler {
                 SchedulingMode::BlockVerification => None,
                 SchedulingMode::BlockProduction => Some(|| {
                     let summary = handler_context.transaction_recorder.record_transactions(
-                        scheduling_context.slot(),
+                        bank.slot(),
                         vec![transaction.to_versioned_transaction()],
                     );
                     summary
