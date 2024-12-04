@@ -526,7 +526,7 @@ impl SimulatorLoop {
                     false,
                 );
                 (bank, bank_created) = (
-                    self.bank_forks.read().unwrap().working_bank_with_scheduler();
+                    self.bank_forks.read().unwrap().working_bank_with_scheduler(),
                     Instant::now(),
                 );
                 logger.log_ongoing_bank_cost(&bank, bank_created.elapsed());
