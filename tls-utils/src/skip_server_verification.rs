@@ -13,7 +13,9 @@ use {
 
 /// Implementation of [`ServerCertVerifier`] that ignores the server
 /// certificate. Yet still checks the TLS signatures.
-pub(crate) struct SkipServerVerification(Arc<CryptoProvider>);
+/// This is useful for turbine (where server verification is not feasible) and for tests
+/// Logic mostly copied from rustls examples.
+pub struct SkipServerVerification(Arc<CryptoProvider>);
 
 impl SkipServerVerification {
     pub fn new() -> Arc<Self> {

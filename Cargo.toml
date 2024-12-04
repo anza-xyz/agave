@@ -3,6 +3,10 @@ inherits = "release"
 debug = true
 split-debuginfo = "packed"
 
+[profile.release]
+split-debuginfo = "unpacked"
+lto = "thin"
+
 [workspace]
 members = [
     "account-decoder",
@@ -172,6 +176,7 @@ members = [
     "sdk/sysvar",
     "sdk/sysvar-id",
     "sdk/time-utils",
+    "sdk/transaction",
     "sdk/transaction-context",
     "sdk/transaction-error",
     "send-transaction-service",
@@ -187,6 +192,7 @@ members = [
     "test-validator",
     "thin-client",
     "timings",
+    "tls-utils",
     "tokens",
     "tps-client",
     "tpu-client",
@@ -322,11 +328,11 @@ humantime = "2.0.1"
 hyper = "0.14.31"
 hyper-proxy = "0.9.1"
 im = "15.1.0"
-index_list = "0.2.13"
-indexmap = "2.6.0"
+index_list = "0.2.14"
+indexmap = "2.7.0"
 indicatif = "0.17.9"
 itertools = "0.12.1"
-js-sys = "0.3.72"
+js-sys = "0.3.74"
 json5 = "0.4.1"
 jsonrpc-core = "18.0.0"
 jsonrpc-core-client = "18.0.0"
@@ -336,7 +342,7 @@ jsonrpc-ipc-server = "18.0.0"
 jsonrpc-pubsub = "18.0.0"
 lazy-lru = "0.1.3"
 lazy_static = "1.5.0"
-libc = "0.2.166"
+libc = "0.2.167"
 libloading = "0.7.4"
 libsecp256k1 = { version = "0.6.0", default-features = false, features = [
     "std",
@@ -523,8 +529,8 @@ solana-rent = { path = "sdk/rent", version = "=2.2.0", default-features = false 
 solana-rent-debits = { path = "sdk/rent-debits", version = "=2.2.0" }
 solana-reserved-account-keys = { path = "sdk/reserved-account-keys", version = "=2.2.0", default-features = false }
 solana-reward-info = { path = "sdk/reward-info", version = "=2.2.0" }
-solana-secp256r1-program = { path = "sdk/secp256r1-program", version = "=2.2.0", default-features = false }
 solana-sanitize = { path = "sdk/sanitize", version = "=2.2.0" }
+solana-secp256r1-program = { path = "sdk/secp256r1-program", version = "=2.2.0", default-features = false }
 solana-seed-derivable = { path = "sdk/seed-derivable", version = "=2.2.0" }
 solana-seed-phrase = { path = "sdk/seed-phrase", version = "=2.2.0" }
 solana-serde = { path = "sdk/serde", version = "=2.2.0" }
@@ -537,6 +543,7 @@ solana-slot-hashes = { path = "sdk/slot-hashes", version = "=2.2.0" }
 solana-slot-history = { path = "sdk/slot-history", version = "=2.2.0" }
 solana-time-utils = { path = "sdk/time-utils", version = "=2.2.0" }
 solana-timings = { path = "timings", version = "=2.2.0" }
+solana-tls-utils = { path = "tls-utils", version = "=2.2.0" }
 solana-unified-scheduler-logic = { path = "unified-scheduler-logic", version = "=2.2.0" }
 solana-unified-scheduler-pool = { path = "unified-scheduler-pool", version = "=2.2.0" }
 solana-rpc = { path = "rpc", version = "=2.2.0" }
@@ -567,6 +574,7 @@ solana-sysvar = { path = "sdk/sysvar", version = "=2.2.0" }
 solana-sysvar-id = { path = "sdk/sysvar-id", version = "=2.2.0" }
 solana-test-validator = { path = "test-validator", version = "=2.2.0" }
 solana-thin-client = { path = "thin-client", version = "=2.2.0" }
+solana-transaction = { path = "sdk/transaction", version = "=2.2.0" }
 solana-transaction-error = { path = "sdk/transaction-error", version = "=2.2.0" }
 solana-tpu-client = { path = "tpu-client", version = "=2.2.0", default-features = false }
 solana-tpu-client-next = { path = "tpu-client-next", version = "=2.2.0" }

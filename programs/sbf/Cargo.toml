@@ -143,6 +143,7 @@ name = "bpf_loader"
 members = [
     "rust/128bit",
     "rust/128bit_dep",
+    "rust/account_mem",
     "rust/alloc",
     "rust/alt_bn128",
     "rust/alt_bn128_compression",

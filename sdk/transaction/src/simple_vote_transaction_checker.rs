@@ -1,9 +1,6 @@
-#![cfg(feature = "full")]
-
 use {
-    crate::{message::VersionedMessage, transaction::SanitizedVersionedTransaction},
-    solana_pubkey::Pubkey,
-    solana_signature::Signature,
+    crate::versioned::sanitized::SanitizedVersionedTransaction, solana_message::VersionedMessage,
+    solana_pubkey::Pubkey, solana_signature::Signature,
 };
 
 /// Simple vote transaction meets these conditions:
@@ -46,6 +43,6 @@ pub fn is_simple_vote_transaction_impl<'a>(
         && instruction_programs
             .next()
             .xor(instruction_programs.next())
-            .map(|program_id| program_id == &solana_sdk::vote::program::ID)
+            .map(|program_id| program_id == &solana_sdk_ids::vote::ID)
             .unwrap_or(false)
 }

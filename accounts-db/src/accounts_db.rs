@@ -2558,7 +2558,7 @@ impl AccountsDb {
             let acceptable_straggler_slot_count = 100;
             let old_slot_cutoff =
                 slot_one_epoch_old.saturating_sub(acceptable_straggler_slot_count);
-            let (old_storages, old_slots) = self.get_snapshot_storages(..old_slot_cutoff);
+            let (old_storages, old_slots) = self.get_storages(..old_slot_cutoff);
             let num_old_storages = old_storages.len();
             self.accounts_index
                 .add_uncleaned_roots(old_slots.iter().copied());
@@ -6939,7 +6939,7 @@ impl AccountsDb {
                 }
 
                 let mut collect_time = Measure::start("collect");
-                let (combined_maps, slots) = self.get_snapshot_storages(..=slot);
+                let (combined_maps, slots) = self.get_storages(..=slot);
                 collect_time.stop();
 
                 let mut sort_time = Measure::start("sort_storages");
@@ -8472,8 +8472,8 @@ impl AccountsDb {
         }
     }
 
-    /// Get storages to use for snapshots, for the requested slots
-    pub fn get_snapshot_storages(
+    /// Returns storages for `requested_slots`
+    pub fn get_storages(
         &self,
         requested_slots: impl RangeBounds<Slot> + Sync,
     ) -> (Vec<Arc<AccountStorageEntry>>, Vec<Slot>) {
@@ -9535,7 +9535,7 @@ impl AccountsDb {
         total_lamports: u64,
         config: VerifyAccountsHashAndLamportsConfig,
     ) -> Result<(), AccountsHashVerificationError> {
-        let snapshot_storages = self.get_snapshot_storages(..);
+        let snapshot_storages = self.get_storages(..);
         let snapshot_storages_and_slots = (
             snapshot_storages.0.as_slice(),
             snapshot_storages.1.as_slice(),
