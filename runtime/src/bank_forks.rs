@@ -227,50 +227,6 @@ impl BankForks {
         );
     }
 
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn reinstall_schedulers(&mut self, mode: SchedulingMode) {
-        for (slot, bank) in self.banks.iter_mut() {
-            if !bank.is_frozen() {
-                trace!("Installed scheduler into existing unfrozen slot: {slot}");
-                *bank = Self::install_scheduler_into_bank(
-                    self.scheduler_pool.as_ref().unwrap(),
-                    mode,
-                    bank.clone_without_scheduler(),
-                    true,
-                );
-            }
-        }
-    }
-
-    fn install_scheduler_into_bank(
-        scheduler_pool: &InstalledSchedulerPoolArc,
-        mode: SchedulingMode,
-        bank: Arc<Bank>,
-        is_reinstall: bool,
-    ) -> BankWithScheduler {
-        if is_reinstall {
-            info!(
-                "Reinserting bank (slot: {}) with scheduler (mode: {:?}) into bank_forks...",
-                bank.slot(),
-                mode,
-            );
-        } else {
-            info!(
-                "Inserting bank (slot: {}) with scheduler (mode: {:?}) into bank_forks...",
-                bank.slot(),
-                mode,
-            );
-        }
-        let context = SchedulingContext::new(mode, Some(bank.clone()));
-        let Some(scheduler) = scheduler_pool.take_scheduler(context) else {
-            info!("disabled for {:?}", mode);
-            return BankWithScheduler::new_without_scheduler(bank);
-        };
-        let bank_with_scheduler = BankWithScheduler::new(bank, Some(scheduler));
-        scheduler_pool.register_timeout_listener(bank_with_scheduler.create_timeout_listener());
-        bank_with_scheduler
-    }
-
     pub fn insert(&mut self, bank: Bank) -> BankWithScheduler {
         self.insert_with_scheduling_mode(SchedulingMode::BlockVerification, bank)
     }
@@ -288,7 +244,6 @@ impl BankForks {
         let bank = if let Some(scheduler_pool) = &self.scheduler_pool {
             Self::install_scheduler_into_bank(scheduler_pool, mode, bank, false)
         } else {
-            info!("no scheduler!!!?");
             BankWithScheduler::new_without_scheduler(bank)
         };
         let prev = self.banks.insert(bank.slot(), bank.clone_with_scheduler());
@@ -299,6 +254,42 @@ impl BankForks {
             self.descendants.entry(parent).or_default().insert(slot);
         }
         bank
+    }
+
+    fn install_scheduler_into_bank(
+        scheduler_pool: &InstalledSchedulerPoolArc,
+        mode: SchedulingMode,
+        bank: Arc<Bank>,
+        is_reinstall: bool,
+    ) -> BankWithScheduler {
+        trace!(
+            "Inserting bank (slot: {}) with scheduler (mode: {:?}, reinstall: {:?})",
+            bank.slot(),
+            mode,
+            is_reinstall,
+        );
+        let context = SchedulingContext::new(mode, Some(bank.clone()));
+        let Some(scheduler) = scheduler_pool.take_scheduler(context) else {
+            return BankWithScheduler::new_without_scheduler(bank);
+        };
+        let bank_with_scheduler = BankWithScheduler::new(bank, Some(scheduler));
+        scheduler_pool.register_timeout_listener(bank_with_scheduler.create_timeout_listener());
+        bank_with_scheduler
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn reinstall_schedulers(&mut self, mode: SchedulingMode) {
+        assert_eq!(self.banks.len(), 1);
+        let bank = self.working_bank();
+        assert!(!bank.is_frozen());
+        trace!("Installed scheduler into existing unfrozen slot: {}", bank.slot());
+
+        self.banks[self.highest_slot()] = Self::install_scheduler_into_bank(
+            self.scheduler_pool.as_ref().unwrap(),
+            mode,
+            bank.clone_without_scheduler(),
+            true,
+        );
     }
 
     pub fn insert_from_ledger(&mut self, bank: Bank) -> BankWithScheduler {

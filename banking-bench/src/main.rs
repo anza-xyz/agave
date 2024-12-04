@@ -452,25 +452,7 @@ fn main() {
             BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
         )))
         .unwrap();
-    let cluster_info = {
-        let keypair = Arc::new(Keypair::new());
-        let node = Node::new_localhost_with_pubkey(&keypair.pubkey());
-        ClusterInfo::new(node.info, keypair, SocketAddrSpace::Unspecified)
-    };
-    let cluster_info = Arc::new(cluster_info);
-    let tpu_disable_quic = matches.is_present("tpu_disable_quic");
-    let connection_cache = match tpu_disable_quic {
-        false => ConnectionCache::new_quic(
-            "connection_cache_banking_bench_quic",
-            DEFAULT_TPU_CONNECTION_POOL_SIZE,
-        ),
-        true => ConnectionCache::with_udp(
-            "connection_cache_banking_bench_udp",
-            DEFAULT_TPU_CONNECTION_POOL_SIZE,
-        ),
-    };
     let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-    let collector = solana_sdk::pubkey::new_rand();
     let scheduler_pool = if matches!(
         block_production_method,
         BlockProductionMethod::UnifiedScheduler
@@ -500,7 +482,23 @@ fn main() {
         gossip_vote_sender,
         gossip_vote_receiver,
     } = banking_tracer.create_channels(scheduler_pool.as_ref());
-
+    let cluster_info = {
+        let keypair = Arc::new(Keypair::new());
+        let node = Node::new_localhost_with_pubkey(&keypair.pubkey());
+        ClusterInfo::new(node.info, keypair, SocketAddrSpace::Unspecified)
+    };
+    let cluster_info = Arc::new(cluster_info);
+    let tpu_disable_quic = matches.is_present("tpu_disable_quic");
+    let connection_cache = match tpu_disable_quic {
+        false => ConnectionCache::new_quic(
+            "connection_cache_banking_bench_quic",
+            DEFAULT_TPU_CONNECTION_POOL_SIZE,
+        ),
+        true => ConnectionCache::with_udp(
+            "connection_cache_banking_bench_udp",
+            DEFAULT_TPU_CONNECTION_POOL_SIZE,
+        ),
+    };
     let banking_stage = BankingStage::new_num_threads(
         block_production_method.clone(),
         &cluster_info,
@@ -538,6 +536,7 @@ fn main() {
     let mut tx_total_us = 0;
     let base_tx_count = bank.transaction_count();
     let mut txs_processed = 0;
+    let collector = solana_sdk::pubkey::new_rand();
     let mut total_sent = 0;
     for current_iteration_index in 0..iterations {
         trace!("RUNNING ITERATION {}", current_iteration_index);
