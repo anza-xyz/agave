@@ -287,7 +287,7 @@ impl BankForks {
         self.banks[&self.highest_slot()] = Self::install_scheduler_into_bank(
             self.scheduler_pool.as_ref().unwrap(),
             mode,
-            bank.clone_without_scheduler(),
+            bank,
             true,
         );
     }
