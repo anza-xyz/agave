@@ -630,7 +630,7 @@ impl PohRecorder {
     }
 
     fn reset_poh(&mut self, reset_bank: Arc<Bank>, reset_start_bank: bool) {
-        let blockhash = reset_bank.last_blockhash();
+        let blockhash = reset_bank.last_vote_only_blockhash();
         let poh_hash = {
             let mut poh = self.poh.lock().unwrap();
             poh.reset(blockhash, *reset_bank.hashes_per_tick());
