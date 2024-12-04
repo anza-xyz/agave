@@ -3,10 +3,7 @@ pub use self::{
     logging::{
         SyscallLog, SyscallLogBpfComputeUnits, SyscallLogData, SyscallLogPubkey, SyscallLogU64,
     },
-    mem_ops::{
-        iter_memory_chunks, MemoryChunkIterator, SyscallMemcmp, SyscallMemcpy, SyscallMemmove,
-        SyscallMemset,
-    },
+    mem_ops::{iter_memory_chunks, SyscallMemcmp, SyscallMemcpy, SyscallMemmove, SyscallMemset},
     sysvar::{
         SyscallGetClockSysvar, SyscallGetEpochRewardsSysvar, SyscallGetEpochScheduleSysvar,
         SyscallGetFeesSysvar, SyscallGetLastRestartSlotSysvar, SyscallGetRentSysvar,
