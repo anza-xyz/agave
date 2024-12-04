@@ -3693,12 +3693,12 @@ mod tests {
             fn handle(
                 _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
-                bank: &SchedulingContext,
+                context: &SchedulingContext,
                 task: &Task,
                 _handler_context: &HandlerContext,
             ) {
                 // The task index must always be matched to the slot.
-                assert_eq!(task.index() as Slot, bank.slot());
+                assert_eq!(task.index() as Slot, context.bank.slot());
             }
         }
 
