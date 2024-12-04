@@ -628,7 +628,7 @@ pub fn process_entries_for_tests(
 ) -> Result<()> {
     let replay_tx_thread_pool = create_thread_pool(1);
     let verify_transaction = {
-        let bank = bank.clone_with_scheduler();
+        let bank = bank.clone();
         move |versioned_tx: VersionedTransaction| -> Result<RuntimeTransaction<SanitizedTransaction>> {
             bank.verify_transaction(versioned_tx, TransactionVerificationMode::FullVerification)
         }
