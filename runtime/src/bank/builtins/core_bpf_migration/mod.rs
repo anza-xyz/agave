@@ -21,7 +21,7 @@ use {
         transaction_context::TransactionContext,
     },
     source_buffer::SourceBuffer,
-    std::{cmp::Ordering, sync::atomic::Ordering::Relaxed},
+    std::cmp::Ordering,
     target_builtin::TargetBuiltin,
     target_core_bpf::TargetCoreBpf,
 };
@@ -286,12 +286,10 @@ impl Bank {
         // Update the bank's capitalization.
         match lamports_to_burn.cmp(&lamports_to_fund) {
             Ordering::Greater => {
-                self.capitalization
-                    .fetch_sub(checked_sub(lamports_to_burn, lamports_to_fund)?, Relaxed);
+                self.change_capitalization(checked_sub(lamports_to_burn, lamports_to_fund)?, false);
             }
             Ordering::Less => {
-                self.capitalization
-                    .fetch_add(checked_sub(lamports_to_fund, lamports_to_burn)?, Relaxed);
+                self.change_capitalization(checked_sub(lamports_to_fund, lamports_to_burn)?, true);
             }
             Ordering::Equal => (),
         }
@@ -380,12 +378,10 @@ impl Bank {
         // Update the bank's capitalization.
         match lamports_to_burn.cmp(&lamports_to_fund) {
             Ordering::Greater => {
-                self.capitalization
-                    .fetch_sub(checked_sub(lamports_to_burn, lamports_to_fund)?, Relaxed);
+                self.change_capitalization(checked_sub(lamports_to_burn, lamports_to_fund)?, false);
             }
             Ordering::Less => {
-                self.capitalization
-                    .fetch_add(checked_sub(lamports_to_fund, lamports_to_burn)?, Relaxed);
+                self.change_capitalization(checked_sub(lamports_to_fund, lamports_to_burn)?, true);
             }
             Ordering::Equal => (),
         }

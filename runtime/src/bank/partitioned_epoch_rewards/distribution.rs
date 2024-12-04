@@ -15,7 +15,6 @@ use {
         pubkey::Pubkey,
         stake::state::{Delegation, StakeStateV2},
     },
-    std::sync::atomic::Ordering::Relaxed,
     thiserror::Error,
 };
 
@@ -103,7 +102,7 @@ impl Bank {
         ) = measure_us!(self.store_stake_accounts_in_partition(this_partition_stake_rewards));
 
         // increase total capitalization by the distributed rewards
-        self.capitalization.fetch_add(lamports_distributed, Relaxed);
+        self.change_capitalization(lamports_distributed, true);
 
         // decrease distributed capital from epoch rewards sysvar
         self.update_epoch_rewards_sysvar(lamports_distributed + lamports_burned);

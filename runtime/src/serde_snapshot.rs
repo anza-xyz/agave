@@ -146,7 +146,6 @@ struct DeserializableVersionedBank {
     transaction_count: u64,
     tick_height_for_vote_only: u64,
     signature_count: u64,
-    capitalization: u64,
     max_tick_height: u64,
     hashes_per_tick: Option<u64>,
     ticks_per_slot: u64,
@@ -189,7 +188,6 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
             transaction_count: dvb.transaction_count,
             tick_height_for_vote_only: dvb.tick_height_for_vote_only,
             signature_count: dvb.signature_count,
-            capitalization: dvb.capitalization,
             max_tick_height: dvb.max_tick_height,
             hashes_per_tick: dvb.hashes_per_tick,
             ticks_per_slot: dvb.ticks_per_slot,
@@ -234,7 +232,6 @@ struct SerializableVersionedBank {
     transaction_count: u64,
     tick_height_for_vote_only: u64,
     signature_count: u64,
-    capitalization: u64,
     max_tick_height: u64,
     hashes_per_tick: Option<u64>,
     ticks_per_slot: u64,
@@ -277,7 +274,6 @@ impl From<BankFieldsToSerialize> for SerializableVersionedBank {
             transaction_count: rhs.transaction_count,
             tick_height_for_vote_only: rhs.tick_height_for_vote_only,
             signature_count: rhs.signature_count,
-            capitalization: rhs.capitalization,
             max_tick_height: rhs.max_tick_height,
             hashes_per_tick: rhs.hashes_per_tick,
             ticks_per_slot: rhs.ticks_per_slot,
@@ -864,11 +860,16 @@ where
     E: SerializableStorage + std::marker::Sync,
 {
     let capitalizations = (
-        bank_fields.full.capitalization,
+        bank_fields
+            .full
+            .full_replay_fields
+            .as_ref()
+            .unwrap()
+            .capitalization(),
         bank_fields
             .incremental
             .as_ref()
-            .map(|bank_fields| bank_fields.capitalization),
+            .map(|fields| fields.full_replay_fields.as_ref().unwrap().capitalization()),
     );
     let bank_fields = bank_fields.collapse_into();
     let (accounts_db, reconstructed_accounts_db_info) = reconstruct_accountsdb_from_fields(

@@ -50,7 +50,7 @@ impl Bank {
             if deposit > 0 {
                 self.deposit_or_burn_fee(deposit, &mut burn);
             }
-            self.capitalization.fetch_sub(burn, Relaxed);
+            self.change_capitalization(burn, false);
         }
     }
 
@@ -68,7 +68,7 @@ impl Bank {
         if deposit > 0 {
             self.deposit_or_burn_fee(deposit, &mut burn);
         }
-        self.capitalization.fetch_sub(burn, Relaxed);
+        self.change_capitalization(burn, false);
     }
 
     pub fn calculate_reward_for_transaction(
@@ -282,7 +282,7 @@ impl Bank {
         self.rewards.write().unwrap().append(&mut rewards);
 
         if rent_to_burn > 0 {
-            self.capitalization.fetch_sub(rent_to_burn, Relaxed);
+            self.change_capitalization(rent_to_burn, false);
             datapoint_warn!(
                 "bank-burned_rent",
                 ("slot", self.slot(), i64),
@@ -312,7 +312,7 @@ impl Bank {
             "distributed rent: {} (rounded from: {}, burned: {})",
             rent_to_be_distributed, total_rent_collected, burned_portion
         );
-        self.capitalization.fetch_sub(burned_portion, Relaxed);
+        self.change_capitalization(burned_portion, false);
 
         if rent_to_be_distributed == 0 {
             return;

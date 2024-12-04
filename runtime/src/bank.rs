@@ -440,7 +440,6 @@ pub struct BankFieldsToDeserialize {
     pub(crate) transaction_count: u64,
     pub(crate) tick_height_for_vote_only: u64,
     pub(crate) signature_count: u64,
-    pub(crate) capitalization: u64,
     pub(crate) max_tick_height: u64,
     pub(crate) hashes_per_tick: Option<u64>,
     pub(crate) ticks_per_slot: u64,
@@ -489,7 +488,6 @@ pub struct BankFieldsToSerialize {
     pub transaction_count: u64,
     pub tick_height_for_vote_only: u64,
     pub signature_count: u64,
-    pub capitalization: u64,
     pub max_tick_height: u64,
     pub hashes_per_tick: Option<u64>,
     pub ticks_per_slot: u64,
@@ -545,7 +543,6 @@ impl PartialEq for Bank {
             transactions_per_entry_max: _,
             tick_height_for_vote_only,
             signature_count,
-            capitalization,
             max_tick_height,
             hashes_per_tick,
             ticks_per_slot,
@@ -611,7 +608,6 @@ impl PartialEq for Bank {
             && transaction_count.load(Relaxed) == other.transaction_count.load(Relaxed)
             && tick_height_for_vote_only.load(Relaxed) == other.tick_height_for_vote_only.load(Relaxed)
             && signature_count.load(Relaxed) == other.signature_count.load(Relaxed)
-            && capitalization.load(Relaxed) == other.capitalization.load(Relaxed)
             && max_tick_height == &other.max_tick_height
             && hashes_per_tick == &other.hashes_per_tick
             && ticks_per_slot == &other.ticks_per_slot
@@ -658,7 +654,6 @@ impl BankFieldsToSerialize {
             transaction_count: u64::default(),
             tick_height_for_vote_only: u64::default(),
             signature_count: u64::default(),
-            capitalization: u64::default(),
             max_tick_height: u64::default(),
             hashes_per_tick: Option::default(),
             ticks_per_slot: u64::default(),
@@ -760,6 +755,9 @@ pub struct BankFullReplayFields {
 
     /// FIFO queue of `recent_blockhash` items
     blockhash_queue: RwLock<BlockhashQueue>,
+
+    /// Total capitalization, used to calculate inflation
+    capitalization: AtomicU64,
 }
 
 impl Clone for BankFullReplayFields {
@@ -767,7 +765,14 @@ impl Clone for BankFullReplayFields {
         Self {
             tick_height: AtomicU64::new(self.tick_height.load(Relaxed)),
             blockhash_queue: RwLock::new(self.blockhash_queue.read().unwrap().clone()),
+            capitalization: AtomicU64::new(self.capitalization.load(Relaxed)),
         }
+    }
+}
+
+impl BankFullReplayFields {
+    pub fn capitalization(&self) -> u64 {
+        self.capitalization.load(Relaxed)
     }
 }
 
@@ -775,6 +780,7 @@ impl PartialEq for BankFullReplayFields {
     fn eq(&self, other: &Self) -> bool {
         self.tick_height.load(Relaxed) == other.tick_height.load(Relaxed)
             && *self.blockhash_queue.read().unwrap() == *other.blockhash_queue.read().unwrap()
+            && self.capitalization.load(Relaxed) == other.capitalization.load(Relaxed)
     }
 }
 
@@ -845,9 +851,6 @@ pub struct Bank {
 
     /// The number of signatures from valid transactions in this slot
     signature_count: AtomicU64,
-
-    /// Total capitalization, used to calculate inflation
-    capitalization: AtomicU64,
 
     // Bank max_tick_height
     max_tick_height: u64,
@@ -1055,7 +1058,6 @@ impl Bank {
             transactions_per_entry_max: AtomicU64::default(),
             tick_height_for_vote_only: AtomicU64::default(),
             signature_count: AtomicU64::default(),
-            capitalization: AtomicU64::default(),
             max_tick_height: u64::default(),
             hashes_per_tick: Option::<u64>::default(),
             ticks_per_slot: u64::default(),
@@ -1306,7 +1308,6 @@ impl Bank {
             max_tick_height: (slot + 1) * parent.ticks_per_slot,
             block_height: parent.block_height + 1,
             fee_rate_governor,
-            capitalization: AtomicU64::new(parent.capitalization()),
             vote_only_bank,
             inflation: parent.inflation.clone(),
             transaction_count: AtomicU64::new(parent.transaction_count()),
@@ -1744,7 +1745,6 @@ impl Bank {
             transactions_per_entry_max: AtomicU64::default(),
             tick_height_for_vote_only: AtomicU64::new(fields.tick_height_for_vote_only),
             signature_count: AtomicU64::new(fields.signature_count),
-            capitalization: AtomicU64::new(fields.capitalization),
             max_tick_height: fields.max_tick_height,
             hashes_per_tick: fields.hashes_per_tick,
             ticks_per_slot: fields.ticks_per_slot,
@@ -1880,7 +1880,6 @@ impl Bank {
             transaction_count: self.transaction_count.load(Relaxed),
             tick_height_for_vote_only: self.tick_height_for_vote_only.load(Relaxed),
             signature_count: self.signature_count.load(Relaxed),
-            capitalization: self.capitalization.load(Relaxed),
             max_tick_height: self.max_tick_height,
             hashes_per_tick: self.hashes_per_tick,
             ticks_per_slot: self.ticks_per_slot,
@@ -2397,8 +2396,7 @@ impl Bank {
                 stakes.vote_accounts().len(),
             )
         };
-        self.capitalization
-            .fetch_add(validator_rewards_paid, Relaxed);
+        self.change_capitalization(validator_rewards_paid, true);
 
         let active_stake = if let Some(stake_history_entry) =
             self.stakes_cache.stakes().history().get(prev_epoch)
@@ -3111,7 +3109,7 @@ impl Bank {
                 "{pubkey} repeated in genesis config"
             );
             self.store_account(pubkey, &account.to_account_shared_data());
-            self.capitalization.fetch_add(account.lamports(), Relaxed);
+            self.change_capitalization(account.lamports(), true);
             self.accounts_data_size_initial += account.data().len() as u64;
         }
 
@@ -3179,7 +3177,7 @@ impl Bank {
 
     fn burn_and_purge_account(&self, program_id: &Pubkey, mut account: AccountSharedData) {
         let old_data_size = account.data().len();
-        self.capitalization.fetch_sub(account.lamports(), Relaxed);
+        self.change_capitalization(account.lamports(), false);
         // Both resetting account balance to 0 and zeroing the account data
         // is needed to really purge from AccountsDb and flush the Stakes cache
         account.set_lamports(0);
@@ -4335,7 +4333,7 @@ impl Bank {
         if let Some((account, _)) =
             self.get_account_modified_since_parent_with_fixed_root(&incinerator::id())
         {
-            self.capitalization.fetch_sub(account.lamports(), Relaxed);
+            self.change_capitalization(account.lamports(), false);
             self.store_account(&incinerator::id(), &AccountSharedData::default());
         }
     }
@@ -5290,7 +5288,7 @@ impl Bank {
                             pubkey,
                             increased
                         );
-                        self.capitalization.fetch_add(increased, Relaxed);
+                        self.change_capitalization(increased, true)
                     }
                     std::cmp::Ordering::Less => {
                         let decreased = old_account.lamports() - new_account.lamports();
@@ -5299,7 +5297,7 @@ impl Bank {
                             pubkey,
                             decreased
                         );
-                        self.capitalization.fetch_sub(decreased, Relaxed);
+                        self.change_capitalization(decreased, false);
                     }
                     std::cmp::Ordering::Equal => {}
                 }
@@ -5310,8 +5308,7 @@ impl Bank {
                     pubkey,
                     new_account.lamports()
                 );
-                self.capitalization
-                    .fetch_add(new_account.lamports(), Relaxed);
+                self.change_capitalization(new_account.lamports(), true);
                 0
             };
 
@@ -6119,7 +6116,11 @@ impl Bank {
         // debug_verify only exists as an extra debugging step under the assumption that this code path is only used for tests. But, this is used by ledger-tool create-snapshot
         // for example.
         let debug_verify = false;
-        self.capitalization
+        let full_replay_fields = self.full_replay_fields.read().unwrap();
+        full_replay_fields
+            .as_ref()
+            .unwrap()
+            .capitalization
             .store(self.calculate_capitalization(debug_verify), Relaxed);
         old
     }
@@ -6400,7 +6401,29 @@ impl Bank {
 
     /// Return the total capitalization of the Bank
     pub fn capitalization(&self) -> u64 {
-        self.capitalization.load(Relaxed)
+        let full_replay_fields = self.full_replay_fields.read().unwrap();
+        full_replay_fields
+            .as_ref()
+            .unwrap()
+            .capitalization
+            .load(Relaxed)
+    }
+
+    pub fn change_capitalization(&self, diff: u64, is_add: bool) {
+        let full_replay_fields = self.full_replay_fields.read().unwrap();
+        if is_add {
+            full_replay_fields
+                .as_ref()
+                .unwrap()
+                .capitalization
+                .fetch_add(diff, Relaxed);
+        } else {
+            full_replay_fields
+                .as_ref()
+                .unwrap()
+                .capitalization
+                .fetch_sub(diff, Relaxed);
+        }
     }
 
     /// Return this bank's max_tick_height
@@ -6962,8 +6985,7 @@ impl Bank {
                 datapoint_info!(datapoint_name, ("slot", self.slot, i64));
 
                 // Burn lamports in the old account
-                self.capitalization
-                    .fetch_sub(old_account.lamports(), Relaxed);
+                self.change_capitalization(old_account.lamports(), false);
 
                 // Transfer new account to old account
                 self.store_account(old_address, &new_account);
