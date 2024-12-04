@@ -278,13 +278,13 @@ impl BankForks {
     }
 
     #[cfg(feature = "dev-context-only-utils")]
-    pub fn reinstall_schedulers(&mut self, mode: SchedulingMode) {
+    pub fn reinstall_schedulers(&mut self) {
         let bank = self.working_bank();
         assert!(self.banks.len() == 1 && bank.slot() == 0 && !bank.is_frozen());
 
+        let pool = self.scheduler_pool.as_ref().unwrap();
         let inserted = self.banks.insert(self.highest_slot(), Self::install_scheduler_into_bank(
-            self.scheduler_pool.as_ref().unwrap(),
-            mode,
+            SchedulingMode::BlockProduction,
             bank,
             true,
         ));
