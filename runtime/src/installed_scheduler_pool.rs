@@ -343,10 +343,11 @@ impl SchedulerStatus {
         &mut self,
         f: impl FnOnce(InstalledSchedulerPoolArc, ResultWithTimings) -> InstalledSchedulerBox,
     ) {
-        let Self::Stale(pool, _mode, result_with_timings) = mem::replace(self, Self::Unavailable)
+        let Self::Stale(pool, mode, result_with_timings) = mem::replace(self, Self::Unavailable)
         else {
             panic!("transition to Active failed: {self:?}");
         };
+        assert_matches!(mode, SchedulingMode::BlockVerification);
         *self = Self::Active(f(pool, result_with_timings));
     }
 
@@ -645,7 +646,8 @@ impl BankWithSchedulerInner {
         let mut scheduler = self.scheduler.write().unwrap();
         match &mut *scheduler {
             SchedulerStatus::Active(scheduler) => scheduler.recover_error_after_abort(),
-            SchedulerStatus::Stale(_pool, _mode, (result, _timings)) if result.is_err() => {
+            SchedulerStatus::Stale(_pool, mode, (result, _timings)) if result.is_err() => {
+                assert_matches!(mode, SchedulingMode::BlockVerification);
                 result.clone().unwrap_err()
             }
             _ => unreachable!("no error in {:?}", self.scheduler),
