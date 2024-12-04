@@ -483,6 +483,7 @@ impl BankWithScheduler {
         );
 
         let schedule_result: ScheduleResult = self.inner.with_active_scheduler(|scheduler| {
+            assert_matches!(scheduler.context().mode(), SchedulingMode::BlockProduction);
             for (sanitized_transaction, index) in transactions_with_indexes {
                 scheduler.schedule_execution(sanitized_transaction, index)?;
             }
@@ -661,7 +662,7 @@ impl BankWithSchedulerInner {
         scheduler: &InstalledSchedulerRwLock,
         reason: WaitReason,
     ) -> Option<ResultWithTimings> {
-        info!(
+        debug!(
             "wait_for_scheduler_termination(slot: {}, reason: {:?}): started at {:?}...",
             bank.slot(),
             reason,
@@ -692,7 +693,7 @@ impl BankWithSchedulerInner {
             }
             SchedulerStatus::Unavailable => (true, None),
         };
-        info!(
+        debug!(
             "wait_for_scheduler_termination(slot: {}, reason: {:?}): noop: {:?}, result: {:?} at {:?}...",
             bank.slot(),
             reason,
