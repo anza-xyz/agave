@@ -403,7 +403,7 @@ impl OldestSlot {
 }
 
 #[derive(Debug)]
-struct Rocks {
+pub(crate) struct Rocks {
     db: rocksdb::DB,
     access_type: AccessType,
     oldest_slot: OldestSlot,
@@ -1326,7 +1326,7 @@ impl TypedColumn for columns::MerkleRootMeta {
 
 #[derive(Debug)]
 pub struct Database {
-    backend: Arc<Rocks>,
+    pub(crate) backend: Arc<Rocks>,
     path: Arc<Path>,
     column_options: Arc<LedgerColumnOptions>,
 }
