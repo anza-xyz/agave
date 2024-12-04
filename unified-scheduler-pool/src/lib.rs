@@ -2240,7 +2240,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
         result_with_timings: ResultWithTimings,
         banking_stage_context: Option<BankingStageContext>,
     ) -> Self {
-        info!("spawning new scheduler for slot: {}", context.slot());
+        info!("spawning new scheduler for slot: {:?}", context.slot());
         let task_creator = match context.mode() {
             SchedulingMode::BlockVerification => TaskCreator::BlockVerification {
                 usage_queue_loader: UsageQueueLoader::default(),
