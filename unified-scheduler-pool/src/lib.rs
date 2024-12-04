@@ -3698,7 +3698,7 @@ mod tests {
                 _handler_context: &HandlerContext,
             ) {
                 // The task index must always be matched to the slot.
-                assert_eq!(task.index() as Slot, context.bank.slot());
+                assert_eq!(task.index() as Slot, context.bank().slot());
             }
         }
 
