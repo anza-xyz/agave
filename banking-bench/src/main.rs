@@ -517,6 +517,8 @@ fn main() {
         scheduler_pool,
     );
 
+    // This bench processes transactions, starting from the very first bank, so special-casing is
+    // needed for unified scheduler.
     if matches!(
         block_production_method,
         BlockProductionMethod::UnifiedScheduler
