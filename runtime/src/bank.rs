@@ -3370,6 +3370,8 @@ impl Bank {
     }
 
     fn check_chili_pepper<T>(&self, txs: &[impl TransactionWithMeta], check_results: &[Result<T>]) {
+        // TODO: optimize this function
+        // This function is very slow!!!
         if self.is_accounts_chili_pepper_enabled() {
             let slot = self.slot();
             let mut result = HashMap::new();
