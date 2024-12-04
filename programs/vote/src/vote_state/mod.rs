@@ -557,7 +557,7 @@ pub fn process_new_vote_state(
     timestamp: Option<i64>,
     epoch: Epoch,
     current_slot: Slot,
-    feature_set: Option<&FeatureSet>,
+    _feature_set: Option<&FeatureSet>,
 ) -> Result<(), VoteError> {
     assert!(!new_state.is_empty());
     if new_state.len() > MAX_LOCKOUT_HISTORY {
@@ -617,27 +617,17 @@ pub fn process_new_vote_state(
     let mut current_vote_state_index: usize = 0;
     let mut new_vote_state_index = 0;
 
-    // Accumulate credits earned by newly rooted slots.  The behavior changes with timely_vote_credits: prior to
-    // this feature, there was a bug that counted a new root slot as 1 credit even if it had never been voted on.
-    // timely_vote_credits fixes this bug by only awarding credits for slots actually voted on and finalized.
-    let timely_vote_credits = feature_set.map_or(false, |f| {
-        f.is_active(&feature_set::timely_vote_credits::id())
-    });
-    let mut earned_credits = if timely_vote_credits { 0_u64 } else { 1_u64 };
+    // Accumulate credits earned by newly rooted slots
+    let mut earned_credits = 0_u64;
 
     if let Some(new_root) = new_root {
         for current_vote in &vote_state.votes {
             // Find the first vote in the current vote state for a slot greater
             // than the new proposed root
             if current_vote.slot() <= new_root {
-                if timely_vote_credits || (current_vote.slot() != new_root) {
-                    earned_credits = earned_credits
-                        .checked_add(vote_state.credits_for_vote_at_index(
-                            current_vote_state_index,
-                            timely_vote_credits,
-                        ))
-                        .expect("`earned_credits` does not overflow");
-                }
+                earned_credits = earned_credits
+                    .checked_add(vote_state.credits_for_vote_at_index(current_vote_state_index))
+                    .expect("`earned_credits` does not overflow");
                 current_vote_state_index = current_vote_state_index
                     .checked_add(1)
                     .expect("`current_vote_state_index` is bounded by `MAX_LOCKOUT_HISTORY` when processing new root");
@@ -715,13 +705,9 @@ pub fn process_new_vote_state(
 
     // Now set the vote latencies on new slots not in the current state.  New slots not in the current vote state will
     // have had their latency initialized to 0 by the above loop.  Those will now be updated to their actual latency.
-    // If the timely_vote_credits feature is not enabled, then the latency is left as 0 for such slots, which will
-    // result in 1 credit per slot when credits are calculated at the time that the slot is rooted.
-    if timely_vote_credits {
-        for new_vote in new_state.iter_mut() {
-            if new_vote.latency == 0 {
-                new_vote.latency = VoteState::compute_vote_latency(new_vote.slot(), current_slot);
-            }
+    for new_vote in new_state.iter_mut() {
+        if new_vote.latency == 0 {
+            new_vote.latency = VoteState::compute_vote_latency(new_vote.slot(), current_slot);
         }
     }
 
@@ -748,12 +734,11 @@ pub fn process_vote_unfiltered(
     slot_hashes: &[SlotHash],
     epoch: Epoch,
     current_slot: Slot,
-    timely_vote_credits: bool,
 ) -> Result<(), VoteError> {
     check_slots_are_valid(vote_state, vote_slots, &vote.hash, slot_hashes)?;
-    vote_slots.iter().for_each(|s| {
-        vote_state.process_next_vote_slot(*s, epoch, current_slot, timely_vote_credits)
-    });
+    vote_slots
+        .iter()
+        .for_each(|s| vote_state.process_next_vote_slot(*s, epoch, current_slot));
     Ok(())
 }
 
@@ -763,7 +748,6 @@ pub fn process_vote(
     slot_hashes: &[SlotHash],
     epoch: Epoch,
     current_slot: Slot,
-    timely_vote_credits: bool,
 ) -> Result<(), VoteError> {
     if vote.slots.is_empty() {
         return Err(VoteError::EmptySlots);
@@ -785,7 +769,6 @@ pub fn process_vote(
         slot_hashes,
         epoch,
         current_slot,
-        timely_vote_credits,
     )
 }
 
@@ -802,7 +785,6 @@ pub fn process_vote_unchecked(vote_state: &mut VoteState, vote: Vote) -> Result<
         &slot_hashes,
         vote_state.current_epoch(),
         0,
-        true,
     )
 }
 
@@ -1071,19 +1053,11 @@ pub fn process_vote_with_account<S: std::hash::BuildHasher>(
     clock: &Clock,
     vote: &Vote,
     signers: &HashSet<Pubkey, S>,
-    feature_set: &FeatureSet,
+    _feature_set: &FeatureSet,
 ) -> Result<(), InstructionError> {
     let mut vote_state = verify_and_get_vote_state(vote_account, clock, signers)?;
 
-    let timely_vote_credits = feature_set.is_active(&feature_set::timely_vote_credits::id());
-    process_vote(
-        &mut vote_state,
-        vote,
-        slot_hashes,
-        clock.epoch,
-        clock.slot,
-        timely_vote_credits,
-    )?;
+    process_vote(&mut vote_state, vote, slot_hashes, clock.epoch, clock.slot)?;
     if let Some(timestamp) = vote.timestamp {
         vote.slots
             .iter()
@@ -1320,7 +1294,7 @@ mod tests {
             134, 135,
         ]
         .into_iter()
-        .for_each(|v| vote_state.process_next_vote_slot(v, 4, 0, false));
+        .for_each(|v| vote_state.process_next_vote_slot(v, 4, 0));
 
         let version1_14_11_serialized = bincode::serialize(&VoteStateVersions::V1_14_11(Box::new(
             VoteState1_14_11::from(vote_state.clone()),
@@ -1801,11 +1775,11 @@ mod tests {
         let slot_hashes: Vec<_> = vote.slots.iter().rev().map(|x| (*x, vote.hash)).collect();
 
         assert_eq!(
-            process_vote(&mut vote_state_a, &vote, &slot_hashes, 0, 0, true),
+            process_vote(&mut vote_state_a, &vote, &slot_hashes, 0, 0),
             Ok(())
         );
         assert_eq!(
-            process_vote(&mut vote_state_b, &vote, &slot_hashes, 0, 0, true),
+            process_vote(&mut vote_state_b, &vote, &slot_hashes, 0, 0),
             Ok(())
         );
         assert_eq!(recent_votes(&vote_state_a), recent_votes(&vote_state_b));
@@ -1818,12 +1792,12 @@ mod tests {
         let vote = Vote::new(vec![0], Hash::default());
         let slot_hashes: Vec<_> = vec![(0, vote.hash)];
         assert_eq!(
-            process_vote(&mut vote_state, &vote, &slot_hashes, 0, 0, true),
+            process_vote(&mut vote_state, &vote, &slot_hashes, 0, 0),
             Ok(())
         );
         let recent = recent_votes(&vote_state);
         assert_eq!(
-            process_vote(&mut vote_state, &vote, &slot_hashes, 0, 0, true),
+            process_vote(&mut vote_state, &vote, &slot_hashes, 0, 0),
             Err(VoteError::VoteTooOld)
         );
         assert_eq!(recent, recent_votes(&vote_state));
@@ -1883,7 +1857,7 @@ mod tests {
         let vote = Vote::new(vec![0], Hash::default());
         let slot_hashes: Vec<_> = vec![(*vote.slots.last().unwrap(), vote.hash)];
         assert_eq!(
-            process_vote(&mut vote_state, &vote, &slot_hashes, 0, 0, true),
+            process_vote(&mut vote_state, &vote, &slot_hashes, 0, 0),
             Ok(())
         );
         assert_eq!(
@@ -1899,7 +1873,7 @@ mod tests {
         let vote = Vote::new(vec![0], Hash::default());
         let slot_hashes: Vec<_> = vec![(*vote.slots.last().unwrap(), vote.hash)];
         assert_eq!(
-            process_vote(&mut vote_state, &vote, &slot_hashes, 0, 0, true),
+            process_vote(&mut vote_state, &vote, &slot_hashes, 0, 0),
             Ok(())
         );
 
@@ -1918,7 +1892,7 @@ mod tests {
         let vote = Vote::new(vec![0], Hash::default());
         let slot_hashes: Vec<_> = vec![(*vote.slots.last().unwrap(), vote.hash)];
         assert_eq!(
-            process_vote(&mut vote_state, &vote, &slot_hashes, 0, 0, true),
+            process_vote(&mut vote_state, &vote, &slot_hashes, 0, 0),
             Ok(())
         );
 
@@ -1935,7 +1909,7 @@ mod tests {
 
         let vote = Vote::new(vec![], Hash::default());
         assert_eq!(
-            process_vote(&mut vote_state, &vote, &[], 0, 0, true),
+            process_vote(&mut vote_state, &vote, &[], 0, 0),
             Err(VoteError::EmptySlots)
         );
     }
@@ -2208,8 +2182,7 @@ mod tests {
             ),
         ];
 
-        let mut feature_set = FeatureSet::default();
-        feature_set.activate(&feature_set::timely_vote_credits::id(), 1);
+        let feature_set = FeatureSet::default();
 
         // For each vote group, process all vote groups leading up to it and it itself, and ensure that the number of
         // credits earned is correct for both regular votes and vote state updates
@@ -2233,7 +2206,6 @@ mod tests {
                         &slot_hashes,
                         0,
                         vote_group.1, // vote_group.1 is the slot in which the vote was cast
-                        true,
                     ),
                     Ok(())
                 );
@@ -2341,8 +2313,7 @@ mod tests {
             ),
         ];
 
-        let mut feature_set = FeatureSet::default();
-        feature_set.activate(&feature_set::timely_vote_credits::id(), 1);
+        let feature_set = FeatureSet::default();
 
         // Initial vote state
         let mut vote_state = VoteState::new(&VoteInit::default(), &Clock::default());
@@ -2448,101 +2419,6 @@ mod tests {
             ),
             Err(VoteError::RootRollBack)
         );
-    }
-
-    fn process_new_vote_state_replaced_root_vote_credits(
-        feature_set: &FeatureSet,
-        expected_credits: u64,
-    ) {
-        let mut vote_state1 = VoteState::default();
-
-        // Initial vote state: as if 31 votes had occurred on slots 0 - 30 (inclusive)
-        assert_eq!(
-            process_new_vote_state_from_lockouts(
-                &mut vote_state1,
-                (0..MAX_LOCKOUT_HISTORY)
-                    .enumerate()
-                    .map(|(index, slot)| Lockout::new_with_confirmation_count(
-                        slot as Slot,
-                        (MAX_LOCKOUT_HISTORY.checked_sub(index).unwrap()) as u32
-                    ))
-                    .collect(),
-                None,
-                None,
-                0,
-                Some(feature_set),
-            ),
-            Ok(())
-        );
-
-        // Now vote as if new votes on slots 31 and 32 had occurred, yielding a new Root of 1
-        assert_eq!(
-            process_new_vote_state_from_lockouts(
-                &mut vote_state1,
-                (2..(MAX_LOCKOUT_HISTORY.checked_add(2).unwrap()))
-                    .enumerate()
-                    .map(|(index, slot)| Lockout::new_with_confirmation_count(
-                        slot as Slot,
-                        (MAX_LOCKOUT_HISTORY.checked_sub(index).unwrap()) as u32
-                    ))
-                    .collect(),
-                Some(1),
-                None,
-                0,
-                Some(feature_set),
-            ),
-            Ok(())
-        );
-
-        // Vote credits should be 2, since two voted-on slots were "popped off the back" of the tower
-        assert_eq!(vote_state1.credits(), 2);
-
-        // Create a new vote state that represents the validator having not voted for a long time, then voting on
-        // slots 10001 through 10032 (inclusive) with an entirely new root of 10000 that was never previously voted
-        // on.  This is valid because a vote state can include a root that it never voted on (if it votes after a very
-        // long delinquency, the new votes will have a root much newer than its most recently voted slot).
-        assert_eq!(
-            process_new_vote_state_from_lockouts(
-                &mut vote_state1,
-                (10001..(MAX_LOCKOUT_HISTORY.checked_add(10001).unwrap()))
-                    .enumerate()
-                    .map(|(index, slot)| Lockout::new_with_confirmation_count(
-                        slot as Slot,
-                        (MAX_LOCKOUT_HISTORY.checked_sub(index).unwrap()) as u32
-                    ))
-                    .collect(),
-                Some(10000),
-                None,
-                0,
-                Some(feature_set),
-            ),
-            Ok(())
-        );
-
-        // The vote is valid, but no vote credits should be awarded because although there is a new root, it does not
-        // represent a slot previously voted on.
-        assert_eq!(vote_state1.credits(), expected_credits)
-    }
-
-    #[test]
-    fn test_process_new_vote_state_replaced_root_vote_credits() {
-        let mut feature_set = FeatureSet::default();
-
-        // Test without the timely_vote_credits feature.  The expected credits here of 34 is *incorrect* but is what
-        // is expected using vote_state_update_credit_per_dequeue.  With this feature, the credits earned will be
-        // calculated as:
-        // 2 (from initial vote state)
-        // + 31 (for votes which were "popped off of the back of the tower" by the new vote
-        // + 1 (just because there is a new root, even though it was never voted on -- this is the flaw)
-        feature_set.activate(&feature_set::vote_state_update_credit_per_dequeue::id(), 1);
-        process_new_vote_state_replaced_root_vote_credits(&feature_set, 34);
-
-        // Now test using the timely_vote_credits feature.  The expected credits here of 33 is *correct*.  With
-        // this feature, the credits earned will be calculated as:
-        // 2 (from initial vote state)
-        // + 31 (for votes which were "popped off of the back of the tower" by the new vote)
-        feature_set.activate(&feature_set::timely_vote_credits::id(), 1);
-        process_new_vote_state_replaced_root_vote_credits(&feature_set, 33);
     }
 
     #[test]
@@ -3116,7 +2992,7 @@ mod tests {
         // error with `VotesTooOldAllFiltered`
         let slot_hashes = vec![(3, Hash::new_unique()), (2, Hash::new_unique())];
         assert_eq!(
-            process_vote(&mut vote_state, &vote, &slot_hashes, 0, 0, true),
+            process_vote(&mut vote_state, &vote, &slot_hashes, 0, 0),
             Err(VoteError::VotesTooOldAllFiltered)
         );
 
@@ -3130,7 +3006,7 @@ mod tests {
             .1;
 
         let vote = Vote::new(vec![old_vote_slot, vote_slot], vote_slot_hash);
-        process_vote(&mut vote_state, &vote, &slot_hashes, 0, 0, true).unwrap();
+        process_vote(&mut vote_state, &vote, &slot_hashes, 0, 0).unwrap();
         assert_eq!(
             vote_state
                 .votes
@@ -3159,7 +3035,7 @@ mod tests {
                 .unwrap()
                 .1;
             let vote = Vote::new(vote_slots, vote_hash);
-            process_vote_unfiltered(&mut vote_state, &vote.slots, &vote, slot_hashes, 0, 0, true)
+            process_vote_unfiltered(&mut vote_state, &vote.slots, &vote, slot_hashes, 0, 0)
                 .unwrap();
         }
 

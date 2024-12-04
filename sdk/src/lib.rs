@@ -94,7 +94,6 @@ pub mod rpc_port;
 pub mod shred_version;
 pub mod signature;
 pub mod signer;
-pub mod simple_vote_transaction_checker;
 pub mod system_transaction;
 pub mod transaction;
 pub mod transport;
@@ -203,6 +202,12 @@ pub use solana_serde_varint as serde_varint;
 pub use solana_short_vec as short_vec;
 #[deprecated(since = "2.2.0", note = "Use `solana-time-utils` crate instead")]
 pub use solana_time_utils as timing;
+#[cfg(feature = "full")]
+#[deprecated(
+    since = "2.2.0",
+    note = "Use `solana_transaction::simple_vote_transaction_checker` instead"
+)]
+pub use solana_transaction::simple_vote_transaction_checker;
 #[deprecated(
     since = "2.2.0",
     note = "Use `solana-transaction-context` crate instead"

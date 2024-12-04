@@ -20,7 +20,7 @@ serde = { workspace = true }
 serde_derive = { workspace = true }
 socket2 = { workspace = true }
 solana-logger = { workspace = true, optional = true }
-solana-sdk = { workspace = true }
+solana-serde = { workspace = true }
 solana-version = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["full"] }
 url = { workspace = true }
@@ -31,6 +31,7 @@ solana-logger = { workspace = true }
 [features]
 default = []
 clap = ["dep:clap", "dep:solana-logger", "dep:solana-version"]
+dev-context-only-utils = []
 
 [lib]
 name = "solana_net_utils"

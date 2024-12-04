@@ -73,7 +73,7 @@ use {
         u64_align, utils,
         verify_accounts_hash_in_background::VerifyAccountsHashInBackground,
     },
-    crossbeam_channel::{unbounded, Receiver, Sender},
+    crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError},
     dashmap::{DashMap, DashSet},
     log::*,
     rand::{thread_rng, Rng},
@@ -2344,7 +2344,7 @@ impl AccountsDb {
     fn background_hasher(receiver: Receiver<Vec<CachedAccount>>) {
         info!("Background account hasher has started");
         loop {
-            let result = receiver.recv();
+            let result = receiver.try_recv();
             match result {
                 Ok(accounts) => {
                     for account in accounts {
@@ -2355,7 +2355,10 @@ impl AccountsDb {
                         };
                     }
                 }
-                Err(err) => {
+                Err(TryRecvError::Empty) => {
+                    sleep(Duration::from_millis(5));
+                }
+                Err(err @ TryRecvError::Disconnected) => {
                     info!("Background account hasher is stopping because: {err}");
                     break;
                 }
@@ -2555,7 +2558,7 @@ impl AccountsDb {
             let acceptable_straggler_slot_count = 100;
             let old_slot_cutoff =
                 slot_one_epoch_old.saturating_sub(acceptable_straggler_slot_count);
-            let (old_storages, old_slots) = self.get_snapshot_storages(..old_slot_cutoff);
+            let (old_storages, old_slots) = self.get_storages(..old_slot_cutoff);
             let num_old_storages = old_storages.len();
             self.accounts_index
                 .add_uncleaned_roots(old_slots.iter().copied());
@@ -3892,6 +3895,7 @@ impl AccountsDb {
                 if store.num_zero_lamport_single_ref_accounts() == store.count() {
                     // all accounts in this storage can be dead
                     self.accounts_index.add_uncleaned_roots([slot]);
+                    self.dirty_stores.entry(slot).or_insert(store);
                     self.shrink_stats
                         .num_dead_slots_added_to_clean
                         .fetch_add(1, Ordering::Relaxed);
@@ -6935,7 +6939,7 @@ impl AccountsDb {
                 }
 
                 let mut collect_time = Measure::start("collect");
-                let (combined_maps, slots) = self.get_snapshot_storages(..=slot);
+                let (combined_maps, slots) = self.get_storages(..=slot);
                 collect_time.stop();
 
                 let mut sort_time = Measure::start("sort_storages");
@@ -8468,49 +8472,21 @@ impl AccountsDb {
         }
     }
 
-    /// Get storages to use for snapshots, for the requested slots
-    pub fn get_snapshot_storages(
+    /// Returns storages for `requested_slots`
+    pub fn get_storages(
         &self,
         requested_slots: impl RangeBounds<Slot> + Sync,
     ) -> (Vec<Arc<AccountStorageEntry>>, Vec<Slot>) {
-        let mut m = Measure::start("get slots");
-        let mut slots_and_storages = self
+        let start = Instant::now();
+        let (slots, storages) = self
             .storage
-            .iter()
-            .filter_map(|(slot, store)| {
-                requested_slots
-                    .contains(&slot)
-                    .then_some((slot, Some(store)))
-            })
-            .collect::<Vec<_>>();
-        m.stop();
-        let mut m2 = Measure::start("filter");
-        let chunk_size = 5_000;
-        let (result, slots): (Vec<_>, Vec<_>) = self.thread_pool_clean.install(|| {
-            slots_and_storages
-                .par_chunks_mut(chunk_size)
-                .map(|slots_and_storages| {
-                    slots_and_storages
-                        .iter_mut()
-                        .filter(|(slot, _)| self.accounts_index.is_alive_root(*slot))
-                        .filter_map(|(slot, store)| {
-                            let store = std::mem::take(store).unwrap();
-                            store.has_accounts().then_some((store, *slot))
-                        })
-                        .collect::<Vec<(Arc<AccountStorageEntry>, Slot)>>()
-                })
-                .flatten()
-                .unzip()
-        });
-
-        m2.stop();
-
-        debug!(
-            "hash_total: get slots: {}, filter: {}",
-            m.as_us(),
-            m2.as_us(),
-        );
-        (result, slots)
+            .get_if(|slot, storage| requested_slots.contains(slot) && storage.has_accounts())
+            .into_vec()
+            .into_iter()
+            .unzip();
+        let duration = start.elapsed();
+        debug!("get_snapshot_storages: {duration:?}");
+        (storages, slots)
     }
 
     /// Returns the latest full snapshot slot
@@ -9559,7 +9535,7 @@ impl AccountsDb {
         total_lamports: u64,
         config: VerifyAccountsHashAndLamportsConfig,
     ) -> Result<(), AccountsHashVerificationError> {
-        let snapshot_storages = self.get_snapshot_storages(..);
+        let snapshot_storages = self.get_storages(..);
         let snapshot_storages_and_slots = (
             snapshot_storages.0.as_slice(),
             snapshot_storages.1.as_slice(),
@@ -9615,7 +9591,7 @@ pub mod test_utils {
             .get_slot_storage_entry(slot)
             .is_none()
         {
-            // Some callers relied on old behavior where the the file size was rounded up to the
+            // Some callers relied on old behavior where the file size was rounded up to the
             // next page size because they append to the storage file after it was written.
             // This behavior is not supported by a normal running validator.  Since this function
             // is only called by tests/benches, add some extra capacity to the file to not break

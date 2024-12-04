@@ -17,6 +17,7 @@ use {
             Arc, Mutex,
         },
         thread,
+        time::Duration,
     },
 };
 
@@ -305,13 +306,24 @@ impl ReadOnlyAccountsCache {
             .spawn(move || {
                 info!("AccountsReadCacheEvictor has started");
                 loop {
-                    let res = receiver.recv();
-                    if let Err(err) = res {
-                        // The only error is when the channel is empty and disconnected.
-                        // Disconnecting the channel is the intended way to stop the evictor.
-                        trace!("AccountsReadCacheEvictor is shutting down... {err}");
-                        break;
-                    };
+                    // Note: We use `try_recv()` here to avoid registering a Waker.
+                    // This ensures the sender doesn't need to grab a lock to wake us up.
+                    let res = receiver.try_recv();
+                    match res {
+                        Ok(_) => {
+                            // Evict request received!
+                        }
+                        Err(crossbeam_channel::TryRecvError::Empty) => {
+                            // No requests to evict were received, so sleep and check again.
+                            // Note: We don't need/want to evict often.  100 ms is already four
+                            // times per slot, which should be plenty.
+                            thread::sleep(Duration::from_millis(100));
+                        }
+                        Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                            // Disconnecting the channel is the intended way to stop the evictor.
+                            break;
+                        }
+                    }
                     stats
                         .evictor_wakeup_count_all
                         .fetch_add(1, Ordering::Relaxed);

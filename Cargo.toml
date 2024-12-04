@@ -3,6 +3,10 @@ inherits = "release"
 debug = true
 split-debuginfo = "packed"
 
+[profile.release]
+split-debuginfo = "unpacked"
+lto = "thin"
+
 [workspace]
 members = [
     "account-decoder",
@@ -131,6 +135,7 @@ members = [
     "sdk/keypair",
     "sdk/logger",
     "sdk/macro",
+    "sdk/message",
     "sdk/msg",
     "sdk/native-token",
     "sdk/nonce",
@@ -171,6 +176,7 @@ members = [
     "sdk/sysvar",
     "sdk/sysvar-id",
     "sdk/time-utils",
+    "sdk/transaction",
     "sdk/transaction-context",
     "sdk/transaction-error",
     "send-transaction-service",
@@ -186,6 +192,7 @@ members = [
     "test-validator",
     "thin-client",
     "timings",
+    "tls-utils",
     "tokens",
     "tps-client",
     "tpu-client",
@@ -255,7 +262,7 @@ backoff = "0.4.0"
 base64 = "0.22.1"
 bincode = "1.3.3"
 bitflags = { version = "2.6.0" }
-blake3 = "1.5.4"
+blake3 = "1.5.5"
 borsh = { version = "1.5.3", features = ["derive", "unstable__schema"] }
 borsh0-10 = { package = "borsh", version = "0.10.3" }
 bs58 = { version = "0.5.1", default-features = false }
@@ -265,7 +272,7 @@ bytecount = "0.6.8"
 bytemuck = "1.20.0"
 bytemuck_derive = "1.8.0"
 byteorder = "1.5.0"
-bytes = "1.8"
+bytes = "1.9"
 bzip2 = "0.4.4"
 caps = "0.5.5"
 cargo_metadata = "0.15.4"
@@ -320,14 +327,14 @@ humantime = "2.0.1"
 hyper = "0.14.31"
 hyper-proxy = "0.9.1"
 im = "15.1.0"
-index_list = "0.2.13"
-indexmap = "2.6.0"
+index_list = "0.2.14"
+indexmap = "2.7.0"
 indicatif = "0.17.9"
 itertools = "0.12.1"
 jemallocator = { package = "tikv-jemallocator", version = "0.4.1", features = [
     "unprefixed_malloc_on_supported_platforms",
 ] }
-js-sys = "0.3.72"
+js-sys = "0.3.74"
 json5 = "0.4.1"
 jsonrpc-core = "18.0.0"
 jsonrpc-core-client = "18.0.0"
@@ -337,7 +344,7 @@ jsonrpc-ipc-server = "18.0.0"
 jsonrpc-pubsub = "18.0.0"
 lazy-lru = "0.1.3"
 lazy_static = "1.5.0"
-libc = "0.2.164"
+libc = "0.2.167"
 libloading = "0.7.4"
 libsecp256k1 = { version = "0.6.0", default-features = false, features = [
     "std",
@@ -390,7 +397,7 @@ reqwest = { version = "0.11.27", default-features = false }
 reqwest-middleware = "0.2.5"
 rolling-file = "0.2.0"
 rpassword = "7.3"
-rustls = { version = "0.23.17", default-features = false }
+rustls = { version = "0.23.19", default-features = false }
 scopeguard = "1.2.0"
 semver = "1.0.23"
 seqlock = "0.2.0"
@@ -407,9 +414,10 @@ sha3 = "0.10.8"
 shuttle = "0.7.1"
 signal-hook = "0.3.17"
 siphasher = "0.3.11"
+slab = "0.4.9"
 smallvec = "1.13.2"
 smpl_jwt = "0.7.1"
-socket2 = "0.5.7"
+socket2 = "0.5.8"
 soketto = "0.7"
 solana-account = { path = "sdk/account", version = "=2.2.0" }
 solana-account-decoder = { path = "account-decoder", version = "=2.2.0" }
@@ -487,6 +495,7 @@ solana-log-collector = { path = "log-collector", version = "=2.2.0" }
 solana-logger = { path = "sdk/logger", version = "=2.2.0" }
 solana-measure = { path = "measure", version = "=2.2.0" }
 solana-merkle-tree = { path = "merkle-tree", version = "=2.2.0" }
+solana-message = { path = "sdk/message", version = "=2.2.0" }
 solana-metrics = { path = "metrics", version = "=2.2.0" }
 solana-msg = { path = "sdk/msg", version = "=2.2.0" }
 solana-native-token = { path = "sdk/native-token", version = "=2.2.0" }
@@ -520,8 +529,8 @@ solana-rent = { path = "sdk/rent", version = "=2.2.0", default-features = false 
 solana-rent-debits = { path = "sdk/rent-debits", version = "=2.2.0" }
 solana-reserved-account-keys = { path = "sdk/reserved-account-keys", version = "=2.2.0", default-features = false }
 solana-reward-info = { path = "sdk/reward-info", version = "=2.2.0" }
-solana-secp256r1-program = { path = "sdk/secp256r1-program", version = "=2.2.0", default-features = false }
 solana-sanitize = { path = "sdk/sanitize", version = "=2.2.0" }
+solana-secp256r1-program = { path = "sdk/secp256r1-program", version = "=2.2.0", default-features = false }
 solana-seed-derivable = { path = "sdk/seed-derivable", version = "=2.2.0" }
 solana-seed-phrase = { path = "sdk/seed-phrase", version = "=2.2.0" }
 solana-serde = { path = "sdk/serde", version = "=2.2.0" }
@@ -534,6 +543,7 @@ solana-slot-hashes = { path = "sdk/slot-hashes", version = "=2.2.0" }
 solana-slot-history = { path = "sdk/slot-history", version = "=2.2.0" }
 solana-time-utils = { path = "sdk/time-utils", version = "=2.2.0" }
 solana-timings = { path = "timings", version = "=2.2.0" }
+solana-tls-utils = { path = "tls-utils", version = "=2.2.0" }
 solana-unified-scheduler-logic = { path = "unified-scheduler-logic", version = "=2.2.0" }
 solana-unified-scheduler-pool = { path = "unified-scheduler-pool", version = "=2.2.0" }
 solana-rpc = { path = "rpc", version = "=2.2.0" }
@@ -558,11 +568,13 @@ solana-svm = { path = "svm", version = "=2.2.0" }
 solana-svm-conformance = { path = "svm-conformance", version = "=2.2.0" }
 solana-svm-rent-collector = { path = "svm-rent-collector", version = "=2.2.0" }
 solana-svm-transaction = { path = "svm-transaction", version = "=2.2.0" }
+solana-system-interface = "1.0"
 solana-system-program = { path = "programs/system", version = "=2.2.0" }
 solana-sysvar = { path = "sdk/sysvar", version = "=2.2.0" }
 solana-sysvar-id = { path = "sdk/sysvar-id", version = "=2.2.0" }
 solana-test-validator = { path = "test-validator", version = "=2.2.0" }
 solana-thin-client = { path = "thin-client", version = "=2.2.0" }
+solana-transaction = { path = "sdk/transaction", version = "=2.2.0" }
 solana-transaction-error = { path = "sdk/transaction-error", version = "=2.2.0" }
 solana-tpu-client = { path = "tpu-client", version = "=2.2.0", default-features = false }
 solana-tpu-client-next = { path = "tpu-client-next", version = "=2.2.0" }
@@ -589,6 +601,7 @@ spl-memo = "=6.0.0"
 spl-pod = "=0.5.0"
 spl-token = "=7.0.0"
 spl-token-2022 = "=6.0.0"
+spl-token-confidential-transfer-proof-extraction = "0.2.0"
 spl-token-group-interface = "=0.5.0"
 spl-token-metadata-interface = "=0.6.0"
 static_assertions = "1.1.0"
@@ -619,7 +632,7 @@ tonic-build = "0.9.2"
 trees = "0.4.2"
 tungstenite = "0.20.1"
 uriparse = "0.6.4"
-url = "2.5.3"
+url = "2.5.4"
 vec_extract_if_polyfill = "0.1.0"
 wasm-bindgen = "0.2"
 winapi = "0.3.8"

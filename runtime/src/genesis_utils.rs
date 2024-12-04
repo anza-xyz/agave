@@ -231,7 +231,7 @@ pub fn activate_feature(genesis_config: &mut GenesisConfig, feature_id: Pubkey) 
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn create_genesis_config_with_leader_ex(
+pub fn create_genesis_config_with_leader_ex_no_features(
     mint_lamports: u64,
     mint_pubkey: &Pubkey,
     validator_pubkey: &Pubkey,
@@ -295,6 +295,38 @@ pub fn create_genesis_config_with_leader_ex(
     };
 
     solana_stake_program::add_genesis_accounts(&mut genesis_config);
+
+    genesis_config
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn create_genesis_config_with_leader_ex(
+    mint_lamports: u64,
+    mint_pubkey: &Pubkey,
+    validator_pubkey: &Pubkey,
+    validator_vote_account_pubkey: &Pubkey,
+    validator_stake_account_pubkey: &Pubkey,
+    validator_stake_lamports: u64,
+    validator_lamports: u64,
+    fee_rate_governor: FeeRateGovernor,
+    rent: Rent,
+    cluster_type: ClusterType,
+    initial_accounts: Vec<(Pubkey, AccountSharedData)>,
+) -> GenesisConfig {
+    let mut genesis_config = create_genesis_config_with_leader_ex_no_features(
+        mint_lamports,
+        mint_pubkey,
+        validator_pubkey,
+        validator_vote_account_pubkey,
+        validator_stake_account_pubkey,
+        validator_stake_lamports,
+        validator_lamports,
+        fee_rate_governor,
+        rent,
+        cluster_type,
+        initial_accounts,
+    );
+
     if genesis_config.cluster_type == ClusterType::Development {
         activate_all_features(&mut genesis_config);
     }

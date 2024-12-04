@@ -60,7 +60,7 @@ use {
         verify_precompiles::verify_precompiles,
     },
     accounts_lt_hash::{CacheValue as AccountsLtHashCacheValue, Stats as AccountsLtHashStats},
-    ahash::AHashMap,
+    ahash::{AHashMap, AHashSet},
     byteorder::{ByteOrder, LittleEndian},
     dashmap::{DashMap, DashSet},
     log::*,
@@ -5769,11 +5769,7 @@ impl Bank {
         // The snapshot storages must be captured *before* starting the background verification.
         // Otherwise, it is possible that a delayed call to `get_snapshot_storages()` will *not*
         // get the correct storages required to calculate and verify the accounts hashes.
-        let snapshot_storages = self
-            .rc
-            .accounts
-            .accounts_db
-            .get_snapshot_storages(RangeFull);
+        let snapshot_storages = self.rc.accounts.accounts_db.get_storages(RangeFull);
         let capitalization = self.capitalization();
         let verify_config = VerifyAccountsHashAndLamportsConfig {
             ancestors: &self.ancestors,
@@ -5955,11 +5951,7 @@ impl Bank {
         // we want to *include* the storage at our slot
         let requested_slots = start_slot..=self.slot();
 
-        self.rc
-            .accounts
-            .accounts_db
-            .get_snapshot_storages(requested_slots)
-            .0
+        self.rc.accounts.accounts_db.get_storages(requested_slots).0
     }
 
     #[must_use]
@@ -6841,10 +6833,10 @@ impl Bank {
 
     /// Compute the active feature set based on the current bank state,
     /// and return it together with the set of newly activated features.
-    fn compute_active_feature_set(&self, include_pending: bool) -> (FeatureSet, HashSet<Pubkey>) {
+    fn compute_active_feature_set(&self, include_pending: bool) -> (FeatureSet, AHashSet<Pubkey>) {
         let mut active = self.feature_set.active.clone();
-        let mut inactive = HashSet::new();
-        let mut pending = HashSet::new();
+        let mut inactive = AHashSet::new();
+        let mut pending = AHashSet::new();
         let slot = self.slot();
 
         for feature_id in &self.feature_set.inactive {
@@ -6878,7 +6870,7 @@ impl Bank {
     fn apply_builtin_program_feature_transitions(
         &mut self,
         only_apply_transitions_for_new_features: bool,
-        new_feature_activations: &HashSet<Pubkey>,
+        new_feature_activations: &AHashSet<Pubkey>,
     ) {
         for builtin in BUILTINS.iter() {
             // The `builtin_is_bpf` flag is used to handle the case where a

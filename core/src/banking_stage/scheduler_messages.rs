@@ -1,9 +1,5 @@
 use {
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk::{
-        clock::{Epoch, Slot},
-        transaction::SanitizedTransaction,
-    },
+    solana_sdk::clock::{Epoch, Slot},
     std::fmt::Display,
 };
 
@@ -23,21 +19,7 @@ impl Display for TransactionBatchId {
     }
 }
 
-/// A unique identifier for a transaction.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct TransactionId(u64);
-
-impl TransactionId {
-    pub fn new(index: u64) -> Self {
-        Self(index)
-    }
-}
-
-impl Display for TransactionId {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
+pub type TransactionId = usize;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct MaxAge {
@@ -54,16 +36,16 @@ impl MaxAge {
 
 /// Message: [Scheduler -> Worker]
 /// Transactions to be consumed (i.e. executed, recorded, and committed)
-pub struct ConsumeWork {
+pub struct ConsumeWork<Tx> {
     pub batch_id: TransactionBatchId,
     pub ids: Vec<TransactionId>,
-    pub transactions: Vec<RuntimeTransaction<SanitizedTransaction>>,
+    pub transactions: Vec<Tx>,
     pub max_ages: Vec<MaxAge>,
 }
 
 /// Message: [Worker -> Scheduler]
 /// Processed transactions.
-pub struct FinishedConsumeWork {
-    pub work: ConsumeWork,
+pub struct FinishedConsumeWork<Tx> {
+    pub work: ConsumeWork<Tx>,
     pub retryable_indexes: Vec<usize>,
 }

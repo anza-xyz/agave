@@ -189,7 +189,6 @@ eager_macro_rules! { $eager_1
             (
                 "update_transaction_statuses",
                 *$self
-
                     .metrics
                     .index(ExecuteTimingType::UpdateTransactionStatuses),
                 i64

@@ -11,7 +11,6 @@ use {
             MAX_UNSTAKED_CONNECTIONS,
         },
         streamer::StakedNodes,
-        tls_certificates::new_dummy_x509_certificate,
     },
     crossbeam_channel::unbounded,
     quinn::{
@@ -19,68 +18,16 @@ use {
         TokioRuntime, TransportConfig,
     },
     solana_keypair::Keypair,
+    solana_net_utils::bind_to_localhost,
     solana_perf::packet::PacketBatch,
     solana_quic_definitions::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT},
+    solana_tls_utils::{new_dummy_x509_certificate, SkipServerVerification},
     std::{
         net::{SocketAddr, UdpSocket},
         sync::{atomic::AtomicBool, Arc, RwLock},
     },
     tokio::task::JoinHandle,
 };
-
-#[derive(Debug)]
-pub struct SkipServerVerification(Arc<rustls::crypto::CryptoProvider>);
-
-impl SkipServerVerification {
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self(Arc::new(rustls::crypto::ring::default_provider())))
-    }
-}
-
-impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
-    fn verify_tls12_signature(
-        &self,
-        message: &[u8],
-        cert: &rustls::pki_types::CertificateDer<'_>,
-        dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls12_signature(
-            message,
-            cert,
-            dss,
-            &self.0.signature_verification_algorithms,
-        )
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        message: &[u8],
-        cert: &rustls::pki_types::CertificateDer<'_>,
-        dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls13_signature(
-            message,
-            cert,
-            dss,
-            &self.0.signature_verification_algorithms,
-        )
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        self.0.signature_verification_algorithms.supported_schemes()
-    }
-
-    fn verify_server_cert(
-        &self,
-        _end_entity: &rustls::pki_types::CertificateDer<'_>,
-        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
-        _server_name: &rustls::pki_types::ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: rustls::pki_types::UnixTime,
-    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
-    }
-}
 
 pub fn get_client_config(keypair: &Keypair) -> ClientConfig {
     let (cert, key) = new_dummy_x509_certificate(keypair);
@@ -141,28 +88,24 @@ pub fn setup_quic_server(
     let sockets = {
         #[cfg(not(target_os = "windows"))]
         {
-            use std::{
-                os::fd::{FromRawFd, IntoRawFd},
-                str::FromStr as _,
+            use {
+                solana_net_utils::bind_to,
+                std::net::{IpAddr, Ipv4Addr},
             };
             (0..10)
                 .map(|_| {
-                    let sock = socket2::Socket::new(
-                        socket2::Domain::IPV4,
-                        socket2::Type::DGRAM,
-                        Some(socket2::Protocol::UDP),
+                    bind_to(
+                        IpAddr::V4(Ipv4Addr::LOCALHOST),
+                        /*port*/ 0,
+                        /*reuseport:*/ true,
                     )
-                    .unwrap();
-                    sock.set_reuse_port(true).unwrap();
-                    sock.bind(&SocketAddr::from_str("127.0.0.1:0").unwrap().into())
-                        .unwrap();
-                    unsafe { UdpSocket::from_raw_fd(sock.into_raw_fd()) }
+                    .unwrap()
                 })
                 .collect::<Vec<_>>()
         }
         #[cfg(target_os = "windows")]
         {
-            vec![UdpSocket::bind("127.0.0.1:0").unwrap()]
+            vec![bind_to_localhost().unwrap()]
         }
     };
     setup_quic_server_with_sockets(sockets, option_staked_nodes, config)
@@ -221,7 +164,7 @@ pub async fn make_client_endpoint(
     addr: &SocketAddr,
     client_keypair: Option<&Keypair>,
 ) -> Connection {
-    let client_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let client_socket = bind_to_localhost().unwrap();
     let mut endpoint = quinn::Endpoint::new(
         EndpointConfig::default(),
         None,

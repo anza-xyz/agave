@@ -4,7 +4,6 @@ use {
         scheduler_error::SchedulerError,
         thread_aware_account_locks::{ThreadAwareAccountLocks, ThreadId, ThreadSet},
         transaction_state::SanitizedTransactionTTL,
-        transaction_state_container::TransactionStateContainer,
     },
     crate::banking_stage::{
         consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
@@ -14,6 +13,7 @@ use {
         },
         transaction_scheduler::{
             transaction_priority_id::TransactionPriorityId, transaction_state::TransactionState,
+            transaction_state_container::StateContainer,
         },
     },
     crossbeam_channel::{Receiver, Sender, TryRecvError},
@@ -21,8 +21,9 @@ use {
     prio_graph::{AccessKind, GraphNode, PrioGraph},
     solana_cost_model::block_cost_limits::MAX_BLOCK_UNITS,
     solana_measure::measure_us,
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk::{pubkey::Pubkey, saturating_add_assign, transaction::SanitizedTransaction},
+    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
+    solana_sdk::{pubkey::Pubkey, saturating_add_assign},
+    solana_svm_transaction::svm_message::SVMMessage,
 };
 
 #[inline(always)]
@@ -40,19 +41,19 @@ type SchedulerPrioGraph = PrioGraph<
     fn(&TransactionPriorityId, &GraphNode<TransactionPriorityId>) -> TransactionPriorityId,
 >;
 
-pub(crate) struct PrioGraphScheduler {
+pub(crate) struct PrioGraphScheduler<Tx> {
     in_flight_tracker: InFlightTracker,
     account_locks: ThreadAwareAccountLocks,
-    consume_work_senders: Vec<Sender<ConsumeWork>>,
-    finished_consume_work_receiver: Receiver<FinishedConsumeWork>,
+    consume_work_senders: Vec<Sender<ConsumeWork<Tx>>>,
+    finished_consume_work_receiver: Receiver<FinishedConsumeWork<Tx>>,
     look_ahead_window_size: usize,
     prio_graph: SchedulerPrioGraph,
 }
 
-impl PrioGraphScheduler {
+impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
     pub(crate) fn new(
-        consume_work_senders: Vec<Sender<ConsumeWork>>,
-        finished_consume_work_receiver: Receiver<FinishedConsumeWork>,
+        consume_work_senders: Vec<Sender<ConsumeWork<Tx>>>,
+        finished_consume_work_receiver: Receiver<FinishedConsumeWork<Tx>>,
     ) -> Self {
         let num_threads = consume_work_senders.len();
         Self {
@@ -65,7 +66,7 @@ impl PrioGraphScheduler {
         }
     }
 
-    /// Schedule transactions from the given `TransactionStateContainer` to be
+    /// Schedule transactions from the given `StateContainer` to be
     /// consumed by the worker threads. Returns summary of scheduling, or an
     /// error.
     /// `pre_graph_filter` is used to filter out transactions that should be
@@ -81,11 +82,11 @@ impl PrioGraphScheduler {
     /// This, combined with internal tracking of threads' in-flight transactions, allows
     /// for load-balancing while prioritizing scheduling transactions onto threads that will
     /// not cause conflicts in the near future.
-    pub(crate) fn schedule(
+    pub(crate) fn schedule<S: StateContainer<Tx>>(
         &mut self,
-        container: &mut TransactionStateContainer,
-        pre_graph_filter: impl Fn(&[&RuntimeTransaction<SanitizedTransaction>], &mut [bool]),
-        pre_lock_filter: impl Fn(&RuntimeTransaction<SanitizedTransaction>) -> bool,
+        container: &mut S,
+        pre_graph_filter: impl Fn(&[&Tx], &mut [bool]),
+        pre_lock_filter: impl Fn(&Tx) -> bool,
     ) -> Result<SchedulingSummary, SchedulerError> {
         let num_threads = self.consume_work_senders.len();
         let max_cu_per_thread = MAX_BLOCK_UNITS / num_threads as u64;
@@ -118,7 +119,7 @@ impl PrioGraphScheduler {
         let mut total_filter_time_us: u64 = 0;
 
         let mut window_budget = self.look_ahead_window_size;
-        let mut chunked_pops = |container: &mut TransactionStateContainer,
+        let mut chunked_pops = |container: &mut S,
                                 prio_graph: &mut PrioGraph<_, _, _, _>,
                                 window_budget: &mut usize| {
             while *window_budget > 0 {
@@ -138,7 +139,7 @@ impl PrioGraphScheduler {
                 *window_budget = window_budget.saturating_sub(chunk_size);
 
                 ids.iter().for_each(|id| {
-                    let transaction = container.get_transaction_ttl(&id.id).unwrap();
+                    let transaction = container.get_transaction_ttl(id.id).unwrap();
                     txs.push(&transaction.transaction);
                 });
 
@@ -148,14 +149,14 @@ impl PrioGraphScheduler {
 
                 for (id, filter_result) in ids.iter().zip(&filter_array[..chunk_size]) {
                     if *filter_result {
-                        let transaction = container.get_transaction_ttl(&id.id).unwrap();
+                        let transaction = container.get_transaction_ttl(id.id).unwrap();
                         prio_graph.insert_transaction(
                             *id,
                             Self::get_transaction_account_access(transaction),
                         );
                     } else {
                         saturating_add_assign!(num_filtered_out, 1);
-                        container.remove_by_id(&id.id);
+                        container.remove_by_id(id.id);
                     }
                 }
 
@@ -186,7 +187,7 @@ impl PrioGraphScheduler {
 
                 // Should always be in the container, during initial testing phase panic.
                 // Later, we can replace with a continue in case this does happen.
-                let Some(transaction_state) = container.get_mut_transaction_state(&id.id) else {
+                let Some(transaction_state) = container.get_mut_transaction_state(id.id) else {
                     panic!("transaction state must exist")
                 };
 
@@ -209,7 +210,7 @@ impl PrioGraphScheduler {
 
                 match maybe_schedule_info {
                     Err(TransactionSchedulingError::Filtered) => {
-                        container.remove_by_id(&id.id);
+                        container.remove_by_id(id.id);
                     }
                     Err(TransactionSchedulingError::UnschedulableConflicts) => {
                         unschedulable_ids.push(id);
@@ -301,7 +302,7 @@ impl PrioGraphScheduler {
     /// Returns (num_transactions, num_retryable_transactions) on success.
     pub fn receive_completed(
         &mut self,
-        container: &mut TransactionStateContainer,
+        container: &mut impl StateContainer<Tx>,
     ) -> Result<(usize, usize), SchedulerError> {
         let mut total_num_transactions: usize = 0;
         let mut total_num_retryable: usize = 0;
@@ -320,7 +321,7 @@ impl PrioGraphScheduler {
     /// Returns `Ok((num_transactions, num_retryable))` if a batch was received, `Ok((0, 0))` if no batch was received.
     fn try_receive_completed(
         &mut self,
-        container: &mut TransactionStateContainer,
+        container: &mut impl StateContainer<Tx>,
     ) -> Result<(usize, usize), SchedulerError> {
         match self.finished_consume_work_receiver.try_recv() {
             Ok(FinishedConsumeWork {
@@ -357,7 +358,7 @@ impl PrioGraphScheduler {
                             continue;
                         }
                     }
-                    container.remove_by_id(&id);
+                    container.remove_by_id(id);
                 }
 
                 Ok((num_transactions, num_retryable))
@@ -371,23 +372,18 @@ impl PrioGraphScheduler {
 
     /// Mark a given `TransactionBatchId` as completed.
     /// This will update the internal tracking, including account locks.
-    fn complete_batch(
-        &mut self,
-        batch_id: TransactionBatchId,
-        transactions: &[RuntimeTransaction<SanitizedTransaction>],
-    ) {
+    fn complete_batch(&mut self, batch_id: TransactionBatchId, transactions: &[Tx]) {
         let thread_id = self.in_flight_tracker.complete_batch(batch_id);
         for transaction in transactions {
-            let message = transaction.message();
-            let account_keys = message.account_keys();
+            let account_keys = transaction.account_keys();
             let write_account_locks = account_keys
                 .iter()
                 .enumerate()
-                .filter_map(|(index, key)| message.is_writable(index).then_some(key));
+                .filter_map(|(index, key)| transaction.is_writable(index).then_some(key));
             let read_account_locks = account_keys
                 .iter()
                 .enumerate()
-                .filter_map(|(index, key)| (!message.is_writable(index)).then_some(key));
+                .filter_map(|(index, key)| (!transaction.is_writable(index)).then_some(key));
             self.account_locks
                 .unlock_accounts(write_account_locks, read_account_locks, thread_id);
         }
@@ -395,7 +391,7 @@ impl PrioGraphScheduler {
 
     /// Send all batches of transactions to the worker threads.
     /// Returns the number of transactions sent.
-    fn send_batches(&mut self, batches: &mut Batches) -> Result<usize, SchedulerError> {
+    fn send_batches(&mut self, batches: &mut Batches<Tx>) -> Result<usize, SchedulerError> {
         (0..self.consume_work_senders.len())
             .map(|thread_index| self.send_batch(batches, thread_index))
             .sum()
@@ -405,7 +401,7 @@ impl PrioGraphScheduler {
     /// Returns the number of transactions sent.
     fn send_batch(
         &mut self,
-        batches: &mut Batches,
+        batches: &mut Batches<Tx>,
         thread_index: usize,
     ) -> Result<usize, SchedulerError> {
         if batches.ids[thread_index].is_empty() {
@@ -445,7 +441,7 @@ impl PrioGraphScheduler {
         thread_set: ThreadSet,
         batch_cus_per_thread: &[u64],
         in_flight_cus_per_thread: &[u64],
-        batches_per_thread: &[Vec<RuntimeTransaction<SanitizedTransaction>>],
+        batches_per_thread: &[Vec<Tx>],
         in_flight_per_thread: &[usize],
     ) -> ThreadId {
         thread_set
@@ -464,9 +460,9 @@ impl PrioGraphScheduler {
 
     /// Gets accessed accounts (resources) for use in `PrioGraph`.
     fn get_transaction_account_access(
-        transaction: &SanitizedTransactionTTL,
+        transaction: &SanitizedTransactionTTL<impl SVMMessage>,
     ) -> impl Iterator<Item = (Pubkey, AccessKind)> + '_ {
-        let message = transaction.transaction.message();
+        let message = &transaction.transaction;
         message
             .account_keys()
             .iter()
@@ -494,14 +490,14 @@ pub(crate) struct SchedulingSummary {
     pub filter_time_us: u64,
 }
 
-struct Batches {
+struct Batches<Tx> {
     ids: Vec<Vec<TransactionId>>,
-    transactions: Vec<Vec<RuntimeTransaction<SanitizedTransaction>>>,
+    transactions: Vec<Vec<Tx>>,
     max_ages: Vec<Vec<MaxAge>>,
     total_cus: Vec<u64>,
 }
 
-impl Batches {
+impl<Tx> Batches<Tx> {
     fn new(num_threads: usize) -> Self {
         Self {
             ids: vec![Vec::with_capacity(TARGET_NUM_TRANSACTIONS_PER_BATCH); num_threads],
@@ -517,12 +513,7 @@ impl Batches {
     fn take_batch(
         &mut self,
         thread_id: ThreadId,
-    ) -> (
-        Vec<TransactionId>,
-        Vec<RuntimeTransaction<SanitizedTransaction>>,
-        Vec<MaxAge>,
-        u64,
-    ) {
+    ) -> (Vec<TransactionId>, Vec<Tx>, Vec<MaxAge>, u64) {
         (
             core::mem::replace(
                 &mut self.ids[thread_id],
@@ -542,9 +533,9 @@ impl Batches {
 }
 
 /// A transaction has been scheduled to a thread.
-struct TransactionSchedulingInfo {
+struct TransactionSchedulingInfo<Tx> {
     thread_id: ThreadId,
-    transaction: RuntimeTransaction<SanitizedTransaction>,
+    transaction: Tx,
     max_age: MaxAge,
     cost: u64,
 }
@@ -558,37 +549,35 @@ enum TransactionSchedulingError {
     UnschedulableConflicts,
 }
 
-fn try_schedule_transaction(
-    transaction_state: &mut TransactionState,
-    pre_lock_filter: impl Fn(&RuntimeTransaction<SanitizedTransaction>) -> bool,
+fn try_schedule_transaction<Tx: TransactionWithMeta>(
+    transaction_state: &mut TransactionState<Tx>,
+    pre_lock_filter: impl Fn(&Tx) -> bool,
     blocking_locks: &mut ReadWriteAccountSet,
     account_locks: &mut ThreadAwareAccountLocks,
     num_threads: usize,
     thread_selector: impl Fn(ThreadSet) -> ThreadId,
-) -> Result<TransactionSchedulingInfo, TransactionSchedulingError> {
+) -> Result<TransactionSchedulingInfo<Tx>, TransactionSchedulingError> {
     let transaction = &transaction_state.transaction_ttl().transaction;
     if !pre_lock_filter(transaction) {
         return Err(TransactionSchedulingError::Filtered);
     }
 
     // Check if this transaction conflicts with any blocked transactions
-    let message = transaction.message();
-    if !blocking_locks.check_locks(message) {
-        blocking_locks.take_locks(message);
+    if !blocking_locks.check_locks(transaction) {
+        blocking_locks.take_locks(transaction);
         return Err(TransactionSchedulingError::UnschedulableConflicts);
     }
 
     // Schedule the transaction if it can be.
-    let message = transaction.message();
-    let account_keys = message.account_keys();
+    let account_keys = transaction.account_keys();
     let write_account_locks = account_keys
         .iter()
         .enumerate()
-        .filter_map(|(index, key)| message.is_writable(index).then_some(key));
+        .filter_map(|(index, key)| transaction.is_writable(index).then_some(key));
     let read_account_locks = account_keys
         .iter()
         .enumerate()
-        .filter_map(|(index, key)| (!message.is_writable(index)).then_some(key));
+        .filter_map(|(index, key)| (!transaction.is_writable(index)).then_some(key));
 
     let Some(thread_id) = account_locks.try_lock_accounts(
         write_account_locks,
@@ -596,7 +585,7 @@ fn try_schedule_transaction(
         ThreadSet::any(num_threads),
         thread_selector,
     ) else {
-        blocking_locks.take_locks(message);
+        blocking_locks.take_locks(transaction);
         return Err(TransactionSchedulingError::UnschedulableConflicts);
     };
 
@@ -618,35 +607,32 @@ mod tests {
         crate::banking_stage::{
             consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
             immutable_deserialized_packet::ImmutableDeserializedPacket,
+            transaction_scheduler::transaction_state_container::TransactionStateContainer,
         },
         crossbeam_channel::{unbounded, Receiver},
         itertools::Itertools,
+        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
-            compute_budget::ComputeBudgetInstruction, hash::Hash, message::Message, packet::Packet,
-            pubkey::Pubkey, signature::Keypair, signer::Signer, system_instruction,
-            transaction::Transaction,
+            compute_budget::ComputeBudgetInstruction,
+            hash::Hash,
+            message::Message,
+            packet::Packet,
+            pubkey::Pubkey,
+            signature::Keypair,
+            signer::Signer,
+            system_instruction,
+            transaction::{SanitizedTransaction, Transaction},
         },
         std::{borrow::Borrow, sync::Arc},
     };
 
-    macro_rules! txid {
-        ($value:expr) => {
-            TransactionId::new($value)
-        };
-    }
-
-    macro_rules! txids {
-        ([$($element:expr),*]) => {
-            vec![ $(txid!($element)),* ]
-        };
-    }
-
+    #[allow(clippy::type_complexity)]
     fn create_test_frame(
         num_threads: usize,
     ) -> (
-        PrioGraphScheduler,
-        Vec<Receiver<ConsumeWork>>,
-        Sender<FinishedConsumeWork>,
+        PrioGraphScheduler<RuntimeTransaction<SanitizedTransaction>>,
+        Vec<Receiver<ConsumeWork<RuntimeTransaction<SanitizedTransaction>>>>,
+        Sender<FinishedConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
     ) {
         let (consume_work_senders, consume_work_receivers) =
             (0..num_threads).map(|_| unbounded()).unzip();
@@ -689,12 +675,9 @@ mod tests {
                 u64,
             ),
         >,
-    ) -> TransactionStateContainer {
+    ) -> TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>> {
         let mut container = TransactionStateContainer::with_capacity(10 * 1024);
-        for (index, (from_keypair, to_pubkeys, lamports, compute_unit_price)) in
-            tx_infos.into_iter().enumerate()
-        {
-            let id = TransactionId::new(index as u64);
+        for (from_keypair, to_pubkeys, lamports, compute_unit_price) in tx_infos.into_iter() {
             let transaction = prioritized_tranfers(
                 from_keypair.borrow(),
                 to_pubkeys,
@@ -713,7 +696,6 @@ mod tests {
             };
             const TEST_TRANSACTION_COST: u64 = 5000;
             container.insert_new_transaction(
-                id,
                 transaction_ttl,
                 packet,
                 compute_unit_price,
@@ -725,8 +707,11 @@ mod tests {
     }
 
     fn collect_work(
-        receiver: &Receiver<ConsumeWork>,
-    ) -> (Vec<ConsumeWork>, Vec<Vec<TransactionId>>) {
+        receiver: &Receiver<ConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
+    ) -> (
+        Vec<ConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
+        Vec<Vec<TransactionId>>,
+    ) {
         receiver
             .try_iter()
             .map(|work| {
@@ -772,7 +757,7 @@ mod tests {
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 2);
         assert_eq!(scheduling_summary.num_unschedulable, 0);
-        assert_eq!(collect_work(&work_receivers[0]).1, vec![txids!([1, 0])]);
+        assert_eq!(collect_work(&work_receivers[0]).1, vec![vec![1, 0]]);
     }
 
     #[test]
@@ -789,10 +774,7 @@ mod tests {
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 2);
         assert_eq!(scheduling_summary.num_unschedulable, 0);
-        assert_eq!(
-            collect_work(&work_receivers[0]).1,
-            vec![txids!([1]), txids!([0])]
-        );
+        assert_eq!(collect_work(&work_receivers[0]).1, vec![vec![1], vec![0]]);
     }
 
     #[test]
@@ -831,8 +813,8 @@ mod tests {
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 4);
         assert_eq!(scheduling_summary.num_unschedulable, 0);
-        assert_eq!(collect_work(&work_receivers[0]).1, [txids!([3, 1])]);
-        assert_eq!(collect_work(&work_receivers[1]).1, [txids!([2, 0])]);
+        assert_eq!(collect_work(&work_receivers[0]).1, [vec![3, 1]]);
+        assert_eq!(collect_work(&work_receivers[1]).1, [vec![2, 0]]);
     }
 
     #[test]
@@ -873,11 +855,8 @@ mod tests {
         assert_eq!(scheduling_summary.num_scheduled, 4);
         assert_eq!(scheduling_summary.num_unschedulable, 2);
         let (thread_0_work, thread_0_ids) = collect_work(&work_receivers[0]);
-        assert_eq!(thread_0_ids, [txids!([0]), txids!([2])]);
-        assert_eq!(
-            collect_work(&work_receivers[1]).1,
-            [txids!([1]), txids!([3])]
-        );
+        assert_eq!(thread_0_ids, [vec![0], vec![2]]);
+        assert_eq!(collect_work(&work_receivers[1]).1, [vec![1], vec![3]]);
 
         // Cannot schedule even on next pass because of lock conflicts
         let scheduling_summary = scheduler
@@ -900,10 +879,7 @@ mod tests {
         assert_eq!(scheduling_summary.num_scheduled, 2);
         assert_eq!(scheduling_summary.num_unschedulable, 0);
 
-        assert_eq!(
-            collect_work(&work_receivers[1]).1,
-            [txids!([4]), txids!([5])]
-        );
+        assert_eq!(collect_work(&work_receivers[1]).1, [vec![4], vec![5]]);
     }
 
     #[test]
@@ -926,9 +902,6 @@ mod tests {
             .unwrap();
         assert_eq!(scheduling_summary.num_scheduled, 2);
         assert_eq!(scheduling_summary.num_unschedulable, 0);
-        assert_eq!(
-            collect_work(&work_receivers[0]).1,
-            vec![txids!([2]), txids!([0])]
-        );
+        assert_eq!(collect_work(&work_receivers[0]).1, vec![vec![2], vec![0]]);
     }
 }

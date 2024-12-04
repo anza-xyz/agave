@@ -56,6 +56,7 @@ use {
         gossip_service::{discover, get_client},
     },
     solana_measure::measure::Measure,
+    solana_net_utils::bind_to_unspecified,
     solana_rpc_client::rpc_client::RpcClient,
     solana_sdk::{
         hash::Hash,
@@ -73,7 +74,7 @@ use {
     solana_tps_client::TpsClient,
     solana_tpu_client::tpu_client::DEFAULT_TPU_CONNECTION_POOL_SIZE,
     std::{
-        net::{SocketAddr, UdpSocket},
+        net::SocketAddr,
         process::exit,
         sync::Arc,
         thread,
@@ -550,7 +551,7 @@ fn create_payers<T: 'static + TpsClient + Send + Sync>(
     // Assume that if we use valid blockhash, we also have a payer
     if valid_blockhash {
         // each payer is used to fund transaction
-        // transactions are built to be invalid so the the amount here is arbitrary
+        // transactions are built to be invalid so the amount here is arbitrary
         let funding_key = Keypair::new();
         let funding_key = Arc::new(funding_key);
         let res = generate_and_fund_keypairs(
@@ -725,7 +726,7 @@ fn run_dos<T: 'static + TpsClient + Send + Sync>(
             _ => panic!("Unsupported data_type detected"),
         };
 
-        let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
+        let socket = bind_to_unspecified().unwrap();
         let mut last_log = Instant::now();
         let mut total_count: usize = 0;
         let mut count: usize = 0;

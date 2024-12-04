@@ -14,10 +14,11 @@ use {
         CertificateError, KeyLogFile,
     },
     solana_gossip::contact_info::Protocol,
-    solana_quic_client::nonblocking::quic_client::SkipServerVerification,
     solana_runtime::bank_forks::BankForks,
     solana_sdk::{pubkey::Pubkey, signature::Keypair},
-    solana_streamer::{quic::SkipClientVerification, tls_certificates::new_dummy_x509_certificate},
+    solana_tls_utils::{
+        new_dummy_x509_certificate, SkipClientVerification, SkipServerVerification,
+    },
     std::{
         cmp::Reverse,
         collections::{hash_map::Entry, HashMap},
@@ -1021,9 +1022,10 @@ mod tests {
         super::*,
         itertools::{izip, multiunzip},
         solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
+        solana_net_utils::bind_to_localhost,
         solana_runtime::bank::Bank,
         solana_sdk::signature::Signer,
-        std::{iter::repeat_with, net::Ipv4Addr, time::Duration},
+        std::{iter::repeat_with, time::Duration},
     };
 
     #[test]
@@ -1036,7 +1038,7 @@ mod tests {
             .build()
             .unwrap();
         let keypairs: Vec<Keypair> = repeat_with(Keypair::new).take(NUM_ENDPOINTS).collect();
-        let sockets: Vec<UdpSocket> = repeat_with(|| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
+        let sockets: Vec<UdpSocket> = repeat_with(bind_to_localhost)
             .take(NUM_ENDPOINTS)
             .collect::<Result<_, _>>()
             .unwrap();

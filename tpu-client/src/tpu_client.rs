@@ -8,6 +8,7 @@ use {
             ConnectionCache, ConnectionManager, ConnectionPool, NewConnectionConfig,
         },
     },
+    solana_net_utils::bind_to_unspecified,
     solana_rpc_client::rpc_client::RpcClient,
     solana_sdk::{
         client::AsyncClient,
@@ -179,7 +180,7 @@ where
             tokio::task::block_in_place(|| rpc_client.runtime().block_on(create_tpu_client))?;
 
         Ok(Self {
-            _deprecated: UdpSocket::bind("0.0.0.0:0").unwrap(),
+            _deprecated: bind_to_unspecified().unwrap(),
             rpc_client,
             tpu_client: Arc::new(tpu_client),
         })
@@ -202,7 +203,7 @@ where
             tokio::task::block_in_place(|| rpc_client.runtime().block_on(create_tpu_client))?;
 
         Ok(Self {
-            _deprecated: UdpSocket::bind("0.0.0.0:0").unwrap(),
+            _deprecated: bind_to_unspecified().unwrap(),
             rpc_client,
             tpu_client: Arc::new(tpu_client),
         })
