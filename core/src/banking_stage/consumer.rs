@@ -24,10 +24,7 @@ use {
         transaction_batch::TransactionBatch,
         verify_precompiles::verify_precompiles,
     },
-    solana_runtime_transaction::{
-        instructions_processor::process_compute_budget_instructions,
-        transaction_with_meta::TransactionWithMeta,
-    },
+    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_sdk::{
         clock::{FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, MAX_PROCESSING_AGE},
         fee::FeeBudgetLimits,
@@ -41,7 +38,6 @@ use {
         transaction_processing_result::TransactionProcessingResultExtensions,
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
-    solana_svm_transaction::svm_message::SVMMessage,
     solana_timings::ExecuteTimings,
     std::{
         sync::{atomic::Ordering, Arc},
@@ -754,16 +750,17 @@ impl Consumer {
 
     pub fn check_fee_payer_unlocked(
         bank: &Bank,
-        message: &impl SVMMessage,
+        transaction: &impl TransactionWithMeta,
         error_counters: &mut TransactionErrorMetrics,
     ) -> Result<(), TransactionError> {
-        let fee_payer = message.fee_payer();
-        let fee_budget_limits = FeeBudgetLimits::from(process_compute_budget_instructions(
-            message.program_instructions_iter(),
-            &bank.feature_set,
-        )?);
+        let fee_payer = transaction.fee_payer();
+        let fee_budget_limits = FeeBudgetLimits::from(
+            transaction
+                .compute_budget_instruction_details()
+                .sanitize_and_convert_to_compute_budget_limits(&bank.feature_set)?,
+        );
         let fee = solana_fee::calculate_fee(
-            message,
+            transaction,
             bank.get_lamports_per_signature() == 0,
             bank.fee_structure().lamports_per_signature,
             fee_budget_limits.prioritization_fee,
