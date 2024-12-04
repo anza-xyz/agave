@@ -92,7 +92,7 @@ pub fn process_instruction(
             sol_memcpy(&mut data[data_len.saturating_sub(3)..], &buf, 10);
         }
         11 => {
-            // memmov dst overlaps end of account
+            // memmove dst overlaps end of account
             unsafe {
                 sol_memmove(
                     data[data_len.saturating_sub(3)..].as_mut_ptr(),
@@ -108,6 +108,31 @@ pub fn process_instruction(
         13 => {
             // memmov dst overlaps begin of account
             unsafe { sol_memmove(too_early(3).as_mut_ptr(), buf.as_ptr(), 10) };
+        }
+        14 => {
+            // hash overlaps end of account
+            use solana_program::hash::{hashv, Hasher};
+
+            let mut hasher = Hasher::default();
+            let data = too_early(9);
+
+            hasher.hashv(&[data]);
+            assert_eq!(hashv(&[data]), hasher.result());
+        }
+        15 => {
+            // hash overlaps end of account
+            use solana_program::keccak::{hashv, Hasher};
+
+            let mut hasher = Hasher::default();
+            let data = unsafe { std::slice::from_raw_parts_mut(data_ptr, data_len + 11) };
+
+            hasher.hashv(&[data]);
+
+            assert_eq!(hashv(&[data]), hasher.result());
+        }
+        16 => {
+            // hash overlaps end of account
+            let _hash = blake3::hash(too_early(7));
         }
 
         20 => {
