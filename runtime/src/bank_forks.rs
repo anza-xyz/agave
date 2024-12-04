@@ -286,10 +286,10 @@ impl BankForks {
         let pool = self.scheduler_pool.as_ref().unwrap();
         let mode = SchedulingMode::BlockProduction;
         let bank = Self::install_scheduler_into_bank(pool, mode, bank, true);
-        let removed = self
+        self
             .banks
-            .insert(self.highest_slot(), bank.clone_with_scheduler());
-        assert!(removed.is_some());
+            .insert(self.highest_slot(), bank.clone_with_scheduler())
+            .unwrap();
         bank
     }
 
