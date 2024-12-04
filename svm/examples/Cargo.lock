@@ -7084,7 +7084,6 @@ dependencies = [
  "rustls 0.23.19",
  "solana-keypair",
  "solana-pubkey",
- "solana-sdk",
  "solana-signer",
  "x509-parser",
 ]
