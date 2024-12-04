@@ -60,6 +60,33 @@ impl HttpSender {
 
     /// Create an HTTP RPC sender.
     ///
+    /// The URL is an HTTP URL, usually for port 8899.
+    /// The sender has a default timeout of 30 seconds.
+    pub fn new_with_headers<U: ToString>(url: U, headers: header::HeaderMap) -> Self {
+        Self::new_with_timeout_and_headers(url, Duration::from_secs(30), headers)
+    }
+
+    /// Create an HTTP RPC sender.
+    ///
+    /// The URL is an HTTP URL, usually for port 8899.
+    pub fn new_with_timeout_and_headers<U: ToString>(
+        url: U,
+        timeout: Duration,
+        headers: header::HeaderMap,
+    ) -> Self {
+        Self::new_with_client(
+            url,
+            reqwest::Client::builder()
+                .default_headers(headers)
+                .timeout(timeout)
+                .pool_idle_timeout(timeout)
+                .build()
+                .expect("build rpc client"),
+        )
+    }
+
+    /// Create an HTTP RPC sender.
+    ///
     /// Most flexible way to create a sender. Pass a created `reqwest::Client`.
     pub fn new_with_client<U: ToString>(url: U, client: reqwest::Client) -> Self {
         Self {
