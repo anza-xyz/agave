@@ -1864,6 +1864,7 @@ dependencies = [
  "once_cell",
  "parking_lot_core 0.9.8",
  "rayon",
+ "serde",
 ]
 
 [[package]]
@@ -7054,6 +7055,7 @@ dependencies = [
  "bitflags 2.6.0",
  "bs58",
  "bv",
+ "dashmap",
  "im",
  "log",
  "memmap2",
@@ -8402,6 +8404,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "serde_with",
+ "smallvec",
  "solana-accounts-db",
  "solana-address-lookup-table-program",
  "solana-bpf-loader-program",
