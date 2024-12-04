@@ -600,10 +600,6 @@ fn main() {
             let new_bank = Bank::new_from_parent(bank.clone(), &collector, new_slot);
             new_bank_time.stop();
 
-            // set cost tracker limits to MAX so it will not filter out TXs
-            bank.write_cost_tracker()
-                .unwrap()
-                .set_limits(u64::MAX, u64::MAX, u64::MAX);
             let mut insert_time = Measure::start("insert_time");
             update_bank_forks_and_poh_recorder_for_new_tpu_bank(
                 &bank_forks,
