@@ -1,5 +1,8 @@
 use {
-    crate::compute_budget_program_id_filter::{ComputeBudgetProgramIdFilter, ProgramKind},
+    crate::{
+        builtin_programs_filter::{BuiltinProgramsFilter, ProgramKind},
+        compute_budget_program_id_filter::ComputeBudgetProgramIdFilter,
+    },
     solana_compute_budget::compute_budget_limits::*,
     solana_sdk::{
         borsh1::try_from_slice_unchecked,
@@ -52,10 +55,11 @@ impl ComputeBudgetInstructionDetails {
             .requested_compute_unit_limit
             .is_none()
         {
+            let mut filter = BuiltinProgramsFilter::new();
             // reiterate to collect builtin details
             for (program_id, instruction) in instructions {
                 match filter.get_program_kind(instruction.program_id_index as usize, program_id) {
-                    ProgramKind::Builtin { .. } => {
+                    ProgramKind::Builtin => {
                         saturating_add_assign!(
                             compute_budget_instruction_details.num_builtin_instructions,
                             1
@@ -169,7 +173,6 @@ impl ComputeBudgetInstructionDetails {
         (MIN_HEAP_FRAME_BYTES..=MAX_HEAP_FRAME_BYTES).contains(&bytes) && bytes % 1024 == 0
     }
 
-    #[inline]
     fn calculate_default_compute_unit_limit(&self, feature_set: &FeatureSet) -> u32 {
         if feature_set.is_active(&feature_set::reserve_minimal_cus_for_builtin_instructions::id()) {
             u32::from(self.num_builtin_instructions)
