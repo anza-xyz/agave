@@ -1705,7 +1705,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                                 "ending"
                                             },
                                             SchedulingMode::BlockProduction => {
-                                                if slot == 282254387/*00*/ {
+                                                if slot == Some(282254387/*00*/) {
                                                     // can't assert pause signal may have been emitted..
                                                     session_ending = true;
                                                     "ending"
