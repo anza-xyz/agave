@@ -282,7 +282,7 @@ impl BankForks {
         assert_eq!(self.banks.len(), 1);
         let bank = self.working_bank();
         assert!(!bank.is_frozen());
-        trace!("Installed scheduler into existing unfrozen slot: {}", bank.slot());
+        assert_eq!(bank.slot(), 0);
 
         let inserted = self.banks.insert(self.highest_slot(), Self::install_scheduler_into_bank(
             self.scheduler_pool.as_ref().unwrap(),
