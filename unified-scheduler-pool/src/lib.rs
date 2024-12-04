@@ -1535,7 +1535,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         {
                         $level! {
                             "sch: {}: slot: {}({})[{:12}]({}{}): state_machine(({}({}b{}B{}F)=>{}({}+{}))/{}|{}TB|{}Lr) channels(<{} >{}+{} <{}+{} <B{}) {}",
-                            scheduler_id, slot,
+                            scheduler_id, slot.unwrap_or("??"),
                             match state_machine.mode() {
                                 SchedulingMode::BlockVerification => "v",
                                 SchedulingMode::BlockProduction => "p",
