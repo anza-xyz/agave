@@ -766,6 +766,10 @@ impl Rocks {
             Err(e) => Err(BlockstoreError::RocksDb(e)),
         }
     }
+
+    pub(crate) fn set_oldest_slot(&self, oldest_slot: Slot) {
+        self.oldest_slot.set(oldest_slot);
+    }
 }
 
 pub trait Column {
@@ -1463,10 +1467,6 @@ impl Database {
 
     pub fn storage_size(&self) -> Result<u64> {
         Ok(fs_extra::dir::get_size(&self.path)?)
-    }
-
-    pub fn set_oldest_slot(&self, oldest_slot: Slot) {
-        self.backend.oldest_slot.set(oldest_slot);
     }
 
     pub(crate) fn set_clean_slot_0(&self, clean_slot_0: bool) {

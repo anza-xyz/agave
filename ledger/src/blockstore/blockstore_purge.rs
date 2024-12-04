@@ -73,7 +73,7 @@ impl Blockstore {
         // convert here from inclusive purged range end to inclusive alive range start to align
         // with Slot::default() for initial compaction filter behavior consistency
         let to_slot = to_slot.checked_add(1).unwrap();
-        self.db.set_oldest_slot(to_slot);
+        self.db.backend.set_oldest_slot(to_slot);
 
         if let Err(err) = self.maybe_cleanup_highest_primary_index_slot(to_slot) {
             warn!("Could not clean up TransactionStatusIndex: {err:?}");
@@ -827,7 +827,7 @@ pub mod tests {
 
     fn purge_compaction_filter(blockstore: &Blockstore, oldest_slot: Slot) {
         let (first_index, last_index) = get_index_bounds(blockstore);
-        blockstore.db.set_oldest_slot(oldest_slot);
+        blockstore.db.backend.set_oldest_slot(oldest_slot);
         blockstore
             .db
             .compact_range_cf::<cf::TransactionStatus>(&first_index, &last_index);
@@ -1009,7 +1009,7 @@ pub mod tests {
         };
 
         let oldest_slot = 3;
-        blockstore.db.set_oldest_slot(oldest_slot);
+        blockstore.db.backend.set_oldest_slot(oldest_slot);
         blockstore.db.compact_range_cf::<cf::TransactionStatus>(
             &cf::TransactionStatus::key(first_index),
             &cf::TransactionStatus::key(last_index),
@@ -1043,7 +1043,7 @@ pub mod tests {
         };
 
         let oldest_slot = 12;
-        blockstore.db.set_oldest_slot(oldest_slot);
+        blockstore.db.backend.set_oldest_slot(oldest_slot);
         blockstore.db.compact_range_cf::<cf::TransactionStatus>(
             &cf::TransactionStatus::key(first_index),
             &cf::TransactionStatus::key(last_index),
@@ -1117,7 +1117,7 @@ pub mod tests {
         };
 
         // Purge at slot 0 should not affect any memos
-        blockstore.db.set_oldest_slot(0);
+        blockstore.db.backend.set_oldest_slot(0);
         blockstore
             .db
             .compact_range_cf::<cf::TransactionMemos>(&first_index, &last_index);
@@ -1132,7 +1132,7 @@ pub mod tests {
         assert_eq!(count, 4);
 
         // Purge at oldest_slot without clean_slot_0 only purges the current memo at slot 4
-        blockstore.db.set_oldest_slot(oldest_slot);
+        blockstore.db.backend.set_oldest_slot(oldest_slot);
         blockstore
             .db
             .compact_range_cf::<cf::TransactionMemos>(&first_index, &last_index);
