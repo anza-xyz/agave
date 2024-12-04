@@ -284,12 +284,13 @@ impl BankForks {
         assert!(!bank.is_frozen());
         trace!("Installed scheduler into existing unfrozen slot: {}", bank.slot());
 
-        self.banks[&self.highest_slot()] = Self::install_scheduler_into_bank(
+        let inserted = self.banks.insert(&self.highest_slot(), Self::install_scheduler_into_bank(
             self.scheduler_pool.as_ref().unwrap(),
             mode,
             bank,
             true,
-        );
+        ));
+        assert!(inserted);
     }
 
     pub fn insert_from_ledger(&mut self, bank: Bank) -> BankWithScheduler {
