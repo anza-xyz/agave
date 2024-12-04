@@ -1294,7 +1294,7 @@ impl Blockstore {
         metrics.insert_lock_elapsed_us += start.as_us();
 
         let mut shred_insertion_tracker =
-            ShredInsertionTracker::new(shreds.len(), self.db.batch()?);
+            ShredInsertionTracker::new(shreds.len(), self.get_write_batch()?);
 
         self.attempt_shred_insertion(
             shreds,
@@ -4079,7 +4079,7 @@ impl Blockstore {
         &self,
         duplicate_confirmed_slot_hashes: impl Iterator<Item = (Slot, Hash)>,
     ) -> Result<()> {
-        let mut write_batch = self.db.batch()?;
+        let mut write_batch = self.get_write_batch()?;
         for (slot, frozen_hash) in duplicate_confirmed_slot_hashes {
             let data = FrozenHashVersioned::Current(FrozenHashStatus {
                 frozen_hash,
@@ -4094,7 +4094,7 @@ impl Blockstore {
     }
 
     pub fn set_roots<'a>(&self, rooted_slots: impl Iterator<Item = &'a Slot>) -> Result<()> {
-        let mut write_batch = self.db.batch()?;
+        let mut write_batch = self.get_write_batch()?;
         let mut max_new_rooted_slot = 0;
         for slot in rooted_slots {
             max_new_rooted_slot = std::cmp::max(max_new_rooted_slot, *slot);
@@ -4397,7 +4397,7 @@ impl Blockstore {
             "Marking slot {} and any full children slots as connected",
             root
         );
-        let mut write_batch = self.db.batch()?;
+        let mut write_batch = self.get_write_batch()?;
 
         // Mark both connected bits on the root slot so that the flags for this
         // slot match the flags of slots that become connected the typical way.
@@ -4773,8 +4773,8 @@ impl Blockstore {
         res
     }
 
-    pub fn get_write_batch(&self) -> std::result::Result<WriteBatch, BlockstoreError> {
-        self.db.batch()
+    pub fn get_write_batch(&self) -> Result<WriteBatch> {
+        self.db.backend.batch()
     }
 
     pub fn write_batch(&self, write_batch: WriteBatch) -> Result<()> {
@@ -7579,7 +7579,7 @@ pub mod tests {
         let coding_shred = coding_shreds[index as usize].clone();
 
         let mut shred_insertion_tracker =
-            ShredInsertionTracker::new(coding_shreds.len(), blockstore.db.batch().unwrap());
+            ShredInsertionTracker::new(coding_shreds.len(), blockstore.get_write_batch().unwrap());
         assert!(blockstore.check_insert_coding_shred(
             coding_shred.clone(),
             &mut shred_insertion_tracker,
@@ -7632,7 +7632,7 @@ pub mod tests {
         let new_coding_shred = coding_shreds[(index + 1) as usize].clone();
 
         let mut shred_insertion_tracker =
-            ShredInsertionTracker::new(coding_shreds.len(), blockstore.db.batch().unwrap());
+            ShredInsertionTracker::new(coding_shreds.len(), blockstore.get_write_batch().unwrap());
 
         assert!(!blockstore.check_insert_coding_shred(
             new_coding_shred.clone(),
@@ -7760,7 +7760,7 @@ pub mod tests {
         let data_shred = data_shreds[0].clone();
 
         let mut shred_insertion_tracker =
-            ShredInsertionTracker::new(data_shreds.len(), blockstore.db.batch().unwrap());
+            ShredInsertionTracker::new(data_shreds.len(), blockstore.get_write_batch().unwrap());
         blockstore
             .check_insert_data_shred(
                 data_shred.clone(),
@@ -7815,7 +7815,7 @@ pub mod tests {
         let new_data_shred = data_shreds[1].clone();
 
         let mut shred_insertion_tracker =
-            ShredInsertionTracker::new(data_shreds.len(), blockstore.db.batch().unwrap());
+            ShredInsertionTracker::new(data_shreds.len(), blockstore.get_write_batch().unwrap());
 
         assert!(blockstore
             .check_insert_data_shred(
@@ -7957,7 +7957,7 @@ pub mod tests {
         );
 
         let mut shred_insertion_tracker =
-            ShredInsertionTracker::new(1, blockstore.db.batch().unwrap());
+            ShredInsertionTracker::new(1, blockstore.get_write_batch().unwrap());
         assert!(blockstore.check_insert_coding_shred(
             coding_shred.clone(),
             &mut shred_insertion_tracker,
@@ -11963,7 +11963,7 @@ pub mod tests {
         blockstore
             .put_erasure_meta(coding_shred_previous.erasure_set(), &erasure_meta)
             .unwrap();
-        let mut write_batch = blockstore.db.batch().unwrap();
+        let mut write_batch = blockstore.get_write_batch().unwrap();
         blockstore
             .merkle_root_meta_cf
             .delete_range_in_batch(&mut write_batch, slot, slot)
@@ -12029,7 +12029,7 @@ pub mod tests {
 
         // Remove the merkle root meta in order to simulate this blockstore originating from
         // an older version.
-        let mut write_batch = blockstore.db.batch().unwrap();
+        let mut write_batch = blockstore.get_write_batch().unwrap();
         blockstore
             .merkle_root_meta_cf
             .delete_range_in_batch(&mut write_batch, slot, slot)

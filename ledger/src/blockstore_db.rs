@@ -716,8 +716,8 @@ impl Rocks {
         Ok(self.db.raw_iterator_cf(cf))
     }
 
-    fn batch(&self) -> RWriteBatch {
-        RWriteBatch::default()
+    pub(crate) fn batch(&self) -> Result<WriteBatch> {
+        Ok(WriteBatch { write_batch: RWriteBatch::default() })
     }
 
     fn write(&self, batch: RWriteBatch) -> Result<()> {
@@ -1457,11 +1457,6 @@ impl Database {
             read_perf_status: PerfSamplingStatus::default(),
             write_perf_status: PerfSamplingStatus::default(),
         }
-    }
-
-    pub fn batch(&self) -> Result<WriteBatch> {
-        let write_batch = self.backend.batch();
-        Ok(WriteBatch { write_batch })
     }
 
     pub fn write(&self, batch: WriteBatch) -> Result<()> {
