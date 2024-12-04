@@ -251,8 +251,8 @@ impl SchedulingContext {
         self.bank.as_ref().unwrap()
     }
 
-    pub fn slot(&self) -> Slot {
-        self.bank.as_ref().map(|b| b.slot()).unwrap_or_default()
+    pub fn slot(&self) -> Option<Slot> {
+        self.bank.as_ref().map(|bank| bank.slot()).unwrap_or_default()
     }
 }
 
@@ -326,7 +326,7 @@ impl SchedulerStatus {
     fn scheduling_mode(&self) -> Option<SchedulingMode> {
         match self {
             SchedulerStatus::Unavailable => None,
-            SchedulerStatus::Active(sch) => Some(sch.context().mode()),
+            SchedulerStatus::Active(scheduler) => Some(scheduler.context().mode()),
             SchedulerStatus::Stale(_, mode, _) => Some(*mode),
         }
     }
@@ -334,7 +334,7 @@ impl SchedulerStatus {
     fn status(&self) -> String {
         match self {
             SchedulerStatus::Unavailable => "Unavailable".to_owned(),
-            SchedulerStatus::Active(sch) => format!("Active({})", sch.id()),
+            SchedulerStatus::Active(scheduler) => format!("Active({})", scheduler.id()),
             SchedulerStatus::Stale(_, _, _) => "Stale".to_owned(),
         }
     }
