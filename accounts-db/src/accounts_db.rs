@@ -2249,11 +2249,7 @@ impl AccountsDb {
                     let mut delete = true;
                     for (slot, _account_info) in slot_list {
                         if let Some(count) = store_counts.get(slot).map(|s| s.0) {
-                            debug!(
-                                "calc_delete_dependencies()
-                            slot: {slot},
-                            count len: {count}"
-                            );
+                            debug!("calc_delete_dependencies() slot: {slot}, count len: {count}");
                             if count == 0 {
                                 // this store CAN be removed
                                 continue;
@@ -2272,15 +2268,9 @@ impl AccountsDb {
                 } else {
                     // a pubkey we were planning to remove is not removing all stores that contain the account
                     debug!(
-                        "calc_delete_dependencies(),
-                    pubkey: {},
-                    slot_list: {:?},
-                    slot_list_len: {},
-                    ref_count: {}",
-                        pubkey,
-                        slot_list,
+                        "calc_delete_dependencies(), pubkey: {pubkey}, slot list len: {}, \
+                         ref count: {ref_count}, slot list: {slot_list:?}",
                         slot_list.len(),
-                        ref_count,
                     );
                 }
 
