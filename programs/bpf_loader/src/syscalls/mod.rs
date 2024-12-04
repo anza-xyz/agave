@@ -3,7 +3,10 @@ pub use self::{
     logging::{
         SyscallLog, SyscallLogBpfComputeUnits, SyscallLogData, SyscallLogPubkey, SyscallLogU64,
     },
-    mem_ops::{MemoryChunkIterator, SyscallMemcmp, SyscallMemcpy, SyscallMemmove, SyscallMemset},
+    mem_ops::{
+        iter_memory_chunks, MemoryChunkIterator, SyscallMemcmp, SyscallMemcpy, SyscallMemmove,
+        SyscallMemset,
+    },
     sysvar::{
         SyscallGetClockSysvar, SyscallGetEpochRewardsSysvar, SyscallGetEpochScheduleSysvar,
         SyscallGetFeesSysvar, SyscallGetLastRestartSlotSysvar, SyscallGetRentSysvar,
@@ -2024,19 +2027,10 @@ declare_builtin_function!(
                 if direct_mapping {
                     let syscall_context = invoke_context.get_syscall_context()?;
 
-                    let chunk_iter = MemoryChunkIterator::new(memory_mapping, &syscall_context.accounts_metadata, AccessType::Load, val.as_ptr() as u64, val.len() as u64)?;
-
-                    for item in chunk_iter {
-                        let (region, src_addr, chunk_len) = item?;
-
-                        let addr = Result::from(region.vm_to_host(src_addr, chunk_len as u64))?;
-
-                        let bytes = unsafe {
-                            std::slice::from_raw_parts(addr as *const u8, chunk_len)
-                        };
-
+                    iter_memory_chunks(AccessType::Load, val.as_ptr() as u64, val.len() as u64, &syscall_context.accounts_metadata, memory_mapping, |bytes| {
                         hasher.hash(bytes);
-                    }
+                        Ok(())
+                    })?;
                 } else {
                     let bytes = translate_slice::<u8>(
                         memory_mapping,
@@ -2055,6 +2049,7 @@ declare_builtin_function!(
                     ),
                 );
                 consume_compute_meter(invoke_context, cost)?;
+
         }
 
         }
