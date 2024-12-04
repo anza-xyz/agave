@@ -3103,13 +3103,16 @@ impl Bank {
         // Bootstrap validator collects fees until `new_from_parent` is called.
         self.fee_rate_governor = genesis_config.fee_rate_governor.clone();
 
+        let mut capitalization: u64 = 0;
         for (pubkey, account) in genesis_config.accounts.iter() {
             assert!(
                 self.get_account(pubkey).is_none(),
                 "{pubkey} repeated in genesis config"
             );
             self.store_account(pubkey, &account.to_account_shared_data());
-            self.change_capitalization(account.lamports(), true);
+            capitalization = capitalization
+                .checked_add(account.lamports())
+                .expect("should not overflow");
             self.accounts_data_size_initial += account.data().len() as u64;
         }
 
@@ -3144,6 +3147,7 @@ impl Bank {
             .unwrap()
             .replace(BankFullReplayFields {
                 blockhash_queue: RwLock::new(blockhash_queue),
+                capitalization: AtomicU64::new(capitalization),
                 ..BankFullReplayFields::default()
             });
         self.vote_only_blockhash_queue
