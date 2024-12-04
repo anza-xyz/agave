@@ -2,6 +2,8 @@
 //! to construct a software pipeline. The stage uses all available CPU cores and
 //! can do its processing in parallel with signature verification on the GPU.
 
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     self::{
         committer::Committer,
@@ -37,10 +39,11 @@ use {
     solana_perf::{data_budget::DataBudget, packet::PACKETS_PER_BATCH},
     solana_poh::poh_recorder::{PohRecorder, TransactionRecorder},
     solana_runtime::{
-        bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
+        bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
         vote_sender_types::ReplayVoteSender,
     },
-    solana_sdk::{pubkey::Pubkey, timing::AtomicInterval},
+    solana_sdk::{pubkey::Pubkey, scheduling::SchedulingMode, timing::AtomicInterval},
+    solana_unified_scheduler_pool::{BankingStageAdapter, DefaultSchedulerPool},
     std::{
         cmp, env,
         ops::Deref,
@@ -364,6 +367,7 @@ impl BankingStage {
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
         enable_forwarding: bool,
+        unified_scheduler_pool: Option<Arc<DefaultSchedulerPool>>,
     ) -> Self {
         Self::new_num_threads(
             block_production_method,
@@ -380,6 +384,7 @@ impl BankingStage {
             bank_forks,
             prioritization_fee_cache,
             enable_forwarding,
+            unified_scheduler_pool,
         )
     }
 
@@ -399,9 +404,12 @@ impl BankingStage {
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
         enable_forwarding: bool,
+        unified_scheduler_pool: Option<Arc<DefaultSchedulerPool>>,
     ) -> Self {
+        use BlockProductionMethod::*;
+
         match block_production_method {
-            BlockProductionMethod::CentralScheduler => Self::new_central_scheduler(
+            CentralScheduler => Self::new_central_scheduler(
                 cluster_info,
                 poh_recorder,
                 non_vote_receiver,
@@ -415,6 +423,16 @@ impl BankingStage {
                 bank_forks,
                 prioritization_fee_cache,
                 enable_forwarding,
+            ),
+            UnifiedScheduler => Self::new_unified_scheduler(
+                cluster_info,
+                poh_recorder,
+                non_vote_receiver,
+                tpu_vote_receiver,
+                gossip_vote_receiver,
+                num_threads,
+                bank_forks,
+                unified_scheduler_pool.unwrap(),
             ),
         }
     }
@@ -645,6 +663,69 @@ impl BankingStage {
         Self { bank_thread_hdls }
     }
 
+    pub fn new_unified_scheduler(
+        cluster_info: &impl LikeClusterInfo,
+        poh_recorder: &Arc<RwLock<PohRecorder>>,
+        non_vote_receiver: BankingPacketReceiver,
+        tpu_vote_receiver: BankingPacketReceiver,
+        gossip_vote_receiver: BankingPacketReceiver,
+        _num_threads: u32,
+        bank_forks: Arc<RwLock<BankForks>>,
+        unified_scheduler_pool: Arc<DefaultSchedulerPool>,
+    ) -> Self {
+        assert!(non_vote_receiver.same_channel(&tpu_vote_receiver));
+        assert!(non_vote_receiver.same_channel(&gossip_vote_receiver));
+        drop((tpu_vote_receiver, gossip_vote_receiver));
+
+        let unified_receiver = non_vote_receiver;
+        let decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
+        let banking_stage_monitor = Box::new(decision_maker.clone());
+
+        unified_scheduler_pool.register_banking_stage(
+            unified_receiver,
+            1, /* todo */
+            banking_stage_monitor,
+            Box::new(move |adapter: Arc<BankingStageAdapter>| {
+                let decision_maker = decision_maker.clone();
+                let bank_forks = bank_forks.clone();
+
+                Box::new(move |batches, task_submitter| {
+                    let decision = decision_maker.make_consume_or_forward_decision();
+                    if matches!(decision, BufferedPacketsDecision::Forward) {
+                        return;
+                    }
+                    let bank = bank_forks.read().unwrap().root_bank();
+                    for batch in batches.0.iter() {
+                        // over-provision nevertheless some of packets could be invalid.
+                        let task_id_base = adapter.generate_task_ids(batch.len());
+                        let packets = PacketDeserializer::deserialize_packets_with_indexes(batch);
+
+                        for (packet, packet_index) in packets {
+                            let Some((transaction, _deactivation_slot)) = packet
+                                .build_sanitized_transaction(
+                                    bank.vote_only_bank(),
+                                    &bank,
+                                    bank.get_reserved_account_keys(),
+                                )
+                            else {
+                                continue;
+                            };
+
+                            let index = task_id_base + packet_index;
+
+                            let task = adapter.create_new_task(transaction, index);
+                            task_submitter(task);
+                        }
+                    }
+                })
+            }),
+        );
+
+        Self {
+            bank_thread_hdls: vec![],
+        }
+    }
+
     fn spawn_thread_local_multi_iterator_thread<T: LikeClusterInfo>(
         id: u32,
         packet_receiver: BankingPacketReceiver,
@@ -809,11 +890,32 @@ impl BankingStage {
     }
 }
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+pub(crate) fn update_bank_forks_and_poh_recorder_for_new_tpu_bank(
+    bank_forks: &RwLock<BankForks>,
+    poh_recorder: &RwLock<PohRecorder>,
+    tpu_bank: Bank,
+    track_transaction_indexes: bool,
+) {
+    // A write lock for the poh recorder must be grabbed for the entire duration of inserting new
+    // tpu bank into the bank forks. That's because any buffered transactions could immediately be
+    // executed after the bank forks update, when unified scheduler is enabled for block
+    // production. And then, the unified scheduler would be hit with false errors due to having no
+    // bank in the poh recorder otherwise.
+    let mut poh_recorder = poh_recorder.write().unwrap();
+
+    let tpu_bank = bank_forks
+        .write()
+        .unwrap()
+        .insert_with_scheduling_mode(SchedulingMode::BlockProduction, tpu_bank);
+    poh_recorder.set_bank(tpu_bank, track_transaction_indexes);
+}
+
 #[cfg(test)]
 mod tests {
     use {
         super::*,
-        crate::banking_trace::{BankingPacketBatch, BankingTracer},
+        crate::banking_trace::{BankingPacketBatch, BankingTracer, Channels},
         crossbeam_channel::{unbounded, Receiver},
         itertools::Itertools,
         solana_entry::entry::{self, Entry, EntrySlice},
@@ -874,10 +976,14 @@ mod tests {
         let genesis_config = create_genesis_config(2).genesis_config;
         let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         let banking_tracer = BankingTracer::new_disabled();
-        let (non_vote_sender, non_vote_receiver) = banking_tracer.create_channel_non_vote();
-        let (tpu_vote_sender, tpu_vote_receiver) = banking_tracer.create_channel_tpu_vote();
-        let (gossip_vote_sender, gossip_vote_receiver) =
-            banking_tracer.create_channel_gossip_vote();
+        let Channels {
+            non_vote_sender,
+            non_vote_receiver,
+            tpu_vote_sender,
+            tpu_vote_receiver,
+            gossip_vote_sender,
+            gossip_vote_receiver,
+        } = banking_tracer.create_channels(None);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         {
             let blockstore = Arc::new(
@@ -904,6 +1010,7 @@ mod tests {
                 bank_forks,
                 &Arc::new(PrioritizationFeeCache::new(0u64)),
                 false,
+                None,
             );
             drop(non_vote_sender);
             drop(tpu_vote_sender);
@@ -926,10 +1033,14 @@ mod tests {
         let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         let start_hash = bank.last_blockhash();
         let banking_tracer = BankingTracer::new_disabled();
-        let (non_vote_sender, non_vote_receiver) = banking_tracer.create_channel_non_vote();
-        let (tpu_vote_sender, tpu_vote_receiver) = banking_tracer.create_channel_tpu_vote();
-        let (gossip_vote_sender, gossip_vote_receiver) =
-            banking_tracer.create_channel_gossip_vote();
+        let Channels {
+            non_vote_sender,
+            non_vote_receiver,
+            tpu_vote_sender,
+            tpu_vote_receiver,
+            gossip_vote_sender,
+            gossip_vote_receiver,
+        } = banking_tracer.create_channels(None);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         {
             let blockstore = Arc::new(
@@ -960,6 +1071,7 @@ mod tests {
                 bank_forks,
                 &Arc::new(PrioritizationFeeCache::new(0u64)),
                 false,
+                None,
             );
             trace!("sending bank");
             drop(non_vote_sender);
@@ -1004,10 +1116,14 @@ mod tests {
         let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         let start_hash = bank.last_blockhash();
         let banking_tracer = BankingTracer::new_disabled();
-        let (non_vote_sender, non_vote_receiver) = banking_tracer.create_channel_non_vote();
-        let (tpu_vote_sender, tpu_vote_receiver) = banking_tracer.create_channel_tpu_vote();
-        let (gossip_vote_sender, gossip_vote_receiver) =
-            banking_tracer.create_channel_gossip_vote();
+        let Channels {
+            non_vote_sender,
+            non_vote_receiver,
+            tpu_vote_sender,
+            tpu_vote_receiver,
+            gossip_vote_sender,
+            gossip_vote_receiver,
+        } = banking_tracer.create_channels(None);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         {
             let blockstore = Arc::new(
@@ -1040,6 +1156,7 @@ mod tests {
                 bank_forks.clone(), // keep a local-copy of bank-forks so worker threads do not lose weak access to bank-forks
                 &Arc::new(PrioritizationFeeCache::new(0u64)),
                 false,
+                None,
             );
 
             // fund another account so we can send 2 good transactions in a single batch.
@@ -1138,7 +1255,14 @@ mod tests {
             ..
         } = create_slow_genesis_config(2);
         let banking_tracer = BankingTracer::new_disabled();
-        let (non_vote_sender, non_vote_receiver) = banking_tracer.create_channel_non_vote();
+        let Channels {
+            non_vote_sender,
+            non_vote_receiver,
+            tpu_vote_sender,
+            tpu_vote_receiver,
+            gossip_vote_sender,
+            gossip_vote_receiver,
+        } = banking_tracer.create_channels(None);
 
         // Process a batch that includes a transaction that receives two lamports.
         let alice = Keypair::new();
@@ -1168,9 +1292,6 @@ mod tests {
             .send(BankingPacketBatch::new((packet_batches, None)))
             .unwrap();
 
-        let (tpu_vote_sender, tpu_vote_receiver) = banking_tracer.create_channel_tpu_vote();
-        let (gossip_vote_sender, gossip_vote_receiver) =
-            banking_tracer.create_channel_gossip_vote();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         {
             let (replay_vote_sender, _replay_vote_receiver) = unbounded();
@@ -1361,10 +1482,14 @@ mod tests {
         let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         let start_hash = bank.last_blockhash();
         let banking_tracer = BankingTracer::new_disabled();
-        let (non_vote_sender, non_vote_receiver) = banking_tracer.create_channel_non_vote();
-        let (tpu_vote_sender, tpu_vote_receiver) = banking_tracer.create_channel_tpu_vote();
-        let (gossip_vote_sender, gossip_vote_receiver) =
-            banking_tracer.create_channel_gossip_vote();
+        let Channels {
+            non_vote_sender,
+            non_vote_receiver,
+            tpu_vote_sender,
+            tpu_vote_receiver,
+            gossip_vote_sender,
+            gossip_vote_receiver,
+        } = banking_tracer.create_channels(None);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         {
             let blockstore = Arc::new(
@@ -1397,6 +1522,7 @@ mod tests {
                 bank_forks,
                 &Arc::new(PrioritizationFeeCache::new(0u64)),
                 false,
+                None,
             );
 
             let keypairs = (0..100).map(|_| Keypair::new()).collect_vec();

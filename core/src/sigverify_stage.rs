@@ -579,10 +579,13 @@ mod tests {
         loop {
             if let Ok(message) = verified_r.recv() {
                 let (verifieds, tracer_packet_stats) = (&message.0, message.1.as_ref().unwrap());
-                total_tracer_packets_received_in_sigverify_stage +=
-                    tracer_packet_stats.total_tracer_packets_received_in_sigverify_stage;
+                total_tracer_packets_received_in_sigverify_stage += tracer_packet_stats
+                    .total_tracer_packets_received_in_sigverify_stage
+                    .0;
                 assert_eq!(
-                    tracer_packet_stats.total_tracer_packets_received_in_sigverify_stage
+                    tracer_packet_stats
+                        .total_tracer_packets_received_in_sigverify_stage
+                        .0
                         % packets_per_batch,
                     0,
                 );
@@ -594,27 +597,28 @@ mod tests {
                     // Also have to account for the fact that deduper could be cleared periodically,
                     // in which case the first transaction in the next batch won't be deduped
                     assert!(
-                        (tracer_packet_stats.total_tracer_packets_deduped
+                        (tracer_packet_stats.total_tracer_packets_deduped.0
                             == tracer_packet_stats
                                 .total_tracer_packets_received_in_sigverify_stage
+                                .0
                                 - 1)
                             || (tracer_packet_stats.total_tracer_packets_deduped
                                 == tracer_packet_stats
                                     .total_tracer_packets_received_in_sigverify_stage)
                     );
                     assert!(
-                        (tracer_packet_stats.total_tracker_packets_passed_sigverify == 1)
-                            || (tracer_packet_stats.total_tracker_packets_passed_sigverify == 0)
+                        (tracer_packet_stats.total_tracker_packets_passed_sigverify.0 == 1)
+                            || (tracer_packet_stats.total_tracker_packets_passed_sigverify.0 == 0)
                     );
                 } else {
-                    assert_eq!(tracer_packet_stats.total_tracer_packets_deduped, 0);
+                    assert_eq!(tracer_packet_stats.total_tracer_packets_deduped.0, 0);
                     assert!(
                         (tracer_packet_stats.total_tracker_packets_passed_sigverify
                             == tracer_packet_stats
                                 .total_tracer_packets_received_in_sigverify_stage)
                     );
                 }
-                assert_eq!(tracer_packet_stats.total_excess_tracer_packets, 0);
+                assert_eq!(tracer_packet_stats.total_excess_tracer_packets.0, 0);
                 received += verifieds.iter().map(|batch| batch.len()).sum::<usize>();
             }
 

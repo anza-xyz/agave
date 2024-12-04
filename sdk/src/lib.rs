@@ -88,6 +88,7 @@ pub mod reward_type {
     pub use solana_reward_info::RewardType;
 }
 pub mod rpc_port;
+pub mod scheduling;
 pub mod shred_version;
 pub mod signature;
 pub mod signer;
