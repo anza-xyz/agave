@@ -124,7 +124,8 @@ pub fn process_instruction(
             use solana_program::keccak::{hashv, Hasher};
 
             let mut hasher = Hasher::default();
-            let data = unsafe { std::slice::from_raw_parts_mut(data_ptr, data_len + 11) };
+            let data =
+                unsafe { std::slice::from_raw_parts_mut(data_ptr, data_len.wrapping_add(11)) };
 
             hasher.hashv(&[data]);
 
