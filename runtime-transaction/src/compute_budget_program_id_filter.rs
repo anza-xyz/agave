@@ -65,7 +65,7 @@ impl ComputeBudgetProgramIdFilter {
     }
 
     #[inline]
-    fn check_compute_bugdet_program_id(program_id: &Pubkey) -> bool {
+    fn check_compute_budget_program_id(program_id: &Pubkey) -> bool {
         if !MAYBE_BUILTIN_KEY[program_id.as_ref()[0] as usize] {
             return false;
         }
