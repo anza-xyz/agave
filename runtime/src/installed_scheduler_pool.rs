@@ -22,6 +22,7 @@
 
 use {
     crate::bank::Bank,
+    assert_matches::assert_matches,
     log::*,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk::{
@@ -39,7 +40,6 @@ use {
         thread,
     },
 };
-use assert_matches::assert_matches;
 #[cfg(feature = "dev-context-only-utils")]
 use {mockall::automock, qualifier_attr::qualifiers};
 
@@ -484,7 +484,10 @@ impl BankWithScheduler {
         );
 
         let schedule_result: ScheduleResult = self.inner.with_active_scheduler(|scheduler| {
-            assert_matches!(scheduler.context().mode(), SchedulingMode::BlockVerification);
+            assert_matches!(
+                scheduler.context().mode(),
+                SchedulingMode::BlockVerification
+            );
             for (sanitized_transaction, index) in transactions_with_indexes {
                 scheduler.schedule_execution(sanitized_transaction, index)?;
             }
