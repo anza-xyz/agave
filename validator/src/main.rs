@@ -24,7 +24,10 @@ use {
             AccountsIndexConfig, IndexLimitMb, ScanFilter,
         },
         partitioned_rewards::TestPartitionedEpochRewards,
-        utils::{create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories},
+        utils::{
+            create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories,
+            create_and_canonicalize_directory,
+        },
     },
     solana_clap_utils::input_parsers::{keypair_of, keypairs_of, pubkey_of, value_of, values_of},
     solana_core::{
@@ -1667,20 +1670,17 @@ pub fn main() {
         value_t_or_exit!(matches, "maximum_snapshot_download_abort", u64);
 
     let snapshots_dir = if let Some(snapshots) = matches.value_of("snapshots") {
-        Path::new(snapshots)
+        &create_and_canonicalize_directory(PathBuf::from(snapshots)).unwrap_or_else(|err| {
+            eprintln!("Unable to access snapshots path '{}': {err}", snapshots);
+            exit(1);
+        })
     } else {
         &ledger_path
     };
-    let snapshots_dir = fs::canonicalize(snapshots_dir).unwrap_or_else(|err| {
-        eprintln!(
-            "Failed to canonicalize snapshots path '{}': {err}",
-            snapshots_dir.display(),
-        );
-        exit(1);
-    });
+
     if account_paths
         .iter()
-        .any(|account_path| account_path == &snapshots_dir)
+        .any(|account_path| account_path == snapshots_dir)
     {
         eprintln!(
             "Failed: The --accounts and --snapshots paths must be unique since they \
