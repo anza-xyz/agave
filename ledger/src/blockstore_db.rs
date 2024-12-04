@@ -742,7 +742,7 @@ impl Rocks {
         }
     }
 
-    fn is_primary_access(&self) -> bool {
+    pub(crate) fn is_primary_access(&self) -> bool {
         self.access_type == AccessType::Primary
             || self.access_type == AccessType::PrimaryForMaintenance
     }
@@ -1463,10 +1463,6 @@ impl Database {
 
     pub fn storage_size(&self) -> Result<u64> {
         Ok(fs_extra::dir::get_size(&self.path)?)
-    }
-
-    pub fn is_primary_access(&self) -> bool {
-        self.backend.is_primary_access()
     }
 
     pub fn set_oldest_slot(&self, oldest_slot: Slot) {

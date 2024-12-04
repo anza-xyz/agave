@@ -4298,7 +4298,7 @@ impl Blockstore {
 
     /// Returns whether the blockstore has primary (read and write) access
     pub fn is_primary_access(&self) -> bool {
-        self.db.is_primary_access()
+        self.db.backend.is_primary_access()
     }
 
     /// Scan for any ancestors of the supplied `start_root` that are not
