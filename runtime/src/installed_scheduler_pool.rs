@@ -238,8 +238,8 @@ impl SchedulingContext {
         Self { mode, bank }
     }
 
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn for_verification(bank: Arc<Bank>) -> Self {
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    fn for_verification(bank: Arc<Bank>) -> Self {
         Self::new(SchedulingMode::BlockVerification, Some(bank))
     }
 
@@ -484,7 +484,7 @@ impl BankWithScheduler {
         );
 
         let schedule_result: ScheduleResult = self.inner.with_active_scheduler(|scheduler| {
-            assert_matches!(scheduler.context().mode(), SchedulingMode::BlockProduction);
+            assert_matches!(scheduler.context().mode(), SchedulingMode::BlockVerification);
             for (sanitized_transaction, index) in transactions_with_indexes {
                 scheduler.schedule_execution(sanitized_transaction, index)?;
             }
@@ -565,7 +565,8 @@ impl BankWithSchedulerInner {
                 // This is the fast path, needing single read-lock most of time.
                 f(scheduler)
             }
-            SchedulerStatus::Stale(_pool, _mode, (result, _timings)) if result.is_err() => {
+            SchedulerStatus::Stale(_pool, mode, (result, _timings)) if result.is_err() => {
+                assert_matches!(mode, SchedulingMode::BlockVerification);
                 trace!(
                     "with_active_scheduler: bank (slot: {}) has a stale aborted scheduler...",
                     self.bank.slot(),
@@ -573,11 +574,11 @@ impl BankWithSchedulerInner {
                 Err(SchedulerAborted)
             }
             SchedulerStatus::Stale(pool, mode, _result_with_timings) => {
-                let mode = *mode;
+                assert_matches!(mode, SchedulingMode::BlockVerification);
                 let pool = pool.clone();
                 drop(scheduler);
 
-                let context = SchedulingContext::new(mode, Some(self.bank.clone()));
+                let context = SchedulingContext::for_verification(self.bank.clone());
                 let mut scheduler = self.scheduler.write().unwrap();
                 trace!("with_active_scheduler: {:?}", scheduler);
                 scheduler.transition_from_stale_to_active(|pool, result_with_timings| {
