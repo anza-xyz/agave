@@ -454,7 +454,10 @@ mod tests {
             get_tmp_ledger_path_auto_delete, leader_schedule_cache::LeaderScheduleCache,
         },
         solana_perf::packet::{to_packet_batches, PacketBatch, NUM_PACKETS},
-        solana_poh::poh_recorder::{PohRecorder, Record, WorkingBankEntry},
+        solana_poh::{
+            mpsc_ringbuffer::ArrayQueue,
+            poh_recorder::{PohRecorder, Record, WorkingBankEntry},
+        },
         solana_runtime::bank::Bank,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
@@ -484,7 +487,7 @@ mod tests {
         mint_keypair: Keypair,
         _ledger_path: TempDir,
         _entry_receiver: Receiver<WorkingBankEntry>,
-        _record_receiver: Receiver<Record>,
+        _record_receiver: Arc<ArrayQueue<Record>>,
         poh_recorder: Arc<RwLock<PohRecorder>>,
         banking_packet_sender: Sender<Arc<(Vec<PacketBatch>, Option<SigverifyTracerPacketStats>)>>,
 
@@ -537,7 +540,7 @@ mod tests {
             mint_keypair,
             _ledger_path: ledger_path,
             _entry_receiver: entry_receiver,
-            _record_receiver: record_receiver,
+            _record_receiver: record_receiver.clone(),
             poh_recorder,
             banking_packet_sender,
             consume_work_receivers,
