@@ -1329,7 +1329,7 @@ impl Blockstore {
 
         // Write out the accumulated batch.
         let mut start = Measure::start("Write Batch");
-        self.db.write(shred_insertion_tracker.write_batch)?;
+        self.write_batch(shred_insertion_tracker.write_batch)?;
         start.stop();
         metrics.write_batch_elapsed_us += start.as_us();
 
@@ -4089,7 +4089,7 @@ impl Blockstore {
                 .put_in_batch(&mut write_batch, slot, &data)?;
         }
 
-        self.db.write(write_batch)?;
+        self.write_batch(write_batch)?;
         Ok(())
     }
 
@@ -4101,7 +4101,7 @@ impl Blockstore {
             self.roots_cf.put_in_batch(&mut write_batch, *slot, &true)?;
         }
 
-        self.db.write(write_batch)?;
+        self.write_batch(write_batch)?;
         self.max_root
             .fetch_max(max_new_rooted_slot, Ordering::Relaxed);
         Ok(())
@@ -4420,7 +4420,7 @@ impl Blockstore {
                 .put_in_batch(&mut write_batch, meta.slot, &meta)?;
         }
 
-        self.db.write(write_batch)?;
+        self.write_batch(write_batch)?;
         Ok(())
     }
 
@@ -4778,7 +4778,7 @@ impl Blockstore {
     }
 
     pub fn write_batch(&self, write_batch: WriteBatch) -> Result<()> {
-        self.db.write(write_batch)
+        self.db.backend.write(write_batch)
     }
 }
 
@@ -7625,7 +7625,7 @@ pub mod tests {
                 .put(erasure_set.store_key(), working_merkle_root_meta.as_ref())
                 .unwrap();
         }
-        blockstore.db.write(write_batch).unwrap();
+        blockstore.write_batch(write_batch).unwrap();
 
         // Add a shred with different merkle root and index
         let (_, coding_shreds, _) = setup_erasure_shreds(slot, parent_slot, 10);
@@ -7807,7 +7807,7 @@ pub mod tests {
                 .put(erasure_set.store_key(), working_merkle_root_meta.as_ref())
                 .unwrap();
         }
-        blockstore.db.write(write_batch).unwrap();
+        blockstore.write_batch(write_batch).unwrap();
 
         // Add a shred with different merkle root and index
         let (data_shreds, _, _) =
@@ -11968,7 +11968,7 @@ pub mod tests {
             .merkle_root_meta_cf
             .delete_range_in_batch(&mut write_batch, slot, slot)
             .unwrap();
-        blockstore.db.write(write_batch).unwrap();
+        blockstore.write_batch(write_batch).unwrap();
         assert!(blockstore
             .merkle_root_meta(coding_shred_previous.erasure_set())
             .unwrap()
@@ -12034,7 +12034,7 @@ pub mod tests {
             .merkle_root_meta_cf
             .delete_range_in_batch(&mut write_batch, slot, slot)
             .unwrap();
-        blockstore.db.write(write_batch).unwrap();
+        blockstore.write_batch(write_batch).unwrap();
         assert!(blockstore
             .merkle_root_meta(next_coding_shreds[0].erasure_set())
             .unwrap()

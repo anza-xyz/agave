@@ -182,7 +182,7 @@ impl Blockstore {
         self.meta_cf
             .put_in_batch(&mut write_batch, slot, &slot_meta)?;
 
-        self.db.write(write_batch).inspect_err(|e| {
+        self.write_batch(write_batch).inspect_err(|e| {
             error!(
                 "Error: {:?} while submitting write batch for slot {:?}",
                 e, slot
@@ -214,7 +214,7 @@ impl Blockstore {
         delete_range_timer.stop();
 
         let mut write_timer = Measure::start("write_batch");
-        self.db.write(write_batch).inspect_err(|e| {
+        self.write_batch(write_batch).inspect_err(|e| {
             error!(
                 "Error: {:?} while submitting write batch for purge from_slot {} to_slot {}",
                 e, from_slot, to_slot

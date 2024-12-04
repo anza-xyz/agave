@@ -717,15 +717,17 @@ impl Rocks {
     }
 
     pub(crate) fn batch(&self) -> Result<WriteBatch> {
-        Ok(WriteBatch { write_batch: RWriteBatch::default() })
+        Ok(WriteBatch {
+            write_batch: RWriteBatch::default(),
+        })
     }
 
-    fn write(&self, batch: RWriteBatch) -> Result<()> {
+    pub(crate) fn write(&self, batch: WriteBatch) -> Result<()> {
         let op_start_instant = maybe_enable_rocksdb_perf(
             self.column_options.rocks_perf_sample_interval,
             &self.write_batch_perf_status,
         );
-        let result = self.db.write(batch);
+        let result = self.db.write(batch.write_batch);
         if let Some(op_start_instant) = op_start_instant {
             report_rocksdb_write_perf(
                 PERF_METRIC_OP_NAME_WRITE_BATCH, // We use write_batch as cf_name for write batch.
@@ -1457,10 +1459,6 @@ impl Database {
             read_perf_status: PerfSamplingStatus::default(),
             write_perf_status: PerfSamplingStatus::default(),
         }
-    }
-
-    pub fn write(&self, batch: WriteBatch) -> Result<()> {
-        self.backend.write(batch.write_batch)
     }
 
     pub fn storage_size(&self) -> Result<u64> {
