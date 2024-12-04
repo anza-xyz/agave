@@ -1,3 +1,5 @@
+#[cfg(any(feature = "verify", feature = "precompiles"))]
+use solana_transaction_error::TransactionError;
 use {
     crate::versioned::{sanitized::SanitizedVersionedTransaction, VersionedTransaction},
     solana_hash::Hash,
@@ -9,7 +11,7 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_signature::Signature,
-    solana_transaction_error::{TransactionError, TransactionResult as Result},
+    solana_transaction_error::TransactionResult as Result,
     std::collections::HashSet,
 };
 #[cfg(feature = "blake3")]
