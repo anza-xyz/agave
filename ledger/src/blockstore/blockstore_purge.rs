@@ -1085,7 +1085,7 @@ pub mod tests {
             .put_deprecated(random_signature(), &"another memo".to_string())
             .unwrap();
         // Set clean_slot_0 to false, since we have deprecated memos
-        blockstore.db.set_clean_slot_0(false);
+        blockstore.db.backend.set_clean_slot_0(false);
 
         // Insert some current TransactionMemos
         blockstore
@@ -1149,7 +1149,7 @@ pub mod tests {
         assert_eq!(count, 3);
 
         // Purge at oldest_slot with clean_slot_0 purges deprecated memos
-        blockstore.db.set_clean_slot_0(true);
+        blockstore.db.backend.set_clean_slot_0(true);
         blockstore
             .db
             .compact_range_cf::<cf::TransactionMemos>(&first_index, &last_index);

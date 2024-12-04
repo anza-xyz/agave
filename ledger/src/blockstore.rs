@@ -2924,7 +2924,7 @@ impl Blockstore {
         if highest_primary_index_slot.is_some_and(|slot| slot != 0) {
             self.set_highest_primary_index_slot(highest_primary_index_slot);
         } else {
-            self.db.set_clean_slot_0(true);
+            self.db.backend.set_clean_slot_0(true);
         }
         Ok(())
     }
@@ -2934,7 +2934,7 @@ impl Blockstore {
         if let Some(highest_primary_index_slot) = *w_highest_primary_index_slot {
             if oldest_slot > highest_primary_index_slot {
                 *w_highest_primary_index_slot = None;
-                self.db.set_clean_slot_0(true);
+                self.db.backend.set_clean_slot_0(true);
             }
         }
         Ok(())

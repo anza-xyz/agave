@@ -770,6 +770,10 @@ impl Rocks {
     pub(crate) fn set_oldest_slot(&self, oldest_slot: Slot) {
         self.oldest_slot.set(oldest_slot);
     }
+
+    pub(crate) fn set_clean_slot_0(&self, clean_slot_0: bool) {
+        self.oldest_slot.set_clean_slot_0(clean_slot_0);
+    }
 }
 
 pub trait Column {
@@ -1467,10 +1471,6 @@ impl Database {
 
     pub fn storage_size(&self) -> Result<u64> {
         Ok(fs_extra::dir::get_size(&self.path)?)
-    }
-
-    pub(crate) fn set_clean_slot_0(&self, clean_slot_0: bool) {
-        self.backend.oldest_slot.set_clean_slot_0(clean_slot_0);
     }
 
     pub fn live_files_metadata(&self) -> Result<Vec<LiveFile>> {
