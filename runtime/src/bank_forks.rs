@@ -278,7 +278,7 @@ impl BankForks {
     }
 
     #[cfg(feature = "dev-context-only-utils")]
-    pub fn reinstall_block_production_scheduler_into_special_cased_working_bank(&mut self) {
+    pub fn reinstall_block_production_scheduler_into_working_genesis_bank(&mut self) {
         let bank = self.working_bank();
         assert!(self.banks.len() == 1 && bank.slot() == 0 && !bank.is_frozen());
         let pool = self.scheduler_pool.as_ref().unwrap();
