@@ -760,7 +760,7 @@ impl Rocks {
         }
     }
 
-    fn live_files_metadata(&self) -> Result<Vec<LiveFile>> {
+    pub(crate) fn live_files_metadata(&self) -> Result<Vec<LiveFile>> {
         match self.db.live_files() {
             Ok(live_files) => Ok(live_files),
             Err(e) => Err(BlockstoreError::RocksDb(e)),
@@ -1471,10 +1471,6 @@ impl Database {
 
     pub fn storage_size(&self) -> Result<u64> {
         Ok(fs_extra::dir::get_size(&self.path)?)
-    }
-
-    pub fn live_files_metadata(&self) -> Result<Vec<LiveFile>> {
-        self.backend.live_files_metadata()
     }
 
     pub fn compact_range_cf<C: Column + ColumnName>(&self, from: &[u8], to: &[u8]) {

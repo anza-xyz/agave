@@ -672,7 +672,7 @@ impl Blockstore {
     }
 
     pub fn live_files_metadata(&self) -> Result<Vec<LiveFile>> {
-        self.db.live_files_metadata()
+        self.db.backend.live_files_metadata()
     }
 
     pub fn slot_data_iterator(
