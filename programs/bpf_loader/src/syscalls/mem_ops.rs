@@ -294,15 +294,45 @@ fn memset_non_contiguous(
     accounts: &[SerializedAccountMetadata],
     memory_mapping: &MemoryMapping,
 ) -> Result<u64, Error> {
-    let dst_chunk_iter =
-        MemoryChunkIterator::new(memory_mapping, accounts, AccessType::Store, dst_addr, n)?;
-    for item in dst_chunk_iter {
-        let (dst_region, dst_vm_addr, dst_len) = item?;
-        let dst_host_addr = Result::from(dst_region.vm_to_host(dst_vm_addr, dst_len as u64))?;
-        unsafe { slice::from_raw_parts_mut(dst_host_addr as *mut u8, dst_len).fill(c) }
+    iter_memory_chunks(
+        AccessType::Store,
+        dst_addr,
+        n,
+        accounts,
+        memory_mapping,
+        |slice| {
+            slice.fill(c);
+            Ok(0)
+        },
+    )
+}
+
+pub fn iter_memory_chunks<T, F>(
+    access: AccessType,
+    addr: u64,
+    n_bytes: u64,
+    accounts: &[SerializedAccountMetadata],
+    memory_mapping: &MemoryMapping,
+    mut fun: F,
+) -> Result<T, Error>
+where
+    T: Default,
+    F: FnMut(&mut [u8]) -> Result<T, Error>,
+{
+    let chunk_iter = MemoryChunkIterator::new(memory_mapping, accounts, access, addr, n_bytes)
+        .map_err(EbpfError::from)?;
+
+    for chunk in chunk_iter {
+        let (region, chunk_addr, chunk_len) = chunk?;
+
+        let host_addr = Result::from(region.vm_to_host(chunk_addr, chunk_len as u64))?;
+
+        let bytes = unsafe { slice::from_raw_parts_mut(host_addr as *mut u8, chunk_len) };
+
+        fun(bytes)?;
     }
 
-    Ok(0)
+    Ok(T::default())
 }
 
 fn iter_memory_pair_chunks<T, F>(
