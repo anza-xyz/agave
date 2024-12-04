@@ -5,7 +5,8 @@ use {
     },
     crossbeam_channel::{unbounded, Sender},
     redb::{
-        Database, Error, Key, ReadableTableMetadata, TableDefinition, TableStats, TypeName, Value,
+        backends::InMemoryBackend, Database, Durability, Error, Key, ReadableTableMetadata,
+        TableDefinition, TableStats, TypeName, Value,
     },
     solana_sdk::{clock::Slot, pubkey::Pubkey},
     std::{
@@ -89,16 +90,20 @@ pub struct ChiliPepperStoreWrapper {
 /// The amount of memory to use for the cache, in bytes.
 /// 90% is used for the read cache, and 10% is used for the write cache.
 #[cfg(not(test))]
-const DEFAULT_CACHE_SIZE: usize = 1024 * 1024 * 1024; // 1GB for validator
+const DEFAULT_CACHE_SIZE: usize = 10 * 1024 * 1024 * 1024; // 10GB for validator
 
 #[cfg(test)]
 const DEFAULT_CACHE_SIZE: usize = 1024 * 1024; // 1MB for test
 
 impl ChiliPepperStoreWrapper {
     pub fn new_with_path(path: impl AsRef<Path>) -> Result<Self, Error> {
+        // let db = Database::builder()
+        //     .set_cache_size(1024 * 1024)
+        //     .create(path.as_ref())
+        //     .unwrap();
+
         let db = Database::builder()
-            .set_cache_size(1024 * 1024)
-            .create(path.as_ref())
+            .create_with_backend(InMemoryBackend::new())
             .unwrap();
 
         Ok(Self {
@@ -193,7 +198,12 @@ impl ChiliPepperStoreWrapper {
     }
 
     pub fn insert(&self, key: PubkeySlot, value: u64) -> Result<(), Error> {
-        let write_txn = self.db.begin_write()?;
+        let mut write_txn = self.db.begin_write()?;
+        write_txn.set_durability(Durability::None); // don't persisted to disk for better performance
+        {
+            let mut table = write_txn.open_table::<PubkeySlot, u64>(TABLE)?;
+            table.insert(key, value)?;
+        }
         {
             let mut table = write_txn.open_table::<PubkeySlot, u64>(TABLE)?;
             table.insert(key, value.borrow())?;
@@ -214,7 +224,8 @@ impl ChiliPepperStoreWrapper {
     where
         I: IntoIterator<Item = (PubkeySlot<'a>, u64)>,
     {
-        let write_txn = self.db.begin_write()?;
+        let mut write_txn = self.db.begin_write()?;
+        write_txn.set_durability(Durability::None); // don't persisted to disk for better performance
         {
             let mut table = write_txn.open_table::<PubkeySlot, u64>(TABLE)?;
             for (key, value) in data {

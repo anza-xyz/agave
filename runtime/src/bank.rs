@@ -3381,7 +3381,7 @@ impl Bank {
                             .accounts
                             .accounts_db
                             .loaded_account_chili_peppers(&self.ancestors, key);
-                        info!("load chili_pepper {} {} {:?}", slot, key, chili_pepper);
+                        // info!("load chili_pepper {} {} {:?}", slot, key, chili_pepper);
                         result.insert(*key, chili_pepper);
                     });
                     // TODO: fail transaction if chili_pepper is below what is specified in the transaction.

@@ -1,3 +1,4 @@
+mod chili_pepper_cache;
 mod chili_pepper_mutator_thread;
 
 /// pub because it is used in bench.
