@@ -449,7 +449,10 @@ fn main() {
         )))
         .unwrap();
     let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-    let scheduler_pool = if matches!(block_production_method, BlockProductionMethod::UnifiedScheduler) {
+    let scheduler_pool = if matches!(
+        block_production_method,
+        BlockProductionMethod::UnifiedScheduler
+    ) {
         let pool = DefaultSchedulerPool::new(
             SupportedSchedulingMode::Either(SchedulingMode::BlockProduction),
             None,
@@ -512,8 +515,14 @@ fn main() {
 
     // This bench processes transactions, starting from the very first bank, so special-casing is
     // needed for unified scheduler.
-    if matches!(block_production_method, BlockProductionMethod::UnifiedScheduler) {
-        bank = bank_forks.write().unwrap().reinstall_block_production_scheduler_into_working_genesis_bank();
+    if matches!(
+        block_production_method,
+        BlockProductionMethod::UnifiedScheduler
+    ) {
+        bank = bank_forks
+            .write()
+            .unwrap()
+            .reinstall_block_production_scheduler_into_working_genesis_bank();
     }
 
     // This is so that the signal_receiver does not go out of scope after the closure.
