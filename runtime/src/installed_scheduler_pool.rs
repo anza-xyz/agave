@@ -39,6 +39,7 @@ use {
         thread,
     },
 };
+use assert_matches::assert_matches;
 #[cfg(feature = "dev-context-only-utils")]
 use {mockall::automock, qualifier_attr::qualifiers};
 
@@ -754,7 +755,6 @@ mod tests {
             bank::test_utils::goto_end_of_slot_with_scheduler,
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
         },
-        assert_matches::assert_matches,
         mockall::Sequence,
         solana_sdk::system_transaction,
         std::sync::Mutex,
