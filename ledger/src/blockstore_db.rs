@@ -712,8 +712,8 @@ impl Rocks {
         self.db.iterator_cf(cf, iterator_mode)
     }
 
-    fn raw_iterator_cf(&self, cf: &ColumnFamily) -> DBRawIterator {
-        self.db.raw_iterator_cf(cf)
+    pub(crate) fn raw_iterator_cf(&self, cf: &ColumnFamily) -> Result<DBRawIterator> {
+        Ok(self.db.raw_iterator_cf(cf))
     }
 
     fn batch(&self) -> RWriteBatch {
@@ -1459,11 +1459,6 @@ impl Database {
         }
     }
 
-    #[inline]
-    pub fn raw_iterator_cf(&self, cf: &ColumnFamily) -> Result<DBRawIterator> {
-        Ok(self.backend.raw_iterator_cf(cf))
-    }
-
     pub fn batch(&self) -> Result<WriteBatch> {
         let write_batch = self.backend.batch();
         Ok(WriteBatch { write_batch })
@@ -1579,7 +1574,7 @@ where
 
     #[cfg(test)]
     pub fn is_empty(&self) -> Result<bool> {
-        let mut iter = self.backend.raw_iterator_cf(self.handle());
+        let mut iter = self.backend.raw_iterator_cf(self.handle())?;
         iter.seek_to_first();
         Ok(!iter.valid())
     }

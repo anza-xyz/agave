@@ -2603,22 +2603,23 @@ impl Blockstore {
         end_index: u64,
         max_missing: usize,
     ) -> Vec<u64> {
-        if let Ok(mut db_iterator) = self
+        let Ok(mut db_iterator) = self
             .db
+            .backend
             .raw_iterator_cf(self.db.cf_handle::<cf::ShredData>())
-        {
-            Self::find_missing_indexes::<cf::ShredData>(
-                &mut db_iterator,
-                slot,
-                first_timestamp,
-                defer_threshold_ticks,
-                start_index,
-                end_index,
-                max_missing,
-            )
-        } else {
-            vec![]
-        }
+        else {
+            return vec![];
+        };
+
+        Self::find_missing_indexes::<cf::ShredData>(
+            &mut db_iterator,
+            slot,
+            first_timestamp,
+            defer_threshold_ticks,
+            start_index,
+            end_index,
+            max_missing,
+        )
     }
 
     fn get_block_time(&self, slot: Slot) -> Result<Option<UnixTimestamp>> {
