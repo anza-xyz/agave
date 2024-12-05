@@ -851,6 +851,17 @@ mod test {
 
         info!("Transactions are only retried until max_retries");
         transactions.insert(
+            Signature::from([1; 64]),
+            TransactionInfo::new(
+                Signature::default(),
+                vec![],
+                working_bank.block_height(),
+                None,
+                Some(0),
+                Some(Instant::now()),
+            ),
+        );
+        transactions.insert(
             Signature::from([2; 64]),
             TransactionInfo::new(
                 Signature::default(),
@@ -877,7 +888,7 @@ mod test {
             result,
             ProcessTransactionsResult {
                 retried: 1,
-                max_retries_elapsed: 1,
+                max_retries_elapsed: 2,
                 ..ProcessTransactionsResult::default()
             }
         );
