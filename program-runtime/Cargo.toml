@@ -37,6 +37,8 @@ solana-timings = { workspace = true }
 solana-type-overrides = { workspace = true }
 solana_rbpf = { workspace = true }
 thiserror = { workspace = true }
+criterion = { workspace = true }
+criterion-stats = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
@@ -62,3 +64,7 @@ shuttle-test = ["solana-type-overrides/shuttle-test", "solana_rbpf/shuttle-test"
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "logging_benchmark"
+harness = false
