@@ -11,6 +11,7 @@ edition = { workspace = true }
 
 [dependencies]
 prost = { workspace = true }
+thiserror = { workspace = true }
 
 [build-dependencies]
 prost-build = { workspace = true }

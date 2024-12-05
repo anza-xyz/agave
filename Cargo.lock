@@ -9012,6 +9012,7 @@ version = "2.2.0"
 dependencies = [
  "prost",
  "prost-build",
+ "thiserror 2.0.4",
 ]
 
 [[package]]
