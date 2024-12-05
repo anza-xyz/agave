@@ -1,20 +1,23 @@
-#![cfg(feature = "full")]
+//! Calculate and collect rent from accounts.
 
-//! calculate and collect rent from Accounts
+#![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
+
 use {
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
-    solana_sdk::{
-        clock::Epoch,
-        epoch_schedule::EpochSchedule,
-        genesis_config::GenesisConfig,
-        incinerator,
-        pubkey::Pubkey,
-        rent::{Rent, RentDue},
-    },
+    solana_clock::Epoch,
+    solana_epoch_schedule::EpochSchedule,
+    solana_genesis_config::GenesisConfig,
+    solana_pubkey::Pubkey,
+    solana_rent::{Rent, RentDue},
+    solana_sdk_ids::incinerator,
 };
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[cfg_attr(feature = "frozen-abi", derive(solana_frozen_abi_macro::AbiExample))]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde_derive::Deserialize, serde_derive::Serialize)
+)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RentCollector {
     pub epoch: Epoch,
     pub epoch_schedule: EpochSchedule,
@@ -215,7 +218,9 @@ impl std::ops::AddAssign for CollectedInfo {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, assert_matches::assert_matches, solana_account::Account, solana_sdk::sysvar};
+    use {
+        super::*, assert_matches::assert_matches, solana_account::Account, solana_sdk_ids::sysvar,
+    };
 
     fn default_rent_collector_clone_with_epoch(epoch: Epoch) -> RentCollector {
         RentCollector::default().clone_with_epoch(epoch)
@@ -374,7 +379,7 @@ mod tests {
 
         // collect rent on a newly-created account
         let collected = rent_collector
-            .collect_from_created_account(&solana_sdk::pubkey::new_rand(), &mut created_account);
+            .collect_from_created_account(&solana_pubkey::new_rand(), &mut created_account);
         assert!(created_account.lamports() < old_lamports);
         assert_eq!(
             created_account.lamports() + collected.rent_amount,
@@ -385,7 +390,7 @@ mod tests {
 
         // collect rent on a already-existing account
         let collected = rent_collector
-            .collect_from_existing_account(&solana_sdk::pubkey::new_rand(), &mut existing_account);
+            .collect_from_existing_account(&solana_pubkey::new_rand(), &mut existing_account);
         assert!(existing_account.lamports() < old_lamports);
         assert_eq!(
             existing_account.lamports() + collected.rent_amount,
@@ -406,7 +411,7 @@ mod tests {
             let epoch = 3;
             let huge_lamports = 123_456_789_012;
             let tiny_lamports = 789_012;
-            let pubkey = solana_sdk::pubkey::new_rand();
+            let pubkey = solana_pubkey::new_rand();
 
             assert_eq!(account.rent_epoch(), 0);
 
@@ -441,7 +446,7 @@ mod tests {
         account.set_owner(sysvar::id());
         account.set_lamports(tiny_lamports);
 
-        let pubkey = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
 
         assert_eq!(account.rent_epoch(), 0);
 
