@@ -9010,8 +9010,17 @@ dependencies = [
 name = "solana-svm-fuzz-harness"
 version = "2.2.0"
 dependencies = [
+ "bincode",
+ "lazy_static",
  "prost",
  "prost-build",
+ "solana-account",
+ "solana-feature-set",
+ "solana-hash",
+ "solana-instruction",
+ "solana-pubkey",
+ "solana-sdk",
+ "solana-stable-layout",
  "thiserror 2.0.4",
 ]
 

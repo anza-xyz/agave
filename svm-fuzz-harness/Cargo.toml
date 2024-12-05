@@ -10,7 +10,17 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+bincode = { workspace = true }
+lazy_static = { workspace = true }
 prost = { workspace = true }
+solana-account = { workspace = true }
+solana-feature-set = { workspace = true }
+solana-hash = { workspace = true }
+solana-instruction = { workspace = true }
+solana-pubkey = { workspace = true }
+# Remove me when `solana_rent_collector` is split out from SDK.
+solana-sdk = { workspace = true }
+solana-stable-layout = { workspace = true }
 thiserror = { workspace = true }
 
 [build-dependencies]
