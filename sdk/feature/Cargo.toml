@@ -1,7 +1,7 @@
 [package]
-name = "solana-feature"
-description = "Solana runtime features."
-documentation = "https://docs.rs/solana-feature"
+name = "solana-feature-gate-interface"
+description = "Solana feature gate program interface."
+documentation = "https://docs.rs/solana-feature-gate-interface"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
@@ -24,7 +24,7 @@ solana-system-interface = { workspace = true, optional = true, features = [
 ] }
 
 [dev-dependencies]
-solana-feature = { path = ".", features = ["dev-context-only-utils"] }
+solana-feature-gate-interface = { path = ".", features = ["dev-context-only-utils"] }
 
 [features]
 bincode = [

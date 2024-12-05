@@ -7012,14 +7012,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-feature"
+name = "solana-feature-gate-interface"
 version = "2.2.0"
 dependencies = [
  "bincode",
  "serde",
  "serde_derive",
  "solana-account-info",
- "solana-feature",
+ "solana-feature-gate-interface",
  "solana-instruction",
  "solana-program-error",
  "solana-pubkey",
@@ -7909,7 +7909,7 @@ dependencies = [
  "solana-define-syscall",
  "solana-epoch-rewards",
  "solana-epoch-schedule",
- "solana-feature",
+ "solana-feature-gate-interface",
  "solana-fee-calculator",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",

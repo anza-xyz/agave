@@ -41,7 +41,7 @@ solana-cpi = { workspace = true }
 solana-decode-error = { workspace = true }
 solana-epoch-rewards = { workspace = true, features = ["serde", "sysvar"] }
 solana-epoch-schedule = { workspace = true, features = ["serde", "sysvar"] }
-solana-feature = { workspace = true, features = ["bincode"] }
+solana-feature-gate-interface = { workspace = true, features = ["bincode"] }
 solana-fee-calculator = { workspace = true, features = ["serde"] }
 solana-frozen-abi = { workspace = true, optional = true, features = ["frozen-abi"] }
 solana-frozen-abi-macro = { workspace = true, optional = true, features = ["frozen-abi"] }
