@@ -6026,6 +6026,7 @@ dependencies = [
  "solana-sysvar",
  "solana-sysvar-id",
  "solana-transaction-error",
+ "solana-unchecked-div-by-const",
  "thiserror 2.0.4",
  "wasm-bindgen",
 ]
@@ -7305,6 +7306,10 @@ dependencies = [
  "thiserror 2.0.4",
  "tokio",
 ]
+
+[[package]]
+name = "solana-unchecked-div-by-const"
+version = "2.2.0"
 
 [[package]]
 name = "solana-unified-scheduler-logic"

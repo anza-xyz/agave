@@ -179,6 +179,7 @@ members = [
     "sdk/transaction",
     "sdk/transaction-context",
     "sdk/transaction-error",
+    "sdk/unchecked-div-by-const",
     "send-transaction-service",
     "stake-accounts",
     "storage-bigtable",
@@ -585,6 +586,7 @@ solana-transaction-metrics-tracker = { path = "transaction-metrics-tracker", ver
 solana-turbine = { path = "turbine", version = "=2.2.0" }
 solana-type-overrides = { path = "type-overrides", version = "=2.2.0" }
 solana-udp-client = { path = "udp-client", version = "=2.2.0" }
+solana-unchecked-div-by-const = { path = "sdk/unchecked-div-by-const", version = "=2.2.0" }
 solana-version = { path = "version", version = "=2.2.0" }
 solana-vote = { path = "vote", version = "=2.2.0" }
 solana-vote-program = { path = "programs/vote", version = "=2.2.0" }
