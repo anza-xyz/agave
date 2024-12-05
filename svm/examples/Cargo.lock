@@ -5595,6 +5595,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-hard-forks"
+version = "2.2.0"
+dependencies = [
+ "byteorder",
+ "serde",
+ "serde_derive",
+]
+
+[[package]]
 name = "solana-hash"
 version = "2.2.0"
 dependencies = [
@@ -6597,6 +6606,7 @@ dependencies = [
  "solana-epoch-info",
  "solana-feature-set",
  "solana-fee-structure",
+ "solana-hard-forks",
  "solana-inflation",
  "solana-instruction",
  "solana-keypair",

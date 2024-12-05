@@ -69,7 +69,8 @@ pub mod example_mocks;
 pub mod exit;
 pub mod feature;
 pub mod genesis_config;
-pub mod hard_forks;
+#[deprecated(since = "2.2.0", note = "Use `solana-hard-forks` crate instead")]
+pub use solana_hard_forks as hard_forks;
 pub mod hash;
 pub mod inner_instruction;
 pub mod log;
