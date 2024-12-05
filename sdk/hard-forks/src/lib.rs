@@ -1,21 +1,22 @@
 //! The list of slot boundaries at which a hard fork should
 //! occur.
 
-#![cfg(feature = "full")]
+#![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 
-use {
-    byteorder::{ByteOrder, LittleEndian},
-    solana_sdk::clock::Slot,
-};
+use byteorder::{ByteOrder, LittleEndian};
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Default, Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[cfg_attr(feature = "frozen-abi", derive(solana_frozen_abi_macro::AbiExample))]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde_derive::Deserialize, serde_derive::Serialize)
+)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct HardForks {
-    hard_forks: Vec<(Slot, usize)>,
+    hard_forks: Vec<(u64, usize)>,
 }
 impl HardForks {
     // Register a fork to occur at all slots >= `slot` with a parent slot < `slot`
-    pub fn register(&mut self, new_slot: Slot) {
+    pub fn register(&mut self, new_slot: u64) {
         if let Some(i) = self
             .hard_forks
             .iter()
@@ -30,7 +31,7 @@ impl HardForks {
     }
 
     // Returns a sorted-by-slot iterator over the registered hark forks
-    pub fn iter(&self) -> std::slice::Iter<(Slot, usize)> {
+    pub fn iter(&self) -> std::slice::Iter<(u64, usize)> {
         self.hard_forks.iter()
     }
 
@@ -40,7 +41,7 @@ impl HardForks {
     }
 
     // Returns data to include in the bank hash for the given slot if a hard fork is scheduled
-    pub fn get_hash_data(&self, slot: Slot, parent_slot: Slot) -> Option<[u8; 8]> {
+    pub fn get_hash_data(&self, slot: u64, parent_slot: u64) -> Option<[u8; 8]> {
         // The expected number of hard forks in a cluster is small.
         // If this turns out to be false then a more efficient data
         // structure may be needed here to avoid this linear search
