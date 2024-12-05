@@ -1441,17 +1441,6 @@ impl Bank {
                 slots_in_epoch,
             ));
 
-        // Update sysvars before processing transactions
-        let (_, update_sysvars_time_us) = measure_us!({
-            new.update_slot_hashes();
-            new.update_stake_history(Some(parent.epoch()));
-            new.update_clock(Some(parent.epoch()));
-            new.update_last_restart_slot()
-        });
-
-        let (_, fill_sysvar_cache_time_us) = measure_us!(new
-            .transaction_processor
-            .fill_missing_sysvar_cache_entries(&new));
         time.stop();
 
         report_new_bank_metrics(
@@ -1475,8 +1464,6 @@ impl Bank {
                 ancestors_time_us,
                 update_epoch_time_us,
                 cache_preparation_time_us,
-                update_sysvars_time_us,
-                fill_sysvar_cache_time_us,
             },
         );
 
@@ -6377,6 +6364,14 @@ impl Bank {
         if self.is_partitioned_rewards_code_enabled() {
             self.distribute_partitioned_epoch_rewards();
         }
+        self.update_slot_hashes();
+        if let Some(parent) = self.parent() {
+            self.update_stake_history(Some(parent.epoch()));
+            self.update_clock(Some(parent.epoch()));
+        }
+        self.update_last_restart_slot();
+        self.transaction_processor
+            .fill_missing_sysvar_cache_entries(self);
     }
 
     /// Return the number of ticks since genesis.
