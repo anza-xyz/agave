@@ -2603,10 +2603,7 @@ impl Blockstore {
         end_index: u64,
         max_missing: usize,
     ) -> Vec<u64> {
-        let Ok(mut db_iterator) = self
-            .db
-            .backend
-            .raw_iterator_cf(self.db.cf_handle::<cf::ShredData>())
+        let Ok(mut db_iterator) = self.db.backend.raw_iterator_cf(self.data_shred_cf.handle())
         else {
             return vec![];
         };

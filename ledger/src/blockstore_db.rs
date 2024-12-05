@@ -1454,16 +1454,8 @@ impl Database {
         Ok(Database { backend })
     }
 
-    #[inline]
-    pub fn cf_handle<C>(&self) -> &ColumnFamily
-    where
-        C: Column + ColumnName,
-    {
-        self.backend.cf_handle(C::NAME)
-    }
-
     pub fn compact_range_cf<C: Column + ColumnName>(&self, from: &[u8], to: &[u8]) {
-        let cf = self.cf_handle::<C>();
+        let cf = self.backend.cf_handle(C::NAME);
         self.backend.db.compact_range_cf(cf, Some(from), Some(to));
     }
 }
