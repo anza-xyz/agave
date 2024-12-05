@@ -7238,6 +7238,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-hard-forks"
+version = "2.2.0"
+dependencies = [
+ "byteorder",
+ "serde",
+ "serde_derive",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
+]
+
+[[package]]
 name = "solana-hash"
 version = "2.2.0"
 dependencies = [
@@ -8579,6 +8590,7 @@ dependencies = [
  "solana-fee-structure",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
+ "solana-hard-forks",
  "solana-inflation",
  "solana-instruction",
  "solana-keypair",
