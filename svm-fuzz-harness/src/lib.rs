@@ -1,0 +1,1 @@
+//! Solana SVM fuzzing harness.

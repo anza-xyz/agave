@@ -9007,6 +9007,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-svm-fuzz-harness"
+version = "2.2.0"
+
+[[package]]
 name = "solana-svm-rent-collector"
 version = "2.2.0"
 dependencies = [
