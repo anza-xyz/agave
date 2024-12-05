@@ -3,7 +3,7 @@ use {
         scheduler_metrics::{SchedulerCountMetrics, SchedulerTimingMetrics},
         transaction_state::TransactionState,
         transaction_state_container::{
-            StateContainer, SuccessfulInsert, TransactionViewStateContainer,
+            SharedBytes, StateContainer, SuccessfulInsert, TransactionViewStateContainer,
         },
     },
     crate::{
@@ -22,7 +22,6 @@ use {
         transaction_version::TransactionVersion, transaction_view::SanitizedTransactionView,
     },
     arrayvec::ArrayVec,
-    bytes::Bytes,
     core::time::Duration,
     crossbeam_channel::{RecvTimeoutError, TryRecvError},
     solana_accounts_db::account_locks::validate_account_locks,
@@ -301,7 +300,7 @@ pub(crate) struct TransactionViewReceiveAndBuffer {
 }
 
 impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
-    type Transaction = RuntimeTransaction<ResolvedTransactionView<Bytes>>;
+    type Transaction = RuntimeTransaction<ResolvedTransactionView<SharedBytes>>;
     type Container = TransactionViewStateContainer;
 
     fn receive_and_buffer_packets(
@@ -416,13 +415,10 @@ impl TransactionViewReceiveAndBuffer {
                 num_received += 1;
 
                 // Reserve free-space to copy packet into, run sanitization checks, and insert.
-                if container.try_insert_with(|mut bytes| {
-                    // Copy packet data into the buffer, and freeze.
-                    bytes.extend_from_slice(packet_data);
-                    let bytes = bytes.freeze();
-
-                    match Self::try_handle_packet(
-                        bytes.clone(),
+                if container.try_insert_with_data(
+                    packet_data,
+                    |bytes| match Self::try_handle_packet(
+                        bytes,
                         root_bank,
                         working_bank,
                         alt_resolved_slot,
@@ -431,14 +427,14 @@ impl TransactionViewReceiveAndBuffer {
                     ) {
                         Ok(state) => {
                             num_buffered += 1;
-                            Ok(SuccessfulInsert { state, bytes })
+                            Ok(SuccessfulInsert { state })
                         }
                         Err(()) => {
                             num_dropped_on_receive += 1;
-                            Err(bytes.try_into_mut().expect("no leaks"))
+                            Err(())
                         }
-                    }
-                }) {
+                    },
+                ) {
                     num_dropped_on_capacity += 1;
                 };
             }
@@ -460,15 +456,16 @@ impl TransactionViewReceiveAndBuffer {
     }
 
     fn try_handle_packet(
-        bytes: Bytes,
+        bytes: SharedBytes,
         root_bank: &Bank,
         working_bank: &Bank,
         alt_resolved_slot: Slot,
         sanitized_epoch: Epoch,
         transaction_account_lock_limit: usize,
-    ) -> Result<TransactionState<RuntimeTransaction<ResolvedTransactionView<Bytes>>>, ()> {
+    ) -> Result<TransactionState<RuntimeTransaction<ResolvedTransactionView<SharedBytes>>>, ()>
+    {
         // Parsing and basic sanitization checks
-        let Ok(view) = SanitizedTransactionView::try_new_sanitized(bytes.clone()) else {
+        let Ok(view) = SanitizedTransactionView::try_new_sanitized(bytes) else {
             return Err(());
         };
 
