@@ -2673,21 +2673,6 @@ impl Bank {
                 metrics,
             );
 
-            // this checking of an unactivated feature can be enabled in tests or with a validator by passing `--partitioned-epoch-rewards-compare-calculation`
-            if self
-                .partitioned_epoch_rewards_config()
-                .test_compare_partitioned_epoch_rewards
-            {
-                // immutable `&self` to avoid side effects
-                (self as &Bank).compare_with_partitioned_rewards(
-                    &stake_rewards,
-                    &vote_account_rewards,
-                    rewarded_epoch,
-                    thread_pool,
-                    null_tracer(),
-                );
-            }
-
             self.store_stake_accounts(thread_pool, &stake_rewards, metrics);
             let vote_rewards = self.store_vote_accounts(vote_account_rewards, metrics);
             self.update_reward_history(stake_rewards, vote_rewards);
@@ -5676,16 +5661,13 @@ impl Bank {
         let measure_total = Measure::start("");
 
         let slot = self.slot();
-        let ignore = (!self.is_partitioned_rewards_feature_enabled()
-            && self.force_partition_rewards_in_first_block_of_epoch())
-        .then_some(sysvar::epoch_rewards::id());
         let (accounts_delta_hash, accounts_delta_hash_us) = measure_us!({
             self.rc
                 .accounts
                 .accounts_db
                 .calculate_accounts_delta_hash_internal(
                     slot,
-                    ignore,
+                    None,
                     self.skipped_rewrites.lock().unwrap().clone(),
                 )
         });

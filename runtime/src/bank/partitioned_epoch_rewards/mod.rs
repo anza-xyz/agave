@@ -1,5 +1,4 @@
 mod calculation;
-mod compare;
 mod distribution;
 mod epoch_rewards_hasher;
 mod sysvar;
@@ -13,10 +12,9 @@ use {
     solana_feature_set as feature_set,
     solana_sdk::{
         account::AccountSharedData,
-        account_utils::StateMut,
         pubkey::Pubkey,
         reward_info::RewardInfo,
-        stake::state::{Delegation, Stake, StakeStateV2},
+        stake::state::{Delegation, Stake},
     },
     solana_stake_program::points::PointValue,
     solana_vote::vote_account::VoteAccounts,
@@ -37,20 +35,6 @@ pub(crate) struct PartitionedStakeReward {
     /// fields are available on calculation, but RewardInfo::post_balance must
     /// be updated based on current account state before recording.
     pub stake_reward_info: RewardInfo,
-}
-
-impl PartitionedStakeReward {
-    fn maybe_from(stake_reward: &StakeReward) -> Option<Self> {
-        if let Ok(StakeStateV2::Stake(_meta, stake, _flags)) = stake_reward.stake_account.state() {
-            Some(Self {
-                stake_pubkey: stake_reward.stake_pubkey,
-                stake,
-                stake_reward_info: stake_reward.stake_reward_info,
-            })
-        } else {
-            None
-        }
-    }
 }
 
 type PartitionedStakeRewards = Vec<PartitionedStakeReward>;
@@ -252,20 +236,11 @@ impl Bank {
     /// This means the feature is activated or certain testing situations.
     pub(super) fn is_partitioned_rewards_code_enabled(&self) -> bool {
         self.is_partitioned_rewards_feature_enabled()
-            || self
-                .partitioned_epoch_rewards_config()
-                .test_enable_partitioned_rewards
     }
 
     /// For testing only
     pub fn force_reward_interval_end_for_tests(&mut self) {
         self.epoch_reward_status = EpochRewardStatus::Inactive;
-    }
-
-    pub(super) fn force_partition_rewards_in_first_block_of_epoch(&self) -> bool {
-        self.partitioned_epoch_rewards_config()
-            .test_enable_partitioned_rewards
-            && self.partitioned_rewards_stake_account_stores_per_block() == u64::MAX
     }
 }
 
@@ -281,18 +256,16 @@ mod tests {
             runtime_config::RuntimeConfig,
         },
         assert_matches::assert_matches,
-        solana_accounts_db::{
-            accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
-            partitioned_rewards::TestPartitionedEpochRewards,
-        },
+        solana_accounts_db::accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
         solana_sdk::{
             account::Account,
+            account_utils::StateMut,
             epoch_schedule::EpochSchedule,
             native_token::LAMPORTS_PER_SOL,
             reward_type::RewardType,
             signature::Signer,
             signer::keypair::Keypair,
-            stake::instruction::StakeError,
+            stake::{instruction::StakeError, state::StakeStateV2},
             system_transaction,
             transaction::Transaction,
             vote::state::{VoteStateVersions, MAX_LOCKOUT_HISTORY},
@@ -306,6 +279,20 @@ mod tests {
     impl PartitionedStakeReward {
         pub fn new_random() -> Self {
             Self::maybe_from(&StakeReward::new_random()).unwrap()
+        }
+
+        fn maybe_from(stake_reward: &StakeReward) -> Option<Self> {
+            if let Ok(StakeStateV2::Stake(_meta, stake, _flags)) =
+                stake_reward.stake_account.state()
+            {
+                Some(Self {
+                    stake_pubkey: stake_reward.stake_pubkey,
+                    stake,
+                    stake_reward_info: stake_reward.stake_reward_info,
+                })
+            } else {
+                None
+            }
         }
     }
 
@@ -384,10 +371,8 @@ mod tests {
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
 
         let mut accounts_db_config: AccountsDbConfig = ACCOUNTS_DB_CONFIG_FOR_TESTING.clone();
-        accounts_db_config.test_partitioned_epoch_rewards =
-            TestPartitionedEpochRewards::PartitionedEpochRewardsConfigRewardBlocks {
-                stake_account_stores_per_block,
-            };
+        accounts_db_config.partitioned_epoch_rewards_config =
+            PartitionedEpochRewardsConfig::new_for_test(stake_account_stores_per_block);
 
         let bank = Bank::new_with_paths(
             &genesis_config,
@@ -491,10 +476,8 @@ mod tests {
 
         // Config stake reward distribution to be 10 per block
         let mut accounts_db_config: AccountsDbConfig = ACCOUNTS_DB_CONFIG_FOR_TESTING.clone();
-        accounts_db_config.test_partitioned_epoch_rewards =
-            TestPartitionedEpochRewards::PartitionedEpochRewardsConfigRewardBlocks {
-                stake_account_stores_per_block: 10,
-            };
+        accounts_db_config.partitioned_epoch_rewards_config =
+            PartitionedEpochRewardsConfig::new_for_test(10);
 
         let bank = Bank::new_with_paths(
             &genesis_config,
