@@ -621,7 +621,7 @@ impl Rocks {
         }
     }
 
-    fn destroy(path: &Path) -> Result<()> {
+    pub(crate) fn destroy(path: &Path) -> Result<()> {
         DB::destroy(&Options::default(), path)?;
 
         Ok(())
@@ -1440,12 +1440,6 @@ impl Database {
             path: Arc::from(path),
             column_options,
         })
-    }
-
-    pub fn destroy(path: &Path) -> Result<()> {
-        Rocks::destroy(path)?;
-
-        Ok(())
     }
 
     #[inline]

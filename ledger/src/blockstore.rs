@@ -7,7 +7,7 @@ use {
         ancestor_iterator::AncestorIterator,
         blockstore_db::{
             columns as cf, Column, ColumnIndexDeprecation, Database, IteratorDirection,
-            IteratorMode, LedgerColumn, Result, WriteBatch,
+            IteratorMode, LedgerColumn, Result, Rocks, WriteBatch,
         },
         blockstore_meta::*,
         blockstore_metrics::BlockstoreRpcApiMetrics,
@@ -534,7 +534,7 @@ impl Blockstore {
     pub fn destroy(ledger_path: &Path) -> Result<()> {
         // Database::destroy() fails if the root directory doesn't exist
         fs::create_dir_all(ledger_path)?;
-        Database::destroy(&Path::new(ledger_path).join(BLOCKSTORE_DIRECTORY_ROCKS_LEVEL))
+        Rocks::destroy(&Path::new(ledger_path).join(BLOCKSTORE_DIRECTORY_ROCKS_LEVEL))
     }
 
     /// Returns the SlotMeta of the specified slot.
