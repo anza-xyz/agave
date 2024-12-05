@@ -8620,6 +8620,7 @@ dependencies = [
  "solana-serde",
  "solana-serde-varint",
  "solana-short-vec",
+ "solana-shred-version",
  "solana-signature",
  "solana-signer",
  "solana-system-transaction",
@@ -8804,6 +8805,16 @@ dependencies = [
  "serde_json",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
+]
+
+[[package]]
+name = "solana-shred-version"
+version = "2.2.0"
+dependencies = [
+ "byteorder",
+ "solana-hard-forks",
+ "solana-hash",
+ "solana-sha256-hasher",
 ]
 
 [[package]]

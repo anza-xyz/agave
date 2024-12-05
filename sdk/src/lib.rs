@@ -91,7 +91,8 @@ pub mod reward_type {
     pub use solana_reward_info::RewardType;
 }
 pub mod rpc_port;
-pub mod shred_version;
+#[deprecated(since = "2.2.0", note = "Use `solana-shred-version` crate instead")]
+pub use solana_shred_version as shred_version;
 pub mod signature;
 pub mod signer;
 pub mod transaction;
