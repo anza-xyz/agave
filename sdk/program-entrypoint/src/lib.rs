@@ -279,6 +279,85 @@ macro_rules! custom_panic_default {
     };
 }
 
+/// This is a more space efficient implementation of custom panic.
+/// It is about 1kb in size and depends on the unstable feature `panic_info_message`,
+/// which is going to be stabilized in Rust 1.84.
+///
+/// It works just like the default custom panic, except that dynamic generated error
+/// messages are not shown. For instance, trying to access an index out of bounds of a vector
+/// would give us `index Y is out of bounds for length X`. As the length is only know at runtime
+/// time, this message is elided.
+///
+/// All messages known at compile time are correctly displayed, e.g. `called unwrap in a None`,
+/// file names, line and column numbers.
+#[macro_export]
+macro_rules! custom_panic_space_efficient {
+    () => {
+        #[cfg(all(not(feature = "custom-panic"), target_os = "solana"))]
+        #[no_mangle]
+        fn custom_panic(info: &core::panic::PanicInfo<'_>) {
+            #[inline(never)]
+            unsafe fn write_num(mut num: u32, dst: *mut u8) -> usize {
+                let mut buf: [u8; 10] = [0; 10];
+                let init_ptr = buf.as_mut_ptr().add(11);
+                let mut write_ptr = init_ptr;
+                while num > 0 {
+                    write_ptr = write_ptr.sub(1);
+                    // SAFETY: The pointer will always be within *buf and *buf+10
+                    *write_ptr = (num % 10) as u8 + 48;
+                    num /= 10;
+                }
+                *dst = 58;
+                let dst = dst.add(1);
+                let len = init_ptr.offset_from(write_ptr) as usize;
+                // SAFETY: The copy length will never be greater than 10.
+                std::ptr::copy_nonoverlapping(write_ptr, dst, len);
+                len + 1
+            }
+
+            if let Some(loc) = info.location() {
+                let filename = loc.file().as_bytes();
+                // Vector of filename size + 11 (line number + separator)
+                // + 11 (column number + separator) + 13 (panic string) + 15 extra bytes
+                let mut msg_line = vec![32; filename.len() + 50];
+
+                let panic_str = "Panicked at: ".as_bytes(); // 13 bytes
+                let dst = msg_line.as_mut_ptr();
+                unsafe {
+                    let src = panic_str.as_ptr();
+                    // SAFETY: Destination is larger than the panic string.
+                    std::ptr::copy_nonoverlapping(src, dst, panic_str.len());
+
+                    let dst = dst.add(panic_str.len());
+                    let src = filename.as_ptr();
+                    // SAFETY: The destination is always larger than the filename string.
+                    std::ptr::copy_nonoverlapping(src, dst, filename.len());
+
+                    let dst = dst.add(filename.len());
+                    // SAFETY: `write_num` never writes more than 11 bytes
+                    let written_bytes = write_num(loc.line(), dst);
+                    let dst = dst.add(written_bytes);
+                    // SAFETY: `write_num` never writes more than 11 bytes
+                    let written_bytes = write_num(loc.column(), dst);
+
+                    let line_len = dst.add(written_bytes).offset_from(msg_line.as_ptr()) as usize;
+                    // SAFETY: The line length is properly offseted from number of
+                    // written bytes
+                    solana_program::syscalls::sol_log_(msg_line.as_ptr(), line_len as u64);
+                }
+            }
+
+            if let Some(Some(mm)) = info.message().map(|mes| mes.as_str()) {
+                let mes = mm.as_bytes();
+                // SAFETY: We assumed the panic message is well formed.
+                unsafe {
+                    solana_program::syscalls::sol_log_(mes.as_ptr(), mes.len() as u64);
+                }
+            }
+        }
+    };
+}
+
 /// The bump allocator used as the default rust heap when running programs.
 pub struct BumpAllocator {
     pub start: usize,
