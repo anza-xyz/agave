@@ -939,6 +939,9 @@ fn main() {
                 .takes_value(true)
                 .value_name("RPC_BENCH_TYPE(S)")
                 .multiple(true)
+                .requires_ifs(&[
+                    ("token-accounts-by-owner", "mint"),
+                ])
                 .help("Spawn a thread which calls a specific RPC method in a loop to benchmark it"),
         )
         .get_matches();
