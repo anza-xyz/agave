@@ -408,7 +408,7 @@ pub(crate) struct Rocks {
     path: PathBuf,
     access_type: AccessType,
     oldest_slot: OldestSlot,
-    column_options: LedgerColumnOptions,
+    column_options: Arc<LedgerColumnOptions>,
     write_batch_perf_status: PerfSamplingStatus,
 }
 
@@ -425,8 +425,8 @@ impl Rocks {
             db_options.set_wal_recovery_mode(recovery_mode.into());
         }
         let oldest_slot = OldestSlot::default();
-        let column_options = options.column_options.clone();
         let cf_descriptors = Self::cf_descriptors(&path, &options, &oldest_slot);
+        let column_options = Arc::from(options.column_options);
 
         // Open the database
         let db = match access_type {
@@ -620,6 +620,20 @@ impl Rocks {
                     )
                     .unwrap();
             }
+        }
+    }
+
+    pub(crate) fn column<C>(rocks: Arc<Self>) -> LedgerColumn<C>
+    where
+        C: Column + ColumnName,
+    {
+        let column_options = Arc::clone(&rocks.column_options);
+        LedgerColumn {
+            backend: rocks,
+            column: PhantomData,
+            column_options,
+            read_perf_status: PerfSamplingStatus::default(),
+            write_perf_status: PerfSamplingStatus::default(),
         }
     }
 
@@ -1343,7 +1357,6 @@ impl TypedColumn for columns::MerkleRootMeta {
 #[derive(Debug)]
 pub struct Database {
     pub(crate) backend: Arc<Rocks>,
-    column_options: Arc<LedgerColumnOptions>,
 }
 
 #[derive(Debug)]
@@ -1437,13 +1450,8 @@ impl WriteBatch {
 
 impl Database {
     pub fn open(path: PathBuf, options: BlockstoreOptions) -> Result<Self> {
-        let column_options = Arc::new(options.column_options.clone());
         let backend = Arc::new(Rocks::open(path, options)?);
-
-        Ok(Database {
-            backend,
-            column_options,
-        })
+        Ok(Database { backend })
     }
 
     #[inline]
@@ -1452,19 +1460,6 @@ impl Database {
         C: Column + ColumnName,
     {
         self.backend.cf_handle(C::NAME)
-    }
-
-    pub fn column<C>(&self) -> LedgerColumn<C>
-    where
-        C: Column + ColumnName,
-    {
-        LedgerColumn {
-            backend: Arc::clone(&self.backend),
-            column: PhantomData,
-            column_options: Arc::clone(&self.column_options),
-            read_perf_status: PerfSamplingStatus::default(),
-            write_perf_status: PerfSamplingStatus::default(),
-        }
     }
 
     pub fn compact_range_cf<C: Column + ColumnName>(&self, from: &[u8], to: &[u8]) {
@@ -2166,7 +2161,7 @@ pub mod tests {
                 enforce_ulimit_nofile: false,
                 ..BlockstoreOptions::default()
             };
-            let mut rocks = Rocks::open(db_path, options).unwrap();
+            let mut rocks = Rocks::open(db_path.to_path_buf(), options).unwrap();
 
             // Introduce a new column that will not be known
             rocks
@@ -2183,7 +2178,7 @@ pub mod tests {
                 enforce_ulimit_nofile: false,
                 ..BlockstoreOptions::default()
             };
-            let _ = Rocks::open(db_path, options).unwrap();
+            let _ = Rocks::open(db_path.to_path_buf(), options).unwrap();
         }
         {
             let options = BlockstoreOptions {
@@ -2191,7 +2186,7 @@ pub mod tests {
                 enforce_ulimit_nofile: false,
                 ..BlockstoreOptions::default()
             };
-            let _ = Rocks::open(db_path, options).unwrap();
+            let _ = Rocks::open(db_path.to_path_buf(), options).unwrap();
         }
     }
 

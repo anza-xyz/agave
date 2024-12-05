@@ -387,27 +387,27 @@ impl Blockstore {
         info!("Opening blockstore at {:?}", blockstore_path);
         let db = Database::open(blockstore_path, options)?;
 
-        let address_signatures_cf = db.column();
-        let bank_hash_cf = db.column();
-        let block_height_cf = db.column();
-        let blocktime_cf = db.column();
-        let code_shred_cf = db.column();
-        let data_shred_cf = db.column();
-        let dead_slots_cf = db.column();
-        let duplicate_slots_cf = db.column();
-        let erasure_meta_cf = db.column();
-        let index_cf = db.column();
-        let merkle_root_meta_cf = db.column();
-        let meta_cf = db.column();
-        let optimistic_slots_cf = db.column();
-        let orphans_cf = db.column();
-        let perf_samples_cf = db.column();
-        let program_costs_cf = db.column();
-        let rewards_cf = db.column();
-        let roots_cf = db.column();
-        let transaction_memos_cf = db.column();
-        let transaction_status_cf = db.column();
-        let transaction_status_index_cf = db.column();
+        let address_signatures_cf = Rocks::column(db.backend.clone());
+        let bank_hash_cf = Rocks::column(db.backend.clone());
+        let block_height_cf = Rocks::column(db.backend.clone());
+        let blocktime_cf = Rocks::column(db.backend.clone());
+        let code_shred_cf = Rocks::column(db.backend.clone());
+        let data_shred_cf = Rocks::column(db.backend.clone());
+        let dead_slots_cf = Rocks::column(db.backend.clone());
+        let duplicate_slots_cf = Rocks::column(db.backend.clone());
+        let erasure_meta_cf = Rocks::column(db.backend.clone());
+        let index_cf = Rocks::column(db.backend.clone());
+        let merkle_root_meta_cf = Rocks::column(db.backend.clone());
+        let meta_cf = Rocks::column(db.backend.clone());
+        let optimistic_slots_cf = Rocks::column(db.backend.clone());
+        let orphans_cf = Rocks::column(db.backend.clone());
+        let perf_samples_cf = Rocks::column(db.backend.clone());
+        let program_costs_cf = Rocks::column(db.backend.clone());
+        let rewards_cf = Rocks::column(db.backend.clone());
+        let roots_cf = Rocks::column(db.backend.clone());
+        let transaction_memos_cf = Rocks::column(db.backend.clone());
+        let transaction_status_cf = Rocks::column(db.backend.clone());
+        let transaction_status_index_cf = Rocks::column(db.backend.clone());
 
         let db = Arc::new(db);
 
