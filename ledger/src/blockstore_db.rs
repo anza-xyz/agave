@@ -643,7 +643,7 @@ impl Rocks {
         Ok(())
     }
 
-    fn cf_handle(&self, cf: &str) -> &ColumnFamily {
+    pub(crate) fn cf_handle(&self, cf: &str) -> &ColumnFamily {
         self.db
             .cf_handle(cf)
             .expect("should never get an unknown column")
@@ -711,7 +711,7 @@ impl Rocks {
         self.db.iterator_cf(cf, iterator_mode)
     }
 
-    fn iterator_cf_raw_key(
+    pub(crate) fn iterator_cf_raw_key(
         &self,
         cf: &ColumnFamily,
         iterator_mode: IteratorMode<Vec<u8>>,
