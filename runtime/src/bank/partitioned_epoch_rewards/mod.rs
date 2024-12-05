@@ -224,12 +224,6 @@ impl Bank {
     pub fn force_reward_interval_end_for_tests(&mut self) {
         self.epoch_reward_status = EpochRewardStatus::Inactive;
     }
-
-    pub(super) fn force_partition_rewards_in_first_block_of_epoch(&self) -> bool {
-        self.partitioned_epoch_rewards_config()
-            .test_enable_partitioned_rewards
-            && self.partitioned_rewards_stake_account_stores_per_block() == u64::MAX
-    }
 }
 
 #[cfg(test)]
@@ -244,10 +238,7 @@ mod tests {
             runtime_config::RuntimeConfig,
         },
         assert_matches::assert_matches,
-        solana_accounts_db::{
-            accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
-            partitioned_rewards::TestPartitionedEpochRewards,
-        },
+        solana_accounts_db::accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
         solana_sdk::{
             account::Account,
             account_utils::StateMut,
@@ -362,10 +353,8 @@ mod tests {
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
 
         let mut accounts_db_config: AccountsDbConfig = ACCOUNTS_DB_CONFIG_FOR_TESTING.clone();
-        accounts_db_config.test_partitioned_epoch_rewards =
-            TestPartitionedEpochRewards::PartitionedEpochRewardsConfigRewardBlocks {
-                stake_account_stores_per_block,
-            };
+        accounts_db_config.partitioned_epoch_rewards_config =
+            PartitionedEpochRewardsConfig::new_for_test(stake_account_stores_per_block);
 
         let bank = Bank::new_with_paths(
             &genesis_config,
@@ -459,10 +448,8 @@ mod tests {
 
         // Config stake reward distribution to be 10 per block
         let mut accounts_db_config: AccountsDbConfig = ACCOUNTS_DB_CONFIG_FOR_TESTING.clone();
-        accounts_db_config.test_partitioned_epoch_rewards =
-            TestPartitionedEpochRewards::PartitionedEpochRewardsConfigRewardBlocks {
-                stake_account_stores_per_block: 10,
-            };
+        accounts_db_config.partitioned_epoch_rewards_config =
+            PartitionedEpochRewardsConfig::new_for_test(10);
 
         let bank = Bank::new_with_paths(
             &genesis_config,
