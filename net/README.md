@@ -24,6 +24,14 @@ More information on AWS CLI configuration can be found [here](https://docs.aws.a
 Ensure that `$(whoami)` is the name of an InfluxDB user account with enough
 access to create a new InfluxDB database.  Ask mvines@ for help if needed.
 
+```bash
+$ ./init-metrics.sh -c <db_name> $(whoami)   #<-- Create a metrics database for the testnet and configure credentials
+```
+You will want to store the ```SOLANA_METRICS_CONFIG``` env variable as suggested by the script in your shell environment for future use.
+Failure to do so will break metrics in the other scripts.
+
+Set ```RUST_LOG=info``` (or debug) to make the metrics trace points active in the upcoming runs.
+
 ## Quick Start
 
 NOTE: This example uses GCE.  If you are using AWS EC2, replace `./gce.sh` with
@@ -32,11 +40,11 @@ NOTE: This example uses GCE.  If you are using AWS EC2, replace `./gce.sh` with
 ```bash
 $ cd net/
 $ ./gce.sh create -n 5 -c 1     #<-- Create a GCE testnet with 5 additional nodes (beyond the bootstrap node) and 1 client (billing starts here)
-$ ./init-metrics.sh $(whoami)   #<-- Recreate a metrics database for the testnet and configure credentials
+$ ./gce.sh info                 #<-- Show the current network node IPs so you can SSH into them if needed
 $ ./net.sh start                #<-- Deploy the network from the local workspace and start processes on all nodes including bench-tps on the client node
 $ ./ssh.sh                      #<-- Show a help to ssh into any testnet node to access logs/etc
 $ ./net.sh stop                 #<-- Stop running processes on all nodes
-$ ./gce.sh delete               #<-- Dispose of the network (billing stops here)
+$ ./gce.sh delete               #<-- Dispose of the network (billing stops here). This can be executed at any point to reset everything into "clean" state
 ```
 
 ## Tips
