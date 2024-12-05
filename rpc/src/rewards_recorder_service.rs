@@ -1,3 +1,6 @@
+//! The `RewardsRecorderService` is responsible for receiving rewards data and
+//! persisting it into the `Blockstore`.
+
 use {
     crossbeam_channel::RecvTimeoutError,
     solana_ledger::{
