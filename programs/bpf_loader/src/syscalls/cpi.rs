@@ -432,14 +432,14 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
         )?;
         let account_metas = translate_slice::<AccountMeta>(
             memory_mapping,
-            ix.accounts.as_ptr() as u64,
-            ix.accounts.len() as u64,
+            ix.accounts.as_vaddr(),
+            ix.accounts.len(),
             invoke_context.get_check_aligned(),
         )?;
         let data = translate_slice::<u8>(
             memory_mapping,
-            ix.data.as_ptr() as u64,
-            ix.data.len() as u64,
+            ix.data.as_vaddr(),
+            ix.data.len(),
             invoke_context.get_check_aligned(),
         )?
         .to_vec();
