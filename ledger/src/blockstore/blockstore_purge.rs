@@ -829,8 +829,8 @@ pub mod tests {
         let (first_index, last_index) = get_index_bounds(blockstore);
         blockstore.db.backend.set_oldest_slot(oldest_slot);
         blockstore
-            .db
-            .compact_range_cf::<cf::TransactionStatus>(&first_index, &last_index);
+            .transaction_status_cf
+            .compact_range_raw_key(&first_index, &last_index);
     }
 
     #[test_case(purge_exact; "exact")]
@@ -1010,7 +1010,7 @@ pub mod tests {
 
         let oldest_slot = 3;
         blockstore.db.backend.set_oldest_slot(oldest_slot);
-        blockstore.db.compact_range_cf::<cf::TransactionStatus>(
+        blockstore.transaction_status_cf.compact_range_raw_key(
             &cf::TransactionStatus::key(first_index),
             &cf::TransactionStatus::key(last_index),
         );
@@ -1044,7 +1044,7 @@ pub mod tests {
 
         let oldest_slot = 12;
         blockstore.db.backend.set_oldest_slot(oldest_slot);
-        blockstore.db.compact_range_cf::<cf::TransactionStatus>(
+        blockstore.transaction_status_cf.compact_range_raw_key(
             &cf::TransactionStatus::key(first_index),
             &cf::TransactionStatus::key(last_index),
         );
@@ -1119,8 +1119,8 @@ pub mod tests {
         // Purge at slot 0 should not affect any memos
         blockstore.db.backend.set_oldest_slot(0);
         blockstore
-            .db
-            .compact_range_cf::<cf::TransactionMemos>(&first_index, &last_index);
+            .transaction_memos_cf
+            .compact_range_raw_key(&first_index, &last_index);
         let memos_iterator = blockstore
             .transaction_memos_cf
             .iterator_cf_raw_key(IteratorMode::Start);
@@ -1134,8 +1134,8 @@ pub mod tests {
         // Purge at oldest_slot without clean_slot_0 only purges the current memo at slot 4
         blockstore.db.backend.set_oldest_slot(oldest_slot);
         blockstore
-            .db
-            .compact_range_cf::<cf::TransactionMemos>(&first_index, &last_index);
+            .transaction_memos_cf
+            .compact_range_raw_key(&first_index, &last_index);
         let memos_iterator = blockstore
             .transaction_memos_cf
             .iterator_cf_raw_key(IteratorMode::Start);
@@ -1151,8 +1151,8 @@ pub mod tests {
         // Purge at oldest_slot with clean_slot_0 purges deprecated memos
         blockstore.db.backend.set_clean_slot_0(true);
         blockstore
-            .db
-            .compact_range_cf::<cf::TransactionMemos>(&first_index, &last_index);
+            .transaction_memos_cf
+            .compact_range_raw_key(&first_index, &last_index);
         let memos_iterator = blockstore
             .transaction_memos_cf
             .iterator_cf_raw_key(IteratorMode::Start);

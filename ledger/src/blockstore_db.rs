@@ -1453,11 +1453,6 @@ impl Database {
         let backend = Arc::new(Rocks::open(path, options)?);
         Ok(Database { backend })
     }
-
-    pub fn compact_range_cf<C: Column + ColumnName>(&self, from: &[u8], to: &[u8]) {
-        let cf = self.backend.cf_handle(C::NAME);
-        self.backend.db.compact_range_cf(cf, Some(from), Some(to));
-    }
 }
 
 impl<C> LedgerColumn<C>
@@ -1531,6 +1526,12 @@ where
         let to = Some(C::key(C::as_index(to)));
         self.backend.db.compact_range_cf(cf, from, to);
         Ok(true)
+    }
+
+    #[cfg(test)]
+    pub fn compact_range_raw_key(&self, from: &[u8], to: &[u8]) {
+        let cf = self.handle();
+        self.backend.db.compact_range_cf(cf, Some(from), Some(to));
     }
 
     #[inline]
