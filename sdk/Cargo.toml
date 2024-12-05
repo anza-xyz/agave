@@ -77,6 +77,7 @@ frozen-abi = [
     "solana-genesis-config/frozen-abi",
     "solana-inflation/frozen-abi",
     "solana-poh-config/frozen-abi",
+    "solana-rent-collector/frozen-abi",
     "solana-program/frozen-abi",
     "solana-reward-info/frozen-abi",
     "solana-short-vec/frozen-abi",
@@ -161,6 +162,7 @@ solana-pubkey = { workspace = true, default-features = false, features = [
     "std",
 ] }
 solana-quic-definitions = { workspace = true, optional = true }
+solana-rent-collector = { workspace = true, features = ["serde"] }
 solana-rent-debits = { workspace = true }
 solana-reserved-account-keys = { workspace = true }
 solana-reward-info = { workspace = true, features = ["serde"] }
