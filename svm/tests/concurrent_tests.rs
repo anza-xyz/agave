@@ -32,6 +32,7 @@ use {
             TransactionProcessingEnvironment,
         },
     },
+    solana_timings::ExecuteTimings,
     std::collections::HashMap,
 };
 
@@ -69,7 +70,13 @@ fn program_cache_execution(threads: usize) {
             let maps = account_maps.clone();
             let programs = programs.clone();
             thread::spawn(move || {
-                let result = processor.replenish_program_cache(&local_bank, &maps, false, true);
+                let result = processor.replenish_program_cache(
+                    &local_bank,
+                    &maps,
+                    &mut ExecuteTimings::default(),
+                    false,
+                    true,
+                );
                 for key in &programs {
                     let cache_entry = result.find(key);
                     assert!(matches!(

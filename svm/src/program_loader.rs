@@ -15,7 +15,7 @@ use {
         pubkey::Pubkey,
         transaction::{self, TransactionError},
     },
-    solana_timings::ExecuteDetailsTimings,
+    solana_timings::ExecuteTimings,
     solana_type_overrides::sync::Arc,
 };
 
@@ -124,6 +124,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
     environments: &ProgramRuntimeEnvironments,
     pubkey: &Pubkey,
     slot: Slot,
+    execute_timings: &mut ExecuteTimings,
     reload: bool,
 ) -> Option<Arc<ProgramCacheEntry>> {
     let mut load_program_metrics = LoadProgramMetrics {
@@ -210,8 +211,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
         )
     });
 
-    let mut timings = ExecuteDetailsTimings::default();
-    load_program_metrics.submit_datapoint(&mut timings);
+    load_program_metrics.submit_datapoint(&mut execute_timings.details);
     loaded_program.update_access_slot(slot);
     Some(Arc::new(loaded_program))
 }
@@ -528,6 +528,7 @@ mod tests {
             &batch_processor.get_environments_for_epoch(50).unwrap(),
             &key,
             500,
+            &mut ExecuteTimings::default(),
             false,
         );
         assert!(result.is_none());
@@ -550,6 +551,7 @@ mod tests {
             &batch_processor.get_environments_for_epoch(20).unwrap(),
             &key,
             0, // Slot 0
+            &mut ExecuteTimings::default(),
             false,
         );
 
@@ -584,6 +586,7 @@ mod tests {
             &batch_processor.get_environments_for_epoch(20).unwrap(),
             &key,
             200,
+            &mut ExecuteTimings::default(),
             false,
         );
         let loaded_program = ProgramCacheEntry::new_tombstone(
@@ -611,6 +614,7 @@ mod tests {
             &batch_processor.get_environments_for_epoch(20).unwrap(),
             &key,
             200,
+            &mut ExecuteTimings::default(),
             false,
         );
 
@@ -664,6 +668,7 @@ mod tests {
             &batch_processor.get_environments_for_epoch(0).unwrap(),
             &key1,
             0,
+            &mut ExecuteTimings::default(),
             false,
         );
         let loaded_program = ProgramCacheEntry::new_tombstone(
@@ -701,6 +706,7 @@ mod tests {
             &batch_processor.get_environments_for_epoch(20).unwrap(),
             &key1,
             200,
+            &mut ExecuteTimings::default(),
             false,
         );
 
@@ -750,6 +756,7 @@ mod tests {
             &batch_processor.get_environments_for_epoch(0).unwrap(),
             &key,
             0,
+            &mut ExecuteTimings::default(),
             false,
         );
         let loaded_program = ProgramCacheEntry::new_tombstone(
@@ -783,6 +790,7 @@ mod tests {
             &batch_processor.get_environments_for_epoch(20).unwrap(),
             &key,
             200,
+            &mut ExecuteTimings::default(),
             false,
         );
 
@@ -833,6 +841,7 @@ mod tests {
                     .unwrap(),
                 &key,
                 200,
+                &mut ExecuteTimings::default(),
                 false,
             )
             .unwrap();
