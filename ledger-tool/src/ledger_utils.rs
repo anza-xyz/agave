@@ -9,7 +9,6 @@ use {
     },
     solana_core::{
         accounts_hash_verifier::AccountsHashVerifier,
-        rewards_recorder_service::RewardsRecorderService,
         snapshot_packager_service::PendingSnapshotPackages, validator::BlockVerificationMethod,
     },
     solana_geyser_plugin_manager::geyser_plugin_service::{
@@ -27,7 +26,10 @@ use {
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     solana_measure::measure_time,
-    solana_rpc::transaction_status_service::TransactionStatusService,
+    solana_rpc::{
+        rewards_recorder_service::RewardsRecorderService,
+        transaction_status_service::TransactionStatusService,
+    },
     solana_runtime::{
         accounts_background_service::{
             AbsRequestHandlers, AbsRequestSender, AccountsBackgroundService,
