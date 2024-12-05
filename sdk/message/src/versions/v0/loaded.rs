@@ -3,7 +3,7 @@ use serde_derive::{Deserialize, Serialize};
 use {
     crate::{v0, AccountKeys},
     solana_pubkey::Pubkey,
-    solana_sdk_ids::bpf_loader_upgradeable,
+    solana_sdk_ids::{bpf_loader_upgradeable, loader_v4},
     std::{borrow::Cow, collections::HashSet},
 };
 
@@ -180,7 +180,7 @@ impl<'a> LoadedMessage<'a> {
     pub fn is_upgradeable_loader_present(&self) -> bool {
         self.account_keys()
             .iter()
-            .any(|&key| key == bpf_loader_upgradeable::id())
+            .any(|key| bpf_loader_upgradeable::check_id(key) || loader_v4::check_id(key))
     }
 }
 
