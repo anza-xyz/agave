@@ -413,7 +413,7 @@ pub(crate) struct Rocks {
 }
 
 impl Rocks {
-    fn open(path: PathBuf, options: BlockstoreOptions) -> Result<Rocks> {
+    pub(crate) fn open(path: PathBuf, options: BlockstoreOptions) -> Result<Rocks> {
         let access_type = options.access_type.clone();
         let recovery_mode = options.recovery_mode.clone();
 
@@ -623,13 +623,13 @@ impl Rocks {
         }
     }
 
-    pub(crate) fn column<C>(rocks: Arc<Self>) -> LedgerColumn<C>
+    pub(crate) fn column<C>(self: &Arc<Self>) -> LedgerColumn<C>
     where
         C: Column + ColumnName,
     {
-        let column_options = Arc::clone(&rocks.column_options);
+        let column_options = Arc::clone(&self.column_options);
         LedgerColumn {
-            backend: rocks,
+            backend: Arc::clone(self),
             column: PhantomData,
             column_options,
             read_perf_status: PerfSamplingStatus::default(),
@@ -1355,11 +1355,6 @@ impl TypedColumn for columns::MerkleRootMeta {
 }
 
 #[derive(Debug)]
-pub struct Database {
-    pub(crate) backend: Arc<Rocks>,
-}
-
-#[derive(Debug)]
 pub struct LedgerColumn<C>
 where
     C: Column + ColumnName,
@@ -1445,13 +1440,6 @@ impl WriteBatch {
     fn delete_range_cf(&mut self, cf: &ColumnFamily, from: &[u8], to: &[u8]) -> Result<()> {
         self.write_batch.delete_range_cf(cf, from, to);
         Ok(())
-    }
-}
-
-impl Database {
-    pub fn open(path: PathBuf, options: BlockstoreOptions) -> Result<Self> {
-        let backend = Arc::new(Rocks::open(path, options)?);
-        Ok(Database { backend })
     }
 }
 

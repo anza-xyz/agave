@@ -6,8 +6,8 @@ use {
     crate::{
         ancestor_iterator::AncestorIterator,
         blockstore_db::{
-            columns as cf, Column, ColumnIndexDeprecation, Database, IteratorDirection,
-            IteratorMode, LedgerColumn, Result, Rocks, WriteBatch,
+            columns as cf, Column, ColumnIndexDeprecation, IteratorDirection, IteratorMode,
+            LedgerColumn, Result, Rocks, WriteBatch,
         },
         blockstore_meta::*,
         blockstore_metrics::BlockstoreRpcApiMetrics,
@@ -232,7 +232,7 @@ pub struct BlockstoreSignals {
 // ledger window
 pub struct Blockstore {
     ledger_path: PathBuf,
-    db: Arc<Database>,
+    db: Arc<Rocks>,
     // Column families
     address_signatures_cf: LedgerColumn<cf::AddressSignatures>,
     bank_hash_cf: LedgerColumn<cf::BankHash>,
@@ -351,10 +351,6 @@ pub fn banking_retrace_path(path: &Path) -> PathBuf {
 }
 
 impl Blockstore {
-    pub fn db(self) -> Arc<Database> {
-        self.db
-    }
-
     pub fn ledger_path(&self) -> &PathBuf {
         &self.ledger_path
     }
@@ -385,31 +381,29 @@ impl Blockstore {
         // Open the database
         let mut measure = Measure::start("blockstore open");
         info!("Opening blockstore at {:?}", blockstore_path);
-        let db = Database::open(blockstore_path, options)?;
+        let db = Arc::new(Rocks::open(blockstore_path, options)?);
 
-        let address_signatures_cf = Rocks::column(db.backend.clone());
-        let bank_hash_cf = Rocks::column(db.backend.clone());
-        let block_height_cf = Rocks::column(db.backend.clone());
-        let blocktime_cf = Rocks::column(db.backend.clone());
-        let code_shred_cf = Rocks::column(db.backend.clone());
-        let data_shred_cf = Rocks::column(db.backend.clone());
-        let dead_slots_cf = Rocks::column(db.backend.clone());
-        let duplicate_slots_cf = Rocks::column(db.backend.clone());
-        let erasure_meta_cf = Rocks::column(db.backend.clone());
-        let index_cf = Rocks::column(db.backend.clone());
-        let merkle_root_meta_cf = Rocks::column(db.backend.clone());
-        let meta_cf = Rocks::column(db.backend.clone());
-        let optimistic_slots_cf = Rocks::column(db.backend.clone());
-        let orphans_cf = Rocks::column(db.backend.clone());
-        let perf_samples_cf = Rocks::column(db.backend.clone());
-        let program_costs_cf = Rocks::column(db.backend.clone());
-        let rewards_cf = Rocks::column(db.backend.clone());
-        let roots_cf = Rocks::column(db.backend.clone());
-        let transaction_memos_cf = Rocks::column(db.backend.clone());
-        let transaction_status_cf = Rocks::column(db.backend.clone());
-        let transaction_status_index_cf = Rocks::column(db.backend.clone());
-
-        let db = Arc::new(db);
+        let address_signatures_cf = db.column();
+        let bank_hash_cf = db.column();
+        let block_height_cf = db.column();
+        let blocktime_cf = db.column();
+        let code_shred_cf = db.column();
+        let data_shred_cf = db.column();
+        let dead_slots_cf = db.column();
+        let duplicate_slots_cf = db.column();
+        let erasure_meta_cf = db.column();
+        let index_cf = db.column();
+        let merkle_root_meta_cf = db.column();
+        let meta_cf = db.column();
+        let optimistic_slots_cf = db.column();
+        let orphans_cf = db.column();
+        let perf_samples_cf = db.column();
+        let program_costs_cf = db.column();
+        let rewards_cf = db.column();
+        let roots_cf = db.column();
+        let transaction_memos_cf = db.column();
+        let transaction_status_cf = db.column();
+        let transaction_status_index_cf = db.column();
 
         // Get max root or 0 if it doesn't exist
         let max_root = roots_cf
@@ -672,7 +666,7 @@ impl Blockstore {
     }
 
     pub fn live_files_metadata(&self) -> Result<Vec<LiveFile>> {
-        self.db.backend.live_files_metadata()
+        self.db.live_files_metadata()
     }
 
     pub fn slot_data_iterator(
@@ -2603,8 +2597,7 @@ impl Blockstore {
         end_index: u64,
         max_missing: usize,
     ) -> Vec<u64> {
-        let Ok(mut db_iterator) = self.db.backend.raw_iterator_cf(self.data_shred_cf.handle())
-        else {
+        let Ok(mut db_iterator) = self.db.raw_iterator_cf(self.data_shred_cf.handle()) else {
             return vec![];
         };
 
@@ -2921,7 +2914,7 @@ impl Blockstore {
         if highest_primary_index_slot.is_some_and(|slot| slot != 0) {
             self.set_highest_primary_index_slot(highest_primary_index_slot);
         } else {
-            self.db.backend.set_clean_slot_0(true);
+            self.db.set_clean_slot_0(true);
         }
         Ok(())
     }
@@ -2931,7 +2924,7 @@ impl Blockstore {
         if let Some(highest_primary_index_slot) = *w_highest_primary_index_slot {
             if oldest_slot > highest_primary_index_slot {
                 *w_highest_primary_index_slot = None;
-                self.db.backend.set_clean_slot_0(true);
+                self.db.set_clean_slot_0(true);
             }
         }
         Ok(())
@@ -4272,7 +4265,7 @@ impl Blockstore {
     }
 
     pub fn storage_size(&self) -> Result<u64> {
-        self.db.backend.storage_size()
+        self.db.storage_size()
     }
 
     /// Returns the total physical storage size contributed by all data shreds.
@@ -4295,7 +4288,7 @@ impl Blockstore {
 
     /// Returns whether the blockstore has primary (read and write) access
     pub fn is_primary_access(&self) -> bool {
-        self.db.backend.is_primary_access()
+        self.db.is_primary_access()
     }
 
     /// Scan for any ancestors of the supplied `start_root` that are not
@@ -4771,11 +4764,11 @@ impl Blockstore {
     }
 
     pub fn get_write_batch(&self) -> Result<WriteBatch> {
-        self.db.backend.batch()
+        self.db.batch()
     }
 
     pub fn write_batch(&self, write_batch: WriteBatch) -> Result<()> {
-        self.db.backend.write(write_batch)
+        self.db.write(write_batch)
     }
 }
 

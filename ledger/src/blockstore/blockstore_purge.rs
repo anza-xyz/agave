@@ -73,7 +73,7 @@ impl Blockstore {
         // convert here from inclusive purged range end to inclusive alive range start to align
         // with Slot::default() for initial compaction filter behavior consistency
         let to_slot = to_slot.checked_add(1).unwrap();
-        self.db.backend.set_oldest_slot(to_slot);
+        self.db.set_oldest_slot(to_slot);
 
         if let Err(err) = self.maybe_cleanup_highest_primary_index_slot(to_slot) {
             warn!("Could not clean up TransactionStatusIndex: {err:?}");
@@ -827,7 +827,7 @@ pub mod tests {
 
     fn purge_compaction_filter(blockstore: &Blockstore, oldest_slot: Slot) {
         let (first_index, last_index) = get_index_bounds(blockstore);
-        blockstore.db.backend.set_oldest_slot(oldest_slot);
+        blockstore.db.set_oldest_slot(oldest_slot);
         blockstore
             .transaction_status_cf
             .compact_range_raw_key(&first_index, &last_index);
@@ -1009,7 +1009,7 @@ pub mod tests {
         };
 
         let oldest_slot = 3;
-        blockstore.db.backend.set_oldest_slot(oldest_slot);
+        blockstore.db.set_oldest_slot(oldest_slot);
         blockstore.transaction_status_cf.compact_range_raw_key(
             &cf::TransactionStatus::key(first_index),
             &cf::TransactionStatus::key(last_index),
@@ -1043,7 +1043,7 @@ pub mod tests {
         };
 
         let oldest_slot = 12;
-        blockstore.db.backend.set_oldest_slot(oldest_slot);
+        blockstore.db.set_oldest_slot(oldest_slot);
         blockstore.transaction_status_cf.compact_range_raw_key(
             &cf::TransactionStatus::key(first_index),
             &cf::TransactionStatus::key(last_index),
@@ -1085,7 +1085,7 @@ pub mod tests {
             .put_deprecated(random_signature(), &"another memo".to_string())
             .unwrap();
         // Set clean_slot_0 to false, since we have deprecated memos
-        blockstore.db.backend.set_clean_slot_0(false);
+        blockstore.db.set_clean_slot_0(false);
 
         // Insert some current TransactionMemos
         blockstore
@@ -1117,7 +1117,7 @@ pub mod tests {
         };
 
         // Purge at slot 0 should not affect any memos
-        blockstore.db.backend.set_oldest_slot(0);
+        blockstore.db.set_oldest_slot(0);
         blockstore
             .transaction_memos_cf
             .compact_range_raw_key(&first_index, &last_index);
@@ -1132,7 +1132,7 @@ pub mod tests {
         assert_eq!(count, 4);
 
         // Purge at oldest_slot without clean_slot_0 only purges the current memo at slot 4
-        blockstore.db.backend.set_oldest_slot(oldest_slot);
+        blockstore.db.set_oldest_slot(oldest_slot);
         blockstore
             .transaction_memos_cf
             .compact_range_raw_key(&first_index, &last_index);
@@ -1149,7 +1149,7 @@ pub mod tests {
         assert_eq!(count, 3);
 
         // Purge at oldest_slot with clean_slot_0 purges deprecated memos
-        blockstore.db.backend.set_clean_slot_0(true);
+        blockstore.db.set_clean_slot_0(true);
         blockstore
             .transaction_memos_cf
             .compact_range_raw_key(&first_index, &last_index);
