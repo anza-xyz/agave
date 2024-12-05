@@ -1,6 +1,6 @@
 [package]
 name = "agave-store-tool"
-description = "Tool to inspect account storage files"
+description = "Tool for account storage files"
 publish = false
 version = { workspace = true }
 authors = { workspace = true }
@@ -10,7 +10,9 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+ahash = { workspace = true }
 clap = { workspace = true }
+rayon = { workspace = true }
 solana-accounts-db = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sdk = { workspace = true }
 solana-version = { workspace = true }

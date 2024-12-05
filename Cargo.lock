@@ -223,7 +223,9 @@ dependencies = [
 name = "agave-store-tool"
 version = "2.2.0"
 dependencies = [
+ "ahash 0.8.11",
  "clap 2.33.3",
+ "rayon",
  "solana-accounts-db",
  "solana-sdk",
  "solana-version",
