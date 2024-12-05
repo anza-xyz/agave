@@ -83,11 +83,14 @@ else
   query "CREATE DATABASE \"$netBasename\""
   query "ALTER RETENTION POLICY autogen ON \"$netBasename\" DURATION 7d"
   query "GRANT READ ON \"$netBasename\" TO \"ro\""
-  query "GRANT WRITE ON \"$netBasename\" TO \"scratch_writer\""
+  query "GRANT WRITE ON \"$netBasename\" TO \"${username}\""
 
-  SOLANA_METRICS_CONFIG="host=$host,db=$netBasename,u=scratch_writer,p=topsecret"
+  SOLANA_METRICS_CONFIG="host=$host,db=$netBasename,u=${username},p=${password}"
+  set +x
+  echo "!!!!!!!!!!!!!!!!!!!!!"
+  echo "Please store the following line in your shell environment for future use!"
+  echo "export SOLANA_METRICS_CONFIG=\"$SOLANA_METRICS_CONFIG\""
 fi
 
-echo "export SOLANA_METRICS_CONFIG=\"$SOLANA_METRICS_CONFIG\"" >> "$configFile"
 
 exit 0
