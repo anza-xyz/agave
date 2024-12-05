@@ -1,7 +1,5 @@
 use {
-    super::{
-        Bank, EpochRewardStatus, PartitionedStakeReward, PartitionedStakeRewards, StakeRewards,
-    },
+    super::{Bank, PartitionedStakeReward, PartitionedStakeRewards, StakeRewards},
     crate::{
         bank::metrics::{report_partitioned_reward_metrics, RewardsStoreMetrics},
         stake_account::StakeAccount,
@@ -38,8 +36,8 @@ struct DistributionResults {
 
 impl Bank {
     /// Process reward distribution for the block if it is inside reward interval.
-    pub(in crate::bank) fn distribute_partitioned_epoch_rewards(&mut self) {
-        let EpochRewardStatus::Active(status) = &self.epoch_reward_status else {
+    pub(in crate::bank) fn distribute_partitioned_epoch_rewards(&self) {
+        let Some(status) = self.epoch_reward_status() else {
             return;
         };
 
@@ -73,11 +71,7 @@ impl Bank {
                 ),
             );
 
-            assert!(matches!(
-                self.epoch_reward_status,
-                EpochRewardStatus::Active(_)
-            ));
-            self.epoch_reward_status = EpochRewardStatus::Inactive;
+            self.set_epoch_reward_status_inactive(true);
             self.set_epoch_rewards_sysvar_to_inactive();
         }
     }

@@ -1243,7 +1243,7 @@ impl ProgramTestContext {
 
         // warp_bank is frozen so go forward to get unfrozen bank at warp_slot
         let warp_slot = pre_warp_slot + 1;
-        let mut warp_bank = Bank::new_from_parent(bank, &Pubkey::default(), warp_slot);
+        let warp_bank = Bank::new_from_parent(bank, &Pubkey::default(), warp_slot);
 
         warp_bank.force_reward_interval_end_for_tests();
         bank_forks.insert(warp_bank);

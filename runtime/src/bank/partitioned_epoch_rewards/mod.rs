@@ -201,14 +201,51 @@ impl Bank {
     }
 
     pub(crate) fn set_epoch_reward_status_active(
-        &mut self,
+        &self,
         distribution_starting_block_height: u64,
         stake_rewards_by_partition: Vec<PartitionedStakeRewards>,
     ) {
-        self.epoch_reward_status = EpochRewardStatus::Active(StartBlockHeightAndRewards {
+        let full_replay_fields = self.full_replay_fields.read().unwrap();
+        *full_replay_fields
+            .as_ref()
+            .unwrap()
+            .epoch_reward_status
+            .write()
+            .unwrap() = EpochRewardStatus::Active(StartBlockHeightAndRewards {
             distribution_starting_block_height,
             stake_rewards_by_partition: Arc::new(stake_rewards_by_partition),
         });
+    }
+
+    pub(crate) fn set_epoch_reward_status_inactive(&self, check_for_active_before: bool) {
+        let full_replay_fields = self.full_replay_fields.read().unwrap();
+        let mut status = full_replay_fields
+            .as_ref()
+            .unwrap()
+            .epoch_reward_status
+            .write()
+            .unwrap();
+        if check_for_active_before {
+            assert!(matches!(*status, EpochRewardStatus::Active(_)));
+        }
+        *status = EpochRewardStatus::Inactive;
+    }
+
+    pub(crate) fn epoch_reward_status(&self) -> Option<StartBlockHeightAndRewards> {
+        let full_replay_fields = self.full_replay_fields.read().unwrap();
+        let stats = full_replay_fields
+            .as_ref()
+            .unwrap()
+            .epoch_reward_status
+            .read()
+            .unwrap()
+            .clone();
+        match stats {
+            EpochRewardStatus::Active(start_block_height_and_rewards) => {
+                Some(start_block_height_and_rewards)
+            }
+            EpochRewardStatus::Inactive => None,
+        }
     }
 
     pub(super) fn partitioned_epoch_rewards_config(&self) -> &PartitionedEpochRewardsConfig {
@@ -258,8 +295,8 @@ impl Bank {
     }
 
     /// For testing only
-    pub fn force_reward_interval_end_for_tests(&mut self) {
-        self.epoch_reward_status = EpochRewardStatus::Inactive;
+    pub fn force_reward_interval_end_for_tests(&self) {
+        self.set_epoch_reward_status_inactive(false);
     }
 
     pub(super) fn force_partition_rewards_in_first_block_of_epoch(&self) -> bool {

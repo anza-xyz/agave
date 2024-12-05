@@ -583,7 +583,6 @@ impl PartialEq for Bank {
             accounts_data_size_initial: _,
             accounts_data_size_delta_on_chain: _,
             accounts_data_size_delta_off_chain: _,
-            epoch_reward_status: _,
             transaction_processor: _,
             check_program_modification_slot: _,
             collector_fee_details: _,
@@ -758,6 +757,8 @@ pub struct BankFullReplayFields {
 
     /// Total capitalization, used to calculate inflation
     capitalization: AtomicU64,
+
+    epoch_reward_status: RwLock<EpochRewardStatus>,
 }
 
 impl Clone for BankFullReplayFields {
@@ -766,6 +767,7 @@ impl Clone for BankFullReplayFields {
             tick_height: AtomicU64::new(self.tick_height.load(Relaxed)),
             blockhash_queue: RwLock::new(self.blockhash_queue.read().unwrap().clone()),
             capitalization: AtomicU64::new(self.capitalization.load(Relaxed)),
+            epoch_reward_status: RwLock::new(self.epoch_reward_status.read().unwrap().clone()),
         }
     }
 }
@@ -781,6 +783,8 @@ impl PartialEq for BankFullReplayFields {
         self.tick_height.load(Relaxed) == other.tick_height.load(Relaxed)
             && *self.blockhash_queue.read().unwrap() == *other.blockhash_queue.read().unwrap()
             && self.capitalization.load(Relaxed) == other.capitalization.load(Relaxed)
+            && *self.epoch_reward_status.read().unwrap()
+                == *other.epoch_reward_status.read().unwrap()
     }
 }
 
@@ -958,8 +962,6 @@ pub struct Bank {
     /// the account hash of the accounts that would have been rewritten as bank hash expects.
     skipped_rewrites: Mutex<HashMap<Pubkey, AccountHash>>,
 
-    epoch_reward_status: EpochRewardStatus,
-
     transaction_processor: TransactionBatchProcessor<BankForks>,
 
     check_program_modification_slot: bool,
@@ -1096,7 +1098,6 @@ impl Bank {
             accounts_data_size_initial: 0,
             accounts_data_size_delta_on_chain: AtomicI64::new(0),
             accounts_data_size_delta_off_chain: AtomicI64::new(0),
-            epoch_reward_status: EpochRewardStatus::default(),
             transaction_processor: TransactionBatchProcessor::default(),
             check_program_modification_slot: false,
             collector_fee_details: RwLock::new(CollectorFeeDetails::default()),
@@ -1360,7 +1361,6 @@ impl Bank {
             accounts_data_size_initial,
             accounts_data_size_delta_on_chain: AtomicI64::new(0),
             accounts_data_size_delta_off_chain: AtomicI64::new(0),
-            epoch_reward_status: parent.epoch_reward_status.clone(),
             transaction_processor,
             check_program_modification_slot: false,
             collector_fee_details: RwLock::new(CollectorFeeDetails::default()),
@@ -1425,9 +1425,6 @@ impl Bank {
                 for vote_account_pubkey in vote_account_to_remove {
                     vote_states.remove(&vote_account_pubkey);
                 }
-            }
-            if new.is_partitioned_rewards_code_enabled() {
-                new.distribute_partitioned_epoch_rewards();
             }
         });
 
@@ -1784,7 +1781,6 @@ impl Bank {
             accounts_data_size_initial,
             accounts_data_size_delta_on_chain: AtomicI64::new(0),
             accounts_data_size_delta_off_chain: AtomicI64::new(0),
-            epoch_reward_status: EpochRewardStatus::default(),
             transaction_processor: TransactionBatchProcessor::default(),
             check_program_modification_slot: false,
             // collector_fee_details is not serialized to snapshot
@@ -6377,6 +6373,9 @@ impl Bank {
             let parent_full_replay_fields = parent.full_replay_fields.read().unwrap();
             assert!(parent_full_replay_fields.is_some());
             *self.full_replay_fields.write().unwrap() = parent_full_replay_fields.clone();
+        }
+        if self.is_partitioned_rewards_code_enabled() {
+            self.distribute_partitioned_epoch_rewards();
         }
     }
 
