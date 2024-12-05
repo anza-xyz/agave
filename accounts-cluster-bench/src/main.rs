@@ -335,8 +335,37 @@ fn run_rpc_bench_loop(
     let mut iters = 0;
     let mut last_error = Instant::now();
     let mut last_print = Instant::now();
+    fn flush_stats(
+        iters: &i32,
+        last_print: &mut Instant,
+        rpc_bench: &RpcBench,
+        stats: &mut RpcBenchStats,
+        thread: &usize,
+    ) {
+        info!(
+            "t({}) rpc({:?}) iters: {} success: {} errors: {}",
+            thread, rpc_bench, iters, stats.success, stats.errors
+        );
+        if stats.success > 0 {
+            info!(
+                " t({}) rpc({:?} average success_time: {} us",
+                thread,
+                rpc_bench,
+                stats.total_success_time_us / stats.success
+            );
+        }
+        if stats.errors > 0 {
+            info!(
+                " rpc average average errors time: {} us",
+                stats.total_errors_time_us / stats.errors
+            );
+        }
+        *last_print = Instant::now();
+        *stats = RpcBenchStats::default();
+    }
     loop {
         if exit.load(Ordering::Relaxed) {
+            flush_stats(&iters, &mut last_print, &rpc_bench, &mut stats, &thread);
             break;
         }
         match rpc_bench {
@@ -430,26 +459,7 @@ fn run_rpc_bench_loop(
         }
 
         if last_print.elapsed().as_secs() > 3 {
-            info!(
-                "t({}) rpc({:?}) iters: {} success: {} errors: {}",
-                thread, rpc_bench, iters, stats.success, stats.errors
-            );
-            if stats.success > 0 {
-                info!(
-                    " t({}) rpc({:?} average success_time: {} us",
-                    thread,
-                    rpc_bench,
-                    stats.total_success_time_us / stats.success
-                );
-            }
-            if stats.errors > 0 {
-                info!(
-                    " rpc average average errors time: {} us",
-                    stats.total_errors_time_us / stats.errors
-                );
-            }
-            last_print = Instant::now();
-            stats = RpcBenchStats::default();
+            flush_stats(&iters, &mut last_print, &rpc_bench, &mut stats, &thread);
         }
 
         iters += 1;
