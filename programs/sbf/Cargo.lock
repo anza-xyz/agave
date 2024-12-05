@@ -6424,6 +6424,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-sbf-rust-divide-by-zero"
+version = "2.2.0"
+dependencies = [
+ "solana-program",
+]
+
+[[package]]
 name = "solana-sbf-rust-dup-accounts"
 version = "2.1.6"
 dependencies = [
