@@ -36,7 +36,7 @@ use {
         ffi::{CStr, CString},
         fs,
         marker::PhantomData,
-        path::Path,
+        path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
             Arc,
@@ -405,6 +405,7 @@ impl OldestSlot {
 #[derive(Debug)]
 pub(crate) struct Rocks {
     db: rocksdb::DB,
+    path: PathBuf,
     access_type: AccessType,
     oldest_slot: OldestSlot,
     column_options: LedgerColumnOptions,
@@ -412,11 +413,11 @@ pub(crate) struct Rocks {
 }
 
 impl Rocks {
-    fn open(path: &Path, options: BlockstoreOptions) -> Result<Rocks> {
+    fn open(path: PathBuf, options: BlockstoreOptions) -> Result<Rocks> {
         let access_type = options.access_type.clone();
         let recovery_mode = options.recovery_mode.clone();
 
-        fs::create_dir_all(path)?;
+        fs::create_dir_all(&path)?;
 
         // Use default database options
         let mut db_options = get_db_options(&access_type);
@@ -425,12 +426,12 @@ impl Rocks {
         }
         let oldest_slot = OldestSlot::default();
         let column_options = options.column_options.clone();
-        let cf_descriptors = Self::cf_descriptors(path, &options, &oldest_slot);
+        let cf_descriptors = Self::cf_descriptors(&path, &options, &oldest_slot);
 
         // Open the database
         let db = match access_type {
             AccessType::Primary | AccessType::PrimaryForMaintenance => {
-                DB::open_cf_descriptors(&db_options, path, cf_descriptors)?
+                DB::open_cf_descriptors(&db_options, &path, cf_descriptors)?
             }
             AccessType::Secondary => {
                 let secondary_path = path.join("solana-secondary");
@@ -441,7 +442,7 @@ impl Rocks {
                 );
                 DB::open_cf_descriptors_as_secondary(
                     &db_options,
-                    path,
+                    &path,
                     &secondary_path,
                     cf_descriptors,
                 )?
@@ -449,6 +450,7 @@ impl Rocks {
         };
         let rocks = Rocks {
             db,
+            path,
             access_type,
             oldest_slot,
             column_options,
@@ -765,6 +767,10 @@ impl Rocks {
             Ok(live_files) => Ok(live_files),
             Err(e) => Err(BlockstoreError::RocksDb(e)),
         }
+    }
+
+    pub(crate) fn storage_size(&self) -> Result<u64> {
+        Ok(fs_extra::dir::get_size(&self.path)?)
     }
 
     pub(crate) fn set_oldest_slot(&self, oldest_slot: Slot) {
@@ -1337,7 +1343,6 @@ impl TypedColumn for columns::MerkleRootMeta {
 #[derive(Debug)]
 pub struct Database {
     pub(crate) backend: Arc<Rocks>,
-    path: Arc<Path>,
     column_options: Arc<LedgerColumnOptions>,
 }
 
@@ -1431,13 +1436,12 @@ impl WriteBatch {
 }
 
 impl Database {
-    pub fn open(path: &Path, options: BlockstoreOptions) -> Result<Self> {
+    pub fn open(path: PathBuf, options: BlockstoreOptions) -> Result<Self> {
         let column_options = Arc::new(options.column_options.clone());
         let backend = Arc::new(Rocks::open(path, options)?);
 
         Ok(Database {
             backend,
-            path: Arc::from(path),
             column_options,
         })
     }
@@ -1461,10 +1465,6 @@ impl Database {
             read_perf_status: PerfSamplingStatus::default(),
             write_perf_status: PerfSamplingStatus::default(),
         }
-    }
-
-    pub fn storage_size(&self) -> Result<u64> {
-        Ok(fs_extra::dir::get_size(&self.path)?)
     }
 
     pub fn compact_range_cf<C: Column + ColumnName>(&self, from: &[u8], to: &[u8]) {

@@ -385,7 +385,7 @@ impl Blockstore {
         // Open the database
         let mut measure = Measure::start("blockstore open");
         info!("Opening blockstore at {:?}", blockstore_path);
-        let db = Database::open(&blockstore_path, options)?;
+        let db = Database::open(blockstore_path, options)?;
 
         let address_signatures_cf = db.column();
         let bank_hash_cf = db.column();
@@ -4275,7 +4275,7 @@ impl Blockstore {
     }
 
     pub fn storage_size(&self) -> Result<u64> {
-        self.db.storage_size()
+        self.db.backend.storage_size()
     }
 
     /// Returns the total physical storage size contributed by all data shreds.
