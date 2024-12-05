@@ -1,32 +1,34 @@
 //! The chain's genesis config.
 
-#![cfg(feature = "full")]
+#![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 
 #[deprecated(
     since = "2.2.0",
     note = "Use `solana_cluster_type::ClusterType` instead."
 )]
 pub use solana_cluster_type::ClusterType;
+#[cfg(feature = "frozen-abi")]
+use solana_frozen_abi_macro::{frozen_abi, AbiExample};
 use {
-    crate::{
-        clock::{UnixTimestamp, DEFAULT_TICKS_PER_SLOT},
-        epoch_schedule::EpochSchedule,
-        fee_calculator::FeeRateGovernor,
-        hash::{hash, Hash},
-        inflation::Inflation,
-        poh_config::PohConfig,
-        pubkey::Pubkey,
-        rent::Rent,
-        shred_version::compute_shred_version,
-        signature::{Keypair, Signer},
-        system_program,
-        timing::years_as_slots,
-    },
     bincode::{deserialize, serialize},
     chrono::{TimeZone, Utc},
     memmap2::Mmap,
     solana_account::{Account, AccountSharedData},
+    solana_clock::{UnixTimestamp, DEFAULT_TICKS_PER_SLOT},
+    solana_epoch_schedule::EpochSchedule,
+    solana_fee_calculator::FeeRateGovernor,
+    solana_hash::Hash,
+    solana_inflation::Inflation,
+    solana_keypair::Keypair,
     solana_native_token::lamports_to_sol,
+    solana_poh_config::PohConfig,
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
+    solana_sdk_ids::system_program,
+    solana_sha256_hasher::hash,
+    solana_shred_version::compute_shred_version,
+    solana_signer::Signer,
+    solana_time_utils::years_as_slots,
     std::{
         collections::BTreeMap,
         fmt,
@@ -49,7 +51,11 @@ pub const UNUSED_DEFAULT: u64 = 1024;
     derive(AbiExample),
     frozen_abi(digest = "D9VFRSj4fodCuKFC9omQY2zY2Uw8wo6SzJFLeMJaVigm")
 )]
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde_derive::Deserialize, serde_derive::Serialize)
+)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GenesisConfig {
     /// when the network (bootstrap validator) was started relative to the UNIX Epoch
     pub creation_time: UnixTimestamp,
@@ -275,11 +281,7 @@ impl fmt::Display for GenesisConfig {
 
 #[cfg(test)]
 mod tests {
-    use {
-        super::*,
-        crate::signature::{Keypair, Signer},
-        std::path::PathBuf,
-    };
+    use {super::*, solana_signer::Signer, std::path::PathBuf};
 
     fn make_tmp_path(name: &str) -> PathBuf {
         let out_dir = std::env::var("FARF_DIR").unwrap_or_else(|_| "farf".to_string());
@@ -310,10 +312,10 @@ mod tests {
             AccountSharedData::new(10_000, 0, &Pubkey::default()),
         );
         config.add_account(
-            solana_sdk::pubkey::new_rand(),
+            solana_pubkey::new_rand(),
             AccountSharedData::new(1, 0, &Pubkey::default()),
         );
-        config.add_native_instruction_processor("hi".to_string(), solana_sdk::pubkey::new_rand());
+        config.add_native_instruction_processor("hi".to_string(), solana_pubkey::new_rand());
 
         assert_eq!(config.accounts.len(), 2);
         assert!(config

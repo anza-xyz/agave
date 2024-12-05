@@ -5521,6 +5521,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-genesis-config"
+version = "2.2.0"
+dependencies = [
+ "bincode",
+ "chrono",
+ "memmap2",
+ "serde",
+ "serde_derive",
+ "solana-account",
+ "solana-clock",
+ "solana-cluster-type",
+ "solana-epoch-schedule",
+ "solana-fee-calculator",
+ "solana-hash",
+ "solana-inflation",
+ "solana-keypair",
+ "solana-logger",
+ "solana-native-token",
+ "solana-poh-config",
+ "solana-pubkey",
+ "solana-rent",
+ "solana-sdk-ids",
+ "solana-sha256-hasher",
+ "solana-shred-version",
+ "solana-signer",
+ "solana-time-utils",
+]
+
+[[package]]
 name = "solana-geyser-plugin-manager"
 version = "2.2.0"
 dependencies = [
@@ -6606,6 +6635,7 @@ dependencies = [
  "solana-epoch-info",
  "solana-feature-set",
  "solana-fee-structure",
+ "solana-genesis-config",
  "solana-hard-forks",
  "solana-inflation",
  "solana-instruction",
