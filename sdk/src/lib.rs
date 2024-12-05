@@ -31,6 +31,7 @@
 
 #![allow(incomplete_features)]
 #![cfg_attr(feature = "frozen-abi", feature(specialization))]
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
 // Allows macro expansion of `use ::solana_sdk::*` to work within this crate
 extern crate self as solana_sdk;
@@ -61,7 +62,6 @@ pub use solana_program::{borsh, borsh0_10, borsh1};
 #[cfg(feature = "full")]
 #[deprecated(since = "2.2.0", note = "Use `solana-signer` crate instead")]
 pub use solana_signer::signers;
-pub mod client;
 pub mod entrypoint;
 pub mod entrypoint_deprecated;
 pub mod epoch_rewards_hasher;
@@ -77,7 +77,6 @@ pub mod native_loader;
 pub mod net;
 pub mod nonce_account;
 pub mod offchain_message;
-pub mod poh_config;
 pub mod precompiles;
 pub mod program_utils;
 pub mod pubkey;
@@ -94,7 +93,6 @@ pub mod rpc_port;
 pub mod shred_version;
 pub mod signature;
 pub mod signer;
-pub mod system_transaction;
 pub mod transaction;
 pub mod transport;
 pub mod wasm;
@@ -108,6 +106,9 @@ pub use solana_account as account;
 pub use solana_account::state_traits as account_utils;
 #[deprecated(since = "2.1.0", note = "Use `solana-bn254` crate instead")]
 pub use solana_bn254 as alt_bn128;
+#[cfg(feature = "full")]
+#[deprecated(since = "2.2.0", note = "Use `solana-client-traits` crate instead")]
+pub use solana_client_traits as client;
 #[deprecated(
     since = "2.2.0",
     note = "Use `solana-compute-budget-interface` crate instead"
@@ -131,6 +132,8 @@ pub use solana_fee_structure as fee;
 pub use solana_inflation as inflation;
 #[deprecated(since = "2.1.0", note = "Use `solana-packet` crate instead")]
 pub use solana_packet as packet;
+#[deprecated(since = "2.2.0", note = "Use `solana-poh-config` crate instead")]
+pub use solana_poh_config as poh_config;
 #[deprecated(since = "2.1.0", note = "Use `solana-program-memory` crate instead")]
 pub use solana_program_memory as program_memory;
 #[deprecated(since = "2.1.0", note = "Use `solana_pubkey::pubkey` instead")]
@@ -200,6 +203,12 @@ pub use solana_serde as deserialize_utils;
 pub use solana_serde_varint as serde_varint;
 #[deprecated(since = "2.1.0", note = "Use `solana-short-vec` crate instead")]
 pub use solana_short_vec as short_vec;
+#[cfg(feature = "full")]
+#[deprecated(
+    since = "2.2.0",
+    note = "Use `solana-system-transaction` crate instead"
+)]
+pub use solana_system_transaction as system_transaction;
 #[deprecated(since = "2.2.0", note = "Use `solana-time-utils` crate instead")]
 pub use solana_time_utils as timing;
 #[cfg(feature = "full")]
@@ -223,10 +232,10 @@ macro_rules! saturating_add_assign {
     }};
 }
 
-#[macro_use]
-extern crate serde_derive;
 pub extern crate bs58;
 extern crate log as logger;
+#[cfg_attr(not(target_os = "solana"), macro_use)]
+extern crate serde_derive;
 
 #[cfg_attr(feature = "frozen-abi", macro_use)]
 #[cfg(feature = "frozen-abi")]

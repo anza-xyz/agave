@@ -219,8 +219,12 @@ fn svm_concurrent() {
             vec![0],
         );
 
-        let sanitized_transaction =
-            transaction_builder.build(Hash::default(), (fee_payer, Signature::new_unique()), true);
+        let sanitized_transaction = transaction_builder.build(
+            Hash::default(),
+            (fee_payer, Signature::new_unique()),
+            true,
+            false,
+        );
         transactions[idx % THREADS].push(sanitized_transaction.unwrap());
         check_data[idx % THREADS].push(CheckTxData {
             fee_payer,

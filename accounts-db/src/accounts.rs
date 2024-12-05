@@ -885,14 +885,6 @@ mod tests {
     }
 
     #[test]
-    fn test_accounts_empty_bank_hash_stats() {
-        let accounts_db = AccountsDb::new_single_for_tests();
-        let accounts = Accounts::new(Arc::new(accounts_db));
-        assert!(accounts.accounts_db.get_bank_hash_stats(0).is_some());
-        assert!(accounts.accounts_db.get_bank_hash_stats(1).is_none());
-    }
-
-    #[test]
     fn test_lock_accounts_with_duplicates() {
         let accounts_db = AccountsDb::new_single_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));

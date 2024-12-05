@@ -35,6 +35,7 @@ full = [
     "solana-commitment-config",
     "digest",
     "solana-pubkey/rand",
+    "dep:solana-client-traits",
     "dep:solana-cluster-type",
     "dep:solana-ed25519-program",
     "dep:solana-compute-budget-interface",
@@ -47,6 +48,7 @@ full = [
     "dep:solana-seed-derivable",
     "dep:solana-seed-phrase",
     "dep:solana-signer",
+    "dep:solana-system-transaction",
     "dep:solana-transaction",
     "dep:solana-transaction-error",
 ]
@@ -72,6 +74,7 @@ frozen-abi = [
     "solana-account/frozen-abi",
     "solana-cluster-type/frozen-abi",
     "solana-inflation/frozen-abi",
+    "solana-poh-config/frozen-abi",
     "solana-program/frozen-abi",
     "solana-reward-info/frozen-abi",
     "solana-short-vec/frozen-abi",
@@ -115,6 +118,7 @@ sha3 = { workspace = true, optional = true }
 siphasher = { workspace = true }
 solana-account = { workspace = true, features = ["bincode"] }
 solana-bn254 = { workspace = true }
+solana-client-traits = { workspace = true, optional = true }
 solana-cluster-type = { workspace = true, features = [
     "serde",
 ], optional = true }
@@ -143,6 +147,7 @@ solana-keypair = { workspace = true, optional = true, features = [
 ] }
 solana-native-token = { workspace = true }
 solana-packet = { workspace = true, features = ["bincode", "serde"] }
+solana-poh-config = { workspace = true, features = ["serde"] }
 solana-precompile-error = { workspace = true, optional = true }
 solana-precompiles = { workspace = true, optional = true }
 solana-presigner = { workspace = true, optional = true }
@@ -175,6 +180,7 @@ solana-signature = { workspace = true, features = [
     "verify",
 ], optional = true }
 solana-signer = { workspace = true, optional = true }
+solana-system-transaction = { workspace = true, optional = true }
 solana-time-utils = { workspace = true }
 solana-transaction = { workspace = true, features = [
     "blake3",
@@ -207,7 +213,9 @@ static_assertions = { workspace = true }
 tiny-bip39 = { workspace = true }
 
 [package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
+targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]

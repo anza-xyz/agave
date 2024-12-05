@@ -222,7 +222,7 @@ mod tests {
                 serde_snapshot::serialize_bank_snapshot_into(
                     &mut writer,
                     bank_fields,
-                    accounts_db.get_bank_hash_stats(bank2_slot).unwrap(),
+                    bank2.get_bank_hash_stats(),
                     accounts_db.get_accounts_delta_hash(bank2_slot).unwrap(),
                     expected_accounts_hash,
                     &get_storages_to_serialize(&bank2.get_snapshot_storages(None)),
@@ -306,7 +306,7 @@ mod tests {
                     .clone()),
                 expected_accounts_lt_hash,
             );
-
+            assert_eq!(dbank.get_bank_hash_stats(), bank2.get_bank_hash_stats());
             assert_eq!(dbank, bank2);
         }
     }
@@ -539,9 +539,9 @@ mod tests {
     mod test_bank_serialize {
         use {
             super::*,
+            crate::bank::BankHashStats,
             solana_accounts_db::{
-                account_storage::meta::StoredMetaWriteVersion, accounts_db::stats::BankHashStats,
-                accounts_hash::AccountsLtHash,
+                account_storage::meta::StoredMetaWriteVersion, accounts_hash::AccountsLtHash,
             },
             solana_frozen_abi::abi_example::AbiExample,
             solana_lattice_hash::lt_hash::LtHash,
@@ -555,7 +555,7 @@ mod tests {
         // snapshot storages as well.
         //
         // It was avoided to impl AbiExample for Bank by wrapping it around PhantomData inside the
-        // spcecial wrapper called BankAbiTestWrapper. And internally, it creates an actual bank
+        // special wrapper called BankAbiTestWrapper. And internally, it creates an actual bank
         // from Bank::default_for_tests().
         //
         // In this way, frozen abi can increase the coverage of the serialization code path as much
@@ -570,7 +570,7 @@ mod tests {
         #[cfg_attr(
             feature = "frozen-abi",
             derive(AbiExample),
-            frozen_abi(digest = "9THbM4acSoJYENSTHp1qBdXyvPr3qUQTSTkotUNkFc76")
+            frozen_abi(digest = "2bWtYJSWVVvCEnBw6W2PsYZaR7RVs2V7CthFcHArdbUR")
         )]
         #[derive(Serialize)]
         pub struct BankAbiTestWrapper {
