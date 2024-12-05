@@ -1670,17 +1670,21 @@ pub fn main() {
         value_t_or_exit!(matches, "maximum_snapshot_download_abort", u64);
 
     let snapshots_dir = if let Some(snapshots) = matches.value_of("snapshots") {
-        &create_and_canonicalize_directory(PathBuf::from(snapshots)).unwrap_or_else(|err| {
-            eprintln!("Unable to access snapshots path '{}': {err}", snapshots);
-            exit(1);
-        })
+        Path::new(snapshots)
     } else {
         &ledger_path
     };
+    let snapshots_dir = create_and_canonicalize_directory(snapshots_dir).unwrap_or_else(|err| {
+        eprintln!(
+            "Failed to create snapshots directory '{}': {err}",
+            snapshots_dir.display(),
+        );
+        exit(1);
+    });
 
     if account_paths
         .iter()
-        .any(|account_path| account_path == snapshots_dir)
+        .any(|account_path| account_path == &snapshots_dir)
     {
         eprintln!(
             "Failed: The --accounts and --snapshots paths must be unique since they \
