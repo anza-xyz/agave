@@ -34,7 +34,7 @@ pub trait SVMMessage: Debug {
 
     /// Return an iterator over the instructions in the message, paired with
     /// the pubkey of the program.
-    fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)>;
+    fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> + Clone;
 
     /// Return the account keys.
     fn account_keys(&self) -> AccountKeys;

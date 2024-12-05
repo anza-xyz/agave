@@ -205,9 +205,15 @@ impl PrioritizationFeeCache {
                     continue;
                 }
 
+<<<<<<< HEAD
                 let compute_budget_limits = process_compute_budget_instructions(
                     SVMMessage::program_instructions_iter(sanitized_transaction),
                 );
+=======
+                let compute_budget_limits = sanitized_transaction
+                    .compute_budget_instruction_details()
+                    .sanitize_and_convert_to_compute_budget_limits(&bank.feature_set);
+>>>>>>> 3e9af14f3a (Fix reserve minimal compute units for builtins  (#3799))
 
                 let message = sanitized_transaction.message();
                 let lock_result = validate_account_locks(
