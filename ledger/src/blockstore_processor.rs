@@ -10,7 +10,7 @@ use {
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     chrono_humanize::{Accuracy, HumanTime, Tense},
-    crossbeam_channel::Sender,
+    crossbeam_channel::{Receiver, Sender},
     itertools::Itertools,
     log::*,
     rayon::{prelude::*, ThreadPool},
@@ -28,7 +28,7 @@ use {
     solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
     solana_runtime::{
         accounts_background_service::{AbsRequestSender, SnapshotRequestKind},
-        bank::{Bank, TransactionBalancesSet},
+        bank::{Bank, KeyedRewardsAndNumPartitions, TransactionBalancesSet},
         bank_forks::{BankForks, SetRootError},
         bank_utils,
         commitment::VOTE_THRESHOLD_SIZE,
@@ -914,6 +914,7 @@ pub fn test_process_blockstore(
         None,
         None,
         None,
+        None,
         &abs_request_sender,
     )
     .unwrap();
@@ -979,6 +980,7 @@ pub fn process_blockstore_from_root(
     opts: &ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
+    rewards_recorder_sender: Option<&RewardsRecorderSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     accounts_background_request_sender: &AbsRequestSender,
 ) -> result::Result<(), BlockstoreProcessorError> {
@@ -1045,6 +1047,7 @@ pub fn process_blockstore_from_root(
             opts,
             transaction_status_sender,
             cache_block_meta_sender,
+            rewards_recorder_sender,
             entry_notification_sender,
             &mut timing,
             accounts_background_request_sender,
@@ -1859,6 +1862,7 @@ fn load_frozen_forks(
     opts: &ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
+    rewards_recorder_sender: Option<&RewardsRecorderSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     timing: &mut ExecuteTimings,
     accounts_background_request_sender: &AbsRequestSender,
@@ -1961,6 +1965,10 @@ fn load_frozen_forks(
             all_banks.insert(bank.slot(), bank.clone_with_scheduler());
             m.stop();
             process_single_slot_us += m.as_us();
+
+            rewards_recorder_sender
+                .as_ref()
+                .inspect(|sender| sender.send_rewards(&bank));
 
             let mut m = Measure::start("voting");
             // If we've reached the last known root in blockstore, start looking
@@ -2272,6 +2280,38 @@ pub fn cache_block_meta(bank: &Arc<Bank>, cache_block_meta_sender: Option<&Cache
         cache_block_meta_sender
             .send(bank.clone())
             .unwrap_or_else(|err| warn!("cache_block_meta_sender failed: {:?}", err));
+    }
+}
+
+pub type RewardsBatch = (Slot, KeyedRewardsAndNumPartitions);
+pub enum RewardsMessage {
+    Batch(RewardsBatch),
+    Complete(Slot),
+}
+
+#[derive(Clone, Debug)]
+pub struct RewardsRecorderSender {
+    pub sender: Sender<RewardsMessage>,
+}
+pub type RewardsRecorderReceiver = Receiver<RewardsMessage>;
+
+impl From<Sender<RewardsMessage>> for RewardsRecorderSender {
+    fn from(sender: Sender<RewardsMessage>) -> Self {
+        Self { sender }
+    }
+}
+
+impl RewardsRecorderSender {
+    pub fn send_rewards(&self, bank: &Bank) {
+        let rewards = bank.get_rewards_and_num_partitions();
+        if rewards.should_record() {
+            self.sender
+                .send(RewardsMessage::Batch((bank.slot(), rewards)))
+                .unwrap_or_else(|err| warn!("rewards_recorder_sender failed: {:?}", err));
+        }
+        self.sender
+            .send(RewardsMessage::Complete(bank.slot()))
+            .unwrap_or_else(|err| warn!("rewards_recorder_sender failed: {:?}", err));
     }
 }
 
@@ -4158,6 +4198,7 @@ pub mod tests {
             &bank_forks,
             &leader_schedule_cache,
             &opts,
+            None,
             None,
             None,
             None,

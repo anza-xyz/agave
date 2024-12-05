@@ -1,27 +1,21 @@
-#![cfg(feature = "full")]
-
-pub use crate::message::{AddressLoader, SimpleAddressLoader};
 use {
-    super::SanitizedVersionedTransaction,
-    crate::{
-        hash::Hash,
-        message::{
-            legacy,
-            v0::{self, LoadedAddresses},
-            LegacyMessage, SanitizedMessage, VersionedMessage,
-        },
-        precompiles::verify_if_precompile,
-        pubkey::Pubkey,
-        reserved_account_keys::ReservedAccountKeys,
-        signature::Signature,
-        simple_vote_transaction_checker::is_simple_vote_transaction,
-        transaction::{Result, Transaction, VersionedTransaction},
+    crate::versioned::{sanitized::SanitizedVersionedTransaction, VersionedTransaction},
+    solana_hash::Hash,
+    solana_message::{
+        legacy,
+        v0::{self, LoadedAddresses},
+        AddressLoader, LegacyMessage, SanitizedMessage, SanitizedVersionedMessage,
+        VersionedMessage,
     },
-    solana_feature_set as feature_set,
-    solana_program::{instruction::InstructionError, message::SanitizedVersionedMessage},
-    solana_sanitize::Sanitize,
-    solana_transaction_error::TransactionError,
+    solana_pubkey::Pubkey,
+    solana_signature::Signature,
+    solana_transaction_error::{TransactionError, TransactionResult as Result},
     std::collections::HashSet,
+};
+#[cfg(feature = "blake3")]
+use {
+    crate::Transaction, solana_reserved_account_keys::ReservedAccountKeys,
+    solana_sanitize::Sanitize,
 };
 
 /// Maximum number of accounts that a transaction may lock.
@@ -96,6 +90,7 @@ impl SanitizedTransaction {
         })
     }
 
+    #[cfg(feature = "blake3")]
     /// Create a sanitized transaction from an un-sanitized versioned
     /// transaction.  If the input transaction uses address tables, attempt to
     /// lookup the address for each table index.
@@ -107,8 +102,11 @@ impl SanitizedTransaction {
         reserved_account_keys: &HashSet<Pubkey>,
     ) -> Result<Self> {
         let sanitized_versioned_tx = SanitizedVersionedTransaction::try_from(tx)?;
-        let is_simple_vote_tx = is_simple_vote_tx
-            .unwrap_or_else(|| is_simple_vote_transaction(&sanitized_versioned_tx));
+        let is_simple_vote_tx = is_simple_vote_tx.unwrap_or_else(|| {
+            crate::simple_vote_transaction_checker::is_simple_vote_transaction(
+                &sanitized_versioned_tx,
+            )
+        });
         let message_hash = match message_hash.into() {
             MessageHash::Compute => sanitized_versioned_tx.message.message.hash(),
             MessageHash::Precomputed(hash) => hash,
@@ -123,6 +121,7 @@ impl SanitizedTransaction {
     }
 
     /// Create a sanitized transaction from a legacy transaction
+    #[cfg(feature = "blake3")]
     pub fn try_from_legacy_transaction(
         tx: Transaction,
         reserved_account_keys: &HashSet<Pubkey>,
@@ -141,6 +140,7 @@ impl SanitizedTransaction {
     }
 
     /// Create a sanitized transaction from a legacy transaction. Used for tests only.
+    #[cfg(feature = "blake3")]
     pub fn from_transaction_for_tests(tx: Transaction) -> Self {
         Self::try_from_legacy_transaction(tx, &ReservedAccountKeys::empty_key_set()).unwrap()
     }
@@ -255,10 +255,12 @@ impl SanitizedTransaction {
     }
 
     /// If the transaction uses a durable nonce, return the pubkey of the nonce account
+    #[cfg(feature = "bincode")]
     pub fn get_durable_nonce(&self) -> Option<&Pubkey> {
         self.message.get_durable_nonce()
     }
 
+    #[cfg(feature = "verify")]
     /// Return the serialized message data to sign.
     fn message_data(&self) -> Vec<u8> {
         match &self.message {
@@ -267,6 +269,7 @@ impl SanitizedTransaction {
         }
     }
 
+    #[cfg(feature = "verify")]
     /// Verify the transaction signatures
     pub fn verify(&self) -> Result<()> {
         let message_bytes = self.message_data();
@@ -283,12 +286,13 @@ impl SanitizedTransaction {
         }
     }
 
+    #[cfg(feature = "precompiles")]
     /// Verify the precompiled programs in this transaction
-    pub fn verify_precompiles(&self, feature_set: &feature_set::FeatureSet) -> Result<()> {
+    pub fn verify_precompiles(&self, feature_set: &solana_feature_set::FeatureSet) -> Result<()> {
         for (index, (program_id, instruction)) in
             self.message.program_instructions_iter().enumerate()
         {
-            verify_if_precompile(
+            solana_precompiles::verify_if_precompile(
                 program_id,
                 instruction,
                 self.message().instructions(),
@@ -297,7 +301,7 @@ impl SanitizedTransaction {
             .map_err(|err| {
                 TransactionError::InstructionError(
                     index as u8,
-                    InstructionError::Custom(err as u32),
+                    solana_instruction::error::InstructionError::Custom(err as u32),
                 )
             })?;
         }
@@ -338,14 +342,11 @@ impl SanitizedTransaction {
 mod tests {
     use {
         super::*,
-        crate::{
-            reserved_account_keys::ReservedAccountKeys,
-            signer::{keypair::Keypair, Signer},
-        },
-        solana_program::{
-            message::MessageHeader,
-            vote::{self, state::Vote},
-        },
+        solana_keypair::Keypair,
+        solana_message::{MessageHeader, SimpleAddressLoader},
+        solana_program::vote::{self, state::Vote},
+        solana_reserved_account_keys::ReservedAccountKeys,
+        solana_signer::Signer,
     };
 
     #[test]

@@ -179,10 +179,13 @@ cloud_CreateInstances() {
     # the stock Ubuntu 20.04 image and programmatically install CUDA after the
     # instance boots
     #
-    imageName="ubuntu-2004-focal-v20201211-with-cuda-10-2 --image-project principal-lane-200702"
+    # imageName="ubuntu-2004-focal-v20201211-with-cuda-10-2 --image-project principal-lane-200702"
+
+    # We don't have custom cuda image for ubnutu 22.04
+    echo "Error: Not supported" >&2
+    exit 1
   else
-    # Upstream Ubuntu 20.04 LTS image
-    imageName="ubuntu-2004-focal-v20220419 --image-project ubuntu-os-cloud"
+    imageName="ubuntu-2204-jammy-v20241119 --image-project ubuntu-os-cloud"
   fi
 
   declare -a nodes

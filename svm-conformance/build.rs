@@ -1,6 +1,11 @@
 fn main() {
     let proto_base_path = std::path::PathBuf::from("proto");
-    let protos = ["context.proto", "invoke.proto", "sysvar.proto", "txn.proto"];
+    let protos = [
+        "context.proto",
+        "invoke.proto",
+        "metadata.proto",
+        "txn.proto",
+    ];
     let protos_path: Vec<_> = protos
         .iter()
         .map(|name| proto_base_path.join(name))

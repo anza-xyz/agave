@@ -86,7 +86,7 @@ impl<T: SVMMessage> SVMMessage for RuntimeTransaction<T> {
         self.transaction.instructions_iter()
     }
 
-    fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> {
+    fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> + Clone {
         self.transaction.program_instructions_iter()
     }
 

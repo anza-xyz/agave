@@ -23,7 +23,7 @@ all-features = true
 rustdoc-args = ["--cfg=docsrs"]
 
 [target.'cfg(not(target_os = "solana"))'.dependencies]
-solana-program = { workspace = true, default-features = false }
+solana-message = { workspace = true }
 
 [features]
 frozen-abi = ["dep:solana-frozen-abi"]

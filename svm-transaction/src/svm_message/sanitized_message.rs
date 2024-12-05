@@ -3,11 +3,9 @@ use {
         instruction::SVMInstruction, message_address_table_lookup::SVMMessageAddressTableLookup,
         svm_message::SVMMessage,
     },
-    solana_sdk::{
-        hash::Hash,
-        message::{AccountKeys, SanitizedMessage},
-        pubkey::Pubkey,
-    },
+    solana_hash::Hash,
+    solana_message::{AccountKeys, SanitizedMessage},
+    solana_pubkey::Pubkey,
 };
 
 // Implement for the "reference" `SanitizedMessage` type.
@@ -34,7 +32,7 @@ impl SVMMessage for SanitizedMessage {
             .map(SVMInstruction::from)
     }
 
-    fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> {
+    fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> + Clone {
         SanitizedMessage::program_instructions_iter(self)
             .map(|(pubkey, ix)| (pubkey, SVMInstruction::from(ix)))
     }

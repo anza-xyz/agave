@@ -1,4 +1,4 @@
-use solana_sdk::{message::v0, pubkey::Pubkey};
+use {solana_message::v0, solana_pubkey::Pubkey};
 
 /// A non-owning version of [`v0::MessageAddressTableLookup`].
 /// This simply references the data in the original message.

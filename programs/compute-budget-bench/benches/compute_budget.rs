@@ -2,7 +2,10 @@ use {
     criterion::{black_box, criterion_group, criterion_main, Criterion},
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
-    solana_sdk::{compute_budget::ComputeBudgetInstruction, instruction::CompiledInstruction},
+    solana_sdk::{
+        compute_budget::ComputeBudgetInstruction, feature_set::FeatureSet,
+        instruction::CompiledInstruction,
+    },
     solana_svm_transaction::instruction::SVMInstruction,
     std::num::NonZero,
 };
@@ -19,15 +22,19 @@ fn bench_request_heap_frame(c: &mut Criterion) {
             vec![],
         ),
     )];
+    let feature_set = FeatureSet::default();
 
     c.bench_function("request_heap_limit", |bencher| {
         bencher.iter(|| {
             assert_eq!(
-                process_compute_budget_instructions(black_box(
-                    instruction
-                        .iter()
-                        .map(|(id, ix)| (id, SVMInstruction::from(ix)))
-                )),
+                process_compute_budget_instructions(
+                    black_box(
+                        instruction
+                            .iter()
+                            .map(|(id, ix)| (id, SVMInstruction::from(ix)))
+                    ),
+                    black_box(&feature_set)
+                ),
                 Ok(ComputeBudgetLimits {
                     updated_heap_bytes: ONE_PAGE,
                     compute_unit_limit: 0,
@@ -48,15 +55,19 @@ fn bench_set_compute_unit_limit(c: &mut Criterion) {
             vec![],
         ),
     )];
+    let feature_set = FeatureSet::default();
 
     c.bench_function("set_compute_unit_limit", |bencher| {
         bencher.iter(|| {
             assert_eq!(
-                process_compute_budget_instructions(black_box(
-                    instruction
-                        .iter()
-                        .map(|(id, ix)| (id, SVMInstruction::from(ix)))
-                )),
+                process_compute_budget_instructions(
+                    black_box(
+                        instruction
+                            .iter()
+                            .map(|(id, ix)| (id, SVMInstruction::from(ix)))
+                    ),
+                    black_box(&feature_set)
+                ),
                 Ok(ComputeBudgetLimits {
                     updated_heap_bytes: ONE_PAGE,
                     compute_unit_limit: 1024,
@@ -77,15 +88,19 @@ fn bench_set_compute_unit_price(c: &mut Criterion) {
             vec![],
         ),
     )];
+    let feature_set = FeatureSet::default();
 
     c.bench_function("set_compute_unit_price", |bencher| {
         bencher.iter(|| {
             assert_eq!(
-                process_compute_budget_instructions(black_box(
-                    instruction
-                        .iter()
-                        .map(|(id, ix)| (id, SVMInstruction::from(ix)))
-                )),
+                process_compute_budget_instructions(
+                    black_box(
+                        instruction
+                            .iter()
+                            .map(|(id, ix)| (id, SVMInstruction::from(ix)))
+                    ),
+                    black_box(&feature_set)
+                ),
                 Ok(ComputeBudgetLimits {
                     updated_heap_bytes: ONE_PAGE,
                     compute_unit_limit: 0,
@@ -106,15 +121,19 @@ fn bench_set_loaded_accounts_data_size_limit(c: &mut Criterion) {
             vec![],
         ),
     )];
+    let feature_set = FeatureSet::default();
 
     c.bench_function("set_loaded_accounts_data_size_limit", |bencher| {
         bencher.iter(|| {
             assert_eq!(
-                process_compute_budget_instructions(black_box(
-                    instruction
-                        .iter()
-                        .map(|(id, ix)| (id, SVMInstruction::from(ix)))
-                )),
+                process_compute_budget_instructions(
+                    black_box(
+                        instruction
+                            .iter()
+                            .map(|(id, ix)| (id, SVMInstruction::from(ix)))
+                    ),
+                    black_box(&feature_set)
+                ),
                 Ok(ComputeBudgetLimits {
                     updated_heap_bytes: ONE_PAGE,
                     compute_unit_limit: 0,

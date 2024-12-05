@@ -17,7 +17,7 @@ solana-instruction = { workspace = true, default-features = false, features = [
 ] }
 
 [dev-dependencies]
-solana-program = { path = "../program" }
+solana-system-interface = { workspace = true, features = ["bincode"] }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

@@ -3,6 +3,10 @@ inherits = "release"
 debug = true
 split-debuginfo = "packed"
 
+[profile.release]
+split-debuginfo = "unpacked"
+lto = "thin"
+
 [workspace]
 members = [
     "account-decoder",
@@ -105,6 +109,7 @@ members = [
     "sdk/borsh",
     "sdk/cargo-build-sbf",
     "sdk/cargo-test-sbf",
+    "sdk/client-traits",
     "sdk/clock",
     "sdk/cluster-type",
     "sdk/commitment-config",
@@ -138,6 +143,7 @@ members = [
     "sdk/package-metadata",
     "sdk/package-metadata-macro",
     "sdk/packet",
+    "sdk/poh-config",
     "sdk/precompile-error",
     "sdk/precompiles",
     "sdk/presigner",
@@ -169,9 +175,11 @@ members = [
     "sdk/slot-hashes",
     "sdk/slot-history",
     "sdk/stable-layout",
+    "sdk/system-transaction",
     "sdk/sysvar",
     "sdk/sysvar-id",
     "sdk/time-utils",
+    "sdk/transaction",
     "sdk/transaction-context",
     "sdk/transaction-error",
     "send-transaction-service",
@@ -187,6 +195,7 @@ members = [
     "test-validator",
     "thin-client",
     "timings",
+    "tls-utils",
     "tokens",
     "tps-client",
     "tpu-client",
@@ -237,7 +246,7 @@ agave-transaction-view = { path = "transaction-view", version = "=2.2.0" }
 aquamarine = "0.3.3"
 aes-gcm-siv = "0.11.1"
 ahash = "0.8.11"
-anyhow = "1.0.93"
+anyhow = "1.0.94"
 arbitrary = "1.4.1"
 ark-bn254 = "0.4.0"
 ark-ec = "0.4.0"
@@ -438,6 +447,7 @@ solana-cli = { path = "cli", version = "=2.2.0" }
 solana-cli-config = { path = "cli-config", version = "=2.2.0" }
 solana-cli-output = { path = "cli-output", version = "=2.2.0" }
 solana-client = { path = "client", version = "=2.2.0" }
+solana-client-traits = { path = "sdk/client-traits", version = "=2.2.0" }
 solana-clock = { path = "sdk/clock", version = "=2.2.0" }
 solana-cluster-type = { path = "sdk/cluster-type", version = "=2.2.0" }
 solana-commitment-config = { path = "sdk/commitment-config", version = "=2.2.0" }
@@ -502,6 +512,7 @@ solana-package-metadata-macro = { path = "sdk/package-metadata-macro", version =
 solana-packet = { path = "sdk/packet", version = "=2.2.0" }
 solana-perf = { path = "perf", version = "=2.2.0" }
 solana-poh = { path = "poh", version = "=2.2.0" }
+solana-poh-config = { path = "sdk/poh-config", version = "=2.2.0" }
 solana-poseidon = { path = "poseidon", version = "=2.2.0" }
 solana-precompile-error = { path = "sdk/precompile-error", version = "=2.2.0" }
 solana-precompiles = { path = "sdk/precompiles", version = "=2.2.0" }
@@ -523,8 +534,8 @@ solana-rent = { path = "sdk/rent", version = "=2.2.0", default-features = false 
 solana-rent-debits = { path = "sdk/rent-debits", version = "=2.2.0" }
 solana-reserved-account-keys = { path = "sdk/reserved-account-keys", version = "=2.2.0", default-features = false }
 solana-reward-info = { path = "sdk/reward-info", version = "=2.2.0" }
-solana-secp256r1-program = { path = "sdk/secp256r1-program", version = "=2.2.0", default-features = false }
 solana-sanitize = { path = "sdk/sanitize", version = "=2.2.0" }
+solana-secp256r1-program = { path = "sdk/secp256r1-program", version = "=2.2.0", default-features = false }
 solana-seed-derivable = { path = "sdk/seed-derivable", version = "=2.2.0" }
 solana-seed-phrase = { path = "sdk/seed-phrase", version = "=2.2.0" }
 solana-serde = { path = "sdk/serde", version = "=2.2.0" }
@@ -537,6 +548,7 @@ solana-slot-hashes = { path = "sdk/slot-hashes", version = "=2.2.0" }
 solana-slot-history = { path = "sdk/slot-history", version = "=2.2.0" }
 solana-time-utils = { path = "sdk/time-utils", version = "=2.2.0" }
 solana-timings = { path = "timings", version = "=2.2.0" }
+solana-tls-utils = { path = "tls-utils", version = "=2.2.0" }
 solana-unified-scheduler-logic = { path = "unified-scheduler-logic", version = "=2.2.0" }
 solana-unified-scheduler-pool = { path = "unified-scheduler-pool", version = "=2.2.0" }
 solana-rpc = { path = "rpc", version = "=2.2.0" }
@@ -563,10 +575,12 @@ solana-svm-rent-collector = { path = "svm-rent-collector", version = "=2.2.0" }
 solana-svm-transaction = { path = "svm-transaction", version = "=2.2.0" }
 solana-system-interface = "1.0"
 solana-system-program = { path = "programs/system", version = "=2.2.0" }
+solana-system-transaction = { path = "sdk/system-transaction", version = "=2.2.0" }
 solana-sysvar = { path = "sdk/sysvar", version = "=2.2.0" }
 solana-sysvar-id = { path = "sdk/sysvar-id", version = "=2.2.0" }
 solana-test-validator = { path = "test-validator", version = "=2.2.0" }
 solana-thin-client = { path = "thin-client", version = "=2.2.0" }
+solana-transaction = { path = "sdk/transaction", version = "=2.2.0" }
 solana-transaction-error = { path = "sdk/transaction-error", version = "=2.2.0" }
 solana-tpu-client = { path = "tpu-client", version = "=2.2.0", default-features = false }
 solana-tpu-client-next = { path = "tpu-client-next", version = "=2.2.0" }
@@ -610,7 +624,7 @@ tar = "0.4.43"
 tarpc = "0.29.0"
 tempfile = "3.14.0"
 test-case = "3.3.1"
-thiserror = "2.0.3"
+thiserror = "2.0.4"
 tiny-bip39 = "0.8.2"
 # Update solana-tokio patch below when updating this version
 tokio = "1.29.1"

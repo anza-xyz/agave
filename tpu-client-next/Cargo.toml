@@ -20,6 +20,7 @@ solana-measure = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-sdk = { workspace = true }
 solana-streamer = { workspace = true }
+solana-tls-utils = { workspace = true }
 solana-tpu-client = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }

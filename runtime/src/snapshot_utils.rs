@@ -1,6 +1,6 @@
 use {
     crate::{
-        bank::{BankFieldsToSerialize, BankSlotDelta},
+        bank::{BankFieldsToSerialize, BankHashStats, BankSlotDelta},
         serde_snapshot::{
             self, BankIncrementalSnapshotPersistence, ExtraFieldsToSerialize, SnapshotStreams,
         },
@@ -24,7 +24,7 @@ use {
     regex::Regex,
     solana_accounts_db::{
         account_storage::{meta::StoredMetaWriteVersion, AccountStorageMap},
-        accounts_db::{stats::BankHashStats, AccountStorageEntry, AtomicAccountsFileId},
+        accounts_db::{AccountStorageEntry, AtomicAccountsFileId},
         accounts_file::{AccountsFile, AccountsFileError, InternalsForArchive, StorageAccess},
         accounts_hash::{AccountsDeltaHash, AccountsHash},
         epoch_accounts_hash::EpochAccountsHash,

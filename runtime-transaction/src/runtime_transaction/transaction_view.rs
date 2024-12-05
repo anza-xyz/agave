@@ -57,6 +57,7 @@ impl<D: TransactionData> RuntimeTransaction<SanitizedTransactionView<D>> {
             u64::from(transaction.num_required_signatures()),
             precompile_signature_details.num_secp256k1_instruction_signatures,
             precompile_signature_details.num_ed25519_instruction_signatures,
+            precompile_signature_details.num_secp256r1_instruction_signatures,
         );
         let compute_budget_instruction_details =
             ComputeBudgetInstructionDetails::try_from(transaction.program_instructions_iter())?;

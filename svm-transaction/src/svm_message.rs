@@ -3,14 +3,21 @@ use {
         instruction::SVMInstruction, message_address_table_lookup::SVMMessageAddressTableLookup,
     },
     core::fmt::Debug,
-    solana_sdk::{
-        hash::Hash, message::AccountKeys, nonce::NONCED_TX_MARKER_IX_INDEX, pubkey::Pubkey,
-        system_program,
-    },
+    solana_hash::Hash,
+    solana_message::AccountKeys,
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::system_program,
 };
 
 mod sanitized_message;
 mod sanitized_transaction;
+// inlined to avoid solana-nonce dep
+#[cfg(test)]
+static_assertions::const_assert_eq!(
+    NONCED_TX_MARKER_IX_INDEX,
+    solana_nonce::NONCED_TX_MARKER_IX_INDEX
+);
+const NONCED_TX_MARKER_IX_INDEX: u8 = 0;
 
 // - Debug to support legacy logging
 pub trait SVMMessage: Debug {
@@ -34,7 +41,7 @@ pub trait SVMMessage: Debug {
 
     /// Return an iterator over the instructions in the message, paired with
     /// the pubkey of the program.
-    fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)>;
+    fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> + Clone;
 
     /// Return the account keys.
     fn account_keys(&self) -> AccountKeys;

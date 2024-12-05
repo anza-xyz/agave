@@ -14,7 +14,7 @@ use {
             VersionedTransaction,
         },
     },
-    std::collections::HashMap,
+    std::collections::{HashMap, HashSet},
 };
 
 #[derive(Default)]
@@ -112,6 +112,7 @@ impl SanitizedTransactionBuilder {
         block_hash: Hash,
         fee_payer: (Pubkey, Signature),
         v0_message: bool,
+        ignore_reserved_accounts: bool,
     ) -> Result<SanitizedTransaction, TransactionError> {
         let mut account_keys = Vec::with_capacity(
             self.signed_mutable_accounts
@@ -214,19 +215,23 @@ impl SanitizedTransactionBuilder {
 
         let loader = MockLoader {};
 
+        let reserved_active = &ReservedAccountKeys::new_all_activated().active;
+        let all_inactive = HashSet::new();
         SanitizedTransaction::try_new(
             sanitized_versioned_transaction,
             Hash::new_unique(),
             false,
             loader,
-            &ReservedAccountKeys::new_all_activated().active,
+            if ignore_reserved_accounts {
+                &all_inactive
+            } else {
+                reserved_active
+            },
         )
     }
 
     fn clean_up(&mut self) -> Vec<InnerInstruction> {
-        let mut instructions = Vec::new();
-
-        std::mem::swap(&mut instructions, &mut self.instructions);
+        let instructions = std::mem::take(&mut self.instructions);
         self.num_required_signatures = 0;
         self.num_readonly_signed_accounts = 0;
         self.num_readonly_unsigned_accounts = 0;

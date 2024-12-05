@@ -28,7 +28,7 @@ solana-signature = { workspace = true, optional = true }
 
 [dev-dependencies]
 solana-account-info = { workspace = true }
-solana-program = { workspace = true }
+solana-system-interface = { workspace = true }
 solana-transaction-context = { path = ".", features = [
     "dev-context-only-utils",
 ] }

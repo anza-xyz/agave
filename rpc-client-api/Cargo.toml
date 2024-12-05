@@ -23,8 +23,8 @@ serde_json = { workspace = true }
 solana-account = { workspace = true }
 solana-account-decoder-client-types = { workspace = true }
 solana-clock = { workspace = true }
-solana-commitment-config = { workspace = true }
-solana-fee-calculator = { workspace = true }
+solana-commitment-config = { workspace = true, features = ["serde"] }
+solana-fee-calculator = { workspace = true, features = ["serde"] }
 solana-inflation = { workspace = true }
 solana-inline-spl = { workspace = true }
 solana-pubkey = { workspace = true }
@@ -36,6 +36,7 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 const_format = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

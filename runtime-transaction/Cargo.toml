@@ -16,6 +16,7 @@ solana-builtins-default-costs = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sdk = { workspace = true }
+solana-sdk-ids = { workspace = true }
 solana-svm-transaction = { workspace = true }
 thiserror = { workspace = true }
 

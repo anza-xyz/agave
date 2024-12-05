@@ -25,7 +25,7 @@ use {
 type K = Pubkey;
 type CacheRangesHeld = RwLock<Vec<RangeInclusive<Pubkey>>>;
 
-type InMemMap<T> = HashMap<Pubkey, AccountMapEntry<T>>;
+type InMemMap<T> = HashMap<Pubkey, AccountMapEntry<T>, ahash::RandomState>;
 
 #[derive(Debug, Default)]
 pub struct StartupStats {

@@ -7,25 +7,20 @@
 //! Asynchronous implementations are expected to create transactions, sign them, and send
 //! them but without waiting to see if the server accepted it.
 
-#![cfg(feature = "full")]
-
 use {
-    crate::{
-        clock::Slot,
-        commitment_config::CommitmentConfig,
-        epoch_info::EpochInfo,
-        hash::Hash,
-        instruction::Instruction,
-        message::Message,
-        pubkey::Pubkey,
-        signature::{Keypair, Signature},
-        signer::Signer,
-        signers::Signers,
-        system_instruction,
-        transaction::{self, Transaction, VersionedTransaction},
-        transport::Result,
-    },
     solana_account::Account,
+    solana_commitment_config::CommitmentConfig,
+    solana_epoch_info::EpochInfo,
+    solana_hash::Hash,
+    solana_instruction::Instruction,
+    solana_keypair::Keypair,
+    solana_message::Message,
+    solana_pubkey::Pubkey,
+    solana_signature::Signature,
+    solana_signer::{signers::Signers, Signer},
+    solana_system_interface::instruction::transfer,
+    solana_transaction::{versioned::VersionedTransaction, Transaction},
+    solana_transaction_error::{TransactionResult, TransportResult as Result},
 };
 
 pub trait Client: SyncClient + AsyncClient {
@@ -84,20 +79,17 @@ pub trait SyncClient {
     fn get_minimum_balance_for_rent_exemption(&self, data_len: usize) -> Result<u64>;
 
     /// Get signature status.
-    fn get_signature_status(
-        &self,
-        signature: &Signature,
-    ) -> Result<Option<transaction::Result<()>>>;
+    fn get_signature_status(&self, signature: &Signature) -> Result<Option<TransactionResult<()>>>;
 
     /// Get signature status. Uses explicit commitment configuration.
     fn get_signature_status_with_commitment(
         &self,
         signature: &Signature,
         commitment_config: CommitmentConfig,
-    ) -> Result<Option<transaction::Result<()>>>;
+    ) -> Result<Option<TransactionResult<()>>>;
 
     /// Get last known slot
-    fn get_slot(&self) -> Result<Slot>;
+    fn get_slot(&self) -> Result<u64>;
 
     /// Get last known slot. Uses explicit commitment configuration.
     fn get_slot_with_commitment(&self, commitment_config: CommitmentConfig) -> Result<u64>;
@@ -200,8 +192,7 @@ pub trait AsyncClient {
         pubkey: &Pubkey,
         recent_blockhash: Hash,
     ) -> Result<Signature> {
-        let transfer_instruction =
-            system_instruction::transfer(&keypair.pubkey(), pubkey, lamports);
+        let transfer_instruction = transfer(&keypair.pubkey(), pubkey, lamports);
         self.async_send_instruction(keypair, transfer_instruction, recent_blockhash)
     }
 }

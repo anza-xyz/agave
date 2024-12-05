@@ -21,7 +21,7 @@ use {
             serve_repair::ServeRepair,
             serve_repair_service::ServeRepairService,
         },
-        rewards_recorder_service::{RewardsRecorderSender, RewardsRecorderService},
+        rewards_recorder_service::RewardsRecorderService,
         sample_performance_service::SamplePerformanceService,
         sigverify,
         snapshot_packager_service::{PendingSnapshotPackages, SnapshotPackagerService},
@@ -66,7 +66,7 @@ use {
         },
         blockstore_metric_report_service::BlockstoreMetricReportService,
         blockstore_options::{BlockstoreOptions, BLOCKSTORE_DIRECTORY_ROCKS_LEVEL},
-        blockstore_processor::{self, TransactionStatusSender},
+        blockstore_processor::{self, RewardsRecorderSender, TransactionStatusSender},
         entry_notifier_interface::EntryNotifierArc,
         entry_notifier_service::{EntryNotifierSender, EntryNotifierService},
         leader_schedule::FixedSchedule,
@@ -906,6 +906,7 @@ impl Validator {
             &blockstore_process_options,
             transaction_status_sender.as_ref(),
             cache_block_meta_sender.clone(),
+            rewards_recorder_sender.as_ref(),
             entry_notification_sender,
             blockstore_root_scan,
             accounts_background_request_sender.clone(),
@@ -2025,6 +2026,7 @@ pub struct ProcessBlockStore<'a> {
     process_options: &'a blockstore_processor::ProcessOptions,
     transaction_status_sender: Option<&'a TransactionStatusSender>,
     cache_block_meta_sender: Option<CacheBlockMetaSender>,
+    rewards_recorder_sender: Option<&'a RewardsRecorderSender>,
     entry_notification_sender: Option<&'a EntryNotifierSender>,
     blockstore_root_scan: Option<BlockstoreRootScan>,
     accounts_background_request_sender: AbsRequestSender,
@@ -2045,6 +2047,7 @@ impl<'a> ProcessBlockStore<'a> {
         process_options: &'a blockstore_processor::ProcessOptions,
         transaction_status_sender: Option<&'a TransactionStatusSender>,
         cache_block_meta_sender: Option<CacheBlockMetaSender>,
+        rewards_recorder_sender: Option<&'a RewardsRecorderSender>,
         entry_notification_sender: Option<&'a EntryNotifierSender>,
         blockstore_root_scan: BlockstoreRootScan,
         accounts_background_request_sender: AbsRequestSender,
@@ -2061,6 +2064,7 @@ impl<'a> ProcessBlockStore<'a> {
             process_options,
             transaction_status_sender,
             cache_block_meta_sender,
+            rewards_recorder_sender,
             entry_notification_sender,
             blockstore_root_scan: Some(blockstore_root_scan),
             accounts_background_request_sender,
@@ -2099,6 +2103,7 @@ impl<'a> ProcessBlockStore<'a> {
                 self.process_options,
                 self.transaction_status_sender,
                 self.cache_block_meta_sender.as_ref(),
+                self.rewards_recorder_sender,
                 self.entry_notification_sender,
                 &self.accounts_background_request_sender,
             )
@@ -2409,7 +2414,7 @@ fn initialize_rpc_transaction_history_services(
 
     let max_complete_rewards_slot = Arc::new(AtomicU64::new(blockstore.max_root()));
     let (rewards_recorder_sender, rewards_receiver) = unbounded();
-    let rewards_recorder_sender = Some(rewards_recorder_sender);
+    let rewards_recorder_sender = Some(rewards_recorder_sender.into());
     let rewards_recorder_service = Some(RewardsRecorderService::new(
         rewards_receiver,
         max_complete_rewards_slot.clone(),

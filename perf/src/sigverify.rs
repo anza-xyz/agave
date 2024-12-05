@@ -515,18 +515,11 @@ pub fn shrink_batches(batches: &mut Vec<PacketBatch>) {
 pub fn ed25519_verify_cpu(batches: &mut [PacketBatch], reject_non_vote: bool, packet_count: usize) {
     debug!("CPU ECDSA for {}", packet_count);
     PAR_THREAD_POOL.install(|| {
-        batches
-            .par_iter_mut()
-            .flatten()
-            .collect::<Vec<&mut Packet>>()
-            .par_chunks_mut(VERIFY_PACKET_CHUNK_SIZE)
-            .for_each(|packets| {
-                for packet in packets.iter_mut() {
-                    if !packet.meta().discard() && !verify_packet(packet, reject_non_vote) {
-                        packet.meta_mut().set_discard(true);
-                    }
-                }
-            });
+        batches.par_iter_mut().flatten().for_each(|packet| {
+            if !packet.meta().discard() && !verify_packet(packet, reject_non_vote) {
+                packet.meta_mut().set_discard(true);
+            }
+        });
     });
 }
 

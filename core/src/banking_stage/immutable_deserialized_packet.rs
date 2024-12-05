@@ -10,6 +10,7 @@ use {
     solana_sanitize::SanitizeError,
     solana_sdk::{
         clock::Slot,
+        feature_set::FeatureSet,
         hash::Hash,
         message::{v0::LoadedAddresses, AddressLoaderError, Message, SimpleAddressLoader},
         pubkey::Pubkey,
@@ -45,6 +46,12 @@ pub enum DeserializedPacketError {
     FailedFilter(#[from] PacketFilterFailure),
 }
 
+lazy_static::lazy_static! {
+    // Make a dummy feature_set with all features enabled to
+    // fetch compute_unit_price and compute_unit_limit for legacy leader.
+    static ref FEATURE_SET: FeatureSet = FeatureSet::all_enabled();
+}
+
 #[derive(Debug)]
 pub struct ImmutableDeserializedPacket {
     original_packet: Packet,
@@ -73,6 +80,7 @@ impl ImmutableDeserializedPacket {
                 .get_message()
                 .program_instructions_iter()
                 .map(|(pubkey, ix)| (pubkey, SVMInstruction::from(ix))),
+            &FEATURE_SET,
         )
         .map_err(|_| DeserializedPacketError::PrioritizationFailure)?;
 

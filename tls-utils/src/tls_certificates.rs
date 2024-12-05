@@ -29,9 +29,22 @@ pub fn new_dummy_x509_certificate(
         0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04,
         0x20,
     ];
-    let mut key_pkcs8_der = Vec::<u8>::with_capacity(PKCS8_PREFIX.len() + 32);
-    key_pkcs8_der.extend_from_slice(&PKCS8_PREFIX);
-    key_pkcs8_der.extend_from_slice(keypair.secret().as_bytes());
+
+    let key_pkcs8_der = {
+        let keypair_secret_bytes = keypair.secret().as_bytes();
+        let keypair_secret_len = keypair_secret_bytes.len();
+        if keypair_secret_len != 32 {
+            panic!("Unexpected secret key length!");
+        }
+        let buffer_size = PKCS8_PREFIX
+            .len()
+            .checked_add(keypair_secret_len) //clippy being overly guarded here but optimizer will elide checked_add
+            .expect("Unexpected secret key length!");
+        let mut key_pkcs8_der = Vec::<u8>::with_capacity(buffer_size);
+        key_pkcs8_der.extend_from_slice(&PKCS8_PREFIX);
+        key_pkcs8_der.extend_from_slice(keypair_secret_bytes);
+        key_pkcs8_der
+    };
 
     // Create a dummy certificate. Only the SubjectPublicKeyInfo field
     // is relevant to the peer-to-peer protocols. The signature of the

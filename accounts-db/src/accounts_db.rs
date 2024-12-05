@@ -33,8 +33,8 @@ use {
         },
         accounts_cache::{AccountsCache, CachedAccount, SlotCache},
         accounts_db::stats::{
-            AccountsStats, BankHashStats, CleanAccountsStats, FlushStats, PurgeStats,
-            ShrinkAncientStats, ShrinkStats, ShrinkStatsSub, StoreAccountsTiming,
+            AccountsStats, CleanAccountsStats, FlushStats, PurgeStats, ShrinkAncientStats,
+            ShrinkStats, ShrinkStatsSub, StoreAccountsTiming,
         },
         accounts_file::{
             AccountsFile, AccountsFileError, AccountsFileProvider, MatchAccountOwnerError,
@@ -1533,7 +1533,6 @@ pub struct AccountsDb {
 
     pub thread_pool_hash: ThreadPool,
 
-    bank_hash_stats: Mutex<HashMap<Slot, BankHashStats>>,
     accounts_delta_hashes: Mutex<HashMap<Slot, AccountsDeltaHash>>,
     accounts_hashes: Mutex<HashMap<Slot, (AccountsHash, /*capitalization*/ u64)>>,
     incremental_accounts_hashes:
@@ -1979,8 +1978,6 @@ impl AccountsDb {
             Self::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI,
         ));
 
-        let bank_hash_stats = Mutex::new(HashMap::from([(0, BankHashStats::default())]));
-
         // Increase the stack for foreground threads
         // rayon needs a lot of stack
         const ACCOUNTS_STACK_SIZE: usize = 8 * 1024 * 1024;
@@ -2049,7 +2046,6 @@ impl AccountsDb {
                 .into(),
             verify_experimental_accumulator_hash: accounts_db_config
                 .verify_experimental_accumulator_hash,
-            bank_hash_stats,
             thread_pool,
             thread_pool_clean,
             thread_pool_hash,
@@ -2249,11 +2245,7 @@ impl AccountsDb {
                     let mut delete = true;
                     for (slot, _account_info) in slot_list {
                         if let Some(count) = store_counts.get(slot).map(|s| s.0) {
-                            debug!(
-                                "calc_delete_dependencies()
-                            slot: {slot},
-                            count len: {count}"
-                            );
+                            debug!("calc_delete_dependencies() slot: {slot}, count len: {count}");
                             if count == 0 {
                                 // this store CAN be removed
                                 continue;
@@ -2272,15 +2264,9 @@ impl AccountsDb {
                 } else {
                     // a pubkey we were planning to remove is not removing all stores that contain the account
                     debug!(
-                        "calc_delete_dependencies(),
-                    pubkey: {},
-                    slot_list: {:?},
-                    slot_list_len: {},
-                    ref_count: {}",
-                        pubkey,
-                        slot_list,
+                        "calc_delete_dependencies(), pubkey: {pubkey}, slot list len: {}, \
+                         ref count: {ref_count}, slot list: {slot_list:?}",
                         slot_list.len(),
-                        ref_count,
                     );
                 }
 
@@ -4556,12 +4542,10 @@ impl AccountsDb {
         dropped_roots: impl Iterator<Item = Slot>,
     ) {
         let mut accounts_delta_hashes = self.accounts_delta_hashes.lock().unwrap();
-        let mut bank_hash_stats = self.bank_hash_stats.lock().unwrap();
 
         dropped_roots.for_each(|slot| {
             self.accounts_index.clean_dead_slot(slot);
             accounts_delta_hashes.remove(&slot);
-            bank_hash_stats.remove(&slot);
             // the storage has been removed from this slot and recycled or dropped
             assert!(self.storage.remove(&slot, false).is_none());
             debug_assert!(
@@ -4971,21 +4955,6 @@ impl AccountsDb {
 
             ScanStorageResult::Stored(retval)
         }
-    }
-
-    /// Insert a default bank hash stats for `slot`
-    ///
-    /// This fn is called when creating a new bank from parent.
-    pub fn insert_default_bank_hash_stats(&self, slot: Slot, parent_slot: Slot) {
-        let mut bank_hash_stats = self.bank_hash_stats.lock().unwrap();
-        if bank_hash_stats.get(&slot).is_some() {
-            error!(
-                "set_hash: already exists; multiple forks with shared slot {slot} as child \
-                 (parent: {parent_slot})!?"
-            );
-            return;
-        }
-        bank_hash_stats.insert(slot, BankHashStats::default());
     }
 
     pub fn load(
@@ -7654,30 +7623,6 @@ impl AccountsDb {
             .cloned()
     }
 
-    /// When reconstructing AccountsDb from a snapshot, insert the `bank_hash_stats` into the
-    /// internal bank hash stats map.
-    ///
-    /// This fn is only called when loading from a snapshot, which means AccountsDb is new and its
-    /// bank hash stats map is unpopulated.  Except for slot 0.
-    ///
-    /// Slot 0 is a special case.  When a new AccountsDb is created--like when loading from a
-    /// snapshot--the bank hash stats map is populated with a default entry at slot 0.  Remove the
-    /// default entry at slot 0, and then insert the new value at `slot`.
-    pub fn update_bank_hash_stats_from_snapshot(
-        &mut self,
-        slot: Slot,
-        stats: BankHashStats,
-    ) -> Option<BankHashStats> {
-        let mut bank_hash_stats = self.bank_hash_stats.lock().unwrap();
-        bank_hash_stats.remove(&0);
-        bank_hash_stats.insert(slot, stats)
-    }
-
-    /// Get the bank hash stats for `slot` in the `bank_hash_stats` map
-    pub fn get_bank_hash_stats(&self, slot: Slot) -> Option<BankHashStats> {
-        self.bank_hash_stats.lock().unwrap().get(&slot).cloned()
-    }
-
     fn update_index<'a>(
         &self,
         infos: Vec<AccountInfo>,
@@ -7899,13 +7844,10 @@ impl AccountsDb {
         );
 
         let mut accounts_delta_hashes = self.accounts_delta_hashes.lock().unwrap();
-        let mut bank_hash_stats = self.bank_hash_stats.lock().unwrap();
         for slot in dead_slots_iter {
             accounts_delta_hashes.remove(slot);
-            bank_hash_stats.remove(slot);
         }
         drop(accounts_delta_hashes);
-        drop(bank_hash_stats);
 
         measure.stop();
         inc_new_counter_info!("remove_dead_slots_metadata-ms", measure.as_ms() as usize);
@@ -8135,28 +8077,16 @@ impl AccountsDb {
             return;
         }
 
-        let mut stats = BankHashStats::default();
         let mut total_data = 0;
         (0..accounts.len()).for_each(|index| {
             accounts.account(index, |account| {
                 total_data += account.data().len();
-                stats.update(&account);
             })
         });
 
         self.stats
             .store_total_data
             .fetch_add(total_data as u64, Ordering::Relaxed);
-
-        {
-            // we need to drop the bank_hash_stats lock to prevent deadlocks
-            self.bank_hash_stats
-                .lock()
-                .unwrap()
-                .entry(accounts.target_slot())
-                .or_default()
-                .accumulate(&stats);
-        }
 
         // we use default hashes for now since the same account may be stored to the cache multiple times
         self.store_accounts_unfrozen(

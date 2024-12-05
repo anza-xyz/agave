@@ -9,8 +9,8 @@ and follows a [Backwards Compatibility Policy](https://docs.solanalabs.com/backw
 
 Release channels have their own copy of this changelog:
 * [edge - v2.2](#edge-channel)
-* [beta - v2.1](https://github.com/solana-labs/solana/blob/v2.1/CHANGELOG.md)
-* [stable - v2.0](https://github.com/solana-labs/solana/blob/v2.0/CHANGELOG.md)
+* [beta - v2.1](https://github.com/anza-xyz/agave/blob/v2.1/CHANGELOG.md)
+* [stable - v2.0](https://github.com/anza-xyz/agave/blob/v2.0/CHANGELOG.md)
 
 <a name="edge-channel"></a>
 ## [2.2.0] - Unreleased
