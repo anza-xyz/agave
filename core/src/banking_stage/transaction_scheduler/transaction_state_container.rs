@@ -8,7 +8,6 @@ use {
         scheduler_messages::TransactionId,
     },
     agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
-    bytes::{Bytes, BytesMut},
     itertools::MinMaxResult,
     min_max_heap::MinMaxHeap,
     slab::Slab,
@@ -197,50 +196,26 @@ impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
     }
 }
 
+pub type SharedBytes = Arc<Vec<u8>>;
+
 /// A wrapper around `TransactionStateContainer` that allows re-uses
 /// pre-allocated `Bytes` to copy packet data into and use for serialization.
 /// This is used to avoid allocations in parsing transactions.
 pub struct TransactionViewStateContainer {
-    inner: TransactionStateContainer<RuntimeTransaction<ResolvedTransactionView<Bytes>>>,
-    bytes_buffer: Box<[MaybeBytes]>,
-}
-
-enum MaybeBytes {
-    None,
-    Bytes(Bytes),
-    BytesMut(BytesMut),
-}
-
-impl MaybeBytes {
-    fn reserve_space(&mut self) -> BytesMut {
-        match core::mem::replace(self, MaybeBytes::None) {
-            MaybeBytes::BytesMut(bytes) => bytes,
-            _ => unreachable!("invalid state"),
-        }
-    }
-
-    fn freeze(&mut self, bytes: Bytes) {
-        debug_assert!(matches!(self, MaybeBytes::None));
-        *self = MaybeBytes::Bytes(bytes);
-    }
-
-    fn free_space(&mut self, mut bytes: BytesMut) {
-        debug_assert!(matches!(self, MaybeBytes::None));
-        bytes.clear();
-        *self = MaybeBytes::BytesMut(bytes);
-    }
+    inner: TransactionStateContainer<RuntimeTransaction<ResolvedTransactionView<SharedBytes>>>,
+    bytes_buffer: Box<[SharedBytes]>,
 }
 
 pub(crate) struct SuccessfulInsert {
-    pub state: TransactionState<RuntimeTransaction<ResolvedTransactionView<Bytes>>>,
-    pub bytes: Bytes,
+    pub state: TransactionState<RuntimeTransaction<ResolvedTransactionView<SharedBytes>>>,
 }
 
 impl TransactionViewStateContainer {
     /// Returns true if packet was dropped due to capacity limits.
-    pub(crate) fn try_insert_with(
+    pub(crate) fn try_insert_with_data(
         &mut self,
-        f: impl FnOnce(BytesMut) -> Result<SuccessfulInsert, BytesMut>,
+        data: &[u8],
+        f: impl FnOnce(SharedBytes) -> Result<SuccessfulInsert, ()>,
     ) -> bool {
         if self.inner.id_to_transaction_state.len() == self.inner.id_to_transaction_state.capacity()
         {
@@ -255,58 +230,38 @@ impl TransactionViewStateContainer {
 
         // Get the vacant space in the bytes buffer.
         let bytes_entry = &mut self.bytes_buffer[transaction_id];
-        let bytes = bytes_entry.reserve_space();
+        // Assert the entry is unique, then copy the packet data.
+        {
+            assert_eq!(Arc::strong_count(bytes_entry), 1, "entry must be unique");
+            let bytes = Arc::make_mut(bytes_entry);
+
+            // Clear and copy the packet data into the bytes buffer.
+            bytes.clear();
+            bytes.extend_from_slice(data);
+        }
 
         // Attempt to insert the transaction, storing the frozen bytes back into bytes buffer.
-        match f(bytes) {
-            Ok(SuccessfulInsert { state, bytes }) => {
+        match f(Arc::clone(bytes_entry)) {
+            Ok(SuccessfulInsert { state }) => {
                 let priority_id = TransactionPriorityId::new(state.priority(), transaction_id);
                 vacant_entry.insert(state);
-                bytes_entry.freeze(bytes);
 
                 // Push the transaction into the queue.
-                self.push_id_into_queue_with_remaining_capacity(priority_id, remaining_capacity)
+                self.inner
+                    .push_id_into_queue_with_remaining_capacity(priority_id, remaining_capacity)
             }
-            Err(bytes) => {
-                bytes_entry.free_space(bytes);
-                false
-            }
-        }
-    }
-
-    // This is re-implemented since we need it to call `remove_by_id` on this
-    // struct rather than `inner`. This is important because we need to return
-    // the `Bytes` to the pool.
-    /// Returns true if packet was dropped due to capacity limits.
-    fn push_id_into_queue_with_remaining_capacity(
-        &mut self,
-        priority_id: TransactionPriorityId,
-        remaining_capacity: usize,
-    ) -> bool {
-        if remaining_capacity == 0 {
-            let popped_id = self.inner.priority_queue.push_pop_min(priority_id);
-            self.remove_by_id(popped_id.id);
-            true
-        } else {
-            self.inner.priority_queue.push(priority_id);
-            false
+            Err(_) => false,
         }
     }
 }
 
-impl StateContainer<RuntimeTransaction<ResolvedTransactionView<Bytes>>>
+impl StateContainer<RuntimeTransaction<ResolvedTransactionView<SharedBytes>>>
     for TransactionViewStateContainer
 {
     fn with_capacity(capacity: usize) -> Self {
         let inner = TransactionStateContainer::with_capacity(capacity);
         let bytes_buffer = (0..inner.id_to_transaction_state.capacity())
-            .map(|_| {
-                MaybeBytes::BytesMut({
-                    let mut bytes = BytesMut::zeroed(PACKET_DATA_SIZE);
-                    bytes.clear();
-                    bytes
-                })
-            })
+            .map(|_| Arc::new(Vec::with_capacity(PACKET_DATA_SIZE)))
             .collect::<Vec<_>>()
             .into_boxed_slice();
         Self {
@@ -334,7 +289,8 @@ impl StateContainer<RuntimeTransaction<ResolvedTransactionView<Bytes>>>
     fn get_mut_transaction_state(
         &mut self,
         id: TransactionId,
-    ) -> Option<&mut TransactionState<RuntimeTransaction<ResolvedTransactionView<Bytes>>>> {
+    ) -> Option<&mut TransactionState<RuntimeTransaction<ResolvedTransactionView<SharedBytes>>>>
+    {
         self.inner.get_mut_transaction_state(id)
     }
 
@@ -342,32 +298,19 @@ impl StateContainer<RuntimeTransaction<ResolvedTransactionView<Bytes>>>
     fn get_transaction_ttl(
         &self,
         id: TransactionId,
-    ) -> Option<&SanitizedTransactionTTL<RuntimeTransaction<ResolvedTransactionView<Bytes>>>> {
+    ) -> Option<&SanitizedTransactionTTL<RuntimeTransaction<ResolvedTransactionView<SharedBytes>>>>
+    {
         self.inner.get_transaction_ttl(id)
     }
 
     #[inline]
     fn push_id_into_queue(&mut self, priority_id: TransactionPriorityId) -> bool {
-        self.push_id_into_queue_with_remaining_capacity(priority_id, self.remaining_capacity())
+        self.inner.push_id_into_queue(priority_id)
     }
 
+    #[inline]
     fn remove_by_id(&mut self, id: TransactionId) {
-        // Remove the entry from the map:
-        // 1. If it was unprocessed, this will drop the `Bytes` held.
-        // 2. If it was scheduled, this just marks the entry as removed.
-        let _ = self.inner.id_to_transaction_state.remove(id);
-
-        // Clear the bytes buffer.
-        let bytes_entry = &mut self.bytes_buffer[id];
-        let MaybeBytes::Bytes(bytes) = core::mem::replace(bytes_entry, MaybeBytes::None) else {
-            unreachable!("invalid state");
-        };
-
-        // Return the `Bytes` to the pool.
-        let bytes = bytes
-            .try_into_mut()
-            .expect("all `Bytes` instances must be dropped");
-        bytes_entry.free_space(bytes);
+        self.inner.remove_by_id(id);
     }
 
     #[inline]
