@@ -162,6 +162,11 @@ pub fn get_builtin_instruction_cost<'a>(
         .map(|builtin_cost| builtin_cost.native_cost)
 }
 
+#[inline]
+pub fn is_builtin_program(program_id: &Pubkey) -> bool {
+    BUILTIN_INSTRUCTION_COSTS.contains_key(program_id)
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

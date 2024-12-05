@@ -47,6 +47,7 @@ full = [
     "dep:solana-seed-derivable",
     "dep:solana-seed-phrase",
     "dep:solana-signer",
+    "dep:solana-transaction",
     "dep:solana-transaction-error",
 ]
 borsh = [
@@ -60,6 +61,7 @@ dev-context-only-utils = [
     "solana-account/dev-context-only-utils",
     "solana-compute-budget-interface/dev-context-only-utils",
     "solana-rent-debits/dev-context-only-utils",
+    "solana-transaction/dev-context-only-utils",
     "solana-transaction-context/dev-context-only-utils",
 ]
 frozen-abi = [
@@ -74,7 +76,8 @@ frozen-abi = [
     "solana-reward-info/frozen-abi",
     "solana-short-vec/frozen-abi",
     "solana-signature/frozen-abi",
-    "solana-transaction-error/frozen-abi",
+    "solana-transaction/frozen-abi",
+    "solana-transaction-error/frozen-abi"
 ]
 # Enables the "vendored" feature of openssl inside of secp256r1-program
 openssl-vendored = ["solana-precompiles/openssl-vendored"]
@@ -173,6 +176,12 @@ solana-signature = { workspace = true, features = [
 ], optional = true }
 solana-signer = { workspace = true, optional = true }
 solana-time-utils = { workspace = true }
+solana-transaction = { workspace = true, features = [
+    "blake3",
+    "precompiles",
+    "serde",
+    "verify"
+], optional = true }
 solana-transaction-context = { workspace = true, features = ["bincode"] }
 solana-transaction-error = { workspace = true, features = [
     "serde",
@@ -198,7 +207,9 @@ static_assertions = { workspace = true }
 tiny-bip39 = { workspace = true }
 
 [package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
+targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]

@@ -7,6 +7,7 @@ use {
 pub struct PrecompileSignatureDetails {
     pub num_secp256k1_instruction_signatures: u64,
     pub num_ed25519_instruction_signatures: u64,
+    pub num_secp256r1_instruction_signatures: u64,
 }
 
 /// Get transaction signature details.
@@ -20,6 +21,7 @@ pub fn get_precompile_signature_details<'a>(
     // is low enough that the sum of all signatures will not overflow a u64.
     let mut num_secp256k1_instruction_signatures: u64 = 0;
     let mut num_ed25519_instruction_signatures: u64 = 0;
+    let mut num_secp256r1_instruction_signatures: u64 = 0;
     for (program_id, instruction) in instructions {
         let program_id_index = instruction.program_id_index;
         match filter.is_signature(program_id_index, program_id) {
@@ -32,12 +34,17 @@ pub fn get_precompile_signature_details<'a>(
                 num_ed25519_instruction_signatures = num_ed25519_instruction_signatures
                     .wrapping_add(get_num_signatures_in_instruction(&instruction));
             }
+            ProgramIdStatus::Secp256r1 => {
+                num_secp256r1_instruction_signatures = num_secp256r1_instruction_signatures
+                    .wrapping_add(get_num_signatures_in_instruction(&instruction));
+            }
         }
     }
 
     PrecompileSignatureDetails {
         num_secp256k1_instruction_signatures,
         num_ed25519_instruction_signatures,
+        num_secp256r1_instruction_signatures,
     }
 }
 
@@ -51,6 +58,7 @@ enum ProgramIdStatus {
     NotSignature,
     Secp256k1,
     Ed25519,
+    Secp256r1,
 }
 
 struct SignatureDetailsFilter {
@@ -86,6 +94,8 @@ impl SignatureDetailsFilter {
             ProgramIdStatus::Secp256k1
         } else if program_id == &solana_sdk::ed25519_program::ID {
             ProgramIdStatus::Ed25519
+        } else if program_id == &solana_sdk_ids::secp256r1_program::ID {
+            ProgramIdStatus::Secp256r1
         } else {
             ProgramIdStatus::NotSignature
         }
@@ -140,19 +150,23 @@ mod tests {
             Pubkey::new_unique(),
             solana_sdk::secp256k1_program::ID,
             solana_sdk::ed25519_program::ID,
+            solana_sdk_ids::secp256r1_program::ID,
         ];
         let instructions = [
             make_instruction(&program_ids, 1, &[5]),
             make_instruction(&program_ids, 2, &[3]),
+            make_instruction(&program_ids, 3, &[4]),
             make_instruction(&program_ids, 0, &[]),
             make_instruction(&program_ids, 2, &[2]),
             make_instruction(&program_ids, 1, &[1]),
             make_instruction(&program_ids, 0, &[]),
+            make_instruction(&program_ids, 3, &[3]),
         ];
 
         let signature_details = get_precompile_signature_details(instructions.into_iter());
         assert_eq!(signature_details.num_secp256k1_instruction_signatures, 6);
         assert_eq!(signature_details.num_ed25519_instruction_signatures, 5);
+        assert_eq!(signature_details.num_secp256r1_instruction_signatures, 7);
     }
 
     #[test]
@@ -160,6 +174,7 @@ mod tests {
         let program_ids = [
             solana_sdk::secp256k1_program::ID,
             solana_sdk::ed25519_program::ID,
+            solana_sdk_ids::secp256r1_program::ID,
         ];
         let instructions = [
             make_instruction(&program_ids, 0, &[]),
@@ -169,5 +184,6 @@ mod tests {
         let signature_details = get_precompile_signature_details(instructions.into_iter());
         assert_eq!(signature_details.num_secp256k1_instruction_signatures, 0);
         assert_eq!(signature_details.num_ed25519_instruction_signatures, 0);
+        assert_eq!(signature_details.num_secp256r1_instruction_signatures, 0);
     }
 }

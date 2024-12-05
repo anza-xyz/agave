@@ -3,7 +3,7 @@
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 
 #[cfg(not(target_os = "solana"))]
-use solana_program::message::SanitizedMessage;
+use solana_message::SanitizedMessage;
 use {solana_native_token::sol_to_lamports, std::num::NonZeroU32};
 
 /// A fee and its associated compute unit limit

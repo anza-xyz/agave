@@ -6,20 +6,17 @@ use {
     serde_derive::{Deserialize, Serialize},
     serde_json::Value,
     solana_account_decoder_client_types::token::UiTokenAmount,
-    solana_sdk::{
-        commitment_config::CommitmentConfig,
-        instruction::CompiledInstruction,
-        message::{
-            v0::{LoadedAddresses, MessageAddressTableLookup},
-            MessageHeader,
-        },
-        reward_type::RewardType,
-        transaction::{
-            Result as TransactionResult, TransactionError, TransactionVersion, VersionedTransaction,
-        },
-        transaction_context::TransactionReturnData,
+    solana_commitment_config::CommitmentConfig,
+    solana_message::{
+        compiled_instruction::CompiledInstruction,
+        v0::{LoadedAddresses, MessageAddressTableLookup},
+        MessageHeader,
     },
+    solana_reward_info::RewardType,
     solana_signature::Signature,
+    solana_transaction::versioned::{TransactionVersion, VersionedTransaction},
+    solana_transaction_context::TransactionReturnData,
+    solana_transaction_error::{TransactionError, TransactionResult},
     thiserror::Error,
 };
 pub mod option_serializer;

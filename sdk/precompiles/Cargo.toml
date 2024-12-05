@@ -13,8 +13,8 @@ edition = { workspace = true }
 lazy_static = { workspace = true }
 solana-ed25519-program = { workspace = true }
 solana-feature-set = { workspace = true }
+solana-message = { workspace = true }
 solana-precompile-error = { workspace = true }
-solana-program = { workspace = true, default-features = false }
 solana-pubkey = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-secp256k1-program = { workspace = true, features = ["bincode"] }

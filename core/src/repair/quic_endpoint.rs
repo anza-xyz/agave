@@ -14,10 +14,11 @@ use {
         CertificateError, KeyLogFile,
     },
     solana_gossip::contact_info::Protocol,
-    solana_quic_client::nonblocking::quic_client::SkipServerVerification,
     solana_runtime::bank_forks::BankForks,
     solana_sdk::{pubkey::Pubkey, signature::Keypair},
-    solana_streamer::{quic::SkipClientVerification, tls_certificates::new_dummy_x509_certificate},
+    solana_tls_utils::{
+        new_dummy_x509_certificate, SkipClientVerification, SkipServerVerification,
+    },
     std::{
         cmp::Reverse,
         collections::{hash_map::Entry, HashMap},

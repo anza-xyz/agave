@@ -1,42 +1,41 @@
 //! Defines a transaction which supports multiple versions of messages.
 
-#![cfg(feature = "full")]
-
 use {
-    crate::{
-        hash::Hash,
-        message::VersionedMessage,
-        signature::Signature,
-        signer::SignerError,
-        signers::Signers,
-        transaction::{Result, Transaction},
-    },
-    serde::Serialize,
-    solana_sanitize::SanitizeError,
+    crate::Transaction, solana_message::VersionedMessage, solana_sanitize::SanitizeError,
+    solana_signature::Signature, std::cmp::Ordering,
+};
+#[cfg(feature = "serde")]
+use {
+    serde_derive::{Deserialize, Serialize},
     solana_short_vec as short_vec,
-    solana_transaction_error::TransactionError,
-    std::cmp::Ordering,
 };
-
-mod sanitized;
-
-pub use sanitized::*;
+#[cfg(feature = "bincode")]
 use {
-    crate::program_utils::limited_deserialize,
-    solana_program::{
-        nonce::NONCED_TX_MARKER_IX_INDEX, system_instruction::SystemInstruction, system_program,
-    },
+    solana_bincode::limited_deserialize,
+    solana_sdk_ids::system_program,
+    solana_signer::{signers::Signers, SignerError},
+    solana_system_interface::instruction::SystemInstruction,
 };
+
+pub mod sanitized;
 
 /// Type that serializes to the string "legacy"
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(
+    feature = "serde",
+    derive(Deserialize, Serialize),
+    serde(rename_all = "camelCase")
+)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Legacy {
     Legacy,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", untagged)]
+#[cfg_attr(
+    feature = "serde",
+    derive(Deserialize, Serialize),
+    serde(rename_all = "camelCase", untagged)
+)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TransactionVersion {
     Legacy(Legacy),
     Number(u8),
@@ -48,11 +47,12 @@ impl TransactionVersion {
 
 // NOTE: Serialization-related changes must be paired with the direct read at sigverify.
 /// An atomic transaction
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Debug, PartialEq, Default, Eq, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "frozen-abi", derive(solana_frozen_abi_macro::AbiExample))]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+#[derive(Debug, PartialEq, Default, Eq, Clone)]
 pub struct VersionedTransaction {
     /// List of signatures
-    #[serde(with = "short_vec")]
+    #[cfg_attr(feature = "serde", serde(with = "short_vec"))]
     pub signatures: Vec<Signature>,
     /// Message to sign.
     pub message: VersionedMessage,
@@ -70,6 +70,7 @@ impl From<Transaction> for VersionedTransaction {
 impl VersionedTransaction {
     /// Signs a versioned message and if successful, returns a signed
     /// transaction.
+    #[cfg(feature = "bincode")]
     pub fn try_new<T: Signers + ?Sized>(
         message: VersionedMessage,
         keypairs: &T,
@@ -170,26 +171,31 @@ impl VersionedTransaction {
         }
     }
 
+    #[cfg(feature = "verify")]
     /// Verify the transaction and hash its message
-    pub fn verify_and_hash_message(&self) -> Result<Hash> {
+    pub fn verify_and_hash_message(
+        &self,
+    ) -> solana_transaction_error::TransactionResult<solana_hash::Hash> {
         let message_bytes = self.message.serialize();
         if !self
             ._verify_with_results(&message_bytes)
             .iter()
             .all(|verify_result| *verify_result)
         {
-            Err(TransactionError::SignatureFailure)
+            Err(solana_transaction_error::TransactionError::SignatureFailure)
         } else {
             Ok(VersionedMessage::hash_raw_message(&message_bytes))
         }
     }
 
+    #[cfg(feature = "verify")]
     /// Verify the transaction and return a list of verification results
     pub fn verify_with_results(&self) -> Vec<bool> {
         let message_bytes = self.message.serialize();
         self._verify_with_results(&message_bytes)
     }
 
+    #[cfg(feature = "verify")]
     fn _verify_with_results(&self, message_bytes: &[u8]) -> Vec<bool> {
         self.signatures
             .iter()
@@ -198,12 +204,13 @@ impl VersionedTransaction {
             .collect()
     }
 
+    #[cfg(feature = "bincode")]
     /// Returns true if transaction begins with an advance nonce instruction.
     pub fn uses_durable_nonce(&self) -> bool {
         let message = &self.message;
         message
             .instructions()
-            .get(NONCED_TX_MARKER_IX_INDEX as usize)
+            .get(crate::NONCED_TX_MARKER_IX_INDEX as usize)
             .filter(|instruction| {
                 // Is system program
                 matches!(
@@ -212,7 +219,7 @@ impl VersionedTransaction {
                 )
                 // Is a nonce advance instruction
                 && matches!(
-                    limited_deserialize(&instruction.data),
+                    limited_deserialize(&instruction.data, crate::PACKET_DATA_SIZE as u64,),
                     Ok(SystemInstruction::AdvanceNonceAccount)
                 )
             })
@@ -224,15 +231,13 @@ impl VersionedTransaction {
 mod tests {
     use {
         super::*,
-        crate::{
-            message::Message as LegacyMessage,
-            signer::{keypair::Keypair, Signer},
-            system_instruction,
-        },
-        solana_program::{
-            instruction::{AccountMeta, Instruction},
-            pubkey::Pubkey,
-        },
+        solana_hash::Hash,
+        solana_instruction::{AccountMeta, Instruction},
+        solana_keypair::Keypair,
+        solana_message::Message as LegacyMessage,
+        solana_pubkey::Pubkey,
+        solana_signer::Signer,
+        solana_system_interface::instruction as system_instruction,
     };
 
     #[test]

@@ -5,19 +5,17 @@ use {
         crypto::rustls::QuicClientConfig, ClientConfig, Connection, Endpoint, IdleTimeout,
         TransportConfig,
     },
-    skip_server_verification::SkipServerVerification,
     solana_sdk::quic::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT},
     solana_streamer::nonblocking::quic::ALPN_TPU_PROTOCOL_ID,
+    solana_tls_utils::SkipServerVerification,
     std::{net::SocketAddr, sync::Arc},
 };
 
 pub mod error;
-pub mod quic_client_certificate;
-pub mod skip_server_verification;
 
 pub use {
     error::{IoErrorWithPartialEq, QuicError},
-    quic_client_certificate::QuicClientCertificate,
+    solana_tls_utils::QuicClientCertificate,
 };
 
 pub(crate) fn create_client_config(client_certificate: QuicClientCertificate) -> ClientConfig {

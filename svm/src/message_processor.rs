@@ -137,7 +137,13 @@ impl MessageProcessor {
 mod tests {
     use {
         super::*,
+        openssl::{
+            ec::{EcGroup, EcKey},
+            nid::Nid,
+        },
+        rand0_7::thread_rng,
         solana_compute_budget::compute_budget::ComputeBudget,
+        solana_ed25519_program::new_ed25519_instruction,
         solana_feature_set::FeatureSet,
         solana_program_runtime::{
             declare_process_instruction,
@@ -147,6 +153,7 @@ mod tests {
         },
         solana_sdk::{
             account::{AccountSharedData, ReadableAccount},
+            ed25519_program,
             hash::Hash,
             instruction::{AccountMeta, Instruction, InstructionError},
             message::{AccountKeys, Message, SanitizedMessage},
@@ -158,6 +165,7 @@ mod tests {
             secp256k1_program, system_program,
             transaction_context::TransactionContext,
         },
+        solana_secp256r1_program::new_secp256r1_instruction,
         std::sync::Arc,
     };
 
@@ -612,6 +620,22 @@ mod tests {
         );
     }
 
+    fn secp256k1_instruction_for_test() -> Instruction {
+        let secret_key = libsecp256k1::SecretKey::random(&mut thread_rng());
+        new_secp256k1_instruction(&secret_key, b"hello")
+    }
+
+    fn ed25519_instruction_for_test() -> Instruction {
+        let secret_key = ed25519_dalek::Keypair::generate(&mut thread_rng());
+        new_ed25519_instruction(&secret_key, b"hello")
+    }
+
+    fn secp256r1_instruction_for_test() -> Instruction {
+        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+        let secret_key = EcKey::generate(&group).unwrap();
+        new_secp256r1_instruction(b"hello", secret_key).unwrap()
+    }
+
     #[test]
     fn test_precompile() {
         let mock_program_id = Pubkey::new_unique();
@@ -621,6 +645,10 @@ mod tests {
 
         let mut secp256k1_account = AccountSharedData::new(1, 0, &native_loader::id());
         secp256k1_account.set_executable(true);
+        let mut ed25519_account = AccountSharedData::new(1, 0, &native_loader::id());
+        ed25519_account.set_executable(true);
+        let mut secp256r1_account = AccountSharedData::new(1, 0, &native_loader::id());
+        secp256r1_account.set_executable(true);
         let mut mock_program_account = AccountSharedData::new(1, 0, &native_loader::id());
         mock_program_account.set_executable(true);
         let accounts = vec![
@@ -629,27 +657,17 @@ mod tests {
                 AccountSharedData::new(1, 0, &system_program::id()),
             ),
             (secp256k1_program::id(), secp256k1_account),
+            (ed25519_program::id(), ed25519_account),
+            (solana_secp256r1_program::id(), secp256r1_account),
             (mock_program_id, mock_program_account),
         ];
-        let mut transaction_context = TransactionContext::new(accounts, Rent::default(), 1, 2);
+        let mut transaction_context = TransactionContext::new(accounts, Rent::default(), 1, 4);
 
-        // Since libsecp256k1 is still using the old version of rand, this test
-        // copies the `random` implementation at:
-        // https://docs.rs/libsecp256k1/latest/src/libsecp256k1/lib.rs.html#430
-        let secret_key = {
-            use solana_type_overrides::rand::RngCore;
-            let mut rng = rand::thread_rng();
-            loop {
-                let mut ret = [0u8; libsecp256k1::util::SECRET_KEY_SIZE];
-                rng.fill_bytes(&mut ret);
-                if let Ok(key) = libsecp256k1::SecretKey::parse(&ret) {
-                    break key;
-                }
-            }
-        };
         let message = new_sanitized_message(Message::new(
             &[
-                new_secp256k1_instruction(&secret_key, b"hello"),
+                secp256k1_instruction_for_test(),
+                ed25519_instruction_for_test(),
+                secp256r1_instruction_for_test(),
                 Instruction::new_with_bytes(mock_program_id, &[], vec![]),
             ],
             Some(transaction_context.get_key_of_account_at_index(0).unwrap()),
@@ -677,7 +695,7 @@ mod tests {
         );
         let result = MessageProcessor::process_message(
             &message,
-            &[vec![1], vec![2]],
+            &[vec![1], vec![2], vec![3], vec![4]],
             &mut invoke_context,
             &mut ExecuteTimings::default(),
             &mut 0,
@@ -686,10 +704,10 @@ mod tests {
         assert_eq!(
             result,
             Err(TransactionError::InstructionError(
-                1,
+                3,
                 InstructionError::Custom(0xbabb1e)
             ))
         );
-        assert_eq!(transaction_context.get_instruction_trace_length(), 2);
+        assert_eq!(transaction_context.get_instruction_trace_length(), 4);
     }
 }

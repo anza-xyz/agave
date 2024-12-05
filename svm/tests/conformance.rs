@@ -15,12 +15,15 @@ use {
     },
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
+        clock::Clock,
+        epoch_schedule::EpochSchedule,
         hash::Hash,
         instruction::AccountMeta,
         message::SanitizedMessage,
         pubkey::Pubkey,
         rent::Rent,
         signature::Signature,
+        sysvar::{last_restart_slot, SysvarId},
         transaction_context::{
             ExecutionRecord, IndexOfAccount, InstructionAccount, TransactionAccount,
             TransactionContext,
@@ -30,10 +33,10 @@ use {
         program_loader, transaction_processing_callback::TransactionProcessingCallback,
         transaction_processor::TransactionBatchProcessor,
     },
-    solana_svm_conformance::proto::{InstrEffects, InstrFixture},
+    solana_svm_conformance::proto::{AcctState, InstrEffects, InstrFixture},
     solana_timings::ExecuteTimings,
     std::{
-        collections::HashMap,
+        collections::{hash_map::Entry, HashMap},
         env,
         ffi::OsString,
         fs::{self, File},
@@ -82,10 +85,10 @@ fn setup() -> PathBuf {
             .status()
             .expect("Failed to download test-vectors");
 
-        std::println!("Checking out commit 90a8ad069f8a07d2fdad3cf03b3fb486a00fe988");
+        std::println!("Checking out commit 4abb2046cf51efe809498f4fd717023684050d2f");
         Command::new("git")
             .current_dir(&dir)
-            .args(["checkout", "90a8ad069f8a07d2fdad3cf03b3fb486a00fe988"])
+            .args(["checkout", "4abb2046cf51efe809498f4fd717023684050d2f"])
             .status()
             .expect("Failed to checkout to proper test-vector commit");
 
@@ -156,7 +159,6 @@ fn run_fixture(fixture: InstrFixture, filename: OsString) {
             is_signer: item.is_signer,
             is_writable: item.is_writable,
         });
-
         if item.is_signer {
             signatures.insert(pubkey, Signature::new_unique());
         }
@@ -182,7 +184,9 @@ fn run_fixture(fixture: InstrFixture, filename: OsString) {
             let mut account_data = AccountSharedData::default();
             account_data.set_lamports(item.lamports);
             account_data.set_data(item.data);
-            account_data.set_owner(Pubkey::new_from_array(item.owner.try_into().unwrap()));
+            account_data.set_owner(Pubkey::new_from_array(
+                item.owner.clone().try_into().unwrap(),
+            ));
             account_data.set_executable(item.executable);
             account_data.set_rent_epoch(item.rent_epoch);
 
@@ -198,9 +202,12 @@ fn run_fixture(fixture: InstrFixture, filename: OsString) {
         account_data_map.insert(fee_payer, account_data);
     }
 
-    let Ok(transaction) =
-        transaction_builder.build(Hash::default(), (fee_payer, Signature::new_unique()), false)
-    else {
+    let Ok(transaction) = transaction_builder.build(
+        Hash::default(),
+        (fee_payer, Signature::new_unique()),
+        false,
+        true,
+    ) else {
         // If we can't build a sanitized transaction,
         // the output must be a failed instruction as well
         assert_ne!(output.result, 0);
@@ -228,7 +235,34 @@ fn run_fixture(fixture: InstrFixture, filename: OsString) {
         None,
     );
 
-    batch_processor.fill_missing_sysvar_cache_entries(&mock_bank);
+    batch_processor
+        .writable_sysvar_cache()
+        .write()
+        .unwrap()
+        .fill_missing_entries(|pubkey, callbackback| {
+            if let Some(account) = mock_bank.get_account_shared_data(pubkey) {
+                if account.lamports() > 0 {
+                    callbackback(account.data());
+                    return;
+                }
+            }
+
+            if *pubkey == Clock::id() {
+                let default_clock = Clock {
+                    slot: 10,
+                    ..Default::default()
+                };
+                let clock_data = bincode::serialize(&default_clock).unwrap();
+                callbackback(&clock_data);
+            } else if *pubkey == EpochSchedule::id() {
+                callbackback(&bincode::serialize(&EpochSchedule::default()).unwrap());
+            } else if *pubkey == Rent::id() {
+                callbackback(&bincode::serialize(&Rent::default()).unwrap());
+            } else if *pubkey == last_restart_slot::id() {
+                let slot_val = 5000_u64;
+                callbackback(&bincode::serialize(&slot_val).unwrap());
+            }
+        });
 
     execute_fixture_as_instr(
         &mock_bank,
@@ -268,6 +302,7 @@ fn execute_fixture_as_instr(
         compute_budget.max_instruction_stack_depth,
         compute_budget.max_instruction_trace_length,
     );
+    transaction_context.set_remove_accounts_executable_flag_checks(false);
 
     let mut loaded_programs = ProgramCacheForTxBatch::new(
         42,
@@ -407,53 +442,43 @@ fn verify_accounts_and_data(
     return_data: &Vec<u8>,
     filename: OsString,
 ) {
-    let idx_map: HashMap<Pubkey, usize> = accounts
-        .iter()
-        .enumerate()
-        .map(|(idx, item)| (item.0, idx))
-        .collect();
+    // The input created by firedancer is malformed in that there may be repeated accounts in the
+    // instruction execution output. This happens because the set system program as the program ID,
+    // as pass it as an account to be modified in the instruction.
+    let mut idx_map: HashMap<Pubkey, Vec<usize>> = HashMap::new();
+    for (idx, item) in accounts.iter().enumerate() {
+        match idx_map.entry(item.0) {
+            Entry::Occupied(mut this) => {
+                this.get_mut().push(idx);
+            }
+            Entry::Vacant(this) => {
+                this.insert(vec![idx]);
+            }
+        }
+    }
 
     for item in &output.modified_accounts {
         let pubkey = Pubkey::new_from_array(item.address.clone().try_into().unwrap());
-        let index = *idx_map
+        let indexes = *idx_map
             .get(&pubkey)
+            .as_ref()
             .expect("Account not in expected results");
 
-        let received_data = &accounts[index].1;
+        let mut error: Option<String> = Some("err".to_string());
+        for idx in indexes {
+            let received_data = &accounts[*idx].1;
+            let check_result = check_account(received_data, item, &filename);
 
-        assert_eq!(
-            received_data.lamports(),
-            item.lamports,
-            "Lamports differ in case: {:?}",
-            filename
-        );
-        assert_eq!(
-            received_data.data(),
-            item.data.as_slice(),
-            "Account data differs in case: {:?}",
-            filename
-        );
-        assert_eq!(
-            received_data.owner(),
-            &Pubkey::new_from_array(item.owner.clone().try_into().unwrap()),
-            "Account owner differs in case: {:?}",
-            filename
-        );
-        assert_eq!(
-            received_data.executable(),
-            item.executable,
-            "Executable boolean differs in case: {:?}",
-            filename
-        );
+            if error.is_some() && check_result.is_none() {
+                // If at least one of the accounts pass the check, we have no error.
+                error = None;
+            } else if error.is_some() && check_result.is_some() {
+                error = check_result;
+            }
+        }
 
-        // u64::MAX means we are not considering the epoch
-        if item.rent_epoch != u64::MAX && received_data.rent_epoch() != u64::MAX {
-            assert_eq!(
-                received_data.rent_epoch(),
-                item.rent_epoch,
-                "Rent epoch differs in case: {:?}",
-                filename
-            );
+        if let Some(error) = error {
+            panic!("{}", error);
         }
     }
 
@@ -469,4 +494,58 @@ fn verify_accounts_and_data(
     } else {
         assert_eq!(&output.return_data, return_data);
     }
+}
+
+fn check_account(
+    received: &AccountSharedData,
+    expected: &AcctState,
+    filename: &OsString,
+) -> Option<String> {
+    macro_rules! format_args {
+        ($received:expr, $expected:expr) => {
+            format!("received: {:?}\nexpected: {:?}", $received, $expected).as_str()
+        };
+    }
+
+    if received.lamports() != expected.lamports {
+        return Some(
+            format!("Lamports differ in case: {:?}\n", filename)
+                + format_args!(received.lamports(), expected.lamports),
+        );
+    }
+
+    if received.data() != expected.data.as_slice() {
+        return Some(
+            format!("Account data differs in case: {:?}\n", filename)
+                + format_args!(received.data(), expected.data.as_slice()),
+        );
+    }
+
+    let expected_owner = Pubkey::new_from_array(expected.owner.clone().try_into().unwrap());
+    if received.owner() != &expected_owner {
+        return Some(
+            format!("Account owner differs in case: {:?}\n", filename)
+                + format_args!(received.owner(), expected_owner),
+        );
+    }
+
+    if received.executable() != expected.executable {
+        return Some(
+            format!("Executable boolean differs in case: {:?}\n", filename)
+                + format_args!(received.executable(), expected.executable),
+        );
+    }
+
+    // u64::MAX means we are not considering the epoch
+    if received.rent_epoch() != u64::MAX
+        && expected.rent_epoch != u64::MAX
+        && received.rent_epoch() != expected.rent_epoch
+    {
+        return Some(
+            format!("Rent epoch differs in case: {:?}\n", filename)
+                + format_args!(received.rent_epoch(), expected.rent_epoch),
+        );
+    }
+
+    None
 }

@@ -9,6 +9,7 @@ use {
     },
     solana_core::{
         accounts_hash_verifier::AccountsHashVerifier,
+        rewards_recorder_service::RewardsRecorderService,
         snapshot_packager_service::PendingSnapshotPackages, validator::BlockVerificationMethod,
     },
     solana_geyser_plugin_manager::geyser_plugin_service::{
@@ -286,12 +287,16 @@ pub fn load_and_process_ledger(
 
     let enable_rpc_transaction_history = arg_matches.is_present("enable_rpc_transaction_history");
 
-    let (transaction_status_sender, transaction_status_service) = if geyser_plugin_active
-        || enable_rpc_transaction_history
-    {
-        // Need Primary (R/W) access to insert transaction data;
+    let (
+        transaction_status_sender,
+        transaction_status_service,
+        rewards_recorder_sender,
+        rewards_recorder_service,
+    ) = if geyser_plugin_active || enable_rpc_transaction_history {
+        // Need Primary (R/W) access to insert transaction and rewards data;
         // obtain Primary access if we do not already have it
-        let tss_blockstore = if enable_rpc_transaction_history && !blockstore.is_primary_access() {
+        let write_blockstore = if enable_rpc_transaction_history && !blockstore.is_primary_access()
+        {
             Arc::new(open_blockstore(
                 blockstore.ledger_path(),
                 arg_matches,
@@ -307,18 +312,29 @@ pub fn load_and_process_ledger(
             Arc::default(),
             enable_rpc_transaction_history,
             transaction_notifier,
-            tss_blockstore,
+            write_blockstore.clone(),
             arg_matches.is_present("enable_extended_tx_metadata_storage"),
             exit.clone(),
         );
+
+        let (rewards_recorder_sender, rewards_recorder_receiver) = unbounded();
+        let rewards_recorder_service = RewardsRecorderService::new(
+            rewards_recorder_receiver,
+            Arc::default(),
+            write_blockstore,
+            exit.clone(),
+        );
+
         (
             Some(TransactionStatusSender {
                 sender: transaction_status_sender,
             }),
             Some(transaction_status_service),
+            Some(rewards_recorder_sender.into()),
+            Some(rewards_recorder_service),
         )
     } else {
-        (transaction_status_sender, None)
+        (transaction_status_sender, None, None, None)
     };
 
     let (bank_forks, leader_schedule_cache, starting_snapshot_hashes, ..) =
@@ -411,8 +427,9 @@ pub fn load_and_process_ledger(
         &leader_schedule_cache,
         &process_options,
         transaction_status_sender.as_ref(),
-        None,
-        None, // Maybe support this later, though
+        None, // cache_block_meta_sender
+        rewards_recorder_sender.as_ref(),
+        None, // entry_notification_sender
         &accounts_background_request_sender,
     )
     .map(|_| LoadAndProcessLedgerOutput {
@@ -425,6 +442,9 @@ pub fn load_and_process_ledger(
     exit.store(true, Ordering::Relaxed);
     accounts_hash_verifier.join().unwrap();
     if let Some(service) = transaction_status_service {
+        service.join().unwrap();
+    }
+    if let Some(service) = rewards_recorder_service {
         service.join().unwrap();
     }
 

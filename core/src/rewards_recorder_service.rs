@@ -1,8 +1,10 @@
 use {
-    crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
-    solana_ledger::blockstore::Blockstore,
+    crossbeam_channel::RecvTimeoutError,
+    solana_ledger::{
+        blockstore::Blockstore,
+        blockstore_processor::{RewardsMessage, RewardsRecorderReceiver},
+    },
     solana_runtime::bank::KeyedRewardsAndNumPartitions,
-    solana_sdk::clock::Slot,
     solana_transaction_status::{Reward, RewardsAndNumPartitions},
     std::{
         sync::{
@@ -13,15 +15,6 @@ use {
         time::Duration,
     },
 };
-
-pub type RewardsBatch = (Slot, KeyedRewardsAndNumPartitions);
-pub type RewardsRecorderReceiver = Receiver<RewardsMessage>;
-pub type RewardsRecorderSender = Sender<RewardsMessage>;
-
-pub enum RewardsMessage {
-    Batch(RewardsBatch),
-    Complete(Slot),
-}
 
 pub struct RewardsRecorderService {
     thread_hdl: JoinHandle<()>,
