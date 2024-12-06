@@ -170,6 +170,17 @@ fn make_create_message(
                     )
                     .unwrap(),
                 );
+                instructions.push(
+                    spl_token::instruction::approve(
+                        &spl_token::id(),
+                        &to_pubkey,
+                        &base_keypair.pubkey(),
+                        &base_keypair.pubkey(),
+                        &[&base_keypair.pubkey()],
+                        1,
+                    )
+                    .unwrap(),
+                );
             }
 
             instructions
@@ -237,6 +248,7 @@ pub enum RpcBench {
     MultipleAccounts,
     ProgramAccounts,
     TokenAccountsByOwner,
+    TokenAccountsByDelegate,
 }
 
 #[derive(Debug)]
@@ -251,6 +263,7 @@ impl FromStr for RpcBench {
         match s {
             "slot" => Ok(RpcBench::Slot),
             "multiple-accounts" => Ok(RpcBench::MultipleAccounts),
+            "token-accounts-by-delegate" => Ok(RpcBench::TokenAccountsByDelegate),
             "token-accounts-by-owner" => Ok(RpcBench::TokenAccountsByOwner),
             "version" => Ok(RpcBench::Version),
             _ => Err(RpcParseError::InvalidOption),
@@ -392,6 +405,26 @@ fn run_rpc_bench_loop(
                     }
                 }
             }
+            RpcBench::TokenAccountsByDelegate => {
+                let mut rpc_time = Measure::start("rpc-get-token-accounts-by-delegate");
+                let filter = TokenAccountsFilter::Mint(*mint.as_ref().unwrap());
+                match client.get_token_accounts_by_delegate(base_keypair_pubkey, filter) {
+                    Ok(_accounts) => {
+                        rpc_time.stop();
+                        stats.success += 1;
+                        stats.total_success_time_us += rpc_time.as_us();
+                    }
+                    Err(e) => {
+                        rpc_time.stop();
+                        stats.errors += 1;
+                        stats.total_errors_time_us += rpc_time.as_us();
+                        if last_error.elapsed().as_secs() > 2 {
+                            info!("get-token-accounts-by-delegate error: {:?}", e);
+                            last_error = Instant::now();
+                        }
+                    }
+                }
+            }
             RpcBench::TokenAccountsByOwner => {
                 let mut rpc_time = Measure::start("rpc-get-token-accounts-by-owner");
                 let filter = TokenAccountsFilter::Mint(*mint.as_ref().unwrap());
@@ -406,7 +439,7 @@ fn run_rpc_bench_loop(
                         stats.errors += 1;
                         stats.total_errors_time_us += rpc_time.as_us();
                         if last_error.elapsed().as_secs() > 2 {
-                            info!("get-token-accounts error: {:?}", e);
+                            info!("get-token-accounts-by-owner error: {:?}", e);
                             last_error = Instant::now();
                         }
                     }
