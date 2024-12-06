@@ -511,23 +511,14 @@ pub fn bind_common_in_range_with_config(
 
 // Find a port in the given range that is available for both TCP and UDP
 #[deprecated(
-    since = "2.1.5",
+    since = "2.2.0",
     note = "use `bind_common_in_range_with_config` instead"
 )]
 pub fn bind_common_in_range(
     ip_addr: IpAddr,
     range: PortRange,
 ) -> io::Result<(u16, (UdpSocket, TcpListener))> {
-    for port in range.0..range.1 {
-        if let Ok((sock, listener)) = bind_common(ip_addr, port) {
-            return Result::Ok((sock.local_addr().unwrap().port(), (sock, listener)));
-        }
-    }
-
-    Err(io::Error::new(
-        io::ErrorKind::Other,
-        format!("No available TCP/UDP ports in {range:?}"),
-    ))
+    bind_common_in_range_with_config(ip_addr, range, SocketConfig::default())
 }
 
 pub fn bind_in_range(ip_addr: IpAddr, range: PortRange) -> io::Result<(u16, UdpSocket)> {
@@ -572,17 +563,9 @@ pub fn bind_with_any_port_with_config(
     }
 }
 
-#[deprecated(since = "2.1.5", note = "use `bind_with_any_port_with_config` instead")]
+#[deprecated(since = "2.2.0", note = "use `bind_with_any_port_with_config` instead")]
 pub fn bind_with_any_port(ip_addr: IpAddr) -> io::Result<UdpSocket> {
-    let sock = udp_socket_with_config(SocketConfig::default())?;
-    let addr = SocketAddr::new(ip_addr, 0);
-    match sock.bind(&SockAddr::from(addr)) {
-        Ok(_) => Result::Ok(sock.into()),
-        Err(err) => Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("No available UDP port: {err}"),
-        )),
-    }
+    bind_with_any_port_with_config(ip_addr, SocketConfig::default())
 }
 
 // binds many sockets to the same port in a range with config
@@ -639,54 +622,19 @@ pub fn multi_bind_in_range_with_config(
 }
 
 // binds many sockets to the same port in a range
+// Note: The `mut` modifier for `num` is unused but kept for compatibility with the public API.
 #[deprecated(
-    since = "2.1.5",
+    since = "2.2.0",
     note = "use `multi_bind_in_range_with_config` instead"
 )]
+#[allow(unused_mut)]
 pub fn multi_bind_in_range(
     ip_addr: IpAddr,
     range: PortRange,
     mut num: usize,
 ) -> io::Result<(u16, Vec<UdpSocket>)> {
-    if cfg!(windows) && num != 1 {
-        // See https://github.com/solana-labs/solana/issues/4607
-        warn!(
-            "multi_bind_in_range() only supports 1 socket in windows ({} requested)",
-            num
-        );
-        num = 1;
-    }
-    let mut sockets = Vec::with_capacity(num);
-
-    const NUM_TRIES: usize = 100;
-    let mut port = 0;
-    let mut error = None;
-    for _ in 0..NUM_TRIES {
-        port = {
-            let (port, _) = bind_in_range(ip_addr, range)?;
-            port
-        }; // drop the probe, port should be available... briefly.
-
-        let config = SocketConfig::default().reuseport(true);
-        for _ in 0..num {
-            let sock = bind_to_with_config(ip_addr, port, config.clone());
-            if let Ok(sock) = sock {
-                sockets.push(sock);
-            } else {
-                error = Some(sock);
-                break;
-            }
-        }
-        if sockets.len() == num {
-            break;
-        } else {
-            sockets.clear();
-        }
-    }
-    if sockets.len() != num {
-        error.unwrap()?;
-    }
-    Ok((port, sockets))
+    let config = SocketConfig::default().reuseport(true);
+    multi_bind_in_range_with_config(ip_addr, range, config, num)
 }
 
 pub fn bind_to(ip_addr: IpAddr, port: u16, reuseport: bool) -> io::Result<UdpSocket> {
