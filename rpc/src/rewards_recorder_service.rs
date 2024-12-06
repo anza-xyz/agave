@@ -4,7 +4,7 @@
 use {
     crossbeam_channel::TryRecvError,
     solana_ledger::{
-        blockstore::Blockstore,
+        blockstore::{Blockstore, BlockstoreError},
         blockstore_processor::{RewardsMessage, RewardsRecorderReceiver},
     },
     solana_runtime::bank::KeyedRewardsAndNumPartitions,
@@ -49,13 +49,20 @@ impl RewardsRecorderService {
                             sleep(TRY_RECV_INTERVAL);
                             continue;
                         }
-                        Err(TryRecvError::Disconnected) => {
-                            info!("RewardsRecorderService is stopping due to disconnected channel");
+                        Err(err @ TryRecvError::Disconnected) => {
+                            info!("RewardsRecorderService is stopping because: {err}");
                             break;
                         }
                     };
 
-                    Self::write_rewards(rewards, &max_complete_rewards_slot, &blockstore);
+                    if let Err(err) =
+                        Self::write_rewards(rewards, &max_complete_rewards_slot, &blockstore)
+                    {
+                        error!("RewardsRecorderService is stopping because: {err}");
+                        // Set the exit flag to allow other services to gracefully stop
+                        exit.store(true, Ordering::Relaxed);
+                        break;
+                    }
                 }
                 info!("RewardsRecorderService has stopped");
             })
@@ -67,7 +74,7 @@ impl RewardsRecorderService {
         rewards: RewardsMessage,
         max_complete_rewards_slot: &Arc<AtomicU64>,
         blockstore: &Blockstore,
-    ) {
+    ) -> Result<(), BlockstoreError> {
         match rewards {
             RewardsMessage::Batch((
                 slot,
@@ -87,20 +94,20 @@ impl RewardsRecorderService {
                     })
                     .collect();
 
-                blockstore
-                    .write_rewards(
-                        slot,
-                        RewardsAndNumPartitions {
-                            rewards: rpc_rewards,
-                            num_partitions,
-                        },
-                    )
-                    .expect("Expect database write to succeed");
+                blockstore.write_rewards(
+                    slot,
+                    RewardsAndNumPartitions {
+                        rewards: rpc_rewards,
+                        num_partitions,
+                    },
+                )?;
             }
             RewardsMessage::Complete(slot) => {
                 max_complete_rewards_slot.fetch_max(slot, Ordering::SeqCst);
             }
         }
+
+        Ok(())
     }
 
     pub fn join(self) -> thread::Result<()> {
