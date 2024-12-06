@@ -395,7 +395,7 @@ fn run_rpc_bench_loop(
             RpcBench::TokenAccountsByOwner => {
                 let mut rpc_time = Measure::start("rpc-get-token-accounts-by-owner");
                 let filter = TokenAccountsFilter::Mint(*mint.as_ref().unwrap());
-                match client.get_token_accounts_by_owner(program_id, filter) {
+                match client.get_token_accounts_by_owner(base_keypair_pubkey, filter) {
                     Ok(_accounts) => {
                         rpc_time.stop();
                         stats.success += 1;
