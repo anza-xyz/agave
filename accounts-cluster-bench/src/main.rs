@@ -237,6 +237,7 @@ pub enum RpcBench {
     MultipleAccounts,
     ProgramAccounts,
     TokenAccountsByOwner,
+    Supply,
 }
 
 #[derive(Debug)]
@@ -250,6 +251,7 @@ impl FromStr for RpcBench {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "slot" => Ok(RpcBench::Slot),
+            "supply" => Ok(RpcBench::Supply),
             "multiple-accounts" => Ok(RpcBench::MultipleAccounts),
             "token-accounts-by-owner" => Ok(RpcBench::TokenAccountsByOwner),
             "version" => Ok(RpcBench::Version),
@@ -354,6 +356,25 @@ fn run_rpc_bench_loop(
                         stats.errors += 1;
                         if last_error.elapsed().as_secs() > 2 {
                             info!("get_slot error: {:?}", e);
+                            last_error = Instant::now();
+                        }
+                    }
+                }
+            }
+            RpcBench::Supply => {
+                let mut rpc_time = Measure::start("rpc-get-token-supply");
+                match client.get_token_supply(&mint.unwrap()) {
+                    Ok(_ui_token_amount) => {
+                        rpc_time.stop();
+                        stats.success += 1;
+                        stats.total_success_time_us += rpc_time.as_us();
+                    }
+                    Err(e) => {
+                        rpc_time.stop();
+                        stats.total_errors_time_us += rpc_time.as_us();
+                        stats.errors += 1;
+                        if last_error.elapsed().as_secs() > 2 {
+                            info!("get_token_supply error: {:?}", e);
                             last_error = Instant::now();
                         }
                     }
@@ -939,6 +960,9 @@ fn main() {
                 .takes_value(true)
                 .value_name("RPC_BENCH_TYPE(S)")
                 .multiple(true)
+                .requires_ifs(&[
+                    ("supply", "mint"),
+                ])
                 .help("Spawn a thread which calls a specific RPC method in a loop to benchmark it"),
         )
         .get_matches();
