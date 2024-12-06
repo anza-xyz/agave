@@ -3,17 +3,10 @@
 #![feature(asm_experimental_arch)]
 
 extern crate solana_program;
-use {
-    solana_program::{account_info::AccountInfo, entrypoint::ProgramResult, pubkey::Pubkey},
-    std::arch::asm,
-};
+use {solana_program::entrypoint::SUCCESS, std::arch::asm};
 
-solana_program::entrypoint_no_alloc!(process_instruction);
-fn process_instruction(
-    _program_id: &Pubkey,
-    _accounts: &[AccountInfo],
-    _instruction_data: &[u8],
-) -> ProgramResult {
+#[no_mangle]
+pub extern "C" fn entrypoint(_input: *mut u8) -> u64 {
     unsafe {
         asm!(
             "
@@ -23,5 +16,6 @@ fn process_instruction(
         "
         );
     }
-    Ok(())
+
+    SUCCESS
 }

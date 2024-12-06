@@ -36,7 +36,8 @@ use {
         clock::Slot,
         entrypoint::{MAX_PERMITTED_DATA_INCREASE, SUCCESS},
         feature_set::{
-            bpf_account_data_direct_mapping, enable_bpf_loader_set_authority_checked_ix,
+            apply_cost_tracker_during_replay, bpf_account_data_direct_mapping,
+            enable_bpf_loader_set_authority_checked_ix,
         },
         instruction::{AccountMeta, InstructionError},
         loader_upgradeable_instruction::UpgradeableLoaderInstruction,
@@ -1435,7 +1436,7 @@ fn execute<'a, 'b: 'a>(
             ProgramResult::Err(mut error) => {
                 if invoke_context
                     .get_feature_set()
-                    .is_active(&solana_feature_set::apply_cost_tracker_during_replay::id())
+                    .is_active(&apply_cost_tracker_during_replay::id())
                     && !matches!(error, EbpfError::SyscallError(_))
                 {
                     // when an exception is thrown during the execution of a
