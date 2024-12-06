@@ -8878,6 +8878,7 @@ version = "2.2.0"
 dependencies = [
  "assert_matches",
  "bincode",
+ "criterion",
  "log",
  "proptest",
  "solana-compute-budget",
