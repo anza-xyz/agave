@@ -1,7 +1,7 @@
 //! The `packet` module defines data structures and methods to pull data from the network.
 pub use solana_packet::{self, Meta, Packet, PacketFlags, PACKET_DATA_SIZE};
 use {
-    crate::{cuda_runtime::PinnedVec, recycler::Recycler},
+    crate::{recycled_vec::RecycledVec, recycler::Recycler},
     bincode::config::Options,
     rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator},
     serde::{de::DeserializeOwned, Deserialize, Serialize},
@@ -21,26 +21,20 @@ pub const NUM_RCVMMSGS: usize = 64;
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct PacketBatch {
-    packets: PinnedVec<Packet>,
+    packets: RecycledVec<Packet>,
 }
 
-pub type PacketBatchRecycler = Recycler<PinnedVec<Packet>>;
+pub type PacketBatchRecycler = Recycler<RecycledVec<Packet>>;
 
 impl PacketBatch {
     pub fn new(packets: Vec<Packet>) -> Self {
-        let packets = PinnedVec::from_vec(packets);
+        let packets = RecycledVec::from_vec(packets);
         Self { packets }
     }
 
     pub fn with_capacity(capacity: usize) -> Self {
-        let packets = PinnedVec::with_capacity(capacity);
+        let packets = RecycledVec::with_capacity(capacity);
         Self { packets }
-    }
-
-    pub fn new_pinned_with_capacity(capacity: usize) -> Self {
-        let mut batch = Self::with_capacity(capacity);
-        batch.packets.reserve_and_pin(capacity);
-        batch
     }
 
     pub fn new_unpinned_with_recycler(
@@ -59,7 +53,7 @@ impl PacketBatch {
         name: &'static str,
     ) -> Self {
         let mut packets = recycler.allocate(name);
-        packets.reserve_and_pin(capacity);
+        packets.reserve(capacity);
         Self { packets }
     }
 

@@ -10,32 +10,18 @@ use {
     rand::{thread_rng, Rng},
     rayon::{prelude::*, ThreadPool},
     serde::{Deserialize, Serialize},
-    solana_measure::measure::Measure,
     solana_merkle_tree::MerkleTree,
-    solana_metrics::*,
-    solana_perf::{
-        cuda_runtime::PinnedVec,
-        packet::{Packet, PacketBatch, PacketBatchRecycler, PACKETS_PER_BATCH},
-        perf_libs,
-        recycler::Recycler,
-        sigverify,
-    },
     solana_rayon_threadlimit::get_max_thread_count,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_sdk::{
         hash::Hash,
-        packet::Meta,
-        transaction::{
-            Result, Transaction, TransactionError, TransactionVerificationMode,
-            VersionedTransaction,
-        },
+        transaction::{Result, Transaction, TransactionVerificationMode, VersionedTransaction},
     },
     std::{
-        cmp,
         ffi::OsStr,
         iter::repeat_with,
-        sync::{Arc, Mutex, Once},
-        thread::{self, JoinHandle},
+        sync::{Arc, Once},
+        thread::JoinHandle,
         time::Instant,
     },
 };
@@ -250,25 +236,8 @@ pub fn next_hash(
     }
 }
 
-/// Last action required to verify an entry
-enum VerifyAction {
-    /// Mixin a hash before computing the last hash for a transaction entry
-    Mixin(Hash),
-    /// Compute one last hash for a tick entry
-    Tick,
-    /// No action needed (tick entry with no hashes)
-    None,
-}
-
-pub struct GpuVerificationData {
-    thread_h: Option<JoinHandle<u64>>,
-    hashes: Option<Arc<Mutex<PinnedVec<Hash>>>>,
-    verifications: Option<Vec<(VerifyAction, Hash)>>,
-}
-
 pub enum DeviceVerificationData {
     Cpu(),
-    Gpu(GpuVerificationData),
 }
 
 pub struct EntryVerificationState {
@@ -323,15 +292,6 @@ impl<Tx: TransactionWithMeta> EntrySigVerificationState<Tx> {
     }
 }
 
-#[derive(Default, Clone)]
-pub struct VerifyRecyclers {
-    hash_recycler: Recycler<PinnedVec<Hash>>,
-    tick_count_recycler: Recycler<PinnedVec<u64>>,
-    packet_recycler: PacketBatchRecycler,
-    out_recycler: Recycler<PinnedVec<u8>>,
-    tx_offset_recycler: Recycler<sigverify::TxOffset>,
-}
-
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum EntryVerificationStatus {
     Failure,
@@ -348,43 +308,8 @@ impl EntryVerificationState {
         self.poh_duration_us
     }
 
-    pub fn finish_verify(&mut self, thread_pool: &ThreadPool) -> bool {
+    pub fn finish_verify(&mut self) -> bool {
         match &mut self.device_verification_data {
-            DeviceVerificationData::Gpu(verification_state) => {
-                let gpu_time_us = verification_state.thread_h.take().unwrap().join().unwrap();
-
-                let mut verify_check_time = Measure::start("verify_check");
-                let hashes = verification_state.hashes.take().unwrap();
-                let hashes = Arc::try_unwrap(hashes)
-                    .expect("unwrap Arc")
-                    .into_inner()
-                    .expect("into_inner");
-                let res = thread_pool.install(|| {
-                    hashes
-                        .into_par_iter()
-                        .cloned()
-                        .zip(verification_state.verifications.take().unwrap())
-                        .all(|(hash, (action, expected))| {
-                            let actual = match action {
-                                VerifyAction::Mixin(mixin) => {
-                                    Poh::new(hash, None).record(mixin).unwrap().hash
-                                }
-                                VerifyAction::Tick => Poh::new(hash, None).tick().unwrap().hash,
-                                VerifyAction::None => hash,
-                            };
-                            actual == expected
-                        })
-                });
-                verify_check_time.stop();
-                self.poh_duration_us += gpu_time_us + verify_check_time.as_us();
-
-                self.verification_status = if res {
-                    EntryVerificationStatus::Success
-                } else {
-                    EntryVerificationStatus::Failure
-                };
-                res
-            }
             DeviceVerificationData::Cpu() => {
                 self.verification_status == EntryVerificationStatus::Success
             }
@@ -421,37 +346,11 @@ pub fn start_verify_transactions<Tx: TransactionWithMeta + Send + Sync + 'static
     entries: Vec<Entry>,
     skip_verification: bool,
     thread_pool: &ThreadPool,
-    verify_recyclers: VerifyRecyclers,
     verify: Arc<
         dyn Fn(VersionedTransaction, TransactionVerificationMode) -> Result<Tx> + Send + Sync,
     >,
 ) -> Result<EntrySigVerificationState<Tx>> {
-    let api = perf_libs::api();
-
-    // Use the CPU if we have too few transactions for GPU signature verification to be worth it.
-    // We will also use the CPU if no acceleration API is used or if we're skipping
-    // the signature verification as we'd have nothing to do on the GPU in that case.
-    // TODO: make the CPU-to GPU crossover point dynamic, perhaps based on similar future
-    // heuristics to what might be used in sigverify::ed25519_verify when a dynamic crossover
-    // is introduced for that function (see TODO in sigverify::ed25519_verify)
-    let use_cpu = skip_verification
-        || api.is_none()
-        || entries
-            .iter()
-            .try_fold(0, |accum: usize, entry: &Entry| -> Option<usize> {
-                if accum.saturating_add(entry.transactions.len()) < 512 {
-                    Some(accum.saturating_add(entry.transactions.len()))
-                } else {
-                    None
-                }
-            })
-            .is_some();
-
-    if use_cpu {
-        start_verify_transactions_cpu(entries, skip_verification, thread_pool, verify)
-    } else {
-        start_verify_transactions_gpu(entries, verify_recyclers, thread_pool, verify)
-    }
+    start_verify_transactions_cpu(entries, skip_verification, thread_pool, verify)
 }
 
 fn start_verify_transactions_cpu<Tx: TransactionWithMeta + Send + Sync + 'static>(
@@ -478,114 +377,6 @@ fn start_verify_transactions_cpu<Tx: TransactionWithMeta + Send + Sync + 'static
         verification_status: EntryVerificationStatus::Success,
         entries: Some(entries),
         device_verification_data: DeviceSigVerificationData::Cpu(),
-        gpu_verify_duration_us: 0,
-    })
-}
-
-fn start_verify_transactions_gpu<Tx: TransactionWithMeta + Send + Sync + 'static>(
-    entries: Vec<Entry>,
-    verify_recyclers: VerifyRecyclers,
-    thread_pool: &ThreadPool,
-    verify: Arc<
-        dyn Fn(VersionedTransaction, TransactionVerificationMode) -> Result<Tx> + Send + Sync,
-    >,
-) -> Result<EntrySigVerificationState<Tx>> {
-    let verify_func = {
-        move |versioned_tx: VersionedTransaction| -> Result<Tx> {
-            verify(
-                versioned_tx,
-                TransactionVerificationMode::HashAndVerifyPrecompiles,
-            )
-        }
-    };
-
-    let entries = verify_transactions(entries, thread_pool, Arc::new(verify_func))?;
-
-    let transactions = entries
-        .iter()
-        .filter_map(|entry_type| match entry_type {
-            EntryType::Tick(_) => None,
-            EntryType::Transactions(transactions) => Some(transactions),
-        })
-        .flatten()
-        .collect::<Vec<_>>();
-
-    if transactions.is_empty() {
-        return Ok(EntrySigVerificationState {
-            verification_status: EntryVerificationStatus::Success,
-            entries: Some(entries),
-            device_verification_data: DeviceSigVerificationData::Cpu(),
-            gpu_verify_duration_us: 0,
-        });
-    }
-
-    let packet_batches = thread_pool.install(|| {
-        transactions
-            .par_chunks(PACKETS_PER_BATCH)
-            .map(|transaction_chunk| {
-                let num_transactions = transaction_chunk.len();
-                let mut packet_batch = PacketBatch::new_with_recycler(
-                    &verify_recyclers.packet_recycler,
-                    num_transactions,
-                    "entry-sig-verify",
-                );
-                // We use set_len here instead of resize(num_txs, Packet::default()), to save
-                // memory bandwidth and avoid writing a large amount of data that will be overwritten
-                // soon afterwards. As well, Packet::default() actually leaves the packet data
-                // uninitialized, so the initialization would simply write junk into
-                // the vector anyway.
-                unsafe {
-                    packet_batch.set_len(num_transactions);
-                }
-                let transaction_iter = transaction_chunk
-                    .iter()
-                    .map(|tx| tx.to_versioned_transaction());
-
-                let res = packet_batch
-                    .iter_mut()
-                    .zip(transaction_iter)
-                    .all(|(packet, tx)| {
-                        *packet.meta_mut() = Meta::default();
-                        Packet::populate_packet(packet, None, &tx).is_ok()
-                    });
-                if res {
-                    Ok(packet_batch)
-                } else {
-                    Err(TransactionError::SanitizeFailure)
-                }
-            })
-            .collect::<Result<Vec<_>>>()
-    });
-    let mut packet_batches = packet_batches?;
-
-    let tx_offset_recycler = verify_recyclers.tx_offset_recycler;
-    let out_recycler = verify_recyclers.out_recycler;
-    let num_packets = transactions.len();
-    let gpu_verify_thread = thread::Builder::new()
-        .name("solGpuSigVerify".into())
-        .spawn(move || {
-            let mut verify_time = Measure::start("sigverify");
-            sigverify::ed25519_verify(
-                &mut packet_batches,
-                &tx_offset_recycler,
-                &out_recycler,
-                false,
-                num_packets,
-            );
-            let verified = packet_batches
-                .iter()
-                .all(|batch| batch.iter().all(|p| !p.meta().discard()));
-            verify_time.stop();
-            (verified, verify_time.as_us())
-        })
-        .unwrap();
-
-    Ok(EntrySigVerificationState {
-        verification_status: EntryVerificationStatus::Pending,
-        entries: Some(entries),
-        device_verification_data: DeviceSigVerificationData::Gpu(GpuSigVerificationData {
-            thread_h: Some(gpu_verify_thread),
-        }),
         gpu_verify_duration_us: 0,
     })
 }
@@ -619,12 +410,7 @@ pub trait EntrySlice {
         simd_len: usize,
         thread_pool: &ThreadPool,
     ) -> EntryVerificationState;
-    fn start_verify(
-        &self,
-        start_hash: &Hash,
-        thread_pool: &ThreadPool,
-        recyclers: VerifyRecyclers,
-    ) -> EntryVerificationState;
+    fn start_verify(&self, start_hash: &Hash, thread_pool: &ThreadPool) -> EntryVerificationState;
     fn verify(&self, start_hash: &Hash, thread_pool: &ThreadPool) -> bool;
     /// Checks that each entry tick has the correct number of hashes. Entry slices do not
     /// necessarily end in a tick, so `tick_hash_count` is used to carry over the hash count
@@ -636,8 +422,7 @@ pub trait EntrySlice {
 
 impl EntrySlice for [Entry] {
     fn verify(&self, start_hash: &Hash, thread_pool: &ThreadPool) -> bool {
-        self.start_verify(start_hash, thread_pool, VerifyRecyclers::default())
-            .finish_verify(thread_pool)
+        self.start_verify(start_hash, thread_pool).finish_verify()
     }
 
     fn verify_cpu_generic(
@@ -788,98 +573,8 @@ impl EntrySlice for [Entry] {
         }
     }
 
-    fn start_verify(
-        &self,
-        start_hash: &Hash,
-        thread_pool: &ThreadPool,
-        recyclers: VerifyRecyclers,
-    ) -> EntryVerificationState {
-        let start = Instant::now();
-        let Some(api) = perf_libs::api() else {
-            return self.verify_cpu(start_hash, thread_pool);
-        };
-        inc_new_counter_info!("entry_verify-num_entries", self.len());
-
-        let genesis = [Entry {
-            num_hashes: 0,
-            hash: *start_hash,
-            transactions: vec![],
-        }];
-
-        let hashes: Vec<Hash> = genesis
-            .iter()
-            .chain(self)
-            .map(|entry| entry.hash)
-            .take(self.len())
-            .collect();
-
-        let mut hashes_pinned = recyclers.hash_recycler.allocate("poh_verify_hash");
-        hashes_pinned.set_pinnable();
-        hashes_pinned.resize(hashes.len(), Hash::default());
-        hashes_pinned.copy_from_slice(&hashes);
-
-        let mut num_hashes_vec = recyclers
-            .tick_count_recycler
-            .allocate("poh_verify_num_hashes");
-        num_hashes_vec.reserve_and_pin(cmp::max(1, self.len()));
-        for entry in self {
-            num_hashes_vec.push(entry.num_hashes.saturating_sub(1));
-        }
-
-        let length = self.len();
-        let hashes = Arc::new(Mutex::new(hashes_pinned));
-        let hashes_clone = hashes.clone();
-
-        let gpu_verify_thread = thread::Builder::new()
-            .name("solGpuPohVerify".into())
-            .spawn(move || {
-                let mut hashes = hashes_clone.lock().unwrap();
-                let gpu_wait = Instant::now();
-                let res;
-                unsafe {
-                    res = (api.poh_verify_many)(
-                        hashes.as_mut_ptr() as *mut u8,
-                        num_hashes_vec.as_ptr(),
-                        length,
-                        1,
-                    );
-                }
-                assert!(res == 0, "GPU PoH verify many failed");
-                inc_new_counter_info!(
-                    "entry_verify-gpu_thread",
-                    gpu_wait.elapsed().as_micros() as usize
-                );
-                gpu_wait.elapsed().as_micros() as u64
-            })
-            .unwrap();
-
-        let verifications = thread_pool.install(|| {
-            self.into_par_iter()
-                .map(|entry| {
-                    let answer = entry.hash;
-                    let action = if entry.transactions.is_empty() {
-                        if entry.num_hashes == 0 {
-                            VerifyAction::None
-                        } else {
-                            VerifyAction::Tick
-                        }
-                    } else {
-                        VerifyAction::Mixin(hash_transactions(&entry.transactions))
-                    };
-                    (action, answer)
-                })
-                .collect()
-        });
-        let device_verification_data = DeviceVerificationData::Gpu(GpuVerificationData {
-            thread_h: Some(gpu_verify_thread),
-            verifications: Some(verifications),
-            hashes: Some(hashes),
-        });
-        EntryVerificationState {
-            verification_status: EntryVerificationStatus::Pending,
-            poh_duration_us: start.elapsed().as_micros() as u64,
-            device_verification_data,
-        }
+    fn start_verify(&self, start_hash: &Hash, thread_pool: &ThreadPool) -> EntryVerificationState {
+        self.verify_cpu(start_hash, thread_pool)
     }
 
     fn verify_tick_hash_count(&self, tick_hash_count: &mut u64, hashes_per_tick: u64) -> bool {
@@ -976,6 +671,7 @@ pub fn thread_pool_for_benches() -> ThreadPool {
 mod tests {
     use {
         super::*,
+        solana_measure::measure::Measure,
         solana_perf::test_tx::{test_invalid_tx, test_tx},
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
@@ -1004,7 +700,6 @@ mod tests {
     fn test_verify_transactions<Tx: TransactionWithMeta + Send + Sync + 'static>(
         entries: Vec<Entry>,
         skip_verification: bool,
-        verify_recyclers: VerifyRecyclers,
         thread_pool: &ThreadPool,
         verify: Arc<
             dyn Fn(VersionedTransaction, TransactionVerificationMode) -> Result<Tx> + Send + Sync,
@@ -1024,14 +719,9 @@ mod tests {
 
         let cpu_verify_result =
             verify_transactions(entries.clone(), thread_pool, Arc::new(verify_func));
-        let mut gpu_verify_result: EntrySigVerificationState<Tx> = {
-            let verify_result = start_verify_transactions(
-                entries,
-                skip_verification,
-                thread_pool,
-                verify_recyclers,
-                verify,
-            );
+        let mut verify_result: EntrySigVerificationState<Tx> = {
+            let verify_result =
+                start_verify_transactions(entries, skip_verification, thread_pool, verify);
             match verify_result {
                 Ok(res) => res,
                 _ => EntrySigVerificationState {
@@ -1045,14 +735,14 @@ mod tests {
 
         match cpu_verify_result {
             Ok(_) => {
-                assert!(gpu_verify_result.verification_status != EntryVerificationStatus::Failure);
-                assert!(gpu_verify_result.finish_verify());
+                assert!(verify_result.verification_status != EntryVerificationStatus::Failure);
+                assert!(verify_result.finish_verify());
                 true
             }
             _ => {
                 assert!(
-                    gpu_verify_result.verification_status == EntryVerificationStatus::Failure
-                        || !gpu_verify_result.finish_verify()
+                    verify_result.verification_status == EntryVerificationStatus::Failure
+                        || !verify_result.finish_verify()
                 );
                 false
             }
@@ -1060,7 +750,7 @@ mod tests {
     }
 
     #[test]
-    fn test_entry_gpu_verify() {
+    fn test_entry_verify_transactions() {
         let thread_pool = thread_pool_for_tests();
 
         let verify_transaction = {
@@ -1088,8 +778,6 @@ mod tests {
             }
         };
 
-        let recycler = VerifyRecyclers::default();
-
         // Make sure we test with a number of transactions that's not a multiple of PACKETS_PER_BATCH
         let entries_invalid = (0..1025)
             .map(|_| {
@@ -1108,14 +796,12 @@ mod tests {
         assert!(!test_verify_transactions(
             entries_invalid,
             false,
-            recycler.clone(),
             &thread_pool,
             Arc::new(verify_transaction)
         ));
         assert!(test_verify_transactions(
             entries_valid,
             false,
-            recycler,
             &thread_pool,
             Arc::new(verify_transaction)
         ));

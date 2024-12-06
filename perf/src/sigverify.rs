@@ -5,9 +5,8 @@
 //!
 use {
     crate::{
-        cuda_runtime::PinnedVec,
-        packet::{Packet, PacketBatch, PacketFlags, PACKET_DATA_SIZE},
-        perf_libs,
+        packet::{Packet, PacketBatch, PacketFlags},
+        recycled_vec::RecycledVec,
         recycler::Recycler,
     },
     rayon::{prelude::*, ThreadPool},
@@ -38,7 +37,7 @@ lazy_static! {
         .unwrap();
 }
 
-pub type TxOffset = PinnedVec<u32>;
+pub type TxOffset = RecycledVec<u32>;
 
 type TxOffsets = (TxOffset, TxOffset, TxOffset, TxOffset, Vec<Vec<u32>>);
 
@@ -91,16 +90,6 @@ impl std::convert::From<std::boxed::Box<bincode::ErrorKind>> for PacketError {
 impl std::convert::From<std::num::TryFromIntError> for PacketError {
     fn from(_e: std::num::TryFromIntError) -> Self {
         Self::InvalidLen
-    }
-}
-
-pub fn init() {
-    if let Some(api) = perf_libs::api() {
-        unsafe {
-            (api.ed25519_set_verbose)(true);
-            assert!((api.ed25519_init)(), "ed25519_init() failed");
-            (api.ed25519_set_verbose)(false);
-        }
     }
 }
 
@@ -428,14 +417,10 @@ pub fn generate_offsets(
     reject_non_vote: bool,
 ) -> TxOffsets {
     debug!("allocating..");
-    let mut signature_offsets: PinnedVec<_> = recycler.allocate("sig_offsets");
-    signature_offsets.set_pinnable();
-    let mut pubkey_offsets: PinnedVec<_> = recycler.allocate("pubkey_offsets");
-    pubkey_offsets.set_pinnable();
-    let mut msg_start_offsets: PinnedVec<_> = recycler.allocate("msg_start_offsets");
-    msg_start_offsets.set_pinnable();
-    let mut msg_sizes: PinnedVec<_> = recycler.allocate("msg_size_offsets");
-    msg_sizes.set_pinnable();
+    let mut signature_offsets: RecycledVec<_> = recycler.allocate("sig_offsets");
+    let mut pubkey_offsets: RecycledVec<_> = recycler.allocate("pubkey_offsets");
+    let mut msg_start_offsets: RecycledVec<_> = recycler.allocate("msg_start_offsets");
+    let mut msg_sizes: RecycledVec<_> = recycler.allocate("msg_size_offsets");
     let mut current_offset: usize = 0;
     let offsets = batches
         .iter_mut()
@@ -533,7 +518,7 @@ pub fn ed25519_verify_disabled(batches: &mut [PacketBatch]) {
     });
 }
 
-pub fn copy_return_values<I, T>(sig_lens: I, out: &PinnedVec<u8>, rvs: &mut [Vec<u8>])
+pub fn copy_return_values<I, T>(sig_lens: I, out: &RecycledVec<u8>, rvs: &mut [Vec<u8>])
 where
     I: IntoIterator<Item = T>,
     T: IntoIterator<Item = u32>,
@@ -548,34 +533,6 @@ where
     }
 }
 
-// return true for success, i.e ge unpacks and !ge.is_small_order()
-pub fn check_packed_ge_small_order(ge: &[u8; 32]) -> bool {
-    if let Some(api) = perf_libs::api() {
-        unsafe {
-            // Returns 1 == fail, 0 == success
-            let res = (api.ed25519_check_packed_ge_small_order)(ge.as_ptr());
-
-            return res == 0;
-        }
-    }
-    false
-}
-
-pub fn get_checked_scalar(scalar: &[u8; 32]) -> Result<[u8; 32], PacketError> {
-    let mut out = [0u8; 32];
-    if let Some(api) = perf_libs::api() {
-        unsafe {
-            let res = (api.ed25519_get_checked_scalar)(out.as_mut_ptr(), scalar.as_ptr());
-            if res == 0 {
-                return Ok(out);
-            } else {
-                return Err(PacketError::InvalidLen);
-            }
-        }
-    }
-    Ok(out)
-}
-
 pub fn mark_disabled(batches: &mut [PacketBatch], r: &[Vec<u8>]) {
     for (batch, v) in batches.iter_mut().zip(r) {
         for (pkt, f) in batch.iter_mut().zip(v) {
@@ -588,78 +545,10 @@ pub fn mark_disabled(batches: &mut [PacketBatch], r: &[Vec<u8>]) {
 
 pub fn ed25519_verify(
     batches: &mut [PacketBatch],
-    recycler: &Recycler<TxOffset>,
-    recycler_out: &Recycler<PinnedVec<u8>>,
     reject_non_vote: bool,
     valid_packet_count: usize,
 ) {
-    let Some(api) = perf_libs::api() else {
-        return ed25519_verify_cpu(batches, reject_non_vote, valid_packet_count);
-    };
-    let total_packet_count = count_packets_in_batches(batches);
-    // micro-benchmarks show GPU time for smallest batch around 15-20ms
-    // and CPU speed for 64-128 sigverifies around 10-20ms. 64 is a nice
-    // power-of-two number around that accounting for the fact that the CPU
-    // may be busy doing other things while being a real validator
-    // TODO: dynamically adjust this crossover
-    let maybe_valid_percentage = 100usize
-        .wrapping_mul(valid_packet_count)
-        .checked_div(total_packet_count);
-    let Some(valid_percentage) = maybe_valid_percentage else {
-        return;
-    };
-    if valid_percentage < 90 || valid_packet_count < 64 {
-        ed25519_verify_cpu(batches, reject_non_vote, valid_packet_count);
-        return;
-    }
-
-    let (signature_offsets, pubkey_offsets, msg_start_offsets, msg_sizes, sig_lens) =
-        generate_offsets(batches, recycler, reject_non_vote);
-
-    debug!("CUDA ECDSA for {}", valid_packet_count);
-    debug!("allocating out..");
-    let mut out = recycler_out.allocate("out_buffer");
-    out.set_pinnable();
-    let mut elems = Vec::new();
-    let mut rvs = Vec::new();
-
-    let mut num_packets: usize = 0;
-    for batch in batches.iter() {
-        elems.push(perf_libs::Elems {
-            elems: batch.as_ptr().cast::<u8>(),
-            num: batch.len() as u32,
-        });
-        let v = vec![0u8; batch.len()];
-        rvs.push(v);
-        num_packets = num_packets.saturating_add(batch.len());
-    }
-    out.resize(signature_offsets.len(), 0);
-    trace!("Starting verify num packets: {}", num_packets);
-    trace!("elem len: {}", elems.len() as u32);
-    trace!("packet sizeof: {}", size_of::<Packet>() as u32);
-    trace!("len offset: {}", PACKET_DATA_SIZE as u32);
-    const USE_NON_DEFAULT_STREAM: u8 = 1;
-    unsafe {
-        let res = (api.ed25519_verify_many)(
-            elems.as_ptr(),
-            elems.len() as u32,
-            size_of::<Packet>() as u32,
-            num_packets as u32,
-            signature_offsets.len() as u32,
-            msg_sizes.as_ptr(),
-            pubkey_offsets.as_ptr(),
-            signature_offsets.as_ptr(),
-            msg_start_offsets.as_ptr(),
-            out.as_mut_ptr(),
-            USE_NON_DEFAULT_STREAM,
-        );
-        if res != 0 {
-            trace!("RETURN!!!: {}", res);
-        }
-    }
-    trace!("done verify");
-    copy_return_values(sig_lens, &out, &mut rvs);
-    mark_disabled(batches, &rvs);
+    ed25519_verify_cpu(batches, reject_non_vote, valid_packet_count);
 }
 
 #[cfg(test)]
@@ -673,8 +562,8 @@ mod tests {
             test_tx::{new_test_vote_tx, test_multisig_tx, test_tx},
         },
         bincode::{deserialize, serialize},
-        curve25519_dalek::{edwards::CompressedEdwardsY, scalar::Scalar},
         rand::{thread_rng, Rng},
+        solana_packet::PACKET_DATA_SIZE,
         solana_program::{
             instruction::CompiledInstruction,
             message::{Message, MessageHeader},
@@ -684,10 +573,7 @@ mod tests {
             transaction::Transaction,
         },
         solana_signature::Signature,
-        std::{
-            iter::repeat_with,
-            sync::atomic::{AtomicU64, Ordering},
-        },
+        std::iter::repeat_with,
     };
 
     const SIG_OFFSET: usize = 1;
@@ -727,8 +613,9 @@ mod tests {
                     .collect()
             })
             .collect();
-        let out =
-            PinnedVec::<u8>::from_vec(out.into_iter().flatten().flatten().map(u8::from).collect());
+        let out = RecycledVec::<u8>::from_vec(
+            out.into_iter().flatten().flatten().map(u8::from).collect(),
+        );
         let mut rvs: Vec<Vec<u8>> = sig_lens
             .iter()
             .map(|sig_lens| vec![0u8; sig_lens.len()])
@@ -1110,10 +997,8 @@ mod tests {
     }
 
     fn ed25519_verify(batches: &mut [PacketBatch]) {
-        let recycler = Recycler::default();
-        let recycler_out = Recycler::default();
         let packet_count = sigverify::count_packets_in_batches(batches);
-        sigverify::ed25519_verify(batches, &recycler, &recycler_out, false, packet_count);
+        sigverify::ed25519_verify(batches, false, packet_count);
     }
 
     #[test]
@@ -1210,8 +1095,6 @@ mod tests {
         let tx = test_multisig_tx();
         let packet = Packet::from_data(None, tx).unwrap();
 
-        let recycler = Recycler::default();
-        let recycler_out = Recycler::default();
         for _ in 0..50 {
             let num_batches = thread_rng().gen_range(2..30);
             let mut batches = generate_packet_batches_random_size(&packet, 128, num_batches);
@@ -1237,7 +1120,7 @@ mod tests {
             // equivalent to the CPU verification pipeline.
             let mut batches_cpu = batches.clone();
             let packet_count = sigverify::count_packets_in_batches(&batches);
-            sigverify::ed25519_verify(&mut batches, &recycler, &recycler_out, false, packet_count);
+            sigverify::ed25519_verify(&mut batches, false, packet_count);
             ed25519_verify_cpu(&mut batches_cpu, false, packet_count);
 
             // check result
@@ -1252,83 +1135,6 @@ mod tests {
     #[test]
     fn test_verify_fail() {
         test_verify_n(5, true);
-    }
-
-    #[test]
-    fn test_get_checked_scalar() {
-        solana_logger::setup();
-        if perf_libs::api().is_none() {
-            return;
-        }
-
-        let passed_g = AtomicU64::new(0);
-        let failed_g = AtomicU64::new(0);
-        (0..4).into_par_iter().for_each(|_| {
-            let mut input = [0u8; 32];
-            let mut passed = 0;
-            let mut failed = 0;
-            for _ in 0..1_000_000 {
-                thread_rng().fill(&mut input);
-                let ans = get_checked_scalar(&input);
-                let ref_ans = Scalar::from_canonical_bytes(input).into_option();
-                if let Some(ref_ans) = ref_ans {
-                    passed += 1;
-                    assert_eq!(ans.unwrap(), ref_ans.to_bytes());
-                } else {
-                    failed += 1;
-                    assert!(ans.is_err());
-                }
-            }
-            passed_g.fetch_add(passed, Ordering::Relaxed);
-            failed_g.fetch_add(failed, Ordering::Relaxed);
-        });
-        info!(
-            "passed: {} failed: {}",
-            passed_g.load(Ordering::Relaxed),
-            failed_g.load(Ordering::Relaxed)
-        );
-    }
-
-    #[test]
-    fn test_ge_small_order() {
-        solana_logger::setup();
-        if perf_libs::api().is_none() {
-            return;
-        }
-
-        let passed_g = AtomicU64::new(0);
-        let failed_g = AtomicU64::new(0);
-        (0..4).into_par_iter().for_each(|_| {
-            let mut input = [0u8; 32];
-            let mut passed = 0;
-            let mut failed = 0;
-            for _ in 0..1_000_000 {
-                thread_rng().fill(&mut input);
-                let ans = check_packed_ge_small_order(&input);
-                let ref_ge = CompressedEdwardsY::from_slice(&input).unwrap();
-                if let Some(ref_element) = ref_ge.decompress() {
-                    if ref_element.is_small_order() {
-                        assert!(!ans);
-                    } else {
-                        assert!(ans);
-                    }
-                } else {
-                    assert!(!ans);
-                }
-                if ans {
-                    passed += 1;
-                } else {
-                    failed += 1;
-                }
-            }
-            passed_g.fetch_add(passed, Ordering::Relaxed);
-            failed_g.fetch_add(failed, Ordering::Relaxed);
-        });
-        info!(
-            "passed: {} failed: {}",
-            passed_g.load(Ordering::Relaxed),
-            failed_g.load(Ordering::Relaxed)
-        );
     }
 
     #[test]

@@ -22,7 +22,6 @@ use {
             serve_repair_service::ServeRepairService,
         },
         sample_performance_service::SamplePerformanceService,
-        sigverify,
         snapshot_packager_service::{PendingSnapshotPackages, SnapshotPackagerService},
         stats_reporter_service::StatsReporterService,
         system_monitor_service::{
@@ -625,14 +624,6 @@ impl Validator {
         for cluster_entrypoint in &cluster_entrypoints {
             info!("entrypoint: {:?}", cluster_entrypoint);
         }
-
-        if solana_perf::perf_libs::api().is_some() {
-            info!("Initializing sigverify, this could take a while...");
-        } else {
-            info!("Initializing sigverify...");
-        }
-        sigverify::init();
-        info!("Initializing sigverify done.");
 
         if !ledger_path.is_dir() {
             return Err(anyhow!(

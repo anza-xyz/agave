@@ -1,15 +1,11 @@
 use {
     super::{Bank, BankStatusCache},
     solana_accounts_db::blockhash_queue::BlockhashQueue,
-    solana_perf::perf_libs,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_sdk::{
         account::AccountSharedData,
         account_utils::StateMut,
-        clock::{
-            MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY,
-            MAX_TRANSACTION_FORWARDING_DELAY_GPU,
-        },
+        clock::{MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY},
         nonce::{
             state::{
                 Data as NonceData, DurableNonce, State as NonceState, Versions as NonceVersions,
@@ -42,18 +38,11 @@ impl Bank {
         //  1. Transaction forwarding delay
         //  2. The slot at which the next leader will actually process the transaction
         // Drop the transaction if it will expire by the time the next node receives and processes it
-        let api = perf_libs::api();
-        let max_tx_fwd_delay = if api.is_none() {
-            MAX_TRANSACTION_FORWARDING_DELAY
-        } else {
-            MAX_TRANSACTION_FORWARDING_DELAY_GPU
-        };
-
         self.check_transactions(
             transactions,
             filter,
             (MAX_PROCESSING_AGE)
-                .saturating_sub(max_tx_fwd_delay)
+                .saturating_sub(MAX_TRANSACTION_FORWARDING_DELAY)
                 .saturating_sub(forward_transactions_to_leader_at_slot_offset as usize),
             &mut error_counters,
         )
