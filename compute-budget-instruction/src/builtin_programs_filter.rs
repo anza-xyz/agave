@@ -5,12 +5,12 @@ use {
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum ProgramKind {
+pub(crate) enum ProgramKind {
     NotBuiltin,
     Builtin,
 }
 
-pub struct BuiltinProgramsFilter {
+pub(crate) struct BuiltinProgramsFilter {
     // array of slots for all possible static and sanitized program_id_index,
     // each slot indicates if a program_id_index has not been checked (eg, None),
     // or already checked with result (eg, Some(ProgramKind)) that can be reused.
@@ -18,13 +18,13 @@ pub struct BuiltinProgramsFilter {
 }
 
 impl BuiltinProgramsFilter {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         BuiltinProgramsFilter {
             program_kind: [None; FILTER_SIZE as usize],
         }
     }
 
-    pub fn get_program_kind(&mut self, index: usize, program_id: &Pubkey) -> ProgramKind {
+    pub(crate) fn get_program_kind(&mut self, index: usize, program_id: &Pubkey) -> ProgramKind {
         *self
             .program_kind
             .get_mut(index)

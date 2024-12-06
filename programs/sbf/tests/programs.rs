@@ -15,6 +15,7 @@ use {
         parse_bpf_upgradeable_loader, BpfUpgradeableLoaderAccountType,
     },
     solana_compute_budget::compute_budget::ComputeBudget,
+    solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_feature_set::{self as feature_set, FeatureSet},
     solana_ledger::token_balances::collect_token_balances,
     solana_program_runtime::{
@@ -34,10 +35,7 @@ use {
             load_upgradeable_program_wrapper, set_upgrade_authority, upgrade_program,
         },
     },
-    solana_runtime_transaction::{
-        instructions_processor::process_compute_budget_instructions,
-        runtime_transaction::RuntimeTransaction,
-    },
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sbf_rust_invoke_dep::*,
     solana_sbf_rust_realloc_dep::*,
     solana_sbf_rust_realloc_invoke_dep::*,

@@ -6861,6 +6861,7 @@ dependencies = [
  "solana-bpf-loader-program",
  "solana-cli-output",
  "solana-compute-budget",
+ "solana-compute-budget-instruction",
  "solana-feature-set",
  "solana-fee",
  "solana-ledger",
