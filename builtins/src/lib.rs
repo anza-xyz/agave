@@ -8,8 +8,6 @@
 //! * The list of builtins that a Bank should add.
 //! * Which of those builtins have been assigned a feature gate to migrate to
 //!   Core BPF, as well as whether or not that feature gate has been activated.
-//! * Which builtins should still reserve `DEFAULT_COMPUTE_UNITS` in the cost
-//!   model.
 
 pub mod core_bpf_migration;
 pub mod prototype;
