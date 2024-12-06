@@ -161,9 +161,32 @@ pub fn get_builtin_instruction_cost<'a>(
         .map(|builtin_cost| builtin_cost.native_cost)
 }
 
-#[inline]
-pub fn is_builtin_program(program_id: &Pubkey) -> bool {
-    BUILTIN_INSTRUCTION_COSTS.contains_key(program_id)
+lazy_static! {
+    /// A static list of builtin programs' migration feature IDs.
+    pub static ref MIGRATION_FEATURES_ID: Vec<Pubkey> = {
+        BUILTIN_INSTRUCTION_COSTS
+            .values()
+            .filter_map(|builtin_cost| builtin_cost.core_bpf_migration_feature)
+            .collect()
+    };
+}
+
+/// Given a program pubkey, returns:
+/// - None, if it is not in BUILTIN_INSTRUCTION_COSTS dictionary;
+/// - Some<None>, is builtin, but no associated migration feature ID;
+/// - Some<usize>, is builtin, and its associated migration feature ID
+///   index in MIGRATION_FEATURES_ID.
+pub fn get_builtin_migration_feature_index(program_id: &Pubkey) -> Option<Option<usize>> {
+    BUILTIN_INSTRUCTION_COSTS
+        .get(program_id)
+        .map(|builtin_cost| {
+            builtin_cost.core_bpf_migration_feature.map(|id| {
+                MIGRATION_FEATURES_ID
+                    .iter()
+                    .position(|&x| x == id)
+                    .expect("must be known migration feature ID")
+            })
+        })
 }
 
 #[cfg(test)]
@@ -198,6 +221,31 @@ mod test {
         assert!(
             get_builtin_instruction_cost(&Pubkey::new_unique(), &FeatureSet::all_enabled())
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn test_get_builtin_migration_feature_index() {
+        assert!(get_builtin_migration_feature_index(&Pubkey::new_unique()).is_none());
+        assert_eq!(
+            get_builtin_migration_feature_index(&compute_budget::id()),
+            Some(None)
+        );
+        let feature_index = get_builtin_migration_feature_index(&solana_stake_program::id());
+        assert_eq!(
+            MIGRATION_FEATURES_ID[feature_index.unwrap().unwrap()],
+            feature_set::migrate_stake_program_to_core_bpf::id()
+        );
+        let feature_index = get_builtin_migration_feature_index(&solana_config_program::id());
+        assert_eq!(
+            MIGRATION_FEATURES_ID[feature_index.unwrap().unwrap()],
+            feature_set::migrate_config_program_to_core_bpf::id()
+        );
+        let feature_index =
+            get_builtin_migration_feature_index(&address_lookup_table::program::id());
+        assert_eq!(
+            MIGRATION_FEATURES_ID[feature_index.unwrap().unwrap()],
+            feature_set::migrate_address_lookup_table_program_to_core_bpf::id()
         );
     }
 }
