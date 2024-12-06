@@ -44,6 +44,14 @@ On Fedora:
 $ sudo dnf install openssl-devel systemd-devel pkg-config zlib-devel llvm clang cmake make protobuf-devel protobuf-compiler perl-core
 ```
 
+On Mac OS, install the command-line tools, and use homebrew package manager to get a couple other dependencies:
+```bash
+$ xcode-select --install
+$ <install homebrew>
+$ brew install coreutils
+$ brew install cmake
+```
+
 ## **2. Download the source code.**
 
 ```bash
@@ -79,18 +87,18 @@ devnet.solana.com. Runs 24/7. Learn more about the [public clusters](https://doc
 
 # Benchmarking
 
-First, install the nightly build of rustc. `cargo bench` requires the use of the
-unstable features only available in the nightly build.
-
-```bash
-$ rustup install nightly
-```
+Use the cargo script in the root of this repo and pass the nightly argument:
 
 Run the benchmarks:
 
 ```bash
-$ cargo +nightly bench
+$ ./cargo nightly bench
 ```
+
+# Signing commits
+
+Signed commits are heavily encouraged, install GPG and set it up with git:
+[github signing commits](https://docs.github.com/en/authentication/managing-commit-signature-verification/generating-a-new-gpg-key)
 
 # Release Process
 

@@ -3,15 +3,18 @@
 This directory contains scripts useful for working with a test network.  It's
 intended to be both dev and CD friendly.
 
-### User Account Prerequisites
+### Supported Networks
 
-GCP, AWS, colo are supported.
+One can create and run networks with GCP, AWS, Azure or custom machines available by ssh. Traditionally
+GCP has more configurable instance types and is better supported and preferred. Pick a network type
+and follow one of the instructions below.
 
 #### GCP
 First authenticate with
 ```bash
 $ gcloud auth login
 ```
+Continue with net/gce.sh
 
 #### AWS
 Obtain your credentials from the AWS IAM Console and configure the AWS CLI with
@@ -19,10 +22,18 @@ Obtain your credentials from the AWS IAM Console and configure the AWS CLI with
 $ aws configure
 ```
 More information on AWS CLI configuration can be found [here](https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-getting-started.html#cli-quick-configuration)
+Continue with net/ec2.sh
+
+#### Azure
+Use net/azure.sh
+
+#### Custom
+Edit net/scripts/colo\_nodes and provide a machine list which should be reachable by ssh
+Use net/colo.sh
 
 ### Metrics configuration (Optional)
 Ensure that `$(whoami)` is the name of an InfluxDB user account with enough
-access to create a new InfluxDB database.  Ask mvines@ for help if needed.
+access to create a new InfluxDB database.  Ask in the discord devops channel for help if needed.
 
 ## Quick Start
 
