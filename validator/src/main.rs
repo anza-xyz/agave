@@ -1,6 +1,4 @@
 #![allow(clippy::arithmetic_side_effects)]
-#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
-use jemallocator::Jemalloc;
 use {
     agave_validator::{
         admin_rpc_service,
@@ -90,9 +88,8 @@ use {
     },
 };
 
-#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
 #[global_allocator]
-static GLOBAL: Jemalloc = Jemalloc;
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 #[derive(Debug, PartialEq, Eq)]
 enum Operation {
@@ -1851,6 +1848,17 @@ pub fn main() {
         "block_production_method",
         BlockProductionMethod
     )
+    .inspect(|method| {
+        if matches!(method, BlockProductionMethod::UnifiedScheduler)
+            && !matches.is_present("enable_experimental_block_production_method")
+        {
+            eprintln!(
+                "Currently, the unified-scheduler method is experimental for block-production. \
+                 Explicitly pass --enable-experimental-block-production-method to use it."
+            );
+            exit(1);
+        }
+    })
     .unwrap_or_default();
     validator_config.enable_block_production_forwarding = staked_nodes_overrides_path.is_some();
     validator_config.unified_scheduler_handler_threads =

@@ -7,7 +7,6 @@ use {
         },
         leader_slot_timing_metrics::LeaderExecuteAndCommitTimings,
         qos_service::QosService,
-        scheduler_messages::MaxAge,
         unprocessed_transaction_storage::{ConsumeScannerPayload, UnprocessedTransactionStorage},
         BankingStageStats,
     },
@@ -32,6 +31,7 @@ use {
         clock::{FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, MAX_PROCESSING_AGE},
         fee::FeeBudgetLimits,
         saturating_add_assign,
+        scheduling::MaxAge,
         timing::timestamp,
         transaction::{self, TransactionError},
     },
@@ -438,36 +438,12 @@ impl Consumer {
             .feature_set
             .is_active(&feature_set::move_precompile_verification_to_svm::id());
 
-        // Need to filter out transactions since they were sanitized earlier.
-        // This means that the transaction may cross and epoch boundary (not allowed),
-        //  or account lookup tables may have been closed.
         let pre_results = txs.iter().zip(max_ages).map(|(tx, max_age)| {
-            // If the transaction was sanitized before this bank's epoch,
-            // additional checks are necessary.
-            if bank.epoch() != max_age.sanitized_epoch {
-                // Reserved key set may have changed, so we must verify that
-                // no writable keys are reserved.
-                bank.check_reserved_keys(tx)?;
-            }
-
-            if bank.slot() > max_age.alt_invalidation_slot {
-                // The address table lookup **may** have expired, but the
-                // expiration is not guaranteed since there may have been
-                // skipped slot.
-                // If the addresses still resolve here, then the transaction is still
-                // valid, and we can continue with processing.
-                // If they do not, then the ATL has expired and the transaction
-                // can be dropped.
-                let (_addresses, _deactivation_slot) =
-                    bank.load_addresses_from_ref(tx.message_address_table_lookups())?;
-            }
-
-            // Verify pre-compiles.
-            if !move_precompile_verification_to_svm {
-                verify_precompiles(tx, &bank.feature_set)?;
-            }
-
-            Ok(())
+            bank.refilter_prebuilt_block_production_transaction(
+                tx,
+                max_age,
+                move_precompile_verification_to_svm,
+            )
         });
         self.process_and_record_transactions_with_pre_results(bank, txs, 0, pre_results)
     }

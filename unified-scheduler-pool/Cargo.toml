@@ -10,20 +10,32 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+ahash = { workspace = true }
 assert_matches = { workspace = true }
+cpu-time = "1.0.0"
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true }
 derive-where = { workspace = true }
+derive_more = { workspace = true }
+dyn-clone = "1.0.17"
+enum-ptr = "0.2.0"
 log = { workspace = true }
-qualifier_attr = { workspace = true }
 scopeguard = { workspace = true }
+serde = { workspace = true }
+solana-cost-model = { workspace = true }
+solana-feature-set = { workspace = true }
 solana-ledger = { workspace = true }
+solana-perf = { workspace = true }
+solana-poh = { workspace = true }
+solana-program-runtime = { workspace = true }
 solana-runtime = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-sdk = { workspace = true }
+solana-svm = { workspace = true }
 solana-timings = { workspace = true }
 solana-unified-scheduler-logic = { workspace = true }
 static_assertions = { workspace = true }
+trait-set = "0.3.0"
 vec_extract_if_polyfill = { workspace = true }
 
 [dev-dependencies]
@@ -31,6 +43,8 @@ assert_matches = { workspace = true }
 lazy_static = { workspace = true }
 solana-logger = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+# See order-crates-for-publishing.py for using this unusual `path = "."`
+solana-unified-scheduler-pool = { path = ".", features = ["dev-context-only-utils"] }
 
 [features]
 dev-context-only-utils = []

@@ -15,6 +15,7 @@ use {
         parse_token::{get_token_account_mint, is_known_spl_token_id},
         UiAccount, UiAccountEncoding, UiDataSliceConfig, MAX_BASE58_BYTES,
     },
+    solana_accounts_db::account_locks::validate_account_locks,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_perf::packet::PACKET_DATA_SIZE,
     solana_program_runtime::loaded_programs::ProgramCacheEntry,
@@ -56,6 +57,7 @@ use {
             TransactionProcessingConfig, TransactionProcessingEnvironment,
         },
     },
+    solana_svm_transaction::svm_message::SVMMessage,
     solana_system_program::system_processor,
     solana_transaction_status::{
         map_inner_instructions, parse_ui_inner_instructions, TransactionBinaryEncoding,
@@ -380,9 +382,7 @@ impl JsonRpcRequestProcessor {
         transaction: &'a SanitizedTransaction,
     ) -> TransactionBatch<'a> {
         let tx_account_lock_limit = solana_sdk::transaction::MAX_TX_ACCOUNT_LOCKS;
-        let lock_result = transaction
-            .get_account_locks(tx_account_lock_limit)
-            .map(|_| ());
+        let lock_result = validate_account_locks(transaction.account_keys(), tx_account_lock_limit);
         let batch = TransactionBatch::new(
             vec![lock_result],
             std::borrow::Cow::Borrowed(std::slice::from_ref(transaction)),

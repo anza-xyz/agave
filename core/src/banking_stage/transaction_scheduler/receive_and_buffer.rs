@@ -6,7 +6,7 @@ use {
     crate::banking_stage::{
         decision_maker::BufferedPacketsDecision,
         immutable_deserialized_packet::ImmutableDeserializedPacket,
-        packet_deserializer::PacketDeserializer, scheduler_messages::MaxAge,
+        packet_deserializer::PacketDeserializer,
         transaction_scheduler::transaction_state::SanitizedTransactionTTL,
         TransactionStateContainer,
     },
@@ -26,6 +26,7 @@ use {
         clock::{Epoch, Slot, MAX_PROCESSING_AGE},
         fee::FeeBudgetLimits,
         saturating_add_assign,
+        scheduling::MaxAge,
         transaction::SanitizedTransaction,
     },
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
@@ -296,7 +297,7 @@ impl SanitizedTransactionReceiveAndBuffer {
 /// from user input. They should never be zero.
 /// Any difference in the prioritization is negligible for
 /// the current transaction costs.
-fn calculate_priority_and_cost(
+pub(crate) fn calculate_priority_and_cost(
     transaction: &RuntimeTransaction<SanitizedTransaction>,
     fee_budget_limits: &FeeBudgetLimits,
     bank: &Bank,
@@ -333,7 +334,7 @@ fn calculate_priority_and_cost(
 /// slots, the value used here is the lower-bound on the deactivation
 /// period, i.e. the transaction's address lookups are valid until
 /// AT LEAST this slot.
-fn calculate_max_age(
+pub(crate) fn calculate_max_age(
     sanitized_epoch: Epoch,
     deactivation_slot: Slot,
     current_slot: Slot,
