@@ -37,7 +37,7 @@ use {
     solana_entry::entry::{create_ticks, Entry},
     solana_measure::measure::Measure,
     solana_metrics::{
-        datapoint_debug, datapoint_error,
+        datapoint_debug,
         poh_timing_point::{send_poh_timing_point, PohTimingSender, SlotPohTimingInfo},
     },
     solana_runtime::bank::Bank,
@@ -2155,16 +2155,9 @@ impl Blockstore {
                 ));
             }
 
-            datapoint_error!(
-                "blockstore_error",
-                (
-                    "error",
-                    format!(
-                        "Leader {leader_pubkey:?}, slot {slot}: received index {shred_index} >= \
+            warn!(
+                "Leader {leader_pubkey:?}, slot {slot}: received index {shred_index} >= \
                          slot.last_index {last_index:?}, shred_source: {shred_source:?}"
-                    ),
-                    String
-                )
             );
             return false;
         }
@@ -2205,17 +2198,10 @@ impl Blockstore {
                 ));
             }
 
-            datapoint_error!(
-                "blockstore_error",
-                (
-                    "error",
-                    format!(
-                        "Leader {:?}, slot {}: received shred_index {} < slot.received {}, \
-                         shred_source: {:?}",
-                        leader_pubkey, slot, shred_index, slot_meta.received, shred_source
-                    ),
-                    String
-                )
+            warn!(
+                "Leader {leader_pubkey:?}, slot {slot}: received shred_index \
+                {shred_index} < slot.received {}, shred_source: {shred_source:?}",
+                slot_meta.received
             );
             return false;
         }
@@ -4885,14 +4871,7 @@ fn send_signals(
         for (signal, slots) in completed_slots_senders.iter().zip(slots.into_iter()) {
             let res = signal.try_send(slots);
             if let Err(TrySendError::Full(_)) = res {
-                datapoint_error!(
-                    "blockstore_error",
-                    (
-                        "error",
-                        "Unable to send newly completed slot because channel is full",
-                        String
-                    ),
-                );
+                warn!("Unable to send newly completed slot because channel is full");
             }
         }
     }
