@@ -12,7 +12,7 @@ pub(crate) enum ProgramKind {
     Builtin,
     // Builtin program maybe in process of being migrated to core bpf,
     // if core_bpf_migration_feature is activated, then the migration has
-    // completed and it should not longer be considered as builtin
+    // completed and it should no longer be considered as builtin
     MigratingBuiltin {
         core_bpf_migration_feature_index: usize,
     },

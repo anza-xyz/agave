@@ -13,27 +13,27 @@ use {
 };
 
 /// DEVELOPER: when a builtin is migrated to sbpf, please add its corresponding
-/// migration feature ID to BUILTIN_INSTRUCTION_COSTS, so the builtin's default
-/// cost can be determined properly based on feature status.
+/// migration feature ID to BUILTIN_INSTRUCTION_COSTS, and move it from
+/// NON_MIGRATING_BUILTINS_COSTS to MIGRATING_BUILTINS_COSTS, so the builtin's
+/// default cost can be determined properly based on feature status.
 /// When migration completed, eg the feature gate is enabled everywhere, please
-/// remove that builtin entry from BUILTIN_INSTRUCTION_COSTS.
+/// remove that builtin entry from MIGRATING_BUILTINS_COSTS.
 #[derive(Clone)]
-struct BuiltinCost {
+pub struct BuiltinCost {
     native_cost: u64,
     core_bpf_migration_feature: Option<Pubkey>,
 }
 
-lazy_static! {
-    /// Number of compute units for each built-in programs
-    ///
-    /// DEVELOPER WARNING: This map CANNOT be modified without causing a
-    /// consensus failure because this map is used to calculate the compute
-    /// limit for transactions that don't specify a compute limit themselves as
-    /// of https://github.com/anza-xyz/agave/issues/2212.  It's also used to
-    /// calculate the cost of a transaction which is used in replay to enforce
-    /// block cost limits as of
-    /// https://github.com/solana-labs/solana/issues/29595.
-    static ref BUILTIN_INSTRUCTION_COSTS: AHashMap<Pubkey, BuiltinCost> = [
+/// Number of compute units for each built-in programs
+///
+/// DEVELOPER WARNING: This map CANNOT be modified without causing a
+/// consensus failure because this map is used to calculate the compute
+/// limit for transactions that don't specify a compute limit themselves as
+/// of https://github.com/anza-xyz/agave/issues/2212.  It's also used to
+/// calculate the cost of a transaction which is used in replay to enforce
+/// block cost limits as of
+/// https://github.com/solana-labs/solana/issues/29595.
+pub const MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[
     (
         stake::id(),
         BuiltinCost {
@@ -48,6 +48,18 @@ lazy_static! {
             core_bpf_migration_feature: Some(feature_set::migrate_config_program_to_core_bpf::id()),
         },
     ),
+    (
+        address_lookup_table::id(),
+        BuiltinCost {
+            native_cost: solana_address_lookup_table_program::processor::DEFAULT_COMPUTE_UNITS,
+            core_bpf_migration_feature: Some(
+                feature_set::migrate_address_lookup_table_program_to_core_bpf::id(),
+            ),
+        },
+    ),
+];
+
+pub const NON_MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[
     (
         vote::id(),
         BuiltinCost {
@@ -67,15 +79,6 @@ lazy_static! {
         BuiltinCost {
             native_cost: solana_compute_budget_program::DEFAULT_COMPUTE_UNITS,
             core_bpf_migration_feature: None,
-        },
-    ),
-    (
-        address_lookup_table::id(),
-        BuiltinCost {
-            native_cost: solana_address_lookup_table_program::processor::DEFAULT_COMPUTE_UNITS,
-            core_bpf_migration_feature: Some(
-                feature_set::migrate_address_lookup_table_program_to_core_bpf::id(),
-            ),
         },
     ),
     (
@@ -121,11 +124,16 @@ lazy_static! {
             core_bpf_migration_feature: None,
         },
     ),
+];
+
+lazy_static! {
+    static ref BUILTIN_INSTRUCTION_COSTS: AHashMap<Pubkey, BuiltinCost> =
+        MIGRATING_BUILTINS_COSTS
+          .iter()
+          .chain(NON_MIGRATING_BUILTINS_COSTS.iter())
+          .cloned()
+          .collect();
     // DO NOT ADD MORE ENTRIES TO THIS MAP
-    ]
-    .iter()
-    .cloned()
-    .collect();
 }
 
 lazy_static! {
