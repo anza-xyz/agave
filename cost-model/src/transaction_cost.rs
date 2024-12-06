@@ -1,12 +1,8 @@
 #[cfg(feature = "dev-context-only-utils")]
 use solana_runtime_transaction::compute_budget_instruction_details::ComputeBudgetInstructionDetails;
 use {
-    crate::block_cost_limits,
-    solana_runtime_transaction::{
-        transaction_meta::StaticMeta, transaction_with_meta::TransactionWithMeta,
-    },
-    solana_sdk::pubkey::Pubkey,
-    solana_svm_transaction::svm_message::SVMMessage,
+    crate::block_cost_limits, solana_runtime_transaction::transaction_meta::StaticMeta,
+    solana_sdk::pubkey::Pubkey, solana_svm_transaction::svm_message::SVMMessage,
 };
 
 /// TransactionCost is used to represent resources required to process
@@ -264,7 +260,9 @@ impl solana_runtime_transaction::transaction_meta::StaticMeta for WritableKeysTr
 }
 
 #[cfg(feature = "dev-context-only-utils")]
-impl TransactionWithMeta for WritableKeysTransaction {
+impl solana_runtime_transaction::transaction_with_meta::TransactionWithMeta
+    for WritableKeysTransaction
+{
     #[allow(refining_impl_trait)]
     fn as_sanitized_transaction(
         &self,

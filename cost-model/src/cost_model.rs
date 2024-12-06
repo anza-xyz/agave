@@ -7,6 +7,7 @@
 
 use {
     crate::{block_cost_limits::*, transaction_cost::*},
+    lazy_static::lazy_static,
     solana_builtins_default_costs::get_builtin_instruction_cost,
     solana_compute_budget::compute_budget_limits::{
         DEFAULT_HEAP_COST, DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_COMPUTE_UNIT_LIMIT,
@@ -56,8 +57,9 @@ impl CostModel {
                     transaction.program_instructions_iter(),
                     feature_set,
                 );
-            let allocated_accounts_data_size =
-                Self::calculate_allocated_accounts_data_size(transaction);
+            let allocated_accounts_data_size = Self::calculate_allocated_accounts_data_size(
+                transaction.program_instructions_iter(),
+            );
 
             let usage_cost_details = UsageCostDetails {
                 transaction,
@@ -89,8 +91,9 @@ impl CostModel {
 
             let instructions_data_cost =
                 Self::get_instructions_data_cost(transaction.program_instructions_iter());
-            let allocated_accounts_data_size =
-                Self::calculate_allocated_accounts_data_size(transaction);
+            let allocated_accounts_data_size = Self::calculate_allocated_accounts_data_size(
+                transaction.program_instructions_iter(),
+            );
 
             let programs_execution_cost = actual_programs_execution_cost;
             let loaded_accounts_data_size_cost = Self::calculate_loaded_accounts_data_size_cost(
@@ -110,6 +113,47 @@ impl CostModel {
 
             TransactionCost::Transaction(usage_cost_details)
         }
+    }
+
+    /// Return an estimated total cost for a transaction given its':
+    /// - `meta` - transaction meta
+    /// - `instructions` - transaction instructions
+    /// - `num_write_locks` - number of requested write locks
+    ///
+    /// This assumes ALL features are activated.
+    /// This is intended to be used as an estimate of cost ONLY for the purposes of
+    /// prioritization and packing.
+    pub fn estimate_cost<'a>(
+        meta: &impl StaticMeta,
+        instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)> + Clone,
+        num_write_locks: u64,
+    ) -> u64 {
+        if meta.is_simple_vote_transaction() {
+            return TransactionCost::SimpleVote { transaction: meta }.sum();
+        }
+
+        lazy_static! {
+            static ref ALL_FEATURES: FeatureSet = FeatureSet::all_enabled();
+        };
+
+        let signature_cost = Self::get_signature_cost(meta, &ALL_FEATURES);
+        let write_lock_cost = num_write_locks.saturating_mul(WRITE_LOCK_UNITS);
+        let (programs_execution_cost, loaded_accounts_data_size_cost, data_bytes_cost) =
+            Self::get_transaction_cost(meta, instructions.clone(), &ALL_FEATURES);
+        let allocated_accounts_data_size =
+            Self::calculate_allocated_accounts_data_size(instructions);
+
+        let usage_cost_details = UsageCostDetails {
+            transaction: meta,
+            signature_cost,
+            write_lock_cost,
+            data_bytes_cost,
+            programs_execution_cost,
+            loaded_accounts_data_size_cost,
+            allocated_accounts_data_size,
+        };
+
+        TransactionCost::Transaction(usage_cost_details).sum()
     }
 
     /// Returns signature details and the total signature cost
@@ -328,9 +372,11 @@ impl CostModel {
 
     /// eventually, potentially determine account data size of all writable accounts
     /// at the moment, calculate account data size of account creation
-    fn calculate_allocated_accounts_data_size(transaction: &impl SVMMessage) -> u64 {
+    fn calculate_allocated_accounts_data_size<'a>(
+        instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)>,
+    ) -> u64 {
         let mut tx_attempted_allocation_size: u64 = 0;
-        for (program_id, instruction) in transaction.program_instructions_iter() {
+        for (program_id, instruction) in instructions {
             match Self::calculate_account_data_size_on_instruction(program_id, instruction) {
                 SystemProgramAccountAllocation::Failed => {
                     // If any system program instructions can be statically
@@ -403,7 +449,9 @@ mod tests {
         let sanitized_tx = RuntimeTransaction::from_transaction_for_tests(transaction);
 
         assert_eq!(
-            CostModel::calculate_allocated_accounts_data_size(&sanitized_tx),
+            CostModel::calculate_allocated_accounts_data_size(
+                sanitized_tx.program_instructions_iter()
+            ),
             0
         );
     }
@@ -428,7 +476,9 @@ mod tests {
         let sanitized_tx = RuntimeTransaction::from_transaction_for_tests(transaction);
 
         assert_eq!(
-            CostModel::calculate_allocated_accounts_data_size(&sanitized_tx),
+            CostModel::calculate_allocated_accounts_data_size(
+                sanitized_tx.program_instructions_iter()
+            ),
             space1 + space2
         );
     }
@@ -469,7 +519,9 @@ mod tests {
         let sanitized_tx = RuntimeTransaction::from_transaction_for_tests(transaction);
 
         assert_eq!(
-            CostModel::calculate_allocated_accounts_data_size(&sanitized_tx),
+            CostModel::calculate_allocated_accounts_data_size(
+                sanitized_tx.program_instructions_iter()
+            ),
             MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION as u64,
         );
     }
@@ -493,7 +545,9 @@ mod tests {
 
         assert_eq!(
             0, // SystemProgramAccountAllocation::Failed,
-            CostModel::calculate_allocated_accounts_data_size(&sanitized_tx),
+            CostModel::calculate_allocated_accounts_data_size(
+                sanitized_tx.program_instructions_iter()
+            ),
         );
     }
 
@@ -510,7 +564,9 @@ mod tests {
 
         assert_eq!(
             0, // SystemProgramAccountAllocation::Failed,
-            CostModel::calculate_allocated_accounts_data_size(&sanitized_tx),
+            CostModel::calculate_allocated_accounts_data_size(
+                sanitized_tx.program_instructions_iter()
+            ),
         );
     }
 
