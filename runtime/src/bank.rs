@@ -790,7 +790,7 @@ impl PartialEq for BankFullReplayFields {
             && self.capitalization.load(Relaxed) == other.capitalization.load(Relaxed)
             && *self.epoch_reward_status.read().unwrap()
                 == *other.epoch_reward_status.read().unwrap()
-//            && self.new_epoch_stakes.read().unwrap().stakes() == other.new_epoch_stakes.read().unwrap().stakes()
+        //            && self.new_epoch_stakes.read().unwrap().stakes() == other.new_epoch_stakes.read().unwrap().stakes()
     }
 }
 
@@ -1391,7 +1391,9 @@ impl Bank {
         let (_, update_epoch_time_us) = measure_us!({
             if parent.epoch() < new.epoch() {
                 new.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, false);
-
+            }
+            // TODO(wen): this should only happen on bank 1 or new epoch.
+            {
                 // Copy the vote authorities from epoch stake into vote states.
                 let new_epoch = new.epoch();
                 let mut vote_states = new.vote_states.write().unwrap();
