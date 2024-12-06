@@ -9,14 +9,14 @@ use {
             Arc,
         },
         thread::{self, Builder, JoinHandle},
-        time::Duration,
+        time::{Duration, Instant},
     },
 };
 
 // Determines how often we report blockstore metrics under
 // BlockstoreMetricReportService. Note that there are other blockstore
 // metrics that are reported outside BlockstoreMetricReportService.
-const BLOCKSTORE_METRICS_REPORT_PERIOD_MILLIS: u64 = 10000;
+const BLOCKSTORE_METRICS_REPORT_INTERVAL: Duration = Duration::from_secs(10);
 
 pub struct BlockstoreMetricReportService {
     t_cf_metric: JoinHandle<()>,
@@ -26,15 +26,24 @@ impl BlockstoreMetricReportService {
     pub fn new(blockstore: Arc<Blockstore>, exit: Arc<AtomicBool>) -> Self {
         let t_cf_metric = Builder::new()
             .name("solRocksCfMtrcs".to_string())
-            .spawn(move || loop {
-                if exit.load(Ordering::Relaxed) {
-                    break;
+            .spawn(move || {
+                info!("BlockstoreMetricReportService has started");
+                let mut last_report_time = Instant::now();
+                loop {
+                    if exit.load(Ordering::Relaxed) {
+                        break;
+                    }
+
+                    if last_report_time.elapsed() > BLOCKSTORE_METRICS_REPORT_INTERVAL {
+                        blockstore.submit_rocksdb_cf_metrics_for_all_cfs();
+                        blockstore.report_rpc_api_metrics();
+
+                        last_report_time = Instant::now();
+                    }
+
+                    thread::sleep(Duration::from_secs(1));
                 }
-                thread::sleep(Duration::from_millis(
-                    BLOCKSTORE_METRICS_REPORT_PERIOD_MILLIS,
-                ));
-                blockstore.submit_rocksdb_cf_metrics_for_all_cfs();
-                blockstore.report_rpc_api_metrics();
+                info!("BlockstoreMetricReportService has stopped");
             })
             .unwrap();
         Self { t_cf_metric }
