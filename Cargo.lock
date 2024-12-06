@@ -7145,6 +7145,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-genesis-config"
+version = "2.2.0"
+dependencies = [
+ "bincode",
+ "chrono",
+ "memmap2",
+ "serde",
+ "serde_derive",
+ "solana-account",
+ "solana-clock",
+ "solana-cluster-type",
+ "solana-epoch-schedule",
+ "solana-fee-calculator",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
+ "solana-hash",
+ "solana-inflation",
+ "solana-keypair",
+ "solana-logger",
+ "solana-native-token",
+ "solana-poh-config",
+ "solana-pubkey",
+ "solana-rent",
+ "solana-sdk-ids",
+ "solana-sha256-hasher",
+ "solana-shred-version",
+ "solana-signer",
+ "solana-time-utils",
+]
+
+[[package]]
 name = "solana-genesis-utils"
 version = "2.2.0"
 dependencies = [
@@ -7235,6 +7266,17 @@ dependencies = [
  "static_assertions",
  "test-case",
  "thiserror 2.0.4",
+]
+
+[[package]]
+name = "solana-hard-forks"
+version = "2.2.0"
+dependencies = [
+ "byteorder",
+ "serde",
+ "serde_derive",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
 ]
 
 [[package]]
@@ -8191,6 +8233,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-rent-collector"
+version = "2.2.0"
+dependencies = [
+ "assert_matches",
+ "serde",
+ "serde_derive",
+ "solana-account",
+ "solana-clock",
+ "solana-epoch-schedule",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
+ "solana-genesis-config",
+ "solana-logger",
+ "solana-pubkey",
+ "solana-rent",
+ "solana-sdk-ids",
+]
+
+[[package]]
 name = "solana-rent-debits"
 version = "2.2.0"
 dependencies = [
@@ -8579,6 +8640,8 @@ dependencies = [
  "solana-fee-structure",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
+ "solana-genesis-config",
+ "solana-hard-forks",
  "solana-inflation",
  "solana-instruction",
  "solana-keypair",
@@ -8593,6 +8656,7 @@ dependencies = [
  "solana-program-memory",
  "solana-pubkey",
  "solana-quic-definitions",
+ "solana-rent-collector",
  "solana-rent-debits",
  "solana-reserved-account-keys",
  "solana-reward-info",
@@ -8608,6 +8672,7 @@ dependencies = [
  "solana-serde",
  "solana-serde-varint",
  "solana-short-vec",
+ "solana-shred-version",
  "solana-signature",
  "solana-signer",
  "solana-system-transaction",
@@ -8792,6 +8857,16 @@ dependencies = [
  "serde_json",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
+]
+
+[[package]]
+name = "solana-shred-version"
+version = "2.2.0"
+dependencies = [
+ "byteorder",
+ "solana-hard-forks",
+ "solana-hash",
+ "solana-sha256-hasher",
 ]
 
 [[package]]

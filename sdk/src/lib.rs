@@ -68,8 +68,10 @@ pub mod epoch_rewards_hasher;
 pub mod example_mocks;
 pub mod exit;
 pub mod feature;
-pub mod genesis_config;
-pub mod hard_forks;
+#[deprecated(since = "2.2.0", note = "Use `solana_genesis_config` crate instead")]
+pub use solana_genesis_config as genesis_config;
+#[deprecated(since = "2.2.0", note = "Use `solana_hard_forks` crate instead")]
+pub use solana_hard_forks as hard_forks;
 pub mod hash;
 pub mod inner_instruction;
 pub mod log;
@@ -80,7 +82,8 @@ pub mod offchain_message;
 pub mod precompiles;
 pub mod program_utils;
 pub mod pubkey;
-pub mod rent_collector;
+#[deprecated(since = "2.2.0", note = "Use `solana_rent_collector` crate instead")]
+pub use solana_rent_collector as rent_collector;
 #[deprecated(since = "2.2.0", note = "Use `solana-reward-info` crate instead")]
 pub mod reward_info {
     pub use solana_reward_info::RewardInfo;
@@ -90,7 +93,8 @@ pub mod reward_type {
     pub use solana_reward_info::RewardType;
 }
 pub mod rpc_port;
-pub mod shred_version;
+#[deprecated(since = "2.2.0", note = "Use `solana-shred-version` crate instead")]
+pub use solana_shred_version as shred_version;
 pub mod signature;
 pub mod signer;
 pub mod transaction;
@@ -234,10 +238,8 @@ macro_rules! saturating_add_assign {
 
 pub extern crate bs58;
 extern crate log as logger;
-#[cfg_attr(not(target_os = "solana"), macro_use)]
 extern crate serde_derive;
 
-#[cfg_attr(feature = "frozen-abi", macro_use)]
 #[cfg(feature = "frozen-abi")]
 extern crate solana_frozen_abi_macro;
 
