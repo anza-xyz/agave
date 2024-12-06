@@ -19,12 +19,14 @@ use {
         hash::Hash,
         instruction::{AccountMeta, Instruction},
         message::Message,
+        program_pack::Pack,
         pubkey::Pubkey,
         signature::{read_keypair_file, Keypair, Signer},
         system_instruction, system_program,
         transaction::Transaction,
     },
     solana_streamer::socket::SocketAddrSpace,
+    spl_token::state::Account,
     std::{
         cmp::min,
         process::exit,
@@ -139,7 +141,11 @@ fn make_create_message(
     maybe_space: Option<u64>,
     mint: Option<Pubkey>,
 ) -> Message {
-    let space = maybe_space.unwrap_or_else(|| thread_rng().gen_range(0..1000));
+    let space = if mint.is_some() {
+        Account::get_packed_len() as u64
+    } else {
+        maybe_space.unwrap_or_else(|| thread_rng().gen_range(0..1000))
+    };
 
     let instructions: Vec<_> = (0..num_instructions)
         .flat_map(|_| {
@@ -850,6 +856,7 @@ fn main() {
                 .long("space")
                 .takes_value(true)
                 .value_name("BYTES")
+                .conflicts_with("mint")
                 .help("Size of accounts to create"),
         )
         .arg(
