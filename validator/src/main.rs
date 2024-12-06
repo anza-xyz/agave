@@ -24,7 +24,10 @@ use {
             AccountsIndexConfig, IndexLimitMb, ScanFilter,
         },
         partitioned_rewards::TestPartitionedEpochRewards,
-        utils::{create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories},
+        utils::{
+            create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories,
+            create_and_canonicalize_directory,
+        },
     },
     solana_clap_utils::input_parsers::{keypair_of, keypairs_of, pubkey_of, value_of, values_of},
     solana_core::{
@@ -1619,13 +1622,14 @@ pub fn main() {
     } else {
         &ledger_path
     };
-    let snapshots_dir = fs::canonicalize(snapshots_dir).unwrap_or_else(|err| {
+    let snapshots_dir = create_and_canonicalize_directory(snapshots_dir).unwrap_or_else(|err| {
         eprintln!(
-            "Failed to canonicalize snapshots path '{}': {err}",
+            "Failed to create snapshots directory '{}': {err}",
             snapshots_dir.display(),
         );
         exit(1);
     });
+
     if account_paths
         .iter()
         .any(|account_path| account_path == &snapshots_dir)
