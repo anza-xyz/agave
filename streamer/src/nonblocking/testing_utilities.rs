@@ -21,7 +21,7 @@ use {
     solana_net_utils::bind_to_localhost,
     solana_perf::packet::PacketBatch,
     solana_quic_definitions::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT},
-    solana_tls_utils::{new_dummy_x509_certificate, SkipServerVerification},
+    solana_tls_utils::{new_dummy_x509_certificate, tls_client_config_builder},
     std::{
         net::{SocketAddr, UdpSocket},
         sync::{atomic::AtomicBool, Arc, RwLock},
@@ -32,9 +32,7 @@ use {
 pub fn get_client_config(keypair: &Keypair) -> ClientConfig {
     let (cert, key) = new_dummy_x509_certificate(keypair);
 
-    let mut crypto = rustls::ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(SkipServerVerification::new())
+    let mut crypto = tls_client_config_builder()
         .with_client_auth_cert(vec![cert], key)
         .expect("Failed to use client certificate");
 
