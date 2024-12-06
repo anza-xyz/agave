@@ -3,7 +3,7 @@
 use {
     clap::{crate_description, crate_name, Arg, Command},
     crossbeam_channel::unbounded,
-    solana_net_utils::bind_to_unspecified,
+    solana_net_utils::{bind_to_unspecified, SocketConfig},
     solana_streamer::{
         packet::{Packet, PacketBatch, PacketBatchRecycler, PACKET_DATA_SIZE},
         streamer::{receiver, PacketBatchReceiver, StreamerReceiveStats},
@@ -95,9 +95,10 @@ fn main() -> Result<()> {
     let mut read_channels = Vec::new();
     let mut read_threads = Vec::new();
     let recycler = PacketBatchRecycler::default();
-    let (_port, read_sockets) = solana_net_utils::multi_bind_in_range(
+    let (_port, read_sockets) = solana_net_utils::multi_bind_in_range_with_config(
         ip_addr,
         (port, port + num_sockets as u16),
+        SocketConfig::default().reuseport(true),
         num_sockets,
     )
     .unwrap();
