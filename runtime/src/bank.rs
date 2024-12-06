@@ -3130,6 +3130,8 @@ impl Bank {
 
         let mut blockhash_queue = BlockhashQueue::default();
         blockhash_queue.genesis_hash(&genesis_hash, self.fee_rate_governor.lamports_per_signature);
+        let stakes = self.stakes_cache.stakes().clone();
+        let stakes = Arc::new(StakesEnum::from(stakes));
         self.full_replay_fields
             .write()
             .unwrap()
@@ -3138,9 +3140,8 @@ impl Bank {
                 capitalization: AtomicU64::new(capitalization),
                 tick_height: AtomicU64::new(0),
                 epoch_reward_status: RwLock::new(EpochRewardStatus::default()),
-                new_epoch_stakes: RwLock::new(Arc::new(
-                    self.epoch_stakes(self.epoch).unwrap().clone(),
-                )),
+                // This is genesis, this is just a placeholder
+                new_epoch_stakes: RwLock::new(Arc::new(EpochStakes::new(stakes, 0))),
             });
         self.vote_only_blockhash_queue
             .write()
