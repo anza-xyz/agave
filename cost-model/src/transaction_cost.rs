@@ -246,7 +246,7 @@ impl solana_runtime_transaction::transaction_meta::StaticMeta for WritableKeysTr
 
     fn signature_details(&self) -> &solana_sdk::message::TransactionSignatureDetails {
         const DUMMY: solana_sdk::message::TransactionSignatureDetails =
-            solana_sdk::message::TransactionSignatureDetails::new(0, 0, 0);
+            solana_sdk::message::TransactionSignatureDetails::new(0, 0, 0, 0);
         &DUMMY
     }
 

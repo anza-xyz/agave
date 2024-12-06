@@ -17,6 +17,7 @@ use {
         secp256k1_program,
         signature::Signature,
     },
+    solana_sdk_ids::secp256r1_program,
     solana_svm_transaction::{
         instruction::SVMInstruction, message_address_table_lookup::SVMMessageAddressTableLookup,
         svm_message::SVMMessage, svm_transaction::SVMTransaction,
@@ -165,6 +166,7 @@ impl<D: TransactionData> ResolvedTransactionView<D> {
         // counting the number of pre-processor operations separately
         let mut num_secp256k1_instruction_signatures: u64 = 0;
         let mut num_ed25519_instruction_signatures: u64 = 0;
+        let mut num_secp256r1_instruction_signatures: u64 = 0;
         for (program_id, instruction) in self.program_instructions_iter() {
             if secp256k1_program::check_id(program_id) {
                 if let Some(num_verifies) = instruction.data.first() {
@@ -176,6 +178,11 @@ impl<D: TransactionData> ResolvedTransactionView<D> {
                     num_ed25519_instruction_signatures =
                         num_ed25519_instruction_signatures.wrapping_add(u64::from(*num_verifies));
                 }
+            } else if secp256r1_program::check_id(program_id) {
+                if let Some(num_verifies) = instruction.data.first() {
+                    num_secp256r1_instruction_signatures =
+                        num_secp256r1_instruction_signatures.wrapping_add(u64::from(*num_verifies));
+                }
             }
         }
 
@@ -183,6 +190,7 @@ impl<D: TransactionData> ResolvedTransactionView<D> {
             u64::from(self.view.num_required_signatures()),
             num_secp256k1_instruction_signatures,
             num_ed25519_instruction_signatures,
+            num_secp256r1_instruction_signatures,
         )
     }
 }

@@ -14,7 +14,7 @@ use {
     solana_instruction::{BorrowedAccountMeta, BorrowedInstruction},
     solana_pubkey::Pubkey,
     solana_sanitize::Sanitize,
-    solana_sdk_ids::{ed25519_program, secp256k1_program},
+    solana_sdk_ids::{ed25519_program, secp256k1_program, secp256r1_program},
     std::{borrow::Cow, collections::HashSet, convert::TryFrom},
 };
 
@@ -411,6 +411,13 @@ impl SanitizedMessage {
                             .num_ed25519_instruction_signatures
                             .saturating_add(u64::from(*num_verifies));
                 }
+            } else if secp256r1_program::check_id(program_id) {
+                if let Some(num_verifies) = instruction.data.first() {
+                    transaction_signature_details.num_secp256r1_instruction_signatures =
+                        transaction_signature_details
+                            .num_secp256r1_instruction_signatures
+                            .saturating_add(u64::from(*num_verifies));
+                }
             }
         }
 
@@ -425,6 +432,7 @@ pub struct TransactionSignatureDetails {
     num_transaction_signatures: u64,
     num_secp256k1_instruction_signatures: u64,
     num_ed25519_instruction_signatures: u64,
+    num_secp256r1_instruction_signatures: u64,
 }
 
 impl TransactionSignatureDetails {
@@ -432,11 +440,13 @@ impl TransactionSignatureDetails {
         num_transaction_signatures: u64,
         num_secp256k1_instruction_signatures: u64,
         num_ed25519_instruction_signatures: u64,
+        num_secp256r1_instruction_signatures: u64,
     ) -> Self {
         Self {
             num_transaction_signatures,
             num_secp256k1_instruction_signatures,
             num_ed25519_instruction_signatures,
+            num_secp256r1_instruction_signatures,
         }
     }
 
@@ -445,6 +455,7 @@ impl TransactionSignatureDetails {
         self.num_transaction_signatures
             .saturating_add(self.num_secp256k1_instruction_signatures)
             .saturating_add(self.num_ed25519_instruction_signatures)
+            .saturating_add(self.num_secp256r1_instruction_signatures)
     }
 
     /// return the number of transaction signatures
@@ -460,6 +471,11 @@ impl TransactionSignatureDetails {
     /// return the number of ed25519 instruction signatures
     pub fn num_ed25519_instruction_signatures(&self) -> u64 {
         self.num_ed25519_instruction_signatures
+    }
+
+    /// return the number of secp256k1 instruction signatures
+    pub fn num_secp256r1_instruction_signatures(&self) -> u64 {
+        self.num_secp256r1_instruction_signatures
     }
 }
 
