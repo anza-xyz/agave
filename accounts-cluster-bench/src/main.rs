@@ -8,7 +8,10 @@ use {
         hidden_unless_forced, input_parsers::pubkey_of, input_validators::is_url_or_moniker,
     },
     solana_cli_config::{ConfigInput, CONFIG_FILE},
-    solana_client::transaction_executor::TransactionExecutor,
+    solana_client::{
+        rpc_config::RpcBlockConfig, rpc_request::MAX_GET_CONFIRMED_BLOCKS_RANGE,
+        transaction_executor::TransactionExecutor,
+    },
     solana_gossip::gossip_service::discover,
     solana_inline_spl::token,
     solana_measure::measure::Measure,
@@ -277,6 +280,8 @@ pub enum RpcBench {
     TokenAccountsByOwner,
     Supply,
     TokenAccountsByDelegate,
+    Block,
+    Blocks,
 }
 
 #[derive(Debug)]
@@ -289,6 +294,8 @@ impl FromStr for RpcBench {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
+            "block" => Ok(RpcBench::Block),
+            "blocks" => Ok(RpcBench::Blocks),
             "slot" => Ok(RpcBench::Slot),
             "supply" => Ok(RpcBench::Supply),
             "multiple-accounts" => Ok(RpcBench::MultipleAccounts),
@@ -362,6 +369,7 @@ struct RpcBenchStats {
     total_success_time_us: u64,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_rpc_bench_loop(
     rpc_bench: RpcBench,
     thread: usize,
@@ -371,6 +379,7 @@ fn run_rpc_bench_loop(
     program_id: &Pubkey,
     max_closed: &AtomicU64,
     max_created: &AtomicU64,
+    slot_height: &AtomicU64,
     mint: &Option<Pubkey>,
 ) {
     let mut stats = RpcBenchStats::default();
@@ -411,6 +420,56 @@ fn run_rpc_bench_loop(
             break;
         }
         match rpc_bench {
+            RpcBench::Block => {
+                let slot_height = slot_height.load(Ordering::Relaxed);
+                let mut rpc_time = Measure::start("rpc-get-block");
+                match client.get_block_with_config(
+                    slot_height,
+                    RpcBlockConfig {
+                        commitment: Some(CommitmentConfig::confirmed()),
+                        ..Default::default()
+                    },
+                ) {
+                    Ok(_block) => {
+                        rpc_time.stop();
+                        stats.success += 1;
+                        stats.total_success_time_us += rpc_time.as_us();
+                    }
+                    Err(e) => {
+                        rpc_time.stop();
+                        stats.total_errors_time_us += rpc_time.as_us();
+                        stats.errors += 1;
+                        if last_error.elapsed().as_secs() > 2 {
+                            info!("get_block error: {:?}", e);
+                            last_error = Instant::now();
+                        }
+                    }
+                }
+            }
+            RpcBench::Blocks => {
+                let slot_height = slot_height.load(Ordering::Relaxed);
+                let mut rpc_time = Measure::start("rpc-get-blocks");
+                match client.get_blocks_with_commitment(
+                    slot_height.saturating_sub(MAX_GET_CONFIRMED_BLOCKS_RANGE),
+                    Some(slot_height),
+                    CommitmentConfig::confirmed(),
+                ) {
+                    Ok(_slots) => {
+                        rpc_time.stop();
+                        stats.success += 1;
+                        stats.total_success_time_us += rpc_time.as_us();
+                    }
+                    Err(e) => {
+                        rpc_time.stop();
+                        stats.total_errors_time_us += rpc_time.as_us();
+                        stats.errors += 1;
+                        if last_error.elapsed().as_secs() > 2 {
+                            info!("get_blocks error: {:?}", e);
+                            last_error = Instant::now();
+                        }
+                    }
+                }
+            }
             RpcBench::Slot => {
                 let mut rpc_time = Measure::start("rpc-get-slot");
                 match client.get_slot() {
@@ -554,7 +613,7 @@ fn make_rpc_bench_threads(
     exit: &Arc<AtomicBool>,
     client: &Arc<RpcClient>,
     seed_tracker: &SeedTracker,
-    slot_height_atom: &Arc<AtomicU64>,
+    slot_height: &Arc<AtomicU64>,
     base_keypair_pubkey: Pubkey,
     num_rpc_bench_threads: usize,
 ) -> Vec<JoinHandle<()>> {
@@ -572,7 +631,7 @@ fn make_rpc_bench_threads(
                 let exit = exit.clone();
                 let max_closed = seed_tracker.max_closed.clone();
                 let max_created = seed_tracker.max_created.clone();
-                let slot_height_atom = slot_height_atom.clone();
+                let slot_height = slot_height.clone();
                 let mint = *mint;
                 Builder::new()
                     .name(format!("rpc-bench-{}", thread))
@@ -587,7 +646,7 @@ fn make_rpc_bench_threads(
                             &program_id,
                             &max_closed,
                             &max_created,
-                            &slot_height_atom,
+                            &slot_height,
                             &mint,
                         )
                     })
@@ -620,7 +679,7 @@ fn run_accounts_bench(
     let mut last_log = Instant::now();
     let mut count = 0;
     let mut blockhash = poll_get_latest_blockhash(&client).expect("blockhash");
-    let slot_height_atom = Arc::new(AtomicU64::new(poll_slot_height(&client)));
+    let slot_height = Arc::new(AtomicU64::new(poll_slot_height(&client)));
     let mut tx_sent_count = 0;
     let mut total_accounts_created = 0;
     let mut total_accounts_closed = 0;
@@ -680,7 +739,7 @@ fn run_accounts_bench(
             &exit,
             &client,
             &seed_tracker,
-            &slot_height_atom,
+            &slot_height,
             base_keypair_pubkey,
             num_rpc_bench_threads,
         )
@@ -691,7 +750,7 @@ fn run_accounts_bench(
     loop {
         if latest_blockhash.elapsed().as_millis() > 10_000 {
             blockhash = poll_get_latest_blockhash(&client).expect("blockhash");
-            slot_height_atom.store(poll_slot_height(&client), Ordering::Relaxed);
+            slot_height.store(poll_slot_height(&client), Ordering::Relaxed);
             latest_blockhash = Instant::now();
         }
 
