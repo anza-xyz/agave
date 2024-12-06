@@ -24,7 +24,7 @@ pub struct RewardsRecorderService {
 }
 
 // ReplayStage sends a new item to this service for every frozen Bank. Banks
-// are frozen every 400ms at steady state, check slightly more often than that
+// are frozen every 400ms at steady state so checking every 100ms is sufficient
 const TRY_RECV_INTERVAL: Duration = Duration::from_millis(100);
 
 impl RewardsRecorderService {
