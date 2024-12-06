@@ -1196,6 +1196,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .assign_program(program_id, Arc::new(builtin));
         debug!("Added program {} under {:?}", name, program_id);
     }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn writable_sysvar_cache(&self) -> &RwLock<SysvarCache> {
+        &self.sysvar_cache
+    }
 }
 
 #[cfg(test)]

@@ -75,6 +75,9 @@ pull_request_rules:
             - status-success=cargo-test-sbf (name-service/program)
             - status-success=cargo-test-sbf (stake-pool/program)
             - status-success=cargo-test-sbf (single-pool/program)
+        - or:
+          - -files~=(Cargo\.toml|.github/workflows/crate-check\.yml|ci/check-crates\.sh)$
+          - check-success=crate check
     actions:
       merge:
         method: squash

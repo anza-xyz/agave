@@ -1089,14 +1089,12 @@ fn run_test_remove_unrooted_slot(is_cached: bool, db: AccountsDb) {
     } else {
         db.store_for_tests(unrooted_slot, &[(&key, &account0)]);
     }
-    assert!(db.get_bank_hash_stats(unrooted_slot).is_some());
     assert!(db.accounts_index.contains(&key));
     db.assert_load_account(unrooted_slot, key, 1);
 
     // Purge the slot
     db.remove_unrooted_slots(&[(unrooted_slot, unrooted_bank_id)]);
     assert!(db.load_without_fixed_root(&ancestors, &key).is_none());
-    assert!(db.get_bank_hash_stats(unrooted_slot).is_none());
     assert!(db.accounts_cache.slot_cache(unrooted_slot).is_none());
     assert!(db.storage.get_slot_storage_entry(unrooted_slot).is_none());
     assert!(!db.accounts_index.contains(&key));
@@ -2392,32 +2390,6 @@ fn test_hash_stored_account() {
         expected_account_hash,
         "Account-based hashing must be consistent with StoredAccountMeta-based one."
     );
-}
-
-#[test]
-fn test_bank_hash_stats() {
-    solana_logger::setup();
-    let db = AccountsDb::new_single_for_tests();
-
-    let key = Pubkey::default();
-    let some_data_len = 5;
-    let some_slot: Slot = 0;
-    let account = AccountSharedData::new(1, some_data_len, &key);
-    let ancestors = vec![(some_slot, 0)].into_iter().collect();
-
-    db.store_for_tests(some_slot, &[(&key, &account)]);
-    let mut account = db.load_without_fixed_root(&ancestors, &key).unwrap().0;
-    account.checked_sub_lamports(1).unwrap();
-    account.set_executable(true);
-    db.store_for_tests(some_slot, &[(&key, &account)]);
-    db.add_root(some_slot);
-
-    let stats = db.get_bank_hash_stats(some_slot).unwrap();
-    assert_eq!(stats.num_updated_accounts, 1);
-    assert_eq!(stats.num_removed_accounts, 1);
-    assert_eq!(stats.num_lamports_stored, 1);
-    assert_eq!(stats.total_data_len, 2 * some_data_len as u64);
-    assert_eq!(stats.num_executable_accounts, 1);
 }
 
 // something we can get a ref to

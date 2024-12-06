@@ -7061,7 +7061,12 @@ dependencies = [
 name = "solana-svm-transaction"
 version = "2.2.0"
 dependencies = [
- "solana-sdk",
+ "solana-hash",
+ "solana-message",
+ "solana-pubkey",
+ "solana-sdk-ids",
+ "solana-signature",
+ "solana-transaction",
 ]
 
 [[package]]
