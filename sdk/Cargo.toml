@@ -75,6 +75,7 @@ frozen-abi = [
     "solana-fee-structure/frozen-abi",
     "solana-account/frozen-abi",
     "solana-cluster-type/frozen-abi",
+    "solana-hard-forks/frozen-abi",
     "solana-inflation/frozen-abi",
     "solana-poh-config/frozen-abi",
     "solana-program/frozen-abi",
