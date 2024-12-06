@@ -790,7 +790,7 @@ impl PartialEq for BankFullReplayFields {
             && self.capitalization.load(Relaxed) == other.capitalization.load(Relaxed)
             && *self.epoch_reward_status.read().unwrap()
                 == *other.epoch_reward_status.read().unwrap()
-            && *self.new_epoch_stakes.read().unwrap() == *other.new_epoch_stakes.read().unwrap()
+            && self.new_epoch_stakes.read().unwrap().stakes() == other.new_epoch_stakes.read().unwrap().stakes()
     }
 }
 
