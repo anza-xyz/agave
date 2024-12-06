@@ -1,5 +1,5 @@
 use {
-    solana_builtins_default_costs::{is_builtin_program, MAYBE_BUILTIN_KEY},
+    solana_builtins_default_costs::{get_builtin_migration_feature_index, MAYBE_BUILTIN_KEY},
     solana_sdk::{packet::PACKET_DATA_SIZE, pubkey::Pubkey},
 };
 
@@ -10,6 +10,12 @@ pub const FILTER_SIZE: u8 = (PACKET_DATA_SIZE / core::mem::size_of::<Pubkey>()) 
 pub(crate) enum ProgramKind {
     NotBuiltin,
     Builtin,
+    // Builtin program maybe in process of being migrated to core bpf,
+    // if core_bpf_migration_feature is activated, then the migration has
+    // completed and it should not longer be considered as builtin
+    MigratingBuiltin {
+        core_bpf_migration_feature_index: usize,
+    },
 }
 
 pub(crate) struct BuiltinProgramsFilter {
@@ -40,17 +46,21 @@ impl BuiltinProgramsFilter {
             return ProgramKind::NotBuiltin;
         }
 
-        if is_builtin_program(program_id) {
-            ProgramKind::Builtin
-        } else {
-            ProgramKind::NotBuiltin
-        }
+        get_builtin_migration_feature_index(program_id).map_or(
+            ProgramKind::NotBuiltin,
+            |some_builtin| match some_builtin {
+                Some(core_bpf_migration_feature_index) => ProgramKind::MigratingBuiltin {
+                    core_bpf_migration_feature_index,
+                },
+                None => ProgramKind::Builtin,
+            },
+        )
     }
 }
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use {super::*, solana_builtins_default_costs::MIGRATION_FEATURES_ID, solana_sdk::feature_set};
 
     const DUMMY_PROGRAM_ID: &str = "dummmy1111111111111111111111111111111111111";
 
@@ -92,6 +102,33 @@ mod test {
             test_store.get_program_kind(index, &solana_sdk::compute_budget::id()),
             ProgramKind::Builtin,
         );
+
+        // migrating builtins
+        for (migrating_builtin_pubkey, migration_feature_id) in [
+            (
+                solana_sdk::stake::program::id(),
+                feature_set::migrate_stake_program_to_core_bpf::id(),
+            ),
+            (
+                solana_sdk::config::program::id(),
+                feature_set::migrate_config_program_to_core_bpf::id(),
+            ),
+            (
+                solana_sdk::address_lookup_table::program::id(),
+                feature_set::migrate_address_lookup_table_program_to_core_bpf::id(),
+            ),
+        ] {
+            index += 1;
+            assert_eq!(
+                test_store.get_program_kind(index, &migrating_builtin_pubkey),
+                ProgramKind::MigratingBuiltin {
+                    core_bpf_migration_feature_index: MIGRATION_FEATURES_ID
+                        .iter()
+                        .position(|&x| x == migration_feature_id)
+                        .unwrap(),
+                }
+            );
+        }
     }
 
     #[test]
