@@ -25,13 +25,13 @@ struct MigrationBuiltinFeatureCounter {
     // The vector of counters, matching the size of the static vector MIGRATION_FEATURE_IDS,
     // each counter representing the number of times its corresponding feature ID is
     // referenced in this transaction.
-    migrating_builtin: Vec<u16>,
+    migrating_builtin: [u16; solana_builtins_default_costs::MIGRATING_BUILTINS_COSTS.len()],
 }
 
 impl Default for MigrationBuiltinFeatureCounter {
     fn default() -> Self {
         Self {
-            migrating_builtin: vec![0; MIGRATION_FEATURES_ID.len()],
+            migrating_builtin: [0; solana_builtins_default_costs::MIGRATING_BUILTINS_COSTS.len()],
         }
     }
 }
