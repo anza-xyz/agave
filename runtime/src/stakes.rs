@@ -64,6 +64,10 @@ impl StakesCache {
         Self(RwLock::new(stakes))
     }
 
+    pub(crate) fn replace(&self, stakes: Stakes<StakeAccount>) {
+        *self.0.write().unwrap() = stakes;
+    }
+
     pub(crate) fn stakes(&self) -> RwLockReadGuard<Stakes<StakeAccount>> {
         self.0.read().unwrap()
     }

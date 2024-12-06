@@ -747,7 +747,7 @@ struct HashOverride {
     bank_hash: Hash,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct BankFullReplayFields {
     /// Bank tick height
     tick_height: AtomicU64,
@@ -759,6 +759,10 @@ pub struct BankFullReplayFields {
     capitalization: AtomicU64,
 
     epoch_reward_status: RwLock<EpochRewardStatus>,
+
+    // Save one epoch stakes for the new epoch, it will be copied back to epoch_stakes
+    // when replay_tip enters into the new epoch.
+    new_epoch_stakes: RwLock<Arc<EpochStakes>>,
 }
 
 impl Clone for BankFullReplayFields {
@@ -768,6 +772,7 @@ impl Clone for BankFullReplayFields {
             blockhash_queue: RwLock::new(self.blockhash_queue.read().unwrap().clone()),
             capitalization: AtomicU64::new(self.capitalization.load(Relaxed)),
             epoch_reward_status: RwLock::new(self.epoch_reward_status.read().unwrap().clone()),
+            new_epoch_stakes: RwLock::new(self.new_epoch_stakes.read().unwrap().clone()),
         }
     }
 }
@@ -785,6 +790,7 @@ impl PartialEq for BankFullReplayFields {
             && self.capitalization.load(Relaxed) == other.capitalization.load(Relaxed)
             && *self.epoch_reward_status.read().unwrap()
                 == *other.epoch_reward_status.read().unwrap()
+            && *self.new_epoch_stakes.read().unwrap() == *other.new_epoch_stakes.read().unwrap()
     }
 }
 
@@ -1384,16 +1390,8 @@ impl Bank {
         // Following code may touch AccountsDb, requiring proper ancestors
         let (_, update_epoch_time_us) = measure_us!({
             if parent.epoch() < new.epoch() {
-                new.process_new_epoch(
-                    parent.epoch(),
-                    parent.slot(),
-                    parent.block_height(),
-                    reward_calc_tracer,
-                );
-            } else {
-                // Save a snapshot of stakes for use in consensus and stake weighted networking
-                let leader_schedule_epoch = new.epoch_schedule().get_leader_schedule_epoch(slot);
-                new.update_epoch_stakes(leader_schedule_epoch);
+                new.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, false);
+
                 // Copy the vote authorities from epoch stake into vote states.
                 let new_epoch = new.epoch();
                 let mut vote_states = new.vote_states.write().unwrap();
@@ -1426,6 +1424,9 @@ impl Bank {
                     vote_states.remove(&vote_account_pubkey);
                 }
             }
+            // Save a snapshot of stakes for use in consensus and stake weighted networking
+            let leader_schedule_epoch = new.epoch_schedule().get_leader_schedule_epoch(slot);
+            new.update_epoch_stakes(leader_schedule_epoch);
         });
 
         let (_epoch, slot_index) = new.epoch_schedule.get_epoch_and_slot_index(new.slot);
@@ -1518,22 +1519,18 @@ impl Bank {
 
     /// process for the start of a new epoch
     fn process_new_epoch(
-        &mut self,
+        &self,
         parent_epoch: Epoch,
         parent_slot: Slot,
         parent_height: u64,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
-    ) {
+    ) -> EpochStakes {
         let epoch = self.epoch();
         let slot = self.slot();
         let (thread_pool, thread_pool_time_us) = measure_us!(ThreadPoolBuilder::new()
             .thread_name(|i| format!("solBnkNewEpch{i:02}"))
             .build()
             .expect("new rayon threadpool"));
-
-        let (_, apply_feature_activations_time_us) = measure_us!(
-            self.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, false)
-        );
 
         // Add new entry to stakes.stake_history, set appropriate epoch and
         // update vote accounts with warmed up stakes before saving a
@@ -1546,8 +1543,27 @@ impl Bank {
 
         // Save a snapshot of stakes for use in consensus and stake weighted networking
         let leader_schedule_epoch = self.epoch_schedule.get_leader_schedule_epoch(slot);
-        let (_, update_epoch_stakes_time_us) =
-            measure_us!(self.update_epoch_stakes(leader_schedule_epoch));
+        let stakes = self.stakes_cache.stakes().clone();
+        let stakes = Arc::new(StakesEnum::from(stakes));
+        let new_epoch_stakes = EpochStakes::new(stakes, leader_schedule_epoch);
+        info!(
+            "new epoch stakes, epoch: {}, total_stake: {}",
+            leader_schedule_epoch,
+            new_epoch_stakes.total_stake(),
+        );
+
+        // It is expensive to log the details of epoch stakes. Only log them at "trace"
+        // level for debugging purpose.
+        if log::log_enabled!(log::Level::Trace) {
+            let vote_stakes: HashMap<_, _> = self
+                .stakes_cache
+                .stakes()
+                .vote_accounts()
+                .delegated_stakes()
+                .map(|(pubkey, stake)| (*pubkey, stake))
+                .collect();
+            trace!("new epoch stakes, stakes: {vote_stakes:#?}");
+        }
 
         let mut rewards_metrics = RewardsMetrics::default();
         // After saving a snapshot of stakes, apply stake rewards and commission
@@ -1576,13 +1592,14 @@ impl Bank {
             parent_slot,
             NewEpochTimings {
                 thread_pool_time_us,
-                apply_feature_activations_time_us,
+                apply_feature_activations_time_us: 0,
                 activate_epoch_time_us,
-                update_epoch_stakes_time_us,
+                update_epoch_stakes_time_us: 0,
                 update_rewards_with_thread_pool_time_us,
             },
             rewards_metrics,
         );
+        new_epoch_stakes
     }
 
     pub fn byte_limit_for_scans(&self) -> Option<usize> {
@@ -2165,29 +2182,17 @@ impl Bank {
             self.epoch_stakes.retain(|&epoch, _| {
                 epoch >= leader_schedule_epoch.saturating_sub(MAX_LEADER_SCHEDULE_STAKES)
             });
-            let stakes = self.stakes_cache.stakes().clone();
-            let stakes = Arc::new(StakesEnum::from(stakes));
-            let new_epoch_stakes = EpochStakes::new(stakes, leader_schedule_epoch);
-            info!(
-                "new epoch stakes, epoch: {}, total_stake: {}",
-                leader_schedule_epoch,
-                new_epoch_stakes.total_stake(),
-            );
-
-            // It is expensive to log the details of epoch stakes. Only log them at "trace"
-            // level for debugging purpose.
-            if log::log_enabled!(log::Level::Trace) {
-                let vote_stakes: HashMap<_, _> = self
-                    .stakes_cache
-                    .stakes()
-                    .vote_accounts()
-                    .delegated_stakes()
-                    .map(|(pubkey, stake)| (*pubkey, stake))
-                    .collect();
-                trace!("new epoch stakes, stakes: {vote_stakes:#?}");
+            let mut ancestor = self.parent();
+            while ancestor.is_some() && !ancestor.as_ref().unwrap().is_frozen() {
+                ancestor = ancestor.unwrap().parent();
             }
-            self.epoch_stakes
-                .insert(leader_schedule_epoch, new_epoch_stakes);
+            if let Some(ancestor) = ancestor.as_ref() {
+                let fields = ancestor.full_replay_fields.read().unwrap();
+                let new_epoch_stakes =
+                    EpochStakes::clone(&*fields.as_ref().unwrap().new_epoch_stakes.read().unwrap());
+                self.epoch_stakes
+                    .insert(leader_schedule_epoch, new_epoch_stakes);
+            }
         }
     }
 
@@ -2321,7 +2326,7 @@ impl Bank {
 
     // update rewards based on the previous epoch
     fn update_rewards_with_thread_pool(
-        &mut self,
+        &self,
         prev_epoch: Epoch,
         reward_calc_tracer: Option<impl Fn(&RewardCalculationEvent) + Send + Sync>,
         thread_pool: &ThreadPool,
@@ -2541,7 +2546,7 @@ impl Bank {
 
     /// Load, calculate and payout epoch rewards for stake and vote accounts
     fn pay_validator_rewards_with_thread_pool(
-        &mut self,
+        &self,
         rewarded_epoch: Epoch,
         rewards: u64,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
@@ -2593,7 +2598,7 @@ impl Bank {
     }
 
     fn load_vote_and_stake_accounts(
-        &mut self,
+        &self,
         thread_pool: &ThreadPool,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
         metrics: &mut RewardsMetrics,
@@ -3131,7 +3136,11 @@ impl Bank {
             .replace(BankFullReplayFields {
                 blockhash_queue: RwLock::new(blockhash_queue),
                 capitalization: AtomicU64::new(capitalization),
-                ..BankFullReplayFields::default()
+                tick_height: AtomicU64::new(0),
+                epoch_reward_status: RwLock::new(EpochRewardStatus::default()),
+                new_epoch_stakes: RwLock::new(Arc::new(
+                    self.epoch_stakes(self.epoch).unwrap().clone(),
+                )),
             });
         self.vote_only_blockhash_queue
             .write()
@@ -6360,6 +6369,19 @@ impl Bank {
             let parent_full_replay_fields = parent.full_replay_fields.read().unwrap();
             assert!(parent_full_replay_fields.is_some());
             *self.full_replay_fields.write().unwrap() = parent_full_replay_fields.clone();
+            self.stakes_cache
+                .replace(parent.stakes_cache.stakes().clone());
+            if parent.epoch() < self.epoch() {
+                let new_epoch_stakes = self.process_new_epoch(
+                    parent.epoch(),
+                    parent.slot(),
+                    parent.block_height(),
+                    null_tracer(),
+                );
+                let fields = self.full_replay_fields.read().unwrap();
+                *fields.as_ref().unwrap().new_epoch_stakes.write().unwrap() =
+                    Arc::new(new_epoch_stakes);
+            }
         }
         if self.is_partitioned_rewards_code_enabled() {
             self.distribute_partitioned_epoch_rewards();
