@@ -28,6 +28,7 @@ use {
         transaction::Transaction,
     },
     solana_streamer::socket::SocketAddrSpace,
+    solana_transaction_status::UiTransactionEncoding,
     spl_token::state::Account,
     std::{
         cmp::min,
@@ -140,7 +141,6 @@ struct SeedTracker {
 struct TransactionSignatureTracker(Arc<RwLock<VecDeque<Signature>>>);
 
 impl TransactionSignatureTracker {
-    #[allow(dead_code)]
     fn get_random(&self) -> Option<Signature> {
         let signatures = self.read().unwrap();
         if signatures.is_empty() {
@@ -290,6 +290,8 @@ pub enum RpcBench {
     TokenAccountsByOwner,
     Supply,
     TokenAccountsByDelegate,
+    Transaction,
+    TransactionParsed,
 }
 
 #[derive(Debug)]
@@ -307,6 +309,8 @@ impl FromStr for RpcBench {
             "multiple-accounts" => Ok(RpcBench::MultipleAccounts),
             "token-accounts-by-delegate" => Ok(RpcBench::TokenAccountsByDelegate),
             "token-accounts-by-owner" => Ok(RpcBench::TokenAccountsByOwner),
+            "transaction" => Ok(RpcBench::Transaction),
+            "transaction-parsed" => Ok(RpcBench::TransactionParsed),
             "version" => Ok(RpcBench::Version),
             _ => Err(RpcParseError::InvalidOption),
         }
@@ -367,6 +371,37 @@ fn process_get_multiple_accounts(
     }
 }
 
+fn process_get_transaction(
+    test_name: &'static str,
+    transaction_signature_tracker: &TransactionSignatureTracker,
+    client: &RpcClient,
+    stats: &mut RpcBenchStats,
+    last_error: &mut Instant,
+    encoding: UiTransactionEncoding,
+) {
+    let Some(signature) = transaction_signature_tracker.get_random() else {
+        info!("transaction: No transactions have yet been made; skipping");
+        return;
+    };
+    let mut measure = Measure::start(test_name);
+    match client.get_transaction(&signature, encoding) {
+        Ok(_tx) => {
+            measure.stop();
+            stats.success += 1;
+            stats.total_success_time_us += measure.as_us();
+        }
+        Err(e) => {
+            measure.stop();
+            stats.errors += 1;
+            stats.total_errors_time_us += measure.as_us();
+            if last_error.elapsed().as_secs() > 2 {
+                info!("get_transaction error: {:?}", &e);
+                *last_error = Instant::now();
+            }
+        }
+    };
+}
+
 #[derive(Default)]
 struct RpcBenchStats {
     errors: u64,
@@ -386,7 +421,7 @@ fn run_rpc_bench_loop(
     max_closed: &AtomicU64,
     max_created: &AtomicU64,
     mint: &Option<Pubkey>,
-    _transaction_signature_tracker: &TransactionSignatureTracker,
+    transaction_signature_tracker: &TransactionSignatureTracker,
 ) {
     let mut stats = RpcBenchStats::default();
     let mut iters = 0;
@@ -536,6 +571,26 @@ fn run_rpc_bench_loop(
                         }
                     }
                 }
+            }
+            RpcBench::Transaction => {
+                process_get_transaction(
+                    "rpc-get-transaction-base64",
+                    transaction_signature_tracker,
+                    client,
+                    &mut stats,
+                    &mut last_error,
+                    UiTransactionEncoding::Base64,
+                );
+            }
+            RpcBench::TransactionParsed => {
+                process_get_transaction(
+                    "rpc-get-transaction-parsed",
+                    transaction_signature_tracker,
+                    client,
+                    &mut stats,
+                    &mut last_error,
+                    UiTransactionEncoding::JsonParsed,
+                );
             }
             RpcBench::Version => {
                 let mut rpc_time = Measure::start("rpc-get-version");
