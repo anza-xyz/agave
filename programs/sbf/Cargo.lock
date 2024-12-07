@@ -5647,10 +5647,15 @@ dependencies = [
  "ahash 0.8.11",
  "lazy_static",
  "solana-epoch-schedule",
+ "solana-feature-set-macro",
  "solana-hash",
  "solana-pubkey",
  "solana-sha256-hasher",
 ]
+
+[[package]]
+name = "solana-feature-set-macro"
+version = "2.2.0"
 
 [[package]]
 name = "solana-fee"
