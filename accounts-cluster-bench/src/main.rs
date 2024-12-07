@@ -8,7 +8,9 @@ use {
         hidden_unless_forced, input_parsers::pubkey_of, input_validators::is_url_or_moniker,
     },
     solana_cli_config::{ConfigInput, CONFIG_FILE},
-    solana_client::transaction_executor::TransactionExecutor,
+    solana_client::{
+        rpc_client::SerializableTransaction, transaction_executor::TransactionExecutor,
+    },
     solana_gossip::gossip_service::discover,
     solana_inline_spl::token,
     solana_measure::measure::Measure,
@@ -21,19 +23,21 @@ use {
         message::Message,
         program_pack::Pack,
         pubkey::Pubkey,
-        signature::{read_keypair_file, Keypair, Signer},
+        signature::{read_keypair_file, Keypair, Signature, Signer},
         system_instruction, system_program,
         transaction::Transaction,
     },
     solana_streamer::socket::SocketAddrSpace,
+    solana_transaction_status::UiTransactionEncoding,
     spl_token::state::Account,
     std::{
         cmp::min,
+        collections::VecDeque,
         process::exit,
         str::FromStr,
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
-            Arc,
+            Arc, RwLock,
         },
         thread::{sleep, Builder, JoinHandle},
         time::{Duration, Instant},
@@ -130,6 +134,30 @@ fn airdrop_lamports(client: &RpcClient, id: &Keypair, desired_balance: u64) -> b
 struct SeedTracker {
     max_created: Arc<AtomicU64>,
     max_closed: Arc<AtomicU64>,
+}
+
+struct TransactionSignatureTracker(Arc<RwLock<VecDeque<Signature>>>);
+
+impl TransactionSignatureTracker {
+    fn clone(&self) -> TransactionSignatureTracker {
+        TransactionSignatureTracker(self.0.clone())
+    }
+    fn get_random(&self) -> Option<Signature> {
+        let signatures = self.0.read().unwrap();
+        if signatures.is_empty() {
+            None
+        } else {
+            let random_index = thread_rng().gen_range(0..signatures.len());
+            let random_signature = signatures.get(random_index);
+            random_signature.cloned()
+        }
+    }
+    fn track_transactions(&self, transactions: &[Transaction]) {
+        let mut lock = self.0.write().unwrap();
+        for signature in transactions.iter().map(Transaction::get_signature) {
+            lock.push_back(*signature);
+        }
+    }
 }
 
 fn make_create_message(
@@ -255,6 +283,8 @@ pub enum RpcBench {
     ProgramAccounts,
     TokenAccountsByOwner,
     TokenAccountsByDelegate,
+    Transaction,
+    TransactionParsed,
 }
 
 #[derive(Debug)]
@@ -271,6 +301,8 @@ impl FromStr for RpcBench {
             "multiple-accounts" => Ok(RpcBench::MultipleAccounts),
             "token-accounts-by-delegate" => Ok(RpcBench::TokenAccountsByDelegate),
             "token-accounts-by-owner" => Ok(RpcBench::TokenAccountsByOwner),
+            "transaction" => Ok(RpcBench::Transaction),
+            "transaction-parsed" => Ok(RpcBench::TransactionParsed),
             "version" => Ok(RpcBench::Version),
             _ => Err(RpcParseError::InvalidOption),
         }
@@ -331,6 +363,36 @@ fn process_get_multiple_accounts(
     }
 }
 
+fn process_get_transaction(
+    transaction_signature_tracker: &TransactionSignatureTracker,
+    client: &RpcClient,
+    stats: &mut RpcBenchStats,
+    last_error: &mut Instant,
+    measure: &mut Measure,
+    encoding: UiTransactionEncoding,
+) {
+    let Some(signature) = transaction_signature_tracker.get_random() else {
+        info!("transaction: No transactions have yet been made; skipping");
+        return;
+    };
+    match client.get_transaction(&signature, encoding) {
+        Ok(_tx) => {
+            measure.stop();
+            stats.success += 1;
+            stats.total_success_time_us += measure.as_us();
+        }
+        Err(e) => {
+            measure.stop();
+            stats.errors += 1;
+            stats.total_errors_time_us += measure.as_us();
+            if last_error.elapsed().as_secs() > 2 {
+                info!("get_transaction error: {:?}", &e);
+                *last_error = Instant::now();
+            }
+        }
+    };
+}
+
 #[derive(Default)]
 struct RpcBenchStats {
     errors: u64,
@@ -339,6 +401,7 @@ struct RpcBenchStats {
     total_success_time_us: u64,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_rpc_bench_loop(
     rpc_bench: RpcBench,
     thread: usize,
@@ -349,6 +412,7 @@ fn run_rpc_bench_loop(
     max_closed: &AtomicU64,
     max_created: &AtomicU64,
     mint: &Option<Pubkey>,
+    transaction_signature_tracker: &TransactionSignatureTracker,
 ) {
     let mut stats = RpcBenchStats::default();
     let mut iters = 0;
@@ -480,6 +544,28 @@ fn run_rpc_bench_loop(
                     }
                 }
             }
+            RpcBench::Transaction => {
+                let mut measure = Measure::start("rpc-get-transaction-base64");
+                process_get_transaction(
+                    transaction_signature_tracker,
+                    client,
+                    &mut stats,
+                    &mut last_error,
+                    &mut measure,
+                    UiTransactionEncoding::Base64,
+                );
+            }
+            RpcBench::TransactionParsed => {
+                let mut measure = Measure::start("rpc-get-transaction-parsed");
+                process_get_transaction(
+                    transaction_signature_tracker,
+                    client,
+                    &mut stats,
+                    &mut last_error,
+                    &mut measure,
+                    UiTransactionEncoding::JsonParsed,
+                );
+            }
             RpcBench::Version => {
                 let mut rpc_time = Measure::start("rpc-get-version");
                 match client.get_version() {
@@ -513,6 +599,7 @@ fn make_rpc_bench_threads(
     seed_tracker: &SeedTracker,
     base_keypair_pubkey: Pubkey,
     num_rpc_bench_threads: usize,
+    transaction_signature_tracker: &TransactionSignatureTracker,
 ) -> Vec<JoinHandle<()>> {
     let program_id = if mint.is_some() {
         token::id()
@@ -527,6 +614,7 @@ fn make_rpc_bench_threads(
                 let exit = exit.clone();
                 let max_closed = seed_tracker.max_closed.clone();
                 let max_created = seed_tracker.max_created.clone();
+                let transaction_signature_tracker = transaction_signature_tracker.clone();
                 let mint = *mint;
                 Builder::new()
                     .name(format!("rpc-bench-{}", thread))
@@ -541,6 +629,7 @@ fn make_rpc_bench_threads(
                             &max_closed,
                             &max_created,
                             &mint,
+                            &transaction_signature_tracker,
                         )
                     })
                     .unwrap()
@@ -594,6 +683,8 @@ fn run_accounts_bench(
         max_created: Arc::new(AtomicU64::default()),
         max_closed: Arc::new(AtomicU64::default()),
     };
+    let transaction_signature_tracker =
+        TransactionSignatureTracker(Arc::new(RwLock::new(VecDeque::with_capacity(5000))));
 
     info!("Starting balance(s): {:?}", balances);
 
@@ -627,6 +718,7 @@ fn run_accounts_bench(
             &seed_tracker,
             base_keypair_pubkey,
             num_rpc_bench_threads,
+            &transaction_signature_tracker,
         )
     } else {
         Vec::new()
@@ -689,6 +781,7 @@ fn run_accounts_bench(
                             .collect();
                         balances[i] = balances[i].saturating_sub(lamports * txs.len() as u64);
                         info!("txs: {}", txs.len());
+                        transaction_signature_tracker.track_transactions(&txs);
                         let new_ids = executor.push_transactions(txs);
                         info!("ids: {}", new_ids.len());
                         tx_sent_count += new_ids.len();
@@ -722,6 +815,7 @@ fn run_accounts_bench(
                         .collect();
                     balances[0] = balances[0].saturating_sub(fee * txs.len() as u64);
                     info!("close txs: {}", txs.len());
+                    transaction_signature_tracker.track_transactions(&txs);
                     let new_ids = executor.push_transactions(txs);
                     info!("close ids: {}", new_ids.len());
                     tx_sent_count += new_ids.len();
@@ -812,6 +906,7 @@ fn run_accounts_bench(
                                 .collect();
                             balances[i] = balances[i].saturating_sub(fee * txs.len() as u64);
                             info!("close txs: {}", txs.len());
+                            transaction_signature_tracker.track_transactions(&txs);
                             let new_ids = executor.push_transactions(txs);
                             info!("close ids: {}", new_ids.len());
                             tx_sent_count += new_ids.len();
