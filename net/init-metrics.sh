@@ -88,7 +88,7 @@ else
   SOLANA_METRICS_CONFIG="host=$host,db=$netBasename,u=${username},p=${password}"
   set +x
   echo "!!!!!!!!!!!!!!!!!!!!!"
-  echo "Please store the following line in your shell environment for future use!"
+  echo "Please, add \`SOLANA_METRICS_CONFIG\` to your shell environment:"
   echo "export SOLANA_METRICS_CONFIG=\"$SOLANA_METRICS_CONFIG\""
 fi
 
