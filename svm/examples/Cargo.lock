@@ -5403,13 +5403,17 @@ dependencies = [
  "rand 0.8.5",
  "rayon",
  "serde",
+ "solana-hash",
  "solana-measure",
  "solana-merkle-tree",
  "solana-metrics",
+ "solana-packet",
  "solana-perf",
  "solana-rayon-threadlimit",
  "solana-runtime-transaction",
- "solana-sdk",
+ "solana-sha256-hasher",
+ "solana-transaction",
+ "solana-transaction-error",
 ]
 
 [[package]]
