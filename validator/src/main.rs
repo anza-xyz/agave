@@ -24,7 +24,10 @@ use {
             AccountsIndexConfig, IndexLimitMb, ScanFilter,
         },
         partitioned_rewards::TestPartitionedEpochRewards,
-        utils::{create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories},
+        utils::{
+            create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories,
+            create_and_canonicalize_directory,
+        },
     },
     solana_clap_utils::input_parsers::{keypair_of, keypairs_of, pubkey_of, value_of, values_of},
     solana_core::{
@@ -34,7 +37,7 @@ use {
         tpu::DEFAULT_TPU_COALESCE,
         validator::{
             is_snapshot_config_valid, BlockProductionMethod, BlockVerificationMethod, Validator,
-            ValidatorConfig, ValidatorError, ValidatorStartProgress,
+            ValidatorConfig, ValidatorError, ValidatorStartProgress, ValidatorTpuConfig,
         },
     },
     solana_gossip::{
@@ -1124,6 +1127,8 @@ pub fn main() {
     let accounts_shrink_optimize_total_space =
         value_t_or_exit!(matches, "accounts_shrink_optimize_total_space", bool);
     let tpu_use_quic = !matches.is_present("tpu_disable_quic");
+    let vote_use_quic = value_t_or_exit!(matches, "vote_use_quic", bool);
+
     let tpu_enable_udp = if matches.is_present("tpu_enable_udp") {
         true
     } else {
@@ -1671,13 +1676,14 @@ pub fn main() {
     } else {
         &ledger_path
     };
-    let snapshots_dir = fs::canonicalize(snapshots_dir).unwrap_or_else(|err| {
+    let snapshots_dir = create_and_canonicalize_directory(snapshots_dir).unwrap_or_else(|err| {
         eprintln!(
-            "Failed to canonicalize snapshots path '{}': {err}",
+            "Failed to create snapshots directory '{}': {err}",
             snapshots_dir.display(),
         );
         exit(1);
     });
+
     if account_paths
         .iter()
         .any(|account_path| account_path == &snapshots_dir)
@@ -2077,10 +2083,13 @@ pub fn main() {
         rpc_to_plugin_manager_receiver,
         start_progress,
         socket_addr_space,
-        tpu_use_quic,
-        tpu_connection_pool_size,
-        tpu_enable_udp,
-        tpu_max_connections_per_ipaddr_per_minute,
+        ValidatorTpuConfig {
+            use_quic: tpu_use_quic,
+            vote_use_quic,
+            tpu_connection_pool_size,
+            tpu_enable_udp,
+            tpu_max_connections_per_ipaddr_per_minute,
+        },
         admin_service_post_init,
     ) {
         Ok(validator) => validator,

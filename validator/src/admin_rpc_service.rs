@@ -871,7 +871,7 @@ mod tests {
         },
         solana_core::{
             consensus::tower_storage::NullTowerStorage,
-            validator::{Validator, ValidatorConfig},
+            validator::{Validator, ValidatorConfig, ValidatorTpuConfig},
         },
         solana_gossip::cluster_info::{ClusterInfo, Node},
         solana_inline_spl::token,
@@ -895,6 +895,7 @@ mod tests {
         solana_streamer::socket::SocketAddrSpace,
         solana_tpu_client::tpu_client::{
             DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_ENABLE_UDP, DEFAULT_TPU_USE_QUIC,
+            DEFAULT_VOTE_USE_QUIC,
         },
         spl_token_2022::{
             solana_program::{program_option::COption, program_pack::Pack},
@@ -1397,10 +1398,13 @@ mod tests {
                 None, // rpc_to_plugin_manager_receiver
                 start_progress.clone(),
                 SocketAddrSpace::Unspecified,
-                DEFAULT_TPU_USE_QUIC,
-                DEFAULT_TPU_CONNECTION_POOL_SIZE,
-                DEFAULT_TPU_ENABLE_UDP,
-                32, // max connections per IpAddr per minute for test
+                ValidatorTpuConfig {
+                    use_quic: DEFAULT_TPU_USE_QUIC,
+                    vote_use_quic: DEFAULT_VOTE_USE_QUIC,
+                    tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
+                    tpu_enable_udp: DEFAULT_TPU_ENABLE_UDP,
+                    tpu_max_connections_per_ipaddr_per_minute: 32, // max connections per IpAddr per minute for test
+                },
                 post_init,
             )
             .expect("assume successful validator start");

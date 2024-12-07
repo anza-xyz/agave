@@ -1011,10 +1011,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         drop(invoke_context);
 
-        saturating_add_assign!(
-            execute_timings.execute_accessories.process_message_us,
-            process_message_time.as_us()
-        );
+        execute_timings.execute_accessories.process_message_us += process_message_time.as_us();
 
         let mut status = process_result
             .and_then(|info| {
@@ -1076,14 +1073,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let status = status.map(|_| ());
 
         loaded_transaction.accounts = accounts;
-        saturating_add_assign!(
-            execute_timings.details.total_account_count,
-            loaded_transaction.accounts.len() as u64
-        );
-        saturating_add_assign!(
-            execute_timings.details.changed_account_count,
-            touched_account_count
-        );
+        execute_timings.details.total_account_count += loaded_transaction.accounts.len() as u64;
+        execute_timings.details.changed_account_count += touched_account_count;
 
         let return_data = if config.recording_config.enable_return_data_recording
             && !return_data.data.is_empty()

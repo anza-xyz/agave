@@ -46,7 +46,6 @@ use {
         },
         weighted_shuffle::WeightedShuffle,
     },
-    bincode::serialize,
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
     itertools::Itertools,
     rand::{seq::SliceRandom, thread_rng, CryptoRng, Rng},
@@ -154,7 +153,6 @@ pub struct ClusterInfo {
     my_contact_info: RwLock<ContactInfo>,
     ping_cache: Mutex<PingCache>,
     stats: GossipStats,
-    socket: UdpSocket,
     local_message_pending_push_queue: Mutex<Vec<CrdsValue>>,
     contact_debug_interval: u64, // milliseconds, 0 = disabled
     contact_save_interval: u64,  // milliseconds, 0 = disabled
@@ -224,7 +222,6 @@ impl ClusterInfo {
                 GOSSIP_PING_CACHE_CAPACITY,
             )),
             stats: GossipStats::default(),
-            socket: bind_to_unspecified().unwrap(),
             local_message_pending_push_queue: Mutex::default(),
             contact_debug_interval: DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS,
             instance: RwLock::new(NodeInstance::new(&mut thread_rng(), id, timestamp())),
@@ -923,19 +920,6 @@ impl ClusterInfo {
             debug_assert!(vote_index < MAX_LOCKOUT_HISTORY as u8);
             self.push_vote_at_index(refresh_vote, vote_index);
         }
-    }
-
-    pub fn send_transaction(
-        &self,
-        transaction: &Transaction,
-        tpu: Option<SocketAddr>,
-    ) -> Result<(), GossipError> {
-        let tpu = tpu
-            .map(Ok)
-            .unwrap_or_else(|| self.my_contact_info().tpu(contact_info::Protocol::UDP))?;
-        let buf = serialize(transaction)?;
-        self.socket.send_to(&buf, tpu)?;
-        Ok(())
     }
 
     /// Returns votes inserted since the given cursor.
@@ -3147,6 +3131,7 @@ mod tests {
             protocol::tests::new_rand_remote_node,
             socketaddr,
         },
+        bincode::serialize,
         itertools::izip,
         solana_ledger::shred::Shredder,
         solana_net_utils::bind_to,

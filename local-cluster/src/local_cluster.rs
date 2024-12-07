@@ -11,7 +11,7 @@ use {
     solana_client::connection_cache::ConnectionCache,
     solana_core::{
         consensus::tower_storage::FileTowerStorage,
-        validator::{Validator, ValidatorConfig, ValidatorStartProgress},
+        validator::{Validator, ValidatorConfig, ValidatorStartProgress, ValidatorTpuConfig},
     },
     solana_gossip::{
         cluster_info::Node,
@@ -51,7 +51,7 @@ use {
     solana_streamer::{socket::SocketAddrSpace, streamer::StakedNodes},
     solana_tpu_client::tpu_client::{
         TpuClient, TpuClientConfig, DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_ENABLE_UDP,
-        DEFAULT_TPU_USE_QUIC,
+        DEFAULT_TPU_USE_QUIC, DEFAULT_VOTE_USE_QUIC,
     },
     solana_vote_program::{
         vote_instruction,
@@ -97,6 +97,7 @@ pub struct ClusterConfig {
     pub additional_accounts: Vec<(Pubkey, AccountSharedData)>,
     pub tpu_use_quic: bool,
     pub tpu_connection_pool_size: usize,
+    pub vote_use_quic: bool,
 }
 
 impl ClusterConfig {
@@ -136,6 +137,7 @@ impl Default for ClusterConfig {
             additional_accounts: vec![],
             tpu_use_quic: DEFAULT_TPU_USE_QUIC,
             tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
+            vote_use_quic: DEFAULT_VOTE_USE_QUIC,
         }
     }
 }
@@ -339,12 +341,15 @@ impl LocalCluster {
             None, // rpc_to_plugin_manager_receiver
             Arc::new(RwLock::new(ValidatorStartProgress::default())),
             socket_addr_space,
-            DEFAULT_TPU_USE_QUIC,
-            DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            // We are turning tpu_enable_udp to true in order to prevent concurrent local cluster tests
-            // to use the same QUIC ports due to SO_REUSEPORT.
-            true,
-            32, // max connections per IpAddr per minute
+            ValidatorTpuConfig {
+                use_quic: DEFAULT_TPU_USE_QUIC,
+                vote_use_quic: DEFAULT_VOTE_USE_QUIC,
+                tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
+                // We are turning tpu_enable_udp to true in order to prevent concurrent local cluster tests
+                // to use the same QUIC ports due to SO_REUSEPORT.
+                tpu_enable_udp: true,
+                tpu_max_connections_per_ipaddr_per_minute: 32, // max connections per IpAddr per minute
+            },
             Arc::new(RwLock::new(None)),
         )
         .expect("assume successful validator start");
@@ -546,10 +551,13 @@ impl LocalCluster {
             None, // rpc_to_plugin_manager_receiver
             Arc::new(RwLock::new(ValidatorStartProgress::default())),
             socket_addr_space,
-            DEFAULT_TPU_USE_QUIC,
-            DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            DEFAULT_TPU_ENABLE_UDP,
-            32, // max connections per IpAddr per mintute
+            ValidatorTpuConfig {
+                use_quic: DEFAULT_TPU_USE_QUIC,
+                vote_use_quic: DEFAULT_VOTE_USE_QUIC,
+                tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
+                tpu_enable_udp: DEFAULT_TPU_ENABLE_UDP,
+                tpu_max_connections_per_ipaddr_per_minute: 32, // max connections per IpAddr per mintute
+            },
             Arc::new(RwLock::new(None)),
         )
         .expect("assume successful validator start");
@@ -1079,10 +1087,13 @@ impl Cluster for LocalCluster {
             None, // rpc_to_plugin_manager_receiver
             Arc::new(RwLock::new(ValidatorStartProgress::default())),
             socket_addr_space,
-            DEFAULT_TPU_USE_QUIC,
-            DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            DEFAULT_TPU_ENABLE_UDP,
-            32, // max connections per IpAddr per minute, use higher value because of tests
+            ValidatorTpuConfig {
+                use_quic: DEFAULT_TPU_USE_QUIC,
+                vote_use_quic: DEFAULT_VOTE_USE_QUIC,
+                tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
+                tpu_enable_udp: DEFAULT_TPU_ENABLE_UDP,
+                tpu_max_connections_per_ipaddr_per_minute: 32, // max connections per IpAddr per minute, use higher value because of tests
+            },
             Arc::new(RwLock::new(None)),
         )
         .expect("assume successful validator start");

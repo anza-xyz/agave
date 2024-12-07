@@ -3,21 +3,22 @@ extern crate eager;
 use {
     core::fmt,
     enum_iterator::Sequence,
-    solana_sdk::{pubkey::Pubkey, saturating_add_assign},
+    solana_pubkey::Pubkey,
     std::{
         collections::HashMap,
+        num::Saturating,
         ops::{Index, IndexMut},
     },
 };
 
 #[derive(Default, Debug, PartialEq, Eq)]
 pub struct ProgramTiming {
-    pub accumulated_us: u64,
-    pub accumulated_units: u64,
-    pub count: u32,
+    pub accumulated_us: Saturating<u64>,
+    pub accumulated_units: Saturating<u64>,
+    pub count: Saturating<u32>,
     pub errored_txs_compute_consumed: Vec<u64>,
     // Sum of all units in `errored_txs_compute_consumed`
-    pub total_errored_units: u64,
+    pub total_errored_units: Saturating<u64>,
 }
 
 impl ProgramTiming {
@@ -25,19 +26,19 @@ impl ProgramTiming {
         for tx_error_compute_consumed in self.errored_txs_compute_consumed.drain(..) {
             let compute_units_update =
                 std::cmp::max(current_estimated_program_cost, tx_error_compute_consumed);
-            saturating_add_assign!(self.accumulated_units, compute_units_update);
-            saturating_add_assign!(self.count, 1);
+            self.accumulated_units += compute_units_update;
+            self.count += 1;
         }
     }
 
     pub fn accumulate_program_timings(&mut self, other: &ProgramTiming) {
-        saturating_add_assign!(self.accumulated_us, other.accumulated_us);
-        saturating_add_assign!(self.accumulated_units, other.accumulated_units);
-        saturating_add_assign!(self.count, other.count);
+        self.accumulated_us += other.accumulated_us;
+        self.accumulated_units += other.accumulated_units;
+        self.count += other.count;
         // Clones the entire vector, maybe not great...
         self.errored_txs_compute_consumed
             .extend(other.errored_txs_compute_consumed.clone());
-        saturating_add_assign!(self.total_errored_units, other.total_errored_units);
+        self.total_errored_units += other.total_errored_units;
     }
 }
 
@@ -60,10 +61,10 @@ pub enum ExecuteTimingType {
     FilterExecutableUs,
 }
 
-pub struct Metrics([u64; ExecuteTimingType::CARDINALITY]);
+pub struct Metrics([Saturating<u64>; ExecuteTimingType::CARDINALITY]);
 
 impl Index<ExecuteTimingType> for Metrics {
-    type Output = u64;
+    type Output = Saturating<u64>;
     fn index(&self, index: ExecuteTimingType) -> &Self::Output {
         self.0.index(index as usize)
     }
@@ -77,7 +78,7 @@ impl IndexMut<ExecuteTimingType> for Metrics {
 
 impl Default for Metrics {
     fn default() -> Self {
-        Metrics([0; ExecuteTimingType::CARDINALITY])
+        Metrics([Saturating(0); ExecuteTimingType::CARDINALITY])
     }
 }
 
@@ -96,72 +97,72 @@ eager_macro_rules! { $eager_1
         ($self: expr, $is_unified_scheduler_enabled: expr) => {
             (
                 "validate_transactions_us",
-                *$self
+                $self
                     .metrics
-                    .index(ExecuteTimingType::CheckUs),
+                    .index(ExecuteTimingType::CheckUs).0,
                 i64
             ),
             (
                 "validate_fees_us",
-                *$self
+                $self
                     .metrics
-                    .index(ExecuteTimingType::ValidateFeesUs),
+                    .index(ExecuteTimingType::ValidateFeesUs).0,
                 i64
             ),
             (
                 "filter_executable_us",
-                *$self
+                $self
                     .metrics
-                    .index(ExecuteTimingType::FilterExecutableUs),
+                    .index(ExecuteTimingType::FilterExecutableUs).0,
                 i64
             ),
             (
                 "program_cache_us",
-                *$self
+                $self
                     .metrics
-                    .index(ExecuteTimingType::ProgramCacheUs),
+                    .index(ExecuteTimingType::ProgramCacheUs).0,
                 i64
             ),
             (
                 "load_us",
-                *$self
+                $self
                     .metrics
-                    .index(ExecuteTimingType::LoadUs),
+                    .index(ExecuteTimingType::LoadUs).0,
                 i64
             ),
             (
                 "execute_us",
-                *$self
+                $self
                     .metrics
-                    .index(ExecuteTimingType::ExecuteUs),
+                    .index(ExecuteTimingType::ExecuteUs).0,
                 i64
             ),
             (
                 "collect_logs_us",
-                *$self
+                $self
                     .metrics
-                    .index(ExecuteTimingType::CollectLogsUs),
+                    .index(ExecuteTimingType::CollectLogsUs).0,
                 i64
             ),
             (
                 "store_us",
-                *$self
+                $self
 
                     .metrics
-                    .index(ExecuteTimingType::StoreUs),
+                    .index(ExecuteTimingType::StoreUs).0,
                 i64
             ),
             (
                 "update_stakes_cache_us",
-                *$self
+                $self
 
                     .metrics
-                    .index(ExecuteTimingType::UpdateStakesCacheUs),
+                    .index(ExecuteTimingType::UpdateStakesCacheUs).0,
                 i64
             ),
             (
                 "execute_accessories_update_executors_us",
-                *$self.metrics.index(ExecuteTimingType::UpdateExecutorsUs),
+                $self.metrics.index(ExecuteTimingType::UpdateExecutorsUs).0,
                 i64
             ),
             (
@@ -169,9 +170,9 @@ eager_macro_rules! { $eager_1
                 (if $is_unified_scheduler_enabled {
                     None
                 } else {
-                    Some(*$self
+                    Some($self
                         .metrics
-                        .index(ExecuteTimingType::TotalBatchesLen))
+                        .index(ExecuteTimingType::TotalBatchesLen).0)
                 }),
                 Option<i64>
             ),
@@ -180,96 +181,96 @@ eager_macro_rules! { $eager_1
                 (if $is_unified_scheduler_enabled {
                     None
                 } else {
-                    Some(*$self
+                    Some($self
                         .metrics
-                        .index(ExecuteTimingType::NumExecuteBatches))
+                        .index(ExecuteTimingType::NumExecuteBatches).0)
                 }),
                 Option<i64>
             ),
             (
                 "update_transaction_statuses",
-                *$self
+                $self
                     .metrics
-                    .index(ExecuteTimingType::UpdateTransactionStatuses),
+                    .index(ExecuteTimingType::UpdateTransactionStatuses).0,
                 i64
             ),
             (
                 "check_block_limits_us",
-                *$self.metrics.index(ExecuteTimingType::CheckBlockLimitsUs),
+                $self.metrics.index(ExecuteTimingType::CheckBlockLimitsUs).0,
                 i64
             ),
             (
                 "execute_details_serialize_us",
-                $self.details.serialize_us,
+                $self.details.serialize_us.0,
                 i64
             ),
             (
                 "execute_details_create_vm_us",
-                $self.details.create_vm_us,
+                $self.details.create_vm_us.0,
                 i64
             ),
             (
                 "execute_details_execute_inner_us",
-                $self.details.execute_us,
+                $self.details.execute_us.0,
                 i64
             ),
             (
                 "execute_details_deserialize_us",
-                $self.details.deserialize_us,
+                $self.details.deserialize_us.0,
                 i64
             ),
             (
                 "execute_details_get_or_create_executor_us",
-                $self.details.get_or_create_executor_us,
+                $self.details.get_or_create_executor_us.0,
                 i64
             ),
             (
                 "execute_details_changed_account_count",
-                $self.details.changed_account_count,
+                $self.details.changed_account_count.0,
                 i64
             ),
             (
                 "execute_details_total_account_count",
-                $self.details.total_account_count,
+                $self.details.total_account_count.0,
                 i64
             ),
             (
                 "execute_details_create_executor_register_syscalls_us",
                 $self
                     .details
-                    .create_executor_register_syscalls_us,
+                    .create_executor_register_syscalls_us.0,
                 i64
             ),
             (
                 "execute_details_create_executor_load_elf_us",
-                $self.details.create_executor_load_elf_us,
+                $self.details.create_executor_load_elf_us.0,
                 i64
             ),
             (
                 "execute_details_create_executor_verify_code_us",
-                $self.details.create_executor_verify_code_us,
+                $self.details.create_executor_verify_code_us.0,
                 i64
             ),
             (
                 "execute_details_create_executor_jit_compile_us",
-                $self.details.create_executor_jit_compile_us,
+                $self.details.create_executor_jit_compile_us.0,
                 i64
             ),
             (
                 "execute_accessories_feature_set_clone_us",
                 $self
                     .execute_accessories
-                    .feature_set_clone_us,
+                    .feature_set_clone_us.0,
                 i64
             ),
             (
                 "execute_accessories_get_executors_us",
-                $self.execute_accessories.get_executors_us,
+                $self.execute_accessories.get_executors_us.0,
                 i64
             ),
             (
                 "execute_accessories_process_message_us",
-                $self.execute_accessories.process_message_us,
+                $self.execute_accessories.process_message_us.0,
                 i64
             ),
             (
@@ -277,7 +278,7 @@ eager_macro_rules! { $eager_1
                 $self
                     .execute_accessories
                     .process_instructions
-                    .total_us,
+                    .total_us.0,
                 i64
             ),
             (
@@ -285,7 +286,7 @@ eager_macro_rules! { $eager_1
                 $self
                     .execute_accessories
                     .process_instructions
-                    .verify_caller_us,
+                    .verify_caller_us.0,
                 i64
             ),
             (
@@ -293,7 +294,7 @@ eager_macro_rules! { $eager_1
                 $self
                     .execute_accessories
                     .process_instructions
-                    .process_executable_chain_us,
+                    .process_executable_chain_us.0,
                 i64
             ),
             (
@@ -301,7 +302,7 @@ eager_macro_rules! { $eager_1
                 $self
                     .execute_accessories
                     .process_instructions
-                    .verify_callee_us,
+                    .verify_callee_us.0,
                 i64
             ),
         }
@@ -318,7 +319,7 @@ pub struct ExecuteTimings {
 impl ExecuteTimings {
     pub fn accumulate(&mut self, other: &ExecuteTimings) {
         for (t1, t2) in self.metrics.0.iter_mut().zip(other.metrics.0.iter()) {
-            saturating_add_assign!(*t1, *t2);
+            *t1 += *t2;
         }
         self.details.accumulate(&other.details);
         self.execute_accessories
@@ -328,7 +329,7 @@ impl ExecuteTimings {
     pub fn saturating_add_in_place(&mut self, timing_type: ExecuteTimingType, value_to_add: u64) {
         let idx = timing_type as usize;
         match self.metrics.0.get_mut(idx) {
-            Some(elem) => *elem = elem.saturating_add(value_to_add),
+            Some(elem) => *elem += value_to_add,
             None => debug_assert!(idx < ExecuteTimingType::CARDINALITY, "Index out of bounds"),
         }
     }
@@ -336,37 +337,34 @@ impl ExecuteTimings {
 
 #[derive(Default, Debug)]
 pub struct ExecuteProcessInstructionTimings {
-    pub total_us: u64,
-    pub verify_caller_us: u64,
-    pub process_executable_chain_us: u64,
-    pub verify_callee_us: u64,
+    pub total_us: Saturating<u64>,
+    pub verify_caller_us: Saturating<u64>,
+    pub process_executable_chain_us: Saturating<u64>,
+    pub verify_callee_us: Saturating<u64>,
 }
 
 impl ExecuteProcessInstructionTimings {
     pub fn accumulate(&mut self, other: &ExecuteProcessInstructionTimings) {
-        saturating_add_assign!(self.total_us, other.total_us);
-        saturating_add_assign!(self.verify_caller_us, other.verify_caller_us);
-        saturating_add_assign!(
-            self.process_executable_chain_us,
-            other.process_executable_chain_us
-        );
-        saturating_add_assign!(self.verify_callee_us, other.verify_callee_us);
+        self.total_us += other.total_us;
+        self.verify_caller_us += other.verify_caller_us;
+        self.process_executable_chain_us += other.process_executable_chain_us;
+        self.verify_callee_us += other.verify_callee_us;
     }
 }
 
 #[derive(Default, Debug)]
 pub struct ExecuteAccessoryTimings {
-    pub feature_set_clone_us: u64,
-    pub get_executors_us: u64,
-    pub process_message_us: u64,
+    pub feature_set_clone_us: Saturating<u64>,
+    pub get_executors_us: Saturating<u64>,
+    pub process_message_us: Saturating<u64>,
     pub process_instructions: ExecuteProcessInstructionTimings,
 }
 
 impl ExecuteAccessoryTimings {
     pub fn accumulate(&mut self, other: &ExecuteAccessoryTimings) {
-        saturating_add_assign!(self.feature_set_clone_us, other.feature_set_clone_us);
-        saturating_add_assign!(self.get_executors_us, other.get_executors_us);
-        saturating_add_assign!(self.process_message_us, other.process_message_us);
+        self.feature_set_clone_us += other.feature_set_clone_us;
+        self.get_executors_us += other.get_executors_us;
+        self.process_message_us += other.process_message_us;
         self.process_instructions
             .accumulate(&other.process_instructions);
     }
@@ -374,48 +372,33 @@ impl ExecuteAccessoryTimings {
 
 #[derive(Default, Debug, PartialEq, Eq)]
 pub struct ExecuteDetailsTimings {
-    pub serialize_us: u64,
-    pub create_vm_us: u64,
-    pub execute_us: u64,
-    pub deserialize_us: u64,
-    pub get_or_create_executor_us: u64,
-    pub changed_account_count: u64,
-    pub total_account_count: u64,
-    pub create_executor_register_syscalls_us: u64,
-    pub create_executor_load_elf_us: u64,
-    pub create_executor_verify_code_us: u64,
-    pub create_executor_jit_compile_us: u64,
+    pub serialize_us: Saturating<u64>,
+    pub create_vm_us: Saturating<u64>,
+    pub execute_us: Saturating<u64>,
+    pub deserialize_us: Saturating<u64>,
+    pub get_or_create_executor_us: Saturating<u64>,
+    pub changed_account_count: Saturating<u64>,
+    pub total_account_count: Saturating<u64>,
+    pub create_executor_register_syscalls_us: Saturating<u64>,
+    pub create_executor_load_elf_us: Saturating<u64>,
+    pub create_executor_verify_code_us: Saturating<u64>,
+    pub create_executor_jit_compile_us: Saturating<u64>,
     pub per_program_timings: HashMap<Pubkey, ProgramTiming>,
 }
 
 impl ExecuteDetailsTimings {
     pub fn accumulate(&mut self, other: &ExecuteDetailsTimings) {
-        saturating_add_assign!(self.serialize_us, other.serialize_us);
-        saturating_add_assign!(self.create_vm_us, other.create_vm_us);
-        saturating_add_assign!(self.execute_us, other.execute_us);
-        saturating_add_assign!(self.deserialize_us, other.deserialize_us);
-        saturating_add_assign!(
-            self.get_or_create_executor_us,
-            other.get_or_create_executor_us
-        );
-        saturating_add_assign!(self.changed_account_count, other.changed_account_count);
-        saturating_add_assign!(self.total_account_count, other.total_account_count);
-        saturating_add_assign!(
-            self.create_executor_register_syscalls_us,
-            other.create_executor_register_syscalls_us
-        );
-        saturating_add_assign!(
-            self.create_executor_load_elf_us,
-            other.create_executor_load_elf_us
-        );
-        saturating_add_assign!(
-            self.create_executor_verify_code_us,
-            other.create_executor_verify_code_us
-        );
-        saturating_add_assign!(
-            self.create_executor_jit_compile_us,
-            other.create_executor_jit_compile_us
-        );
+        self.serialize_us += other.serialize_us;
+        self.create_vm_us += other.create_vm_us;
+        self.execute_us += other.execute_us;
+        self.deserialize_us += other.deserialize_us;
+        self.get_or_create_executor_us += other.get_or_create_executor_us;
+        self.changed_account_count += other.changed_account_count;
+        self.total_account_count += other.total_account_count;
+        self.create_executor_register_syscalls_us += other.create_executor_register_syscalls_us;
+        self.create_executor_load_elf_us += other.create_executor_load_elf_us;
+        self.create_executor_verify_code_us += other.create_executor_verify_code_us;
+        self.create_executor_jit_compile_us += other.create_executor_jit_compile_us;
         for (id, other) in &other.per_program_timings {
             let program_timing = self.per_program_timings.entry(*id).or_default();
             program_timing.accumulate_program_timings(other);
@@ -430,19 +413,15 @@ impl ExecuteDetailsTimings {
         is_error: bool,
     ) {
         let program_timing = self.per_program_timings.entry(*program_id).or_default();
-        program_timing.accumulated_us = program_timing.accumulated_us.saturating_add(us);
+        program_timing.accumulated_us += us;
         if is_error {
             program_timing
                 .errored_txs_compute_consumed
                 .push(compute_units_consumed);
-            program_timing.total_errored_units = program_timing
-                .total_errored_units
-                .saturating_add(compute_units_consumed);
+            program_timing.total_errored_units += compute_units_consumed;
         } else {
-            program_timing.accumulated_units = program_timing
-                .accumulated_units
-                .saturating_add(compute_units_consumed);
-            program_timing.count = program_timing.count.saturating_add(1);
+            program_timing.accumulated_units += compute_units_consumed;
+            program_timing.count += 1;
         };
     }
 }
@@ -482,14 +461,17 @@ mod tests {
             .unwrap();
 
         // Both error and success transactions count towards `accumulated_us`
-        assert_eq!(program_timings.accumulated_us, us.saturating_mul(2));
-        assert_eq!(program_timings.accumulated_units, compute_units_consumed);
-        assert_eq!(program_timings.count, 1,);
+        assert_eq!(program_timings.accumulated_us.0, us.saturating_mul(2));
+        assert_eq!(program_timings.accumulated_units.0, compute_units_consumed);
+        assert_eq!(program_timings.count.0, 1,);
         assert_eq!(
             program_timings.errored_txs_compute_consumed,
             vec![compute_units_consumed]
         );
-        assert_eq!(program_timings.total_errored_units, compute_units_consumed,);
+        assert_eq!(
+            program_timings.total_errored_units.0,
+            compute_units_consumed,
+        );
 
         execute_details_timings
     }
@@ -515,12 +497,12 @@ mod tests {
         let mut other_execute_details_timings =
             construct_execute_timings_with_program(&program_id, us, compute_units_consumed);
         let account_count = 1;
-        other_execute_details_timings.serialize_us = us;
-        other_execute_details_timings.create_vm_us = us;
-        other_execute_details_timings.execute_us = us;
-        other_execute_details_timings.deserialize_us = us;
-        other_execute_details_timings.changed_account_count = account_count;
-        other_execute_details_timings.total_account_count = account_count;
+        other_execute_details_timings.serialize_us.0 = us;
+        other_execute_details_timings.create_vm_us.0 = us;
+        other_execute_details_timings.execute_us.0 = us;
+        other_execute_details_timings.deserialize_us.0 = us;
+        other_execute_details_timings.changed_account_count.0 = account_count;
+        other_execute_details_timings.total_account_count.0 = account_count;
 
         // Accumulate the other instance into the current instance
         execute_details_timings.accumulate(&other_execute_details_timings);
@@ -534,10 +516,10 @@ mod tests {
         let mut timings = ExecuteTimings::default();
         timings.saturating_add_in_place(ExecuteTimingType::CheckUs, 1);
         let check_us = timings.metrics.index(ExecuteTimingType::CheckUs);
-        assert_eq!(1, *check_us);
+        assert_eq!(1, check_us.0);
 
         timings.saturating_add_in_place(ExecuteTimingType::CheckUs, 2);
         let check_us = timings.metrics.index(ExecuteTimingType::CheckUs);
-        assert_eq!(3, *check_us);
+        assert_eq!(3, check_us.0);
     }
 }

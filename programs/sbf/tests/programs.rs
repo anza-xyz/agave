@@ -5653,7 +5653,7 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
 
             let message = Message::new(&[instruction], Some(&mint_pubkey));
             let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
-            let (result, _, logs) = process_transaction_and_record_inner(&bank, tx);
+            let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
 
             if direct_mapping {
                 assert!(logs.last().unwrap().ends_with(" failed: InvalidLength"));

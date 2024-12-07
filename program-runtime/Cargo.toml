@@ -21,7 +21,11 @@ num-traits = { workspace = true }
 percentage = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }
+solana-account = { workspace = true, features = ["bincode"] }
+solana-clock = { workspace = true }
 solana-compute-budget = { workspace = true }
+solana-epoch-rewards = { workspace = true }
+solana-epoch-schedule = { workspace = true }
 solana-feature-set = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
@@ -29,19 +33,34 @@ solana-frozen-abi = { workspace = true, optional = true, features = [
 solana-frozen-abi-macro = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
+solana-hash = { workspace = true }
+solana-instruction = { workspace = true }
+solana-last-restart-slot = { workspace = true }
 solana-log-collector = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
-solana-sdk = { workspace = true }
+solana-precompiles = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-rent = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-slot-hashes = { workspace = true }
+solana-stable-layout = { workspace = true }
+solana-sysvar = { workspace = true }
+solana-sysvar-id = { workspace = true }
 solana-timings = { workspace = true }
+solana-transaction-context = { workspace = true }
 solana-type-overrides = { workspace = true }
 solana_rbpf = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
+solana-instruction = { workspace = true, features = ["bincode"] }
 solana-logger = { workspace = true }
-solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
+solana-pubkey = { workspace = true, features = ["rand"] }
+solana-transaction-context = { workspace = true, features = [
+    "dev-context-only-utils",
+] }
 test-case = { workspace = true }
 
 [lib]
@@ -56,9 +75,11 @@ frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-compute-budget/frozen-abi",
-    "solana-sdk/frozen-abi",
 ]
-shuttle-test = ["solana-type-overrides/shuttle-test", "solana_rbpf/shuttle-test"]
+shuttle-test = [
+    "solana-type-overrides/shuttle-test",
+    "solana_rbpf/shuttle-test",
+]
 
 [lints]
 workspace = true
