@@ -27,12 +27,24 @@ const CACHE_JITTER_SLOT: i64 = 20;
 
 impl WarmQuicCacheService {
     pub fn new(
-        connection_cache: Arc<ConnectionCache>,
+        tpu_connection_cache: Option<Arc<ConnectionCache>>,
+        vote_connection_cache: Option<Arc<ConnectionCache>>,
         cluster_info: Arc<ClusterInfo>,
         poh_recorder: Arc<RwLock<PohRecorder>>,
         exit: Arc<AtomicBool>,
     ) -> Self {
-        assert!(matches!(*connection_cache, ConnectionCache::Quic(_)));
+        assert!(
+            tpu_connection_cache.is_none()
+                || tpu_connection_cache
+                    .as_ref()
+                    .is_some_and(|cache| cache.use_quic())
+        );
+        assert!(
+            vote_connection_cache.is_none()
+                || vote_connection_cache
+                    .as_ref()
+                    .is_some_and(|cache| cache.use_quic())
+        );
         let thread_hdl = Builder::new()
             .name("solWarmQuicSvc".to_string())
             .spawn(move || {
@@ -48,18 +60,37 @@ impl WarmQuicCacheService {
                             .map_or(true, |last_leader| last_leader != leader_pubkey)
                         {
                             maybe_last_leader = Some(leader_pubkey);
-                            if let Some(Ok(addr)) = cluster_info
-                                .lookup_contact_info(&leader_pubkey, |node| {
-                                    node.tpu(Protocol::QUIC)
-                                })
-                            {
-                                let conn = connection_cache.get_connection(&addr);
-                                if let Err(err) = conn.send_data(&[]) {
-                                    warn!(
-                                        "Failed to warmup QUIC connection to the leader {:?}, \
-                                         Error {:?}",
-                                        leader_pubkey, err
-                                    );
+                            if let Some(tpu_connection_cache) = &tpu_connection_cache {
+                                if let Some(Ok(addr)) = cluster_info
+                                    .lookup_contact_info(&leader_pubkey, |node| {
+                                        node.tpu(Protocol::QUIC)
+                                    })
+                                {
+                                    let conn = tpu_connection_cache.get_connection(&addr);
+                                    if let Err(err) = conn.send_data(&[]) {
+                                        warn!(
+                                            "Failed to warmup QUIC connection to the leader {:?}, \
+                                            Error {:?}",
+                                            leader_pubkey, err
+                                        );
+                                    }
+                                }
+                            }
+                            // Warm cache for vote
+                            if let Some(vote_connection_cache) = &vote_connection_cache {
+                                if let Some(Ok(addr)) = cluster_info
+                                    .lookup_contact_info(&leader_pubkey, |node| {
+                                        node.tpu_vote(Protocol::QUIC)
+                                    })
+                                {
+                                    let conn = vote_connection_cache.get_connection(&addr);
+                                    if let Err(err) = conn.send_data(&[]) {
+                                        warn!(
+                                            "Failed to warmup QUIC connection to the leader {:?} at {addr:?}, \
+                                            Error {:?}",
+                                            leader_pubkey, err
+                                        );
+                                    }
                                 }
                             }
                         }
