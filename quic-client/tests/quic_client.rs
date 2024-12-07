@@ -4,10 +4,11 @@ mod tests {
         crossbeam_channel::{unbounded, Receiver},
         log::*,
         solana_connection_cache::connection_cache_stats::ConnectionCacheStats,
+        solana_keypair::Keypair,
         solana_net_utils::bind_to_localhost,
+        solana_packet::PACKET_DATA_SIZE,
         solana_perf::packet::PacketBatch,
         solana_quic_client::nonblocking::quic_client::QuicLazyInitializedEndpoint,
-        solana_sdk::{packet::PACKET_DATA_SIZE, signature::Keypair},
         solana_streamer::{
             quic::{QuicServerParams, SpawnServerResult},
             streamer::StakedNodes,
