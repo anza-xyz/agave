@@ -5646,12 +5646,18 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
         let account = AccountSharedData::new(42, 1024, &program_id);
         bank.store_account(&account_keypair.pubkey(), &account);
 
-        for instr in 0..=13 {
+        for instr in 0..=16 {
             println!("Testing direct_mapping:{direct_mapping} instruction:{instr}");
             let instruction =
                 Instruction::new_with_bytes(program_id, &[instr], account_metas.clone());
 
-            let message = Message::new(&[instruction], Some(&mint_pubkey));
+            let message = Message::new(
+                &[
+                    instruction,
+                    ComputeBudgetInstruction::set_compute_unit_limit(1_000_000_000),
+                ],
+                Some(&mint_pubkey),
+            );
             let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
             let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
 
@@ -5661,6 +5667,26 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
                 // without direct mapping, we should never get the InvalidLength error
                 assert!(!logs.last().unwrap().ends_with(" failed: InvalidLength"));
             }
+        }
+
+        // now test the hashing functions
+
+        for instr in 20..=22 {
+            println!("Testing direct_mapping:{direct_mapping} instruction:{instr}");
+            let instruction =
+                Instruction::new_with_bytes(program_id, &[instr], account_metas.clone());
+
+            let message = Message::new(
+                &[
+                    instruction,
+                    ComputeBudgetInstruction::set_compute_unit_limit(1_000_000_000),
+                ],
+                Some(&mint_pubkey),
+            );
+            let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
+            let (result, _, _logs) = process_transaction_and_record_inner(&bank, tx);
+
+            assert!(result.is_ok());
         }
     }
 }
