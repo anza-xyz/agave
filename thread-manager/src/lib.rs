@@ -66,8 +66,10 @@ impl RuntimeManager {
             }
         };
 
-        if let Err(e) = affinity::set_thread_affinity(&chosen_cores_mask) {
-            anyhow::bail!(e.to_string())
+        if cfg!(target_os = "linux") {
+            if let Err(e) = affinity::set_thread_affinity(&chosen_cores_mask) {
+                anyhow::bail!(e.to_string())
+            }
         }
         Ok(chosen_cores_mask)
     }
@@ -129,6 +131,14 @@ mod tests {
         std::collections::HashMap,
     };
 
+    fn validate_affinity(expect_cores: &[usize], error_msg: &str) {
+        // Nobody runs Agave on windows, and on Mac we can not set mask affinity without patching external crate
+        if cfg!(target_os = "linux") {
+            let aff = affinity::get_thread_affinity().unwrap();
+            assert_eq!(aff, expect_cores, "{}", error_msg);
+        }
+    }
+
     #[test]
     fn process_affinity() {
         let conf = RuntimeManagerConfig {
@@ -151,21 +161,17 @@ mod tests {
 
         let t2 = r
             .spawn(|| {
-                let aff = affinity::get_thread_affinity().unwrap();
-                assert_eq!(aff, [0, 1, 2, 3], "Managed thread allocation should be 0-3");
+                validate_affinity(&[0, 1, 2, 3], "Managed thread allocation should be 0-3");
             })
             .unwrap();
 
         let t = std::thread::spawn(|| {
-            let aff = affinity::get_thread_affinity().unwrap();
-            assert_eq!(aff, [4, 5, 6, 7], "Default thread allocation should be 4-7");
+            validate_affinity(&[4, 5, 6, 7], "Default thread allocation should be 4-7");
 
             let tt = std::thread::spawn(|| {
-                let aff = affinity::get_thread_affinity().unwrap();
-                assert_eq!(
-                    aff,
-                    [4, 5, 6, 7],
-                    "Nested thread allocation should still be 4-7"
+                validate_affinity(
+                    &[4, 5, 6, 7],
+                    "Nested thread allocation should still be 4-7",
                 );
             });
             tt.join().unwrap();
@@ -173,6 +179,7 @@ mod tests {
         t.join().unwrap();
         t2.join().unwrap();
     }
+
     #[test]
     fn rayon_affinity() {
         let conf = RuntimeManagerConfig {
@@ -206,46 +213,25 @@ mod tests {
 
         let t2 = r
             .spawn(|| {
-                let aff = affinity::get_thread_affinity().unwrap();
-                assert_eq!(aff, [0, 1, 2, 3], "Managed thread allocation should be 0-3");
+                validate_affinity(&[0, 1, 2, 3], "Managed thread allocation should be 0-3");
             })
             .unwrap();
         let rrt = rtm.get_rayon("test").unwrap();
 
-        /*.spawn_handler(|thread| {
-            let mut b = std::thread::Builder::new();
-            if let Some(name) = thread.name() {
-                b = b.name(name.to_owned());
-            }
-            if let Some(stack_size) = thread.stack_size() {
-                b = b.stack_size(stack_size);
-            }
-            b.spawn(|| thread.run())?;
-            Ok(())
-        })*/
-
         let t = std::thread::spawn(|| {
-            let aff = affinity::get_thread_affinity().unwrap();
-            assert_eq!(aff, [4, 5, 6, 7], "Default thread allocation should be 4-7");
+            validate_affinity(&[4, 5, 6, 7], "Default thread allocation should be 4-7");
 
             let tt = std::thread::spawn(|| {
-                let aff = affinity::get_thread_affinity().unwrap();
-                assert_eq!(
-                    aff,
-                    [4, 5, 6, 7],
-                    "Nested thread allocation should still be 4-7"
+                validate_affinity(
+                    &[4, 5, 6, 7],
+                    "Nested thread allocation should still be 4-7",
                 );
             });
             tt.join().unwrap();
         });
         let _rr = rrt.rayon_pool.broadcast(|ctx| {
-            let aff = affinity::get_thread_affinity().unwrap();
             println!("Rayon thread {} reporting", ctx.index());
-            assert_eq!(
-                aff,
-                [1, 2, 3],
-                "Rayon thread allocation should still be 1-3"
-            );
+            validate_affinity(&[1, 2, 3], "Rayon thread allocation should still be 1-3");
         });
         t.join().unwrap();
         t2.join().unwrap();

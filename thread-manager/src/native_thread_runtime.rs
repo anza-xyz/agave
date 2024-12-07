@@ -2,6 +2,7 @@ use {
     crate::policy::{apply_policy, CoreAllocation},
     anyhow::bail,
     serde::{Deserialize, Serialize},
+    solana_metrics::datapoint_info,
     std::sync::{
         atomic::{AtomicUsize, Ordering},
         Arc, Mutex,
@@ -44,18 +45,17 @@ pub struct JoinHandle<T> {
 
 impl<T> JoinHandle<T> {
     fn join_inner(&mut self) -> Result<T, Box<dyn core::any::Any + Send + 'static>> {
-        let r = match self.std_handle.take() {
+        match self.std_handle.take() {
             Some(jh) => {
-                let r = jh.join();
-                self.running_count.fetch_sub(1, Ordering::SeqCst);
-                r
+                let result = jh.join();
+                let rc = self.running_count.fetch_sub(1, Ordering::Relaxed);
+                datapoint_info!("thread-manager-native", ("threads-running", rc, i64),);
+                result
             }
             None => {
                 panic!("Thread already joined");
             }
-        };
-        dbg!(self.std_handle.is_some());
-        r
+        }
     }
 
     pub fn join(mut self) -> Result<T, Box<dyn core::any::Any + Send + 'static>> {
@@ -93,7 +93,7 @@ impl NativeThreadRuntime {
         F: Send + 'static,
         T: Send + 'static,
     {
-        let spawned = self.running_count.load(Ordering::SeqCst);
+        let spawned = self.running_count.load(Ordering::Relaxed);
         if spawned >= self.config.max_threads {
             bail!("All allowed threads in this pool are already spawned");
         }
@@ -101,7 +101,7 @@ impl NativeThreadRuntime {
         let core_alloc = self.config.core_allocation.clone();
         let priority = self.config.priority;
         let chosen_cores_mask = Mutex::new(self.config.core_allocation.as_core_mask_vector());
-        let n = self.id_count.fetch_add(1, Ordering::SeqCst);
+        let n = self.id_count.fetch_add(1, Ordering::Relaxed);
         let jh = std::thread::Builder::new()
             .name(format!("{}-{}", &self.config.name_base, n))
             .stack_size(self.config.stack_size_bytes)
@@ -109,7 +109,8 @@ impl NativeThreadRuntime {
                 apply_policy(&core_alloc, priority, &chosen_cores_mask);
                 f()
             })?;
-        self.running_count.fetch_add(1, Ordering::SeqCst);
+        let rc = self.running_count.fetch_add(1, Ordering::Relaxed);
+        datapoint_info!("thread-manager-native", ("threads-running", rc as i64, i64),);
         Ok(JoinHandle {
             std_handle: Some(jh),
             running_count: self.running_count.clone(),

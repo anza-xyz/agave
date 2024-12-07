@@ -12,12 +12,17 @@ edition = { workspace = true }
 publish = false
 
 [dependencies]
-affinity = "0.1.2"
 anyhow = { workspace = true }
+log = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 thread-priority = "1.2.0"
 tokio = { workspace = true, features = ["time", "rt-multi-thread"] }
 rayon = { workspace = true }
+num_cpus.workspace = true
+solana-metrics.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+affinity = "0.1.2"
 
 [dev-dependencies]
 axum = "0.7.9"
