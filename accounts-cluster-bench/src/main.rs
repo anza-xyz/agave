@@ -33,7 +33,7 @@ use {
         str::FromStr,
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
-            Arc,
+            Arc, Barrier,
         },
         thread::{sleep, Builder, JoinHandle},
         time::{Duration, Instant},
@@ -508,6 +508,7 @@ fn run_rpc_bench_loop(
 fn make_rpc_bench_threads(
     rpc_benches: Vec<RpcBench>,
     mint: &Option<Pubkey>,
+    start_bench_barrier: &Arc<Barrier>,
     exit: &Arc<AtomicBool>,
     client: &Arc<RpcClient>,
     seed_tracker: &SeedTracker,
@@ -524,6 +525,7 @@ fn make_rpc_bench_threads(
         .flat_map(|rpc_bench| {
             (0..num_rpc_bench_threads).map(move |thread| {
                 let client = client.clone();
+                let start_bench = start_bench_barrier.clone();
                 let exit = exit.clone();
                 let max_closed = seed_tracker.max_closed.clone();
                 let max_created = seed_tracker.max_created.clone();
@@ -531,6 +533,7 @@ fn make_rpc_bench_threads(
                 Builder::new()
                     .name(format!("rpc-bench-{}", thread))
                     .spawn(move || {
+                        start_bench.wait();
                         run_rpc_bench_loop(
                             rpc_bench,
                             thread,
@@ -617,11 +620,17 @@ fn run_accounts_bench(
     );
 
     let exit = Arc::new(AtomicBool::new(false));
+    let mut start_bench_barrier = Some(Arc::new(Barrier::new(
+        // In order to unlock the benchmark threads, `wait()` must be called on each thread and then
+        // once from this thread, after the first pass through the account creation loop.
+        num_rpc_bench_threads + 1,
+    )));
     let base_keypair_pubkey = base_keypair.pubkey();
     let rpc_bench_threads: Vec<_> = if let Some(rpc_benches) = rpc_benches {
         make_rpc_bench_threads(
             rpc_benches,
             &mint,
+            start_bench_barrier.as_ref().unwrap(),
             &exit,
             &client,
             &seed_tracker,
@@ -731,6 +740,12 @@ fn run_accounts_bench(
         } else {
             let _ = executor.drain_cleared();
         }
+
+        if let Some(start_bench) = &start_bench_barrier {
+            // As the final barrier participant, this call to `wait()` unlocks all the bench threads
+            start_bench.wait();
+        }
+        start_bench_barrier = None;
 
         count += 1;
         let max_accounts_met = if let Some(max_accounts) = max_accounts {
