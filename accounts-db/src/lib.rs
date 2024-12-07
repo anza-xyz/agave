@@ -32,7 +32,7 @@ mod file_io;
 pub mod hardened_unpack;
 pub mod partitioned_rewards;
 pub mod pubkey_bins;
-mod read_only_accounts_cache;
+pub mod read_only_accounts_cache;
 mod rolling_bit_field;
 pub mod secondary_index;
 pub mod shared_buffer_reader;
