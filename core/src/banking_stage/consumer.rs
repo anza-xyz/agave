@@ -589,8 +589,15 @@ impl Consumer {
             .filter_map(|transaction| {
                 let round_compute_unit_price_enabled = false; // TODO get from working_bank.feature_set
                 transaction
+<<<<<<< HEAD
                     .get_compute_budget_details(round_compute_unit_price_enabled)
                     .map(|details| details.compute_unit_price)
+=======
+                    .compute_budget_instruction_details()
+                    .sanitize_and_convert_to_compute_budget_limits(&bank.feature_set)
+                    .ok()
+                    .map(|limits| limits.compute_unit_price)
+>>>>>>> 3e9af14f3a (Fix reserve minimal compute units for builtins  (#3799))
             })
             .minmax();
         let (min_prioritization_fees, max_prioritization_fees) =
@@ -751,9 +758,17 @@ impl Consumer {
         error_counters: &mut TransactionErrorMetrics,
     ) -> Result<(), TransactionError> {
         let fee_payer = message.fee_payer();
+<<<<<<< HEAD
         let budget_limits =
             process_compute_budget_instructions(message.program_instructions_iter())?.into();
         let fee = bank.fee_structure().calculate_fee(
+=======
+        let fee_budget_limits = FeeBudgetLimits::from(process_compute_budget_instructions(
+            message.program_instructions_iter(),
+            &bank.feature_set,
+        )?);
+        let fee = solana_fee::calculate_fee(
+>>>>>>> 3e9af14f3a (Fix reserve minimal compute units for builtins  (#3799))
             message,
             bank.get_lamports_per_signature(),
             &budget_limits,

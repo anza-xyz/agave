@@ -240,9 +240,56 @@ impl PrioritizationFeeCache {
                             );
                         });
                 }
+<<<<<<< HEAD
             },
             "send_updates",
         );
+=======
+
+                let compute_budget_limits = sanitized_transaction
+                    .compute_budget_instruction_details()
+                    .sanitize_and_convert_to_compute_budget_limits(&bank.feature_set);
+
+                let lock_result = validate_account_locks(
+                    sanitized_transaction.account_keys(),
+                    bank.get_transaction_account_lock_limit(),
+                );
+
+                if compute_budget_limits.is_err() || lock_result.is_err() {
+                    continue;
+                }
+                let compute_budget_limits = compute_budget_limits.unwrap();
+
+                // filter out any transaction that requests zero compute_unit_limit
+                // since its priority fee amount is not instructive
+                if compute_budget_limits.compute_unit_limit == 0 {
+                    continue;
+                }
+
+                let writable_accounts = sanitized_transaction
+                    .account_keys()
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| sanitized_transaction.is_writable(*index))
+                    .map(|(_, key)| *key)
+                    .collect();
+
+                self.sender
+                    .send(CacheServiceUpdate::TransactionUpdate {
+                        slot: bank.slot(),
+                        bank_id: bank.bank_id(),
+                        transaction_fee: compute_budget_limits.compute_unit_price,
+                        writable_accounts,
+                    })
+                    .unwrap_or_else(|err| {
+                        warn!(
+                            "prioritization fee cache transaction updates failed: {:?}",
+                            err
+                        );
+                    });
+            }
+        });
+>>>>>>> 3e9af14f3a (Fix reserve minimal compute units for builtins  (#3799))
 
         self.metrics
             .accumulate_total_update_elapsed_us(send_updates_time.as_us());
