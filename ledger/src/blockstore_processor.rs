@@ -1599,6 +1599,11 @@ fn confirm_slot_entries(
             } else {
                 bank.tick_height()
             };
+            let last_blockhash = if vote_only_execution {
+                bank.last_vote_only_blockhash()
+            } else {
+                bank.last_blockhash()
+            };
             warn!(
                 "{:#?}, slot: {}, entry len: {}, tick_height: {}, last entry: {}, last_blockhash: \
                  {}, shred_index: {}, slot_full: {}",
@@ -1607,7 +1612,7 @@ fn confirm_slot_entries(
                 num_entries,
                 tick_height,
                 progress.last_entry,
-                bank.last_blockhash(),
+                last_blockhash,
                 num_shreds,
                 slot_full,
             );
