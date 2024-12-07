@@ -421,20 +421,20 @@ fn create_cache_warmer_if_needed(
 ) -> Option<WarmQuicCacheService> {
     let tpu_connection_cache = connection_cache
         .is_some_and(|cache| cache.use_quic())
-        .then_some(connection_cache.unwrap().clone());
+        .then(|| connection_cache.unwrap().clone());
     let vote_connection_cache = vote_connection_cache
         .use_quic()
-        .then_some(vote_connection_cache);
+        .then(|| vote_connection_cache);
 
-    (tpu_connection_cache.is_some() || vote_connection_cache.is_some()).then_some(
+    (tpu_connection_cache.is_some() || vote_connection_cache.is_some()).then(|| {
         WarmQuicCacheService::new(
             tpu_connection_cache,
             vote_connection_cache,
             cluster_info.clone(),
             poh_recorder.clone(),
             exit.clone(),
-        ),
-    )
+        )
+    })
 }
 
 #[cfg(test)]
