@@ -1,15 +1,17 @@
 //! The list of slot boundaries at which a hard fork should
 //! occur.
 
-#![cfg(feature = "full")]
-
 use {
     byteorder::{ByteOrder, LittleEndian},
-    solana_sdk::clock::Slot,
+    solana_clock::Slot,
 };
 
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Default, Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[cfg_attr(feature = "frozen-abi", derive(solana_frozen_abi_macro::AbiExample))]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde_derive::Deserialize, serde_derive::Serialize)
+)]
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
 pub struct HardForks {
     hard_forks: Vec<(Slot, usize)>,
 }

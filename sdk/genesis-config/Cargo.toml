@@ -1,0 +1,88 @@
+[package]
+name = "solana-genesis-config"
+description = "Solana genesis config."
+documentation = "https://docs.rs/solana-genesis-config"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[dependencies]
+bincode = { workspace = true, optional = true }
+byteorder = { workspace = true }
+chrono = { workspace = true, features = ["alloc"], optional = true }
+memmap2 = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+serde_derive = { workspace = true, optional = true }
+solana-account = { workspace = true }
+solana-clock = { workspace = true }
+solana-cluster-type = { workspace = true }
+solana-epoch-schedule = { workspace = true }
+solana-fee-calculator = { workspace = true }
+solana-frozen-abi = { workspace = true, optional = true, features = [
+    "frozen-abi",
+] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = [
+    "frozen-abi",
+] }
+solana-hash = { workspace = true }
+solana-inflation = { workspace = true }
+solana-keypair = { workspace = true }
+solana-logger = { workspace = true, optional = true }
+solana-native-token = { workspace = true, optional = true }
+solana-poh-config = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-rent = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-sha256-hasher = { workspace = true }
+solana-signer = { workspace = true }
+solana-time-utils = { workspace = true }
+
+[dev-dependencies]
+solana-genesis-config = { path = ".", features = ["dev-context-only-utils"] }
+solana-pubkey = { workspace = true, features = ["rand"] }
+
+[features]
+bincode = [
+    "dep:bincode",
+    "dep:chrono",
+    "dep:memmap2",
+    "dep:solana-native-token",
+    "serde",
+]
+dev-context-only-utils = ["bincode"]
+frozen-abi = [
+    "dep:solana-frozen-abi",
+    "dep:solana-frozen-abi-macro",
+    "dep:solana-logger",
+    "solana-account/frozen-abi",
+    "solana-cluster-type/frozen-abi",
+    "solana-epoch-schedule/frozen-abi",
+    "solana-fee-calculator/frozen-abi",
+    "solana-inflation/frozen-abi",
+    "solana-poh-config/frozen-abi",
+    "solana-pubkey/frozen-abi",
+    "solana-rent/frozen-abi",
+]
+serde = [
+    "dep:serde",
+    "dep:serde_derive",
+    "solana-account/serde",
+    "solana-cluster-type/serde",
+    "solana-epoch-schedule/serde",
+    "solana-fee-calculator/serde",
+    "solana-inflation/serde",
+    "solana-poh-config/serde",
+    "solana-pubkey/serde",
+    "solana-rent/serde",
+]
+
+[lints]
+workspace = true
