@@ -1,8 +1,9 @@
 use {
-    solana_sdk::{
-        hash::Hash, pubkey::Pubkey, signature::Keypair, system_transaction,
-        transaction::Transaction,
-    },
+    solana_hash::Hash,
+    solana_keypair::Keypair,
+    solana_pubkey::Pubkey,
+    solana_system_transaction::transfer,
+    solana_transaction::Transaction,
     std::{
         io::{Error, ErrorKind},
         net::SocketAddr,
@@ -19,9 +20,9 @@ pub fn request_airdrop_transaction(
         Err(Error::new(ErrorKind::Other, "Airdrop failed"))
     } else {
         let key = Keypair::new();
-        let to = solana_sdk::pubkey::new_rand();
+        let to = solana_pubkey::new_rand();
         let blockhash = Hash::default();
-        let tx = system_transaction::transfer(&key, &to, lamports, blockhash);
+        let tx = transfer(&key, &to, lamports, blockhash);
         Ok(tx)
     }
 }
