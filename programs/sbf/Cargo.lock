@@ -5592,6 +5592,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-epoch-rewards-hasher"
+version = "2.2.0"
+dependencies = [
+ "siphasher",
+ "solana-hash",
+ "solana-pubkey",
+]
+
+[[package]]
 name = "solana-epoch-schedule"
 version = "2.2.0"
 dependencies = [
@@ -7291,7 +7300,6 @@ dependencies = [
  "serde_with",
  "sha2 0.10.8",
  "sha3",
- "siphasher",
  "solana-account",
  "solana-bn254",
  "solana-client-traits",
@@ -7302,6 +7310,7 @@ dependencies = [
  "solana-derivation-path",
  "solana-ed25519-program",
  "solana-epoch-info",
+ "solana-epoch-rewards-hasher",
  "solana-feature-set",
  "solana-fee-structure",
  "solana-inflation",
