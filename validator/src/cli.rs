@@ -1202,6 +1202,13 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .help("Еnable Geyser interface even if no Geyser configs are specified."),
         )
         .arg(
+            Arg::with_name("geyser_plugin_snapshot_disabled")
+                .long("geyser-plugin-snapshot-disabled")
+                .value_name("BOOLEAN")
+                .takes_value(false)
+                .help("Disable on startup account notifications from snapshot."),
+        )
+        .arg(
             Arg::with_name("snapshot_archive_format")
                 .long("snapshot-archive-format")
                 .alias("snapshot-compression") // Legacy name used by Solana v1.5.x and older

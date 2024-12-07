@@ -227,6 +227,7 @@ pub struct ValidatorConfig {
     /// Specifies which plugins to start up with
     pub on_start_geyser_plugin_config_files: Option<Vec<PathBuf>>,
     pub geyser_plugin_always_enabled: bool,
+    pub geyser_plugin_snapshot_disabled: bool,
     pub rpc_addrs: Option<(SocketAddr, SocketAddr)>, // (JsonRpc, JsonRpcPubSub)
     pub pubsub_config: PubSubConfig,
     pub snapshot_config: SnapshotConfig,
@@ -303,6 +304,7 @@ impl Default for ValidatorConfig {
             rpc_config: JsonRpcConfig::default(),
             on_start_geyser_plugin_config_files: None,
             geyser_plugin_always_enabled: false,
+            geyser_plugin_snapshot_disabled: false,
             rpc_addrs: None,
             pubsub_config: PubSubConfig::default(),
             snapshot_config: SnapshotConfig::new_load_only(),
@@ -602,6 +604,7 @@ impl Validator {
                     GeyserPluginService::new_with_receiver(
                         confirmed_bank_receiver,
                         config.geyser_plugin_always_enabled,
+                        config.geyser_plugin_snapshot_disabled,
                         geyser_plugin_config_files.as_ref(),
                         rpc_to_plugin_manager_receiver_and_exit,
                     )

@@ -7,6 +7,9 @@ use {
 };
 
 pub trait AccountsUpdateNotifierInterface: std::fmt::Debug {
+    /// Disable account notifications from snapshot
+    fn notify_snapshot_disabled(&self) -> bool;
+
     /// Notified when an account is updated at runtime, due to transaction activities
     fn notify_account_update(
         &self,

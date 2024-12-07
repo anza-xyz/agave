@@ -22,9 +22,14 @@ use {
 #[derive(Debug)]
 pub(crate) struct AccountsUpdateNotifierImpl {
     plugin_manager: Arc<RwLock<GeyserPluginManager>>,
+    snapshot_disabled: bool,
 }
 
 impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
+    fn notify_snapshot_disabled(&self) -> bool {
+        self.snapshot_disabled
+    }
+
     fn notify_account_update(
         &self,
         slot: Slot,
@@ -97,8 +102,11 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
 }
 
 impl AccountsUpdateNotifierImpl {
-    pub fn new(plugin_manager: Arc<RwLock<GeyserPluginManager>>) -> Self {
-        AccountsUpdateNotifierImpl { plugin_manager }
+    pub fn new(plugin_manager: Arc<RwLock<GeyserPluginManager>>, snapshot_disabled: bool) -> Self {
+        AccountsUpdateNotifierImpl {
+            plugin_manager,
+            snapshot_disabled,
+        }
     }
 
     fn accountinfo_from_shared_account_data<'a>(
