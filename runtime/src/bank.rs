@@ -1392,8 +1392,7 @@ impl Bank {
             if parent.epoch() < new.epoch() {
                 new.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, false);
             }
-            // TODO(wen): this should only happen on bank 1 or new epoch.
-            {
+            if parent.epoch() < new.epoch() || new.vote_states.read().unwrap().is_empty() {
                 // Copy the vote authorities from epoch stake into vote states.
                 let new_epoch = new.epoch();
                 let mut vote_states = new.vote_states.write().unwrap();
