@@ -192,6 +192,7 @@ solana-transaction-context = { workspace = true, features = ["bincode"] }
 solana-transaction-error = { workspace = true, features = [
     "serde",
 ], optional = true }
+solana-validator-exit = { workspace = true }
 thiserror = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
