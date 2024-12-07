@@ -2503,7 +2503,22 @@ impl Blockstore {
     }
 
     pub fn get_index(&self, slot: Slot) -> Result<Option<Index>> {
-        self.index_cf.get(slot)
+        // Migration strategy for new column format:
+        // 1. Release 1: Add ability to read new format as fallback, keep writing old format
+        // 2. Release 2: Switch to writing new format, keep reading old format as fallback
+        // 3. Release 3: Remove old format support once stable
+        // This allows safe downgrade to Release 1 since it can read both formats
+        // https://github.com/anza-xyz/agave/issues/3570
+        self.index_cf.get_with(slot, |slice| {
+            let index: bincode::Result<Index> = bincode::deserialize(slice);
+            match index {
+                Ok(index) => Ok(index),
+                Err(_) => {
+                    let index_next: IndexV2 = bincode::deserialize(slice)?;
+                    Ok(index_next.into())
+                }
+            }
+        })
     }
 
     /// Manually update the meta for a slot.
