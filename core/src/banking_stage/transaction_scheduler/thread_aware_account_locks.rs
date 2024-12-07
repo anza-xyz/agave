@@ -439,7 +439,15 @@ impl Iterator for ThreadSetIterator {
         if self.0 == 0 {
             None
         } else {
+            // Find the first set bit by counting trailing zeros.
+            // This is guaranteed to be < 64 because self.0 != 0.
             let thread_id = self.0.trailing_zeros() as ThreadId;
+            // Clear the lowest set bit. The subtraction is safe because
+            // we know that self.0 != 0.
+            // Example (with 4 bits):
+            //  self.0 = 0b1010           // initial value
+            //  self.0 - 1 = 0b1001       // all bits at or after the lowest set bit are flipped
+            //  0b1010 & 0b1001 = 0b1000  // the lowest bit has been cleared
             self.0 &= self.0 - 1;
             Some(thread_id)
         }
