@@ -1,6 +1,6 @@
 use {
     crate::{
-        bank::{builtins::BuiltinPrototype, Bank, BankFieldsToDeserialize, BankSlotDelta},
+        bank::{Bank, BankFieldsToDeserialize, BankSlotDelta},
         epoch_stakes::EpochStakes,
         runtime_config::RuntimeConfig,
         serde_snapshot::{
@@ -34,6 +34,7 @@ use {
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         utils::delete_contents_of_path,
     },
+    solana_builtins::prototype::BuiltinPrototype,
     solana_measure::{measure::Measure, measure_time},
     solana_sdk::{
         clock::{Epoch, Slot},
