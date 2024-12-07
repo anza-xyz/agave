@@ -35,15 +35,9 @@ async fn axum_main(port: u16) {
         }
     }
 }
-use {affinity::*, agave_thread_manager::*};
+use agave_thread_manager::*;
 
 fn main() -> anyhow::Result<()> {
-    println!(
-        "\tCurrent thread affinity : {:?}",
-        get_thread_affinity().unwrap()
-    );
-    println!("\tTotal cores : {}", get_core_num());
-
     let experiments = [
         "examples/core_contention_dedicated_set.json",
         "examples/core_contention_contending_set.json",

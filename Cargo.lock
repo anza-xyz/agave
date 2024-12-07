@@ -274,9 +274,12 @@ dependencies = [
  "affinity",
  "anyhow",
  "axum 0.7.9",
+ "log",
+ "num_cpus",
  "rayon",
  "serde",
  "serde_json",
+ "solana-metrics",
  "thread-priority",
  "tokio",
 ]
