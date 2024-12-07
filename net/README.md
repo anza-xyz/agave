@@ -1,16 +1,25 @@
+# Test Network Management
+The `./net/` directory in the monorepo contains scripts useful for creation and manipulation of a test network. 
+The test network allows you to run a fully isolated set of validators and clients on a configurable hardware setup.
+It's intended to be both dev and CD friendly. 
 
-# Network Management
-This directory contains scripts useful for working with a test network.  It's
-intended to be both dev and CD friendly.
+### Cloud account prerequisites
 
-### User Account Prerequisites
-
-GCP, AWS, colo are supported.
+The test networks to be created can run in GCP, AWS or colo. Whichever cloud provider you choose, you will need the credentials set up on your machine.
 
 #### GCP
-First authenticate with
+You will need a working `gcloud` command from google SDK,
+if you do not have it follow the guide in [https://cloud.google.com/sdk?hl=en](https://cloud.google.com/sdk?hl=en) 
+
+Before running any scripts, authenticate with
 ```bash
 $ gcloud auth login
+```
+If you are running the scripts on a headless machine, you can use curl to issue requests to confirm your auth.
+
+If you are doing it the first time, you might need to set up project
+```bash
+gcloud config set project principal-lane-200702
 ```
 
 #### AWS
@@ -20,17 +29,48 @@ $ aws configure
 ```
 More information on AWS CLI configuration can be found [here](https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-getting-started.html#cli-quick-configuration)
 
-### Metrics configuration (Optional)
-Ensure that `$(whoami)` is the name of an InfluxDB user account with enough
-access to create a new InfluxDB database.  Ask mvines@ for help if needed.
+## Metrics configuration (Optional)
+Metrics collection relies on 2 environment variables: 
+ * `RUST_LOG` to enable metrics reporting in principle
+ * `SOLANA_METRICS_CONFIG` to tell agave where to log the metrics
 
+### Preparation
+> [!NOTE]
+> Anza employees should follow the guide in notion to set up the influxDB account.
+
+ * Ensure that `${host}` is the host name of the InfluxDB you can access, for example `https://metrics.solana.com:9999`
+ * Ensure that `${user}` is the name of an InfluxDB user account with enough
+rights to create a new InfluxDB database, for example `solana`. 
+
+### To set up the metrics
+* Go to ./net/ in agave repo 
+* Run `./init-metrics.sh -c testnet-dev-${user} ${user} `
+  * Script will ask for a password, it is the same one you’ve created when making a user in the InfluxDB UI
+  * Put the username you have used in preparation, not your login user name\!
+* Watch the script spit out a config line in the very end like the following: 
+  * `export SOLANA_METRICS_CONFIG="host=${host},db=testnet-dev-${user},u=${user},p=some_secret"` 
+  * You’ll want to store that into your shell’s environment for future use\! 
+* Assuming no errors, your influxDB setup is now done and stored in shell environment 
+  * Source your shell environment to be sure the new `SOLANA_METRICS_CONFIG` is loaded 
+* By default, metrics are only logged by agave if `RUST_LOG` is set to `info` or higher. You can set this in your shell environment as well.
+  ```bash
+  RUST_LOG="info,solana_runtime=debug"
+  ```
+  
+### To validate that your environment is set up 100% correctly
+  
 ```bash
-$ ./init-metrics.sh -c <db_name> $(whoami)   #<-- Create a metrics database for the testnet and configure credentials
-```
-You will want to store the ```SOLANA_METRICS_CONFIG``` env variable as suggested by the script in your shell environment for future use.
-Failure to do so will break metrics in the other scripts.
-
-Set ```RUST_LOG=info``` (or debug) to make the metrics trace points active in the upcoming runs.
+  cd ./scripts/
+  source  ./configure-metrics.sh
+    INFLUX_HOST=https://metrics.solana.com:9999
+    INFLUX_DATABASE=testnet-dev-solana
+    INFLUX_USERNAME=solana
+    INFLUX_PASSWORD=********
+  ./metrics-write-datapoint.sh "testnet-deploy net-create-begin=1"
+  
+  ```
+  * All commands should complete with no errors, this indicates your influxDB config is usable
+  * Ensure that `RUST_LOG` is set to `info` or `debug`
 
 ## Quick Start
 
@@ -38,13 +78,75 @@ NOTE: This example uses GCE.  If you are using AWS EC2, replace `./gce.sh` with
 `./ec2.sh` in the commands.
 
 ```bash
-$ cd net/
-$ ./gce.sh create -n 5 -c 1     #<-- Create a GCE testnet with 5 additional nodes (beyond the bootstrap node) and 1 client (billing starts here)
-$ ./gce.sh info                 #<-- Show the current network node IPs so you can SSH into them if needed
-$ ./net.sh start                #<-- Deploy the network from the local workspace and start processes on all nodes including bench-tps on the client node
-$ ./ssh.sh                      #<-- Show a help to ssh into any testnet node to access logs/etc
-$ ./net.sh stop                 #<-- Stop running processes on all nodes
-$ ./gce.sh delete               #<-- Dispose of the network (billing stops here). This can be executed at any point to reset everything into "clean" state
+cd net/
+
+# Recreate a metrics database for the testnet and validate credentials (if you are using metrics)
+./init-metrics.sh -e  
+
+# Create a GCE testnet with 4 additional validator nodes (beyond the bootstrap node) and 1 client (billing starts here) 
+./gce.sh create -n 4 -c 1  
+
+# Deploy the network from the local workspace and start processes on all nodes including bench-tps on the client node  
+RUST_LOG=info ./net.sh start       
+
+# Show a help to ssh into any testnet node to access logs/etc
+./ssh.sh                     
+
+# Stop running processes on all nodes
+./net.sh stop
+
+# Dispose of the network (billing stops here)
+./gce.sh delete    
+```
+
+## Full guide
+* If you expect metrics to work, make sure you have configured them before proceeding
+* Go to `./net/` directory in agave repo 
+* `./gce.sh` command controls creation and destruction of the nodes in the test net. It does not actually run any software.
+  * `./gce.sh create \-n 4 \-c 2` creates cluster with 4 validators and 1 node for load generation, this is minimal viable setup for all solana features to work
+  * `./gce.sh info`  lists active test cluster nodes, this allows you to get their IP addresses for SSH access and/or debugging
+  * `./gce.sh delete`  destroys the nodes (save the electricity and $$$ - destroy your test nets the moment you no longer need them). 
+  * On GCE, if you do not delete nodes, they will self-destruct in 8 hours anyway, you can configure self-destruct timer by supplying `--self-destruct-hours=N` argument to `gce.sh`
+  * On other cloud platforms the testnet will not self-destruct!
+* `./net.sh` controls the payload on the testnet nodes, i.e. bootstrapping, the validators and bench-tps. In principle, you can run everything by hand, but `./net.sh` makes it easier.
+  * `./net.sh start` to actually run the test network.
+    * This will actually upload your current sources to the bootstrap host, build them there and upload the result to all the nodes 
+    * The script will take 5-10 of minutes to run, in the end it should print something like
+     ```
+     --- Deployment Successful
+     Bootstrap validator deployment took 164 seconds
+     `Additional validator deployment (5 validators, 0 blockstreamer nodes) took 120 seconds
+     Client deployment (1 instances) took 11 seconds
+     Network start logs in /home/sol/agave/net/log 
+     ```
+    * You can also make sure it logs successful test transfers: 
+    ```✅ 1 lamport(s) transferred: seq=0   time= 402ms signature=33uJtPJM6ekBGrWCgWHKw1TTQJVrLxYMe3sp2PUmSRVb21LyXn3nDbQmzsgQyihE7VP2zD2iR66Du8aDUnSSd6pb```
+  * `./net.sh start  bench-tps=2="--tx_count 2500"` will start 2 clients with bench-tps workload sending 2500 transactions per batch. 
+    * --tx_count argument is passed to the bench-tps program, see its manual for more options
+  * `./net.sh sanity`  to test the deployment, it is also run by start command
+  * `./net.sh stop`  to stop the validators and client. This does not kill the machines, so you can study the logs etc.
+  * `./net.sh start --nobuild` will skip the source compilation, you will generally want that if you are only changing configuration files rather than code, or just want to re-run the last test.
+* To connect to the nodes: 
+  * `./gce.sh info ` to get the public IPs
+  * `./ssh.sh <IP> ` to get a shell on the node 
+  * `sudo su` will give you root access on the nodes
+  * Nodes run latest ubuntu LTS image
+* You can also interact with the nodes using solana cli:
+```bash
+# source ip list  use as ${validatorIpList[4]}
+source net/config/config
+
+# airdrop
+../target/release/solana -u http://${validatorIpList[1]}:8899 airdrop 1
+
+# check feature
+../target/release/solana -u http://${validatorIpList[1]}:8899 feature status
+
+# activate a feature
+../target/release/solana -u http://${validatorIpList[1]}:8899 feature activate <path to .json>
+
+# check the stakes on current validators
+../target/release/solana --url http://${validatorIpList[0]}:8899 validators
 ```
 
 ## Tips
@@ -70,6 +172,8 @@ $ ./net.sh start -t edge
 ```
 
 ### Enabling CUDA
+> [!NOTE]
+> CUDA is currently not available on GCE 
 First ensure the network instances are created with GPU enabled:
 ```bash
 $ ./gce.sh create -g ...
