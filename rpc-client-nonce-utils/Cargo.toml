@@ -11,12 +11,12 @@ edition = { workspace = true }
 
 [dependencies]
 clap = { version = "2.33.0", optional = true }
-solana-account = { workspace = true }
+solana-account = { workspace = true, features = ["bincode"] }
 solana-clap-utils = { workspace = true, optional = true }
 solana-commitment-config = { workspace = true }
 solana-hash = { workspace = true }
 solana-message = { workspace = true }
-solana-nonce = { workspace = true }
+solana-nonce = { workspace = true, features = ["serde"] }
 solana-pubkey = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-sdk-ids = { workspace = true }

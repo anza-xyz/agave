@@ -19,12 +19,14 @@ use {
         hash::Hash,
         instruction::{AccountMeta, Instruction},
         message::Message,
+        program_pack::Pack,
         pubkey::Pubkey,
         signature::{read_keypair_file, Keypair, Signer},
         system_instruction, system_program,
         transaction::Transaction,
     },
     solana_streamer::socket::SocketAddrSpace,
+    spl_token::state::Account,
     std::{
         cmp::min,
         process::exit,
@@ -139,7 +141,11 @@ fn make_create_message(
     maybe_space: Option<u64>,
     mint: Option<Pubkey>,
 ) -> Message {
-    let space = maybe_space.unwrap_or_else(|| thread_rng().gen_range(0..1000));
+    let space = if mint.is_some() {
+        Account::get_packed_len() as u64
+    } else {
+        maybe_space.unwrap_or_else(|| thread_rng().gen_range(0..1000))
+    };
 
     let instructions: Vec<_> = (0..num_instructions)
         .flat_map(|_| {
@@ -167,6 +173,17 @@ fn make_create_message(
                         &to_pubkey,
                         &mint_address,
                         &base_keypair.pubkey(),
+                    )
+                    .unwrap(),
+                );
+                instructions.push(
+                    spl_token::instruction::approve(
+                        &spl_token::id(),
+                        &to_pubkey,
+                        &base_keypair.pubkey(),
+                        &base_keypair.pubkey(),
+                        &[&base_keypair.pubkey()],
+                        1,
                     )
                     .unwrap(),
                 );
@@ -238,6 +255,7 @@ pub enum RpcBench {
     ProgramAccounts,
     TokenAccountsByOwner,
     Supply,
+    TokenAccountsByDelegate,
 }
 
 #[derive(Debug)]
@@ -253,6 +271,7 @@ impl FromStr for RpcBench {
             "slot" => Ok(RpcBench::Slot),
             "supply" => Ok(RpcBench::Supply),
             "multiple-accounts" => Ok(RpcBench::MultipleAccounts),
+            "token-accounts-by-delegate" => Ok(RpcBench::TokenAccountsByDelegate),
             "token-accounts-by-owner" => Ok(RpcBench::TokenAccountsByOwner),
             "version" => Ok(RpcBench::Version),
             _ => Err(RpcParseError::InvalidOption),
@@ -337,8 +356,37 @@ fn run_rpc_bench_loop(
     let mut iters = 0;
     let mut last_error = Instant::now();
     let mut last_print = Instant::now();
+    fn flush_stats(
+        iters: &i32,
+        last_print: &mut Instant,
+        rpc_bench: &RpcBench,
+        stats: &mut RpcBenchStats,
+        thread: &usize,
+    ) {
+        info!(
+            "t({}) rpc({:?}) iters: {} success: {} errors: {}",
+            thread, rpc_bench, iters, stats.success, stats.errors
+        );
+        if stats.success > 0 {
+            info!(
+                " t({}) rpc({:?} average success_time: {} us",
+                thread,
+                rpc_bench,
+                stats.total_success_time_us / stats.success
+            );
+        }
+        if stats.errors > 0 {
+            info!(
+                " rpc average average errors time: {} us",
+                stats.total_errors_time_us / stats.errors
+            );
+        }
+        *last_print = Instant::now();
+        *stats = RpcBenchStats::default();
+    }
     loop {
         if exit.load(Ordering::Relaxed) {
+            flush_stats(&iters, &mut last_print, &rpc_bench, &mut stats, &thread);
             break;
         }
         match rpc_bench {
@@ -413,10 +461,10 @@ fn run_rpc_bench_loop(
                     }
                 }
             }
-            RpcBench::TokenAccountsByOwner => {
-                let mut rpc_time = Measure::start("rpc-get-token-accounts-by-owner");
+            RpcBench::TokenAccountsByDelegate => {
+                let mut rpc_time = Measure::start("rpc-get-token-accounts-by-delegate");
                 let filter = TokenAccountsFilter::Mint(*mint.as_ref().unwrap());
-                match client.get_token_accounts_by_owner(program_id, filter) {
+                match client.get_token_accounts_by_delegate(base_keypair_pubkey, filter) {
                     Ok(_accounts) => {
                         rpc_time.stop();
                         stats.success += 1;
@@ -427,7 +475,27 @@ fn run_rpc_bench_loop(
                         stats.errors += 1;
                         stats.total_errors_time_us += rpc_time.as_us();
                         if last_error.elapsed().as_secs() > 2 {
-                            info!("get-token-accounts error: {:?}", e);
+                            info!("get-token-accounts-by-delegate error: {:?}", e);
+                            last_error = Instant::now();
+                        }
+                    }
+                }
+            }
+            RpcBench::TokenAccountsByOwner => {
+                let mut rpc_time = Measure::start("rpc-get-token-accounts-by-owner");
+                let filter = TokenAccountsFilter::Mint(*mint.as_ref().unwrap());
+                match client.get_token_accounts_by_owner(base_keypair_pubkey, filter) {
+                    Ok(_accounts) => {
+                        rpc_time.stop();
+                        stats.success += 1;
+                        stats.total_success_time_us += rpc_time.as_us();
+                    }
+                    Err(e) => {
+                        rpc_time.stop();
+                        stats.errors += 1;
+                        stats.total_errors_time_us += rpc_time.as_us();
+                        if last_error.elapsed().as_secs() > 2 {
+                            info!("get-token-accounts-by-owner error: {:?}", e);
                             last_error = Instant::now();
                         }
                     }
@@ -451,26 +519,7 @@ fn run_rpc_bench_loop(
         }
 
         if last_print.elapsed().as_secs() > 3 {
-            info!(
-                "t({}) rpc({:?}) iters: {} success: {} errors: {}",
-                thread, rpc_bench, iters, stats.success, stats.errors
-            );
-            if stats.success > 0 {
-                info!(
-                    " t({}) rpc({:?} average success_time: {} us",
-                    thread,
-                    rpc_bench,
-                    stats.total_success_time_us / stats.success
-                );
-            }
-            if stats.errors > 0 {
-                info!(
-                    " rpc average average errors time: {} us",
-                    stats.total_errors_time_us / stats.errors
-                );
-            }
-            last_print = Instant::now();
-            stats = RpcBenchStats::default();
+            flush_stats(&iters, &mut last_print, &rpc_bench, &mut stats, &thread);
         }
 
         iters += 1;
@@ -871,6 +920,7 @@ fn main() {
                 .long("space")
                 .takes_value(true)
                 .value_name("BYTES")
+                .conflicts_with("mint")
                 .help("Size of accounts to create"),
         )
         .arg(
@@ -962,6 +1012,7 @@ fn main() {
                 .multiple(true)
                 .requires_ifs(&[
                     ("supply", "mint"),
+                    ("token-accounts-by-owner", "mint"),
                 ])
                 .help("Spawn a thread which calls a specific RPC method in a loop to benchmark it"),
         )

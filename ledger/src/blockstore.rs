@@ -1775,6 +1775,15 @@ impl Blockstore {
                     &shred,
                     duplicate_shreds,
                 ) {
+                    // This indicates there is an alternate version of this block.
+                    // Similar to the last index case above, we might never get all the
+                    // shreds for our current version, never replay this slot, and make no
+                    // progress. We cannot determine if we have the version that will eventually
+                    // be complete, so we take the conservative approach and mark the slot as dead
+                    // so that replay can dump and repair the correct version.
+                    self.dead_slots_cf
+                        .put_in_batch(write_batch, slot, &true)
+                        .unwrap();
                     return Err(InsertDataShredError::InvalidShred);
                 }
             }
@@ -5981,21 +5990,6 @@ pub mod tests {
             .insert_shreds(shreds, None, false)
             .expect("Expected successful write of shreds");
 
-        let mut shreds1 = entries_to_test_shreds(
-            &entries[4..],
-            1,
-            0,
-            false,
-            0,
-            false, // merkle_variant
-        );
-        for (i, b) in shreds1.iter_mut().enumerate() {
-            b.set_index(8 + i as u32);
-        }
-        blockstore
-            .insert_shreds(shreds1, None, false)
-            .expect("Expected successful write of shreds");
-
         assert_eq!(
             blockstore.get_slot_entries(1, 0).unwrap()[2..4],
             entries[2..4],
@@ -7827,12 +7821,13 @@ pub mod tests {
             )
             .is_err());
         let ShredInsertionTracker {
-            ref merkle_root_metas,
-            ref duplicate_shreds,
+            merkle_root_metas,
+            duplicate_shreds,
+            write_batch,
             ..
         } = shred_insertion_tracker;
 
-        // No insert, notify duplicate
+        // No insert, notify duplicate, and block is dead
         assert_eq!(duplicate_shreds.len(), 1);
         assert_matches!(
             duplicate_shreds[0],
@@ -7857,6 +7852,11 @@ pub mod tests {
                 .first_received_shred_index(),
             index
         );
+
+        // Block is now dead
+        blockstore.db.write(write_batch).unwrap();
+        assert!(blockstore.is_dead(slot));
+        blockstore.remove_dead_slot(slot).unwrap();
 
         // Blockstore should also have the merkle root meta of the original shred
         assert_eq!(
@@ -7889,6 +7889,8 @@ pub mod tests {
             fec_set_index + 30,
         );
 
+        let mut shred_insertion_tracker =
+            ShredInsertionTracker::new(data_shreds.len(), blockstore.db.batch().unwrap());
         blockstore
             .check_insert_data_shred(
                 new_data_shred.clone(),
@@ -7899,25 +7901,29 @@ pub mod tests {
             )
             .unwrap();
         let ShredInsertionTracker {
-            merkle_root_metas, ..
+            merkle_root_metas,
+            write_batch,
+            ..
         } = shred_insertion_tracker;
+        blockstore.db.write(write_batch).unwrap();
 
         // Verify that we still have the merkle root meta for the original shred
         // and the new shred
-        assert_eq!(merkle_root_metas.len(), 2);
         assert_eq!(
-            merkle_root_metas
-                .get(&data_shred.erasure_set())
+            blockstore
+                .merkle_root_meta(data_shred.erasure_set())
                 .unwrap()
                 .as_ref()
+                .unwrap()
                 .merkle_root(),
             data_shred.merkle_root().ok()
         );
         assert_eq!(
-            merkle_root_metas
-                .get(&data_shred.erasure_set())
+            blockstore
+                .merkle_root_meta(data_shred.erasure_set())
                 .unwrap()
                 .as_ref()
+                .unwrap()
                 .first_received_shred_index(),
             index
         );

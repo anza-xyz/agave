@@ -1,15 +1,13 @@
 use {
     rand::{CryptoRng, Rng, RngCore},
-    solana_sdk::{
-        clock::Slot,
-        hash::Hash,
-        instruction::CompiledInstruction,
-        signature::{Keypair, Signer},
-        stake,
-        system_instruction::SystemInstruction,
-        system_program, system_transaction,
-        transaction::Transaction,
-    },
+    solana_clock::Slot,
+    solana_hash::Hash,
+    solana_keypair::Keypair,
+    solana_message::compiled_instruction::CompiledInstruction,
+    solana_sdk_ids::{stake, system_program},
+    solana_signer::Signer,
+    solana_system_interface::instruction::SystemInstruction,
+    solana_transaction::Transaction,
     solana_vote_program::{vote_state::TowerSync, vote_transaction},
 };
 
@@ -17,7 +15,7 @@ pub fn test_tx() -> Transaction {
     let keypair1 = Keypair::new();
     let pubkey1 = keypair1.pubkey();
     let zero = Hash::default();
-    system_transaction::transfer(&keypair1, &pubkey1, 42, zero)
+    solana_system_transaction::transfer(&keypair1, &pubkey1, 42, zero)
 }
 
 pub fn test_invalid_tx() -> Transaction {
@@ -35,7 +33,7 @@ pub fn test_multisig_tx() -> Transaction {
 
     let transfer_instruction = SystemInstruction::Transfer { lamports };
 
-    let program_ids = vec![system_program::id(), stake::program::id()];
+    let program_ids = vec![system_program::id(), stake::id()];
 
     let instructions = vec![CompiledInstruction::new(
         0,

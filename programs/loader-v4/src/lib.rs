@@ -13,7 +13,6 @@ use {
         loader_v4_instruction::LoaderV4Instruction,
         program_utils::limited_deserialize,
         pubkey::Pubkey,
-        saturating_add_assign,
         transaction_context::{BorrowedAccount, InstructionContext},
     },
     solana_type_overrides::sync::{atomic::Ordering, Arc},
@@ -456,10 +455,7 @@ pub fn process_instruction_inner(
                 InstructionError::UnsupportedProgramId
             })?;
         get_or_create_executor_time.stop();
-        saturating_add_assign!(
-            invoke_context.timings.get_or_create_executor_us,
-            get_or_create_executor_time.as_us()
-        );
+        invoke_context.timings.get_or_create_executor_us += get_or_create_executor_time.as_us();
         drop(program);
         loaded_program
             .ix_usage_counter
