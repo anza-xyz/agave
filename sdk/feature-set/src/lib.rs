@@ -892,6 +892,10 @@ pub mod migrate_stake_program_to_core_bpf {
     solana_pubkey::declare_id!("6M4oQ6eXneVhtLoiAr4yRYQY43eVLjrKbiDZDJc892yk");
 }
 
+pub mod deplete_cu_meter_on_vm_failure {
+    solana_pubkey::declare_id!("B7H2caeia4ZFcpE3QcgMqbiWiBtWrdBRBSJ1DY6Ktxbq");
+}
+
 pub mod reserve_minimal_cus_for_builtin_instructions {
     solana_pubkey::declare_id!("C9oAhLxDBm3ssWtJx1yBGzPY55r2rArHmN1pbQn6HogH");
 }
@@ -1114,6 +1118,7 @@ lazy_static! {
         (accounts_lt_hash::id(), "enables lattice-based accounts hash #3333"),
         (enable_secp256r1_precompile::id(), "Enable secp256r1 precompile SIMD-0075"),
         (migrate_stake_program_to_core_bpf::id(), "Migrate Stake program to Core BPF SIMD-0196 #3655"),
+        (deplete_cu_meter_on_vm_failure::id(), "Deplete compute meter for vm errors SIMD-0182 #3993"),
         (reserve_minimal_cus_for_builtin_instructions::id(), "Reserve minimal CUs for builtin instructions SIMD-170 #2562"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
