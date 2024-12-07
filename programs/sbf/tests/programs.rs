@@ -4692,7 +4692,7 @@ fn test_deplete_cost_meter_with_access_violation() {
 
         assert_eq!(
             result.status.unwrap_err(),
-            TransactionError::InstructionError(1, InstructionError::ReadonlyDataModified)
+            TransactionError::InstructionError(1, InstructionError::ExecutableDataModified)
         );
 
         if apply_cost_tracker {
