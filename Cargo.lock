@@ -9714,7 +9714,7 @@ dependencies = [
  "futures-util",
  "governor",
  "histogram",
- "indexmap 2.6.0",
+ "indexmap 2.7.0",
  "itertools 0.12.1",
  "libc",
  "log",
@@ -9737,7 +9737,7 @@ dependencies = [
  "solana-streamer",
  "solana-transaction-metrics-tracker",
  "solana-version",
- "thiserror 2.0.3",
+ "thiserror 2.0.4",
  "tokio",
  "x509-parser",
 ]
