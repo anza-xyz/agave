@@ -10,7 +10,6 @@ use {
         memory_region::{MemoryRegion, MemoryState},
     },
     solana_sdk::{
-        saturating_add_assign,
         stable_layout::stable_instruction::StableInstruction,
         syscalls::{
             MAX_CPI_ACCOUNT_INFOS, MAX_CPI_INSTRUCTION_ACCOUNTS, MAX_CPI_INSTRUCTION_DATA_LEN,
@@ -1087,7 +1086,7 @@ fn cpi_common<S: SyscallInvokeSigned>(
     )?;
     if let Some(execute_time) = invoke_context.execute_time.as_mut() {
         execute_time.stop();
-        saturating_add_assign!(invoke_context.timings.execute_us, execute_time.as_us());
+        invoke_context.timings.execute_us += execute_time.as_us();
     }
 
     let instruction = S::translate_instruction(instruction_addr, memory_mapping, invoke_context)?;

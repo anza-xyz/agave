@@ -1446,10 +1446,10 @@ impl ReplaySlotStats {
                 (0, 0, 0, 0, 0),
                 |(sum_us, sum_units, sum_count, sum_errored_units, sum_errored_count), a| {
                     (
-                        sum_us + a.1.accumulated_us,
-                        sum_units + a.1.accumulated_units,
-                        sum_count + a.1.count,
-                        sum_errored_units + a.1.total_errored_units,
+                        sum_us + a.1.accumulated_us.0,
+                        sum_units + a.1.accumulated_units.0,
+                        sum_count + a.1.count.0,
+                        sum_errored_units + a.1.total_errored_units.0,
                         sum_errored_count + a.1.errored_txs_compute_consumed.len(),
                     )
                 },
@@ -1460,10 +1460,10 @@ impl ReplaySlotStats {
                 "per_program_timings",
                 ("slot", slot as i64, i64),
                 ("pubkey", pubkey.to_string(), String),
-                ("execute_us", time.accumulated_us, i64),
-                ("accumulated_units", time.accumulated_units, i64),
-                ("errored_units", time.total_errored_units, i64),
-                ("count", time.count, i64),
+                ("execute_us", time.accumulated_us.0, i64),
+                ("accumulated_units", time.accumulated_units.0, i64),
+                ("errored_units", time.total_errored_units.0, i64),
+                ("count", time.count.0, i64),
                 (
                     "errored_count",
                     time.errored_txs_compute_consumed.len(),

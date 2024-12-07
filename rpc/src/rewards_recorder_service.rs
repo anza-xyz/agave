@@ -2,9 +2,9 @@
 //! persisting it into the `Blockstore`.
 
 use {
-    crossbeam_channel::RecvTimeoutError,
+    crossbeam_channel::TryRecvError,
     solana_ledger::{
-        blockstore::Blockstore,
+        blockstore::{Blockstore, BlockstoreError},
         blockstore_processor::{RewardsMessage, RewardsRecorderReceiver},
     },
     solana_runtime::bank::KeyedRewardsAndNumPartitions,
@@ -14,7 +14,7 @@ use {
             atomic::{AtomicBool, AtomicU64, Ordering},
             Arc,
         },
-        thread::{self, Builder, JoinHandle},
+        thread::{self, sleep, Builder, JoinHandle},
         time::Duration,
     },
 };
@@ -22,6 +22,10 @@ use {
 pub struct RewardsRecorderService {
     thread_hdl: JoinHandle<()>,
 }
+
+// ReplayStage sends a new item to this service for every frozen Bank. Banks
+// are frozen every 400ms at steady state so checking every 100ms is sufficient
+const TRY_RECV_INTERVAL: Duration = Duration::from_millis(100);
 
 impl RewardsRecorderService {
     pub fn new(
@@ -38,11 +42,25 @@ impl RewardsRecorderService {
                     if exit.load(Ordering::Relaxed) {
                         break;
                     }
-                    if let Err(RecvTimeoutError::Disconnected) = Self::write_rewards(
-                        &rewards_receiver,
-                        &max_complete_rewards_slot,
-                        &blockstore,
-                    ) {
+
+                    let rewards = match rewards_receiver.try_recv() {
+                        Ok(rewards) => rewards,
+                        Err(TryRecvError::Empty) => {
+                            sleep(TRY_RECV_INTERVAL);
+                            continue;
+                        }
+                        Err(err @ TryRecvError::Disconnected) => {
+                            info!("RewardsRecorderService is stopping because: {err}");
+                            break;
+                        }
+                    };
+
+                    if let Err(err) =
+                        Self::write_rewards(rewards, &max_complete_rewards_slot, &blockstore)
+                    {
+                        error!("RewardsRecorderService is stopping because: {err}");
+                        // Set the exit flag to allow other services to gracefully stop
+                        exit.store(true, Ordering::Relaxed);
                         break;
                     }
                 }
@@ -53,11 +71,11 @@ impl RewardsRecorderService {
     }
 
     fn write_rewards(
-        rewards_receiver: &RewardsRecorderReceiver,
+        rewards: RewardsMessage,
         max_complete_rewards_slot: &Arc<AtomicU64>,
         blockstore: &Blockstore,
-    ) -> Result<(), RecvTimeoutError> {
-        match rewards_receiver.recv_timeout(Duration::from_secs(1))? {
+    ) -> Result<(), BlockstoreError> {
+        match rewards {
             RewardsMessage::Batch((
                 slot,
                 KeyedRewardsAndNumPartitions {
@@ -76,20 +94,19 @@ impl RewardsRecorderService {
                     })
                     .collect();
 
-                blockstore
-                    .write_rewards(
-                        slot,
-                        RewardsAndNumPartitions {
-                            rewards: rpc_rewards,
-                            num_partitions,
-                        },
-                    )
-                    .expect("Expect database write to succeed");
+                blockstore.write_rewards(
+                    slot,
+                    RewardsAndNumPartitions {
+                        rewards: rpc_rewards,
+                        num_partitions,
+                    },
+                )?;
             }
             RewardsMessage::Complete(slot) => {
                 max_complete_rewards_slot.fetch_max(slot, Ordering::SeqCst);
             }
         }
+
         Ok(())
     }
 

@@ -3761,8 +3761,10 @@ impl Bank {
                 .per_program_timings
                 .iter()
                 .fold(0, |acc: u64, (_, program_timing)| {
-                    acc.saturating_add(program_timing.accumulated_units)
-                        .saturating_add(program_timing.total_errored_units)
+                    (std::num::Saturating(acc)
+                        + program_timing.accumulated_units
+                        + program_timing.total_errored_units)
+                        .0
                 });
 
         debug!("simulate_transaction: {:?}", timings);
