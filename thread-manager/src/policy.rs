@@ -45,15 +45,19 @@ pub fn apply_policy(
             let core = lg
                 .pop()
                 .expect("Not enough cores provided for pinned allocation");
-            affinity::set_thread_affinity([core])
-                .expect("Can not set thread affinity for runtime worker");
+            if cfg!(target_os = "linux") {
+                affinity::set_thread_affinity([core])
+                    .expect("Can not set thread affinity for runtime worker");
+            }
         }
         CoreAllocation::DedicatedCoreSet { min: _, max: _ } => {
             let lg = chosen_cores_mask
                 .lock()
                 .expect("Can not lock core mask mutex");
-            affinity::set_thread_affinity(&(*lg))
-                .expect("Can not set thread affinity for runtime worker");
+            if cfg!(target_os = "linux") {
+                affinity::set_thread_affinity(&(*lg))
+                    .expect("Can not set thread affinity for runtime worker");
+            }
         }
         CoreAllocation::OsDefault => {}
     }
