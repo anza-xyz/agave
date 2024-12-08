@@ -8364,7 +8364,6 @@ dependencies = [
  "jsonrpc-core",
  "reqwest",
  "reqwest-middleware",
- "semver 1.0.23",
  "serde",
  "serde_derive",
  "serde_json",
@@ -8376,10 +8375,10 @@ dependencies = [
  "solana-inflation",
  "solana-inline-spl",
  "solana-pubkey",
+ "solana-rpc-response",
  "solana-signer",
  "solana-transaction-error",
  "solana-transaction-status-client-types",
- "solana-version",
  "thiserror 2.0.4",
 ]
 
@@ -8410,6 +8409,24 @@ dependencies = [
  "solana-transaction",
  "thiserror 2.0.4",
  "tokio",
+]
+
+[[package]]
+name = "solana-rpc-response"
+version = "2.2.0"
+dependencies = [
+ "semver 1.0.23",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "solana-account-decoder-client-types",
+ "solana-clock",
+ "solana-fee-calculator",
+ "solana-inflation",
+ "solana-transaction-error",
+ "solana-transaction-status-client-types",
+ "solana-version",
+ "thiserror 2.0.4",
 ]
 
 [[package]]
