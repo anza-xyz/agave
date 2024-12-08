@@ -197,7 +197,7 @@ use {
         net::TcpStream,
         sync::{mpsc, oneshot},
         task::JoinHandle,
-        time::{sleep, Duration},
+        time::{interval, Interval, sleep, Duration},
     },
     tokio_stream::wrappers::UnboundedReceiverStream,
     tokio_tungstenite::{
@@ -212,6 +212,11 @@ use {
 };
 
 pub type PubsubClientResult<T = ()> = Result<T, PubsubClientError>;
+
+/// The interval between pings measured in seconds
+pub const DEFAULT_PING_DURATION_SECONDS: u64 = 10;
+/// The maximum number of consecutive failed pings before considering the connection stale
+pub const DEFAULT_MAX_FAILED_PINGS: usize = 3;
 
 #[derive(Debug, Error)]
 pub enum PubsubClientError {
@@ -247,6 +252,16 @@ pub enum PubsubClientError {
 
     #[error("could not find node version: {0}")]
     UnexpectedGetVersionResponse(String),
+}
+
+impl PubsubClientError {
+    pub fn is_timeout(&self) -> bool {
+        matches!(
+            self,
+            PubsubClientError::WsError(tungstenite::Error::Io(ref err))
+                if err.kind() == std::io::ErrorKind::WouldBlock
+        )
+    }
 }
 
 type UnsubscribeFn = Box<dyn FnOnce() -> BoxFuture<'static, ()> + Send>;
@@ -500,6 +515,9 @@ impl PubsubClient {
         let mut subscriptions = BTreeMap::new();
         let (unsubscribe_sender, mut unsubscribe_receiver) = mpsc::unbounded_channel();
 
+        let mut ping_interval: Interval = interval(Duration::from_secs(DEFAULT_PING_DURATION_SECONDS));
+        let mut unmatched_pings: usize = 0usize;
+
         loop {
             tokio::select! {
                 // Send close on shutdown signal
@@ -510,8 +528,15 @@ impl PubsubClient {
                     break;
                 },
                 // Send `Message::Ping` each 10s if no any other communication
-                () = sleep(Duration::from_secs(10)) => {
+                _ = ping_interval.tick() => {
                     ws.send(Message::Ping(Vec::new())).await?;
+                    unmatched_pings += 1;
+
+                    if unmatched_pings > DEFAULT_MAX_FAILED_PINGS {
+                        info!("No pong received after {} pings. Closing connection...", DEFAULT_MAX_FAILED_PINGS);
+                        ws.close(Some(CloseFrame { code: CloseCode::Normal, reason: "No pong received".into() })).await?;
+                        break;
+                    }
                 },
                 // Read message for subscribe
                 Some((operation, params, response_sender)) = subscribe_receiver.recv() => {
@@ -547,13 +572,20 @@ impl PubsubClient {
 
                     // Get text from the message
                     let text = match msg {
-                        Message::Text(text) => text,
+                        Message::Text(text) => {
+                            unmatched_pings = 0;
+                            text
+                        },
                         Message::Binary(_data) => continue, // Ignore
                         Message::Ping(data) => {
                             ws.send(Message::Pong(data)).await?;
+                            unmatched_pings = 0;
                             continue
                         },
-                        Message::Pong(_data) => continue,
+                        Message::Pong(_data) => {
+                            unmatched_pings = 0;
+                            continue
+                        },
                         Message::Close(_frame) => break,
                         Message::Frame(_frame) => continue,
                     };
