@@ -13,12 +13,125 @@ without any safety issues that would otherwise be associated with running two
 instances of your validator.
 
 You will need two validator-class machines for your primary and secondary
-validator. A third machine for running an [etcd](https://etcd.io/) cluster,
-which is used to store the tower voting record for your validator.
+validator. 
 
-## Setup
+## Manual Identity Transition
+
+[Based on Identity Transition by Pumpkin's Pool](https://pumpkins-pool.gitbook.io/pumpkins-pool)
+
+Pumpkin's Pool based their guide on [Identity Transition Demo by mvines](https://github.com/mvines/validator-Identity-transition-demo)
+
+### Hot Swap Configuration Requirements
+
+* Junk identities on both validators to use when not actively voting
+* Validator startup scripts both modified to use symbolic link as the identity
+* Validator startup scripts both modified to include staked identity as authorized voter
+
+### Generating Junk Identities
+
+Both validators need to have secondary identities to assume when not actively voting. You can generate these "junk" identities on each of your validators like so:
+
+```bash
+solana-keygen new -s --no-bip39-passphrase -o unstaked-identity.json
+```
+
+### Validator Startup Script Modifications
+
+The identity flag and authorized voter flags should be modified on **both** validators.
+
+Note that `identity.json` is not a real file but a symbolic link we will create shortly - so don't worry about whether or not that file exists. However, the authorized voter flag does need to point to your staked identity file (your main identity). I renamed mine to `staked-identity.json` for clarity and simplicity. You can certainly name yours whatever you'd like, just make sure they are specified as authorized voters as shown below.
+
+```bash
+exec /home/sol/bin/agave-validator \
+    --identity /home/sol/identity.json \
+    --vote-account /home/sol/vote.json \
+    --authorized-voter /home/sol/staked-identity.json \
+```
+
+Summary:
+
+* Identity is a symbolic link we will create in the next section. It may point to your staked identity or your inactive "junk" identity.
+* Vote account is exactly what you think it is. No changes. Just shown for context.
+* Authorized voter points to your main, staked identity.
+
+### Creating Identity Symlinks
+
+An important part of how this system functions is the `identity.json` symbolic link. This link allows us to soft link the desired identity so that the validator can restart or stop/start with the same identity we last intended it to have.
+
+On your actively voting validator, link this to your staked identity
+
+```bash
+ln -sf /home/sol/staked-identity.json /home/sol/identity.json
+```
+
+On your inactive, non-voting validator, link this to your unstaked "junk" identity
+
+```bash
+ln -sf /home/sol/unstaked-identity.json /home/sol/identity.json
+```
+
+### Transition Preparation Checklist
+
+At this point on both validators you should have:
+
+* Generated unstaked "junk" identities
+* Updated your validator startup scripts
+* Created symbolic links to point to respective identities
+
+If you have done this - great! You're ready to transition!
+
+### Transition Process
+
+#### Notes on the tower file
+
+For people who dont know what the tower file is, it is basically a file that keeps track of what forks you have and haven't voted on. It also keeps track of what forks you cannot vote on due to lockouts. For more info see the [Tower BFT](./../../implemented-proposals/tower-bft.md) page.
+
+The important note about this for validator operators is that if you cannot copy your tower file as described in the following documentation, you need to wait ~200 slots (2 minutes) from the last vote on your active validator before transitioning. If you do not do this you could violate voting lockouts which in the future could result in slashing. 
+
+#### Active Validator
+
+* Wait for a restart window
+* Set identity to unstaked "junk" identity
+* Correct symbolic link to reflect this change
+* Copy the tower file to the inactive validator
+
+```bash
+#!/bin/bash
+
+# example script of the above steps - change IP obviously
+agave-validator -l /mnt/ledger wait-for-restart-window --min-idle-time 2 --skip-new-snapshot-check
+agave-validator -l /mnt/ledger set-identity /home/sol/unstaked-identity.json
+ln -sf /home/sol/unstaked-identity.json /home/sol/identity.json
+scp /mnt/ledger/tower-1_9-$(solana-keygen pubkey /home/sol/staked-identity.json).bin sol@68.100.100.10:/mnt/ledger
+```
+
+(At this point your primary identity is no longer voting)
+
+#### Inactive Validator
+
+* Set identity to your staked identity (requiring the tower)
+* Rewrite symbolic link to reflect this
+
+```bash
+#!/bin/bash
+agave-validator -l /mnt/ledger set-identity --require-tower /home/sol/staked-identity.json
+ln -sf /home/sol/staked-identity.json /home/sol/identity.json
+```
+
+If you cannot copy your tower file from your currently active validator you can remove the `--require-tower` flag. Be very careful about doing this. If your previously active validator comes back up and starts voting to your staked identity, this can result in lockout violations which could result in slashing.
+
+#### Verification
+
+Verify identities transitioned successfully using either monitor or `solana catchup --our-localhost 8899`
+
+## Deprecated etcd Setup
 
 ### etcd cluster setup
+
+**WARNING:** This setup is now heavily deprecated. etcd tends to result in more a larger chance of outages due to increased setup complexity then it solves with a automatic failover.
+
+This setup uses a third machine for running an [etcd](https://etcd.io/) cluster,
+which is used to store the tower voting record for your validator.
 
 There is ample documentation regarding etcd setup and configuration at
 https://etcd.io/, please generally familiarize yourself with etcd before
@@ -109,7 +222,7 @@ following `agave-validator` command-line argument changes:
 * Add `--authorized-voter validator-keypair.json` (where
   `validator-keypair.json` is the identity keypair for your primary validator)
 
-## Triggering a failover manually
+### Triggering a failover manually
 When both validators are running normally and caught up to the cluster, a
 failover from primary to secondary can be triggered by running the following
 command on the secondary validator:
@@ -130,7 +243,7 @@ from the secondary validator. This will in turn cause the secondary validator to
 exit. However if/when the secondary validator restarts, it will do so using the
 secondary validator identity and thus the restart cycle is broken.
 
-## Triggering a failover via monitoring
+### Triggering a failover via monitoring
 Monitoring of your choosing can invoke the `agave-validator set-identity
 validator-keypair.json` command mentioned in the previous section.
 
@@ -138,7 +251,7 @@ It is not necessary to guarantee the primary validator has halted before failing
 over to the secondary, as the failover process will prevent the primary
 validator from voting and producing blocks even if it is in an unknown state.
 
-## Validator Software Upgrades
+### Validator Software Upgrades
 To perform a software upgrade using this failover method:
 1. Install the new software version on your primary validator system but do not
    restart it yet.
