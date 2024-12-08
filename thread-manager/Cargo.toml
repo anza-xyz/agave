@@ -14,12 +14,12 @@ publish = false
 [dependencies]
 anyhow = { workspace = true }
 log = { workspace = true }
+num_cpus ={ workspace = true }
+rayon = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
+solana-metrics ={ workspace = true }
 thread-priority = "1.2.0"
 tokio = { workspace = true, features = ["time", "rt-multi-thread"] }
-rayon = { workspace = true }
-num_cpus.workspace = true
-solana-metrics.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 affinity = "0.1.2"

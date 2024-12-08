@@ -58,19 +58,9 @@ impl RuntimeManager {
         self.tokio_runtimes.get(n)
     }
     pub fn set_process_affinity(config: &RuntimeManagerConfig) -> anyhow::Result<Vec<usize>> {
-        let chosen_cores_mask: Vec<usize> = {
-            match config.default_core_allocation {
-                CoreAllocation::PinnedCores { min, max } => (min..max).collect(),
-                CoreAllocation::DedicatedCoreSet { min, max } => (min..max).collect(),
-                CoreAllocation::OsDefault => vec![],
-            }
-        };
+        let chosen_cores_mask = config.default_core_allocation.as_core_mask_vector();
 
-        if cfg!(target_os = "linux") {
-            if let Err(e) = affinity::set_thread_affinity(&chosen_cores_mask) {
-                anyhow::bail!(e.to_string())
-            }
-        }
+        crate::policy::set_thread_affinity(&chosen_cores_mask);
         Ok(chosen_cores_mask)
     }
 
@@ -131,13 +121,14 @@ mod tests {
         std::collections::HashMap,
     };
 
+    // Nobody runs Agave on windows, and on Mac we can not set mask affinity without patching external crate
+    #[cfg(target_os = "linux")]
     fn validate_affinity(expect_cores: &[usize], error_msg: &str) {
-        // Nobody runs Agave on windows, and on Mac we can not set mask affinity without patching external crate
-        if cfg!(target_os = "linux") {
-            let aff = affinity::get_thread_affinity().unwrap();
-            assert_eq!(aff, expect_cores, "{}", error_msg);
-        }
+        let aff = affinity::get_thread_affinity().unwrap();
+        assert_eq!(aff, expect_cores, "{}", error_msg);
     }
+    #[cfg(not(target_os = "linux"))]
+    fn validate_affinity(_expect_cores: &[usize], _error_msg: &str) {}
 
     #[test]
     fn process_affinity() {

@@ -25,6 +25,14 @@ impl CoreAllocation {
     }
 }
 
+#[cfg(target_os = "linux")]
+pub fn set_thread_affinity(cores: &[usize]) {
+    affinity::set_thread_affinity(cores).expect("Can not set thread affinity for runtime worker");
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn set_thread_affinity(_cores: &[usize]) {}
+
 ///Applies policy to the calling thread
 pub fn apply_policy(
     alloc: &CoreAllocation,
@@ -45,19 +53,13 @@ pub fn apply_policy(
             let core = lg
                 .pop()
                 .expect("Not enough cores provided for pinned allocation");
-            if cfg!(target_os = "linux") {
-                affinity::set_thread_affinity([core])
-                    .expect("Can not set thread affinity for runtime worker");
-            }
+            set_thread_affinity(&[core]);
         }
         CoreAllocation::DedicatedCoreSet { min: _, max: _ } => {
             let lg = chosen_cores_mask
                 .lock()
                 .expect("Can not lock core mask mutex");
-            if cfg!(target_os = "linux") {
-                affinity::set_thread_affinity(&(*lg))
-                    .expect("Can not set thread affinity for runtime worker");
-            }
+            set_thread_affinity(&lg);
         }
         CoreAllocation::OsDefault => {}
     }
