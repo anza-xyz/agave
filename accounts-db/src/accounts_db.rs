@@ -8566,7 +8566,8 @@ impl AccountsDb {
         // a given pubkey. If there is just a single item, there is no cleaning to
         // be done on that pubkey. Use only those pubkeys with multiple updates.
         if !dirty_pubkeys.is_empty() {
-            self.uncleaned_pubkeys.insert(slot, dirty_pubkeys);
+            let old = self.uncleaned_pubkeys.insert(slot, dirty_pubkeys);
+            assert!(old.is_none());
         }
         SlotIndexGenerationInfo {
             insert_time_us,

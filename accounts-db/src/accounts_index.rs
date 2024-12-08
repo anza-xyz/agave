@@ -1713,6 +1713,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         duplicates
     }
 
+    pub fn with_disk(&self) -> bool {
+        self.storage.storage.disk.is_some()
+    }
+
     // Same functionally to upsert, but:
     // 1. operates on a batch of items
     // 2. holds the write lock for the duration of adding the items
@@ -1730,12 +1734,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         // this assumes the largest bin contains twice the expected amount of the average size per bin
         let bins = self.bins();
         let expected_items_per_bin = approx_items_len * 2 / bins;
-        let use_disk = self.storage.storage.is_disk_index_enabled();
+        let use_disk = self.with_disk();
         let mut binned = (0..bins)
             .map(|_| Vec::with_capacity(expected_items_per_bin))
             .collect::<Vec<_>>();
         let mut count = 0;
-        let mut dirty_pubkeys = items
+        let dirty_pubkeys = items
             .filter_map(|(pubkey, account_info)| {
                 let pubkey_bin = self.bin_calculator.bin_from_pubkey(&pubkey);
                 // this value is equivalent to what update() below would have created if we inserted a new item
@@ -1775,6 +1779,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             } else {
                 // not using disk buckets, so just write to in-mem
                 // this is no longer the default case
+                let mut dup_pubkeys = vec![];
                 items
                     .into_iter()
                     .for_each(|(pubkey, (slot, account_info))| {
@@ -1789,11 +1794,16 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                         {
                             InsertNewEntryResults::DidNotExist => {}
                             InsertNewEntryResults::ExistedNewEntryZeroLamports => {}
-                            InsertNewEntryResults::ExistedNewEntryNonZeroLamports => {
-                                dirty_pubkeys.push(pubkey);
+                            InsertNewEntryResults::ExistedNewEntryNonZeroLamports(other_slot) => {
+                                if let Some(other_slot) = other_slot {
+                                    dup_pubkeys.push((other_slot, pubkey));
+                                }
+                                dup_pubkeys.push((slot, pubkey));
                             }
                         }
                     });
+
+                r_account_maps.update_duplicates_from_in_memory_only_startup(dup_pubkeys);
             }
             insert_time.stop();
             insertion_time.fetch_add(insert_time.as_us(), Ordering::Relaxed);
@@ -1814,13 +1824,23 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         &self,
         f: impl Fn(Vec<(Slot, Pubkey)>) + Sync + Send,
     ) {
-        (0..self.bins())
-            .into_par_iter()
-            .map(|pubkey_bin| {
-                let r_account_maps = &self.account_maps[pubkey_bin];
-                r_account_maps.populate_and_retrieve_duplicate_keys_from_startup()
-            })
-            .for_each(f);
+        if self.with_disk() {
+            (0..self.bins())
+                .into_par_iter()
+                .map(|pubkey_bin| {
+                    let r_account_maps = &self.account_maps[pubkey_bin];
+                    r_account_maps.populate_and_retrieve_duplicate_keys_from_startup()
+                })
+                .for_each(f);
+        } else {
+            (0..self.bins())
+                .into_par_iter()
+                .map(|pubkey_bin| {
+                    let r_account_maps = &self.account_maps[pubkey_bin];
+                    r_account_maps.get_duplicates_from_in_memory_only_startup()
+                })
+                .for_each(f);
+        }
     }
 
     /// Updates the given pubkey at the given slot with the new account information.
