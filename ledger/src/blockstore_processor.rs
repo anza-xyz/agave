@@ -765,6 +765,9 @@ pub enum BlockstoreProcessorError {
 
     #[error("invalid retransmitter signature final fec set")]
     InvalidRetransmitterSignatureFinalFecSet,
+
+    #[error("Final replay on bank too old {0}")]
+    FinalReplayOnBankTooOld(Slot),
 }
 
 /// Callback for accessing bank state after each slot is confirmed while

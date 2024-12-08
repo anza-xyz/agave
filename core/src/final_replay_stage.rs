@@ -187,15 +187,18 @@ impl FinalReplayStage {
         replay_stats: &mut FinalReplayProgressMap,
     ) -> Vec<ReplayResult> {
         let longest_replay_time_us = AtomicU64::new(0);
-        for slot in active_bank_slots {
-            replay_stats.insert_if_not_exist(
-                &bank_forks
-                    .read()
-                    .unwrap()
-                    .get_with_scheduler(*slot)
-                    .unwrap(),
-            );
-        }
+        let active_bank_slots: Vec<&Slot> = active_bank_slots
+            .iter()
+            .filter(|slot| {
+                let bank = bank_forks.read().unwrap().get_with_scheduler(**slot);
+                if let Some(bank) = bank {
+                    replay_stats.insert_if_not_exist(&bank);
+                    true
+                } else {
+                    false
+                }
+            })
+            .collect();
         let replay_result_vec: Vec<ReplayResult> = fork_thread_pool.install(|| {
             active_bank_slots
                 .into_par_iter()
@@ -211,42 +214,40 @@ impl FinalReplayStage {
                         fork_thread_pool.current_thread_index().unwrap_or_default()
                     );
 
-                    let bank = bank_forks
-                        .read()
-                        .unwrap()
-                        .get_with_scheduler(bank_slot)
-                        .unwrap();
-
-                    if bank.collector_id() != my_pubkey {
-                        // The bank may be created before parent is frozen, so we need to copy current data from parent.
-                        bank.update_data_from_parent();
-                        let mut replay_blockstore_time =
-                            Measure::start("replay_blockstore_into_bank");
-                        let r_replay_progress = replay_stats.get(&bank_slot).unwrap();
-                        let mut w_replay_stats = r_replay_progress.stats.write().unwrap();
-                        let mut w_replay_progress = r_replay_progress.progress.write().unwrap();
-                        if let Err(error) = blockstore_processor::confirm_slot(
-                            blockstore,
-                            &bank,
-                            replay_tx_thread_pool,
-                            &mut w_replay_stats,
-                            &mut w_replay_progress,
-                            false,
-                            transaction_status_sender,
-                            entry_notification_sender,
-                            None,
-                            verify_recyclers,
-                            false,
-                            log_messages_bytes_limit,
-                            prioritization_fee_cache,
-                            false,
-                        ) {
-                            warn!("All errors should have been handled during replay stage {bank_slot}: {error:?}");
-                            replay_result.replay_error = Some(error);
+                    if let Some(bank) = bank_forks.read().unwrap().get_with_scheduler(bank_slot) {
+                        if bank.collector_id() != my_pubkey {
+                            // The bank may be created before parent is frozen, so we need to copy current data from parent.
+                            bank.update_data_from_parent();
+                            let mut replay_blockstore_time =
+                                Measure::start("replay_blockstore_into_bank");
+                            let r_replay_progress = replay_stats.get(&bank_slot).unwrap();
+                            let mut w_replay_stats = r_replay_progress.stats.write().unwrap();
+                            let mut w_replay_progress = r_replay_progress.progress.write().unwrap();
+                            if let Err(error) = blockstore_processor::confirm_slot(
+                                blockstore,
+                                &bank,
+                                replay_tx_thread_pool,
+                                &mut w_replay_stats,
+                                &mut w_replay_progress,
+                                false,
+                                transaction_status_sender,
+                                entry_notification_sender,
+                                None,
+                                verify_recyclers,
+                                false,
+                                log_messages_bytes_limit,
+                                prioritization_fee_cache,
+                                false,
+                            ) {
+                                warn!("All errors should have been handled during replay stage {bank_slot}: {error:?}");
+                                replay_result.replay_error = Some(error);
+                            }
+                            replay_blockstore_time.stop();
+                            longest_replay_time_us
+                                .fetch_max(replay_blockstore_time.as_us(), Ordering::Relaxed);
                         }
-                        replay_blockstore_time.stop();
-                        longest_replay_time_us
-                            .fetch_max(replay_blockstore_time.as_us(), Ordering::Relaxed);
+                    } else {
+                        replay_result.replay_error = Some(BlockstoreProcessorError::FinalReplayOnBankTooOld(bank_slot));
                     }
                     replay_result
                 })
@@ -276,112 +277,113 @@ impl FinalReplayStage {
             }
 
             let bank_slot = replay_result.bank_slot;
-            let bank = &bank_forks
-                .read()
-                .unwrap()
-                .get_with_scheduler(bank_slot)
-                .unwrap();
+            if let Some(bank) = &bank_forks.read().unwrap().get_with_scheduler(bank_slot) {
+                assert_eq!(bank_slot, bank.slot());
+                if bank.is_complete() {
+                    let mut bank_complete_time = Measure::start("bank_complete_time");
+                    let mut is_unified_scheduler_enabled = false;
 
-            assert_eq!(bank_slot, bank.slot());
-            if bank.is_complete() {
-                let mut bank_complete_time = Measure::start("bank_complete_time");
-                let mut is_unified_scheduler_enabled = false;
+                    let r_replay_progress = progress_map.get(&bank_slot).unwrap();
+                    if let Some((result, completed_execute_timings)) =
+                        bank.wait_for_completed_scheduler()
+                    {
+                        // It's guaranteed that wait_for_completed_scheduler() returns Some(_), iff the
+                        // unified scheduler is enabled for the bank.
+                        is_unified_scheduler_enabled = true;
+                        let metrics =
+                            ExecuteBatchesInternalMetrics::new_with_timings_from_all_threads(
+                                completed_execute_timings,
+                            );
+                        r_replay_progress
+                            .stats
+                            .write()
+                            .unwrap()
+                            .batch_execute
+                            .accumulate(metrics, is_unified_scheduler_enabled);
 
-                let r_replay_progress = progress_map.get(&bank_slot).unwrap();
-                if let Some((result, completed_execute_timings)) =
-                    bank.wait_for_completed_scheduler()
-                {
-                    // It's guaranteed that wait_for_completed_scheduler() returns Some(_), iff the
-                    // unified scheduler is enabled for the bank.
-                    is_unified_scheduler_enabled = true;
-                    let metrics = ExecuteBatchesInternalMetrics::new_with_timings_from_all_threads(
-                        completed_execute_timings,
-                    );
-                    r_replay_progress
-                        .stats
-                        .write()
-                        .unwrap()
-                        .batch_execute
-                        .accumulate(metrics, is_unified_scheduler_enabled);
-
-                    if let Err(error) = result {
-                        warn!("All errors should have been handled during replay stage {bank_slot}: {error:?}");
-                        continue;
+                        if let Err(error) = result {
+                            warn!("All errors should have been handled during replay stage {bank_slot}: {error:?}");
+                            continue;
+                        }
                     }
-                }
 
-                let r_replay_stats = r_replay_progress.stats.read().unwrap();
-                debug!(
-                    "bank {} has completed replay from blockstore, contribute to update cost with \
-                     {:?}",
-                    bank.slot(),
-                    r_replay_stats.batch_execute.totals
-                );
-                did_complete_bank = true;
-                if let Some(transaction_status_sender) = transaction_status_sender {
-                    transaction_status_sender.send_transaction_status_freeze_message(bank);
-                }
-                bank.freeze();
-                datapoint_info!(
-                    "bank_frozen",
-                    ("slot", bank_slot, i64),
-                    ("hash", bank.hash().to_string(), String),
-                );
-                // report cost tracker stats
-                cost_update_sender
-                    .send(CostUpdate::FrozenBank {
-                        bank: bank.clone_without_scheduler(),
-                    })
-                    .unwrap_or_else(|err| {
-                        warn!("cost_update_sender failed sending bank stats: {:?}", err)
-                    });
-
-                assert_ne!(bank.hash(), Hash::default());
-                if let Some(sender) = bank_notification_sender {
-                    sender
-                        .sender
-                        .send(BankNotification::Frozen(bank.clone_without_scheduler()))
-                        .unwrap_or_else(|err| warn!("bank_notification_sender failed: {:?}", err));
-                }
-
-                Self::record_rewards(bank, rewards_recorder_sender);
-
-                let r_replay_progress = r_replay_progress.progress.read().unwrap();
-                if let Some(ref block_metadata_notifier) = block_metadata_notifier {
-                    let parent_blockhash = bank
-                        .parent()
-                        .map(|bank| bank.last_blockhash())
-                        .unwrap_or_default();
-                    block_metadata_notifier.notify_block_metadata(
-                        bank.parent_slot(),
-                        &parent_blockhash.to_string(),
+                    let r_replay_stats = r_replay_progress.stats.read().unwrap();
+                    debug!(
+                        "bank {} has completed replay from blockstore, contribute to update cost with \
+                        {:?}",
                         bank.slot(),
-                        &bank.last_blockhash().to_string(),
-                        &bank.get_rewards_and_num_partitions(),
-                        Some(bank.clock().unix_timestamp),
-                        Some(bank.block_height()),
-                        bank.executed_transaction_count(),
-                        r_replay_progress.num_entries as u64,
-                    )
-                }
-                bank_complete_time.stop();
+                        r_replay_stats.batch_execute.totals
+                    );
+                    did_complete_bank = true;
+                    if let Some(transaction_status_sender) = transaction_status_sender {
+                        transaction_status_sender.send_transaction_status_freeze_message(bank);
+                    }
+                    bank.freeze();
+                    datapoint_info!(
+                        "bank_frozen",
+                        ("slot", bank_slot, i64),
+                        ("hash", bank.hash().to_string(), String),
+                    );
+                    // report cost tracker stats
+                    cost_update_sender
+                        .send(CostUpdate::FrozenBank {
+                            bank: bank.clone_without_scheduler(),
+                        })
+                        .unwrap_or_else(|err| {
+                            warn!("cost_update_sender failed sending bank stats: {:?}", err)
+                        });
 
-                r_replay_stats.report_stats(
-                    bank.slot(),
-                    r_replay_progress.num_txs,
-                    r_replay_progress.num_entries,
-                    r_replay_progress.num_shreds,
-                    bank_complete_time.as_us(),
-                    is_unified_scheduler_enabled,
-                );
-                execute_timings.accumulate(&r_replay_stats.batch_execute.totals);
+                    assert_ne!(bank.hash(), Hash::default());
+                    if let Some(sender) = bank_notification_sender {
+                        sender
+                            .sender
+                            .send(BankNotification::Frozen(bank.clone_without_scheduler()))
+                            .unwrap_or_else(|err| {
+                                warn!("bank_notification_sender failed: {:?}", err)
+                            });
+                    }
+
+                    Self::record_rewards(bank, rewards_recorder_sender);
+
+                    let r_replay_progress = r_replay_progress.progress.read().unwrap();
+                    if let Some(ref block_metadata_notifier) = block_metadata_notifier {
+                        let parent_blockhash = bank
+                            .parent()
+                            .map(|bank| bank.last_blockhash())
+                            .unwrap_or_default();
+                        block_metadata_notifier.notify_block_metadata(
+                            bank.parent_slot(),
+                            &parent_blockhash.to_string(),
+                            bank.slot(),
+                            &bank.last_blockhash().to_string(),
+                            &bank.get_rewards_and_num_partitions(),
+                            Some(bank.clock().unix_timestamp),
+                            Some(bank.block_height()),
+                            bank.executed_transaction_count(),
+                            r_replay_progress.num_entries as u64,
+                        )
+                    }
+                    bank_complete_time.stop();
+
+                    r_replay_stats.report_stats(
+                        bank.slot(),
+                        r_replay_progress.num_txs,
+                        r_replay_progress.num_entries,
+                        r_replay_progress.num_shreds,
+                        bank_complete_time.as_us(),
+                        is_unified_scheduler_enabled,
+                    );
+                    execute_timings.accumulate(&r_replay_stats.batch_execute.totals);
+                } else {
+                    trace!(
+                        "bank {} not completed tick_height: {}, max_tick_height: {}",
+                        bank.slot(),
+                        bank.tick_height(),
+                        bank.max_tick_height()
+                    );
+                }
             } else {
-                trace!(
-                    "bank {} not completed tick_height: {}, max_tick_height: {}",
-                    bank.slot(),
-                    bank.tick_height(),
-                    bank.max_tick_height()
-                );
+                warn!("Bank {} not found in bank_forks", bank_slot);
             }
         }
 
