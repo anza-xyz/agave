@@ -424,7 +424,7 @@ fn create_cache_warmer_if_needed(
         .then(|| connection_cache.unwrap().clone());
     let vote_connection_cache = vote_connection_cache
         .use_quic()
-        .then(|| vote_connection_cache);
+        .then_some(vote_connection_cache);
 
     (tpu_connection_cache.is_some() || vote_connection_cache.is_some()).then(|| {
         WarmQuicCacheService::new(
