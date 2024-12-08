@@ -214,6 +214,7 @@ members = [
     "upload-perf",
     "validator",
     "version",
+    "vortexor",
     "vote",
     "watchtower",
     "wen-restart",
