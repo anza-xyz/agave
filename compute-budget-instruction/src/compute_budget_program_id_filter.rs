@@ -1,7 +1,7 @@
 // static account keys has max
 use {
-    agave_transaction_view::static_account_keys_frame::MAX_STATIC_ACCOUNTS_PER_PACKET as FILTER_SIZE,
-    solana_builtins_default_costs::MAYBE_BUILTIN_KEY, solana_sdk::pubkey::Pubkey,
+    crate::builtin_programs_filter::FILTER_SIZE, solana_builtins_default_costs::MAYBE_BUILTIN_KEY,
+    solana_sdk::pubkey::Pubkey,
 };
 
 pub(crate) struct ComputeBudgetProgramIdFilter {

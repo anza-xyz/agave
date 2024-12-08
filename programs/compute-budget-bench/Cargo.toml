@@ -11,8 +11,8 @@ edition = { workspace = true }
 [dependencies]
 criterion = { workspace = true }
 solana-compute-budget = { workspace = true }
+solana-compute-budget-instruction = { workspace = true }
 solana-compute-budget-program = { workspace = true }
-solana-runtime-transaction = { workspace = true }
 solana-sdk = { workspace = true }
 solana-svm-transaction = { workspace = true }
 
