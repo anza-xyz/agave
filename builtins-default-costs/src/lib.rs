@@ -14,27 +14,27 @@ use {
 };
 
 /// DEVELOPER: when a builtin is migrated to sbpf, please add its corresponding
-/// migration feature ID to BUILTIN_INSTRUCTION_COSTS, so the builtin's default
-/// cost can be determined properly based on feature status.
+/// migration feature ID to BUILTIN_INSTRUCTION_COSTS, and move it from
+/// NON_MIGRATING_BUILTINS_COSTS to MIGRATING_BUILTINS_COSTS, so the builtin's
+/// default cost can be determined properly based on feature status.
 /// When migration completed, eg the feature gate is enabled everywhere, please
-/// remove that builtin entry from BUILTIN_INSTRUCTION_COSTS.
+/// remove that builtin entry from MIGRATING_BUILTINS_COSTS.
 #[derive(Clone)]
-struct BuiltinCost {
+pub struct BuiltinCost {
     native_cost: u64,
     core_bpf_migration_feature: Option<Pubkey>,
 }
 
-lazy_static! {
-    /// Number of compute units for each built-in programs
-    ///
-    /// DEVELOPER WARNING: This map CANNOT be modified without causing a
-    /// consensus failure because this map is used to calculate the compute
-    /// limit for transactions that don't specify a compute limit themselves as
-    /// of https://github.com/anza-xyz/agave/issues/2212.  It's also used to
-    /// calculate the cost of a transaction which is used in replay to enforce
-    /// block cost limits as of
-    /// https://github.com/solana-labs/solana/issues/29595.
-    static ref BUILTIN_INSTRUCTION_COSTS: AHashMap<Pubkey, BuiltinCost> = [
+/// Number of compute units for each built-in programs
+///
+/// DEVELOPER WARNING: This map CANNOT be modified without causing a
+/// consensus failure because this map is used to calculate the compute
+/// limit for transactions that don't specify a compute limit themselves as
+/// of https://github.com/anza-xyz/agave/issues/2212.  It's also used to
+/// calculate the cost of a transaction which is used in replay to enforce
+/// block cost limits as of
+/// https://github.com/solana-labs/solana/issues/29595.
+pub const MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[
     (
         solana_stake_program::id(),
         BuiltinCost {
@@ -49,6 +49,18 @@ lazy_static! {
             core_bpf_migration_feature: Some(feature_set::migrate_config_program_to_core_bpf::id()),
         },
     ),
+    (
+        address_lookup_table::program::id(),
+        BuiltinCost {
+            native_cost: solana_address_lookup_table_program::processor::DEFAULT_COMPUTE_UNITS,
+            core_bpf_migration_feature: Some(
+                feature_set::migrate_address_lookup_table_program_to_core_bpf::id(),
+            ),
+        },
+    ),
+];
+
+pub const NON_MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[
     (
         solana_vote_program::id(),
         BuiltinCost {
@@ -68,15 +80,6 @@ lazy_static! {
         BuiltinCost {
             native_cost: solana_compute_budget_program::DEFAULT_COMPUTE_UNITS,
             core_bpf_migration_feature: None,
-        },
-    ),
-    (
-        address_lookup_table::program::id(),
-        BuiltinCost {
-            native_cost: solana_address_lookup_table_program::processor::DEFAULT_COMPUTE_UNITS,
-            core_bpf_migration_feature: Some(
-                feature_set::migrate_address_lookup_table_program_to_core_bpf::id(),
-            ),
         },
     ),
     (
@@ -122,11 +125,16 @@ lazy_static! {
             core_bpf_migration_feature: None,
         },
     ),
+];
+
+lazy_static! {
+    static ref BUILTIN_INSTRUCTION_COSTS: AHashMap<Pubkey, BuiltinCost> =
+        MIGRATING_BUILTINS_COSTS
+          .iter()
+          .chain(NON_MIGRATING_BUILTINS_COSTS.iter())
+          .cloned()
+          .collect();
     // DO NOT ADD MORE ENTRIES TO THIS MAP
-    ]
-    .iter()
-    .cloned()
-    .collect();
 }
 
 lazy_static! {
@@ -162,9 +170,32 @@ pub fn get_builtin_instruction_cost<'a>(
         .map(|builtin_cost| builtin_cost.native_cost)
 }
 
-#[inline]
-pub fn is_builtin_program(program_id: &Pubkey) -> bool {
-    BUILTIN_INSTRUCTION_COSTS.contains_key(program_id)
+lazy_static! {
+    /// A static list of builtin programs' migration feature IDs.
+    pub static ref MIGRATION_FEATURES_ID: Vec<Pubkey> = {
+        BUILTIN_INSTRUCTION_COSTS
+            .values()
+            .filter_map(|builtin_cost| builtin_cost.core_bpf_migration_feature)
+            .collect()
+    };
+}
+
+/// Given a program pubkey, returns:
+/// - None, if it is not in BUILTIN_INSTRUCTION_COSTS dictionary;
+/// - Some<None>, is builtin, but no associated migration feature ID;
+/// - Some<usize>, is builtin, and its associated migration feature ID
+///   index in MIGRATION_FEATURES_ID.
+pub fn get_builtin_migration_feature_index(program_id: &Pubkey) -> Option<Option<usize>> {
+    BUILTIN_INSTRUCTION_COSTS
+        .get(program_id)
+        .map(|builtin_cost| {
+            builtin_cost.core_bpf_migration_feature.map(|id| {
+                MIGRATION_FEATURES_ID
+                    .iter()
+                    .position(|&x| x == id)
+                    .expect("must be known migration feature ID")
+            })
+        })
 }
 
 #[cfg(test)]
@@ -199,6 +230,31 @@ mod test {
         assert!(
             get_builtin_instruction_cost(&Pubkey::new_unique(), &FeatureSet::all_enabled())
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn test_get_builtin_migration_feature_index() {
+        assert!(get_builtin_migration_feature_index(&Pubkey::new_unique()).is_none());
+        assert_eq!(
+            get_builtin_migration_feature_index(&compute_budget::id()),
+            Some(None)
+        );
+        let feature_index = get_builtin_migration_feature_index(&solana_stake_program::id());
+        assert_eq!(
+            MIGRATION_FEATURES_ID[feature_index.unwrap().unwrap()],
+            feature_set::migrate_stake_program_to_core_bpf::id()
+        );
+        let feature_index = get_builtin_migration_feature_index(&solana_config_program::id());
+        assert_eq!(
+            MIGRATION_FEATURES_ID[feature_index.unwrap().unwrap()],
+            feature_set::migrate_config_program_to_core_bpf::id()
+        );
+        let feature_index =
+            get_builtin_migration_feature_index(&address_lookup_table::program::id());
+        assert_eq!(
+            MIGRATION_FEATURES_ID[feature_index.unwrap().unwrap()],
+            feature_set::migrate_address_lookup_table_program_to_core_bpf::id()
         );
     }
 }
