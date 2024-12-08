@@ -817,7 +817,7 @@ mod tests {
     fn all_features_except(exclude: Option<&[Pubkey]>) -> FeatureSet {
         let mut features = FeatureSet::all_enabled();
         if let Some(exclude) = exclude {
-            features.active.retain(|k, _v| !exclude.contains(k));
+            features.active.retain(|k, _v| !exclude.contains(&k.0));
         }
         features
     }

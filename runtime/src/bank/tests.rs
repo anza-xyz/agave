@@ -1644,11 +1644,11 @@ fn test_rent_eager_collect_rent_in_partition(should_collect_rent: bool) {
     solana_logger::setup();
     let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
     for feature_id in FeatureSet::default().inactive {
-        if feature_id != solana_feature_set::skip_rent_rewrites::id()
+        if feature_id.0 != solana_feature_set::skip_rent_rewrites::id()
             && (!should_collect_rent
-                || feature_id != solana_feature_set::disable_rent_fees_collection::id())
+                || feature_id.0 != solana_feature_set::disable_rent_fees_collection::id())
         {
-            activate_feature(&mut genesis_config, feature_id);
+            activate_feature(&mut genesis_config, feature_id.0);
         }
     }
 
@@ -3958,7 +3958,7 @@ fn test_bank_update_sysvar_account() {
 
         // First, initialize the clock sysvar
         for feature_id in FeatureSet::default().inactive {
-            activate_feature(&mut genesis_config, feature_id);
+            activate_feature(&mut genesis_config, feature_id.0);
         }
         let bank1 = Arc::new(Bank::new_for_tests(&genesis_config));
         if pass == 0 {
@@ -7931,7 +7931,7 @@ fn test_compute_active_feature_set() {
         .parse::<Pubkey>()
         .unwrap();
     let mut feature_set = FeatureSet::default();
-    feature_set.inactive.insert(test_feature);
+    feature_set.inactive.insert(FeatureId(test_feature));
     bank.feature_set = Arc::new(feature_set.clone());
 
     let (feature_set, new_activations) = bank.compute_active_feature_set(true);

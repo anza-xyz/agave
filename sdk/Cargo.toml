@@ -56,7 +56,7 @@ borsh = [
     "dep:borsh",
     "solana-compute-budget-interface/borsh",
     "solana-program/borsh",
-    "solana-secp256k1-recover/borsh",
+    "solana-secp256k1-recover/borsh"
 ]
 dev-context-only-utils = [
     "qualifier_attr",
@@ -122,9 +122,7 @@ solana-client-traits = { workspace = true, optional = true }
 solana-cluster-type = { workspace = true, features = [
     "serde",
 ], optional = true }
-solana-commitment-config = { workspace = true, optional = true, features = [
-    "serde",
-] }
+solana-commitment-config = { workspace = true, optional = true, features = ["serde"] }
 solana-compute-budget-interface = { workspace = true, optional = true, features = [
     "serde",
 ] }
@@ -142,9 +140,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 ] }
 solana-inflation = { workspace = true, features = ["serde"] }
 solana-instruction = { workspace = true }
-solana-keypair = { workspace = true, optional = true, features = [
-    "seed-derivable",
-] }
+solana-keypair = { workspace = true, optional = true, features = ["seed-derivable"] }
 solana-native-token = { workspace = true }
 solana-packet = { workspace = true, features = ["bincode", "serde"] }
 solana-poh-config = { workspace = true, features = ["serde"] }
@@ -153,9 +149,7 @@ solana-precompiles = { workspace = true, optional = true }
 solana-presigner = { workspace = true, optional = true }
 solana-program = { workspace = true }
 solana-program-memory = { workspace = true }
-solana-pubkey = { workspace = true, default-features = false, features = [
-    "std",
-] }
+solana-pubkey = { workspace = true, default-features = false, features = ["std"] }
 solana-quic-definitions = { workspace = true, optional = true }
 solana-rent-debits = { workspace = true }
 solana-reserved-account-keys = { workspace = true }
@@ -163,9 +157,7 @@ solana-reward-info = { workspace = true, features = ["serde"] }
 solana-sanitize = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-sdk-macro = { workspace = true }
-solana-secp256k1-program = { workspace = true, optional = true, features = [
-    "bincode",
-] }
+solana-secp256k1-program = { workspace = true, optional = true, features = ["bincode"] }
 solana-secp256k1-recover = { workspace = true }
 solana-secp256r1-program = { workspace = true, default-features = false }
 solana-seed-derivable = { workspace = true, optional = true }

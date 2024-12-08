@@ -60,7 +60,7 @@ use {
         verify_precompiles::verify_precompiles,
     },
     accounts_lt_hash::{CacheValue as AccountsLtHashCacheValue, Stats as AccountsLtHashStats},
-    ahash::{AHashMap, AHashSet},
+    ahash::AHashMap,
     byteorder::{ByteOrder, LittleEndian},
     dashmap::{DashMap, DashSet},
     log::*,
@@ -99,7 +99,7 @@ use {
     solana_cost_model::cost_tracker::CostTracker,
     solana_feature_set::{
         self as feature_set, remove_rounding_in_fee_calculation, reward_full_priority_fee,
-        FeatureSet,
+        FeatureId, FeatureIdRandomState, FeatureSet,
     },
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{meas_dur, measure::Measure, measure_time, measure_us},
@@ -6759,15 +6759,15 @@ impl Bank {
 
     pub fn deactivate_feature(&mut self, id: &Pubkey) {
         let mut feature_set = Arc::make_mut(&mut self.feature_set).clone();
-        feature_set.active.remove(id);
-        feature_set.inactive.insert(*id);
+        feature_set.active.remove(&FeatureId(*id));
+        feature_set.inactive.insert(FeatureId(*id));
         self.feature_set = Arc::new(feature_set);
     }
 
     pub fn activate_feature(&mut self, id: &Pubkey) {
         let mut feature_set = Arc::make_mut(&mut self.feature_set).clone();
-        feature_set.inactive.remove(id);
-        feature_set.active.insert(*id, 0);
+        feature_set.inactive.remove(&FeatureId(*id));
+        feature_set.active.insert(FeatureId(*id), 0);
         self.feature_set = Arc::new(feature_set);
     }
 
@@ -6937,20 +6937,20 @@ impl Bank {
 
     /// Compute the active feature set based on the current bank state,
     /// and return it together with the set of newly activated features.
-    fn compute_active_feature_set(&self, include_pending: bool) -> (FeatureSet, AHashSet<Pubkey>) {
+    fn compute_active_feature_set(&self, include_pending: bool) -> (FeatureSet, HashSet<Pubkey>) {
         let mut active = self.feature_set.active.clone();
-        let mut inactive = AHashSet::new();
-        let mut pending = AHashSet::new();
+        let mut inactive = HashSet::with_hasher(FeatureIdRandomState);
+        let mut pending = HashSet::new();
         let slot = self.slot();
 
         for feature_id in &self.feature_set.inactive {
             let mut activated = None;
-            if let Some(account) = self.get_account_with_fixed_root(feature_id) {
+            if let Some(account) = self.get_account_with_fixed_root(&feature_id.0) {
                 if let Some(feature) = feature::from_account(&account) {
                     match feature.activated_at {
                         None if include_pending => {
                             // Feature activation is pending
-                            pending.insert(*feature_id);
+                            pending.insert(feature_id.0);
                             activated = Some(slot);
                         }
                         Some(activation_slot) if slot >= activation_slot => {
@@ -6974,7 +6974,7 @@ impl Bank {
     fn apply_builtin_program_feature_transitions(
         &mut self,
         only_apply_transitions_for_new_features: bool,
-        new_feature_activations: &AHashSet<Pubkey>,
+        new_feature_activations: &HashSet<Pubkey>,
     ) {
         for builtin in BUILTINS.iter() {
             // The `builtin_is_bpf` flag is used to handle the case where a

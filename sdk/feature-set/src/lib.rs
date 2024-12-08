@@ -20,12 +20,12 @@
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 
 use {
-    ahash::{AHashMap, AHashSet},
     lazy_static::lazy_static,
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_sha256_hasher::Hasher,
+    std::collections::{HashMap, HashSet},
 };
 
 pub mod deprecate_rewards_sysvar {
@@ -898,7 +898,7 @@ pub mod reserve_minimal_cus_for_builtin_instructions {
 
 lazy_static! {
     /// Map of feature identifiers to user-visible description
-    pub static ref FEATURE_NAMES: AHashMap<Pubkey, &'static str> = [
+    pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
         (deprecate_rewards_sysvar::id(), "deprecate unused rewards sysvar"),
         (pico_inflation::id(), "pico inflation"),
@@ -1133,6 +1133,44 @@ lazy_static! {
     };
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FeatureId(pub Pubkey);
+
+impl std::hash::Hash for FeatureId {
+    #[inline]
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u64(
+            <[u8; 8]>::try_from(&self.0.as_ref()[..8])
+                .map(u64::from_le_bytes)
+                .unwrap(),
+        );
+    }
+}
+
+pub struct FeatureIdHasher(u64);
+
+impl std::hash::Hasher for FeatureIdHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, _: &[u8]) {
+        unimplemented!();
+    }
+    fn write_u64(&mut self, val: u64) {
+        self.0 = val;
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct FeatureIdRandomState;
+
+impl std::hash::BuildHasher for FeatureIdRandomState {
+    type Hasher = FeatureIdHasher;
+    fn build_hasher(&self) -> Self::Hasher {
+        FeatureIdHasher(0)
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct FullInflationFeaturePair {
     pub vote_id: Pubkey, // Feature that grants the candidate the ability to enable full inflation
@@ -1141,7 +1179,7 @@ pub struct FullInflationFeaturePair {
 
 lazy_static! {
     /// Set of feature pairs that once enabled will trigger full inflation
-    pub static ref FULL_INFLATION_FEATURE_PAIRS: AHashSet<FullInflationFeaturePair> = [
+    pub static ref FULL_INFLATION_FEATURE_PAIRS: HashSet<FullInflationFeaturePair> = [
         FullInflationFeaturePair {
             vote_id: full_inflation::mainnet::certusone::vote::id(),
             enable_id: full_inflation::mainnet::certusone::enable::id(),
@@ -1156,29 +1194,29 @@ lazy_static! {
 #[cfg_attr(feature = "frozen-abi", derive(solana_frozen_abi_macro::AbiExample))]
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct FeatureSet {
-    pub active: AHashMap<Pubkey, u64>,
-    pub inactive: AHashSet<Pubkey>,
+    pub active: HashMap<FeatureId, u64, FeatureIdRandomState>,
+    pub inactive: HashSet<FeatureId, FeatureIdRandomState>,
 }
 impl Default for FeatureSet {
     fn default() -> Self {
         // All features disabled
         Self {
-            active: AHashMap::new(),
-            inactive: FEATURE_NAMES.keys().cloned().collect(),
+            active: HashMap::with_hasher(FeatureIdRandomState),
+            inactive: FEATURE_NAMES.keys().cloned().map(FeatureId).collect(),
         }
     }
 }
 impl FeatureSet {
     pub fn is_active(&self, feature_id: &Pubkey) -> bool {
-        self.active.contains_key(feature_id)
+        self.active.contains_key(&FeatureId(*feature_id))
     }
 
     pub fn activated_slot(&self, feature_id: &Pubkey) -> Option<u64> {
-        self.active.get(feature_id).copied()
+        self.active.get(&FeatureId(*feature_id)).copied()
     }
 
     /// List of enabled features that trigger full inflation
-    pub fn full_inflation_features_enabled(&self) -> AHashSet<Pubkey> {
+    pub fn full_inflation_features_enabled(&self) -> HashSet<Pubkey> {
         let mut hash_set = FULL_INFLATION_FEATURE_PAIRS
             .iter()
             .filter_map(|pair| {
@@ -1188,7 +1226,7 @@ impl FeatureSet {
                     None
                 }
             })
-            .collect::<AHashSet<_>>();
+            .collect::<HashSet<_>>();
 
         if self.is_active(&full_inflation::devnet_and_testnet::id()) {
             hash_set.insert(full_inflation::devnet_and_testnet::id());
@@ -1199,21 +1237,25 @@ impl FeatureSet {
     /// All features enabled, useful for testing
     pub fn all_enabled() -> Self {
         Self {
-            active: FEATURE_NAMES.keys().cloned().map(|key| (key, 0)).collect(),
-            inactive: AHashSet::new(),
+            active: FEATURE_NAMES
+                .keys()
+                .cloned()
+                .map(|key| (FeatureId(key), 0))
+                .collect(),
+            inactive: HashSet::with_hasher(FeatureIdRandomState),
         }
     }
 
     /// Activate a feature
     pub fn activate(&mut self, feature_id: &Pubkey, slot: u64) {
-        self.inactive.remove(feature_id);
-        self.active.insert(*feature_id, slot);
+        self.inactive.remove(&FeatureId(*feature_id));
+        self.active.insert(FeatureId(*feature_id), slot);
     }
 
     /// Deactivate a feature
     pub fn deactivate(&mut self, feature_id: &Pubkey) {
-        self.active.remove(feature_id);
-        self.inactive.insert(*feature_id);
+        self.active.remove(&FeatureId(*feature_id));
+        self.inactive.insert(FeatureId(*feature_id));
     }
 
     pub fn new_warmup_cooldown_rate_epoch(&self, epoch_schedule: &EpochSchedule) -> Option<u64> {
@@ -1232,7 +1274,7 @@ mod test {
         assert!(feature_set.full_inflation_features_enabled().is_empty());
         feature_set
             .active
-            .insert(full_inflation::devnet_and_testnet::id(), 42);
+            .insert(FeatureId(full_inflation::devnet_and_testnet::id()), 42);
         assert_eq!(
             feature_set.full_inflation_features_enabled(),
             [full_inflation::devnet_and_testnet::id()]
@@ -1247,13 +1289,15 @@ mod test {
         // Normal sequence: vote_id then enable_id
         let mut feature_set = FeatureSet::default();
         assert!(feature_set.full_inflation_features_enabled().is_empty());
-        feature_set
-            .active
-            .insert(full_inflation::mainnet::certusone::vote::id(), 42);
+        feature_set.active.insert(
+            FeatureId(full_inflation::mainnet::certusone::vote::id()),
+            42,
+        );
         assert!(feature_set.full_inflation_features_enabled().is_empty());
-        feature_set
-            .active
-            .insert(full_inflation::mainnet::certusone::enable::id(), 42);
+        feature_set.active.insert(
+            FeatureId(full_inflation::mainnet::certusone::enable::id()),
+            42,
+        );
         assert_eq!(
             feature_set.full_inflation_features_enabled(),
             [full_inflation::mainnet::certusone::enable::id()]
@@ -1265,13 +1309,15 @@ mod test {
         // Backwards sequence: enable_id and then vote_id
         let mut feature_set = FeatureSet::default();
         assert!(feature_set.full_inflation_features_enabled().is_empty());
-        feature_set
-            .active
-            .insert(full_inflation::mainnet::certusone::enable::id(), 42);
+        feature_set.active.insert(
+            FeatureId(full_inflation::mainnet::certusone::enable::id()),
+            42,
+        );
         assert!(feature_set.full_inflation_features_enabled().is_empty());
-        feature_set
-            .active
-            .insert(full_inflation::mainnet::certusone::vote::id(), 42);
+        feature_set.active.insert(
+            FeatureId(full_inflation::mainnet::certusone::vote::id()),
+            42,
+        );
         assert_eq!(
             feature_set.full_inflation_features_enabled(),
             [full_inflation::mainnet::certusone::enable::id()]

@@ -46,7 +46,7 @@ use {
         commitment_config::CommitmentConfig,
         epoch_schedule::EpochSchedule,
         exit::Exit,
-        feature_set::FeatureSet,
+        feature_set::{FeatureId, FeatureSet},
         fee_calculator::FeeRateGovernor,
         instruction::{AccountMeta, Instruction},
         message::Message,
@@ -859,7 +859,7 @@ impl TestValidator {
         // Only activate features which are not explicitly deactivated.
         let mut feature_set = FeatureSet::default().inactive;
         for feature in &config.deactivate_feature_set {
-            if feature_set.remove(feature) {
+            if feature_set.remove(&FeatureId(*feature)) {
                 info!("Feature for {:?} deactivated", feature)
             } else {
                 warn!(
@@ -869,7 +869,7 @@ impl TestValidator {
             }
         }
         for feature in feature_set {
-            genesis_utils::activate_feature(&mut genesis_config, feature);
+            genesis_utils::activate_feature(&mut genesis_config, feature.0);
         }
 
         let ledger_path = match &config.ledger_path {
@@ -1233,12 +1233,12 @@ mod test {
         ]
         .into_iter()
         .for_each(|feature| {
-            control.remove(&feature);
+            control.remove(&FeatureId(feature));
             deactivate_features.push(feature);
         });
 
         // Convert to `Vec` so we can get a slice.
-        let control: Vec<Pubkey> = control.into_iter().collect();
+        let control: Vec<Pubkey> = control.into_iter().map(|feature| feature.0).collect();
 
         let (test_validator, _payer) = TestValidatorGenesis::default()
             .deactivate_features(&deactivate_features)
