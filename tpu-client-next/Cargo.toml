@@ -14,12 +14,15 @@ log = { workspace = true }
 lru = { workspace = true }
 quinn = { workspace = true }
 rustls = { workspace = true }
+solana-clock = { workspace = true }
 solana-connection-cache = { workspace = true }
+solana-keypair = { workspace = true }
 solana-logger = { workspace = true }
 solana-measure = { workspace = true }
+solana-quic-definitions = { workspace = true }
 solana-rpc-client = { workspace = true }
-solana-sdk = { workspace = true }
 solana-streamer = { workspace = true }
+solana-time-utils = { workspace = true }
 solana-tls-utils = { workspace = true }
 solana-tpu-client = { workspace = true }
 thiserror = { workspace = true }
@@ -30,6 +33,9 @@ tokio-util = { workspace = true }
 crossbeam-channel = { workspace = true }
 futures = { workspace = true }
 solana-cli-config = { workspace = true }
+solana-commitment-config = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-signer = { workspace = true }
 solana-streamer = { workspace = true, features = ["dev-context-only-utils"] }
 
 [package.metadata.docs.rs]
