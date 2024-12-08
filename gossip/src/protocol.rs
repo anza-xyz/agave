@@ -3,21 +3,23 @@ use {
         cluster_info_metrics::GossipStats,
         crds_data::MAX_WALLCLOCK,
         crds_gossip_pull::CrdsFilter,
-        crds_value::CrdsValue,
+        crds_value::{convert_fixed_bytes, CrdsValue},
         ping_pong::{self, Pong},
     },
-    bincode::serialize,
+    bincode::{serialize, Options},
     rayon::prelude::*,
-    serde::Serialize,
+    serde::{de::DeserializeOwned, Serialize},
     solana_perf::packet::PACKET_DATA_SIZE,
     solana_sanitize::{Sanitize, SanitizeError},
     solana_sdk::{
-        pubkey::Pubkey,
+        packet::Encode,
+        pubkey::{Pubkey, PUBKEY_BYTES},
         signature::{Signable, Signature},
     },
     std::{
         borrow::{Borrow, Cow},
         fmt::Debug,
+        io::{Cursor, Write},
         result::Result,
     },
 };
@@ -43,12 +45,7 @@ const GOSSIP_PING_TOKEN_SIZE: usize = 32;
 pub(crate) const PULL_RESPONSE_MIN_SERIALIZED_SIZE: usize = 161;
 
 // TODO These messages should go through the gpu pipeline for spam filtering
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "CBR9G92mpd1WSXEmiH6dAKHziLjJky9aYWPw6S5WmJkG")
-)]
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum Protocol {
     /// Gossip protocol messages
@@ -81,13 +78,110 @@ pub(crate) struct PruneData {
 }
 
 impl Protocol {
+    // Implement bincode::serialize_into for Protocol.
+    pub(crate) fn bincode_serialize<W: Write>(&self, writer: &mut W) -> Result<(), bincode::Error> {
+        match self {
+            Self::PullRequest(filter, caller) => {
+                writer.write_all(&0u32.to_le_bytes())?;
+                bincode::serialize_into(&mut *writer, filter)?;
+                Ok(caller.bincode_serialize(writer)?)
+            }
+            Self::PullResponse(pubkey, values) => {
+                writer.write_all(&1u32.to_le_bytes())?;
+                writer.write_all(pubkey.as_ref())?;
+                Ok(CrdsValue::bincode_serialize_many(values, writer)?)
+            }
+            Self::PushMessage(pubkey, values) => {
+                writer.write_all(&2u32.to_le_bytes())?;
+                writer.write_all(pubkey.as_ref())?;
+                Ok(CrdsValue::bincode_serialize_many(values, writer)?)
+            }
+            Self::PruneMessage(pubkey, prune_data) => {
+                writer.write_all(&3u32.to_le_bytes())?;
+                writer.write_all(pubkey.as_ref())?;
+                bincode::serialize_into(writer, prune_data)
+            }
+            Self::PingMessage(ping) => {
+                writer.write_all(&4u32.to_le_bytes())?;
+                bincode::serialize_into(writer, ping)
+            }
+            Self::PongMessage(pong) => {
+                writer.write_all(&5u32.to_le_bytes())?;
+                bincode::serialize_into(writer, pong)
+            }
+        }
+    }
+
+    // Implement bincode::deserialize_from for Protocol.
+    pub(crate) fn bincode_deserialize(bytes: &[u8]) -> Result<Self, bincode::Error> {
+        fn bincode_deserialize<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, bincode::Error> {
+            bincode::options()
+                .with_limit(bytes.len() as u64)
+                .with_fixint_encoding()
+                .reject_trailing_bytes()
+                .deserialize(bytes)
+        }
+        // bincode::serialize{,_into} serializes enum tag as a u32 (4 bytes)
+        // with fixint encoding in little endian.
+        let (tag, bytes) = convert_fixed_bytes::<[u8; 4], 4>(bytes)?;
+        let tag = u32::from_le_bytes(tag);
+        match tag {
+            // PullRequest(CrdsFilter, CrdsValue)
+            0u32 => {
+                let mut cursor = Cursor::new(bytes);
+                let filter: CrdsFilter = bincode::options()
+                    .with_limit(bytes.len() as u64)
+                    .with_fixint_encoding()
+                    .allow_trailing_bytes()
+                    .deserialize_from(&mut cursor)?;
+                let offset = usize::try_from(cursor.position()).map_err(|err| {
+                    let err = format!("{err:?}, cursor: {}", cursor.position());
+                    bincode::ErrorKind::Custom(err)
+                })?;
+                let bytes = bytes.get(offset..).ok_or_else(|| {
+                    let err = format!("Invalid offset: {offset}, bytes.len(): {}", bytes.len());
+                    bincode::ErrorKind::Custom(err)
+                })?;
+                CrdsValue::bincode_deserialize(bytes, /*allow_trailing_bytes:*/ false)
+                    .map(|caller| Self::PullRequest(filter, caller))
+            }
+            // PullResponse(Pubkey, Vec<CrdsValue>)
+            1 => {
+                let (pubkey, bytes) = convert_fixed_bytes::<Pubkey, PUBKEY_BYTES>(bytes)?;
+                CrdsValue::bincode_deserialize_many(bytes)
+                    .collect::<Result<_, _>>()
+                    .map(|values| Self::PullResponse(pubkey, values))
+            }
+            // PushMessage(Pubkey, Vec<CrdsValue>)
+            2 => {
+                let (pubkey, bytes) = convert_fixed_bytes::<Pubkey, PUBKEY_BYTES>(bytes)?;
+                CrdsValue::bincode_deserialize_many(bytes)
+                    .collect::<Result<_, _>>()
+                    .map(|values| Self::PushMessage(pubkey, values))
+            }
+            // PruneMessage(Pubkey, PruneData)
+            3 => {
+                let (pubkey, bytes) = convert_fixed_bytes::<Pubkey, PUBKEY_BYTES>(bytes)?;
+                bincode_deserialize(bytes).map(|prune_data| Self::PruneMessage(pubkey, prune_data))
+            }
+            // PingMessage(Ping)
+            4 => bincode_deserialize(bytes).map(Self::PingMessage),
+            // PongMessage(Pong)
+            5 => bincode_deserialize(bytes).map(Self::PongMessage),
+            // Invalid enum tag.
+            _ => Err(bincode::Error::from(
+                bincode::ErrorKind::InvalidTagEncoding(tag as usize),
+            )),
+        }
+    }
+
     /// Returns the bincode serialized size (in bytes) of the Protocol.
     #[cfg(test)]
     fn bincode_serialized_size(&self) -> usize {
-        bincode::serialized_size(self)
-            .map(usize::try_from)
-            .unwrap()
-            .unwrap()
+        // Pretty inefficient implementation but this method is #[cfg(test)].
+        let mut buffer = Vec::<u8>::new();
+        self.bincode_serialize(&mut buffer).unwrap();
+        buffer.len()
     }
 
     pub(crate) fn par_verify(self, stats: &GossipStats) -> Option<Self> {
@@ -260,19 +354,27 @@ impl Signable for PruneData {
     }
 }
 
+impl Encode for Protocol {
+    fn encode<W: Write>(&self, mut writer: W) -> Result<(), bincode::Error> {
+        Protocol::bincode_serialize(self, &mut writer)
+    }
+}
+
+impl Encode for &Protocol {
+    fn encode<W: Write>(&self, mut writer: W) -> Result<(), bincode::Error> {
+        Protocol::bincode_serialize(self, &mut writer)
+    }
+}
+
 /// Splits an input feed of serializable data into chunks where the sum of
 /// serialized size of values within each chunk is no larger than
 /// max_chunk_size.
 /// Note: some messages cannot be contained within that size so in the worst case this returns
 /// N nested Vecs with 1 item each.
-pub(crate) fn split_gossip_messages<I, T>(
+pub(crate) fn split_gossip_messages(
     max_chunk_size: usize,
-    data_feed: I,
-) -> impl Iterator<Item = Vec<T>>
-where
-    T: Serialize + Debug,
-    I: IntoIterator<Item = T>,
-{
+    data_feed: impl IntoIterator<Item = CrdsValue>,
+) -> impl Iterator<Item = Vec<CrdsValue>> {
     let mut data_feed = data_feed.into_iter().fuse();
     let mut buffer = vec![];
     let mut buffer_size = 0; // Serialized size of buffered values.
@@ -286,13 +388,7 @@ where
                 };
             }
             Some(data) => {
-                let data_size = match bincode::serialized_size(&data) {
-                    Ok(size) => size as usize,
-                    Err(err) => {
-                        error!("serialized_size failed: {}", err);
-                        continue;
-                    }
-                };
+                let data_size = data.bincode_serialized_size();
                 if buffer_size + data_size <= max_chunk_size {
                     buffer_size += data_size;
                     buffer.push(data);
