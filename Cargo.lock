@@ -324,12 +324,14 @@ dependencies = [
  "solana-clap-utils",
  "solana-cli-config",
  "solana-cli-output",
+ "solana-hash",
  "solana-logger",
  "solana-metrics",
+ "solana-native-token",
  "solana-notifier",
+ "solana-pubkey",
  "solana-rpc-client",
  "solana-rpc-client-api",
- "solana-sdk",
  "solana-version",
 ]
 
