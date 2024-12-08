@@ -10,7 +10,6 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
-agave-transaction-view = { workspace = true }
 log = { workspace = true }
 solana-builtins-default-costs = { workspace = true }
 solana-compute-budget = { workspace = true }

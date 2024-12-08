@@ -5366,7 +5366,6 @@ dependencies = [
 name = "solana-compute-budget-instruction"
 version = "2.2.0"
 dependencies = [
- "agave-transaction-view",
  "log",
  "solana-builtins-default-costs",
  "solana-compute-budget",

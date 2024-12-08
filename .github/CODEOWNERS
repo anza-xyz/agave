@@ -15,4 +15,3 @@
 /svm-transaction/ @anza-xyz/svm
 /svm/ @anza-xyz/svm
 /svm/examples/Cargo.lock
-/transaction-view/ @anza-xyz/svm

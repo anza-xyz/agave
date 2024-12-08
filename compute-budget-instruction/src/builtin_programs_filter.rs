@@ -1,8 +1,10 @@
 use {
-    agave_transaction_view::static_account_keys_frame::MAX_STATIC_ACCOUNTS_PER_PACKET as FILTER_SIZE,
     solana_builtins_default_costs::{is_builtin_program, MAYBE_BUILTIN_KEY},
-    solana_sdk::pubkey::Pubkey,
+    solana_sdk::{packet::PACKET_DATA_SIZE, pubkey::Pubkey},
 };
+
+// The maximum number of pubkeys that a packet can contain.
+pub const FILTER_SIZE: u8 = (PACKET_DATA_SIZE / core::mem::size_of::<Pubkey>()) as u8;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum ProgramKind {
