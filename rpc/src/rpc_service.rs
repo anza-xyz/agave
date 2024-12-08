@@ -391,7 +391,11 @@ impl JsonRpcService {
             tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(rpc_threads)
                 .on_thread_start(move || renice_this_thread(rpc_niceness_adj).unwrap())
-                .thread_name("solRpcEl")
+                .thread_name_fn(|| {
+                    static ATOMIC_ID: AtomicU64 = AtomicU64::new(0);
+                    let id = ATOMIC_ID.fetch_add(1, Ordering::Relaxed);
+                    format!("solRpcElWork{id:02}")
+                })
                 .enable_all()
                 .build()
                 .expect("Runtime"),
