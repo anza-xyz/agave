@@ -35,14 +35,14 @@ pub(crate) enum TransactionState<Tx> {
     /// The transaction is available for scheduling.
     Unprocessed {
         transaction_ttl: SanitizedTransactionTTL<Tx>,
-        packet: Arc<ImmutableDeserializedPacket>,
+        packet: Option<Arc<ImmutableDeserializedPacket>>,
         priority: u64,
         cost: u64,
         should_forward: bool,
     },
     /// The transaction is currently scheduled or being processed.
     Pending {
-        packet: Arc<ImmutableDeserializedPacket>,
+        packet: Option<Arc<ImmutableDeserializedPacket>>,
         priority: u64,
         cost: u64,
         should_forward: bool,
@@ -55,12 +55,17 @@ impl<Tx> TransactionState<Tx> {
     /// Creates a new `TransactionState` in the `Unprocessed` state.
     pub(crate) fn new(
         transaction_ttl: SanitizedTransactionTTL<Tx>,
-        packet: Arc<ImmutableDeserializedPacket>,
+        packet: Option<Arc<ImmutableDeserializedPacket>>,
         priority: u64,
         cost: u64,
     ) -> Self {
-        let should_forward = !packet.original_packet().meta().forwarded()
-            && packet.original_packet().meta().is_from_staked_node();
+        let should_forward = !packet
+            .as_ref()
+            .map(|packet| {
+                packet.original_packet().meta().forwarded()
+                    && packet.original_packet().meta().is_from_staked_node()
+            })
+            .unwrap_or_default();
         Self::Unprocessed {
             transaction_ttl,
             packet,
@@ -116,10 +121,10 @@ impl<Tx> TransactionState<Tx> {
     }
 
     /// Return the packet of the transaction.
-    pub(crate) fn packet(&self) -> &Arc<ImmutableDeserializedPacket> {
+    pub(crate) fn packet(&self) -> Option<&Arc<ImmutableDeserializedPacket>> {
         match self {
-            Self::Unprocessed { packet, .. } => packet,
-            Self::Pending { packet, .. } => packet,
+            Self::Unprocessed { packet, .. } => packet.as_ref(),
+            Self::Pending { packet, .. } => packet.as_ref(),
             Self::Transitioning => unreachable!(),
         }
     }
@@ -248,7 +253,7 @@ mod tests {
         const TEST_TRANSACTION_COST: u64 = 5000;
         TransactionState::new(
             transaction_ttl,
-            packet,
+            Some(packet),
             compute_unit_price,
             TEST_TRANSACTION_COST,
         )

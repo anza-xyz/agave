@@ -237,6 +237,7 @@ version = "2.2.0"
 dependencies = [
  "agave-transaction-view",
  "bincode",
+ "bytes",
  "criterion",
  "solana-sdk",
  "solana-sdk-ids",
@@ -6684,6 +6685,7 @@ dependencies = [
 name = "solana-core"
 version = "2.2.0"
 dependencies = [
+ "agave-transaction-view",
  "ahash 0.8.11",
  "anyhow",
  "arrayvec",

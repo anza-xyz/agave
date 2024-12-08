@@ -358,6 +358,11 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
                             continue;
                         }
                     }
+                    // Transaction must be dropped before removing, since we
+                    // currently have ownership of the transaction, and
+                    // therefore may have a reference to the backing-memory
+                    // that the container expects to be free.
+                    drop(transaction);
                     container.remove_by_id(id);
                 }
 
@@ -697,7 +702,7 @@ mod tests {
             const TEST_TRANSACTION_COST: u64 = 5000;
             container.insert_new_transaction(
                 transaction_ttl,
-                packet,
+                Some(packet),
                 compute_unit_price,
                 TEST_TRANSACTION_COST,
             );

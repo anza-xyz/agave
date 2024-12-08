@@ -7,10 +7,14 @@ use {
         immutable_deserialized_packet::ImmutableDeserializedPacket,
         scheduler_messages::TransactionId,
     },
+    agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
     itertools::MinMaxResult,
     min_max_heap::MinMaxHeap,
     slab::Slab,
-    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
+    solana_runtime_transaction::{
+        runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
+    },
+    solana_sdk::packet::PACKET_DATA_SIZE,
     std::sync::Arc,
 };
 
@@ -65,23 +69,20 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
     /// Panics if the transaction does not exist.
     fn get_transaction_ttl(&self, id: TransactionId) -> Option<&SanitizedTransactionTTL<Tx>>;
 
-    /// Insert a new transaction into the container's queues and maps.
-    /// Returns `true` if a packet was dropped due to capacity limits.
-    fn insert_new_transaction(
-        &mut self,
-        transaction_ttl: SanitizedTransactionTTL<Tx>,
-        packet: Arc<ImmutableDeserializedPacket>,
-        priority: u64,
-        cost: u64,
-    ) -> bool;
-
     /// Retries a transaction - inserts transaction back into map (but not packet).
     /// This transitions the transaction to `Unprocessed` state.
     fn retry_transaction(
         &mut self,
         transaction_id: TransactionId,
         transaction_ttl: SanitizedTransactionTTL<Tx>,
-    );
+    ) {
+        let transaction_state = self
+            .get_mut_transaction_state(transaction_id)
+            .expect("transaction must exist");
+        let priority_id = TransactionPriorityId::new(transaction_state.priority(), transaction_id);
+        transaction_state.transition_to_unprocessed(transaction_ttl);
+        self.push_id_into_queue(priority_id);
+    }
 
     /// Pushes a transaction id into the priority queue. If the queue is full, the lowest priority
     /// transaction will be dropped (removed from the queue and map).
@@ -132,10 +133,32 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
             .map(|state| state.transaction_ttl())
     }
 
-    fn insert_new_transaction(
+    fn push_id_into_queue(&mut self, priority_id: TransactionPriorityId) -> bool {
+        self.push_id_into_queue_with_remaining_capacity(priority_id, self.remaining_capacity())
+    }
+
+    fn remove_by_id(&mut self, id: TransactionId) {
+        self.id_to_transaction_state.remove(id);
+    }
+
+    fn get_min_max_priority(&self) -> MinMaxResult<u64> {
+        match self.priority_queue.peek_min() {
+            Some(min) => match self.priority_queue.peek_max() {
+                Some(max) => MinMaxResult::MinMax(min.priority, max.priority),
+                None => MinMaxResult::OneElement(min.priority),
+            },
+            None => MinMaxResult::NoElements,
+        }
+    }
+}
+
+impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
+    /// Insert a new transaction into the container's queues and maps.
+    /// Returns `true` if a packet was dropped due to capacity limits.
+    pub(crate) fn insert_new_transaction(
         &mut self,
         transaction_ttl: SanitizedTransactionTTL<Tx>,
-        packet: Arc<ImmutableDeserializedPacket>,
+        packet: Option<Arc<ImmutableDeserializedPacket>>,
         priority: u64,
         cost: u64,
     ) -> bool {
@@ -157,39 +180,6 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
         self.push_id_into_queue_with_remaining_capacity(priority_id, remaining_capacity)
     }
 
-    fn retry_transaction(
-        &mut self,
-        transaction_id: TransactionId,
-        transaction_ttl: SanitizedTransactionTTL<Tx>,
-    ) {
-        let transaction_state = self
-            .get_mut_transaction_state(transaction_id)
-            .expect("transaction must exist");
-        let priority_id = TransactionPriorityId::new(transaction_state.priority(), transaction_id);
-        transaction_state.transition_to_unprocessed(transaction_ttl);
-        self.push_id_into_queue(priority_id);
-    }
-
-    fn push_id_into_queue(&mut self, priority_id: TransactionPriorityId) -> bool {
-        self.push_id_into_queue_with_remaining_capacity(priority_id, self.remaining_capacity())
-    }
-
-    fn remove_by_id(&mut self, id: TransactionId) {
-        self.id_to_transaction_state.remove(id);
-    }
-
-    fn get_min_max_priority(&self) -> MinMaxResult<u64> {
-        match self.priority_queue.peek_min() {
-            Some(min) => match self.priority_queue.peek_max() {
-                Some(max) => MinMaxResult::MinMax(min.priority, max.priority),
-                None => MinMaxResult::OneElement(min.priority),
-            },
-            None => MinMaxResult::NoElements,
-        }
-    }
-}
-
-impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
     fn push_id_into_queue_with_remaining_capacity(
         &mut self,
         priority_id: TransactionPriorityId,
@@ -203,6 +193,129 @@ impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
             self.priority_queue.push(priority_id);
             false
         }
+    }
+}
+
+pub type SharedBytes = Arc<Vec<u8>>;
+
+/// A wrapper around `TransactionStateContainer` that allows re-uses
+/// pre-allocated `Bytes` to copy packet data into and use for serialization.
+/// This is used to avoid allocations in parsing transactions.
+pub struct TransactionViewStateContainer {
+    inner: TransactionStateContainer<RuntimeTransaction<ResolvedTransactionView<SharedBytes>>>,
+    bytes_buffer: Box<[SharedBytes]>,
+}
+
+pub(crate) struct SuccessfulInsert {
+    pub state: TransactionState<RuntimeTransaction<ResolvedTransactionView<SharedBytes>>>,
+}
+
+impl TransactionViewStateContainer {
+    /// Returns true if packet was dropped due to capacity limits.
+    pub(crate) fn try_insert_with_data(
+        &mut self,
+        data: &[u8],
+        f: impl FnOnce(SharedBytes) -> Result<SuccessfulInsert, ()>,
+    ) -> bool {
+        if self.inner.id_to_transaction_state.len() == self.inner.id_to_transaction_state.capacity()
+        {
+            return true;
+        }
+        // Get remaining capacity before inserting.
+        let remaining_capacity = self.remaining_capacity();
+
+        // Get a vacant entry in the slab.
+        let vacant_entry = self.inner.id_to_transaction_state.vacant_entry();
+        let transaction_id = vacant_entry.key();
+
+        // Get the vacant space in the bytes buffer.
+        let bytes_entry = &mut self.bytes_buffer[transaction_id];
+        // Assert the entry is unique, then copy the packet data.
+        {
+            assert_eq!(Arc::strong_count(bytes_entry), 1, "entry must be unique");
+            let bytes = Arc::make_mut(bytes_entry);
+
+            // Clear and copy the packet data into the bytes buffer.
+            bytes.clear();
+            bytes.extend_from_slice(data);
+        }
+
+        // Attempt to insert the transaction, storing the frozen bytes back into bytes buffer.
+        match f(Arc::clone(bytes_entry)) {
+            Ok(SuccessfulInsert { state }) => {
+                let priority_id = TransactionPriorityId::new(state.priority(), transaction_id);
+                vacant_entry.insert(state);
+
+                // Push the transaction into the queue.
+                self.inner
+                    .push_id_into_queue_with_remaining_capacity(priority_id, remaining_capacity)
+            }
+            Err(_) => false,
+        }
+    }
+}
+
+impl StateContainer<RuntimeTransaction<ResolvedTransactionView<SharedBytes>>>
+    for TransactionViewStateContainer
+{
+    fn with_capacity(capacity: usize) -> Self {
+        let inner = TransactionStateContainer::with_capacity(capacity);
+        let bytes_buffer = (0..inner.id_to_transaction_state.capacity())
+            .map(|_| Arc::new(Vec::with_capacity(PACKET_DATA_SIZE)))
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        Self {
+            inner,
+            bytes_buffer,
+        }
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    #[inline]
+    fn remaining_capacity(&self) -> usize {
+        self.inner.remaining_capacity()
+    }
+
+    #[inline]
+    fn pop(&mut self) -> Option<TransactionPriorityId> {
+        self.inner.pop()
+    }
+
+    #[inline]
+    fn get_mut_transaction_state(
+        &mut self,
+        id: TransactionId,
+    ) -> Option<&mut TransactionState<RuntimeTransaction<ResolvedTransactionView<SharedBytes>>>>
+    {
+        self.inner.get_mut_transaction_state(id)
+    }
+
+    #[inline]
+    fn get_transaction_ttl(
+        &self,
+        id: TransactionId,
+    ) -> Option<&SanitizedTransactionTTL<RuntimeTransaction<ResolvedTransactionView<SharedBytes>>>>
+    {
+        self.inner.get_transaction_ttl(id)
+    }
+
+    #[inline]
+    fn push_id_into_queue(&mut self, priority_id: TransactionPriorityId) -> bool {
+        self.inner.push_id_into_queue(priority_id)
+    }
+
+    #[inline]
+    fn remove_by_id(&mut self, id: TransactionId) {
+        self.inner.remove_by_id(id);
+    }
+
+    #[inline]
+    fn get_min_max_priority(&self) -> MinMaxResult<u64> {
+        self.inner.get_min_max_priority()
     }
 }
 
@@ -268,7 +381,7 @@ mod tests {
     ) {
         for priority in 0..num as u64 {
             let (transaction_ttl, packet, priority, cost) = test_transaction(priority);
-            container.insert_new_transaction(transaction_ttl, packet, priority, cost);
+            container.insert_new_transaction(transaction_ttl, Some(packet), priority, cost);
         }
     }
 
