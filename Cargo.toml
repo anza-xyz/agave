@@ -132,6 +132,7 @@ members = [
     "sdk/gen-headers",
     "sdk/hash",
     "sdk/inflation",
+    "sdk/inner-instruction",
     "sdk/instruction",
     "sdk/keccak-hasher",
     "sdk/keypair",
@@ -489,6 +490,7 @@ solana-gossip = { path = "gossip", version = "=2.2.0" }
 solana-hash = { path = "sdk/hash", version = "=2.2.0", default-features = false }
 solana-inflation = { path = "sdk/inflation", version = "=2.2.0" }
 solana-inline-spl = { path = "inline-spl", version = "=2.2.0" }
+solana-inner-instruction = { path = "sdk/inner-instruction", version = "=2.2.0" }
 solana-instruction = { path = "sdk/instruction", version = "=2.2.0", default-features = false }
 solana-keccak-hasher = { path = "sdk/keccak-hasher", version = "=2.2.0" }
 solana-keypair = { path = "sdk/keypair", version = "=2.2.0" }

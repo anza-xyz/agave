@@ -1,10 +1,12 @@
-use {
-    crate::instruction::CompiledInstruction,
-    serde::{Deserialize, Serialize},
-};
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+use solana_message::compiled_instruction::CompiledInstruction;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde_derive::Deserialize, serde_derive::Serialize),
+    serde(rename_all = "camelCase")
+)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InnerInstruction {
     pub instruction: CompiledInstruction,
     /// Invocation stack height of this instruction. Instruction stack height

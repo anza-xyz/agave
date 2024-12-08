@@ -7275,6 +7275,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-inner-instruction"
+version = "2.2.0"
+dependencies = [
+ "serde",
+ "serde_derive",
+ "solana-message",
+]
+
+[[package]]
 name = "solana-instruction"
 version = "2.2.0"
 dependencies = [
@@ -8618,6 +8627,7 @@ dependencies = [
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-inflation",
+ "solana-inner-instruction",
  "solana-instruction",
  "solana-keypair",
  "solana-logger",

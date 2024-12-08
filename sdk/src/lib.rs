@@ -71,7 +71,6 @@ pub mod feature;
 pub mod genesis_config;
 pub mod hard_forks;
 pub mod hash;
-pub mod inner_instruction;
 pub mod log;
 pub mod native_loader;
 pub mod net;
@@ -130,6 +129,8 @@ pub use solana_feature_set as feature_set;
 pub use solana_fee_structure as fee;
 #[deprecated(since = "2.1.0", note = "Use `solana-inflation` crate instead")]
 pub use solana_inflation as inflation;
+#[deprecated(since = "2.2.0", note = "Use `solana-inner-instruction` crate instead")]
+pub use solana_inner_instruction as inner_instruction;
 #[deprecated(since = "2.1.0", note = "Use `solana-packet` crate instead")]
 pub use solana_packet as packet;
 #[deprecated(since = "2.2.0", note = "Use `solana-poh-config` crate instead")]
