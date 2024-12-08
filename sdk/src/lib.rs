@@ -76,7 +76,6 @@ pub mod log;
 pub mod native_loader;
 pub mod net;
 pub mod nonce_account;
-pub mod offchain_message;
 pub mod precompiles;
 pub mod program_utils;
 pub mod pubkey;
@@ -130,6 +129,9 @@ pub use solana_feature_set as feature_set;
 pub use solana_fee_structure as fee;
 #[deprecated(since = "2.1.0", note = "Use `solana-inflation` crate instead")]
 pub use solana_inflation as inflation;
+#[cfg(feature = "full")]
+#[deprecated(since = "2.2.0", note = "Use `solana-offchain-message` crate instead")]
+pub use solana_offchain_message as offchain_message;
 #[deprecated(since = "2.1.0", note = "Use `solana-packet` crate instead")]
 pub use solana_packet as packet;
 #[deprecated(since = "2.2.0", note = "Use `solana-poh-config` crate instead")]

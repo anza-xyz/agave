@@ -40,6 +40,7 @@ full = [
     "dep:solana-ed25519-program",
     "dep:solana-compute-budget-interface",
     "dep:solana-keypair",
+    "dep:solana-offchain-message",
     "dep:solana-precompile-error",
     "dep:solana-precompiles",
     "dep:solana-presigner",
@@ -104,7 +105,6 @@ log = { workspace = true }
 memmap2 = { workspace = true, optional = true }
 num-derive = { workspace = true }
 num-traits = { workspace = true }
-num_enum = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
 rand = { workspace = true, optional = true }
 rand0-7 = { workspace = true, optional = true }
@@ -146,6 +146,7 @@ solana-keypair = { workspace = true, optional = true, features = [
     "seed-derivable",
 ] }
 solana-native-token = { workspace = true }
+solana-offchain-message = { workspace = true, optional = true, features = ["verify"] }
 solana-packet = { workspace = true, features = ["bincode", "serde"] }
 solana-poh-config = { workspace = true, features = ["serde"] }
 solana-precompile-error = { workspace = true, optional = true }

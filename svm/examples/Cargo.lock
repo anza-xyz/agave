@@ -5890,6 +5890,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-offchain-message"
+version = "2.2.0"
+dependencies = [
+ "num_enum",
+ "solana-hash",
+ "solana-packet",
+ "solana-pubkey",
+ "solana-sanitize",
+ "solana-sha256-hasher",
+ "solana-signature",
+ "solana-signer",
+]
+
+[[package]]
 name = "solana-packet"
 version = "2.2.0"
 dependencies = [
@@ -6602,7 +6616,6 @@ dependencies = [
  "memmap2",
  "num-derive",
  "num-traits",
- "num_enum",
  "rand 0.7.3",
  "rand 0.8.5",
  "serde",
@@ -6629,6 +6642,7 @@ dependencies = [
  "solana-instruction",
  "solana-keypair",
  "solana-native-token",
+ "solana-offchain-message",
  "solana-packet",
  "solana-poh-config",
  "solana-precompile-error",

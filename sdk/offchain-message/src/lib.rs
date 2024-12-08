@@ -1,15 +1,11 @@
 //! Off-chain message container for storing non-transaction messages.
-
-#![cfg(feature = "full")]
-
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
 use {
-    crate::{
-        hash::Hash,
-        pubkey::Pubkey,
-        signature::{Signature, Signer},
-    },
     num_enum::{IntoPrimitive, TryFromPrimitive},
+    solana_hash::Hash,
     solana_sanitize::SanitizeError,
+    solana_signature::Signature,
+    solana_signer::Signer,
 };
 
 #[cfg(test)]
@@ -46,11 +42,10 @@ pub enum MessageFormat {
 pub mod v0 {
     use {
         super::{is_printable_ascii, is_utf8, MessageFormat, OffchainMessage as Base},
-        crate::{
-            hash::{Hash, Hasher},
-            packet::PACKET_DATA_SIZE,
-        },
+        solana_hash::Hash,
+        solana_packet::PACKET_DATA_SIZE,
         solana_sanitize::SanitizeError,
+        solana_sha256_hasher::Hasher,
     };
 
     /// OffchainMessage Version 0.
@@ -239,15 +234,20 @@ impl OffchainMessage {
         Ok(signer.sign_message(&self.serialize()?))
     }
 
+    #[cfg(feature = "verify")]
     /// Verify that the message signature is valid for the given public key
-    pub fn verify(&self, signer: &Pubkey, signature: &Signature) -> Result<bool, SanitizeError> {
+    pub fn verify(
+        &self,
+        signer: &solana_pubkey::Pubkey,
+        signature: &Signature,
+    ) -> Result<bool, SanitizeError> {
         Ok(signature.verify(signer.as_ref(), &self.serialize()?))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::signature::Keypair, std::str::FromStr};
+    use {super::*, solana_keypair::Keypair, std::str::FromStr};
 
     #[test]
     fn test_offchain_message_ascii() {
