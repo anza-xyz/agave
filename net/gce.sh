@@ -642,7 +642,6 @@ EOF
     cloud_ForEachInstance recordInstanceIp true blockstreamerIpList
   }
 
-  echo "export SOLANA_METRICS_CONFIG=\"${SOLANA_METRICS_CONFIG}\"" >> "$configFile"
   echo "Wrote $configFile"
   $metricsWriteDatapoint "testnet-deploy net-config-complete=1"
 }
