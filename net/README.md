@@ -3,6 +3,7 @@ The `./net/` directory in the monorepo contains scripts useful for creation and 
 The test network allows you to run a fully isolated set of validators and clients on a configurable hardware setup.
 It's intended to be both dev and CD friendly.
 
+
 ### Cloud account prerequisites
 
 The test networks to be created can run in GCP, AWS or colo. Whichever cloud provider you choose, you will need the credentials set up on your machine.
@@ -52,6 +53,9 @@ rights to create a new InfluxDB database, for example `solana`.
   * You’ll want to store that into your shell’s environment for future use\!
 * Assuming no errors, your influxDB setup is now done and stored in shell environment
   * Source your shell environment to be sure the new `SOLANA_METRICS_CONFIG` is loaded
+* For simple cases, storing `SOLANA_METRICS_CONFIG` in your env is appropriate, but you may want to use different databases for different runs of net.sh
+  * You can call ./init-metrics.sh before you call net.sh start, this will change the metrics config for a particular run.
+  * You can manually rewrite `SOLANA_METRICS_CONFIG` in the `net/config/config` file
 * By default, metrics are only logged by agave if `RUST_LOG` is set to `info` or higher. You can set this in your shell environment as well.
   ```bash
   RUST_LOG="info,solana_runtime=debug"
@@ -104,6 +108,7 @@ RUST_LOG=info ./net.sh start
 * Go to `./net/` directory in agave repo
 * `./gce.sh` command controls creation and destruction of the nodes in the test net. It does not actually run any software.
   * `./gce.sh create \-n 4 \-c 2` creates cluster with 4 validators and 1 node for load generation, this is minimal viable setup for all solana features to work
+    * if the creation succeeds, `net/config/config` will contain the config file of the testnet just created
   * `./gce.sh info`  lists active test cluster nodes, this allows you to get their IP addresses for SSH access and/or debugging
   * `./gce.sh delete`  destroys the nodes (save the electricity and $$$ - destroy your test nets the moment you no longer need them).
   * On GCE, if you do not delete nodes, they will self-destruct in 8 hours anyway, you can configure self-destruct timer by supplying `--self-destruct-hours=N` argument to `gce.sh`
@@ -151,6 +156,9 @@ source net/config/config
 
 ## Tips
 
+### Inscrutable "nothing works everything times out state"
+ Note that net.sh and `gce.sh info` commands do not actually check if all the nodes are still alive in gcloud,
+ they just assume the config file information is correct. So if your nodes got killed/timed out they will lie to you. In such case, just use `gce.sh delete` to reset.
 ### Running the network over public IP addresses
 By default private IP addresses are used with all instances in the same
 availability zone to avoid GCE network egress charges. However to run the
