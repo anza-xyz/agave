@@ -10,7 +10,7 @@ use {
     agave_transaction_view::resolved_transaction_view::ResolvedTransactionView,
     itertools::MinMaxResult,
     min_max_heap::MinMaxHeap,
-    slab::Slab,
+    slab::{Slab, VacantEntry},
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
     },
@@ -166,7 +166,7 @@ impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
         // the next vacant entry. i.e. get the size before we insert.
         let remaining_capacity = self.remaining_capacity();
         let priority_id = {
-            let entry = self.id_to_transaction_state.vacant_entry();
+            let entry = self.get_vacant_map_entry();
             let transaction_id = entry.key();
             entry.insert(TransactionState::new(
                 transaction_ttl,
@@ -194,6 +194,11 @@ impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
             false
         }
     }
+
+    fn get_vacant_map_entry(&mut self) -> VacantEntry<TransactionState<Tx>> {
+        assert!(self.id_to_transaction_state.len() < self.id_to_transaction_state.capacity());
+        self.id_to_transaction_state.vacant_entry()
+    }
 }
 
 pub type SharedBytes = Arc<Vec<u8>>;
@@ -217,15 +222,11 @@ impl TransactionViewStateContainer {
         data: &[u8],
         f: impl FnOnce(SharedBytes) -> Result<SuccessfulInsert, ()>,
     ) -> bool {
-        if self.inner.id_to_transaction_state.len() == self.inner.id_to_transaction_state.capacity()
-        {
-            return true;
-        }
         // Get remaining capacity before inserting.
         let remaining_capacity = self.remaining_capacity();
 
         // Get a vacant entry in the slab.
-        let vacant_entry = self.inner.id_to_transaction_state.vacant_entry();
+        let vacant_entry = self.inner.get_vacant_map_entry();
         let transaction_id = vacant_entry.key();
 
         // Get the vacant space in the bytes buffer.
@@ -240,7 +241,7 @@ impl TransactionViewStateContainer {
             bytes.extend_from_slice(data);
         }
 
-        // Attempt to insert the transaction, storing the frozen bytes back into bytes buffer.
+        // Attempt to insert the transaction.
         match f(Arc::clone(bytes_entry)) {
             Ok(SuccessfulInsert { state }) => {
                 let priority_id = TransactionPriorityId::new(state.priority(), transaction_id);
