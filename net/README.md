@@ -31,7 +31,7 @@ $ aws configure
 More information on AWS CLI configuration can be found [here](https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-getting-started.html#cli-quick-configuration)
 
 ## Metrics configuration (Optional)
-Metrics collection relies on 2 environment variables:
+Metrics collection relies on 2 environment variables that are patched to the remote nodes:
  * `RUST_LOG` to enable metrics reporting in principle
  * `SOLANA_METRICS_CONFIG` to tell agave where to log the metrics
 
@@ -47,21 +47,24 @@ rights to create a new InfluxDB database, for example `solana`.
 * Go to ./net/ in agave repo
 * Run `./init-metrics.sh -c testnet-dev-${user} ${user} `
   * Script will ask for a password, it is the same one you’ve created when making a user in the InfluxDB UI
-  * Put the username you have used in preparation, not your login user name\!
+  * Put the username you have used in preparation, not your login user name
 * Watch the script spit out a config line in the very end like the following:
   * `export SOLANA_METRICS_CONFIG="host=${host},db=testnet-dev-${user},u=${user},p=some_secret"`
-  * You’ll want to store that into your shell’s environment for future use\!
+  * You’ll want to store that into your shell’s environment so you can run `./init-metrics.sh -e` to quickly load it
+  * Alternatively, you'll need to run `./init-metrics.sh ${user}` every time you set up a new cluster
 * Assuming no errors, your influxDB setup is now done and stored in shell environment
   * Source your shell environment to be sure the new `SOLANA_METRICS_CONFIG` is loaded
 * For simple cases, storing `SOLANA_METRICS_CONFIG` in your env is appropriate, but you may want to use different databases for different runs of net.sh
   * You can call ./init-metrics.sh before you call net.sh start, this will change the metrics config for a particular run.
-  * You can manually rewrite `SOLANA_METRICS_CONFIG` in the `net/config/config` file
-* By default, metrics are only logged by agave if `RUST_LOG` is set to `info` or higher. You can set this in your shell environment as well.
+  * You can manually rewrite `SOLANA_METRICS_CONFIG` in the `./net/config/config` file
+* By default, metrics are only logged by agave if `RUST_LOG` is set to `info` or higher. You can provide it as environment for `./net.sh start` command, or set this in your shell environment.
   ```bash
   RUST_LOG="info,solana_runtime=debug"
   ```
 
-### To validate that your environment is set up 100% correctly
+### To validate that your database and environment variables are set up 100% correctly
+
+Note: this only works if you store `SOLANA_METRICS_CONFIG` in your shell environment
 
 ```bash
   cd ./scripts/
@@ -84,11 +87,12 @@ NOTE: This example uses GCE.  If you are using AWS EC2, replace `./gce.sh` with
 ```bash
 cd net/
 
-# Recreate a metrics database for the testnet and validate credentials (if you are using metrics)
-./init-metrics.sh -e
 
 # Create a GCE testnet with 4 additional validator nodes (beyond the bootstrap node) and 1 client (billing starts here)
 ./gce.sh create -n 4 -c 1
+
+# Configure the metrics database and validate credentials (if you are using metrics)
+./init-metrics.sh -e
 
 # Deploy the network from the local workspace and start processes on all nodes including bench-tps on the client node
 RUST_LOG=info ./net.sh start
@@ -108,11 +112,16 @@ RUST_LOG=info ./net.sh start
 * Go to `./net/` directory in agave repo
 * `./gce.sh` command controls creation and destruction of the nodes in the test net. It does not actually run any software.
   * `./gce.sh create \-n 4 \-c 2` creates cluster with 4 validators and 1 node for load generation, this is minimal viable setup for all solana features to work
-    * if the creation succeeds, `net/config/config` will contain the config file of the testnet just created
+    * If the creation succeeds, `net/config/config` will contain the config file of the testnet just created
+    * If you do not have `SOLANA_METRICS_CONFIG` set in your shell env, `gce.sh` may complain about metrics not being configured, this is perfectly fine
   * `./gce.sh info`  lists active test cluster nodes, this allows you to get their IP addresses for SSH access and/or debugging
   * `./gce.sh delete`  destroys the nodes (save the electricity and $$$ - destroy your test nets the moment you no longer need them).
   * On GCE, if you do not delete nodes, they will self-destruct in 8 hours anyway, you can configure self-destruct timer by supplying `--self-destruct-hours=N` argument to `gce.sh`
   * On other cloud platforms the testnet will not self-destruct!
+* To enable metrics in the testnet, at this point you need to either:
+  * `./init-metrics.sh -e` to load metrics config from `SOLANA_METRICS_CONFIG` into the testnet config file or
+  * `./init-metrics.sh ${user}` to create a new metrics database from scratch
+  * Manually set `SOLANA_METRICS_CONFIG` in `./net/config/config` (which is exactly what `init-metrics.sh` does for you)
 * `./net.sh` controls the payload on the testnet nodes, i.e. bootstrapping, the validators and bench-tps. In principle, you can run everything by hand, but `./net.sh` makes it easier.
   * `./net.sh start` to actually run the test network.
     * This will actually upload your current sources to the bootstrap host, build them there and upload the result to all the nodes
@@ -156,9 +165,21 @@ source net/config/config
 
 ## Tips
 
+### Automation
+You will want to have a script like this pretty much immediately to avoid making mistakes in the init process:
+```bash
+# Create the testnet with reasonable node sizes for a small test
+./gce.sh create -n4 -c2 --custom-machine-type "--machine-type n1-standard-16" --client-machine-type "--machine-type n1-standard-4"
+# Patch metrics config from env into config file
+./init-metrics.sh -e
+# Enable metrics and stat the network (this will also build software)
+RUST_LOG=info ./net.sh start  -c bench-tps=2="--tx_count 25000"
+```
+
 ### Inscrutable "nothing works everything times out state"
  Note that net.sh and `gce.sh info` commands do not actually check if all the nodes are still alive in gcloud,
  they just assume the config file information is correct. So if your nodes got killed/timed out they will lie to you. In such case, just use `gce.sh delete` to reset.
+
 ### Running the network over public IP addresses
 By default private IP addresses are used with all instances in the same
 availability zone to avoid GCE network egress charges. However to run the
