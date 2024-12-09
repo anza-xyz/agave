@@ -11,13 +11,6 @@ impl TransactionData for &[u8] {
     }
 }
 
-impl TransactionData for bytes::Bytes {
-    #[inline]
-    fn data(&self) -> &[u8] {
-        self.as_ref()
-    }
-}
-
 impl TransactionData for std::sync::Arc<Vec<u8>> {
     #[inline]
     fn data(&self) -> &[u8] {
