@@ -781,8 +781,8 @@ impl PohRecorder {
             );
 
             for tick in &self.tick_cache[..entry_count] {
-                working_bank.bank.register_tick(&tick.0.hash, true);
                 working_bank.bank.register_tick(&tick.0.hash, false);
+                working_bank.bank.register_tick(&tick.0.hash, true);
                 send_result = self.sender.send((working_bank.bank.clone(), tick.clone()));
                 if send_result.is_err() {
                     break;
