@@ -358,11 +358,6 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
                             continue;
                         }
                     }
-                    // Transaction must be dropped before removing, since we
-                    // currently have ownership of the transaction, and
-                    // therefore may have a reference to the backing-memory
-                    // that the container expects to be free.
-                    drop(transaction);
                     container.remove_by_id(id);
                 }
 
