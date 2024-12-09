@@ -8265,7 +8265,10 @@ dependencies = [
  "qstring",
  "semver 1.0.23",
  "solana-derivation-path",
- "solana-sdk",
+ "solana-offchain-message",
+ "solana-pubkey",
+ "solana-signature",
+ "solana-signer",
  "thiserror 2.0.6",
  "uriparse",
 ]
