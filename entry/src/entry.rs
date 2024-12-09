@@ -10,9 +10,11 @@ use {
     rand::{thread_rng, Rng},
     rayon::{prelude::*, ThreadPool},
     serde::{Deserialize, Serialize},
+    solana_hash::Hash,
     solana_measure::measure::Measure,
     solana_merkle_tree::MerkleTree,
     solana_metrics::*,
+    solana_packet::Meta,
     solana_perf::{
         cuda_runtime::PinnedVec,
         packet::{Packet, PacketBatch, PacketBatchRecycler, PACKETS_PER_BATCH},
@@ -22,14 +24,10 @@ use {
     },
     solana_rayon_threadlimit::get_max_thread_count,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
-    solana_sdk::{
-        hash::Hash,
-        packet::Meta,
-        transaction::{
-            Result, Transaction, TransactionError, TransactionVerificationMode,
-            VersionedTransaction,
-        },
+    solana_transaction::{
+        versioned::VersionedTransaction, Transaction, TransactionVerificationMode,
     },
+    solana_transaction_error::{TransactionError, TransactionResult as Result},
     std::{
         cmp,
         ffi::OsStr,
@@ -684,7 +682,7 @@ impl EntrySlice for [Entry] {
         simd_len: usize,
         thread_pool: &ThreadPool,
     ) -> EntryVerificationState {
-        use solana_sdk::hash::HASH_BYTES;
+        use solana_hash::HASH_BYTES;
         let now = Instant::now();
         let genesis = [Entry {
             num_hashes: 0,
@@ -976,19 +974,21 @@ pub fn thread_pool_for_benches() -> ThreadPool {
 mod tests {
     use {
         super::*,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
+        solana_message::SimpleAddressLoader,
         solana_perf::test_tx::{test_invalid_tx, test_tx},
+        solana_pubkey::Pubkey,
+        solana_reserved_account_keys::ReservedAccountKeys,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-        solana_sdk::{
-            hash::{hash, Hash},
-            pubkey::Pubkey,
-            reserved_account_keys::ReservedAccountKeys,
-            signature::{Keypair, Signer},
-            system_transaction,
-            transaction::{
-                MessageHash, Result, SanitizedTransaction, SimpleAddressLoader,
-                VersionedTransaction,
-            },
+        solana_sha256_hasher::hash,
+        solana_signer::Signer,
+        solana_system_transaction as system_transaction,
+        solana_transaction::{
+            sanitized::{MessageHash, SanitizedTransaction},
+            versioned::VersionedTransaction,
         },
+        solana_transaction_error::TransactionResult as Result,
     };
 
     #[test]
@@ -1142,7 +1142,7 @@ mod tests {
     fn test_transaction_signing() {
         let thread_pool = thread_pool_for_tests();
 
-        use solana_sdk::signature::Signature;
+        use solana_signature::Signature;
         let zero = Hash::default();
 
         let keypair = Keypair::new();

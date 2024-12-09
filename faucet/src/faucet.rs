@@ -10,18 +10,17 @@ use {
     crossbeam_channel::{unbounded, Sender},
     log::*,
     serde_derive::{Deserialize, Serialize},
+    solana_hash::Hash,
+    solana_instruction::Instruction,
+    solana_keypair::Keypair,
+    solana_message::Message,
     solana_metrics::datapoint_info,
-    solana_sdk::{
-        hash::Hash,
-        instruction::Instruction,
-        message::Message,
-        native_token::lamports_to_sol,
-        packet::PACKET_DATA_SIZE,
-        pubkey::Pubkey,
-        signature::{Keypair, Signer},
-        system_instruction,
-        transaction::Transaction,
-    },
+    solana_native_token::lamports_to_sol,
+    solana_packet::PACKET_DATA_SIZE,
+    solana_pubkey::Pubkey,
+    solana_signer::Signer,
+    solana_system_interface::instruction::transfer,
+    solana_transaction::Transaction,
     std::{
         collections::{HashMap, HashSet},
         io::{Read, Write},
@@ -218,8 +217,7 @@ impl Faucet {
                 }
                 self.check_time_request_limit(lamports, to)?;
 
-                let transfer_instruction =
-                    system_instruction::transfer(&mint_pubkey, &to, lamports);
+                let transfer_instruction = transfer(&mint_pubkey, &to, lamports);
                 let message = Message::new(&[transfer_instruction], Some(&mint_pubkey));
                 Ok(FaucetTransaction::Airdrop(Transaction::new(
                     &[&self.faucet_keypair],
@@ -492,7 +490,7 @@ impl LimitByTime for Pubkey {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, solana_sdk::system_instruction::SystemInstruction, std::time::Duration};
+    use {super::*, solana_system_interface::instruction::SystemInstruction, std::time::Duration};
 
     #[test]
     fn test_check_time_request_limit() {
@@ -649,7 +647,7 @@ mod tests {
 
     #[test]
     fn test_process_faucet_request() {
-        let to = solana_sdk::pubkey::new_rand();
+        let to = solana_pubkey::new_rand();
         let blockhash = Hash::new_from_array(to.to_bytes());
         let lamports = 50;
         let req = FaucetRequest::GetAirdrop {
@@ -661,7 +659,7 @@ mod tests {
         let req = serialize(&req).unwrap();
 
         let keypair = Keypair::new();
-        let expected_instruction = system_instruction::transfer(&keypair.pubkey(), &to, lamports);
+        let expected_instruction = transfer(&keypair.pubkey(), &to, lamports);
         let message = Message::new(&[expected_instruction], Some(&keypair.pubkey()));
         let expected_tx = Transaction::new(&[&keypair], message, blockhash);
         let expected_bytes = serialize(&expected_tx).unwrap();

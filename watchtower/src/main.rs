@@ -10,15 +10,13 @@ use {
         input_validators::{is_parsable, is_pubkey_or_keypair, is_url, is_valid_percentage},
     },
     solana_cli_output::display::format_labeled_address,
+    solana_hash::Hash,
     solana_metrics::{datapoint_error, datapoint_info},
+    solana_native_token::{sol_to_lamports, Sol},
     solana_notifier::{NotificationType, Notifier},
+    solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::{client_error, response::RpcVoteAccountStatus},
-    solana_sdk::{
-        hash::Hash,
-        native_token::{sol_to_lamports, Sol},
-        pubkey::Pubkey,
-    },
     std::{
         collections::HashMap,
         error,

@@ -282,6 +282,7 @@ pub enum RpcBench {
     TokenAccountsByDelegate,
     Block,
     Blocks,
+    AccountInfo,
 }
 
 #[derive(Debug)]
@@ -294,6 +295,7 @@ impl FromStr for RpcBench {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
+            "account-info" => Ok(RpcBench::AccountInfo),
             "block" => Ok(RpcBench::Block),
             "blocks" => Ok(RpcBench::Blocks),
             "slot" => Ok(RpcBench::Slot),
@@ -420,6 +422,35 @@ fn run_rpc_bench_loop(
             break;
         }
         match rpc_bench {
+            RpcBench::AccountInfo => {
+                let start: u64 = max_closed.load(Ordering::Relaxed);
+                let end: u64 = max_created.load(Ordering::Relaxed);
+                let seed_range = start..end;
+                if seed_range.is_empty() {
+                    info!("get_account_info: No accounts have yet been created; skipping");
+                    continue;
+                }
+                let seed = thread_rng().gen_range(seed_range).to_string();
+                let account_pubkey =
+                    Pubkey::create_with_seed(base_keypair_pubkey, &seed, program_id).unwrap();
+                let mut rpc_time = Measure::start("rpc-get-account-info");
+                match client.get_account(&account_pubkey) {
+                    Ok(_account) => {
+                        rpc_time.stop();
+                        stats.success += 1;
+                        stats.total_success_time_us += rpc_time.as_us();
+                    }
+                    Err(e) => {
+                        rpc_time.stop();
+                        stats.total_errors_time_us += rpc_time.as_us();
+                        stats.errors += 1;
+                        if last_error.elapsed().as_secs() > 2 {
+                            info!("get_account_info error: {:?}", e);
+                            last_error = Instant::now();
+                        }
+                    }
+                }
+            }
             RpcBench::Block => {
                 let slot_height = slot_height.load(Ordering::Relaxed);
                 let mut rpc_time = Measure::start("rpc-get-block");

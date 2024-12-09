@@ -3,13 +3,12 @@
 use {
     ahash::AHashMap,
     lazy_static::lazy_static,
-    solana_sdk::{
+    solana_feature_set::{self as feature_set, FeatureSet},
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::{
         address_lookup_table, bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
-        compute_budget, ed25519_program,
-        feature_set::{self, FeatureSet},
-        loader_v4,
-        pubkey::Pubkey,
-        secp256k1_program,
+        compute_budget, config, ed25519_program, loader_v4, secp256k1_program, stake,
+        system_program, vote,
     },
 };
 
@@ -36,28 +35,28 @@ lazy_static! {
     /// https://github.com/solana-labs/solana/issues/29595.
     static ref BUILTIN_INSTRUCTION_COSTS: AHashMap<Pubkey, BuiltinCost> = [
     (
-        solana_stake_program::id(),
+        stake::id(),
         BuiltinCost {
             native_cost: solana_stake_program::stake_instruction::DEFAULT_COMPUTE_UNITS,
             core_bpf_migration_feature: Some(feature_set::migrate_stake_program_to_core_bpf::id()),
         },
     ),
     (
-        solana_config_program::id(),
+        config::id(),
         BuiltinCost {
             native_cost: solana_config_program::config_processor::DEFAULT_COMPUTE_UNITS,
             core_bpf_migration_feature: Some(feature_set::migrate_config_program_to_core_bpf::id()),
         },
     ),
     (
-        solana_vote_program::id(),
+        vote::id(),
         BuiltinCost {
             native_cost: solana_vote_program::vote_processor::DEFAULT_COMPUTE_UNITS,
             core_bpf_migration_feature: None,
         },
     ),
     (
-        solana_system_program::id(),
+        system_program::id(),
         BuiltinCost {
             native_cost: solana_system_program::system_processor::DEFAULT_COMPUTE_UNITS,
             core_bpf_migration_feature: None,
@@ -71,7 +70,7 @@ lazy_static! {
         },
     ),
     (
-        address_lookup_table::program::id(),
+        address_lookup_table::id(),
         BuiltinCost {
             native_cost: solana_address_lookup_table_program::processor::DEFAULT_COMPUTE_UNITS,
             core_bpf_migration_feature: Some(

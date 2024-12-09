@@ -6,6 +6,8 @@ use {
     bincode::serialize,
     dashmap::DashMap,
     futures_util::future::join_all,
+    solana_hash::Hash,
+    solana_message::Message,
     solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
     solana_rpc_client::spinner::{self, SendTransactionProgress},
     solana_rpc_client_api::{
@@ -14,14 +16,11 @@ use {
         request::{RpcError, RpcResponseErrorData, MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS},
         response::RpcSimulateTransactionResult,
     },
-    solana_sdk::{
-        hash::Hash,
-        message::Message,
-        signature::{Signature, SignerError},
-        signers::Signers,
-        transaction::{Transaction, TransactionError},
-    },
+    solana_signature::Signature,
+    solana_signer::{signers::Signers, SignerError},
     solana_tpu_client::tpu_client::{Result, TpuSenderError},
+    solana_transaction::Transaction,
+    solana_transaction_error::TransactionError,
     std::{
         sync::{
             atomic::{AtomicU64, AtomicUsize, Ordering},
