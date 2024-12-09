@@ -2,9 +2,7 @@ use {
     super::{
         scheduler_metrics::{SchedulerCountMetrics, SchedulerTimingMetrics},
         transaction_state::TransactionState,
-        transaction_state_container::{
-            SharedBytes, StateContainer, SuccessfulInsert, TransactionViewStateContainer,
-        },
+        transaction_state_container::{SharedBytes, StateContainer, TransactionViewStateContainer},
     },
     crate::banking_stage::{
         decision_maker::BufferedPacketsDecision,
@@ -425,7 +423,7 @@ impl TransactionViewReceiveAndBuffer {
                     ) {
                         Ok(state) => {
                             num_buffered += 1;
-                            Ok(SuccessfulInsert { state })
+                            Ok(state)
                         }
                         Err(()) => {
                             num_dropped_on_receive += 1;

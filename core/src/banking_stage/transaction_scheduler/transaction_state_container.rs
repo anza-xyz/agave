@@ -211,16 +211,17 @@ pub struct TransactionViewStateContainer {
     bytes_buffer: Box<[SharedBytes]>,
 }
 
-pub(crate) struct SuccessfulInsert {
-    pub state: TransactionState<RuntimeTransaction<ResolvedTransactionView<SharedBytes>>>,
-}
-
 impl TransactionViewStateContainer {
     /// Returns true if packet was dropped due to capacity limits.
     pub(crate) fn try_insert_with_data(
         &mut self,
         data: &[u8],
-        f: impl FnOnce(SharedBytes) -> Result<SuccessfulInsert, ()>,
+        f: impl FnOnce(
+            SharedBytes,
+        ) -> Result<
+            TransactionState<RuntimeTransaction<ResolvedTransactionView<SharedBytes>>>,
+            (),
+        >,
     ) -> bool {
         // Get remaining capacity before inserting.
         let remaining_capacity = self.remaining_capacity();
@@ -251,7 +252,7 @@ impl TransactionViewStateContainer {
 
         // Attempt to insert the transaction.
         match f(Arc::clone(bytes_entry)) {
-            Ok(SuccessfulInsert { state }) => {
+            Ok(state) => {
                 let priority_id = TransactionPriorityId::new(state.priority(), transaction_id);
                 vacant_entry.insert(state);
 
