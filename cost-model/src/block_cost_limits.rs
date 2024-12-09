@@ -1,14 +1,6 @@
 //! defines block cost related limits
 //!
 
-/// Static configurations:
-///
-/// Number of microseconds replaying a block should take, 400 millisecond block times
-/// is currently publicly communicated on solana.com
-pub const MAX_BLOCK_REPLAY_TIME_US: u64 = 400_000;
-/// number of concurrent processes,
-pub const MAX_CONCURRENCY: u64 = 4;
-
 // Cluster data, method of collecting at https://github.com/solana-labs/solana/issues/19627
 // Dashboard: https://metrics.solana.com/d/monitor-edge/cluster-telemetry?orgId=1
 
@@ -27,32 +19,23 @@ pub const WRITE_LOCK_UNITS: u64 = COMPUTE_UNIT_TO_US_RATIO * 10;
 /// Number of data bytes per compute units
 pub const INSTRUCTION_DATA_BYTES_COST: u64 = 140 /*bytes per us*/ / COMPUTE_UNIT_TO_US_RATIO;
 
-/// Statically computed data:
-///
 /// Number of compute units that a block is allowed. A block's compute units are
 /// accumulated by Transactions added to it; A transaction's compute units are
 /// calculated by cost_model, based on transaction's signatures, write locks,
 /// data size and built-in and SBF instructions.
-pub const MAX_BLOCK_UNITS: u64 =
-    MAX_BLOCK_REPLAY_TIME_US * COMPUTE_UNIT_TO_US_RATIO * MAX_CONCURRENCY;
-
-#[cfg(test)]
-static_assertions::const_assert_eq!(MAX_BLOCK_UNITS, 48_000_000);
+pub const MAX_BLOCK_UNITS: u64 = 48_000_000;
 
 /// Number of compute units that a writable account in a block is allowed. The
 /// limit is to prevent too many transactions write to same account, therefore
 /// reduce block's parallelism.
-pub const MAX_WRITABLE_ACCOUNT_UNITS: u64 = MAX_BLOCK_REPLAY_TIME_US * COMPUTE_UNIT_TO_US_RATIO;
-
-#[cfg(test)]
-static_assertions::const_assert_eq!(MAX_WRITABLE_ACCOUNT_UNITS, 12_000_000);
+pub const MAX_WRITABLE_ACCOUNT_UNITS: u64 = 12_000_000;
 
 /// Number of compute units that a block can have for vote transactions,
-/// sets at ~75% of MAX_BLOCK_UNITS to leave room for non-vote transactions
-pub const MAX_VOTE_UNITS: u64 = (MAX_BLOCK_UNITS as f64 * 0.75_f64) as u64;
+/// set to less than MAX_BLOCK_UNITS to leave room for non-vote transactions
+pub const MAX_VOTE_UNITS: u64 = 36_000_000;
 
 #[cfg(test)]
-static_assertions::const_assert_eq!(MAX_VOTE_UNITS, 36_000_000);
+static_assertions::const_assert!(MAX_VOTE_UNITS < MAX_BLOCK_UNITS);
 
 /// The maximum allowed size, in bytes, that accounts data can grow, per block.
 /// This can also be thought of as the maximum size of new allocations per block.
