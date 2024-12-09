@@ -1132,8 +1132,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_banking_stage_entryfication() {
+    #[test_case(TransactionStructure::Sdk)]
+    #[test_case(TransactionStructure::View)]
+    fn test_banking_stage_entryfication(transaction_struct: TransactionStructure) {
         solana_logger::setup();
         // In this attack we'll demonstrate that a verifier can interpret the ledger
         // differently if either the server doesn't signal the ledger to add an
@@ -1204,6 +1205,7 @@ mod tests {
                 let cluster_info = Arc::new(cluster_info);
                 let _banking_stage = BankingStage::new(
                     BlockProductionMethod::CentralScheduler,
+                    transaction_struct,
                     &cluster_info,
                     &poh_recorder,
                     non_vote_receiver,
