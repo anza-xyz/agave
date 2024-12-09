@@ -10,7 +10,6 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
-bytes = { workspace = true }
 solana-hash = { workspace = true }
 solana-message = { workspace = true }
 solana-packet = { workspace = true }

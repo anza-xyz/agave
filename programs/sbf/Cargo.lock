@@ -87,7 +87,6 @@ dependencies = [
 name = "agave-transaction-view"
 version = "2.2.0"
 dependencies = [
- "bytes",
  "solana-hash",
  "solana-message",
  "solana-packet",
