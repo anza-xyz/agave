@@ -18,7 +18,8 @@ use {
 };
 
 #[cfg_attr(test, derive(Eq, PartialEq))]
-#[derive(Clone, Default, Debug)]
+#[cfg_attr(feature = "dev-context-only-utils", derive(Clone))]
+#[derive(Default, Debug)]
 pub struct ComputeBudgetInstructionDetails {
     // compute-budget instruction details:
     // the first field in tuple is instruction index, second field is the unsanitized value set by user
