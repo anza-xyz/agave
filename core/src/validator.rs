@@ -1302,8 +1302,12 @@ impl Validator {
             && genesis_config.cluster_type != ClusterType::MainnetBeta)
             .then(|| {
                 tokio::runtime::Builder::new_multi_thread()
+                    .thread_name_fn(|| {
+                        static ATOMIC_ID: AtomicU64 = AtomicU64::new(0);
+                        let id = ATOMIC_ID.fetch_add(1, Ordering::Relaxed);
+                        format!("solTurbineQui{id:02}")
+                    })
                     .enable_all()
-                    .thread_name("solTurbineQuic")
                     .build()
                     .unwrap()
             });

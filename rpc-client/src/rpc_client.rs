@@ -42,7 +42,15 @@ use {
         EncodedConfirmedBlock, EncodedConfirmedTransactionWithStatusMeta, TransactionStatus,
         UiConfirmedBlock, UiTransactionEncoding,
     },
-    std::{net::SocketAddr, str::FromStr, sync::Arc, time::Duration},
+    std::{
+        net::SocketAddr,
+        str::FromStr,
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc,
+        },
+        time::Duration,
+    },
 };
 
 #[derive(Default)]
@@ -215,7 +223,11 @@ impl RpcClient {
             )),
             runtime: Some(
                 tokio::runtime::Builder::new_current_thread()
-                    .thread_name("solRpcClient")
+                    .thread_name_fn(|| {
+                        static ATOMIC_ID: AtomicU64 = AtomicU64::new(0);
+                        let id = ATOMIC_ID.fetch_add(1, Ordering::Relaxed);
+                        format!("solRpcClient{id:02}")
+                    })
                     .enable_io()
                     .enable_time()
                     .build()

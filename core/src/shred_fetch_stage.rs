@@ -21,7 +21,7 @@ use {
     std::{
         net::{SocketAddr, UdpSocket},
         sync::{
-            atomic::{AtomicBool, Ordering},
+            atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, RwLock,
         },
         thread::{self, Builder, JoinHandle},
@@ -183,8 +183,10 @@ impl ShredFetchStage {
                 )
             })
             .collect();
+        static ATOMIC_ID: AtomicU64 = AtomicU64::new(0);
+        let id = ATOMIC_ID.fetch_add(1, Ordering::Relaxed);
         let modifier_hdl = Builder::new()
-            .name(modifier_thread_name.to_string())
+            .name(format!("{modifier_thread_name}{id:02}"))
             .spawn(move || {
                 let repair_context = repair_context
                     .as_ref()

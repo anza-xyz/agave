@@ -97,6 +97,11 @@ impl PubSubService {
                 let runtime = tokio::runtime::Builder::new_multi_thread()
                     .thread_name("solRpcPubSubRt")
                     .worker_threads(pubsub_config.worker_threads)
+                    .thread_name_fn(|| {
+                        static ATOMIC_ID: AtomicU64 = AtomicU64::new(0);
+                        let id = ATOMIC_ID.fetch_add(1, Ordering::Relaxed);
+                        format!("solRpcPubSubW{id:02}")
+                    })
                     .enable_all()
                     .build()
                     .expect("runtime creation failed");
