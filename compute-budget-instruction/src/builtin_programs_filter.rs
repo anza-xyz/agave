@@ -1,5 +1,7 @@
 use {
-    solana_builtins_default_costs::{get_builtin_migration_feature_index, MAYBE_BUILTIN_KEY},
+    solana_builtins_default_costs::{
+        get_builtin_migration_feature_index, BuiltinMigrationFeatureIndex, MAYBE_BUILTIN_KEY,
+    },
     solana_sdk::{packet::PACKET_DATA_SIZE, pubkey::Pubkey},
 };
 
@@ -46,21 +48,24 @@ impl BuiltinProgramsFilter {
             return ProgramKind::NotBuiltin;
         }
 
-        get_builtin_migration_feature_index(program_id).map_or(
-            ProgramKind::NotBuiltin,
-            |some_builtin| match some_builtin {
-                Some(core_bpf_migration_feature_index) => ProgramKind::MigratingBuiltin {
-                    core_bpf_migration_feature_index,
-                },
-                None => ProgramKind::Builtin,
+        match get_builtin_migration_feature_index(program_id) {
+            BuiltinMigrationFeatureIndex::NotBuiltin => ProgramKind::NotBuiltin,
+            BuiltinMigrationFeatureIndex::BuiltinNoMigrationFeature => ProgramKind::Builtin,
+            BuiltinMigrationFeatureIndex::BuiltinWithMigrationFeature(
+                core_bpf_migration_feature_index,
+            ) => ProgramKind::MigratingBuiltin {
+                core_bpf_migration_feature_index,
             },
-        )
+        }
     }
 }
 
 #[cfg(test)]
 mod test {
-    use {super::*, solana_builtins_default_costs::MIGRATION_FEATURES_ID, solana_sdk::feature_set};
+    use {
+        super::*, solana_builtins_default_costs::get_migration_feature_position,
+        solana_sdk::feature_set,
+    };
 
     const DUMMY_PROGRAM_ID: &str = "dummmy1111111111111111111111111111111111111";
 
@@ -122,10 +127,9 @@ mod test {
             assert_eq!(
                 test_store.get_program_kind(index, &migrating_builtin_pubkey),
                 ProgramKind::MigratingBuiltin {
-                    core_bpf_migration_feature_index: MIGRATION_FEATURES_ID
-                        .iter()
-                        .position(|&x| x == migration_feature_id)
-                        .unwrap(),
+                    core_bpf_migration_feature_index: get_migration_feature_position(
+                        &migration_feature_id
+                    ),
                 }
             );
         }
