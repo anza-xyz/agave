@@ -574,11 +574,19 @@ impl Consumer {
             .sanitized_transactions()
             .iter()
             .filter_map(|transaction| {
+<<<<<<< HEAD
                 process_compute_budget_instructions(SVMMessage::program_instructions_iter(
                     transaction,
                 ))
                 .ok()
                 .map(|limits| limits.compute_unit_price)
+=======
+                transaction
+                    .compute_budget_instruction_details()
+                    .sanitize_and_convert_to_compute_budget_limits(&bank.feature_set)
+                    .ok()
+                    .map(|limits| limits.compute_unit_price)
+>>>>>>> 3e9af14f3a (Fix reserve minimal compute units for builtins  (#3799))
             })
             .minmax();
         let (min_prioritization_fees, max_prioritization_fees) =
@@ -757,7 +765,12 @@ impl Consumer {
     ) -> Result<(), TransactionError> {
         let fee_payer = message.fee_payer();
         let fee_budget_limits = FeeBudgetLimits::from(process_compute_budget_instructions(
+<<<<<<< HEAD
             SVMMessage::program_instructions_iter(message),
+=======
+            message.program_instructions_iter(),
+            &bank.feature_set,
+>>>>>>> 3e9af14f3a (Fix reserve minimal compute units for builtins  (#3799))
         )?);
         let fee = solana_fee::calculate_fee(
             message,

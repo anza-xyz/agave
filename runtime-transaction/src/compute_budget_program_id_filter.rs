@@ -18,7 +18,6 @@ impl ComputeBudgetProgramIdFilter {
         }
     }
 
-    #[inline]
     pub(crate) fn is_compute_budget_program(&mut self, index: usize, program_id: &Pubkey) -> bool {
         *self
             .flags
