@@ -2,7 +2,9 @@ use {
     super::{
         scheduler_metrics::{SchedulerCountMetrics, SchedulerTimingMetrics},
         transaction_state::TransactionState,
-        transaction_state_container::{SharedBytes, StateContainer, TransactionViewStateContainer},
+        transaction_state_container::{
+            SharedBytes, StateContainer, TransactionViewState, TransactionViewStateContainer,
+        },
     },
     crate::{
         banking_stage::{
@@ -460,8 +462,7 @@ impl TransactionViewReceiveAndBuffer {
         alt_resolved_slot: Slot,
         sanitized_epoch: Epoch,
         transaction_account_lock_limit: usize,
-    ) -> Result<TransactionState<RuntimeTransaction<ResolvedTransactionView<SharedBytes>>>, ()>
-    {
+    ) -> Result<TransactionViewState, ()> {
         // Parsing and basic sanitization checks
         let Ok(view) = SanitizedTransactionView::try_new_sanitized(bytes) else {
             return Err(());
