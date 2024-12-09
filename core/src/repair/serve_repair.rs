@@ -141,11 +141,6 @@ impl AncestorHashesRepairType {
     }
 }
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiEnumVisitor, AbiExample),
-    frozen_abi(digest = "GPS6e6pgUdbXLwXN6XHTqrUVMwAL2YKLPDawgMi5hHzi")
-)]
 #[derive(Debug, Deserialize, Serialize)]
 pub enum AncestorHashesResponse {
     Hashes(Vec<(Slot, Hash)>),
@@ -271,11 +266,6 @@ fn discard_malformed_repair_requests(
     requests.len()
 }
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiEnumVisitor, AbiExample),
-    frozen_abi(digest = "9A6ae44qpdT7PaxiDZbybMM2mewnSnPs3C4CxhpbbYuV")
-)]
 #[derive(Debug, Deserialize, Serialize)]
 pub(crate) enum RepairResponse {
     Ping(Ping),

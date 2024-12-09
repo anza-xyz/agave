@@ -43,11 +43,6 @@ const GOSSIP_PING_TOKEN_SIZE: usize = 32;
 pub(crate) const PULL_RESPONSE_MIN_SERIALIZED_SIZE: usize = 161;
 
 // TODO These messages should go through the gpu pipeline for spam filtering
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "CBR9G92mpd1WSXEmiH6dAKHziLjJky9aYWPw6S5WmJkG")
-)]
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum Protocol {
