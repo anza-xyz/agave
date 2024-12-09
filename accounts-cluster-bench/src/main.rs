@@ -746,6 +746,7 @@ fn run_rpc_bench_loop(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn make_rpc_bench_threads(
     rpc_benches: Vec<RpcBench>,
     mint: &Option<Pubkey>,
