@@ -96,7 +96,7 @@ use {
         create_program_runtime_environment_v1, create_program_runtime_environment_v2,
     },
     solana_compute_budget::compute_budget::ComputeBudget,
-    solana_cost_model::cost_tracker::CostTracker,
+    solana_cost_model::{block_cost_limits::simd_0207_block_limits, cost_tracker::CostTracker},
     solana_feature_set::{
         self as feature_set, remove_rounding_in_fee_calculation, reward_full_priority_fee,
         FeatureSet,
@@ -6916,6 +6916,15 @@ impl Bank {
                     self.accounts_lt_hash.get_mut().unwrap().0.checksum(),
                 );
             }
+        }
+
+        if new_feature_activations.contains(&feature_set::raise_block_limits_to_50m::id()) {
+            let (account_cost_limit, block_cost_limit, vote_cost_limit) = simd_0207_block_limits();
+            self.write_cost_tracker().unwrap().set_limits(
+                account_cost_limit,
+                block_cost_limit,
+                vote_cost_limit,
+            );
         }
     }
 
