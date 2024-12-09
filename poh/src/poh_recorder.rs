@@ -13,10 +13,12 @@
 #[cfg(feature = "dev-context-only-utils")]
 use solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo};
 use {
-    crate::{leader_bank_notifier::LeaderBankNotifier, poh_service::PohService},
-    crossbeam_channel::{
-        bounded, unbounded, Receiver, RecvTimeoutError, SendError, Sender, TrySendError,
+    crate::{
+        leader_bank_notifier::LeaderBankNotifier,
+        mpsc::{self, Consumer, Producer},
+        poh_service::PohService,
     },
+    crossbeam_channel::{unbounded, Receiver, SendError, Sender, TrySendError},
     log::*,
     solana_entry::{
         entry::{hash_transactions, Entry},
@@ -36,17 +38,19 @@ use {
     },
     std::{
         cmp,
-        sync::{
-            atomic::{AtomicBool, Ordering},
-            Arc, Mutex, RwLock,
-        },
-        time::{Duration, Instant},
+        sync::{atomic::AtomicBool, Arc, Mutex, RwLock},
+        time::Instant,
     },
     thiserror::Error,
 };
 
 pub const GRACE_TICKS_FACTOR: u64 = 2;
 pub const MAX_GRACE_SLOTS: u64 = 2;
+
+// The queue capacity should be small enough to have acceptable 'dead time' at the end of the slot
+// but large enough to not run out of capacity during normal operations. For example, an average of
+// 10M hashes/s will result in 102.4us of dead time in the worst case.
+const MPSC_RECORD_QUEUE_CAPACITY: u32 = 1024;
 
 #[derive(Error, Debug, Clone)]
 pub enum PohRecorderError {
@@ -87,28 +91,17 @@ impl BankStart {
     }
 }
 
-// Sends the Result of the record operation, including the index in the slot of the first
-// transaction, if being tracked by WorkingBank
-type RecordResultSender = Sender<Result<Option<usize>>>;
-
 pub struct Record {
     pub mixin: Hash,
     pub transactions: Vec<VersionedTransaction>,
     pub slot: Slot,
-    pub sender: RecordResultSender,
 }
 impl Record {
-    pub fn new(
-        mixin: Hash,
-        transactions: Vec<VersionedTransaction>,
-        slot: Slot,
-        sender: RecordResultSender,
-    ) -> Self {
+    pub fn new(mixin: Hash, transactions: Vec<VersionedTransaction>, slot: Slot) -> Self {
         Self {
             mixin,
             transactions,
             slot,
-            sender,
         }
     }
 }
@@ -143,12 +136,12 @@ pub struct RecordTransactionsSummary {
 #[derive(Clone)]
 pub struct TransactionRecorder {
     // shared by all users of PohRecorder
-    pub record_sender: Sender<Record>,
+    pub record_sender: Producer<Record>,
     pub is_exited: Arc<AtomicBool>,
 }
 
 impl TransactionRecorder {
-    pub fn new(record_sender: Sender<Record>, is_exited: Arc<AtomicBool>) -> Self {
+    pub fn new(record_sender: Producer<Record>, is_exited: Arc<AtomicBool>) -> Self {
         Self {
             record_sender,
             is_exited,
@@ -208,38 +201,16 @@ impl TransactionRecorder {
         mixin: Hash,
         transactions: Vec<VersionedTransaction>,
     ) -> Result<Option<usize>> {
-        // create a new channel so that there is only 1 sender and when it goes out of scope, the receiver fails
-        let (result_sender, result_receiver) = bounded(1);
-        let res =
-            self.record_sender
-                .send(Record::new(mixin, transactions, bank_slot, result_sender));
-        if res.is_err() {
+        let rec_send_res = self
+            .record_sender
+            .try_push(Record::new(mixin, transactions, bank_slot));
+        if rec_send_res.is_err() {
             // If the channel is dropped, then the validator is shutting down so return that we are hitting
             //  the max tick height to stop transaction processing and flush any transactions in the pipeline.
             return Err(PohRecorderError::MaxHeightReached);
         }
-        // Besides validator exit, this timeout should primarily be seen to affect test execution environments where the various pieces can be shutdown abruptly
-        let mut is_exited = false;
-        loop {
-            let res = result_receiver.recv_timeout(Duration::from_millis(1000));
-            match res {
-                Err(RecvTimeoutError::Timeout) => {
-                    if is_exited {
-                        return Err(PohRecorderError::MaxHeightReached);
-                    } else {
-                        // A result may have come in between when we timed out checking this
-                        // bool, so check the channel again, even if is_exited == true
-                        is_exited = self.is_exited.load(Ordering::SeqCst);
-                    }
-                }
-                Err(RecvTimeoutError::Disconnected) => {
-                    return Err(PohRecorderError::MaxHeightReached);
-                }
-                Ok(result) => {
-                    return result;
-                }
-            }
-        }
+        // Send the transaction index from poh.record call in read_record_receiver_and_process.
+        Ok(Some(0))
     }
 }
 
@@ -306,7 +277,7 @@ pub struct PohRecorder {
     report_metrics_us: u64,
     ticks_from_record: u64,
     last_metric: Instant,
-    record_sender: Sender<Record>,
+    record_sender: Producer<Record>,
     leader_bank_notifier: Arc<LeaderBankNotifier>,
     delay_leader_block_for_pending_fork: bool,
     last_reported_slot_for_pending_fork: Arc<Mutex<Slot>>,
@@ -1028,7 +999,7 @@ impl PohRecorder {
         poh_config: &PohConfig,
         poh_timing_point_sender: Option<PohTimingSender>,
         is_exited: Arc<AtomicBool>,
-    ) -> (Self, Receiver<WorkingBankEntry>, Receiver<Record>) {
+    ) -> (Self, Receiver<WorkingBankEntry>, Consumer<Record>) {
         let tick_number = 0;
         let poh = Arc::new(Mutex::new(Poh::new_with_slot_info(
             last_entry_hash,
@@ -1041,7 +1012,8 @@ impl PohRecorder {
             poh_config.target_tick_duration.as_nanos() as u64,
         );
         let (sender, receiver) = unbounded();
-        let (record_sender, record_receiver) = unbounded();
+        let (record_sender, record_receiver) =
+            mpsc::with_capacity::<Record>(MPSC_RECORD_QUEUE_CAPACITY);
         let (leader_first_tick_height_including_grace_ticks, leader_last_tick_height, grace_ticks) =
             Self::compute_leader_slot_tick_heights(next_leader_slot, ticks_per_slot);
         (
@@ -1098,7 +1070,7 @@ impl PohRecorder {
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
         poh_config: &PohConfig,
         is_exited: Arc<AtomicBool>,
-    ) -> (Self, Receiver<WorkingBankEntry>, Receiver<Record>) {
+    ) -> (Self, Receiver<WorkingBankEntry>, Consumer<Record>) {
         let delay_leader_block_for_pending_fork = false;
         Self::new_with_clear_signal(
             tick_height,
@@ -1199,7 +1171,9 @@ mod tests {
             blockstore::Blockstore, blockstore_meta::SlotMeta, get_tmp_ledger_path_auto_delete,
         },
         solana_perf::test_tx::test_tx,
+        solana_poh::mpsc,
         solana_sdk::{clock::DEFAULT_TICKS_PER_SLOT, hash::hash},
+        std::sync::atomic::Ordering,
     };
 
     #[test]
@@ -2333,5 +2307,81 @@ mod tests {
             PohRecorder::compute_leader_slot_tick_heights(Some((6, 7)), 4),
             (Some(29), 32, 4)
         );
+    }
+    #[test]
+    fn test_mpsc_ring_buffer_multi_producer() {
+        const COUNT: u32 = 100;
+        const THREADS: u32 = 4;
+        let (tx, rx): (mpsc::Producer<u64>, mpsc::Consumer<u64>) = mpsc::with_capacity(COUNT);
+
+        std::thread::scope(|scope| {
+            for _ in 0..THREADS {
+                scope.spawn(|| {
+                    for _ in 0..COUNT / 10 {
+                        assert!(tx.try_push(1).is_ok());
+                    }
+                });
+            }
+        });
+        assert!(rx.pop().is_some());
+    }
+
+    #[test]
+    fn test_mpsc_ring_buffer() {
+        const COUNT: usize = 50;
+        const THREADS: usize = 4;
+
+        let t = std::sync::atomic::AtomicUsize::new(THREADS);
+        let (tx, rx): (mpsc::Producer<usize>, mpsc::Consumer<usize>) =
+            mpsc::with_capacity(COUNT as u32);
+        let v = (0..COUNT)
+            .map(|_| std::sync::atomic::AtomicUsize::new(0))
+            .collect::<Vec<_>>();
+
+        std::thread::scope(|scope| {
+            scope.spawn(|| loop {
+                match t.load(Ordering::SeqCst) {
+                    0 => break,
+
+                    _ => {
+                        if let Some(n) = rx.pop() {
+                            v[n].fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+                }
+            });
+
+            for _ in 0..THREADS {
+                scope.spawn(|| {
+                    #[allow(clippy::needless_range_loop)]
+                    for i in 0..COUNT {
+                        if tx.try_push(i).is_ok() {
+                            v[i].fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+
+                    t.fetch_sub(1, Ordering::SeqCst);
+                });
+            }
+        });
+
+        for c in v {
+            assert_ne!(c.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    #[test]
+    fn test_mpsc_ring_buffer_clone_producer() {
+        struct Record {
+            m: u32,
+        }
+        let (tx, rx) = mpsc::with_capacity::<Record>(4);
+        let r = Record { m: 10 };
+        let r1 = Record { m: 100 };
+        let tx1 = tx.clone();
+        assert!(tx.try_push(r).is_ok());
+        assert!(tx1.try_push(r1).is_ok());
+        assert_eq!(rx.pop().unwrap().m, 10);
+        assert_eq!(rx.pop().unwrap().m, 100);
     }
 }
