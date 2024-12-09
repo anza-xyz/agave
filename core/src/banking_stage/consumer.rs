@@ -725,7 +725,7 @@ impl Consumer {
 
         let vote_only_freeze_lock = bank.vote_only_freeze_lock();
         // Add vote_only execution here.
-        if *vote_only_freeze_lock != Hash::default() {
+        if *vote_only_freeze_lock == Hash::default() {
             let _ = bank.load_execute_and_commit_for_vote_only_execution(
                 batch,
                 MAX_PROCESSING_AGE,
