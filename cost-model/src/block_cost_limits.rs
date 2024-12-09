@@ -38,3 +38,16 @@ pub const MAX_VOTE_UNITS: u64 = 36_000_000;
 /// The maximum allowed size, in bytes, that accounts data can grow, per block.
 /// This can also be thought of as the maximum size of new allocations per block.
 pub const MAX_BLOCK_ACCOUNTS_DATA_SIZE_DELTA: u64 = 100_000_000;
+
+/// Return the block limits that will be used upon activation of SIMD-0207.
+/// Returns as
+/// (account_limit, block_limit, vote_limit)
+// ^ Above order is used to be consistent with the order of
+//   `CostTracker::set_limits`.
+pub const fn simd_0207_block_limits() -> (u64, u64, u64) {
+    (
+        MAX_WRITABLE_ACCOUNT_UNITS,
+        MAX_BLOCK_UNITS_SIMD_0207,
+        MAX_VOTE_UNITS,
+    )
+}
