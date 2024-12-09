@@ -214,7 +214,8 @@ impl FinalReplayStage {
                         fork_thread_pool.current_thread_index().unwrap_or_default()
                     );
 
-                    if let Some(bank) = bank_forks.read().unwrap().get_with_scheduler(bank_slot) {
+                    let bank= bank_forks.read().unwrap().get_with_scheduler(bank_slot);
+                    if let Some(bank) = bank {
                         if bank.collector_id() != my_pubkey {
                             // The bank may be created before parent is frozen, so we need to copy current data from parent.
                             bank.update_data_from_parent();
@@ -277,7 +278,8 @@ impl FinalReplayStage {
             }
 
             let bank_slot = replay_result.bank_slot;
-            if let Some(bank) = &bank_forks.read().unwrap().get_with_scheduler(bank_slot) {
+            let bank = bank_forks.read().unwrap().get_with_scheduler(bank_slot);
+            if let Some(bank) = bank {
                 assert_eq!(bank_slot, bank.slot());
                 if bank.is_complete() {
                     let mut bank_complete_time = Measure::start("bank_complete_time");
@@ -316,7 +318,7 @@ impl FinalReplayStage {
                     );
                     did_complete_bank = true;
                     if let Some(transaction_status_sender) = transaction_status_sender {
-                        transaction_status_sender.send_transaction_status_freeze_message(bank);
+                        transaction_status_sender.send_transaction_status_freeze_message(&bank);
                     }
                     bank.freeze();
                     datapoint_info!(
@@ -343,7 +345,7 @@ impl FinalReplayStage {
                             });
                     }
 
-                    Self::record_rewards(bank, rewards_recorder_sender);
+                    Self::record_rewards(&bank, rewards_recorder_sender);
 
                     let r_replay_progress = r_replay_progress.progress.read().unwrap();
                     if let Some(ref block_metadata_notifier) = block_metadata_notifier {
