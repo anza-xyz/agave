@@ -2,6 +2,7 @@ use {
     crate::banking_stage::{
         immutable_deserialized_packet::ImmutableDeserializedPacket, scheduler_messages::MaxAge,
     },
+    solana_sdk::packet::{self},
     std::sync::Arc,
 };
 
@@ -61,10 +62,7 @@ impl<Tx> TransactionState<Tx> {
     ) -> Self {
         let should_forward = packet
             .as_ref()
-            .map(|packet| {
-                !packet.original_packet().meta().forwarded()
-                    && packet.original_packet().meta().is_from_staked_node()
-            })
+            .map(|packet| initialize_should_forward(packet.original_packet().meta()))
             .unwrap_or_default();
         Self::Unprocessed {
             transaction_ttl,
@@ -211,10 +209,15 @@ impl<Tx> TransactionState<Tx> {
     }
 }
 
+fn initialize_should_forward(meta: &packet::Meta) -> bool {
+    !meta.forwarded() && meta.is_from_staked_node()
+}
+
 #[cfg(test)]
 mod tests {
     use {
         super::*,
+        packet::PacketFlags,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
             compute_budget::ComputeBudgetInstruction,
@@ -373,5 +376,24 @@ mod tests {
             TransactionState::Unprocessed { .. }
         ));
         assert_eq!(transaction_ttl.max_age, MaxAge::MAX);
+    }
+
+    #[test]
+    fn test_initialize_should_forward() {
+        let meta = packet::Meta::default();
+        assert!(!initialize_should_forward(&meta));
+
+        let mut meta = packet::Meta::default();
+        meta.flags.set(PacketFlags::FORWARDED, true);
+        assert!(!initialize_should_forward(&meta));
+
+        let mut meta = packet::Meta::default();
+        meta.set_from_staked_node(true);
+        assert!(initialize_should_forward(&meta));
+
+        let mut meta = packet::Meta::default();
+        meta.flags.set(PacketFlags::FORWARDED, true);
+        meta.set_from_staked_node(true);
+        assert!(!initialize_should_forward(&meta));
     }
 }
