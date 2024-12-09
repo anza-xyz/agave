@@ -4,7 +4,6 @@ use {
     solana_sdk::{
         account::WritableAccount,
         precompiles::get_precompile,
-        saturating_add_assign,
         sysvar::instructions,
         transaction::TransactionError,
         transaction_context::{IndexOfAccount, InstructionAccount},
@@ -118,13 +117,10 @@ impl MessageProcessor {
                 execute_timings.details.accumulate(&invoke_context.timings);
                 ExecuteDetailsTimings::default()
             };
-            saturating_add_assign!(
-                execute_timings
-                    .execute_accessories
-                    .process_instructions
-                    .total_us,
-                process_instruction_us
-            );
+            execute_timings
+                .execute_accessories
+                .process_instructions
+                .total_us += process_instruction_us;
 
             result
                 .map_err(|err| TransactionError::InstructionError(instruction_index as u8, err))?;

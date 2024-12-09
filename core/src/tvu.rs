@@ -163,6 +163,7 @@ impl Tvu {
         cluster_slots: Arc<ClusterSlots>,
         wen_restart_repair_slots: Option<Arc<RwLock<Vec<Slot>>>>,
         slot_status_notifier: Option<SlotStatusNotifier>,
+        vote_connection_cache: Arc<ConnectionCache>,
     ) -> Result<Self, String> {
         let in_wen_restart = wen_restart_repair_slots.is_some();
 
@@ -331,6 +332,7 @@ impl Tvu {
             cluster_info.clone(),
             poh_recorder.clone(),
             tower_storage,
+            vote_connection_cache,
         );
 
         let warm_quic_cache_service = connection_cache.and_then(|connection_cache| {
@@ -436,6 +438,7 @@ pub mod tests {
         solana_runtime::bank::Bank,
         solana_sdk::signature::{Keypair, Signer},
         solana_streamer::socket::SocketAddrSpace,
+        solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
         std::sync::atomic::{AtomicU64, Ordering},
     };
 
@@ -494,6 +497,18 @@ pub mod tests {
         } else {
             None
         };
+        let connection_cache = if DEFAULT_VOTE_USE_QUIC {
+            ConnectionCache::new_quic(
+                "connection_cache_vote_quic",
+                DEFAULT_TPU_CONNECTION_POOL_SIZE,
+            )
+        } else {
+            ConnectionCache::with_udp(
+                "connection_cache_vote_udp",
+                DEFAULT_TPU_CONNECTION_POOL_SIZE,
+            )
+        };
+
         let tvu = Tvu::new(
             &vote_keypair.pubkey(),
             Arc::new(RwLock::new(vec![Arc::new(vote_keypair)])),
@@ -555,6 +570,7 @@ pub mod tests {
             cluster_slots,
             wen_restart_repair_slots,
             None,
+            Arc::new(connection_cache),
         )
         .expect("assume success");
         if enable_wen_restart {

@@ -17,13 +17,23 @@ indexmap = { workspace = true }
 indicatif = { workspace = true, optional = true }
 log = { workspace = true }
 rayon = { workspace = true }
+solana-client-traits = { workspace = true }
+solana-clock = { workspace = true }
+solana-commitment-config = { workspace = true }
 solana-connection-cache = { workspace = true }
+solana-epoch-info = { workspace = true }
 solana-measure = { workspace = true }
+solana-message = { workspace = true, optional = true }
 solana-net-utils = { workspace = true }
+solana-pubkey = { workspace = true }
 solana-pubsub-client = { workspace = true }
+solana-quic-definitions = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
-solana-sdk = { workspace = true }
+solana-signature = { workspace = true }
+solana-signer = { workspace = true }
+solana-transaction = { workspace = true }
+solana-transaction-error = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 
@@ -31,7 +41,11 @@ tokio = { workspace = true, features = ["full"] }
 default = ["spinner"]
 # Support tpu-client methods that feature a spinner progress bar for
 # command-line interfaces
-spinner = ["dep:indicatif", "solana-rpc-client/spinner"]
+spinner = [
+    "dep:indicatif",
+    "dep:solana-message",
+    "solana-rpc-client/spinner"
+]
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

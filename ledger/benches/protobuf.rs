@@ -4,15 +4,10 @@ extern crate test;
 
 use {
     bincode::{deserialize, serialize},
-    solana_ledger::{
-        blockstore::Blockstore,
-        blockstore_db::{columns as cf, LedgerColumn},
-        get_tmp_ledger_path_auto_delete,
-    },
+    prost::Message,
     solana_runtime::bank::RewardType,
-    solana_sdk::{clock::Slot, pubkey},
+    solana_sdk::pubkey,
     solana_transaction_status::{Reward, Rewards},
-    std::path::Path,
     test::Bencher,
 };
 
@@ -28,92 +23,73 @@ fn create_rewards() -> Rewards {
         .collect()
 }
 
-fn write_bincode_rewards(rewards_cf: &LedgerColumn<cf::Rewards>, slot: Slot, rewards: Rewards) {
-    let data = serialize(&rewards).unwrap();
-    rewards_cf.put_bytes(slot, &data).unwrap();
+fn bincode_serialize_rewards(rewards: Rewards) -> Vec<u8> {
+    serialize(&rewards).unwrap()
 }
 
-fn write_protobuf_rewards(rewards_cf: &LedgerColumn<cf::Rewards>, slot: Slot, rewards: Rewards) {
-    let rewards = rewards.into();
-    rewards_cf.put_protobuf(slot, &rewards).unwrap();
+fn protobuf_serialize_rewards(rewards: Rewards) -> Vec<u8> {
+    let rewards: solana_storage_proto::convert::generated::Rewards = rewards.into();
+    let mut buffer = Vec::with_capacity(rewards.encoded_len());
+    rewards.encode(&mut buffer).unwrap();
+    buffer
 }
 
-fn read_bincode_rewards(rewards_cf: &LedgerColumn<cf::Rewards>, slot: Slot) -> Option<Rewards> {
-    rewards_cf
-        .get_bytes(slot)
+fn bincode_deserialize_rewards(bytes: &[u8]) -> Rewards {
+    deserialize(bytes).unwrap()
+}
+
+fn protobuf_deserialize_rewards(bytes: &[u8]) -> Rewards {
+    solana_storage_proto::convert::generated::Rewards::decode(bytes)
         .unwrap()
-        .map(|data| deserialize::<Rewards>(&data).unwrap())
+        .into()
 }
 
-fn read_protobuf_rewards(rewards_cf: &LedgerColumn<cf::Rewards>, slot: Slot) -> Option<Rewards> {
-    rewards_cf.get_protobuf(slot).unwrap().map(|r| r.into())
-}
-
-fn bench_write_rewards<F>(bench: &mut Bencher, ledger_path: &Path, write_method: F)
+fn bench_serialize_rewards<S>(bench: &mut Bencher, serialize_method: S)
 where
-    F: Fn(&LedgerColumn<cf::Rewards>, Slot, Rewards),
+    S: Fn(Rewards) -> Vec<u8>,
 {
-    let blockstore =
-        Blockstore::open(ledger_path).expect("Expected to be able to open database ledger");
     let rewards = create_rewards();
-    let mut slot = 0;
-    let rewards_cf = blockstore.db().column::<cf::Rewards>();
     bench.iter(move || {
-        write_method(&rewards_cf, slot, rewards.clone());
-        slot += 1;
+        let _ = serialize_method(rewards.clone());
     });
-    Blockstore::destroy(ledger_path).expect("Expected successful database destruction");
 }
 
-fn bench_read_rewards<F, G>(
-    bench: &mut Bencher,
-    ledger_path: &Path,
-    write_method: F,
-    read_method: G,
-) where
-    F: Fn(&LedgerColumn<cf::Rewards>, Slot, Rewards),
-    G: Fn(&LedgerColumn<cf::Rewards>, Slot) -> Option<Rewards>,
+fn bench_deserialize_rewards<S, D>(bench: &mut Bencher, serialize_method: S, deserialize_method: D)
+where
+    S: Fn(Rewards) -> Vec<u8>,
+    D: Fn(&[u8]) -> Rewards,
 {
-    let blockstore =
-        Blockstore::open(ledger_path).expect("Expected to be able to open database ledger");
     let rewards = create_rewards();
-    let slot = 1;
-    let rewards_cf = blockstore.db().column::<cf::Rewards>();
-    write_method(&rewards_cf, slot, rewards);
-    bench.iter(move || read_method(&rewards_cf, slot));
-    Blockstore::destroy(ledger_path).expect("Expected successful database destruction");
+    let rewards_bytes = serialize_method(rewards);
+    bench.iter(move || {
+        let _ = deserialize_method(&rewards_bytes);
+    });
 }
 
 #[bench]
-fn bench_serialize_write_bincode(bencher: &mut Bencher) {
-    let ledger_path = get_tmp_ledger_path_auto_delete!();
-    bench_write_rewards(bencher, ledger_path.path(), write_bincode_rewards);
+fn bench_serialize_bincode(bencher: &mut Bencher) {
+    bench_serialize_rewards(bencher, bincode_serialize_rewards);
 }
 
 #[bench]
-fn bench_serialize_write_protobuf(bencher: &mut Bencher) {
-    let ledger_path = get_tmp_ledger_path_auto_delete!();
-    bench_write_rewards(bencher, ledger_path.path(), write_protobuf_rewards);
+fn bench_serialize_protobuf(bencher: &mut Bencher) {
+    bench_serialize_rewards(bencher, protobuf_serialize_rewards);
 }
 
 #[bench]
-fn bench_read_bincode(bencher: &mut Bencher) {
-    let ledger_path = get_tmp_ledger_path_auto_delete!();
-    bench_read_rewards(
+fn bench_deserialize_bincode(bencher: &mut Bencher) {
+    bench_deserialize_rewards(
         bencher,
-        ledger_path.path(),
-        write_bincode_rewards,
-        read_bincode_rewards,
+        bincode_serialize_rewards,
+        bincode_deserialize_rewards,
     );
 }
 
 #[bench]
-fn bench_read_protobuf(bencher: &mut Bencher) {
-    let ledger_path = get_tmp_ledger_path_auto_delete!();
-    bench_read_rewards(
+fn bench_deserialize_protobuf(bencher: &mut Bencher) {
+    bench_deserialize_rewards(
         bencher,
-        ledger_path.path(),
-        write_protobuf_rewards,
-        read_protobuf_rewards,
+        protobuf_serialize_rewards,
+        protobuf_deserialize_rewards,
     );
 }

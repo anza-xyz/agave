@@ -16,6 +16,7 @@ pub(crate) fn upcoming_leader_tpu_vote_sockets(
     cluster_info: &ClusterInfo,
     poh_recorder: &RwLock<PohRecorder>,
     fanout_slots: u64,
+    protocol: Protocol,
 ) -> Vec<SocketAddr> {
     let upcoming_leaders = {
         let poh_recorder = poh_recorder.read().unwrap();
@@ -29,7 +30,7 @@ pub(crate) fn upcoming_leader_tpu_vote_sockets(
         .dedup()
         .filter_map(|leader_pubkey| {
             cluster_info
-                .lookup_contact_info(&leader_pubkey, |node| node.tpu_vote(Protocol::UDP))?
+                .lookup_contact_info(&leader_pubkey, |node| node.tpu_vote(protocol))?
                 .ok()
         })
         // dedup again since leaders could potentially share the same tpu vote socket

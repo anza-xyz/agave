@@ -12,17 +12,20 @@
 //!    active them.  When this occurs, the activation slot is recorded in the feature account
 
 pub use solana_sdk_ids::feature::{check_id, id, ID};
+#[cfg(feature = "bincode")]
 use {
-    crate::{
-        account_info::AccountInfo, instruction::Instruction, program_error::ProgramError,
-        pubkey::Pubkey, rent::Rent, system_instruction,
-    },
-    solana_clock::Slot,
+    solana_account_info::AccountInfo, solana_instruction::Instruction,
+    solana_program_error::ProgramError, solana_pubkey::Pubkey, solana_rent::Rent,
+    solana_system_interface::instruction as system_instruction,
 };
 
-#[derive(Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde_derive::Deserialize, serde_derive::Serialize)
+)]
+#[derive(Default, Debug, PartialEq, Eq)]
 pub struct Feature {
-    pub activated_at: Option<Slot>,
+    pub activated_at: Option<u64>,
 }
 
 impl Feature {
@@ -30,6 +33,7 @@ impl Feature {
         9 // see test_feature_size_of.
     }
 
+    #[cfg(feature = "bincode")]
     pub fn from_account_info(account_info: &AccountInfo) -> Result<Self, ProgramError> {
         if *account_info.owner != id() {
             return Err(ProgramError::InvalidAccountOwner);
@@ -39,6 +43,7 @@ impl Feature {
     }
 }
 
+#[cfg(feature = "bincode")]
 /// Activate a feature
 pub fn activate(feature_id: &Pubkey, funding_address: &Pubkey, rent: &Rent) -> Vec<Instruction> {
     activate_with_lamports(
@@ -48,6 +53,7 @@ pub fn activate(feature_id: &Pubkey, funding_address: &Pubkey, rent: &Rent) -> V
     )
 }
 
+#[cfg(feature = "bincode")]
 pub fn activate_with_lamports(
     feature_id: &Pubkey,
     funding_address: &Pubkey,
@@ -82,7 +88,7 @@ mod test {
                 activated_at: Some(0),
             },
             Feature {
-                activated_at: Some(Slot::MAX),
+                activated_at: Some(u64::MAX),
             },
         ];
         for feature in &features {

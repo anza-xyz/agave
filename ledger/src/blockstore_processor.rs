@@ -46,7 +46,6 @@ use {
         genesis_config::GenesisConfig,
         hash::Hash,
         pubkey::Pubkey,
-        saturating_add_assign,
         signature::{Keypair, Signature},
         transaction::{
             Result, SanitizedTransaction, TransactionError, TransactionVerificationMode,
@@ -63,6 +62,7 @@ use {
     solana_vote::vote_account::VoteAccountsHashMap,
     std::{
         collections::{HashMap, HashSet},
+        num::Saturating,
         ops::{Index, Range},
         path::PathBuf,
         result,
@@ -342,8 +342,8 @@ fn execute_batches_internal(
                         total_thread_execute_timings.accumulate(&timings);
                     })
                     .or_insert(ThreadExecuteTimings {
-                        total_thread_us: execute_batches_us,
-                        total_transactions_executed: transaction_count,
+                        total_thread_us: Saturating(execute_batches_us),
+                        total_transactions_executed: Saturating(transaction_count),
                         execute_timings: timings,
                     });
                 result
@@ -1258,7 +1258,7 @@ pub struct BatchExecutionTiming {
 
     /// Wall clock time used by the transaction execution part of pipeline.
     /// [`ConfirmationTiming::replay_elapsed`] includes this time.  In microseconds.
-    wall_clock_us: u64,
+    wall_clock_us: Saturating<u64>,
 
     /// Time used to execute transactions, via `execute_batch()`, in the thread that consumed the
     /// most time (in terms of total_thread_us) among rayon threads. Note that the slowest thread
@@ -1286,7 +1286,7 @@ impl BatchExecutionTiming {
 
         // These metric fields aren't applicable for the unified scheduler
         if !is_unified_scheduler_enabled {
-            saturating_add_assign!(*wall_clock_us, new_batch.execute_batches_us);
+            *wall_clock_us += new_batch.execute_batches_us;
 
             totals.saturating_add_in_place(TotalBatchesLen, new_batch.total_batches_len);
             totals.saturating_add_in_place(NumExecuteBatches, 1);
@@ -1316,8 +1316,8 @@ impl BatchExecutionTiming {
 
 #[derive(Debug, Default)]
 pub struct ThreadExecuteTimings {
-    pub total_thread_us: u64,
-    pub total_transactions_executed: u64,
+    pub total_thread_us: Saturating<u64>,
+    pub total_transactions_executed: Saturating<u64>,
     pub execute_timings: ExecuteTimings,
 }
 
@@ -1327,8 +1327,8 @@ impl ThreadExecuteTimings {
             datapoint_info!(
                 "replay-slot-end-to-end-stats",
                 ("slot", slot as i64, i64),
-                ("total_thread_us", self.total_thread_us as i64, i64),
-                ("total_transactions_executed", self.total_transactions_executed as i64, i64),
+                ("total_thread_us", self.total_thread_us.0 as i64, i64),
+                ("total_transactions_executed", self.total_transactions_executed.0 as i64, i64),
                 // Everything inside the `eager!` block will be eagerly expanded before
                 // evaluation of the rest of the surrounding macro.
                 // Pass false because this code-path is never touched by unified scheduler.
@@ -1339,11 +1339,8 @@ impl ThreadExecuteTimings {
 
     pub fn accumulate(&mut self, other: &ThreadExecuteTimings) {
         self.execute_timings.accumulate(&other.execute_timings);
-        saturating_add_assign!(self.total_thread_us, other.total_thread_us);
-        saturating_add_assign!(
-            self.total_transactions_executed,
-            other.total_transactions_executed
-        );
+        self.total_thread_us += other.total_thread_us;
+        self.total_transactions_executed += other.total_transactions_executed;
     }
 }
 
@@ -1384,7 +1381,7 @@ impl ReplaySlotStats {
         let execute_batches_us = if is_unified_scheduler_enabled {
             None
         } else {
-            Some(self.batch_execute.wall_clock_us as i64)
+            Some(self.batch_execute.wall_clock_us.0 as i64)
         };
 
         lazy! {
@@ -1446,10 +1443,10 @@ impl ReplaySlotStats {
                 (0, 0, 0, 0, 0),
                 |(sum_us, sum_units, sum_count, sum_errored_units, sum_errored_count), a| {
                     (
-                        sum_us + a.1.accumulated_us,
-                        sum_units + a.1.accumulated_units,
-                        sum_count + a.1.count,
-                        sum_errored_units + a.1.total_errored_units,
+                        sum_us + a.1.accumulated_us.0,
+                        sum_units + a.1.accumulated_units.0,
+                        sum_count + a.1.count.0,
+                        sum_errored_units + a.1.total_errored_units.0,
                         sum_errored_count + a.1.errored_txs_compute_consumed.len(),
                     )
                 },
@@ -1460,10 +1457,10 @@ impl ReplaySlotStats {
                 "per_program_timings",
                 ("slot", slot as i64, i64),
                 ("pubkey", pubkey.to_string(), String),
-                ("execute_us", time.accumulated_us, i64),
-                ("accumulated_units", time.accumulated_units, i64),
-                ("errored_units", time.total_errored_units, i64),
-                ("count", time.count, i64),
+                ("execute_us", time.accumulated_us.0, i64),
+                ("accumulated_units", time.accumulated_units.0, i64),
+                ("errored_units", time.total_errored_units.0, i64),
+                ("count", time.count.0, i64),
                 (
                     "errored_count",
                     time.errored_txs_compute_consumed.len(),
@@ -2353,7 +2350,8 @@ pub mod tests {
         crate::{
             blockstore_options::{AccessType, BlockstoreOptions},
             genesis_utils::{
-                create_genesis_config, create_genesis_config_with_leader, GenesisConfigInfo,
+                create_genesis_config, create_genesis_config_with_leader,
+                create_genesis_config_with_mint_keypair, GenesisConfigInfo,
             },
         },
         assert_matches::assert_matches,
@@ -2381,6 +2379,7 @@ pub mod tests {
             pubkey::Pubkey,
             rent_debits::RentDebits,
             signature::{Keypair, Signer},
+            signer::SeedDerivable,
             system_instruction::SystemError,
             system_transaction,
             transaction::{Transaction, TransactionError},
@@ -2397,6 +2396,7 @@ pub mod tests {
             vote_transaction,
         },
         std::{collections::BTreeSet, sync::RwLock},
+        test_case::test_case,
         trees::tr,
     };
 
@@ -3459,14 +3459,19 @@ pub mod tests {
         }
     }
 
-    #[test]
-    fn test_transaction_result_does_not_affect_bankhash() {
+    #[test_case(true; "rent_collected")]
+    #[test_case(false; "rent_not_collected")]
+    fn test_transaction_result_does_not_affect_bankhash(fee_payer_in_rent_partition: bool) {
         solana_logger::setup();
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
             ..
-        } = create_genesis_config(1000);
+        } = if fee_payer_in_rent_partition {
+            create_genesis_config(1000)
+        } else {
+            create_genesis_config_with_mint_keypair(Keypair::from_seed(&[1u8; 32]).unwrap(), 1000)
+        };
 
         fn get_instruction_errors() -> Vec<InstructionError> {
             vec![
@@ -3532,7 +3537,7 @@ pub mod tests {
             Ok(())
         });
 
-        let mock_program_id = solana_sdk::pubkey::new_rand();
+        let mock_program_id = Pubkey::new_unique();
 
         let (bank, _bank_forks) = Bank::new_with_mockup_builtin_for_tests(
             &genesis_config,
@@ -3596,7 +3601,8 @@ pub mod tests {
 
             let entry = next_entry(&bank.last_blockhash(), 1, vec![tx]);
             let bank = Arc::new(bank);
-            let _result = process_entries_for_tests_without_scheduler(&bank, vec![entry]);
+            let result = process_entries_for_tests_without_scheduler(&bank, vec![entry]);
+            assert!(result.is_ok()); // No failing transaction error - only instruction errors
             bank.freeze();
             let bank_details = SlotDetails::new_from_bank(&bank, true).unwrap();
 
@@ -3613,8 +3619,8 @@ pub mod tests {
                     .unwrap()
                     .last_blockhash
             );
-            // ... but should affect bank hash
-            assert_ne!(ok_bank_details, bank_details);
+            // AND should not affect bankhash IF the rent is collected during freeze.
+            assert_eq!(ok_bank_details == bank_details, fee_payer_in_rent_partition);
             // Different types of transaction failure should not affect bank hash
             if let Some(prev_bank_details) = &err_bank_details {
                 assert_eq!(

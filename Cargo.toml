@@ -122,6 +122,7 @@ members = [
     "sdk/epoch-info",
     "sdk/epoch-rewards",
     "sdk/epoch-schedule",
+    "sdk/feature-gate-interface",
     "sdk/feature-set",
     "sdk/fee-calculator",
     "sdk/fee-structure",
@@ -140,6 +141,7 @@ members = [
     "sdk/msg",
     "sdk/native-token",
     "sdk/nonce",
+    "sdk/offchain-message",
     "sdk/package-metadata",
     "sdk/package-metadata-macro",
     "sdk/packet",
@@ -334,7 +336,7 @@ index_list = "0.2.14"
 indexmap = "2.7.0"
 indicatif = "0.17.9"
 itertools = "0.12.1"
-jemallocator = { package = "tikv-jemallocator", version = "0.4.1", features = [
+jemallocator = { package = "tikv-jemallocator", version = "0.6.0", features = [
     "unprefixed_malloc_on_supported_platforms",
 ] }
 js-sys = "0.3.74"
@@ -471,6 +473,7 @@ solana-epoch-info = { path = "sdk/epoch-info", version = "=2.2.0" }
 solana-epoch-rewards = { path = "sdk/epoch-rewards", version = "=2.2.0" }
 solana-epoch-schedule = { path = "sdk/epoch-schedule", version = "=2.2.0" }
 solana-faucet = { path = "faucet", version = "=2.2.0" }
+solana-feature-gate-interface = { path = "sdk/feature-gate-interface", version = "=2.2.0" }
 solana-feature-set = { path = "sdk/feature-set", version = "=2.2.0" }
 solana-fee-calculator = { path = "sdk/fee-calculator", version = "=2.2.0" }
 solana-fee = { path = "fee", version = "=2.2.0" }
@@ -507,6 +510,7 @@ solana-net-utils = { path = "net-utils", version = "=2.2.0" }
 solana-nohash-hasher = "0.2.1"
 solana-nonce = { path = "sdk/nonce", version = "=2.2.0" }
 solana-notifier = { path = "notifier", version = "=2.2.0" }
+solana-offchain-message = { path = "sdk/offchain-message", version = "=2.2.0" }
 solana-package-metadata = { path = "sdk/package-metadata", version = "=2.2.0" }
 solana-package-metadata-macro = { path = "sdk/package-metadata-macro", version = "=2.2.0" }
 solana-packet = { path = "sdk/packet", version = "=2.2.0" }

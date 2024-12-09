@@ -54,7 +54,7 @@ fn calc(info: &[(usize, usize)], bin_widths: Vec<usize>, offset: i64) {
     eprintln!("slot range: {}", max_inclusive - min + 1);
     eprintln!("ancient boundary: {}", outside_slot);
     eprintln!(
-        "number of slots beyond ancient bondary: {}",
+        "number of slots beyond ancient boundary: {}",
         info.iter()
             .filter(|x| x.0 < max_inclusive - outside_slot)
             .count()

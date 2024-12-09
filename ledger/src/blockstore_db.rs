@@ -36,7 +36,7 @@ use {
         ffi::{CStr, CString},
         fs,
         marker::PhantomData,
-        path::Path,
+        path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
             Arc,
@@ -403,20 +403,21 @@ impl OldestSlot {
 }
 
 #[derive(Debug)]
-struct Rocks {
+pub(crate) struct Rocks {
     db: rocksdb::DB,
+    path: PathBuf,
     access_type: AccessType,
     oldest_slot: OldestSlot,
-    column_options: LedgerColumnOptions,
+    column_options: Arc<LedgerColumnOptions>,
     write_batch_perf_status: PerfSamplingStatus,
 }
 
 impl Rocks {
-    fn open(path: &Path, options: BlockstoreOptions) -> Result<Rocks> {
+    pub(crate) fn open(path: PathBuf, options: BlockstoreOptions) -> Result<Rocks> {
         let access_type = options.access_type.clone();
         let recovery_mode = options.recovery_mode.clone();
 
-        fs::create_dir_all(path)?;
+        fs::create_dir_all(&path)?;
 
         // Use default database options
         let mut db_options = get_db_options(&access_type);
@@ -424,13 +425,13 @@ impl Rocks {
             db_options.set_wal_recovery_mode(recovery_mode.into());
         }
         let oldest_slot = OldestSlot::default();
-        let column_options = options.column_options.clone();
-        let cf_descriptors = Self::cf_descriptors(path, &options, &oldest_slot);
+        let cf_descriptors = Self::cf_descriptors(&path, &options, &oldest_slot);
+        let column_options = Arc::from(options.column_options);
 
         // Open the database
         let db = match access_type {
             AccessType::Primary | AccessType::PrimaryForMaintenance => {
-                DB::open_cf_descriptors(&db_options, path, cf_descriptors)?
+                DB::open_cf_descriptors(&db_options, &path, cf_descriptors)?
             }
             AccessType::Secondary => {
                 let secondary_path = path.join("solana-secondary");
@@ -441,7 +442,7 @@ impl Rocks {
                 );
                 DB::open_cf_descriptors_as_secondary(
                     &db_options,
-                    path,
+                    &path,
                     &secondary_path,
                     cf_descriptors,
                 )?
@@ -449,6 +450,7 @@ impl Rocks {
         };
         let rocks = Rocks {
             db,
+            path,
             access_type,
             oldest_slot,
             column_options,
@@ -621,13 +623,27 @@ impl Rocks {
         }
     }
 
-    fn destroy(path: &Path) -> Result<()> {
+    pub(crate) fn column<C>(self: &Arc<Self>) -> LedgerColumn<C>
+    where
+        C: Column + ColumnName,
+    {
+        let column_options = Arc::clone(&self.column_options);
+        LedgerColumn {
+            backend: Arc::clone(self),
+            column: PhantomData,
+            column_options,
+            read_perf_status: PerfSamplingStatus::default(),
+            write_perf_status: PerfSamplingStatus::default(),
+        }
+    }
+
+    pub(crate) fn destroy(path: &Path) -> Result<()> {
         DB::destroy(&Options::default(), path)?;
 
         Ok(())
     }
 
-    fn cf_handle(&self, cf: &str) -> &ColumnFamily {
+    pub(crate) fn cf_handle(&self, cf: &str) -> &ColumnFamily {
         self.db
             .cf_handle(cf)
             .expect("should never get an unknown column")
@@ -695,7 +711,7 @@ impl Rocks {
         self.db.iterator_cf(cf, iterator_mode)
     }
 
-    fn iterator_cf_raw_key(
+    pub(crate) fn iterator_cf_raw_key(
         &self,
         cf: &ColumnFamily,
         iterator_mode: IteratorMode<Vec<u8>>,
@@ -712,20 +728,22 @@ impl Rocks {
         self.db.iterator_cf(cf, iterator_mode)
     }
 
-    fn raw_iterator_cf(&self, cf: &ColumnFamily) -> DBRawIterator {
-        self.db.raw_iterator_cf(cf)
+    pub(crate) fn raw_iterator_cf(&self, cf: &ColumnFamily) -> Result<DBRawIterator> {
+        Ok(self.db.raw_iterator_cf(cf))
     }
 
-    fn batch(&self) -> RWriteBatch {
-        RWriteBatch::default()
+    pub(crate) fn batch(&self) -> Result<WriteBatch> {
+        Ok(WriteBatch {
+            write_batch: RWriteBatch::default(),
+        })
     }
 
-    fn write(&self, batch: RWriteBatch) -> Result<()> {
+    pub(crate) fn write(&self, batch: WriteBatch) -> Result<()> {
         let op_start_instant = maybe_enable_rocksdb_perf(
             self.column_options.rocks_perf_sample_interval,
             &self.write_batch_perf_status,
         );
-        let result = self.db.write(batch);
+        let result = self.db.write(batch.write_batch);
         if let Some(op_start_instant) = op_start_instant {
             report_rocksdb_write_perf(
                 PERF_METRIC_OP_NAME_WRITE_BATCH, // We use write_batch as cf_name for write batch.
@@ -740,7 +758,7 @@ impl Rocks {
         }
     }
 
-    fn is_primary_access(&self) -> bool {
+    pub(crate) fn is_primary_access(&self) -> bool {
         self.access_type == AccessType::Primary
             || self.access_type == AccessType::PrimaryForMaintenance
     }
@@ -758,11 +776,23 @@ impl Rocks {
         }
     }
 
-    fn live_files_metadata(&self) -> Result<Vec<LiveFile>> {
+    pub(crate) fn live_files_metadata(&self) -> Result<Vec<LiveFile>> {
         match self.db.live_files() {
             Ok(live_files) => Ok(live_files),
             Err(e) => Err(BlockstoreError::RocksDb(e)),
         }
+    }
+
+    pub(crate) fn storage_size(&self) -> Result<u64> {
+        Ok(fs_extra::dir::get_size(&self.path)?)
+    }
+
+    pub(crate) fn set_oldest_slot(&self, oldest_slot: Slot) {
+        self.oldest_slot.set(oldest_slot);
+    }
+
+    pub(crate) fn set_clean_slot_0(&self, clean_slot_0: bool) {
+        self.oldest_slot.set_clean_slot_0(clean_slot_0);
     }
 }
 
@@ -1325,13 +1355,6 @@ impl TypedColumn for columns::MerkleRootMeta {
 }
 
 #[derive(Debug)]
-pub struct Database {
-    backend: Arc<Rocks>,
-    path: Arc<Path>,
-    column_options: Arc<LedgerColumnOptions>,
-}
-
-#[derive(Debug)]
 pub struct LedgerColumn<C>
 where
     C: Column + ColumnName,
@@ -1420,85 +1443,6 @@ impl WriteBatch {
     }
 }
 
-impl Database {
-    pub fn open(path: &Path, options: BlockstoreOptions) -> Result<Self> {
-        let column_options = Arc::new(options.column_options.clone());
-        let backend = Arc::new(Rocks::open(path, options)?);
-
-        Ok(Database {
-            backend,
-            path: Arc::from(path),
-            column_options,
-        })
-    }
-
-    pub fn destroy(path: &Path) -> Result<()> {
-        Rocks::destroy(path)?;
-
-        Ok(())
-    }
-
-    #[inline]
-    pub fn cf_handle<C>(&self) -> &ColumnFamily
-    where
-        C: Column + ColumnName,
-    {
-        self.backend.cf_handle(C::NAME)
-    }
-
-    pub fn column<C>(&self) -> LedgerColumn<C>
-    where
-        C: Column + ColumnName,
-    {
-        LedgerColumn {
-            backend: Arc::clone(&self.backend),
-            column: PhantomData,
-            column_options: Arc::clone(&self.column_options),
-            read_perf_status: PerfSamplingStatus::default(),
-            write_perf_status: PerfSamplingStatus::default(),
-        }
-    }
-
-    #[inline]
-    pub fn raw_iterator_cf(&self, cf: &ColumnFamily) -> Result<DBRawIterator> {
-        Ok(self.backend.raw_iterator_cf(cf))
-    }
-
-    pub fn batch(&self) -> Result<WriteBatch> {
-        let write_batch = self.backend.batch();
-        Ok(WriteBatch { write_batch })
-    }
-
-    pub fn write(&self, batch: WriteBatch) -> Result<()> {
-        self.backend.write(batch.write_batch)
-    }
-
-    pub fn storage_size(&self) -> Result<u64> {
-        Ok(fs_extra::dir::get_size(&self.path)?)
-    }
-
-    pub fn is_primary_access(&self) -> bool {
-        self.backend.is_primary_access()
-    }
-
-    pub fn set_oldest_slot(&self, oldest_slot: Slot) {
-        self.backend.oldest_slot.set(oldest_slot);
-    }
-
-    pub(crate) fn set_clean_slot_0(&self, clean_slot_0: bool) {
-        self.backend.oldest_slot.set_clean_slot_0(clean_slot_0);
-    }
-
-    pub fn live_files_metadata(&self) -> Result<Vec<LiveFile>> {
-        self.backend.live_files_metadata()
-    }
-
-    pub fn compact_range_cf<C: Column + ColumnName>(&self, from: &[u8], to: &[u8]) {
-        let cf = self.cf_handle::<C>();
-        self.backend.db.compact_range_cf(cf, Some(from), Some(to));
-    }
-}
-
 impl<C> LedgerColumn<C>
 where
     C: Column + ColumnName,
@@ -1572,6 +1516,12 @@ where
         Ok(true)
     }
 
+    #[cfg(test)]
+    pub fn compact_range_raw_key(&self, from: &[u8], to: &[u8]) {
+        let cf = self.handle();
+        self.backend.db.compact_range_cf(cf, Some(from), Some(to));
+    }
+
     #[inline]
     pub fn handle(&self) -> &ColumnFamily {
         self.backend.cf_handle(C::NAME)
@@ -1579,7 +1529,7 @@ where
 
     #[cfg(test)]
     pub fn is_empty(&self) -> Result<bool> {
-        let mut iter = self.backend.raw_iterator_cf(self.handle());
+        let mut iter = self.backend.raw_iterator_cf(self.handle())?;
         iter.seek_to_first();
         Ok(!iter.valid())
     }
@@ -2192,7 +2142,7 @@ pub mod tests {
                 enforce_ulimit_nofile: false,
                 ..BlockstoreOptions::default()
             };
-            let mut rocks = Rocks::open(db_path, options).unwrap();
+            let mut rocks = Rocks::open(db_path.to_path_buf(), options).unwrap();
 
             // Introduce a new column that will not be known
             rocks
@@ -2209,7 +2159,7 @@ pub mod tests {
                 enforce_ulimit_nofile: false,
                 ..BlockstoreOptions::default()
             };
-            let _ = Rocks::open(db_path, options).unwrap();
+            let _ = Rocks::open(db_path.to_path_buf(), options).unwrap();
         }
         {
             let options = BlockstoreOptions {
@@ -2217,7 +2167,7 @@ pub mod tests {
                 enforce_ulimit_nofile: false,
                 ..BlockstoreOptions::default()
             };
-            let _ = Rocks::open(db_path, options).unwrap();
+            let _ = Rocks::open(db_path.to_path_buf(), options).unwrap();
         }
     }
 

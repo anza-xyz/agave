@@ -5292,6 +5292,7 @@ dependencies = [
  "solana-runtime-transaction",
  "solana-sanitize",
  "solana-sdk",
+ "solana-sdk-ids",
  "solana-send-transaction-service",
  "solana-short-vec",
  "solana-streamer",
@@ -5462,6 +5463,22 @@ dependencies = [
  "spl-memo",
  "thiserror 2.0.4",
  "tokio",
+]
+
+[[package]]
+name = "solana-feature-gate-interface"
+version = "2.2.0"
+dependencies = [
+ "bincode",
+ "serde",
+ "serde_derive",
+ "solana-account-info",
+ "solana-instruction",
+ "solana-program-error",
+ "solana-pubkey",
+ "solana-rent",
+ "solana-sdk-ids",
+ "solana-system-interface",
 ]
 
 [[package]]
@@ -5873,6 +5890,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-offchain-message"
+version = "2.2.0"
+dependencies = [
+ "num_enum",
+ "solana-hash",
+ "solana-packet",
+ "solana-pubkey",
+ "solana-sanitize",
+ "solana-sha256-hasher",
+ "solana-signature",
+ "solana-signer",
+]
+
+[[package]]
 name = "solana-packet"
 version = "2.2.0"
 dependencies = [
@@ -5903,11 +5934,12 @@ dependencies = [
  "rayon",
  "serde",
  "solana-hash",
+ "solana-message",
  "solana-metrics",
  "solana-packet",
- "solana-program",
  "solana-pubkey",
  "solana-rayon-threadlimit",
+ "solana-sdk-ids",
  "solana-short-vec",
  "solana-signature",
  "solana-time-utils",
@@ -5983,35 +6015,25 @@ dependencies = [
 name = "solana-program"
 version = "2.2.0"
 dependencies = [
- "base64 0.22.1",
  "bincode",
- "bitflags 2.6.0",
  "blake3",
  "borsh 0.10.4",
  "borsh 1.5.3",
  "bs58",
- "bv",
  "bytemuck",
- "bytemuck_derive",
  "console_error_panic_hook",
  "console_log",
- "curve25519-dalek 4.1.3",
- "five8_const",
  "getrandom 0.2.15",
- "js-sys",
  "lazy_static",
  "log",
  "memoffset 0.9.1",
  "num-bigint 0.4.6",
  "num-derive",
  "num-traits",
- "parking_lot 0.12.3",
  "rand 0.8.5",
  "serde",
  "serde_bytes",
  "serde_derive",
- "sha2 0.10.8",
- "sha3",
  "solana-account-info",
  "solana-atomic-u64",
  "solana-bincode",
@@ -6022,6 +6044,7 @@ dependencies = [
  "solana-define-syscall",
  "solana-epoch-rewards",
  "solana-epoch-schedule",
+ "solana-feature-gate-interface",
  "solana-fee-calculator",
  "solana-hash",
  "solana-instruction",
@@ -6052,7 +6075,6 @@ dependencies = [
  "solana-system-interface",
  "solana-sysvar",
  "solana-sysvar-id",
- "solana-transaction-error",
  "thiserror 2.0.4",
  "wasm-bindgen",
 ]
@@ -6115,13 +6137,28 @@ dependencies = [
  "percentage",
  "rand 0.8.5",
  "serde",
+ "solana-account",
+ "solana-clock",
  "solana-compute-budget",
+ "solana-epoch-rewards",
+ "solana-epoch-schedule",
  "solana-feature-set",
+ "solana-hash",
+ "solana-instruction",
+ "solana-last-restart-slot",
  "solana-log-collector",
  "solana-measure",
  "solana-metrics",
- "solana-sdk",
+ "solana-precompiles",
+ "solana-pubkey",
+ "solana-rent",
+ "solana-sdk-ids",
+ "solana-slot-hashes",
+ "solana-stable-layout",
+ "solana-sysvar",
+ "solana-sysvar-id",
  "solana-timings",
+ "solana-transaction-context",
  "solana-type-overrides",
  "solana_rbpf",
  "thiserror 2.0.4",
@@ -6386,9 +6423,21 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
+ "solana-account",
  "solana-account-decoder-client-types",
+ "solana-clock",
+ "solana-commitment-config",
+ "solana-epoch-info",
+ "solana-epoch-schedule",
+ "solana-feature-gate-interface",
+ "solana-hash",
+ "solana-instruction",
+ "solana-message",
+ "solana-pubkey",
  "solana-rpc-client-api",
- "solana-sdk",
+ "solana-signature",
+ "solana-transaction",
+ "solana-transaction-error",
  "solana-transaction-status-client-types",
  "solana-version",
  "tokio",
@@ -6427,8 +6476,14 @@ dependencies = [
 name = "solana-rpc-client-nonce-utils"
 version = "2.2.0"
 dependencies = [
+ "solana-account",
+ "solana-commitment-config",
+ "solana-hash",
+ "solana-message",
+ "solana-nonce",
+ "solana-pubkey",
  "solana-rpc-client",
- "solana-sdk",
+ "solana-sdk-ids",
  "thiserror 2.0.4",
 ]
 
@@ -6561,7 +6616,6 @@ dependencies = [
  "memmap2",
  "num-derive",
  "num-traits",
- "num_enum",
  "rand 0.7.3",
  "rand 0.8.5",
  "serde",
@@ -6588,6 +6642,7 @@ dependencies = [
  "solana-instruction",
  "solana-keypair",
  "solana-native-token",
+ "solana-offchain-message",
  "solana-packet",
  "solana-poh-config",
  "solana-precompile-error",
@@ -7106,10 +7161,24 @@ dependencies = [
  "bincode",
  "log",
  "rayon",
+ "solana-account",
+ "solana-client-traits",
+ "solana-clock",
+ "solana-commitment-config",
  "solana-connection-cache",
+ "solana-epoch-info",
+ "solana-hash",
+ "solana-instruction",
+ "solana-keypair",
+ "solana-message",
+ "solana-pubkey",
  "solana-rpc-client",
  "solana-rpc-client-api",
- "solana-sdk",
+ "solana-signature",
+ "solana-signer",
+ "solana-system-interface",
+ "solana-transaction",
+ "solana-transaction-error",
 ]
 
 [[package]]
@@ -7122,7 +7191,7 @@ version = "2.2.0"
 dependencies = [
  "eager",
  "enum-iterator",
- "solana-sdk",
+ "solana-pubkey",
 ]
 
 [[package]]
@@ -7147,13 +7216,23 @@ dependencies = [
  "indicatif",
  "log",
  "rayon",
+ "solana-client-traits",
+ "solana-clock",
+ "solana-commitment-config",
  "solana-connection-cache",
+ "solana-epoch-info",
  "solana-measure",
+ "solana-message",
  "solana-net-utils",
+ "solana-pubkey",
  "solana-pubsub-client",
+ "solana-quic-definitions",
  "solana-rpc-client",
  "solana-rpc-client-api",
- "solana-sdk",
+ "solana-signature",
+ "solana-signer",
+ "solana-transaction",
+ "solana-transaction-error",
  "thiserror 2.0.4",
  "tokio",
 ]
