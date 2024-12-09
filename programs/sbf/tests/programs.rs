@@ -5684,7 +5684,7 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
                 Some(&mint_pubkey),
             );
             let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
-            let (result, _, _logs) = process_transaction_and_record_inner(&bank, tx);
+            let (result, _, _logs, _) = process_transaction_and_record_inner(&bank, tx);
 
             assert!(result.is_ok());
         }
