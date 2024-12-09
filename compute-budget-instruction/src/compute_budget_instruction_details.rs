@@ -3,7 +3,7 @@ use {
         builtin_programs_filter::{BuiltinProgramsFilter, ProgramKind},
         compute_budget_program_id_filter::ComputeBudgetProgramIdFilter,
     },
-    solana_builtins_default_costs::MIGRATION_FEATURES_ID,
+    solana_builtins_default_costs::{get_migration_feature_id, MIGRATING_BUILTINS_COSTS},
     solana_compute_budget::compute_budget_limits::*,
     solana_sdk::{
         borsh1::try_from_slice_unchecked,
@@ -25,13 +25,13 @@ struct MigrationBuiltinFeatureCounter {
     // The vector of counters, matching the size of the static vector MIGRATION_FEATURE_IDS,
     // each counter representing the number of times its corresponding feature ID is
     // referenced in this transaction.
-    migrating_builtin: [u16; solana_builtins_default_costs::MIGRATING_BUILTINS_COSTS.len()],
+    migrating_builtin: [u16; MIGRATING_BUILTINS_COSTS.len()],
 }
 
 impl Default for MigrationBuiltinFeatureCounter {
     fn default() -> Self {
         Self {
-            migrating_builtin: [0; solana_builtins_default_costs::MIGRATING_BUILTINS_COSTS.len()],
+            migrating_builtin: [0; MIGRATING_BUILTINS_COSTS.len()],
         }
     }
 }
@@ -216,7 +216,7 @@ impl ComputeBudgetInstructionDetails {
                 .iter()
                 .enumerate()
                 .fold((0, 0), |(migrated, not_migrated), (index, count)| {
-                    if feature_set.is_active(&MIGRATION_FEATURES_ID[index]) {
+                    if *count > 0 && feature_set.is_active(get_migration_feature_id(index)) {
                         (migrated + count, not_migrated)
                     } else {
                         (migrated, not_migrated + count)
@@ -242,6 +242,7 @@ impl ComputeBudgetInstructionDetails {
 mod test {
     use {
         super::*,
+        solana_builtins_default_costs::get_migration_feature_position,
         solana_sdk::{
             instruction::Instruction,
             message::Message,
@@ -582,10 +583,8 @@ mod test {
                 &Pubkey::new_unique(),
             ),
         ]);
-        let feature_id_index = MIGRATION_FEATURES_ID
-            .iter()
-            .position(|id| *id == feature_set::migrate_stake_program_to_core_bpf::id())
-            .unwrap();
+        let feature_id_index =
+            get_migration_feature_position(&feature_set::migrate_stake_program_to_core_bpf::id());
         let mut expected_details = ComputeBudgetInstructionDetails {
             num_non_compute_budget_instructions: 2,
             num_non_builtin_instructions: 1,

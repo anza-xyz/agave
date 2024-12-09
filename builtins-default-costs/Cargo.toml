@@ -35,6 +35,7 @@ name = "solana_builtins_default_costs"
 
 [dev-dependencies]
 rand = "0.8.5"
+static_assertions = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
