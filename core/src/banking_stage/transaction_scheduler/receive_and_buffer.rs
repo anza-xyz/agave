@@ -258,7 +258,7 @@ impl SanitizedTransactionReceiveAndBuffer {
                     max_age,
                 };
 
-                if container.insert_new_transaction(transaction_ttl, Some(packet), priority, cost) {
+                if container.insert_new_transaction(transaction_ttl, packet, priority, cost) {
                     saturating_add_assign!(num_dropped_on_capacity, 1);
                 }
                 saturating_add_assign!(num_buffered, 1);
