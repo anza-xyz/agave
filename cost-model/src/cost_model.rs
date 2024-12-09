@@ -65,33 +65,23 @@ impl CostModel {
         if transaction.is_simple_vote_transaction() {
             TransactionCost::SimpleVote { transaction }
         } else {
-            let signature_cost = Self::get_signature_cost(transaction, feature_set);
-            let write_lock_cost =
-                Self::get_write_lock_cost(Self::num_write_locks(transaction, feature_set));
-
-            let instructions_data_cost =
-                Self::get_instructions_data_cost(transaction.program_instructions_iter());
-            let allocated_accounts_data_size = Self::calculate_allocated_accounts_data_size(
-                transaction.program_instructions_iter(),
-            );
-
-            let programs_execution_cost = actual_programs_execution_cost;
+            let num_write_locks = Self::num_write_locks(transaction, feature_set);
             let loaded_accounts_data_size_cost = Self::calculate_loaded_accounts_data_size_cost(
                 actual_loaded_accounts_data_size_bytes,
                 feature_set,
             );
+            let instructions_data_cost =
+                Self::get_instructions_data_cost(transaction.program_instructions_iter());
 
-            let usage_cost_details = UsageCostDetails {
+            Self::calculate_non_vote_transaction_cost(
                 transaction,
-                signature_cost,
-                write_lock_cost,
-                data_bytes_cost: instructions_data_cost,
-                programs_execution_cost,
+                transaction.program_instructions_iter(),
+                num_write_locks,
+                actual_programs_execution_cost,
                 loaded_accounts_data_size_cost,
-                allocated_accounts_data_size,
-            };
-
-            TransactionCost::Transaction(usage_cost_details)
+                instructions_data_cost,
+                feature_set,
+            )
         }
     }
 
@@ -108,11 +98,31 @@ impl CostModel {
         if transaction.is_simple_vote_transaction() {
             return TransactionCost::SimpleVote { transaction };
         }
-
-        let signature_cost = Self::get_signature_cost(transaction, feature_set);
-        let write_lock_cost = num_write_locks.saturating_mul(WRITE_LOCK_UNITS);
         let (programs_execution_cost, loaded_accounts_data_size_cost, data_bytes_cost) =
             Self::get_transaction_cost(transaction, instructions.clone(), feature_set);
+        Self::calculate_non_vote_transaction_cost(
+            transaction,
+            instructions,
+            num_write_locks,
+            programs_execution_cost,
+            loaded_accounts_data_size_cost,
+            data_bytes_cost,
+            feature_set,
+        )
+    }
+
+    fn calculate_non_vote_transaction_cost<'a, Tx: StaticMeta>(
+        transaction: &'a Tx,
+        instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)> + Clone,
+        num_write_locks: u64,
+        programs_execution_cost: u64,
+        loaded_accounts_data_size_cost: u64,
+        data_bytes_cost: u64,
+        feature_set: &FeatureSet,
+    ) -> TransactionCost<'a, Tx> {
+        let signature_cost = Self::get_signature_cost(transaction, feature_set);
+        let write_lock_cost = Self::get_write_lock_cost(num_write_locks);
+
         let allocated_accounts_data_size =
             Self::calculate_allocated_accounts_data_size(instructions);
 
