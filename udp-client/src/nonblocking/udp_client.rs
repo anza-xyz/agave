@@ -46,7 +46,7 @@ impl ClientConnection for UdpClientConnection {
 mod tests {
     use {
         super::*,
-        solana_net_utils::bind_to_async,
+        solana_net_utils::{bind_to_async, SocketConfig},
         solana_packet::{Packet, PACKET_DATA_SIZE},
         solana_streamer::nonblocking::recvmmsg::recv_mmsg,
         std::net::{IpAddr, Ipv4Addr},
@@ -73,8 +73,11 @@ mod tests {
     async fn test_send_from_addr() {
         let addr_str = "0.0.0.0:50100";
         let addr = addr_str.parse().unwrap();
-        let socket =
-            solana_net_utils::bind_with_any_port(IpAddr::V4(Ipv4Addr::UNSPECIFIED)).unwrap();
+        let socket = solana_net_utils::bind_with_any_port_with_config(
+            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            SocketConfig::default(),
+        )
+        .unwrap();
         let connection = UdpClientConnection::new_from_addr(socket, addr);
         let reader = bind_to_async(
             addr.ip(),
