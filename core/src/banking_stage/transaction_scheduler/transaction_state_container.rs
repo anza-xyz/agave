@@ -233,6 +233,14 @@ impl TransactionViewStateContainer {
         let bytes_entry = &mut self.bytes_buffer[transaction_id];
         // Assert the entry is unique, then copy the packet data.
         {
+            // The strong count must be 1 here. These are only cloned into the
+            // inner container below, wrapped by a `ResolveTransactionView`,
+            // which does not expose the backing memory (the `Arc`), or
+            // implement `Clone`.
+            // This could only fail if there is a bug in the container that the
+            // entry in the slab was not cleared. However, since we share
+            // indexing between the slab and our `bytes_buffer`, we know that
+            // `vacant_entry` is not occupied.
             assert_eq!(Arc::strong_count(bytes_entry), 1, "entry must be unique");
             let bytes = Arc::make_mut(bytes_entry);
 
