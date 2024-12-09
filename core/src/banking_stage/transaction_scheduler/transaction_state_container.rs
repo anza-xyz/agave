@@ -202,12 +202,14 @@ impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
 }
 
 pub type SharedBytes = Arc<Vec<u8>>;
+pub(crate) type RuntimeTransactionView = RuntimeTransaction<ResolvedTransactionView<SharedBytes>>;
+pub(crate) type TransactionViewState = TransactionState<RuntimeTransactionView>;
 
 /// A wrapper around `TransactionStateContainer` that allows re-uses
 /// pre-allocated `Bytes` to copy packet data into and use for serialization.
 /// This is used to avoid allocations in parsing transactions.
 pub struct TransactionViewStateContainer {
-    inner: TransactionStateContainer<RuntimeTransaction<ResolvedTransactionView<SharedBytes>>>,
+    inner: TransactionStateContainer<RuntimeTransactionView>,
     bytes_buffer: Box<[SharedBytes]>,
 }
 
@@ -216,12 +218,7 @@ impl TransactionViewStateContainer {
     pub(crate) fn try_insert_with_data(
         &mut self,
         data: &[u8],
-        f: impl FnOnce(
-            SharedBytes,
-        ) -> Result<
-            TransactionState<RuntimeTransaction<ResolvedTransactionView<SharedBytes>>>,
-            (),
-        >,
+        f: impl FnOnce(SharedBytes) -> Result<TransactionState<RuntimeTransactionView>, ()>,
     ) -> bool {
         // Get remaining capacity before inserting.
         let remaining_capacity = self.remaining_capacity();
@@ -265,9 +262,7 @@ impl TransactionViewStateContainer {
     }
 }
 
-impl StateContainer<RuntimeTransaction<ResolvedTransactionView<SharedBytes>>>
-    for TransactionViewStateContainer
-{
+impl StateContainer<RuntimeTransactionView> for TransactionViewStateContainer {
     fn with_capacity(capacity: usize) -> Self {
         let inner = TransactionStateContainer::with_capacity(capacity);
         let bytes_buffer = (0..inner.id_to_transaction_state.capacity())
@@ -299,8 +294,7 @@ impl StateContainer<RuntimeTransaction<ResolvedTransactionView<SharedBytes>>>
     fn get_mut_transaction_state(
         &mut self,
         id: TransactionId,
-    ) -> Option<&mut TransactionState<RuntimeTransaction<ResolvedTransactionView<SharedBytes>>>>
-    {
+    ) -> Option<&mut TransactionViewState> {
         self.inner.get_mut_transaction_state(id)
     }
 
@@ -308,8 +302,7 @@ impl StateContainer<RuntimeTransaction<ResolvedTransactionView<SharedBytes>>>
     fn get_transaction_ttl(
         &self,
         id: TransactionId,
-    ) -> Option<&SanitizedTransactionTTL<RuntimeTransaction<ResolvedTransactionView<SharedBytes>>>>
-    {
+    ) -> Option<&SanitizedTransactionTTL<RuntimeTransactionView>> {
         self.inner.get_transaction_ttl(id)
     }
 
