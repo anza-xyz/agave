@@ -293,6 +293,7 @@ pub enum RpcBench {
     AccountInfo,
     Transaction,
     TransactionParsed,
+    FirstAvailableBlock,
 }
 
 #[derive(Debug)]
@@ -306,6 +307,7 @@ impl FromStr for RpcBench {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "account-info" => Ok(RpcBench::AccountInfo),
+            "first-available-block" => Ok(RpcBench::FirstAvailableBlock),
             "slot" => Ok(RpcBench::Slot),
             "supply" => Ok(RpcBench::Supply),
             "multiple-accounts" => Ok(RpcBench::MultipleAccounts),
@@ -487,6 +489,25 @@ fn run_rpc_bench_loop(
                         stats.errors += 1;
                         if last_error.elapsed().as_secs() > 2 {
                             info!("get_account_info error: {:?}", e);
+                            last_error = Instant::now();
+                        }
+                    }
+                }
+            }
+            RpcBench::FirstAvailableBlock => {
+                let mut rpc_time = Measure::start("rpc-get-first-available-block");
+                match client.get_first_available_block() {
+                    Ok(_slot) => {
+                        rpc_time.stop();
+                        stats.success += 1;
+                        stats.total_success_time_us += rpc_time.as_us();
+                    }
+                    Err(e) => {
+                        rpc_time.stop();
+                        stats.total_errors_time_us += rpc_time.as_us();
+                        stats.errors += 1;
+                        if last_error.elapsed().as_secs() > 2 {
+                            info!("get_first_available_block error: {:?}", e);
                             last_error = Instant::now();
                         }
                     }
