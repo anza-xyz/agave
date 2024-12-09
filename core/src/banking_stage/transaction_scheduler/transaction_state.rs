@@ -59,10 +59,10 @@ impl<Tx> TransactionState<Tx> {
         priority: u64,
         cost: u64,
     ) -> Self {
-        let should_forward = !packet
+        let should_forward = packet
             .as_ref()
             .map(|packet| {
-                packet.original_packet().meta().forwarded()
+                !packet.original_packet().meta().forwarded()
                     && packet.original_packet().meta().is_from_staked_node()
             })
             .unwrap_or_default();
