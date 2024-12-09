@@ -119,8 +119,57 @@ impl RuntimeTransaction<SanitizedMessage> {
         Ok(tx)
     }
 
+<<<<<<< HEAD
     fn load_dynamic_metadata(&mut self) -> Result<()> {
         Ok(())
+=======
+    fn num_write_locks(&self) -> u64 {
+        self.transaction.num_write_locks()
+    }
+
+    fn recent_blockhash(&self) -> &Hash {
+        self.transaction.recent_blockhash()
+    }
+
+    fn num_instructions(&self) -> usize {
+        self.transaction.num_instructions()
+    }
+
+    fn instructions_iter(&self) -> impl Iterator<Item = SVMInstruction> {
+        self.transaction.instructions_iter()
+    }
+
+    fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> + Clone {
+        self.transaction.program_instructions_iter()
+    }
+
+    fn account_keys(&self) -> AccountKeys {
+        self.transaction.account_keys()
+    }
+
+    fn fee_payer(&self) -> &Pubkey {
+        self.transaction.fee_payer()
+    }
+
+    fn is_writable(&self, index: usize) -> bool {
+        self.transaction.is_writable(index)
+    }
+
+    fn is_signer(&self, index: usize) -> bool {
+        self.transaction.is_signer(index)
+    }
+
+    fn is_invoked(&self, key_index: usize) -> bool {
+        self.transaction.is_invoked(key_index)
+    }
+
+    fn num_lookup_tables(&self) -> usize {
+        self.transaction.num_lookup_tables()
+    }
+
+    fn message_address_table_lookups(&self) -> impl Iterator<Item = SVMMessageAddressTableLookup> {
+        self.transaction.message_address_table_lookups()
+>>>>>>> 3e9af14f3a (Fix reserve minimal compute units for builtins  (#3799))
     }
 }
 

@@ -3092,7 +3092,18 @@ impl Bank {
         message: &SanitizedMessage,
         lamports_per_signature: u64,
     ) -> u64 {
+<<<<<<< HEAD
         self.fee_structure().calculate_fee(
+=======
+        let fee_budget_limits = FeeBudgetLimits::from(
+            process_compute_budget_instructions(
+                message.program_instructions_iter(),
+                &self.feature_set,
+            )
+            .unwrap_or_default(),
+        );
+        solana_fee::calculate_fee(
+>>>>>>> 3e9af14f3a (Fix reserve minimal compute units for builtins  (#3799))
             message,
             lamports_per_signature,
             &process_compute_budget_instructions(message.program_instructions_iter())
