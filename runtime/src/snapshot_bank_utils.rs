@@ -264,7 +264,7 @@ pub fn bank_from_snapshot_archives(
 
     verify_slot_deltas(slot_deltas.as_slice(), &bank)?;
 
-    bank.status_cache.write().unwrap().append(&slot_deltas);
+    bank.status_cache.append(&slot_deltas);
 
     let snapshot_archive_info = incremental_snapshot_archive_info.map_or_else(
         || full_snapshot_archive_info.snapshot_archive_info(),
@@ -478,7 +478,7 @@ pub fn bank_from_snapshot_dir(
 
     verify_slot_deltas(slot_deltas.as_slice(), &bank)?;
 
-    bank.status_cache.write().unwrap().append(&slot_deltas);
+    bank.status_cache.append(&slot_deltas);
 
     if bank
         .feature_set
@@ -874,7 +874,7 @@ fn bank_to_full_snapshot_archive_with(
     };
 
     let snapshot_storages = bank.get_snapshot_storages(None);
-    let status_cache_slot_deltas = bank.status_cache.read().unwrap().root_slot_deltas();
+    let status_cache_slot_deltas = bank.status_cache.root_slot_deltas();
     let accounts_package = AccountsPackage::new_for_snapshot(
         AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
         bank,
@@ -969,7 +969,7 @@ pub fn bank_to_incremental_snapshot_archive(
         };
 
     let snapshot_storages = bank.get_snapshot_storages(Some(full_snapshot_slot));
-    let status_cache_slot_deltas = bank.status_cache.read().unwrap().root_slot_deltas();
+    let status_cache_slot_deltas = bank.status_cache.root_slot_deltas();
     let accounts_package = AccountsPackage::new_for_snapshot(
         AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(full_snapshot_slot)),
         bank,
