@@ -886,14 +886,14 @@ fn process_status(
                     .and_then(status_from_account)
                     .map(|feature_status| CliFeature {
                         id: feature_id.to_string(),
-                        description: feature_name.to_string(),
+                        description: feature_name.1.to_string(),
                         status: feature_status,
                     })
                     .unwrap_or_else(|| {
                         inactive = true;
                         CliFeature {
                             id: feature_id.to_string(),
-                            description: feature_name.to_string(),
+                            description: feature_name.1.to_string(),
                             status: CliFeatureStatus::Inactive,
                         }
                     })
@@ -987,7 +987,7 @@ fn process_activate(
 
     println!(
         "Activating {} ({})",
-        FEATURE_NAMES.get(&feature_id).unwrap(),
+        FEATURE_NAMES.get(&feature_id).unwrap().1,
         feature_id
     );
     let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(

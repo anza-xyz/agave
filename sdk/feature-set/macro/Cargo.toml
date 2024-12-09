@@ -1,0 +1,18 @@
+[package]
+name = "solana-feature-set-macro"
+description = "Solana Feature Set Macro"
+documentation = "https://docs.rs/solana-feature-set-macro"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[lib]
+proc-macro = true
+
+[dependencies]
+
+[lints]
+workspace = true

@@ -99,7 +99,7 @@ use {
     solana_cost_model::cost_tracker::CostTracker,
     solana_feature_set::{
         self as feature_set, remove_rounding_in_fee_calculation, reward_full_priority_fee,
-        FeatureSet,
+        FeatureSet, FEATURE_NAMES, NUM_FEATURES,
     },
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{meas_dur, measure::Measure, measure_time, measure_us},
@@ -6941,6 +6941,7 @@ impl Bank {
         let mut active = self.feature_set.active.clone();
         let mut inactive = AHashSet::new();
         let mut pending = AHashSet::new();
+        let mut fast_set = [false; NUM_FEATURES];
         let slot = self.slot();
 
         for feature_id in &self.feature_set.inactive {
@@ -6963,12 +6964,20 @@ impl Bank {
             }
             if let Some(slot) = activated {
                 active.insert(*feature_id, slot);
+                fast_set[FEATURE_NAMES.get(feature_id).unwrap().0] = true;
             } else {
                 inactive.insert(*feature_id);
             }
         }
 
-        (FeatureSet { active, inactive }, pending)
+        (
+            FeatureSet {
+                active,
+                inactive,
+                fast_set,
+            },
+            pending,
+        )
     }
 
     fn apply_builtin_program_feature_transitions(
