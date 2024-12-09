@@ -7,7 +7,6 @@
 
 use {
     crate::{block_cost_limits::*, transaction_cost::*},
-    lazy_static::lazy_static,
     solana_builtins_default_costs::get_builtin_instruction_cost,
     solana_compute_budget::compute_budget_limits::{
         DEFAULT_HEAP_COST, DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_COMPUTE_UNIT_LIMIT,
@@ -46,33 +45,13 @@ impl CostModel {
         transaction: &'a Tx,
         feature_set: &FeatureSet,
     ) -> TransactionCost<'a, Tx> {
-        if transaction.is_simple_vote_transaction() {
-            TransactionCost::SimpleVote { transaction }
-        } else {
-            let signature_cost = Self::get_signature_cost(transaction, feature_set);
-            let write_lock_cost = Self::get_write_lock_cost(transaction, feature_set);
-            let (programs_execution_cost, loaded_accounts_data_size_cost, data_bytes_cost) =
-                Self::get_transaction_cost(
-                    transaction,
-                    transaction.program_instructions_iter(),
-                    feature_set,
-                );
-            let allocated_accounts_data_size = Self::calculate_allocated_accounts_data_size(
-                transaction.program_instructions_iter(),
-            );
-
-            let usage_cost_details = UsageCostDetails {
-                transaction,
-                signature_cost,
-                write_lock_cost,
-                data_bytes_cost,
-                programs_execution_cost,
-                loaded_accounts_data_size_cost,
-                allocated_accounts_data_size,
-            };
-
-            TransactionCost::Transaction(usage_cost_details)
-        }
+        let num_write_locks = Self::num_write_locks(transaction, feature_set);
+        Self::estimate_cost(
+            transaction,
+            transaction.program_instructions_iter(),
+            num_write_locks,
+            feature_set,
+        )
     }
 
     // Calculate executed transaction CU cost, with actual execution and loaded accounts size
@@ -87,7 +66,8 @@ impl CostModel {
             TransactionCost::SimpleVote { transaction }
         } else {
             let signature_cost = Self::get_signature_cost(transaction, feature_set);
-            let write_lock_cost = Self::get_write_lock_cost(transaction, feature_set);
+            let write_lock_cost =
+                Self::get_write_lock_cost(Self::num_write_locks(transaction, feature_set));
 
             let instructions_data_cost =
                 Self::get_instructions_data_cost(transaction.program_instructions_iter());
@@ -119,32 +99,25 @@ impl CostModel {
     /// - `meta` - transaction meta
     /// - `instructions` - transaction instructions
     /// - `num_write_locks` - number of requested write locks
-    ///
-    /// This assumes ALL features are activated.
-    /// This is intended to be used as an estimate of cost ONLY for the purposes of
-    /// prioritization and packing.
-    pub fn estimate_cost<'a>(
-        meta: &impl StaticMeta,
+    pub fn estimate_cost<'a, Tx: StaticMeta>(
+        transaction: &'a Tx,
         instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)> + Clone,
         num_write_locks: u64,
-    ) -> u64 {
-        if meta.is_simple_vote_transaction() {
-            return TransactionCost::SimpleVote { transaction: meta }.sum();
+        feature_set: &FeatureSet,
+    ) -> TransactionCost<'a, Tx> {
+        if transaction.is_simple_vote_transaction() {
+            return TransactionCost::SimpleVote { transaction };
         }
 
-        lazy_static! {
-            static ref ALL_FEATURES: FeatureSet = FeatureSet::all_enabled();
-        };
-
-        let signature_cost = Self::get_signature_cost(meta, &ALL_FEATURES);
+        let signature_cost = Self::get_signature_cost(transaction, feature_set);
         let write_lock_cost = num_write_locks.saturating_mul(WRITE_LOCK_UNITS);
         let (programs_execution_cost, loaded_accounts_data_size_cost, data_bytes_cost) =
-            Self::get_transaction_cost(meta, instructions.clone(), &ALL_FEATURES);
+            Self::get_transaction_cost(transaction, instructions.clone(), feature_set);
         let allocated_accounts_data_size =
             Self::calculate_allocated_accounts_data_size(instructions);
 
         let usage_cost_details = UsageCostDetails {
-            transaction: meta,
+            transaction,
             signature_cost,
             write_lock_cost,
             data_bytes_cost,
@@ -153,7 +126,7 @@ impl CostModel {
             allocated_accounts_data_size,
         };
 
-        TransactionCost::Transaction(usage_cost_details).sum()
+        TransactionCost::Transaction(usage_cost_details)
     }
 
     /// Returns signature details and the total signature cost
@@ -190,14 +163,17 @@ impl CostModel {
             .filter_map(|(i, k)| message.is_writable(i).then_some(k))
     }
 
+    /// Return the number of write-locks for a transaction.
+    fn num_write_locks(transaction: &impl SVMMessage, feature_set: &FeatureSet) -> u64 {
+        if feature_set.is_active(&feature_set::cost_model_requested_write_lock_cost::id()) {
+            transaction.num_write_locks()
+        } else {
+            Self::get_writable_accounts(transaction).count() as u64
+        }
+    }
+
     /// Returns the total write-lock cost.
-    fn get_write_lock_cost(transaction: &impl SVMMessage, feature_set: &FeatureSet) -> u64 {
-        let num_write_locks =
-            if feature_set.is_active(&feature_set::cost_model_requested_write_lock_cost::id()) {
-                transaction.num_write_locks()
-            } else {
-                Self::get_writable_accounts(transaction).count() as u64
-            };
+    fn get_write_lock_cost(num_write_locks: u64) -> u64 {
         WRITE_LOCK_UNITS.saturating_mul(num_write_locks)
     }
 
