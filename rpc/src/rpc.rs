@@ -1041,16 +1041,24 @@ impl JsonRpcRequestProcessor {
         }
     }
 
-    fn get_supply(
+    async fn get_supply(
         &self,
         config: Option<RpcSupplyConfig>,
     ) -> RpcCustomResult<RpcResponse<RpcSupply>> {
         let config = config.unwrap_or_default();
         let bank = self.bank(config.commitment);
-        let non_circulating_supply =
-            calculate_non_circulating_supply(&bank).map_err(|e| RpcCustomError::ScanError {
-                message: e.to_string(),
-            })?;
+        let non_circulating_supply = self
+            .runtime
+            .spawn_blocking({
+                let bank = bank.clone();
+                move || {
+                    calculate_non_circulating_supply(&bank).map_err(|e| RpcCustomError::ScanError {
+                        message: e.to_string(),
+                    })
+                }
+            })
+            .await
+            .expect("Failed to spawn blocking task")?;
         let total_supply = bank.capitalization();
         let non_circulating_accounts = if config.exclude_non_circulating_accounts_list {
             vec![]
@@ -3299,7 +3307,7 @@ pub mod rpc_accounts_scan {
             &self,
             meta: Self::Metadata,
             config: Option<RpcSupplyConfig>,
-        ) -> Result<RpcResponse<RpcSupply>>;
+        ) -> BoxFuture<Result<RpcResponse<RpcSupply>>>;
 
         // SPL Token-specific RPC endpoints
         // See https://github.com/solana-labs/solana-program-library/releases/tag/token-v2.0.0 for
@@ -3385,9 +3393,9 @@ pub mod rpc_accounts_scan {
             &self,
             meta: Self::Metadata,
             config: Option<RpcSupplyConfig>,
-        ) -> Result<RpcResponse<RpcSupply>> {
+        ) -> BoxFuture<Result<RpcResponse<RpcSupply>>> {
             debug!("get_supply rpc request received");
-            Ok(meta.get_supply(config)?)
+            async move { Ok(meta.get_supply(config).await?) }.boxed()
         }
 
         fn get_token_largest_accounts(
