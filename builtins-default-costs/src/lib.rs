@@ -54,66 +54,8 @@ lazy_static! {
         temp_table
     };
 }
-<<<<<<< HEAD
-=======
-
-pub fn get_builtin_instruction_cost<'a>(
-    program_id: &'a Pubkey,
-    feature_set: &'a FeatureSet,
-) -> Option<u64> {
-    BUILTIN_INSTRUCTION_COSTS
-        .get(program_id)
-        .filter(
-            // Returns true if builtin program id has no core_bpf_migration_feature or feature is not activated;
-            // otherwise returns false because it's not considered as builtin
-            |builtin_cost| -> bool {
-                builtin_cost
-                    .core_bpf_migration_feature
-                    .map(|feature_id| !feature_set.is_active(&feature_id))
-                    .unwrap_or(true)
-            },
-        )
-        .map(|builtin_cost| builtin_cost.native_cost)
-}
 
 #[inline]
 pub fn is_builtin_program(program_id: &Pubkey) -> bool {
     BUILTIN_INSTRUCTION_COSTS.contains_key(program_id)
 }
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn test_get_builtin_instruction_cost() {
-        // use native cost if no migration planned
-        assert_eq!(
-            Some(solana_compute_budget_program::DEFAULT_COMPUTE_UNITS),
-            get_builtin_instruction_cost(&compute_budget::id(), &FeatureSet::all_enabled())
-        );
-
-        // use native cost if migration is planned but not activated
-        assert_eq!(
-            Some(solana_stake_program::stake_instruction::DEFAULT_COMPUTE_UNITS),
-            get_builtin_instruction_cost(&solana_stake_program::id(), &FeatureSet::default())
-        );
-
-        // None if migration is planned and activated, in which case, it's no longer builtin
-        assert!(get_builtin_instruction_cost(
-            &solana_stake_program::id(),
-            &FeatureSet::all_enabled()
-        )
-        .is_none());
-
-        // None if not builtin
-        assert!(
-            get_builtin_instruction_cost(&Pubkey::new_unique(), &FeatureSet::default()).is_none()
-        );
-        assert!(
-            get_builtin_instruction_cost(&Pubkey::new_unique(), &FeatureSet::all_enabled())
-                .is_none()
-        );
-    }
-}
->>>>>>> 3e9af14f3a (Fix reserve minimal compute units for builtins  (#3799))

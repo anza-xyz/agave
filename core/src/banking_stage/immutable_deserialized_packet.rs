@@ -41,17 +41,13 @@ pub enum DeserializedPacketError {
     FailedFilter(#[from] PacketFilterFailure),
 }
 
-<<<<<<< HEAD
-#[derive(Debug, Eq)]
-=======
 lazy_static::lazy_static! {
     // Make a dummy feature_set with all features enabled to
     // fetch compute_unit_price and compute_unit_limit for legacy leader.
     static ref FEATURE_SET: FeatureSet = FeatureSet::all_enabled();
 }
 
-#[derive(Debug)]
->>>>>>> 3e9af14f3a (Fix reserve minimal compute units for builtins  (#3799))
+#[derive(Debug, Eq)]
 pub struct ImmutableDeserializedPacket {
     original_packet: Packet,
     transaction: SanitizedVersionedTransaction,
