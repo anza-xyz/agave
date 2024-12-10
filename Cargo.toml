@@ -132,6 +132,7 @@ members = [
     "sdk/frozen-abi",
     "sdk/frozen-abi/macro",
     "sdk/gen-headers",
+    "sdk/hard-forks",
     "sdk/hash",
     "sdk/inflation",
     "sdk/instruction",
@@ -491,6 +492,7 @@ solana-genesis-utils = { path = "genesis-utils", version = "=2.2.0" }
 agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=2.2.0" }
 solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=2.2.0" }
 solana-gossip = { path = "gossip", version = "=2.2.0" }
+solana-hard-forks = { path = "sdk/hard-forks", version = "=2.2.0", default-features = false }
 solana-hash = { path = "sdk/hash", version = "=2.2.0", default-features = false }
 solana-inflation = { path = "sdk/inflation", version = "=2.2.0" }
 solana-inline-spl = { path = "inline-spl", version = "=2.2.0" }
