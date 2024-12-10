@@ -1,14 +1,17 @@
 //! Prototype layouts for builtins.
 
 use {
-    crate::core_bpf_migration::CoreBpfMigrationConfig,
-    solana_program_runtime::invoke_context::BuiltinFunctionWithContext, solana_pubkey::Pubkey,
+    crate::{core_bpf_migration::CoreBpfMigrationConfig, cost_modeling::CostModelingConfig},
+    solana_program_runtime::invoke_context::BuiltinFunctionWithContext,
+    solana_pubkey::Pubkey,
 };
 
 /// Transitions of built-in programs at epoch boundaries when features are activated.
 pub struct BuiltinPrototype {
     /// Configurations for migrating the builtin to Core BPF.
     pub core_bpf_migration_config: Option<CoreBpfMigrationConfig>,
+    /// Configurations for cost modeling.
+    pub cost_modeling_config: CostModelingConfig,
     /// Feature ID that enables the builtin program.
     /// If None, the built-in program is always enabled.
     pub enable_feature_id: Option<Pubkey>,
@@ -27,6 +30,7 @@ impl std::fmt::Debug for BuiltinPrototype {
         builder.field("name", &self.name);
         builder.field("enable_feature_id", &self.enable_feature_id);
         builder.field("core_bpf_migration_config", &self.core_bpf_migration_config);
+        builder.field("cost_modeling_config", &self.cost_modeling_config);
         builder.finish()
     }
 }
