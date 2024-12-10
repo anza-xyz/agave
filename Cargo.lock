@@ -8106,7 +8106,6 @@ dependencies = [
  "solana-instruction",
  "solana-last-restart-slot",
  "solana-log-collector",
- "solana-logger",
  "solana-measure",
  "solana-metrics",
  "solana-precompiles",
