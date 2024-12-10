@@ -13,6 +13,8 @@ edition = { workspace = true }
 dev-context-only-utils = []
 
 [dependencies]
+ahash = { workspace = true }
+lazy_static = { workspace = true }
 solana-address-lookup-table-program = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
 solana-compute-budget-program = { workspace = true }
