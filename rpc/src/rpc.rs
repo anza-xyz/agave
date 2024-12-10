@@ -9,7 +9,7 @@ use {
     bincode::{config::Options, serialize},
     crossbeam_channel::{unbounded, Receiver, Sender},
     jsonrpc_core::{
-        futures::future::{self, FutureExt},
+        futures::future::{self, FutureExt, OptionFuture},
         types::error,
         BoxFuture, Error, Metadata, Result,
     },
@@ -1969,15 +1969,25 @@ impl JsonRpcRequestProcessor {
         Ok(new_response(&bank, balance))
     }
 
-    pub fn get_token_supply(
+    pub async fn get_token_supply(
         &self,
         mint: &Pubkey,
         commitment: Option<CommitmentConfig>,
     ) -> Result<RpcResponse<UiTokenAmount>> {
         let bank = self.bank(commitment);
-        let mint_account = bank.get_account(mint).ok_or_else(|| {
-            Error::invalid_params("Invalid param: could not find account".to_string())
-        })?;
+        let mint_account = self
+            .runtime
+            .spawn_blocking({
+                let bank = Arc::clone(&bank);
+                let mint = Pubkey::clone(mint);
+                move || {
+                    bank.get_account(&mint).ok_or_else(|| {
+                        Error::invalid_params("Invalid param: could not find account".to_string())
+                    })
+                }
+            })
+            .await
+            .expect("Failed to spawn blocking task")?;
         if !is_known_spl_token_id(mint_account.owner()) {
             return Err(Error::invalid_params(
                 "Invalid param: not a Token mint".to_string(),
@@ -1987,10 +1997,22 @@ impl JsonRpcRequestProcessor {
             Error::invalid_params("Invalid param: mint could not be unpacked".to_string())
         })?;
 
-        let interest_bearing_config = mint
-            .get_extension::<InterestBearingConfig>()
-            .map(|x| (*x, bank.clock().unix_timestamp))
-            .ok();
+        let interest_bearing_config = OptionFuture::from(
+            mint.get_extension::<InterestBearingConfig>()
+                .map(|interest_bearing_config| {
+                    let bank = Arc::clone(&bank);
+                    async move {
+                        let unix_timestamp = self
+                            .runtime
+                            .spawn_blocking(move || bank.clock().unix_timestamp)
+                            .await
+                            .expect("Failed to spawn blocking task");
+                        (*interest_bearing_config, unix_timestamp)
+                    }
+                })
+                .ok(),
+        )
+        .await;
 
         let supply = token_amount_to_ui_amount_v2(
             mint.base.supply,
@@ -3205,7 +3227,7 @@ pub mod rpc_accounts {
             meta: Self::Metadata,
             mint_str: String,
             commitment: Option<CommitmentConfig>,
-        ) -> Result<RpcResponse<UiTokenAmount>>;
+        ) -> BoxFuture<Result<RpcResponse<UiTokenAmount>>>;
     }
 
     pub struct AccountsDataImpl;
@@ -3283,10 +3305,13 @@ pub mod rpc_accounts {
             meta: Self::Metadata,
             mint_str: String,
             commitment: Option<CommitmentConfig>,
-        ) -> Result<RpcResponse<UiTokenAmount>> {
+        ) -> BoxFuture<Result<RpcResponse<UiTokenAmount>>> {
             debug!("get_token_supply rpc request received: {:?}", mint_str);
-            let mint = verify_pubkey(&mint_str)?;
-            meta.get_token_supply(&mint, commitment)
+            async move {
+                let mint = verify_pubkey(&mint_str)?;
+                meta.get_token_supply(&mint, commitment).await
+            }
+            .boxed()
         }
     }
 }
