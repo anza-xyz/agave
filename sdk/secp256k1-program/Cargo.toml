@@ -35,7 +35,7 @@ solana-program-error = { workspace = true }
 solana-sdk = { path = ".." }
 solana-secp256k1-program = { path = ".", features = ["dev-context-only-utils"] }
 solana-signer = { workspace = true }
-solana-sysvar = { workspace = true }
+solana-instructions-sysvar = { workspace = true }
 
 [features]
 bincode = [

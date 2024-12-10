@@ -8800,6 +8800,7 @@ dependencies = [
  "solana-feature-set",
  "solana-hash",
  "solana-instruction",
+ "solana-instructions-sysvar",
  "solana-keccak-hasher",
  "solana-keypair",
  "solana-logger",
@@ -8810,7 +8811,6 @@ dependencies = [
  "solana-sdk-ids",
  "solana-secp256k1-program",
  "solana-signer",
- "solana-sysvar",
 ]
 
 [[package]]
