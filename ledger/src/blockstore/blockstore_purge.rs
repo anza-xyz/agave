@@ -1118,15 +1118,12 @@ pub mod tests {
         blockstore
             .transaction_memos_cf
             .compact_range_raw_key(&first_index, &last_index);
-        let memos_iterator = blockstore
+        let num_memos = blockstore
             .transaction_memos_cf
-            .iterator_cf_raw_key(IteratorMode::Start);
-        let mut count = 0;
-        for item in memos_iterator {
-            let _item = item.unwrap();
-            count += 1;
-        }
-        assert_eq!(count, 4);
+            .iter(IteratorMode::Start)
+            .unwrap()
+            .count();
+        assert_eq!(num_memos, 4);
 
         // Purge at oldest_slot without clean_slot_0 only purges the current memo at slot 4
         blockstore.db.set_oldest_slot(oldest_slot);
@@ -1135,11 +1132,10 @@ pub mod tests {
             .compact_range_raw_key(&first_index, &last_index);
         let memos_iterator = blockstore
             .transaction_memos_cf
-            .iterator_cf_raw_key(IteratorMode::Start);
+            .iter(IteratorMode::Start)
+            .unwrap();
         let mut count = 0;
-        for item in memos_iterator {
-            let (key, _value) = item.unwrap();
-            let slot = <cf::TransactionMemos as Column>::index(&key).1;
+        for ((_signature, slot), _value) in memos_iterator {
             assert!(slot == 0 || slot >= oldest_slot);
             count += 1;
         }
@@ -1152,11 +1148,10 @@ pub mod tests {
             .compact_range_raw_key(&first_index, &last_index);
         let memos_iterator = blockstore
             .transaction_memos_cf
-            .iterator_cf_raw_key(IteratorMode::Start);
+            .iter(IteratorMode::Start)
+            .unwrap();
         let mut count = 0;
-        for item in memos_iterator {
-            let (key, _value) = item.unwrap();
-            let slot = <cf::TransactionMemos as Column>::index(&key).1;
+        for ((_signature, slot), _value) in memos_iterator {
             assert!(slot >= oldest_slot);
             count += 1;
         }
