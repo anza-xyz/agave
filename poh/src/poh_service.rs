@@ -1,5 +1,7 @@
 //! The `poh_service` module implements a service that records the passing of
 //! "ticks", a measure of time in the PoH stream
+
+use std::time::Duration;
 use {
     crate::{
         mpsc::{self, Consumer},
@@ -236,6 +238,19 @@ impl PohService {
         poh: &Arc<Mutex<Poh>>,
         target_ns_per_tick: u64,
     ) -> bool {
+        // If the difference between min tick height and capacity is small then shutoff.
+        // remaining_tick_time, ticks_per_slot, compute_leader_slot_tick_heights
+        // tick_height, Bank::max_tick_height
+        let tick_height = poh_recorder.read().unwrap().tick_height();
+        let max_tick_height = poh_recorder.read().unwrap().bank().unwrap().max_tick_height();
+        let remaining_slots = max_tick_height - tick_height;
+        let min_gap = std::cmp::max(max_tick_height - record_receiver.ring_buffer.capacity(), 64);
+        if remaining_slots < min_gap {
+            record_receiver.shut_off_producers();
+            if remaining_slots == 0 {
+                record_receiver.enable_producers(); // TODO: Do we need to reset the queue?
+            }
+        }
         match next_record.take() {
             Some(mut record) => {
                 // received message to record
@@ -281,6 +296,7 @@ impl PohService {
                         // nothing else can be done. tick required.
                         return true;
                     }
+
                     // check to see if a record request has been sent
                     if let Some(record) = record_receiver.pop() {
                         // remember the record we just received as the next record to occur
@@ -288,7 +304,8 @@ impl PohService {
                         break;
                     }
                     // check to see if we need to wait to catch up to ideal
-                    let wait_start = Instant::now();
+                    let mut wait_start = Instant::now();
+
                     if ideal_time <= wait_start {
                         // no, keep hashing. We still hold the lock.
                         continue;
@@ -296,13 +313,18 @@ impl PohService {
 
                     // busy wait, polling for new records and after dropping poh lock (reset can occur, for example)
                     drop(poh_l);
-                    while ideal_time > Instant::now() {
+                    let d = Duration::from_nanos(target_ns_per_tick*64);
+                    while ideal_time > wait_start {
+                        if ideal_time.checked_duration_since(wait_start).unwrap().ge(&d) {
+                            record_receiver.shut_off_producers()
+                        }
                         // check to see if a record request has been sent
                         if let Some(record) = record_receiver.pop() {
                             // remember the record we just received as the next record to occur
                             *next_record = Some(record);
                             break;
                         }
+                        wait_start = Instant::now();
                     }
                     timing.total_sleep_us += wait_start.elapsed().as_micros() as u64;
                     break;

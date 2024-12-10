@@ -201,6 +201,8 @@ impl TransactionRecorder {
         mixin: Hash,
         transactions: Vec<VersionedTransaction>,
     ) -> Result<Option<usize>> {
+        // Shut off producer if certain height is reached.
+
         let rec_send_res = self
             .record_sender
             .try_push(Record::new(mixin, transactions, bank_slot));
@@ -459,7 +461,7 @@ impl PohRecorder {
         }
 
         self.report_pending_fork_was_detected(next_slot);
-        if !self.delay_leader_block_for_pending_fork {
+            if !self.delay_leader_block_for_pending_fork {
             // Not configured to wait for pending blocks from previous leader.
             return true;
         }
@@ -935,6 +937,7 @@ impl PohRecorder {
         let ((), report_metrics_us) = measure_us!(self.report_metrics(bank_slot));
         self.report_metrics_us += report_metrics_us;
 
+        // TODO: can check if rb is full
         loop {
             let (flush_cache_res, flush_cache_us) = measure_us!(self.flush_cache(false));
             self.flush_cache_no_tick_us += flush_cache_us;
