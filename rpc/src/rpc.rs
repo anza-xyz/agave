@@ -378,6 +378,10 @@ impl JsonRpcRequestProcessor {
         let (sender, receiver) = unbounded();
 
         let client = Client::create_client(runtime, my_tpu_address, None, 1);
+        assert!(
+            client.protocol() == Protocol::QUIC,
+            "UDP is not supported by this test."
+        );
         SendTransactionService::new(&bank_forks, receiver, client, 1000, exit.clone());
 
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
@@ -6523,6 +6527,10 @@ pub mod tests {
             Arc::new(PrioritizationFeeCache::default()),
         );
         let client = C::create_client(maybe_runtime, my_tpu_address, None, 1);
+        assert!(
+            client.protocol() == Protocol::QUIC,
+            "UDP is not supported by this test."
+        );
         SendTransactionService::new(&bank_forks, receiver, client, 1000, exit.clone());
 
         let mut bad_transaction = system_transaction::transfer(
@@ -6794,6 +6802,10 @@ pub mod tests {
             Arc::new(PrioritizationFeeCache::default()),
         );
         let client = C::create_client(maybe_runtime, my_tpu_address, None, 1);
+        assert!(
+            client.protocol() == Protocol::QUIC,
+            "UDP is not supported by this test."
+        );
         SendTransactionService::new(&bank_forks, receiver, client, 1000, exit);
 
         assert_eq!(
