@@ -565,69 +565,38 @@ mod tests {
         );
 
         let mut sent_len = 0;
-        for mut batch in batches.into_iter() {
+        for batch in batches.into_iter() {
             sent_len += batch.len();
-            batch
-                .iter_mut()
-                .for_each(|packet| packet.meta_mut().flags |= PacketFlags::TRACER_PACKET);
             assert_eq!(batch.len(), packets_per_batch);
             packet_s.send(batch).unwrap();
         }
-        let mut received = 0;
-        let mut total_tracer_packets_received_in_sigverify_stage = 0;
+        let mut packet_s = Some(packet_s);
+        let mut valid_received = 0;
         trace!("sent: {}", sent_len);
         loop {
-            if let Ok(message) = verified_r.recv() {
-                let (verifieds, tracer_packet_stats) = (&message.0, message.1.as_ref().unwrap());
-                total_tracer_packets_received_in_sigverify_stage +=
-                    tracer_packet_stats.total_tracer_packets_received_in_sigverify_stage;
-                assert_eq!(
-                    tracer_packet_stats.total_tracer_packets_received_in_sigverify_stage
-                        % packets_per_batch,
-                    0,
-                );
-
-                if use_same_tx {
-                    // Every transaction other than the very first one in the very first batch
-                    // should be deduped.
-
-                    // Also have to account for the fact that deduper could be cleared periodically,
-                    // in which case the first transaction in the next batch won't be deduped
-                    assert!(
-                        (tracer_packet_stats.total_tracer_packets_deduped
-                            == tracer_packet_stats
-                                .total_tracer_packets_received_in_sigverify_stage
-                                - 1)
-                            || (tracer_packet_stats.total_tracer_packets_deduped
-                                == tracer_packet_stats
-                                    .total_tracer_packets_received_in_sigverify_stage)
-                    );
-                    assert!(
-                        (tracer_packet_stats.total_tracker_packets_passed_sigverify == 1)
-                            || (tracer_packet_stats.total_tracker_packets_passed_sigverify == 0)
-                    );
-                } else {
-                    assert_eq!(tracer_packet_stats.total_tracer_packets_deduped, 0);
-                    assert!(
-                        (tracer_packet_stats.total_tracker_packets_passed_sigverify
-                            == tracer_packet_stats
-                                .total_tracer_packets_received_in_sigverify_stage)
-                    );
-                }
-                assert_eq!(tracer_packet_stats.total_excess_tracer_packets, 0);
-                received += verifieds.iter().map(|batch| batch.len()).sum::<usize>();
-            }
-
-            if total_tracer_packets_received_in_sigverify_stage >= sent_len {
+            if let Ok(verifieds) = verified_r.recv() {
+                valid_received += verifieds
+                    .iter()
+                    .map(|batch| batch.iter().filter(|p| !p.meta().discard()).count())
+                    .sum::<usize>();
+            } else {
                 break;
             }
+
+            // Check if all the sent batches have been picked up by sigverify stage.
+            // Drop sender to exit the loop on next receive call, once the channel is
+            // drained.
+            if packet_s.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
+                packet_s.take();
+            }
         }
-        trace!("received: {}", received);
-        assert_eq!(
-            total_tracer_packets_received_in_sigverify_stage,
-            total_packets
-        );
-        drop(packet_s);
+        trace!("received: {}", valid_received);
+
+        if use_same_tx {
+            assert_eq!(valid_received, 1);
+        } else {
+            assert_eq!(valid_received, total_packets);
+        }
         stage.join().unwrap();
     }
 

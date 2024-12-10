@@ -1073,7 +1073,7 @@ mod tests {
                 .collect();
             let packet_batches = convert_from_old_verified(packet_batches);
             non_vote_sender // no_ver, anf, tx
-                .send(BankingPacketBatch::new((packet_batches, None)))
+                .send(BankingPacketBatch::new(packet_batches))
                 .unwrap();
 
             drop(non_vote_sender);
@@ -1152,7 +1152,7 @@ mod tests {
             .collect();
         let packet_batches = convert_from_old_verified(packet_batches);
         non_vote_sender
-            .send(BankingPacketBatch::new((packet_batches, None)))
+            .send(BankingPacketBatch::new(packet_batches))
             .unwrap();
 
         // Process a second batch that uses the same from account, so conflicts with above TX
@@ -1165,7 +1165,7 @@ mod tests {
             .collect();
         let packet_batches = convert_from_old_verified(packet_batches);
         non_vote_sender
-            .send(BankingPacketBatch::new((packet_batches, None)))
+            .send(BankingPacketBatch::new(packet_batches))
             .unwrap();
 
         let (tpu_vote_sender, tpu_vote_receiver) = banking_tracer.create_channel_tpu_vote();
@@ -1472,7 +1472,7 @@ mod tests {
                 Builder::new()
                     .spawn(move || {
                         sender
-                            .send(BankingPacketBatch::new((packet_batches, None)))
+                            .send(BankingPacketBatch::new(packet_batches))
                             .unwrap()
                     })
                     .unwrap()
