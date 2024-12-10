@@ -154,17 +154,12 @@ use {
     tokio::runtime::{self, Runtime as TokioRuntime},
 };
 
-static GLOBAL_RUNTIME: LazyLock<TokioRuntime> = LazyLock::new(|| {
+static STS_CLIENT_RUNTIME: LazyLock<TokioRuntime> = LazyLock::new(|| {
     runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("Failed to create Tokio runtime")
 });
-
-// Function to get a handle to the runtime
-fn get_runtime_handle() -> tokio::runtime::Handle {
-    GLOBAL_RUNTIME.handle().clone()
-}
 
 const MAX_COMPLETED_DATA_SETS_IN_CHANNEL: usize = 100_000;
 const WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT: u64 = 80;
@@ -1116,7 +1111,7 @@ impl Validator {
                     .map_err(|err| ValidatorError::Other(format!("{err}")))?;
 
                 let client = TpuClientNextClient::new(
-                    get_runtime_handle(),
+                    STS_CLIENT_RUNTIME.handle().clone(),
                     my_tpu_address,
                     config.send_transaction_service_config.tpu_peers.clone(),
                     Some(leader_info),
