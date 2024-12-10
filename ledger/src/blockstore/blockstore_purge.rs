@@ -804,18 +804,17 @@ pub mod tests {
     }
 
     fn get_index_bounds(blockstore: &Blockstore) -> (Box<[u8]>, Box<[u8]>) {
-        let first_index = {
-            let mut status_entry_iterator = blockstore
-                .transaction_status_cf
-                .iterator_cf_raw_key(IteratorMode::Start);
-            status_entry_iterator.next().unwrap().unwrap().0
-        };
-        let last_index = {
-            let mut status_entry_iterator = blockstore
-                .transaction_status_cf
-                .iterator_cf_raw_key(IteratorMode::End);
-            status_entry_iterator.next().unwrap().unwrap().0
-        };
+        let (first_index, _value) = blockstore
+            .transaction_status_cf
+            .iterator_cf_raw_key(IteratorMode::Start)
+            .next()
+            .unwrap();
+        let (last_index, _value) = blockstore
+            .transaction_status_cf
+            .iterator_cf_raw_key(IteratorMode::End)
+            .next()
+            .unwrap();
+
         (first_index, last_index)
     }
 
@@ -990,27 +989,13 @@ pub mod tests {
         let max_slot = 19;
 
         clear_and_repopulate_transaction_statuses_for_test(&blockstore, max_slot);
-        let first_index = {
-            let mut status_entry_iterator = blockstore
-                .transaction_status_cf
-                .iter(IteratorMode::Start)
-                .unwrap();
-            status_entry_iterator.next().unwrap().0
-        };
-        let last_index = {
-            let mut status_entry_iterator = blockstore
-                .transaction_status_cf
-                .iter(IteratorMode::End)
-                .unwrap();
-            status_entry_iterator.next().unwrap().0
-        };
+        let (first_index, last_index) = get_index_bounds(&blockstore);
 
         let oldest_slot = 3;
         blockstore.db.set_oldest_slot(oldest_slot);
-        blockstore.transaction_status_cf.compact_range_raw_key(
-            &cf::TransactionStatus::key(first_index),
-            &cf::TransactionStatus::key(last_index),
-        );
+        blockstore
+            .transaction_status_cf
+            .compact_range_raw_key(&first_index, &last_index);
 
         let status_entry_iterator = blockstore
             .transaction_status_cf
@@ -1024,27 +1009,13 @@ pub mod tests {
         assert_eq!(count, max_slot - (oldest_slot - 1));
 
         clear_and_repopulate_transaction_statuses_for_test(&blockstore, max_slot);
-        let first_index = {
-            let mut status_entry_iterator = blockstore
-                .transaction_status_cf
-                .iter(IteratorMode::Start)
-                .unwrap();
-            status_entry_iterator.next().unwrap().0
-        };
-        let last_index = {
-            let mut status_entry_iterator = blockstore
-                .transaction_status_cf
-                .iter(IteratorMode::End)
-                .unwrap();
-            status_entry_iterator.next().unwrap().0
-        };
+        let (first_index, last_index) = get_index_bounds(&blockstore);
 
         let oldest_slot = 12;
         blockstore.db.set_oldest_slot(oldest_slot);
-        blockstore.transaction_status_cf.compact_range_raw_key(
-            &cf::TransactionStatus::key(first_index),
-            &cf::TransactionStatus::key(last_index),
-        );
+        blockstore
+            .transaction_status_cf
+            .compact_range_raw_key(&first_index, &last_index);
 
         let status_entry_iterator = blockstore
             .transaction_status_cf
@@ -1100,18 +1071,16 @@ pub mod tests {
             )
             .unwrap();
 
-        let first_index = {
-            let mut memos_iterator = blockstore
-                .transaction_memos_cf
-                .iterator_cf_raw_key(IteratorMode::Start);
-            memos_iterator.next().unwrap().unwrap().0
-        };
-        let last_index = {
-            let mut memos_iterator = blockstore
-                .transaction_memos_cf
-                .iterator_cf_raw_key(IteratorMode::End);
-            memos_iterator.next().unwrap().unwrap().0
-        };
+        let (first_index, _value) = blockstore
+            .transaction_memos_cf
+            .iterator_cf_raw_key(IteratorMode::Start)
+            .next()
+            .unwrap();
+        let (last_index, _value) = blockstore
+            .transaction_memos_cf
+            .iterator_cf_raw_key(IteratorMode::End)
+            .next()
+            .unwrap();
 
         // Purge at slot 0 should not affect any memos
         blockstore.db.set_oldest_slot(0);

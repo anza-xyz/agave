@@ -2197,20 +2197,14 @@ pub mod tests {
     {
         pub(crate) fn iterator_cf_raw_key(
             &self,
-            iterator_mode: IteratorMode<Vec<u8>>,
-        ) -> DBIterator {
-            let cf = self.handle();
-            let start_key;
-            let iterator_mode = match iterator_mode {
-                IteratorMode::Start => RocksIteratorMode::Start,
-                IteratorMode::End => RocksIteratorMode::End,
-                IteratorMode::From(start_from, direction) => {
-                    start_key = start_from.clone();
-                    RocksIteratorMode::From(&start_key, direction)
-                }
-            };
-
-            self.backend.iterator_cf(cf, iterator_mode)
+            iterator_mode: IteratorMode<C::Index>,
+        ) -> impl Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_ {
+            // The conversion of key back into Box<[u8]> incurs an extra
+            // allocation. However, this is test code and the goal is to
+            // maximize code reuse over efficiency
+            self.iter(iterator_mode)
+                .unwrap()
+                .map(|(key, value)| (Box::from(C::key(key)), value))
         }
     }
 }
