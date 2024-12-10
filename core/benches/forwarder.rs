@@ -84,7 +84,6 @@ fn setup(num_packets: usize, contentious_transaction: bool) -> BenchSetup {
                 transaction.message.account_keys[0] = solana_sdk::pubkey::Pubkey::new_unique();
             }
             let mut packet = Packet::from_data(None, transaction).unwrap();
-            packet.meta_mut().set_tracer(true);
             packet.meta_mut().set_from_staked_node(true);
             DeserializedPacket::new(packet).unwrap()
         })

@@ -47,11 +47,10 @@ impl SigVerifier for TransactionSigVerifier {
     #[inline(always)]
     fn process_received_packet(
         &mut self,
-        packet: &mut Packet,
+        _packet: &mut Packet,
         _removed_before_sigverify_stage: bool,
         _is_dup: bool,
     ) {
-        sigverify::check_for_tracer_packet(packet);
     }
 
     #[inline(always)]
