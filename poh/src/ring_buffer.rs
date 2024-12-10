@@ -113,6 +113,7 @@ impl<T> RingBuffer<T> {
         let ProducerCheckResult::CanWrite(cell) = self.producer_check() else {
             return Err(item);
         };
+        // If the buffer is at capacity then wait for a bit.
 
         cell.set(item);
         Ok(())
