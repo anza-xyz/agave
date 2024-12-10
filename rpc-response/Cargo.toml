@@ -1,0 +1,29 @@
+[package]
+name = "solana-rpc-response"
+description = "Solana RPC response types"
+documentation = "https://docs.rs/solana-rpc-response"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+semver = { workspace = true }
+serde = { workspace = true }
+serde_derive = { workspace = true }
+solana-account-decoder-client-types = { workspace = true }
+solana-clock = { workspace = true }
+solana-fee-calculator = { workspace = true }
+solana-inflation = { workspace = true }
+solana-transaction-error = { workspace = true }
+solana-transaction-status-client-types = { workspace = true }
+solana-version = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
