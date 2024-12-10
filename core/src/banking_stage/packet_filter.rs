@@ -9,6 +9,8 @@ use {
     thiserror::Error,
 };
 
+pub const MAX_ALLOWED_PRECOMPILE_SIGNATURES: u64 = 8;
+
 lazy_static! {
     // To calculate the static_builtin_cost_sum conservatively, an all-enabled dummy feature_set
     // is used. It lowers required minimal compute_unit_limit, aligns with future versions.
@@ -58,7 +60,6 @@ impl ImmutableDeserializedPacket {
             }
         }
 
-        const MAX_ALLOWED_PRECOMPILE_SIGNATURES: u64 = 8;
         if num_precompile_signatures <= MAX_ALLOWED_PRECOMPILE_SIGNATURES {
             Ok(())
         } else {
