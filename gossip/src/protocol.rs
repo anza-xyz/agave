@@ -43,11 +43,6 @@ const GOSSIP_PING_TOKEN_SIZE: usize = 32;
 pub(crate) const PULL_RESPONSE_MIN_SERIALIZED_SIZE: usize = 161;
 
 // TODO These messages should go through the gpu pipeline for spam filtering
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "CBR9G92mpd1WSXEmiH6dAKHziLjJky9aYWPw6S5WmJkG")
-)]
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum Protocol {
@@ -63,7 +58,8 @@ pub(crate) enum Protocol {
     // Update count_packets_received if new variants are added here.
 }
 
-pub(crate) type Ping = ping_pong::Ping<[u8; GOSSIP_PING_TOKEN_SIZE]>;
+pub(crate) type Ping = ping_pong::Ping<GOSSIP_PING_TOKEN_SIZE>;
+pub(crate) type PingCache = ping_pong::PingCache<GOSSIP_PING_TOKEN_SIZE>;
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
