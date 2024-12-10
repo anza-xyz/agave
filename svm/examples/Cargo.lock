@@ -5012,6 +5012,8 @@ dependencies = [
 name = "solana-builtins"
 version = "2.2.0"
 dependencies = [
+ "ahash 0.8.11",
+ "lazy_static",
  "solana-address-lookup-table-program",
  "solana-bpf-loader-program",
  "solana-compute-budget-program",
@@ -5026,26 +5028,6 @@ dependencies = [
  "solana-vote-program",
  "solana-zk-elgamal-proof-program",
  "solana-zk-token-proof-program",
-]
-
-[[package]]
-name = "solana-builtins-default-costs"
-version = "2.2.0"
-dependencies = [
- "ahash 0.8.11",
- "lazy_static",
- "log",
- "solana-address-lookup-table-program",
- "solana-bpf-loader-program",
- "solana-compute-budget-program",
- "solana-config-program",
- "solana-feature-set",
- "solana-loader-v4-program",
- "solana-pubkey",
- "solana-sdk-ids",
- "solana-stake-program",
- "solana-system-program",
- "solana-vote-program",
 ]
 
 [[package]]
@@ -5304,7 +5286,7 @@ dependencies = [
  "slab",
  "solana-accounts-db",
  "solana-bloom",
- "solana-builtins-default-costs",
+ "solana-builtins",
  "solana-client",
  "solana-compute-budget",
  "solana-connection-cache",
@@ -5361,7 +5343,7 @@ dependencies = [
  "ahash 0.8.11",
  "lazy_static",
  "log",
- "solana-builtins-default-costs",
+ "solana-builtins",
  "solana-compute-budget",
  "solana-feature-set",
  "solana-metrics",
@@ -6632,7 +6614,7 @@ version = "2.2.0"
 dependencies = [
  "agave-transaction-view",
  "log",
- "solana-builtins-default-costs",
+ "solana-builtins",
  "solana-compute-budget",
  "solana-pubkey",
  "solana-sdk",

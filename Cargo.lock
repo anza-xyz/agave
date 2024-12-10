@@ -6276,6 +6276,8 @@ dependencies = [
 name = "solana-builtins"
 version = "2.2.0"
 dependencies = [
+ "ahash 0.8.11",
+ "lazy_static",
  "solana-address-lookup-table-program",
  "solana-bpf-loader-program",
  "solana-compute-budget-program",
@@ -6290,28 +6292,6 @@ dependencies = [
  "solana-vote-program",
  "solana-zk-elgamal-proof-program",
  "solana-zk-token-proof-program",
-]
-
-[[package]]
-name = "solana-builtins-default-costs"
-version = "2.2.0"
-dependencies = [
- "ahash 0.8.11",
- "lazy_static",
- "log",
- "rand 0.8.5",
- "solana-address-lookup-table-program",
- "solana-bpf-loader-program",
- "solana-compute-budget-program",
- "solana-config-program",
- "solana-feature-set",
- "solana-frozen-abi",
- "solana-loader-v4-program",
- "solana-pubkey",
- "solana-sdk-ids",
- "solana-stake-program",
- "solana-system-program",
- "solana-vote-program",
 ]
 
 [[package]]
@@ -6760,7 +6740,7 @@ dependencies = [
  "solana-accounts-db",
  "solana-address-lookup-table-program",
  "solana-bloom",
- "solana-builtins-default-costs",
+ "solana-builtins",
  "solana-client",
  "solana-compute-budget",
  "solana-compute-budget-program",
@@ -6831,7 +6811,7 @@ dependencies = [
  "lazy_static",
  "log",
  "rand 0.8.5",
- "solana-builtins-default-costs",
+ "solana-builtins",
  "solana-compute-budget",
  "solana-compute-budget-program",
  "solana-cost-model",
@@ -8638,7 +8618,7 @@ dependencies = [
  "criterion",
  "log",
  "rand 0.8.5",
- "solana-builtins-default-costs",
+ "solana-builtins",
  "solana-compute-budget",
  "solana-program",
  "solana-pubkey",

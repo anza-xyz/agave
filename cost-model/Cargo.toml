@@ -13,7 +13,7 @@ edition = { workspace = true }
 ahash = { workspace = true }
 lazy_static = { workspace = true }
 log = { workspace = true }
-solana-builtins-default-costs = { workspace = true }
+solana-builtins = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-feature-set = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
