@@ -316,10 +316,11 @@ macro_rules! custom_panic_space_efficient {
             }
 
             if let Some(loc) = info.location() {
+                const MAX_LEN: usize = 200;
                 let filename = loc.file().as_bytes();
-                // Vector of filename size + 11 (line number + separator)
+                // MAX_LEN for filename + 3 (ellipsis string) + 11 (line number + separator)
                 // + 11 (column number + separator) + 13 (panic string) + 15 extra bytes
-                let mut msg_line = vec![32; filename.len() + 50];
+                let mut msg_line: [u8; MAX_LEN + 53] = [32; MAX_LEN + 53];
 
                 let panic_str = "Panicked at: ".as_bytes(); // 13 bytes
                 let dst = msg_line.as_mut_ptr();
@@ -328,12 +329,26 @@ macro_rules! custom_panic_space_efficient {
                     // SAFETY: Destination is larger than the panic string.
                     std::ptr::copy_nonoverlapping(src, dst, panic_str.len());
 
-                    let dst = dst.add(panic_str.len());
-                    let src = filename.as_ptr();
-                    // SAFETY: The destination is always larger than the filename string.
-                    std::ptr::copy_nonoverlapping(src, dst, filename.len());
+                    let mut dst = dst.add(panic_str.len());
+                    let mut src = filename.as_ptr();
+                    let mut copy_len = filename.len();
+                    if copy_len > MAX_LEN {
+                        let truncated_str = "...".as_bytes(); // 3 bytes
+                                                              // SAFETY: Destination is larger than the truncated string
+                        std::ptr::copy_nonoverlapping(
+                            truncated_str.as_ptr(),
+                            dst,
+                            truncated_str.len(),
+                        );
+                        dst = dst.add(truncated_str.len());
+                        src = src.add(copy_len - MAX_LEN);
+                        copy_len = MAX_LEN;
+                    }
 
-                    let dst = dst.add(filename.len());
+                    // SAFETY: The destination is always larger than the filename string.
+                    std::ptr::copy_nonoverlapping(src, dst, copy_len);
+
+                    let dst = dst.add(copy_len);
                     // SAFETY: `write_num` never writes more than 11 bytes
                     let written_bytes = write_num(loc.line(), dst);
                     let dst = dst.add(written_bytes);
