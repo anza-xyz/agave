@@ -1,5 +1,6 @@
 use {
     crate::filter::RpcFilterType,
+    serde_derive::{Deserialize, Serialize},
     solana_account_decoder_client_types::{UiAccountEncoding, UiDataSliceConfig},
     solana_clock::{Epoch, Slot},
     solana_commitment_config::{CommitmentConfig, CommitmentLevel},
