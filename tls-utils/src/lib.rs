@@ -1,6 +1,12 @@
 //! Collection of TLS related code fragments that end up popping up everywhere where quic is used.
 //! Aggregated here to avoid bugs due to conflicting implementations of the same functionality.
 
+mod config;
+pub use config::*;
+
+mod crypto_provider;
+pub use crypto_provider::*;
+
 mod tls_certificates;
 pub use tls_certificates::*;
 

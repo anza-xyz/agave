@@ -7,7 +7,7 @@ use {
     },
     solana_quic_definitions::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT},
     solana_streamer::nonblocking::quic::ALPN_TPU_PROTOCOL_ID,
-    solana_tls_utils::SkipServerVerification,
+    solana_tls_utils::tls_client_config_builder,
     std::{net::SocketAddr, sync::Arc},
 };
 
@@ -20,9 +20,7 @@ pub use {
 
 pub(crate) fn create_client_config(client_certificate: QuicClientCertificate) -> ClientConfig {
     // adapted from QuicLazyInitializedEndpoint::create_endpoint
-    let mut crypto = rustls::ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(SkipServerVerification::new())
+    let mut crypto = tls_client_config_builder()
         .with_client_auth_cert(
             vec![client_certificate.certificate.clone()],
             client_certificate.key.clone_key(),
