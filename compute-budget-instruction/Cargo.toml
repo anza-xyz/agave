@@ -1,7 +1,7 @@
 [package]
-name = "solana-runtime-transaction"
-description = "Solana runtime-transaction"
-documentation = "https://docs.rs/solana-runtime-transaction"
+name = "solana-compute-budget-instruction"
+description = "Solana Compute Budget Instruction"
+documentation = "https://docs.rs/solana-compute-budget-instruction"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
@@ -10,35 +10,32 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
-agave-transaction-view = { workspace = true }
 log = { workspace = true }
+solana-builtins-default-costs = { workspace = true }
 solana-compute-budget = { workspace = true }
-solana-compute-budget-instruction = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sdk = { workspace = true }
-solana-sdk-ids = { workspace = true }
 solana-svm-transaction = { workspace = true }
 thiserror = { workspace = true }
 
 [lib]
 crate-type = ["lib"]
-name = "solana_runtime_transaction"
+name = "solana_compute_budget_instruction"
 
 [dev-dependencies]
 bincode = { workspace = true }
 criterion = { workspace = true }
 rand = { workspace = true }
-solana-compute-budget-instruction = { workspace = true, features = ["dev-context-only-utils"] }
 solana-program = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-dev-context-only-utils = ["solana-compute-budget-instruction/dev-context-only-utils"]
+dev-context-only-utils = []
 
 [[bench]]
-name = "get_signature_details"
+name = "process_compute_budget_instructions"
 harness = false
 
 [lints]

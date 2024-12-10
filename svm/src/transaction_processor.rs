@@ -24,6 +24,7 @@ use {
         create_program_runtime_environment_v1, create_program_runtime_environment_v2,
     },
     solana_compute_budget::compute_budget::ComputeBudget,
+    solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_feature_set::{
         enable_transaction_loading_failure_fees, remove_accounts_executable_flag_checks,
         remove_rounding_in_fee_calculation, FeatureSet,
@@ -42,7 +43,6 @@ use {
         },
         sysvar_cache::SysvarCache,
     },
-    solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, PROGRAM_OWNERS},
         account_utils::StateMut,

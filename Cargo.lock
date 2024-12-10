@@ -6646,6 +6646,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-compute-budget-instruction"
+version = "2.2.0"
+dependencies = [
+ "bincode",
+ "criterion",
+ "log",
+ "rand 0.8.5",
+ "solana-builtins-default-costs",
+ "solana-compute-budget",
+ "solana-program",
+ "solana-pubkey",
+ "solana-sdk",
+ "solana-svm-transaction",
+ "thiserror 2.0.6",
+]
+
+[[package]]
 name = "solana-compute-budget-interface"
 version = "2.2.0"
 dependencies = [
@@ -6672,8 +6689,8 @@ version = "2.2.0"
 dependencies = [
  "criterion",
  "solana-compute-budget",
+ "solana-compute-budget-instruction",
  "solana-compute-budget-program",
- "solana-runtime-transaction",
  "solana-sdk",
  "solana-svm-transaction",
 ]
@@ -6763,6 +6780,7 @@ dependencies = [
  "solana-builtins-default-costs",
  "solana-client",
  "solana-compute-budget",
+ "solana-compute-budget-instruction",
  "solana-compute-budget-program",
  "solana-connection-cache",
  "solana-core",
@@ -6833,6 +6851,7 @@ dependencies = [
  "rand 0.8.5",
  "solana-builtins-default-costs",
  "solana-compute-budget",
+ "solana-compute-budget-instruction",
  "solana-compute-budget-program",
  "solana-cost-model",
  "solana-feature-set",
@@ -8589,6 +8608,7 @@ dependencies = [
  "solana-bucket-map",
  "solana-builtins",
  "solana-compute-budget",
+ "solana-compute-budget-instruction",
  "solana-config-program",
  "solana-cost-model",
  "solana-feature-set",
@@ -8638,8 +8658,8 @@ dependencies = [
  "criterion",
  "log",
  "rand 0.8.5",
- "solana-builtins-default-costs",
  "solana-compute-budget",
+ "solana-compute-budget-instruction",
  "solana-program",
  "solana-pubkey",
  "solana-sdk",
@@ -9151,6 +9171,7 @@ dependencies = [
  "shuttle",
  "solana-bpf-loader-program",
  "solana-compute-budget",
+ "solana-compute-budget-instruction",
  "solana-compute-budget-program",
  "solana-ed25519-program",
  "solana-feature-set",
@@ -9162,7 +9183,6 @@ dependencies = [
  "solana-logger",
  "solana-measure",
  "solana-program-runtime",
- "solana-runtime-transaction",
  "solana-sdk",
  "solana-secp256r1-program",
  "solana-svm",

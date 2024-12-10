@@ -36,6 +36,7 @@ members = [
     "client",
     "client-test",
     "compute-budget",
+    "compute-budget-instruction",
     "connection-cache",
     "core",
     "cost-model",
@@ -457,6 +458,7 @@ solana-clock = { path = "sdk/clock", version = "=2.2.0" }
 solana-cluster-type = { path = "sdk/cluster-type", version = "=2.2.0" }
 solana-commitment-config = { path = "sdk/commitment-config", version = "=2.2.0" }
 solana-compute-budget = { path = "compute-budget", version = "=2.2.0" }
+solana-compute-budget-instruction = { path = "compute-budget-instruction", version = "=2.2.0" }
 solana-compute-budget-interface = { path = "sdk/compute-budget-interface", version = "=2.2.0" }
 solana-compute-budget-program = { path = "programs/compute-budget", version = "=2.2.0" }
 solana-config-program = { path = "programs/config", version = "=2.2.0" }

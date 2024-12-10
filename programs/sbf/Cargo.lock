@@ -5363,6 +5363,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-compute-budget-instruction"
+version = "2.2.0"
+dependencies = [
+ "log",
+ "solana-builtins-default-costs",
+ "solana-compute-budget",
+ "solana-pubkey",
+ "solana-sdk",
+ "solana-svm-transaction",
+ "thiserror 2.0.6",
+]
+
+[[package]]
 name = "solana-compute-budget-interface"
 version = "2.2.0"
 dependencies = [
@@ -5456,6 +5469,7 @@ dependencies = [
  "solana-builtins-default-costs",
  "solana-client",
  "solana-compute-budget",
+ "solana-compute-budget-instruction",
  "solana-connection-cache",
  "solana-cost-model",
  "solana-entry",
@@ -5512,6 +5526,7 @@ dependencies = [
  "log",
  "solana-builtins-default-costs",
  "solana-compute-budget",
+ "solana-compute-budget-instruction",
  "solana-feature-set",
  "solana-metrics",
  "solana-runtime-transaction",
@@ -6773,6 +6788,7 @@ dependencies = [
  "solana-bucket-map",
  "solana-builtins",
  "solana-compute-budget",
+ "solana-compute-budget-instruction",
  "solana-config-program",
  "solana-cost-model",
  "solana-feature-set",
@@ -6813,8 +6829,8 @@ version = "2.2.0"
 dependencies = [
  "agave-transaction-view",
  "log",
- "solana-builtins-default-costs",
  "solana-compute-budget",
+ "solana-compute-budget-instruction",
  "solana-pubkey",
  "solana-sdk",
  "solana-sdk-ids",
@@ -6844,6 +6860,7 @@ dependencies = [
  "solana-bpf-loader-program",
  "solana-cli-output",
  "solana-compute-budget",
+ "solana-compute-budget-instruction",
  "solana-feature-set",
  "solana-fee",
  "solana-ledger",
@@ -7717,13 +7734,13 @@ dependencies = [
  "serde_derive",
  "solana-bpf-loader-program",
  "solana-compute-budget",
+ "solana-compute-budget-instruction",
  "solana-feature-set",
  "solana-fee",
  "solana-loader-v4-program",
  "solana-log-collector",
  "solana-measure",
  "solana-program-runtime",
- "solana-runtime-transaction",
  "solana-sdk",
  "solana-svm-rent-collector",
  "solana-svm-transaction",
