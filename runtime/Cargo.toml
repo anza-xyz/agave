@@ -49,11 +49,11 @@ serde_derive = { workspace = true }
 serde_json = { workspace = true }
 serde_with = { workspace = true }
 solana-accounts-db = { workspace = true }
-solana-address-lookup-table-program = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
 solana-bucket-map = { workspace = true }
+solana-builtins = { workspace = true }
 solana-compute-budget = { workspace = true }
-solana-compute-budget-program = { workspace = true }
+solana-compute-budget-instruction = { workspace = true }
 solana-config-program = { workspace = true }
 solana-cost-model = { workspace = true }
 solana-feature-set = { workspace = true }
@@ -66,7 +66,6 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 ] }
 solana-inline-spl = { workspace = true }
 solana-lattice-hash = { workspace = true }
-solana-loader-v4-program = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-perf = { workspace = true }
@@ -79,16 +78,12 @@ solana-stake-program = { workspace = true }
 solana-svm = { workspace = true }
 solana-svm-rent-collector = { workspace = true }
 solana-svm-transaction = { workspace = true }
-solana-system-program = { workspace = true }
+solana-system-program = { workspace = true, optional = true }
 solana-timings = { workspace = true }
-solana-transaction-status = { workspace = true }
+solana-transaction-status-client-types = { workspace = true }
 solana-version = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
-solana-zk-elgamal-proof-program = { workspace = true }
-solana-zk-sdk = { workspace = true }
-solana-zk-token-proof-program = { workspace = true }
-solana-zk-token-sdk = { workspace = true }
 static_assertions = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
 strum_macros = { workspace = true }
@@ -111,6 +106,7 @@ memoffset = { workspace = true }
 rand0-7 = { package = "rand", version = "0.7" }
 rand_chacha = { workspace = true }
 solana-accounts-db = { workspace = true, features = ["dev-context-only-utils"] }
+solana-builtins = { workspace = true, features = ["dev-context-only-utils"] }
 solana-logger = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-runtime = { path = ".", features = ["dev-context-only-utils"] }
@@ -118,6 +114,7 @@ solana-runtime-transaction = { workspace = true, features = [
     "dev-context-only-utils",
 ] }
 solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
+solana-sdk-ids = { workspace = true }
 solana-svm = { workspace = true, features = ["dev-context-only-utils"] }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
@@ -127,6 +124,7 @@ targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
 dev-context-only-utils = [
+    "dep:solana-system-program",
     "solana-svm/dev-context-only-utils",
     "solana-runtime-transaction/dev-context-only-utils",
 ]

@@ -6,8 +6,8 @@ use {
     crate::{
         ancestor_iterator::AncestorIterator,
         blockstore_db::{
-            columns as cf, Column, ColumnIndexDeprecation, Database, IteratorDirection,
-            IteratorMode, LedgerColumn, Result, WriteBatch,
+            columns as cf, Column, ColumnIndexDeprecation, IteratorDirection, IteratorMode,
+            LedgerColumn, Result, Rocks, WriteBatch,
         },
         blockstore_meta::*,
         blockstore_metrics::BlockstoreRpcApiMetrics,
@@ -232,7 +232,7 @@ pub struct BlockstoreSignals {
 // ledger window
 pub struct Blockstore {
     ledger_path: PathBuf,
-    db: Arc<Database>,
+    db: Arc<Rocks>,
     // Column families
     address_signatures_cf: LedgerColumn<cf::AddressSignatures>,
     bank_hash_cf: LedgerColumn<cf::BankHash>,
@@ -351,10 +351,6 @@ pub fn banking_retrace_path(path: &Path) -> PathBuf {
 }
 
 impl Blockstore {
-    pub fn db(self) -> Arc<Database> {
-        self.db
-    }
-
     pub fn ledger_path(&self) -> &PathBuf {
         &self.ledger_path
     }
@@ -385,7 +381,7 @@ impl Blockstore {
         // Open the database
         let mut measure = Measure::start("blockstore open");
         info!("Opening blockstore at {:?}", blockstore_path);
-        let db = Database::open(&blockstore_path, options)?;
+        let db = Arc::new(Rocks::open(blockstore_path, options)?);
 
         let address_signatures_cf = db.column();
         let bank_hash_cf = db.column();
@@ -408,8 +404,6 @@ impl Blockstore {
         let transaction_memos_cf = db.column();
         let transaction_status_cf = db.column();
         let transaction_status_index_cf = db.column();
-
-        let db = Arc::new(db);
 
         // Get max root or 0 if it doesn't exist
         let max_root = roots_cf
@@ -534,7 +528,7 @@ impl Blockstore {
     pub fn destroy(ledger_path: &Path) -> Result<()> {
         // Database::destroy() fails if the root directory doesn't exist
         fs::create_dir_all(ledger_path)?;
-        Database::destroy(&Path::new(ledger_path).join(BLOCKSTORE_DIRECTORY_ROCKS_LEVEL))
+        Rocks::destroy(&Path::new(ledger_path).join(BLOCKSTORE_DIRECTORY_ROCKS_LEVEL))
     }
 
     /// Returns the SlotMeta of the specified slot.
@@ -673,6 +667,16 @@ impl Blockstore {
 
     pub fn live_files_metadata(&self) -> Result<Vec<LiveFile>> {
         self.db.live_files_metadata()
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn iterator_cf(
+        &self,
+        cf_name: &str,
+    ) -> Result<impl Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_> {
+        let cf = self.db.cf_handle(cf_name);
+        let iterator = self.db.iterator_cf_raw_key(cf, IteratorMode::Start);
+        Ok(iterator.map(|pair| pair.unwrap()))
     }
 
     pub fn slot_data_iterator(
@@ -1294,7 +1298,7 @@ impl Blockstore {
         metrics.insert_lock_elapsed_us += start.as_us();
 
         let mut shred_insertion_tracker =
-            ShredInsertionTracker::new(shreds.len(), self.db.batch()?);
+            ShredInsertionTracker::new(shreds.len(), self.get_write_batch()?);
 
         self.attempt_shred_insertion(
             shreds,
@@ -1329,7 +1333,7 @@ impl Blockstore {
 
         // Write out the accumulated batch.
         let mut start = Measure::start("Write Batch");
-        self.db.write(shred_insertion_tracker.write_batch)?;
+        self.write_batch(shred_insertion_tracker.write_batch)?;
         start.stop();
         metrics.write_batch_elapsed_us += start.as_us();
 
@@ -1771,6 +1775,15 @@ impl Blockstore {
                     &shred,
                     duplicate_shreds,
                 ) {
+                    // This indicates there is an alternate version of this block.
+                    // Similar to the last index case above, we might never get all the
+                    // shreds for our current version, never replay this slot, and make no
+                    // progress. We cannot determine if we have the version that will eventually
+                    // be complete, so we take the conservative approach and mark the slot as dead
+                    // so that replay can dump and repair the correct version.
+                    self.dead_slots_cf
+                        .put_in_batch(write_batch, slot, &true)
+                        .unwrap();
                     return Err(InsertDataShredError::InvalidShred);
                 }
             }
@@ -2603,22 +2616,19 @@ impl Blockstore {
         end_index: u64,
         max_missing: usize,
     ) -> Vec<u64> {
-        if let Ok(mut db_iterator) = self
-            .db
-            .raw_iterator_cf(self.db.cf_handle::<cf::ShredData>())
-        {
-            Self::find_missing_indexes::<cf::ShredData>(
-                &mut db_iterator,
-                slot,
-                first_timestamp,
-                defer_threshold_ticks,
-                start_index,
-                end_index,
-                max_missing,
-            )
-        } else {
-            vec![]
-        }
+        let Ok(mut db_iterator) = self.db.raw_iterator_cf(self.data_shred_cf.handle()) else {
+            return vec![];
+        };
+
+        Self::find_missing_indexes::<cf::ShredData>(
+            &mut db_iterator,
+            slot,
+            first_timestamp,
+            defer_threshold_ticks,
+            start_index,
+            end_index,
+            max_missing,
+        )
     }
 
     fn get_block_time(&self, slot: Slot) -> Result<Option<UnixTimestamp>> {
@@ -4078,7 +4088,7 @@ impl Blockstore {
         &self,
         duplicate_confirmed_slot_hashes: impl Iterator<Item = (Slot, Hash)>,
     ) -> Result<()> {
-        let mut write_batch = self.db.batch()?;
+        let mut write_batch = self.get_write_batch()?;
         for (slot, frozen_hash) in duplicate_confirmed_slot_hashes {
             let data = FrozenHashVersioned::Current(FrozenHashStatus {
                 frozen_hash,
@@ -4088,19 +4098,19 @@ impl Blockstore {
                 .put_in_batch(&mut write_batch, slot, &data)?;
         }
 
-        self.db.write(write_batch)?;
+        self.write_batch(write_batch)?;
         Ok(())
     }
 
     pub fn set_roots<'a>(&self, rooted_slots: impl Iterator<Item = &'a Slot>) -> Result<()> {
-        let mut write_batch = self.db.batch()?;
+        let mut write_batch = self.get_write_batch()?;
         let mut max_new_rooted_slot = 0;
         for slot in rooted_slots {
             max_new_rooted_slot = std::cmp::max(max_new_rooted_slot, *slot);
             self.roots_cf.put_in_batch(&mut write_batch, *slot, &true)?;
         }
 
-        self.db.write(write_batch)?;
+        self.write_batch(write_batch)?;
         self.max_root
             .fetch_max(max_new_rooted_slot, Ordering::Relaxed);
         Ok(())
@@ -4396,7 +4406,7 @@ impl Blockstore {
             "Marking slot {} and any full children slots as connected",
             root
         );
-        let mut write_batch = self.db.batch()?;
+        let mut write_batch = self.get_write_batch()?;
 
         // Mark both connected bits on the root slot so that the flags for this
         // slot match the flags of slots that become connected the typical way.
@@ -4419,7 +4429,7 @@ impl Blockstore {
                 .put_in_batch(&mut write_batch, meta.slot, &meta)?;
         }
 
-        self.db.write(write_batch)?;
+        self.write_batch(write_batch)?;
         Ok(())
     }
 
@@ -4772,7 +4782,7 @@ impl Blockstore {
         res
     }
 
-    pub fn get_write_batch(&self) -> std::result::Result<WriteBatch, BlockstoreError> {
+    pub fn get_write_batch(&self) -> Result<WriteBatch> {
         self.db.batch()
     }
 
@@ -5978,21 +5988,6 @@ pub mod tests {
         );
         blockstore
             .insert_shreds(shreds, None, false)
-            .expect("Expected successful write of shreds");
-
-        let mut shreds1 = entries_to_test_shreds(
-            &entries[4..],
-            1,
-            0,
-            false,
-            0,
-            false, // merkle_variant
-        );
-        for (i, b) in shreds1.iter_mut().enumerate() {
-            b.set_index(8 + i as u32);
-        }
-        blockstore
-            .insert_shreds(shreds1, None, false)
             .expect("Expected successful write of shreds");
 
         assert_eq!(
@@ -7578,7 +7573,7 @@ pub mod tests {
         let coding_shred = coding_shreds[index as usize].clone();
 
         let mut shred_insertion_tracker =
-            ShredInsertionTracker::new(coding_shreds.len(), blockstore.db.batch().unwrap());
+            ShredInsertionTracker::new(coding_shreds.len(), blockstore.get_write_batch().unwrap());
         assert!(blockstore.check_insert_coding_shred(
             coding_shred.clone(),
             &mut shred_insertion_tracker,
@@ -7624,14 +7619,14 @@ pub mod tests {
                 .put(erasure_set.store_key(), working_merkle_root_meta.as_ref())
                 .unwrap();
         }
-        blockstore.db.write(write_batch).unwrap();
+        blockstore.write_batch(write_batch).unwrap();
 
         // Add a shred with different merkle root and index
         let (_, coding_shreds, _) = setup_erasure_shreds(slot, parent_slot, 10);
         let new_coding_shred = coding_shreds[(index + 1) as usize].clone();
 
         let mut shred_insertion_tracker =
-            ShredInsertionTracker::new(coding_shreds.len(), blockstore.db.batch().unwrap());
+            ShredInsertionTracker::new(coding_shreds.len(), blockstore.get_write_batch().unwrap());
 
         assert!(!blockstore.check_insert_coding_shred(
             new_coding_shred.clone(),
@@ -7759,7 +7754,7 @@ pub mod tests {
         let data_shred = data_shreds[0].clone();
 
         let mut shred_insertion_tracker =
-            ShredInsertionTracker::new(data_shreds.len(), blockstore.db.batch().unwrap());
+            ShredInsertionTracker::new(data_shreds.len(), blockstore.get_write_batch().unwrap());
         blockstore
             .check_insert_data_shred(
                 data_shred.clone(),
@@ -7806,7 +7801,7 @@ pub mod tests {
                 .put(erasure_set.store_key(), working_merkle_root_meta.as_ref())
                 .unwrap();
         }
-        blockstore.db.write(write_batch).unwrap();
+        blockstore.write_batch(write_batch).unwrap();
 
         // Add a shred with different merkle root and index
         let (data_shreds, _, _) =
@@ -7814,7 +7809,7 @@ pub mod tests {
         let new_data_shred = data_shreds[1].clone();
 
         let mut shred_insertion_tracker =
-            ShredInsertionTracker::new(data_shreds.len(), blockstore.db.batch().unwrap());
+            ShredInsertionTracker::new(data_shreds.len(), blockstore.get_write_batch().unwrap());
 
         assert!(blockstore
             .check_insert_data_shred(
@@ -7826,12 +7821,13 @@ pub mod tests {
             )
             .is_err());
         let ShredInsertionTracker {
-            ref merkle_root_metas,
-            ref duplicate_shreds,
+            merkle_root_metas,
+            duplicate_shreds,
+            write_batch,
             ..
         } = shred_insertion_tracker;
 
-        // No insert, notify duplicate
+        // No insert, notify duplicate, and block is dead
         assert_eq!(duplicate_shreds.len(), 1);
         assert_matches!(
             duplicate_shreds[0],
@@ -7856,6 +7852,11 @@ pub mod tests {
                 .first_received_shred_index(),
             index
         );
+
+        // Block is now dead
+        blockstore.db.write(write_batch).unwrap();
+        assert!(blockstore.is_dead(slot));
+        blockstore.remove_dead_slot(slot).unwrap();
 
         // Blockstore should also have the merkle root meta of the original shred
         assert_eq!(
@@ -7888,6 +7889,8 @@ pub mod tests {
             fec_set_index + 30,
         );
 
+        let mut shred_insertion_tracker =
+            ShredInsertionTracker::new(data_shreds.len(), blockstore.db.batch().unwrap());
         blockstore
             .check_insert_data_shred(
                 new_data_shred.clone(),
@@ -7898,25 +7901,29 @@ pub mod tests {
             )
             .unwrap();
         let ShredInsertionTracker {
-            merkle_root_metas, ..
+            merkle_root_metas,
+            write_batch,
+            ..
         } = shred_insertion_tracker;
+        blockstore.db.write(write_batch).unwrap();
 
         // Verify that we still have the merkle root meta for the original shred
         // and the new shred
-        assert_eq!(merkle_root_metas.len(), 2);
         assert_eq!(
-            merkle_root_metas
-                .get(&data_shred.erasure_set())
+            blockstore
+                .merkle_root_meta(data_shred.erasure_set())
                 .unwrap()
                 .as_ref()
+                .unwrap()
                 .merkle_root(),
             data_shred.merkle_root().ok()
         );
         assert_eq!(
-            merkle_root_metas
-                .get(&data_shred.erasure_set())
+            blockstore
+                .merkle_root_meta(data_shred.erasure_set())
                 .unwrap()
                 .as_ref()
+                .unwrap()
                 .first_received_shred_index(),
             index
         );
@@ -7956,7 +7963,7 @@ pub mod tests {
         );
 
         let mut shred_insertion_tracker =
-            ShredInsertionTracker::new(1, blockstore.db.batch().unwrap());
+            ShredInsertionTracker::new(1, blockstore.get_write_batch().unwrap());
         assert!(blockstore.check_insert_coding_shred(
             coding_shred.clone(),
             &mut shred_insertion_tracker,
@@ -11962,12 +11969,12 @@ pub mod tests {
         blockstore
             .put_erasure_meta(coding_shred_previous.erasure_set(), &erasure_meta)
             .unwrap();
-        let mut write_batch = blockstore.db.batch().unwrap();
+        let mut write_batch = blockstore.get_write_batch().unwrap();
         blockstore
             .merkle_root_meta_cf
             .delete_range_in_batch(&mut write_batch, slot, slot)
             .unwrap();
-        blockstore.db.write(write_batch).unwrap();
+        blockstore.write_batch(write_batch).unwrap();
         assert!(blockstore
             .merkle_root_meta(coding_shred_previous.erasure_set())
             .unwrap()
@@ -12028,12 +12035,12 @@ pub mod tests {
 
         // Remove the merkle root meta in order to simulate this blockstore originating from
         // an older version.
-        let mut write_batch = blockstore.db.batch().unwrap();
+        let mut write_batch = blockstore.get_write_batch().unwrap();
         blockstore
             .merkle_root_meta_cf
             .delete_range_in_batch(&mut write_batch, slot, slot)
             .unwrap();
-        blockstore.db.write(write_batch).unwrap();
+        blockstore.write_batch(write_batch).unwrap();
         assert!(blockstore
             .merkle_root_meta(next_coding_shreds[0].erasure_set())
             .unwrap()

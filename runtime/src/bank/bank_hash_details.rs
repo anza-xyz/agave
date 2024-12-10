@@ -24,7 +24,7 @@ use {
         transaction_context::TransactionReturnData,
     },
     solana_svm::transaction_commit_result::CommittedTransaction,
-    solana_transaction_status::UiInstruction,
+    solana_transaction_status_client_types::UiInstruction,
     std::str::FromStr,
 };
 

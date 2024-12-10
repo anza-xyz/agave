@@ -21,6 +21,7 @@ log = { workspace = true }
 rand = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
+solana-clock = { workspace = true, optional = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
@@ -28,15 +29,20 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
 solana-hash = { workspace = true }
+solana-keypair = { workspace = true, optional = true }
+solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-packet = { workspace = true, features = ["bincode"] }
-solana-program = { workspace = true, default-features = false }
 solana-pubkey = { workspace = true, default-features = false }
 solana-rayon-threadlimit = { workspace = true }
-solana-sdk = { workspace = true, optional = true }
+solana-sdk-ids = { workspace = true }
 solana-short-vec = { workspace = true }
 solana-signature = { workspace = true, features = ["verify"] }
+solana-signer = { workspace = true, optional = true }
+solana-system-interface = { workspace = true, optional = true }
+solana-system-transaction = { workspace = true, optional = true }
 solana-time-utils = { workspace = true }
+solana-transaction = { workspace = true, optional = true }
 solana-vote-program = { workspace = true, optional = true }
 
 [target."cfg(target_os = \"linux\")".dependencies]
@@ -55,13 +61,20 @@ solana-perf = { path = ".", features = ["dev-context-only-utils"] }
 test-case = { workspace = true }
 
 [features]
-dev-context-only-utils = ["dep:solana-vote-program", "dep:solana-sdk"]
+dev-context-only-utils = [
+    "dep:solana-clock",
+    "dep:solana-keypair",
+    "dep:solana-signer",
+    "dep:solana-system-interface",
+    "dep:solana-system-transaction",
+    "dep:solana-transaction",
+    "dep:solana-vote-program",
+]
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
-    "solana-sdk/frozen-abi",
     "solana-short-vec/frozen-abi",
-    "solana-vote-program/frozen-abi"
+    "solana-vote-program/frozen-abi",
 ]
 
 [[bench]]

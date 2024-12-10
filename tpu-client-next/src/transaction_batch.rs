@@ -1,6 +1,6 @@
 //! This module holds [`TransactionBatch`] structure.
 
-use solana_sdk::timing::timestamp;
+use solana_time_utils::timestamp;
 
 /// Batch of generated transactions timestamp is used to discard batches which
 /// are too old to have valid blockhash.

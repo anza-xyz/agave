@@ -154,7 +154,7 @@ impl Blockstore {
         let Some(mut slot_meta) = self.meta(slot)? else {
             return Err(BlockstoreError::SlotUnavailable);
         };
-        let mut write_batch = self.db.batch()?;
+        let mut write_batch = self.get_write_batch()?;
 
         let columns_purged = self.purge_range(&mut write_batch, slot, slot, PurgeType::Exact)?;
 
@@ -182,7 +182,7 @@ impl Blockstore {
         self.meta_cf
             .put_in_batch(&mut write_batch, slot, &slot_meta)?;
 
-        self.db.write(write_batch).inspect_err(|e| {
+        self.write_batch(write_batch).inspect_err(|e| {
             error!(
                 "Error: {:?} while submitting write batch for slot {:?}",
                 e, slot
@@ -207,14 +207,14 @@ impl Blockstore {
         purge_type: PurgeType,
         purge_stats: &mut PurgeStats,
     ) -> Result<bool> {
-        let mut write_batch = self.db.batch()?;
+        let mut write_batch = self.get_write_batch()?;
 
         let mut delete_range_timer = Measure::start("delete_range");
         let columns_purged = self.purge_range(&mut write_batch, from_slot, to_slot, purge_type)?;
         delete_range_timer.stop();
 
         let mut write_timer = Measure::start("write_batch");
-        self.db.write(write_batch).inspect_err(|e| {
+        self.write_batch(write_batch).inspect_err(|e| {
             error!(
                 "Error: {:?} while submitting write batch for purge from_slot {} to_slot {}",
                 e, from_slot, to_slot
@@ -829,8 +829,8 @@ pub mod tests {
         let (first_index, last_index) = get_index_bounds(blockstore);
         blockstore.db.set_oldest_slot(oldest_slot);
         blockstore
-            .db
-            .compact_range_cf::<cf::TransactionStatus>(&first_index, &last_index);
+            .transaction_status_cf
+            .compact_range_raw_key(&first_index, &last_index);
     }
 
     #[test_case(purge_exact; "exact")]
@@ -980,7 +980,7 @@ pub mod tests {
         );
         blockstore.insert_shreds(shreds, None, false).unwrap();
 
-        let mut write_batch = blockstore.db.batch().unwrap();
+        let mut write_batch = blockstore.get_write_batch().unwrap();
         blockstore
             .purge_special_columns_exact(&mut write_batch, slot, slot + 1)
             .unwrap();
@@ -1010,7 +1010,7 @@ pub mod tests {
 
         let oldest_slot = 3;
         blockstore.db.set_oldest_slot(oldest_slot);
-        blockstore.db.compact_range_cf::<cf::TransactionStatus>(
+        blockstore.transaction_status_cf.compact_range_raw_key(
             &cf::TransactionStatus::key(first_index),
             &cf::TransactionStatus::key(last_index),
         );
@@ -1044,7 +1044,7 @@ pub mod tests {
 
         let oldest_slot = 12;
         blockstore.db.set_oldest_slot(oldest_slot);
-        blockstore.db.compact_range_cf::<cf::TransactionStatus>(
+        blockstore.transaction_status_cf.compact_range_raw_key(
             &cf::TransactionStatus::key(first_index),
             &cf::TransactionStatus::key(last_index),
         );
@@ -1119,8 +1119,8 @@ pub mod tests {
         // Purge at slot 0 should not affect any memos
         blockstore.db.set_oldest_slot(0);
         blockstore
-            .db
-            .compact_range_cf::<cf::TransactionMemos>(&first_index, &last_index);
+            .transaction_memos_cf
+            .compact_range_raw_key(&first_index, &last_index);
         let memos_iterator = blockstore
             .transaction_memos_cf
             .iterator_cf_raw_key(IteratorMode::Start);
@@ -1134,8 +1134,8 @@ pub mod tests {
         // Purge at oldest_slot without clean_slot_0 only purges the current memo at slot 4
         blockstore.db.set_oldest_slot(oldest_slot);
         blockstore
-            .db
-            .compact_range_cf::<cf::TransactionMemos>(&first_index, &last_index);
+            .transaction_memos_cf
+            .compact_range_raw_key(&first_index, &last_index);
         let memos_iterator = blockstore
             .transaction_memos_cf
             .iterator_cf_raw_key(IteratorMode::Start);
@@ -1151,8 +1151,8 @@ pub mod tests {
         // Purge at oldest_slot with clean_slot_0 purges deprecated memos
         blockstore.db.set_clean_slot_0(true);
         blockstore
-            .db
-            .compact_range_cf::<cf::TransactionMemos>(&first_index, &last_index);
+            .transaction_memos_cf
+            .compact_range_raw_key(&first_index, &last_index);
         let memos_iterator = blockstore
             .transaction_memos_cf
             .iterator_cf_raw_key(IteratorMode::Start);

@@ -64,7 +64,6 @@ pub use solana_program::{borsh, borsh0_10, borsh1};
 pub use solana_signer::signers;
 pub mod entrypoint;
 pub mod entrypoint_deprecated;
-pub mod epoch_rewards_hasher;
 pub mod example_mocks;
 pub mod exit;
 pub mod feature;
@@ -76,7 +75,6 @@ pub mod log;
 pub mod native_loader;
 pub mod net;
 pub mod nonce_account;
-pub mod offchain_message;
 pub mod precompiles;
 pub mod program_utils;
 pub mod pubkey;
@@ -124,12 +122,20 @@ pub use solana_derivation_path as derivation_path;
 pub use solana_ed25519_program as ed25519_instruction;
 #[deprecated(since = "2.2.0", note = "Use `solana-epoch-info` crate instead")]
 pub use solana_epoch_info as epoch_info;
+#[deprecated(
+    since = "2.2.0",
+    note = "Use `solana-epoch-rewards-hasher` crate instead"
+)]
+pub use solana_epoch_rewards_hasher as epoch_rewards_hasher;
 #[deprecated(since = "2.1.0", note = "Use `solana-feature-set` crate instead")]
 pub use solana_feature_set as feature_set;
 #[deprecated(since = "2.2.0", note = "Use `solana-fee-structure` crate instead")]
 pub use solana_fee_structure as fee;
 #[deprecated(since = "2.1.0", note = "Use `solana-inflation` crate instead")]
 pub use solana_inflation as inflation;
+#[cfg(feature = "full")]
+#[deprecated(since = "2.2.0", note = "Use `solana-offchain-message` crate instead")]
+pub use solana_offchain_message as offchain_message;
 #[deprecated(since = "2.1.0", note = "Use `solana-packet` crate instead")]
 pub use solana_packet as packet;
 #[deprecated(since = "2.2.0", note = "Use `solana-poh-config` crate instead")]

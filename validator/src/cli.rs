@@ -48,7 +48,7 @@ use {
         self, MAX_BATCH_SEND_RATE_MS, MAX_TRANSACTION_BATCH_SIZE,
     },
     solana_streamer::quic::DEFAULT_QUIC_ENDPOINTS,
-    solana_tpu_client::tpu_client::DEFAULT_TPU_CONNECTION_POOL_SIZE,
+    solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{path::PathBuf, str::FromStr},
 };
@@ -897,6 +897,14 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .validator(is_parsable::<u32>)
                 .hidden(hidden_unless_forced())
                 .help("Controls the rate of the clients connections per IpAddr per minute."),
+        )
+        .arg(
+            Arg::with_name("vote_use_quic")
+                .long("vote-use-quic")
+                .takes_value(true)
+                .default_value(&default_args.vote_use_quic)
+                .hidden(hidden_unless_forced())
+                .help("Controls if to use QUIC to send votes."),
         )
         .arg(
             Arg::with_name("num_quic_endpoints")
@@ -2294,6 +2302,7 @@ pub struct DefaultArgs {
     pub tpu_connection_pool_size: String,
     pub tpu_max_connections_per_ipaddr_per_minute: String,
     pub num_quic_endpoints: String,
+    pub vote_use_quic: String,
 
     // Exit subcommand
     pub exit_min_idle_time: String,
@@ -2385,6 +2394,7 @@ impl DefaultArgs {
             tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE.to_string(),
             tpu_max_connections_per_ipaddr_per_minute:
                 DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE.to_string(),
+            vote_use_quic: DEFAULT_VOTE_USE_QUIC.to_string(),
             num_quic_endpoints: DEFAULT_QUIC_ENDPOINTS.to_string(),
             rpc_max_request_body_size: MAX_REQUEST_BODY_SIZE.to_string(),
             exit_min_idle_time: "10".to_string(),

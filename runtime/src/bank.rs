@@ -37,7 +37,6 @@ use {
     crate::{
         account_saver::collect_accounts_to_store,
         bank::{
-            builtins::{BuiltinPrototype, BUILTINS, STATELESS_BUILTINS},
             metrics::*,
             partitioned_epoch_rewards::{EpochRewardStatus, StakeRewards, VoteRewardsAccounts},
         },
@@ -95,7 +94,9 @@ use {
     solana_bpf_loader_program::syscalls::{
         create_program_runtime_environment_v1, create_program_runtime_environment_v2,
     },
+    solana_builtins::{prototype::BuiltinPrototype, BUILTINS, STATELESS_BUILTINS},
     solana_compute_budget::compute_budget::ComputeBudget,
+    solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_cost_model::cost_tracker::CostTracker,
     solana_feature_set::{
         self as feature_set, remove_rounding_in_fee_calculation, reward_full_priority_fee,
@@ -107,7 +108,6 @@ use {
         invoke_context::BuiltinFunctionWithContext, loaded_programs::ProgramCacheEntry,
     },
     solana_runtime_transaction::{
-        instructions_processor::process_compute_budget_instructions,
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
     },
     solana_sdk::{
@@ -3761,8 +3761,10 @@ impl Bank {
                 .per_program_timings
                 .iter()
                 .fold(0, |acc: u64, (_, program_timing)| {
-                    acc.saturating_add(program_timing.accumulated_units)
-                        .saturating_add(program_timing.total_errored_units)
+                    (std::num::Saturating(acc)
+                        + program_timing.accumulated_units
+                        + program_timing.total_errored_units)
+                        .0
                 });
 
         debug!("simulate_transaction: {:?}", timings);

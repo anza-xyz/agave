@@ -481,7 +481,6 @@ pub mod ed25519_program;
 pub mod entrypoint_deprecated;
 pub mod epoch_schedule;
 pub mod epoch_stake;
-pub mod feature;
 pub mod hash;
 pub mod incinerator;
 pub mod instruction;
@@ -518,6 +517,11 @@ pub use solana_borsh::v0_10 as borsh0_10;
 pub use solana_borsh::v1 as borsh1;
 #[deprecated(since = "2.1.0", note = "Use `solana-epoch-rewards` crate instead")]
 pub use solana_epoch_rewards as epoch_rewards;
+#[deprecated(
+    since = "2.2.0",
+    note = "Use `solana-feature-gate-interface` crate instead"
+)]
+pub use solana_feature_gate_interface as feature;
 #[deprecated(since = "2.1.0", note = "Use `solana-fee-calculator` crate instead")]
 pub use solana_fee_calculator as fee_calculator;
 #[deprecated(since = "2.2.0", note = "Use `solana-keccak-hasher` crate instead")]

@@ -4233,6 +4233,7 @@ pub(crate) mod tests {
         },
         crossbeam_channel::unbounded,
         itertools::Itertools,
+        solana_client::connection_cache::ConnectionCache,
         solana_entry::entry::{self, Entry},
         solana_gossip::{cluster_info::Node, crds::Cursor},
         solana_ledger::{
@@ -4263,6 +4264,7 @@ pub(crate) mod tests {
             transaction::TransactionError,
         },
         solana_streamer::socket::SocketAddrSpace,
+        solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
         solana_transaction_status::VersionedTransactionWithStatusMeta,
         solana_vote_program::{
             vote_state::{self, TowerSync, VoteStateVersions},
@@ -7547,11 +7549,25 @@ pub(crate) mod tests {
         let vote_info = voting_receiver
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
+
+        let connection_cache = if DEFAULT_VOTE_USE_QUIC {
+            ConnectionCache::new_quic(
+                "connection_cache_vote_quic",
+                DEFAULT_TPU_CONNECTION_POOL_SIZE,
+            )
+        } else {
+            ConnectionCache::with_udp(
+                "connection_cache_vote_udp",
+                DEFAULT_TPU_CONNECTION_POOL_SIZE,
+            )
+        };
+
         crate::voting_service::VotingService::handle_vote(
             &cluster_info,
             &poh_recorder,
             &tower_storage,
             vote_info,
+            Arc::new(connection_cache),
         );
 
         let mut cursor = Cursor::default();
@@ -7622,12 +7638,27 @@ pub(crate) mod tests {
         let vote_info = voting_receiver
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
+
+        let connection_cache = if DEFAULT_VOTE_USE_QUIC {
+            ConnectionCache::new_quic(
+                "connection_cache_vote_quic",
+                DEFAULT_TPU_CONNECTION_POOL_SIZE,
+            )
+        } else {
+            ConnectionCache::with_udp(
+                "connection_cache_vote_udp",
+                DEFAULT_TPU_CONNECTION_POOL_SIZE,
+            )
+        };
+
         crate::voting_service::VotingService::handle_vote(
             &cluster_info,
             &poh_recorder,
             &tower_storage,
             vote_info,
+            Arc::new(connection_cache),
         );
+
         let votes = cluster_info.get_votes(&mut cursor);
         assert_eq!(votes.len(), 1);
         let vote_tx = &votes[0];
@@ -7705,11 +7736,24 @@ pub(crate) mod tests {
         let vote_info = voting_receiver
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
+        let connection_cache = if DEFAULT_VOTE_USE_QUIC {
+            ConnectionCache::new_quic(
+                "connection_cache_vote_quic",
+                DEFAULT_TPU_CONNECTION_POOL_SIZE,
+            )
+        } else {
+            ConnectionCache::with_udp(
+                "connection_cache_vote_udp",
+                DEFAULT_TPU_CONNECTION_POOL_SIZE,
+            )
+        };
+
         crate::voting_service::VotingService::handle_vote(
             &cluster_info,
             &poh_recorder,
             &tower_storage,
             vote_info,
+            Arc::new(connection_cache),
         );
 
         assert!(last_vote_refresh_time.last_refresh_time > clone_refresh_time);
@@ -7820,11 +7864,24 @@ pub(crate) mod tests {
         let vote_info = voting_receiver
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
+        let connection_cache = if DEFAULT_VOTE_USE_QUIC {
+            ConnectionCache::new_quic(
+                "connection_cache_vote_quic",
+                DEFAULT_TPU_CONNECTION_POOL_SIZE,
+            )
+        } else {
+            ConnectionCache::with_udp(
+                "connection_cache_vote_udp",
+                DEFAULT_TPU_CONNECTION_POOL_SIZE,
+            )
+        };
+
         crate::voting_service::VotingService::handle_vote(
             cluster_info,
             poh_recorder,
             tower_storage,
             vote_info,
+            Arc::new(connection_cache),
         );
 
         let votes = cluster_info.get_votes(cursor);

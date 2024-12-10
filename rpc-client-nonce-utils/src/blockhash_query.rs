@@ -8,8 +8,8 @@ use {
     },
 };
 use {
+    solana_commitment_config::CommitmentConfig, solana_hash::Hash, solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_sdk::{commitment_config::CommitmentConfig, hash::Hash, pubkey::Pubkey},
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -114,18 +114,15 @@ mod tests {
         super::*,
         crate::blockhash_query,
         serde_json::{self, json},
+        solana_account::Account,
         solana_account_decoder::{encode_ui_account, UiAccountEncoding},
+        solana_fee_calculator::FeeCalculator,
+        solana_nonce::{self as nonce, state::DurableNonce},
         solana_rpc_client_api::{
             request::RpcRequest,
             response::{Response, RpcBlockhash, RpcResponseContext},
         },
-        solana_sdk::{
-            account::Account,
-            fee_calculator::FeeCalculator,
-            hash::hash,
-            nonce::{self, state::DurableNonce},
-            system_program,
-        },
+        solana_sha256_hasher::hash,
         std::collections::HashMap,
     };
 
@@ -354,9 +351,9 @@ mod tests {
         };
         let nonce_account = Account::new_data_with_space(
             42,
-            &nonce::state::Versions::new(nonce::State::Initialized(data)),
-            nonce::State::size(),
-            &system_program::id(),
+            &nonce::versions::Versions::new(nonce::state::State::Initialized(data)),
+            nonce::state::State::size(),
+            &solana_sdk_ids::system_program::id(),
         )
         .unwrap();
         let nonce_pubkey = Pubkey::from([4u8; 32]);

@@ -3,10 +3,6 @@ inherits = "release"
 debug = true
 split-debuginfo = "packed"
 
-[profile.release]
-split-debuginfo = "unpacked"
-lto = "thin"
-
 [workspace]
 members = [
     "account-decoder",
@@ -25,6 +21,7 @@ members = [
     "bench-tps",
     "bloom",
     "bucket_map",
+    "builtins",
     "builtins-default-costs",
     "cargo-registry",
     "clap-utils",
@@ -35,6 +32,7 @@ members = [
     "client",
     "client-test",
     "compute-budget",
+    "compute-budget-instruction",
     "connection-cache",
     "core",
     "cost-model",
@@ -121,7 +119,9 @@ members = [
     "sdk/ed25519-program",
     "sdk/epoch-info",
     "sdk/epoch-rewards",
+    "sdk/epoch-rewards-hasher",
     "sdk/epoch-schedule",
+    "sdk/feature-gate-interface",
     "sdk/feature-set",
     "sdk/fee-calculator",
     "sdk/fee-structure",
@@ -140,6 +140,7 @@ members = [
     "sdk/msg",
     "sdk/native-token",
     "sdk/nonce",
+    "sdk/offchain-message",
     "sdk/package-metadata",
     "sdk/package-metadata-macro",
     "sdk/packet",
@@ -286,7 +287,7 @@ clap = "2.33.1"
 console = "0.15.8"
 console_error_panic_hook = "0.1.7"
 console_log = "0.2.2"
-const_format = "0.2.33"
+const_format = "0.2.34"
 core_affinity = "0.5.10"
 criterion = "0.5.1"
 criterion-stats = "0.3.0"
@@ -330,14 +331,14 @@ humantime = "2.0.1"
 hyper = "0.14.31"
 hyper-proxy = "0.9.1"
 im = "15.1.0"
-index_list = "0.2.14"
+index_list = "0.2.15"
 indexmap = "2.7.0"
 indicatif = "0.17.9"
 itertools = "0.12.1"
-jemallocator = { package = "tikv-jemallocator", version = "0.4.1", features = [
+jemallocator = { package = "tikv-jemallocator", version = "0.6.0", features = [
     "unprefixed_malloc_on_supported_platforms",
 ] }
-js-sys = "0.3.74"
+js-sys = "0.3.76"
 json5 = "0.4.1"
 jsonrpc-core = "18.0.0"
 jsonrpc-core-client = "18.0.0"
@@ -439,6 +440,7 @@ solana-bn254 = { path = "curves/bn254", version = "=2.2.0" }
 solana-borsh = { path = "sdk/borsh", version = "=2.2.0" }
 solana-bpf-loader-program = { path = "programs/bpf_loader", version = "=2.2.0" }
 solana-bucket-map = { path = "bucket_map", version = "=2.2.0" }
+solana-builtins = { path = "builtins", version = "=2.2.0" }
 solana-builtins-default-costs = { path = "builtins-default-costs", version = "=2.2.0" }
 agave-cargo-registry = { path = "cargo-registry", version = "=2.2.0" }
 solana-clap-utils = { path = "clap-utils", version = "=2.2.0" }
@@ -452,6 +454,7 @@ solana-clock = { path = "sdk/clock", version = "=2.2.0" }
 solana-cluster-type = { path = "sdk/cluster-type", version = "=2.2.0" }
 solana-commitment-config = { path = "sdk/commitment-config", version = "=2.2.0" }
 solana-compute-budget = { path = "compute-budget", version = "=2.2.0" }
+solana-compute-budget-instruction = { path = "compute-budget-instruction", version = "=2.2.0" }
 solana-compute-budget-interface = { path = "sdk/compute-budget-interface", version = "=2.2.0" }
 solana-compute-budget-program = { path = "programs/compute-budget", version = "=2.2.0" }
 solana-config-program = { path = "programs/config", version = "=2.2.0" }
@@ -469,8 +472,10 @@ solana-entry = { path = "entry", version = "=2.2.0" }
 solana-program-entrypoint = { path = "sdk/program-entrypoint", version = "=2.2.0" }
 solana-epoch-info = { path = "sdk/epoch-info", version = "=2.2.0" }
 solana-epoch-rewards = { path = "sdk/epoch-rewards", version = "=2.2.0" }
+solana-epoch-rewards-hasher = { path = "sdk/epoch-rewards-hasher", version = "=2.2.0" }
 solana-epoch-schedule = { path = "sdk/epoch-schedule", version = "=2.2.0" }
 solana-faucet = { path = "faucet", version = "=2.2.0" }
+solana-feature-gate-interface = { path = "sdk/feature-gate-interface", version = "=2.2.0" }
 solana-feature-set = { path = "sdk/feature-set", version = "=2.2.0" }
 solana-fee-calculator = { path = "sdk/fee-calculator", version = "=2.2.0" }
 solana-fee = { path = "fee", version = "=2.2.0" }
@@ -507,6 +512,7 @@ solana-net-utils = { path = "net-utils", version = "=2.2.0" }
 solana-nohash-hasher = "0.2.1"
 solana-nonce = { path = "sdk/nonce", version = "=2.2.0" }
 solana-notifier = { path = "notifier", version = "=2.2.0" }
+solana-offchain-message = { path = "sdk/offchain-message", version = "=2.2.0" }
 solana-package-metadata = { path = "sdk/package-metadata", version = "=2.2.0" }
 solana-package-metadata-macro = { path = "sdk/package-metadata-macro", version = "=2.2.0" }
 solana-packet = { path = "sdk/packet", version = "=2.2.0" }
@@ -624,12 +630,12 @@ tar = "0.4.43"
 tarpc = "0.29.0"
 tempfile = "3.14.0"
 test-case = "3.3.1"
-thiserror = "2.0.4"
+thiserror = "2.0.6"
 tiny-bip39 = "0.8.2"
 # Update solana-tokio patch below when updating this version
 tokio = "1.29.1"
 tokio-serde = "0.8"
-tokio-stream = "0.1.16"
+tokio-stream = "0.1.17"
 tokio-tungstenite = "0.20.1"
 tokio-util = "0.7"
 toml = "0.8.12"

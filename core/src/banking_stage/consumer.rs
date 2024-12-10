@@ -12,6 +12,7 @@ use {
         BankingStageStats,
     },
     itertools::Itertools,
+    solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_feature_set as feature_set,
     solana_ledger::token_balances::collect_token_balances,
     solana_measure::{measure::Measure, measure_us},
@@ -24,10 +25,7 @@ use {
         transaction_batch::TransactionBatch,
         verify_precompiles::verify_precompiles,
     },
-    solana_runtime_transaction::{
-        instructions_processor::process_compute_budget_instructions,
-        transaction_with_meta::TransactionWithMeta,
-    },
+    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_sdk::{
         clock::{FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, MAX_PROCESSING_AGE},
         fee::FeeBudgetLimits,
@@ -44,6 +42,7 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
     solana_timings::ExecuteTimings,
     std::{
+        num::Saturating,
         sync::{atomic::Ordering, Arc},
         time::Instant,
     },
@@ -792,10 +791,11 @@ impl Consumer {
             (0, 0),
             |(units, times), program_timings| {
                 (
-                    units
-                        .saturating_add(program_timings.accumulated_units)
-                        .saturating_add(program_timings.total_errored_units),
-                    times.saturating_add(program_timings.accumulated_us),
+                    (Saturating(units)
+                        + program_timings.accumulated_units
+                        + program_timings.total_errored_units)
+                        .0,
+                    (Saturating(times) + program_timings.accumulated_us).0,
                 )
             },
         )
@@ -2522,11 +2522,11 @@ mod tests {
             execute_timings.details.per_program_timings.insert(
                 Pubkey::new_unique(),
                 ProgramTiming {
-                    accumulated_us: n * 100,
-                    accumulated_units: n * 1000,
-                    count: n as u32,
+                    accumulated_us: Saturating(n * 100),
+                    accumulated_units: Saturating(n * 1000),
+                    count: Saturating(n as u32),
                     errored_txs_compute_consumed: vec![],
-                    total_errored_units: 0,
+                    total_errored_units: Saturating(0),
                 },
             );
             expected_us += n * 100;

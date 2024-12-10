@@ -43,7 +43,6 @@ use {
         loader_v4, native_loader,
         program_utils::limited_deserialize,
         pubkey::Pubkey,
-        saturating_add_assign,
         system_instruction::{self, MAX_PERMITTED_DATA_LENGTH},
         transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
     },
@@ -469,10 +468,7 @@ pub fn process_instruction_inner(
         })?;
     drop(program_account);
     get_or_create_executor_time.stop();
-    saturating_add_assign!(
-        invoke_context.timings.get_or_create_executor_us,
-        get_or_create_executor_time.as_us()
-    );
+    invoke_context.timings.get_or_create_executor_us += get_or_create_executor_time.as_us();
 
     executor.ix_usage_counter.fetch_add(1, Ordering::Relaxed);
     match &executor.program {
@@ -1452,7 +1448,7 @@ pub fn execute<'a, 'b: 'a>(
         drop(vm);
         if let Some(execute_time) = invoke_context.execute_time.as_mut() {
             execute_time.stop();
-            saturating_add_assign!(invoke_context.timings.execute_us, execute_time.as_us());
+            invoke_context.timings.execute_us += execute_time.as_us();
         }
 
         ic_logger_msg!(
@@ -1473,6 +1469,24 @@ pub fn execute<'a, 'b: 'a>(
                 Err(Box::new(error) as Box<dyn std::error::Error>)
             }
             ProgramResult::Err(mut error) => {
+                if invoke_context
+                    .get_feature_set()
+                    .is_active(&solana_feature_set::apply_cost_tracker_during_replay::id())
+                    && !matches!(error, EbpfError::SyscallError(_))
+                {
+                    // when an exception is thrown during the execution of a
+                    // Basic Block (e.g., a null memory dereference or other
+                    // faults), determining the exact number of CUs consumed
+                    // up to the point of failure requires additional effort
+                    // and is unnecessary since these cases are rare.
+                    //
+                    // In order to simplify CU tracking, simply consume all
+                    // remaining compute units so that the block cost
+                    // tracker uses the full requested compute unit cost for
+                    // this failed transaction.
+                    invoke_context.consume(invoke_context.get_remaining());
+                }
+
                 if direct_mapping {
                     if let EbpfError::AccessViolation(
                         AccessType::Store,
@@ -1549,12 +1563,9 @@ pub fn execute<'a, 'b: 'a>(
     deserialize_time.stop();
 
     // Update the timings
-    saturating_add_assign!(invoke_context.timings.serialize_us, serialize_time.as_us());
-    saturating_add_assign!(invoke_context.timings.create_vm_us, create_vm_time.as_us());
-    saturating_add_assign!(
-        invoke_context.timings.deserialize_us,
-        deserialize_time.as_us()
-    );
+    invoke_context.timings.serialize_us += serialize_time.as_us();
+    invoke_context.timings.create_vm_us += create_vm_time.as_us();
+    invoke_context.timings.deserialize_us += deserialize_time.as_us();
 
     execute_or_deserialize_result
 }

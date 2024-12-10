@@ -5,6 +5,7 @@ use {
     solana_sdk::{
         ed25519_program, feature_set::FeatureSet, saturating_add_assign, secp256k1_program,
     },
+    solana_sdk_ids::secp256r1_program,
     thiserror::Error,
 };
 
@@ -48,7 +49,10 @@ impl ImmutableDeserializedPacket {
     pub fn check_excessive_precompiles(&self) -> Result<(), PacketFilterFailure> {
         let mut num_precompile_signatures: u64 = 0;
         for (program_id, ix) in self.transaction().get_message().program_instructions_iter() {
-            if secp256k1_program::check_id(program_id) || ed25519_program::check_id(program_id) {
+            if secp256k1_program::check_id(program_id)
+                || ed25519_program::check_id(program_id)
+                || secp256r1_program::check_id(program_id)
+            {
                 let num_signatures = ix.data.first().map_or(0, |byte| u64::from(*byte));
                 saturating_add_assign!(num_precompile_signatures, num_signatures);
             }

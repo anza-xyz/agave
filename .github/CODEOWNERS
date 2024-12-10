@@ -2,6 +2,7 @@
 # repo and would like to avoid introducing dependencies in the meantime.
 /builtins-default-costs/ @anza-xyz/svm
 /compute-budget/ @anza-xyz/svm
+/compute-budget-instruction/ @anza-xyz/svm
 /fee/ @anza-xyz/svm
 /log-collector/ @anza-xyz/svm
 /program-runtime/ @anza-xyz/svm
@@ -9,10 +10,8 @@
 /programs/compute-budget/ @anza-xyz/svm
 /programs/loader-v4/ @anza-xyz/svm
 /programs/system/ @anza-xyz/svm
-/runtime-transaction/ @anza-xyz/svm
 /svm-conformance/ @anza-xyz/svm
 /svm-rent-collector/ @anza-xyz/svm
 /svm-transaction/ @anza-xyz/svm
 /svm/ @anza-xyz/svm
 /svm/examples/Cargo.lock
-/transaction-view/ @anza-xyz/svm

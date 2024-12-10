@@ -1,7 +1,7 @@
 use {
     criterion::{black_box, criterion_group, criterion_main, Criterion},
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
-    solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
+    solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_sdk::{
         compute_budget::ComputeBudgetInstruction, feature_set::FeatureSet,
         instruction::CompiledInstruction,

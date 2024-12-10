@@ -2831,7 +2831,7 @@ impl AccountsDb {
                 // closure passed to scan thus making
                 // conflicting read and write borrows.
                 candidates_bin.retain(|candidate_pubkey, candidate_info| {
-                    let mut should_purge = false;
+                    let mut should_collect_reclaims = false;
                     self.accounts_index.scan(
                         [*candidate_pubkey].iter(),
                         |_candidate_pubkey, slot_list_and_ref_count, _entry| {
@@ -2871,8 +2871,8 @@ impl AccountsDb {
                                                 assert!(slot <= &max_clean_root_inclusive);
                                             }
                                             if slot_list.len() > 1 {
-                                                // no need to purge old accounts if there is only 1 slot in the slot list
-                                                should_purge = true;
+                                                // no need to reclaim old accounts if there is only 1 slot in the slot list
+                                                should_collect_reclaims = true;
                                                 purges_old_accounts_local += 1;
                                                 useless = false;
                                             } else {
@@ -2890,7 +2890,7 @@ impl AccountsDb {
                                         // it was in the dirty list, so we assume that the slot it was
                                         // touched in must be unrooted.
                                         not_found_on_fork += 1;
-                                        should_purge = true;
+                                        should_collect_reclaims = true;
                                         purges_old_accounts_local += 1;
                                         useless = false;
                                     }
@@ -2911,7 +2911,7 @@ impl AccountsDb {
                             self.scan_filter_for_shrinking
                         },
                     );
-                    if should_purge {
+                    if should_collect_reclaims {
                         let reclaims_new = self.collect_reclaims(
                             candidate_pubkey,
                             max_clean_root_inclusive,

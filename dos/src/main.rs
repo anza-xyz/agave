@@ -259,14 +259,13 @@ fn create_sender_thread(
     tpu_use_quic: bool,
 ) -> thread::JoinHandle<()> {
     // ConnectionCache is used instead of client because it gives ~6% higher pps
-    let connection_cache = match tpu_use_quic {
-        true => ConnectionCache::new_quic(
+    let connection_cache = if tpu_use_quic {
+        ConnectionCache::new_quic(
             "connection_cache_dos_quic",
             DEFAULT_TPU_CONNECTION_POOL_SIZE,
-        ),
-        false => {
-            ConnectionCache::with_udp("connection_cache_dos_udp", DEFAULT_TPU_CONNECTION_POOL_SIZE)
-        }
+        )
+    } else {
+        ConnectionCache::with_udp("connection_cache_dos_udp", DEFAULT_TPU_CONNECTION_POOL_SIZE)
     };
     let connection = connection_cache.get_connection(target);
 
