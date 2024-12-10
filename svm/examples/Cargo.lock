@@ -5145,6 +5145,7 @@ dependencies = [
  "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-rpc-client-nonce-utils",
+ "solana-rpc-sender",
  "solana-signature",
  "solana-signer",
  "solana-streamer",
@@ -6494,6 +6495,7 @@ dependencies = [
  "solana-message",
  "solana-pubkey",
  "solana-rpc-client-api",
+ "solana-rpc-sender",
  "solana-signature",
  "solana-transaction",
  "solana-transaction-error",
@@ -6544,6 +6546,15 @@ dependencies = [
  "solana-rpc-client",
  "solana-sdk-ids",
  "thiserror 2.0.6",
+]
+
+[[package]]
+name = "solana-rpc-sender"
+version = "2.2.0"
+dependencies = [
+ "async-trait",
+ "serde_json",
+ "solana-rpc-client-api",
 ]
 
 [[package]]

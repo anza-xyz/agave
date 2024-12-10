@@ -542,6 +542,7 @@ solana-rent = { path = "sdk/rent", version = "=2.2.0", default-features = false 
 solana-rent-debits = { path = "sdk/rent-debits", version = "=2.2.0" }
 solana-reserved-account-keys = { path = "sdk/reserved-account-keys", version = "=2.2.0", default-features = false }
 solana-reward-info = { path = "sdk/reward-info", version = "=2.2.0" }
+solana-rpc-sender = { path = "rpc-sender", version = "=2.2.0" }
 solana-sanitize = { path = "sdk/sanitize", version = "=2.2.0" }
 solana-secp256r1-program = { path = "sdk/secp256r1-program", version = "=2.2.0", default-features = false }
 solana-seed-derivable = { path = "sdk/seed-derivable", version = "=2.2.0" }
