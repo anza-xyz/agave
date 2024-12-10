@@ -1024,7 +1024,7 @@ impl Validator {
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
 
         // ConnectionCache might be used for JsonRpc and for Forwarding. Since
-        // the later is not migrated yet to the tpu-client-next, create
+        // the latter is not migrated yet to the tpu-client-next, create
         // ConnectionCache regardless of config.use_tpu_client_next for now.
         let connection_cache = if use_quic {
             let connection_cache = ConnectionCache::new_with_client_options(
@@ -1635,10 +1635,9 @@ impl Validator {
         *start_progress.write().unwrap() = ValidatorStartProgress::Running;
         if let Some(client_updater) = client_updater {
             key_notifies.push(client_updater);
-        } else {
-            // add connection_cache because it is still used in Forwarder.
-            key_notifies.push(connection_cache);
         }
+        // add connection_cache because it is still used in Forwarder.
+        key_notifies.push(connection_cache);
 
         *admin_rpc_service_post_init.write().unwrap() = Some(AdminRpcRequestMetadataPostInit {
             bank_forks: bank_forks.clone(),
