@@ -1914,9 +1914,13 @@ impl JsonRpcRequestProcessor {
 
     pub async fn get_first_available_block(&self) -> Slot {
         let slot = self
-            .blockstore
-            .get_first_available_block()
-            .unwrap_or_default();
+            .runtime
+            .spawn_blocking({
+                let blockstore = Arc::clone(&self.blockstore);
+                move || blockstore.get_first_available_block().unwrap_or_default()
+            })
+            .await
+            .expect("Failed to spawn blocking task");
 
         if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
             let bigtable_slot = bigtable_ledger_storage
