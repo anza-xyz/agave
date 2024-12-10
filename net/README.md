@@ -39,7 +39,7 @@ Metrics collection relies on 2 environment variables that are patched to the rem
 > [!NOTE]
 > Anza employees should follow the guide in notion to set up the influxDB account.
 
- * Ensure that `${host}` is the host name of the InfluxDB you can access, for example `https://metrics.solana.com:9999`
+ * Ensure that `${host}` is the host name of the InfluxDB you can access, for example `https://internal-metrics.solana.com:8086`
  * Ensure that `${user}` is the name of an InfluxDB user account with enough
 rights to create a new InfluxDB database, for example `solana`.
 
@@ -69,7 +69,7 @@ Note: this only works if you store `SOLANA_METRICS_CONFIG` in your shell environ
 ```bash
   cd ./scripts/
   source  ./configure-metrics.sh
-    INFLUX_HOST=https://metrics.solana.com:9999
+    INFLUX_HOST=https://internal-metrics.solana.com:8086
     INFLUX_DATABASE=testnet-dev-solana
     INFLUX_USERNAME=solana
     INFLUX_PASSWORD=********
@@ -85,8 +85,8 @@ NOTE: This example uses GCE.  If you are using AWS EC2, replace `./gce.sh` with
 `./ec2.sh` in the commands.
 
 ```bash
+# In Agave repo
 cd net/
-
 
 # Create a GCE testnet with 4 additional validator nodes (beyond the bootstrap node) and 1 client (billing starts here)
 ./gce.sh create -n 4 -c 1
