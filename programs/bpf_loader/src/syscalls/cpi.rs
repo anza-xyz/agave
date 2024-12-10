@@ -186,12 +186,7 @@ impl<'a, 'b> CallerAccount<'a, 'b> {
             let ref_to_len_in_vm = if direct_mapping {
                 let vm_addr = (account_info.data.as_ptr() as *const u64 as u64)
                     .saturating_add(size_of::<u64>() as u64);
-                // In the same vein as the other check_account_info_pointer() checks, we don't lock
-                // this pointer to a specific address but we don't want it to be inside accounts, or
-                // callees might be able to write to the pointed memory.
-                if vm_addr >= ebpf::MM_INPUT_START {
-                    return Err(SyscallError::InvalidPointer.into());
-                }
+
                 VmValue::VmAddress {
                     vm_addr,
                     memory_mapping,
