@@ -3,10 +3,6 @@ inherits = "release"
 debug = true
 split-debuginfo = "packed"
 
-[profile.release]
-split-debuginfo = "unpacked"
-lto = "thin"
-
 [workspace]
 members = [
     "account-decoder",
