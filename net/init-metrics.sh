@@ -92,7 +92,7 @@ else
 fi
 
 set -x
-sed -i '/SOLANA_METRICS_CONFIG/d' "${configFile}"
+sed -i '/^export\s\+SOLANA_METRICS_CONFIG\s*=\s*"/d' "${configFile}"
 echo "export SOLANA_METRICS_CONFIG=\"$SOLANA_METRICS_CONFIG\"" >> "$configFile"
 
 exit 0
