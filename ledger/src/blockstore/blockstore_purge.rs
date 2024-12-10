@@ -866,22 +866,22 @@ pub mod tests {
             .put(1, &index1)
             .unwrap();
 
-        let statuses: Vec<_> = blockstore
+        let num_statuses = blockstore
             .transaction_status_cf
-            .iterator_cf_raw_key(IteratorMode::Start)
-            .collect();
-        assert_eq!(statuses.len(), 15);
+            .iter(IteratorMode::Start)
+            .unwrap()
+            .count();
+        assert_eq!(num_statuses, 15);
 
         // Delete some of primary-index 0
         let oldest_slot = 3;
         purge(&blockstore, oldest_slot);
         let status_entry_iterator = blockstore
             .transaction_status_cf
-            .iterator_cf_raw_key(IteratorMode::Start);
+            .iter(IteratorMode::Start)
+            .unwrap();
         let mut count = 0;
-        for entry in status_entry_iterator {
-            let (key, _value) = entry.unwrap();
-            let (_signature, slot) = <cf::TransactionStatus as Column>::index(&key);
+        for ((_signature, slot), _value) in status_entry_iterator {
             assert!(slot >= oldest_slot);
             count += 1;
         }
@@ -892,11 +892,10 @@ pub mod tests {
         purge(&blockstore, oldest_slot);
         let status_entry_iterator = blockstore
             .transaction_status_cf
-            .iterator_cf_raw_key(IteratorMode::Start);
+            .iter(IteratorMode::Start)
+            .unwrap();
         let mut count = 0;
-        for entry in status_entry_iterator {
-            let (key, _value) = entry.unwrap();
-            let (_signature, slot) = <cf::TransactionStatus as Column>::index(&key);
+        for ((_signature, slot), _value) in status_entry_iterator {
             assert!(slot >= oldest_slot);
             count += 1;
         }
@@ -907,11 +906,10 @@ pub mod tests {
         purge(&blockstore, oldest_slot);
         let status_entry_iterator = blockstore
             .transaction_status_cf
-            .iterator_cf_raw_key(IteratorMode::Start);
+            .iter(IteratorMode::Start)
+            .unwrap();
         let mut count = 0;
-        for entry in status_entry_iterator {
-            let (key, _value) = entry.unwrap();
-            let (_signature, slot) = <cf::TransactionStatus as Column>::index(&key);
+        for ((_signature, slot), _value) in status_entry_iterator {
             assert!(slot >= oldest_slot);
             count += 1;
         }
@@ -922,11 +920,10 @@ pub mod tests {
         purge(&blockstore, oldest_slot);
         let status_entry_iterator = blockstore
             .transaction_status_cf
-            .iterator_cf_raw_key(IteratorMode::Start);
+            .iter(IteratorMode::Start)
+            .unwrap();
         let mut count = 0;
-        for entry in status_entry_iterator {
-            let (key, _value) = entry.unwrap();
-            let (_signature, slot) = <cf::TransactionStatus as Column>::index(&key);
+        for ((_signature, slot), _value) in status_entry_iterator {
             assert!(slot >= oldest_slot);
             count += 1;
         }
@@ -937,11 +934,10 @@ pub mod tests {
         purge(&blockstore, oldest_slot);
         let status_entry_iterator = blockstore
             .transaction_status_cf
-            .iterator_cf_raw_key(IteratorMode::Start);
+            .iter(IteratorMode::Start)
+            .unwrap();
         let mut count = 0;
-        for entry in status_entry_iterator {
-            let (key, _value) = entry.unwrap();
-            let (_signature, slot) = <cf::TransactionStatus as Column>::index(&key);
+        for ((_signature, slot), _value) in status_entry_iterator {
             assert!(slot >= oldest_slot);
             count += 1;
         }
@@ -952,7 +948,8 @@ pub mod tests {
         purge(&blockstore, oldest_slot);
         let mut status_entry_iterator = blockstore
             .transaction_status_cf
-            .iterator_cf_raw_key(IteratorMode::Start);
+            .iter(IteratorMode::Start)
+            .unwrap();
         assert!(status_entry_iterator.next().is_none());
     }
 
