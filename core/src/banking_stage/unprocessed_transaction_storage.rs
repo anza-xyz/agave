@@ -93,13 +93,6 @@ impl InsertPacketBatchSummary {
             _ => 0,
         }
     }
-
-    pub fn dropped_tracer_packets(&self) -> usize {
-        match self {
-            Self::PacketBatchInsertionMetrics(metrics) => metrics.num_dropped_tracer_packets,
-            _ => 0,
-        }
-    }
 }
 
 impl From<VoteBatchInsertionMetrics> for InsertPacketBatchSummary {
@@ -750,8 +743,6 @@ impl ThreadLocalUnprocessedPackets {
 
         FilterForwardingResults {
             total_forwardable_packets,
-            total_tracer_packets_in_buffer,
-            total_forwardable_tracer_packets,
             total_dropped_packets,
             total_packet_conversion_us,
             total_filter_packets_us,
@@ -1134,16 +1125,12 @@ mod tests {
 
             let FilterForwardingResults {
                 total_forwardable_packets,
-                total_tracer_packets_in_buffer,
-                total_forwardable_tracer_packets,
                 ..
             } = transaction_storage.filter_forwardable_packets_and_add_batches(
                 current_bank.clone(),
                 &mut forward_packet_batches_by_accounts,
             );
             assert_eq!(total_forwardable_packets, 256);
-            assert_eq!(total_tracer_packets_in_buffer, 256);
-            assert_eq!(total_forwardable_tracer_packets, 256);
 
             // packets in a batch are forwarded in arbitrary order; verify the ports match after
             // sorting
@@ -1172,8 +1159,6 @@ mod tests {
                 ForwardPacketBatchesByAccounts::new_with_default_batch_limits();
             let FilterForwardingResults {
                 total_forwardable_packets,
-                total_tracer_packets_in_buffer,
-                total_forwardable_tracer_packets,
                 ..
             } = transaction_storage.filter_forwardable_packets_and_add_batches(
                 current_bank.clone(),
@@ -1181,11 +1166,6 @@ mod tests {
             );
             assert_eq!(
                 total_forwardable_packets,
-                packets.len() - num_already_forwarded
-            );
-            assert_eq!(total_tracer_packets_in_buffer, packets.len());
-            assert_eq!(
-                total_forwardable_tracer_packets,
                 packets.len() - num_already_forwarded
             );
         }
@@ -1206,8 +1186,6 @@ mod tests {
                 ForwardPacketBatchesByAccounts::new_with_default_batch_limits();
             let FilterForwardingResults {
                 total_forwardable_packets,
-                total_tracer_packets_in_buffer,
-                total_forwardable_tracer_packets,
                 ..
             } = transaction_storage.filter_forwardable_packets_and_add_batches(
                 current_bank,
@@ -1215,11 +1193,6 @@ mod tests {
             );
             assert_eq!(
                 total_forwardable_packets,
-                packets.len() - num_already_processed
-            );
-            assert_eq!(total_tracer_packets_in_buffer, packets.len());
-            assert_eq!(
-                total_forwardable_tracer_packets,
                 packets.len() - num_already_processed
             );
         }
