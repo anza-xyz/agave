@@ -695,19 +695,7 @@ impl Rocks {
         Ok(())
     }
 
-    fn iterator_cf<C>(&self, cf: &ColumnFamily, iterator_mode: IteratorMode<C::Index>) -> DBIterator
-    where
-        C: Column,
-    {
-        let start_key;
-        let iterator_mode = match iterator_mode {
-            IteratorMode::From(start_from, direction) => {
-                start_key = C::key(start_from);
-                RocksIteratorMode::From(&start_key, direction)
-            }
-            IteratorMode::Start => RocksIteratorMode::Start,
-            IteratorMode::End => RocksIteratorMode::End,
-        };
+    fn iterator_cf(&self, cf: &ColumnFamily, iterator_mode: RocksIteratorMode) -> DBIterator {
         self.db.iterator_cf(cf, iterator_mode)
     }
 
@@ -1498,7 +1486,17 @@ where
         iterator_mode: IteratorMode<C::Index>,
     ) -> Result<impl Iterator<Item = (C::Index, Box<[u8]>)> + '_> {
         let cf = self.handle();
-        let iter = self.backend.iterator_cf::<C>(cf, iterator_mode);
+        let start_key;
+        let iterator_mode = match iterator_mode {
+            IteratorMode::Start => RocksIteratorMode::Start,
+            IteratorMode::End => RocksIteratorMode::End,
+            IteratorMode::From(start_from, direction) => {
+                start_key = C::key(start_from);
+                RocksIteratorMode::From(&start_key, direction)
+            }
+        };
+
+        let iter = self.backend.iterator_cf(cf, iterator_mode);
         Ok(iter.map(|pair| {
             let (key, value) = pair.unwrap();
             (C::index(&key), value)
@@ -1808,7 +1806,17 @@ where
         iterator_mode: IteratorMode<C::Index>,
     ) -> Result<impl Iterator<Item = (C::Index, Box<[u8]>)> + '_> {
         let cf = self.handle();
-        let iter = self.backend.iterator_cf::<C>(cf, iterator_mode);
+        let start_key;
+        let iterator_mode = match iterator_mode {
+            IteratorMode::Start => RocksIteratorMode::Start,
+            IteratorMode::End => RocksIteratorMode::End,
+            IteratorMode::From(start_from, direction) => {
+                start_key = C::key(start_from);
+                RocksIteratorMode::From(&start_key, direction)
+            }
+        };
+
+        let iter = self.backend.iterator_cf(cf, iterator_mode);
         Ok(iter.filter_map(|pair| {
             let (key, value) = pair.unwrap();
             C::try_current_index(&key).ok().map(|index| (index, value))
