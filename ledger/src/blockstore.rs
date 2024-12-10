@@ -675,7 +675,7 @@ impl Blockstore {
         cf_name: &str,
     ) -> Result<impl Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_> {
         let cf = self.db.cf_handle(cf_name);
-        let iterator = self.db.iterator_cf_raw_key(cf, IteratorMode::Start);
+        let iterator = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
         Ok(iterator.map(|pair| pair.unwrap()))
     }
 

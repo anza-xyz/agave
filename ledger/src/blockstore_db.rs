@@ -695,7 +695,11 @@ impl Rocks {
         Ok(())
     }
 
-    fn iterator_cf(&self, cf: &ColumnFamily, iterator_mode: RocksIteratorMode) -> DBIterator {
+    pub(crate) fn iterator_cf(
+        &self,
+        cf: &ColumnFamily,
+        iterator_mode: RocksIteratorMode,
+    ) -> DBIterator {
         self.db.iterator_cf(cf, iterator_mode)
     }
 
