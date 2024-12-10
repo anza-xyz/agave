@@ -21,12 +21,13 @@ use {
     solana_feature_set::{
         self as feature_set, abort_on_invalid_curve, blake3_syscall_enabled,
         bpf_account_data_direct_mapping, curve25519_syscall_enabled,
-        disable_deploy_of_alloc_free_syscall, disable_fees_sysvar, disable_sbpf_v1_execution,
+        disable_deploy_of_alloc_free_syscall, disable_fees_sysvar, disable_sbpf_v0_execution,
         enable_alt_bn128_compression_syscall, enable_alt_bn128_syscall, enable_big_mod_exp_syscall,
         enable_get_epoch_stake_syscall, enable_partitioned_epoch_reward, enable_poseidon_syscall,
-        get_sysvar_syscall_enabled, last_restart_slot_sysvar,
-        partitioned_epoch_rewards_superfeature, reenable_sbpf_v1_execution,
-        remaining_compute_units_syscall_enabled, FeatureSet,
+        enable_sbpf_v1_deployment_and_execution, enable_sbpf_v2_deployment_and_execution,
+        enable_sbpf_v3_deployment_and_execution, get_sysvar_syscall_enabled,
+        last_restart_slot_sysvar, partitioned_epoch_rewards_superfeature,
+        reenable_sbpf_v0_execution, remaining_compute_units_syscall_enabled, FeatureSet,
     },
     solana_log_collector::{ic_logger_msg, ic_msg},
     solana_poseidon as poseidon,
@@ -35,7 +36,7 @@ use {
     solana_rbpf::{
         declare_builtin_function,
         memory_region::{AccessType, MemoryMapping},
-        program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
+        program::{BuiltinFunction, BuiltinProgram, FunctionRegistry, SBPFVersion},
         vm::Config,
     },
     solana_sdk::{
@@ -244,12 +245,15 @@ macro_rules! register_feature_gated_function {
 pub fn morph_into_deployment_environment_v1(
     from: Arc<BuiltinProgram<InvokeContext>>,
 ) -> Result<BuiltinProgram<InvokeContext>, Error> {
-    let mut config = *from.get_config();
+    let mut config = from.get_config().clone();
     config.reject_broken_elfs = true;
+    // TODO: Uncomment once the SBPF toolchain can produce v3 programs
+    // config.enabled_sbpf_versions =
+    //     *config.enabled_sbpf_versions.end()..=*config.enabled_sbpf_versions.end();
 
     let mut result = FunctionRegistry::<BuiltinFunction<InvokeContext>>::default();
 
-    for (key, (name, value)) in from.get_function_registry().iter() {
+    for (key, (name, value)) in from.get_function_registry(SBPFVersion::V0).iter() {
         // Deployment of programs with sol_alloc_free is disabled. So do not register the syscall.
         if name != *b"sol_alloc_free_" {
             result.register_function(key, name, value)?;
@@ -284,6 +288,23 @@ pub fn create_program_runtime_environment_v1<'a>(
     let get_sysvar_syscall_enabled = feature_set.is_active(&get_sysvar_syscall_enabled::id());
     let enable_get_epoch_stake_syscall =
         feature_set.is_active(&enable_get_epoch_stake_syscall::id());
+    let min_sbpf_version = if !feature_set.is_active(&disable_sbpf_v0_execution::id())
+        || feature_set.is_active(&reenable_sbpf_v0_execution::id())
+    {
+        SBPFVersion::V0
+    } else {
+        SBPFVersion::V3
+    };
+    let max_sbpf_version = if feature_set.is_active(&enable_sbpf_v3_deployment_and_execution::id())
+    {
+        SBPFVersion::V3
+    } else if feature_set.is_active(&enable_sbpf_v2_deployment_and_execution::id()) {
+        SBPFVersion::V2
+    } else if feature_set.is_active(&enable_sbpf_v1_deployment_and_execution::id()) {
+        SBPFVersion::V1
+    } else {
+        SBPFVersion::V0
+    };
 
     let config = Config {
         max_call_depth: compute_budget.max_call_depth,
@@ -297,11 +318,7 @@ pub fn create_program_runtime_environment_v1<'a>(
         reject_broken_elfs: reject_deployment_of_broken_elfs,
         noop_instruction_rate: 256,
         sanitize_user_provided_values: true,
-        external_internal_function_hash_collision: true,
-        reject_callx_r10: true,
-        enable_sbpf_v1: !feature_set.is_active(&disable_sbpf_v1_execution::id())
-            || feature_set.is_active(&reenable_sbpf_v1_execution::id()),
-        enable_sbpf_v2: false,
+        enabled_sbpf_versions: min_sbpf_version..=max_sbpf_version,
         optimize_rodata: false,
         aligned_memory_mapping: !feature_set.is_active(&bpf_account_data_direct_mapping::id()),
         // Warning, do not use `Config::default()` so that configuration here is explicit.
@@ -504,10 +521,7 @@ pub fn create_program_runtime_environment_v2<'a>(
         reject_broken_elfs: true,
         noop_instruction_rate: 256,
         sanitize_user_provided_values: true,
-        external_internal_function_hash_collision: true,
-        reject_callx_r10: true,
-        enable_sbpf_v1: false,
-        enable_sbpf_v2: true,
+        enabled_sbpf_versions: SBPFVersion::Reserved..=SBPFVersion::Reserved,
         optimize_rodata: true,
         aligned_memory_mapping: true,
         // Warning, do not use `Config::default()` so that configuration here is explicit.
@@ -2191,7 +2205,7 @@ mod tests {
         let memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_readonly(&data, START)],
             &config,
-            &SBPFVersion::V2,
+            SBPFVersion::V3,
         )
         .unwrap();
 
@@ -2232,7 +2246,7 @@ mod tests {
         let memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_readonly(bytes_of(&pubkey), 0x100000000)],
             &config,
-            &SBPFVersion::V2,
+            SBPFVersion::V3,
         )
         .unwrap();
         let translated_pubkey =
@@ -2248,14 +2262,14 @@ mod tests {
         let instruction = StableInstruction::from(instruction);
         let memory_region = MemoryRegion::new_readonly(bytes_of(&instruction), 0x100000000);
         let memory_mapping =
-            MemoryMapping::new(vec![memory_region], &config, &SBPFVersion::V2).unwrap();
+            MemoryMapping::new(vec![memory_region], &config, SBPFVersion::V3).unwrap();
         let translated_instruction =
             translate_type::<StableInstruction>(&memory_mapping, 0x100000000, true).unwrap();
         assert_eq!(instruction, *translated_instruction);
 
         let memory_region = MemoryRegion::new_readonly(&bytes_of(&instruction)[..1], 0x100000000);
         let memory_mapping =
-            MemoryMapping::new(vec![memory_region], &config, &SBPFVersion::V2).unwrap();
+            MemoryMapping::new(vec![memory_region], &config, SBPFVersion::V3).unwrap();
         assert!(translate_type::<Instruction>(&memory_mapping, 0x100000000, true).is_err());
     }
 
@@ -2270,7 +2284,7 @@ mod tests {
         let memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_readonly(&good_data, 0x100000000)],
             &config,
-            &SBPFVersion::V2,
+            SBPFVersion::V3,
         )
         .unwrap();
         let translated_data =
@@ -2283,7 +2297,7 @@ mod tests {
         let memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_readonly(&data, 0x100000000)],
             &config,
-            &SBPFVersion::V2,
+            SBPFVersion::V3,
         )
         .unwrap();
         let translated_data =
@@ -2308,7 +2322,7 @@ mod tests {
                 0x100000000,
             )],
             &config,
-            &SBPFVersion::V2,
+            SBPFVersion::V3,
         )
         .unwrap();
         let translated_data =
@@ -2328,7 +2342,7 @@ mod tests {
                 0x100000000,
             )],
             &config,
-            &SBPFVersion::V2,
+            SBPFVersion::V3,
         )
         .unwrap();
         let translated_data =
@@ -2346,7 +2360,7 @@ mod tests {
         let memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_readonly(string.as_bytes(), 0x100000000)],
             &config,
-            &SBPFVersion::V2,
+            SBPFVersion::V3,
         )
         .unwrap();
         assert_eq!(
@@ -2370,7 +2384,7 @@ mod tests {
     fn test_syscall_abort() {
         prepare_mockup!(invoke_context, program_id, bpf_loader::id());
         let config = Config::default();
-        let mut memory_mapping = MemoryMapping::new(vec![], &config, &SBPFVersion::V2).unwrap();
+        let mut memory_mapping = MemoryMapping::new(vec![], &config, SBPFVersion::V3).unwrap();
         let result = SyscallAbort::rust(&mut invoke_context, 0, 0, 0, 0, 0, &mut memory_mapping);
         result.unwrap();
     }
@@ -2385,7 +2399,7 @@ mod tests {
         let mut memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_readonly(string.as_bytes(), 0x100000000)],
             &config,
-            &SBPFVersion::V2,
+            SBPFVersion::V3,
         )
         .unwrap();
 
@@ -2426,7 +2440,7 @@ mod tests {
         let mut memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_readonly(string.as_bytes(), 0x100000000)],
             &config,
-            &SBPFVersion::V2,
+            SBPFVersion::V3,
         )
         .unwrap();
 
@@ -2493,7 +2507,7 @@ mod tests {
 
         invoke_context.mock_set_remaining(cost);
         let config = Config::default();
-        let mut memory_mapping = MemoryMapping::new(vec![], &config, &SBPFVersion::V2).unwrap();
+        let mut memory_mapping = MemoryMapping::new(vec![], &config, SBPFVersion::V3).unwrap();
         let result = SyscallLogU64::rust(&mut invoke_context, 1, 2, 3, 4, 5, &mut memory_mapping);
         result.unwrap();
 
@@ -2517,7 +2531,7 @@ mod tests {
         let mut memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_readonly(bytes_of(&pubkey), 0x100000000)],
             &config,
-            &SBPFVersion::V2,
+            SBPFVersion::V3,
         )
         .unwrap();
 
@@ -2700,7 +2714,7 @@ mod tests {
                 MemoryRegion::new_readonly(bytes2.as_bytes(), bytes_to_hash[1].vm_addr),
             ],
             &config,
-            &SBPFVersion::V2,
+            SBPFVersion::V3,
         )
         .unwrap();
 
@@ -2798,7 +2812,7 @@ mod tests {
                 MemoryRegion::new_readonly(&invalid_bytes, invalid_bytes_va),
             ],
             &config,
-            &SBPFVersion::V2,
+            SBPFVersion::V3,
         )
         .unwrap();
 
@@ -2871,7 +2885,7 @@ mod tests {
                 MemoryRegion::new_readonly(&invalid_bytes, invalid_bytes_va),
             ],
             &config,
-            &SBPFVersion::V2,
+            SBPFVersion::V3,
         )
         .unwrap();
 
@@ -2958,7 +2972,7 @@ mod tests {
                 MemoryRegion::new_writable(bytes_of_slice_mut(&mut result_point), result_point_va),
             ],
             &config,
-            &SBPFVersion::V2,
+            SBPFVersion::V3,
         )
         .unwrap();
 
@@ -3113,7 +3127,7 @@ mod tests {
                 MemoryRegion::new_writable(bytes_of_slice_mut(&mut result_point), result_point_va),
             ],
             &config,
-            &SBPFVersion::V2,
+            SBPFVersion::V3,
         )
         .unwrap();
 
@@ -3283,7 +3297,7 @@ mod tests {
                 MemoryRegion::new_writable(bytes_of_slice_mut(&mut result_point), result_point_va),
             ],
             &config,
-            &SBPFVersion::V2,
+            SBPFVersion::V3,
         )
         .unwrap();
 
@@ -3376,7 +3390,7 @@ mod tests {
                 MemoryRegion::new_writable(bytes_of_slice_mut(&mut result_point), result_point_va),
             ],
             &config,
-            &SBPFVersion::V2,
+            SBPFVersion::V3,
         )
         .unwrap();
 
@@ -3561,7 +3575,7 @@ mod tests {
                     MemoryRegion::new_readonly(&Clock::id().to_bytes(), clock_id_va),
                 ],
                 &config,
-                &SBPFVersion::V2,
+                SBPFVersion::V3,
             )
             .unwrap();
 
@@ -3627,7 +3641,7 @@ mod tests {
                     ),
                 ],
                 &config,
-                &SBPFVersion::V2,
+                SBPFVersion::V3,
             )
             .unwrap();
 
@@ -3689,7 +3703,7 @@ mod tests {
                     got_fees_va,
                 )],
                 &config,
-                &SBPFVersion::V2,
+                SBPFVersion::V3,
             )
             .unwrap();
 
@@ -3728,7 +3742,7 @@ mod tests {
                     MemoryRegion::new_readonly(&Rent::id().to_bytes(), rent_id_va),
                 ],
                 &config,
-                &SBPFVersion::V2,
+                SBPFVersion::V3,
             )
             .unwrap();
 
@@ -3788,7 +3802,7 @@ mod tests {
                     MemoryRegion::new_readonly(&EpochRewards::id().to_bytes(), rewards_id_va),
                 ],
                 &config,
-                &SBPFVersion::V2,
+                SBPFVersion::V3,
             )
             .unwrap();
 
@@ -3853,7 +3867,7 @@ mod tests {
                     MemoryRegion::new_readonly(&LastRestartSlot::id().to_bytes(), restart_id_va),
                 ],
                 &config,
-                &SBPFVersion::V2,
+                SBPFVersion::V3,
             )
             .unwrap();
 
@@ -3938,7 +3952,7 @@ mod tests {
                     MemoryRegion::new_readonly(&StakeHistory::id().to_bytes(), history_id_va),
                 ],
                 &config,
-                &SBPFVersion::V2,
+                SBPFVersion::V3,
             )
             .unwrap();
 
@@ -3997,7 +4011,7 @@ mod tests {
                     MemoryRegion::new_readonly(&SlotHashes::id().to_bytes(), hashes_id_va),
                 ],
                 &config,
-                &SBPFVersion::V2,
+                SBPFVersion::V3,
             )
             .unwrap();
 
@@ -4043,7 +4057,7 @@ mod tests {
                 MemoryRegion::new_readonly(&got_clock_buf_ro, got_clock_buf_ro_va),
             ],
             &config,
-            &SBPFVersion::V2,
+            SBPFVersion::V3,
         )
         .unwrap();
 
@@ -4232,7 +4246,7 @@ mod tests {
             bytes_of_slice(&mock_slices),
             SEEDS_VA,
         ));
-        let mut memory_mapping = MemoryMapping::new(regions, &config, &SBPFVersion::V2).unwrap();
+        let mut memory_mapping = MemoryMapping::new(regions, &config, SBPFVersion::V3).unwrap();
 
         let result = syscall(
             invoke_context,
@@ -4296,7 +4310,7 @@ mod tests {
                 MemoryRegion::new_writable(&mut id_buffer, PROGRAM_ID_VA),
             ],
             &config,
-            &SBPFVersion::V2,
+            SBPFVersion::V3,
         )
         .unwrap();
 
@@ -4396,7 +4410,7 @@ mod tests {
         let mut memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_writable(&mut memory, VM_BASE_ADDRESS)],
             &config,
-            &SBPFVersion::V2,
+            SBPFVersion::V3,
         )
         .unwrap();
         let processed_sibling_instruction = translate_type_mut::<ProcessedSiblingInstruction>(
@@ -4702,7 +4716,7 @@ mod tests {
                     MemoryRegion::new_writable(&mut data_out, VADDR_OUT),
                 ],
                 &config,
-                &SBPFVersion::V2,
+                SBPFVersion::V3,
             )
             .unwrap();
 
@@ -4744,7 +4758,7 @@ mod tests {
                     MemoryRegion::new_writable(&mut data_out, VADDR_OUT),
                 ],
                 &config,
-                &SBPFVersion::V2,
+                SBPFVersion::V3,
             )
             .unwrap();
 
@@ -4799,7 +4813,7 @@ mod tests {
 
         let null_pointer_var = std::ptr::null::<Pubkey>() as u64;
 
-        let mut memory_mapping = MemoryMapping::new(vec![], &config, &SBPFVersion::V2).unwrap();
+        let mut memory_mapping = MemoryMapping::new(vec![], &config, SBPFVersion::V3).unwrap();
 
         let result = SyscallGetEpochStake::rust(
             &mut invoke_context,
@@ -4863,7 +4877,7 @@ mod tests {
                     MemoryRegion::new_readonly(&[2; 31], vote_address_var),
                 ],
                 &config,
-                &SBPFVersion::V2,
+                SBPFVersion::V3,
             )
             .unwrap();
 
@@ -4893,7 +4907,7 @@ mod tests {
                     vote_address_var,
                 )],
                 &config,
-                &SBPFVersion::V2,
+                SBPFVersion::V3,
             )
             .unwrap();
 
@@ -4925,7 +4939,7 @@ mod tests {
                     vote_address_var,
                 )],
                 &config,
-                &SBPFVersion::V2,
+                SBPFVersion::V3,
             )
             .unwrap();
 
