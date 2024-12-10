@@ -49,26 +49,53 @@ pub fn program_log(log_collector: &Option<Rc<RefCell<LogCollector>>>, message: &
 /// ```
 ///
 /// That is, any program-generated output is guaranteed to be prefixed by "Program data: "
+/// Emits program data in a consistent format with length limits. The data is output in this format:
+/// "Program data: <base64-data> <base64-data>..." where each piece of data is base64 encoded and
+/// space-separated.
+///
+/// Handles memory/length limits by:
+/// - Calculates remaining bytes based on LogCollector's limit
+/// - Pre-allocates string capacity to reduce reallocations
 pub fn program_data(log_collector: &Option<Rc<RefCell<LogCollector>>>, data: &[&[u8]]) {
-    // Pre-allocate the result string with an estimated capacity.
-    // The estimation assumes base64 encoding increases the size by about 4/3, plus some extra for spaces (padding = true).
+    // Calculate remaining bytes available for logging
+    let available_bytes = log_collector
+        .as_ref()
+        .map(|collector| {
+            let borrowed = collector.borrow();
+            borrowed.bytes_limit
+                .map_or(usize::MAX, |limit| limit.saturating_sub(borrowed.bytes_written))
+        })
+        .unwrap_or(usize::MAX);
+
+    // Pre-calculate capacity including prefix and estimated base64 encoding size
+    let prefix_len = 13usize; // "Program data: " length
     let estimated_capacity = data.iter()
-        .map(|v| encoded_len(v.len(), true).unwrap())
-        .sum::<usize>()
-        + 13; // "Program data: " length
+        .map(|v| encoded_len(v.len(), true).unwrap()) // Get base64 length with padding
+        .try_fold(prefix_len, |acc: usize, x| {
+            acc.checked_add(x).filter(|&sum| sum <= available_bytes) // Stop if exceeds limit
+        })
+        .unwrap_or(available_bytes);
 
+    // Initialize result with estimated capacity to avoid reallocations
     let mut result = String::with_capacity(estimated_capacity);
-
-    // Build the string manually to avoid intermediate allocations.
     result.push_str("Program data: ");
 
-    for (i, v) in data.iter().enumerate() {
+    // Process each data chunk, truncating if needed to stay within byte limit
+    for (i, &v) in data.iter().enumerate() {
+        // If we run out of space in the log_collector, no need to keep processing so break out
+        // It's possible to truncate this data to fill the remaining space of the log_collector,
+        // but this is keeping in line with previous functionality where this specific log data entry
+        // will be converted to "Log truncated" and added to the logs, rather than any encoded data.
+        if available_bytes <= result.len() {
+            break;
+        }
         if i > 0 {
             result.push(' ');
         }
-        // Use BASE64_STANDARD.encode_string() to append directly to the existing string, instead of creating new strings for each piece of data.
+
         BASE64_STANDARD.encode_string(v, &mut result);
     }
+
     ic_logger_msg!(log_collector, &result);
 }
 
@@ -120,7 +147,7 @@ pub fn program_failure<E: std::fmt::Display>(
 mod tests {
     use super::*;
     use base64::prelude::BASE64_STANDARD;
-    use solana_vote::vote_account::Error;
+    use solana_sdk::instruction::InstructionError;
 
     // Helper function to get messages from log collector
     fn get_messages(log_collector: &Option<Rc<RefCell<LogCollector>>>) -> Vec<String> {
@@ -275,7 +302,7 @@ mod tests {
     fn test_program_failure() {
         let log_collector = Some(LogCollector::new_ref());
         let program_id = Pubkey::new_unique();
-        let error = Error::InvalidOwner(program_id);
+        let error = InstructionError::ProgramFailedToComplete;
 
         program_failure(&log_collector, &program_id, &error);
 
@@ -283,7 +310,7 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(
             messages[0],
-            format!("Program {} failed: Invalid vote account owner: {}", program_id, program_id)
+            format!("Program {} failed: Program failed to complete", program_id)
         );
     }
 
@@ -344,4 +371,117 @@ mod tests {
         assert_eq!(messages1[0], format!("Program {} invoke [1]", program_id));
         assert_eq!(messages2[0], format!("Program {} invoke [2]", program_id));
     }
+
+    #[test]
+    fn test_program_data_overflow_handling_over_log_collector_byte_limit() {
+        let log_collector = Some(LogCollector::new_ref());
+
+        let inner_data = vec![0u8; 0];
+        let data = vec![&inner_data[..]; 10001];
+
+        // To test an actual overflow condition, use higher values. For example:
+        // let inner_data = vec![0u8; 14000000000];
+        // let data = vec![&inner_data[..]; 1000000000];
+
+        program_data(&log_collector, &data);
+        let collector = log_collector.unwrap();
+        let borrow = collector.borrow();
+        let logs = borrow.get_recorded_content();
+
+        // Assert the expected log behavior
+        assert!(!logs.is_empty());
+        assert!(logs[0].starts_with("Log truncated"));
+    }
+
+    #[test]
+    fn test_program_data_overflow_handling_under_log_collector_byte_limit() {
+        let log_collector = Some(LogCollector::new_ref());
+
+        let inner_data = vec![0u8; 0];
+        let data = vec![&inner_data[..]; 4];
+
+        program_data(&log_collector, &data);
+        let collector = log_collector.unwrap();
+        let borrow = collector.borrow();
+        let logs = borrow.get_recorded_content();
+
+        assert!(!logs.is_empty());
+        assert!(logs[0].starts_with("Program data: "));
+    }
+
+    #[test]
+    fn test_program_data_overflow_handling_log_collector_no_limit() {
+        let log_collector = Some(LogCollector::new_ref_with_limit(None));
+
+        let inner_data = vec![0u8; 0];
+        let data = vec![&inner_data[..]; 4];
+
+        program_data(&log_collector, &data);
+        let collector = log_collector.unwrap();
+        let borrow = collector.borrow();
+        let logs = borrow.get_recorded_content();
+
+        assert!(!logs.is_empty());
+        assert!(logs[0].starts_with("Program data: "));
+    }
+
+    #[test]
+    fn test_program_data_overflow_handling_log_collector_over_custom_limit_multi_line() {
+        let log_collector = Some(LogCollector::new_ref_with_limit(Some(1000)));
+
+        program_log(&log_collector, "");
+
+        let inner_data = vec![b'A'; 1];
+        let data = vec![&inner_data[..]; 10001];
+
+        program_data(&log_collector, &data);
+
+        program_success(&log_collector, &Pubkey::new_unique());
+        let collector = log_collector.clone().unwrap();
+        let borrow = collector.borrow();
+        let logs = borrow.get_recorded_content();
+
+        assert!(logs[1].starts_with("Log truncated"));
+        assert!(logs[2].starts_with("Program"));
+        assert!(logs[2].ends_with("success"));
+    }
+
+    #[test]
+    fn test_program_data_overflow_handling_log_collector_under_custom_limit() {
+        let log_collector = Some(LogCollector::new_ref_with_limit(Some(1000)));
+
+        program_log(&log_collector, "");
+
+        let inner_data = vec![0u8; 0];
+        let data = vec![&inner_data[..]; 973];
+
+        program_data(&log_collector, &data);
+        let collector = log_collector.unwrap();
+        let borrow = collector.borrow();
+        let logs = borrow.get_recorded_content();
+
+        assert!(!logs.is_empty());
+        assert!(logs[0].starts_with("Program log: "));
+        assert!(logs[1].starts_with("Program data: "));
+    }
+
+    #[test]
+    fn test_program_data_overflow_handling_log_collector_over_custom_limit() {
+        let log_collector = Some(LogCollector::new_ref_with_limit(Some(1000)));
+
+        program_log(&log_collector, "");
+
+        let inner_data = vec![0u8; 0];
+        let data = vec![&inner_data[..]; 974];
+
+        program_data(&log_collector, &data);
+        let collector = log_collector.unwrap();
+        let borrow = collector.borrow();
+        let logs = borrow.get_recorded_content();
+
+        assert!(!logs.is_empty());
+        assert!(logs[0].starts_with("Program log: "));
+        assert!(logs[1].starts_with("Log truncated"));
+    }
+
 }
