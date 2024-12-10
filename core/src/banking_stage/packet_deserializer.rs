@@ -5,10 +5,7 @@ use {
         immutable_deserialized_packet::{DeserializedPacketError, ImmutableDeserializedPacket},
         packet_filter::PacketFilterFailure,
     },
-    crate::{
-        banking_trace::{BankingPacketBatch, BankingPacketReceiver},
-        sigverify::SigverifyTracerPacketStats,
-    },
+    crate::banking_trace::{BankingPacketBatch, BankingPacketReceiver},
     crossbeam_channel::RecvTimeoutError,
     solana_perf::packet::PacketBatch,
     solana_sdk::saturating_add_assign,
@@ -19,8 +16,6 @@ use {
 pub struct ReceivePacketResults {
     /// Deserialized packets from all received packet batches
     pub deserialized_packets: Vec<ImmutableDeserializedPacket>,
-    /// Aggregate tracer stats for all received packet batches
-    pub new_tracer_stats_option: Option<SigverifyTracerPacketStats>,
     /// Counts of packets received and errors recorded during deserialization
     /// and filtering
     pub packet_stats: PacketReceiverStats,
@@ -137,7 +132,6 @@ impl PacketDeserializer {
 
         ReceivePacketResults {
             deserialized_packets,
-            new_tracer_stats_option: None,
             packet_stats,
         }
     }
@@ -225,7 +219,6 @@ mod tests {
     fn test_deserialize_and_collect_packets_empty() {
         let results = PacketDeserializer::deserialize_and_collect_packets(0, &[], Ok);
         assert_eq!(results.deserialized_packets.len(), 0);
-        assert!(results.new_tracer_stats_option.is_none());
         assert_eq!(results.packet_stats.passed_sigverify_count, 0);
         assert_eq!(results.packet_stats.failed_sigverify_count, 0);
     }
@@ -243,7 +236,6 @@ mod tests {
             Ok,
         );
         assert_eq!(results.deserialized_packets.len(), 2);
-        assert!(results.new_tracer_stats_option.is_none());
         assert_eq!(results.packet_stats.passed_sigverify_count, 2);
         assert_eq!(results.packet_stats.failed_sigverify_count, 0);
     }
@@ -262,7 +254,6 @@ mod tests {
             Ok,
         );
         assert_eq!(results.deserialized_packets.len(), 1);
-        assert!(results.new_tracer_stats_option.is_none());
         assert_eq!(results.packet_stats.passed_sigverify_count, 1);
         assert_eq!(results.packet_stats.failed_sigverify_count, 1);
     }

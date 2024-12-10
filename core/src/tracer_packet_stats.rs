@@ -1,5 +1,4 @@
 use {
-    crate::sigverify::SigverifyTracerPacketStats,
     solana_sdk::{pubkey::Pubkey, saturating_add_assign, timing::timestamp},
     std::collections::HashSet,
 };
@@ -18,7 +17,6 @@ pub struct BankingStageTracerPacketStats {
 
 #[derive(Debug, Default)]
 pub struct ModifiableTracerPacketStats {
-    sigverify_tracer_packet_stats: SigverifyTracerPacketStats,
     banking_stage_tracer_packet_stats: BankingStageTracerPacketStats,
 }
 
@@ -49,18 +47,6 @@ impl TracerPacketStats {
             self.modifiable_tracer_packet_stats = Some(ModifiableTracerPacketStats::default());
         }
         self.modifiable_tracer_packet_stats.as_mut().unwrap()
-    }
-
-    pub fn aggregate_sigverify_tracer_packet_stats(
-        &mut self,
-        new_sigverify_stats: &SigverifyTracerPacketStats,
-    ) {
-        if !new_sigverify_stats.is_default() {
-            let stats = self.get_mutable_stats();
-            stats
-                .sigverify_tracer_packet_stats
-                .aggregate(new_sigverify_stats);
-        }
     }
 
     pub fn increment_total_exceeded_banking_stage_buffer(
@@ -124,42 +110,6 @@ impl TracerPacketStats {
                 datapoint_info!(
                     "tracer-packet-stats",
                     "id" => &self.id,
-                    (
-                        "total_removed_before_sigverify",
-                        modifiable_tracer_packet_stats
-                            .sigverify_tracer_packet_stats
-                            .total_removed_before_sigverify_stage as i64,
-                        i64
-                    ),
-                    (
-                        "total_tracer_packets_received_in_sigverify",
-                        modifiable_tracer_packet_stats
-                            .sigverify_tracer_packet_stats
-                            .total_tracer_packets_received_in_sigverify_stage
-                            as i64,
-                        i64
-                    ),
-                    (
-                        "total_tracer_packets_deduped_in_sigverify",
-                        modifiable_tracer_packet_stats
-                            .sigverify_tracer_packet_stats
-                            .total_tracer_packets_deduped as i64,
-                        i64
-                    ),
-                    (
-                        "total_excess_tracer_packets_discarded_in_sigverify",
-                        modifiable_tracer_packet_stats
-                            .sigverify_tracer_packet_stats
-                            .total_excess_tracer_packets as i64,
-                        i64
-                    ),
-                    (
-                        "total_tracker_packets_passed_sigverify",
-                        modifiable_tracer_packet_stats
-                            .sigverify_tracer_packet_stats
-                            .total_tracker_packets_passed_sigverify as i64,
-                        i64
-                    ),
                     (
                         "total_exceeded_banking_stage_buffer",
                         modifiable_tracer_packet_stats

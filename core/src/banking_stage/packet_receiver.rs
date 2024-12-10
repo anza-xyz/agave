@@ -93,7 +93,6 @@ impl PacketReceiver {
         &self,
         ReceivePacketResults {
             deserialized_packets,
-            new_tracer_stats_option,
             packet_stats,
         }: ReceivePacketResults,
         unprocessed_transaction_storage: &mut UnprocessedTransactionStorage,
@@ -105,9 +104,6 @@ impl PacketReceiver {
         debug!("@{:?} txs: {} id: {}", timestamp(), packet_count, self.id);
 
         slot_metrics_tracker.increment_received_packet_counts(packet_stats);
-        if let Some(new_sigverify_stats) = &new_tracer_stats_option {
-            tracer_packet_stats.aggregate_sigverify_tracer_packet_stats(new_sigverify_stats);
-        }
 
         let mut dropped_packets_count = 0;
         let mut newly_buffered_packets_count = 0;
