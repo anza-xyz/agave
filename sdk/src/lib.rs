@@ -65,7 +65,6 @@ pub use solana_signer::signers;
 pub mod entrypoint;
 pub mod entrypoint_deprecated;
 pub mod example_mocks;
-pub mod exit;
 pub mod feature;
 pub mod genesis_config;
 pub mod hard_forks;
@@ -228,6 +227,8 @@ pub use solana_transaction::simple_vote_transaction_checker;
     note = "Use `solana-transaction-context` crate instead"
 )]
 pub use solana_transaction_context as transaction_context;
+#[deprecated(since = "2.2.0", note = "Use `solana-validator-exit` crate instead")]
+pub use solana_validator_exit as exit;
 
 /// Convenience macro for `AddAssign` with saturating arithmetic.
 /// Replace by `std::num::Saturating` once stable
