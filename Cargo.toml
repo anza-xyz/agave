@@ -135,6 +135,7 @@ members = [
     "sdk/hash",
     "sdk/inflation",
     "sdk/instruction",
+    "sdk/instructions-sysvar",
     "sdk/keccak-hasher",
     "sdk/keypair",
     "sdk/logger",
@@ -495,6 +496,7 @@ solana-hash = { path = "sdk/hash", version = "=2.2.0", default-features = false 
 solana-inflation = { path = "sdk/inflation", version = "=2.2.0" }
 solana-inline-spl = { path = "inline-spl", version = "=2.2.0" }
 solana-instruction = { path = "sdk/instruction", version = "=2.2.0", default-features = false }
+solana-instructions-sysvar = { path = "sdk/instructions-sysvar", version = "=2.2.0" }
 solana-keccak-hasher = { path = "sdk/keccak-hasher", version = "=2.2.0" }
 solana-keypair = { path = "sdk/keypair", version = "=2.2.0" }
 solana-last-restart-slot = { path = "sdk/last-restart-slot", version = "=2.2.0" }
