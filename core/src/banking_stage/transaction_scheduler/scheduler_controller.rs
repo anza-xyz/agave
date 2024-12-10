@@ -107,7 +107,7 @@ impl<C: LikeClusterInfo, R: ReceiveAndBuffer> SchedulerController<C, R> {
 
             self.process_transactions(&decision)?;
             self.receive_completed()?;
-            if !self.receive_and_buffer_packets(&decision) {
+            if self.receive_and_buffer_packets(&decision).is_err() {
                 break;
             }
             // Report metrics only if there is data.
@@ -421,7 +421,10 @@ impl<C: LikeClusterInfo, R: ReceiveAndBuffer> SchedulerController<C, R> {
     }
 
     /// Returns whether the packet receiver is still connected.
-    fn receive_and_buffer_packets(&mut self, decision: &BufferedPacketsDecision) -> bool {
+    fn receive_and_buffer_packets(
+        &mut self,
+        decision: &BufferedPacketsDecision,
+    ) -> Result<usize, ()> {
         self.receive_and_buffer.receive_and_buffer_packets(
             &mut self.container,
             &mut self.timing_metrics,
@@ -618,7 +621,16 @@ mod tests {
             .make_consume_or_forward_decision();
         assert!(matches!(decision, BufferedPacketsDecision::Consume(_)));
         assert!(scheduler_controller.receive_completed().is_ok());
-        assert!(scheduler_controller.receive_and_buffer_packets(&decision));
+
+        // Time is not a reliable way for deterministic testing.
+        // Loop here until no more packets are received, this avoids parallel
+        // tests from inconsistently timing out and not receiving
+        // from the channel.
+        while scheduler_controller
+            .receive_and_buffer_packets(&decision)
+            .map(|n| n > 0)
+            .unwrap_or_default()
+        {}
         assert!(scheduler_controller.process_transactions(&decision).is_ok());
     }
 
