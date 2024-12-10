@@ -1707,13 +1707,22 @@ impl JsonRpcRequestProcessor {
 
         if self.config.enable_rpc_transaction_history {
             let confirmed_bank = self.bank(Some(CommitmentConfig::confirmed()));
-            let confirmed_transaction = if commitment.is_confirmed() {
-                let highest_confirmed_slot = confirmed_bank.slot();
-                self.blockstore
-                    .get_complete_transaction(signature, highest_confirmed_slot)
-            } else {
-                self.blockstore.get_rooted_transaction(signature)
-            };
+            let confirmed_transaction = self
+                .runtime
+                .spawn_blocking({
+                    let blockstore = Arc::clone(&self.blockstore);
+                    let confirmed_bank = Arc::clone(&confirmed_bank);
+                    move || {
+                        if commitment.is_confirmed() {
+                            let highest_confirmed_slot = confirmed_bank.slot();
+                            blockstore.get_complete_transaction(signature, highest_confirmed_slot)
+                        } else {
+                            blockstore.get_rooted_transaction(signature)
+                        }
+                    }
+                })
+                .await
+                .expect("Failed to spawn blocking task");
 
             let encode_transaction =
                 |confirmed_tx_with_meta: ConfirmedTransactionWithStatusMeta| -> Result<EncodedConfirmedTransactionWithStatusMeta> {
