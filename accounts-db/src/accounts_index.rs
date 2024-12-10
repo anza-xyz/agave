@@ -1713,10 +1713,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         duplicates
     }
 
-    pub fn with_disk(&self) -> bool {
-        self.storage.storage.disk.is_some()
-    }
-
     // Same functionally to upsert, but:
     // 1. operates on a batch of items
     // 2. holds the write lock for the duration of adding the items
@@ -1734,7 +1730,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         // this assumes the largest bin contains twice the expected amount of the average size per bin
         let bins = self.bins();
         let expected_items_per_bin = approx_items_len * 2 / bins;
-        let use_disk = self.with_disk();
+        let use_disk = self.storage.storage.is_disk_index_enabled();
         let mut binned = (0..bins)
             .map(|_| Vec::with_capacity(expected_items_per_bin))
             .collect::<Vec<_>>();
@@ -1824,7 +1820,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         &self,
         f: impl Fn(Vec<(Slot, Pubkey)>) + Sync + Send,
     ) {
-        if self.with_disk() {
+        if self.storage.storage.is_disk_index_enabled() {
             (0..self.bins())
                 .into_par_iter()
                 .map(|pubkey_bin| {
