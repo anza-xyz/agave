@@ -2862,6 +2862,19 @@ impl AccountsDb {
                                         } else {
                                             found_not_zero += 1;
                                         }
+
+                                        // If this candidate has multiple rooted slot list entries,
+                                        // we should reclaim the older ones.
+                                        if slot_list.len() > 1
+                                            && *slot
+                                                <= max_clean_root_inclusive.unwrap_or(Slot::MAX)
+                                        {
+                                            should_collect_reclaims = true;
+                                            purges_old_accounts_local += 1;
+                                            useless = false;
+                                        }
+                                        // Note, this next if-block is only kept to maintain the
+                                        // `uncleaned_roots_slot_list_1` stat.
                                         if uncleaned_roots.contains(slot) {
                                             // Assertion enforced by `accounts_index.get()`, the latest slot
                                             // will not be greater than the given `max_clean_root`
@@ -2870,12 +2883,7 @@ impl AccountsDb {
                                             {
                                                 assert!(slot <= &max_clean_root_inclusive);
                                             }
-                                            if slot_list.len() > 1 {
-                                                // no need to reclaim old accounts if there is only 1 slot in the slot list
-                                                should_collect_reclaims = true;
-                                                purges_old_accounts_local += 1;
-                                                useless = false;
-                                            } else {
+                                            if slot_list.len() == 1 {
                                                 self.clean_accounts_stats
                                                     .uncleaned_roots_slot_list_1
                                                     .fetch_add(1, Ordering::Relaxed);
