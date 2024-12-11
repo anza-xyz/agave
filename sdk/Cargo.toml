@@ -49,6 +49,7 @@ full = [
     "dep:solana-secp256k1-program",
     "dep:solana-seed-derivable",
     "dep:solana-seed-phrase",
+    "dep:solana-shred-version",
     "dep:solana-signer",
     "dep:solana-system-transaction",
     "dep:solana-transaction",
@@ -180,6 +181,7 @@ solana-seed-phrase = { workspace = true, optional = true }
 solana-serde = { workspace = true }
 solana-serde-varint = { workspace = true }
 solana-short-vec = { workspace = true }
+solana-shred-version = { workspace = true, optional = true }
 solana-signature = { workspace = true, features = [
     "rand",
     "serde",
