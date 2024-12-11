@@ -14,10 +14,10 @@ publish = false
 [dependencies]
 anyhow = { workspace = true }
 log = { workspace = true }
-num_cpus ={ workspace = true }
+num_cpus = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-solana-metrics ={ workspace = true }
+solana-metrics = { workspace = true }
 thread-priority = "1.2.0"
 tokio = { workspace = true, features = ["time", "rt-multi-thread"] }
 
@@ -27,3 +27,4 @@ affinity = "0.1.2"
 [dev-dependencies]
 axum = "0.7.9"
 serde_json = { workspace = true }
+toml = { workspace = true }

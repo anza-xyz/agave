@@ -1,6 +1,6 @@
 use std::{
     future::IntoFuture,
-    io::Write,
+    io::{Read, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
     time::Duration,
@@ -48,11 +48,12 @@ fn main() -> anyhow::Result<()> {
         println!("Running {exp}");
         let mut conffile = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         conffile.push(exp);
-        let conffile = std::fs::File::open(conffile)?;
-        let cfg: RuntimeManagerConfig = serde_json::from_reader(conffile)?;
+        let mut buf = String::new();
+        std::fs::File::open(conffile)?.read_to_string(&mut buf)?;
+        let cfg: RuntimeManagerConfig = toml::from_str(&buf)?;
         //println!("Loaded config {}", serde_json::to_string_pretty(&cfg)?);
 
-        let rtm = RuntimeManager::new(cfg).unwrap();
+        let rtm = ThreadManager::new(cfg).unwrap();
         let tok1 = rtm
             .get_tokio("axum1")
             .expect("Expecting runtime named axum1");
@@ -63,10 +64,10 @@ fn main() -> anyhow::Result<()> {
         let wrk_cores: Vec<_> = (32..64).collect();
         let results = std::thread::scope(|s| {
             s.spawn(|| {
-                tok1.start(axum_main(8888));
+                tok1.tokio.block_on(axum_main(8888));
             });
             s.spawn(|| {
-                tok2.start(axum_main(8889));
+                tok2.tokio.block_on(axum_main(8889));
             });
             let jh = s.spawn(|| run_wrk(&[8888, 8889], &wrk_cores, wrk_cores.len(), 1000).unwrap());
             jh.join().expect("WRK crashed!")

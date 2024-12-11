@@ -15,7 +15,6 @@ pub struct NativeConfig {
     pub core_allocation: CoreAllocation,
     pub max_threads: usize,
     pub priority: u8,
-    pub name_base: String,
     pub stack_size_bytes: usize,
 }
 
@@ -26,7 +25,6 @@ impl Default for NativeConfig {
             max_threads: 10,
             priority: 0,
             stack_size_bytes: 2 * 1024 * 1024,
-            name_base: "thread".to_owned(),
         }
     }
 }
@@ -36,6 +34,7 @@ pub struct NativeThreadRuntime {
     pub id_count: AtomicUsize,
     pub running_count: Arc<AtomicUsize>,
     pub config: NativeConfig,
+    pub name: String,
 }
 
 pub struct JoinHandle<T> {
@@ -44,7 +43,7 @@ pub struct JoinHandle<T> {
 }
 
 impl<T> JoinHandle<T> {
-    fn join_inner(&mut self) -> Result<T, Box<dyn core::any::Any + Send + 'static>> {
+    fn join_inner(&mut self) -> std::thread::Result<T> {
         match self.std_handle.take() {
             Some(jh) => {
                 let result = jh.join();
@@ -58,7 +57,7 @@ impl<T> JoinHandle<T> {
         }
     }
 
-    pub fn join(mut self) -> Result<T, Box<dyn core::any::Any + Send + 'static>> {
+    pub fn join(mut self) -> std::thread::Result<T> {
         self.join_inner()
     }
 
@@ -80,11 +79,12 @@ impl<T> Drop for JoinHandle<T> {
 }
 
 impl NativeThreadRuntime {
-    pub fn new(cfg: NativeConfig) -> Self {
+    pub fn new(name: String, cfg: NativeConfig) -> Self {
         Self {
             id_count: AtomicUsize::new(0),
             running_count: Arc::new(AtomicUsize::new(0)),
             config: cfg,
+            name,
         }
     }
     pub fn spawn<F, T>(&self, f: F) -> anyhow::Result<JoinHandle<T>>
@@ -103,7 +103,7 @@ impl NativeThreadRuntime {
         let chosen_cores_mask = Mutex::new(self.config.core_allocation.as_core_mask_vector());
         let n = self.id_count.fetch_add(1, Ordering::Relaxed);
         let jh = std::thread::Builder::new()
-            .name(format!("{}-{}", &self.config.name_base, n))
+            .name(format!("{}-{}", &self.name, n))
             .stack_size(self.config.stack_size_bytes)
             .spawn(move || {
                 apply_policy(&core_alloc, priority, &chosen_cores_mask);

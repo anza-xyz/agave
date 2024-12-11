@@ -36,13 +36,14 @@ pub struct RayonRuntime {
 }
 
 impl RayonRuntime {
-    pub fn new(config: RayonConfig) -> anyhow::Result<Self> {
+    pub fn new(name: String, config: RayonConfig) -> anyhow::Result<Self> {
         let policy = config.core_allocation.clone();
         let chosen_cores_mask = Mutex::new(policy.as_core_mask_vector());
         let priority = config.priority;
         let spawned_threads = AtomicI64::new(0);
         let rayon_pool = rayon::ThreadPoolBuilder::new()
             .num_threads(config.worker_threads)
+            .thread_name(move |i| format!("{}_{}", &name, i))
             .start_handler(move |_idx| {
                 let rc = spawned_threads.fetch_add(1, Ordering::Relaxed);
                 datapoint_info!("thread-manager-rayon", ("threads-spawned", rc, i64),);

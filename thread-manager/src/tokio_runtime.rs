@@ -2,12 +2,9 @@ use {
     crate::policy::{apply_policy, CoreAllocation},
     serde::{Deserialize, Serialize},
     solana_metrics::datapoint_info,
-    std::{
-        future::Future,
-        sync::{
-            atomic::{AtomicI64, AtomicUsize, Ordering},
-            Arc, Mutex,
-        },
+    std::sync::{
+        atomic::{AtomicI64, AtomicUsize, Ordering},
+        Arc, Mutex,
     },
     thread_priority::ThreadExt,
 };
@@ -69,13 +66,13 @@ impl ThreadCounters {
 
 #[derive(Debug)]
 pub struct TokioRuntime {
-    pub(crate) tokio: tokio::runtime::Runtime,
+    pub tokio: tokio::runtime::Runtime,
     pub config: TokioConfig,
     pub counters: Arc<ThreadCounters>,
 }
 
 impl TokioRuntime {
-    pub(crate) fn new(name: String, cfg: TokioConfig) -> anyhow::Result<Self> {
+    pub fn new(name: String, cfg: TokioConfig) -> anyhow::Result<Self> {
         let num_workers = if cfg.worker_threads == 0 {
             num_cpus::get()
         } else {
@@ -84,10 +81,6 @@ impl TokioRuntime {
         let chosen_cores_mask = cfg.core_allocation.as_core_mask_vector();
 
         let base_name = name.clone();
-        println!(
-            "Assigning {:?} to runtime {}",
-            &chosen_cores_mask, &base_name
-        );
         let mut builder = match num_workers {
             1 => tokio::runtime::Builder::new_current_thread(),
             _ => {
@@ -139,24 +132,5 @@ impl TokioRuntime {
             config: cfg.clone(),
             counters,
         })
-    }
-    /* This is bad idea...
-    pub fn spawn<F>(&self, fut: F)-><F as Future>::Output
-    where F: Future
-    {
-        self.tokio.spawn(fut)
-    }
-    pub fn spawn_blocking<F>(&self, fut: F)-><F as Future>::Output
-    where F: Future
-    {
-        self.spawn(fut)
-    }
-    */
-    pub fn start<F>(&self, fut: F) -> F::Output
-    where
-        F: Future,
-    {
-        // the thread that calls block_on does not need its affinity messed with here
-        self.tokio.block_on(fut)
     }
 }
