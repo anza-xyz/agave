@@ -1889,12 +1889,12 @@ impl AccountsDb {
     pub const DEFAULT_ACCOUNTS_HASH_CACHE_DIR: &'static str = "accounts_hash_cache";
 
     // read only cache does not update lru on read of an entry unless it has been at least this many ms since the last lru update
-    const READ_ONLY_CACHE_MS_TO_SKIP_LRU_UPDATE: u32 = 100;
+    pub const READ_ONLY_CACHE_MS_TO_SKIP_LRU_UPDATE: u32 = 100;
 
     // The default high and low watermark sizes for the accounts read cache.
     // If the cache size exceeds MAX_SIZE_HI, it'll evict entries until the size is <= MAX_SIZE_LO.
-    const DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_LO: usize = 400 * 1024 * 1024;
-    const DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI: usize = 410 * 1024 * 1024;
+    pub const DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_LO: usize = 400 * 1024 * 1024;
+    pub const DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI: usize = 410 * 1024 * 1024;
 
     pub fn default_for_tests() -> Self {
         Self::new_single_for_tests()

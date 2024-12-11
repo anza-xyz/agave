@@ -66,7 +66,7 @@ struct AtomicReadOnlyCacheStats {
 }
 
 #[derive(Debug)]
-pub(crate) struct ReadOnlyAccountsCache {
+pub struct ReadOnlyAccountsCache {
     cache: Arc<DashMap<ReadOnlyCacheKey, ReadOnlyAccountCacheEntry>>,
     /// When an item is first entered into the cache, it is added to the end of
     /// the queue. Also each time an entry is looked up from the cache it is
@@ -93,7 +93,7 @@ pub(crate) struct ReadOnlyAccountsCache {
 }
 
 impl ReadOnlyAccountsCache {
-    pub(crate) fn new(
+    pub fn new(
         max_data_size_lo: usize,
         max_data_size_hi: usize,
         ms_to_skip_lru_update: u32,
@@ -137,7 +137,7 @@ impl ReadOnlyAccountsCache {
         }
     }
 
-    pub(crate) fn load(&self, pubkey: Pubkey, slot: Slot) -> Option<AccountSharedData> {
+    pub fn load(&self, pubkey: Pubkey, slot: Slot) -> Option<AccountSharedData> {
         let (account, load_us) = measure_us!({
             let mut found = None;
             if let Some(entry) = self.cache.get(&pubkey) {
@@ -175,7 +175,7 @@ impl ReadOnlyAccountsCache {
         CACHE_ENTRY_SIZE + account.data().len()
     }
 
-    pub(crate) fn store(&self, pubkey: Pubkey, slot: Slot, account: AccountSharedData) {
+    pub fn store(&self, pubkey: Pubkey, slot: Slot, account: AccountSharedData) {
         let measure_store = Measure::start("");
         self.highest_slot_stored.fetch_max(slot, Ordering::Release);
         let account_size = Self::account_size(&account);
