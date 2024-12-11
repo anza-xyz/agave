@@ -544,11 +544,12 @@ impl<T: LikeClusterInfo> SchedulerController<T> {
                     .is_ok()
                 })
                 .filter_map(|(packet, tx, deactivation_slot)| {
-                    process_compute_budget_instructions(SVMMessage::program_instructions_iter(&tx))
-                        .map(|compute_budget| {
-                            (packet, tx, deactivation_slot, compute_budget.into())
-                        })
-                        .ok()
+                    process_compute_budget_instructions(
+                        SVMMessage::program_instructions_iter(&tx),
+                        &working_bank.feature_set,
+                    )
+                    .map(|compute_budget| (packet, tx, deactivation_slot, compute_budget.into()))
+                    .ok()
                 })
                 .for_each(|(packet, tx, deactivation_slot, fee_budget_limits)| {
                     arc_packets.push(packet);
