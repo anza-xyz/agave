@@ -1775,7 +1775,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             } else {
                 // not using disk buckets, so just write to in-mem
                 // this is no longer the default case
-                let mut dup_pubkeys = vec![];
+                let mut duplicates_from_in_memory = vec![];
                 items
                     .into_iter()
                     .for_each(|(pubkey, (slot, account_info))| {
@@ -1792,14 +1792,15 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                             InsertNewEntryResults::ExistedNewEntryZeroLamports => {}
                             InsertNewEntryResults::ExistedNewEntryNonZeroLamports(other_slot) => {
                                 if let Some(other_slot) = other_slot {
-                                    dup_pubkeys.push((other_slot, pubkey));
+                                    duplicates_from_in_memory.push((other_slot, pubkey));
                                 }
-                                dup_pubkeys.push((slot, pubkey));
+                                duplicates_from_in_memory.push((slot, pubkey));
                             }
                         }
                     });
 
-                r_account_maps.update_duplicates_from_in_memory_only_startup(dup_pubkeys);
+                r_account_maps
+                    .update_duplicates_from_in_memory_only_startup(duplicates_from_in_memory);
             }
             insert_time.stop();
             insertion_time.fetch_add(insert_time.as_us(), Ordering::Relaxed);
