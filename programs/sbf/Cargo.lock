@@ -6425,7 +6425,7 @@ dependencies = [
 
 [[package]]
 name = "solana-sbf-rust-divide-by-zero"
-version = "2.1.5"
+version = "2.1.6"
 dependencies = [
  "solana-program",
 ]
