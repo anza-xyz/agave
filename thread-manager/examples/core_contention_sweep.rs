@@ -112,7 +112,7 @@ fn main() -> anyhow::Result<()> {
             println!("Running {core_cnt} cores under {regime:?}");
             let (tok1, tok2) = match regime {
                 Regime::Shared => {
-                    rtm = RuntimeManager::new(make_config_shared(core_cnt)).unwrap();
+                    rtm = ThreadManager::new(make_config_shared(core_cnt)).unwrap();
                     (
                         rtm.get_tokio("axum1")
                             .expect("Expecting runtime named axum1"),
@@ -121,7 +121,7 @@ fn main() -> anyhow::Result<()> {
                     )
                 }
                 Regime::Dedicated => {
-                    rtm = RuntimeManager::new(make_config_dedicated(core_cnt)).unwrap();
+                    rtm = ThreadManager::new(make_config_dedicated(core_cnt)).unwrap();
                     (
                         rtm.get_tokio("axum1")
                             .expect("Expecting runtime named axum1"),
@@ -130,7 +130,7 @@ fn main() -> anyhow::Result<()> {
                     )
                 }
                 Regime::Single => {
-                    rtm = RuntimeManager::new(make_config_shared(core_cnt)).unwrap();
+                    rtm = ThreadManager::new(make_config_shared(core_cnt)).unwrap();
                     (
                         rtm.get_tokio("axum1")
                             .expect("Expecting runtime named axum1"),
@@ -143,7 +143,7 @@ fn main() -> anyhow::Result<()> {
             let wrk_cores: Vec<_> = (32..64).collect();
             let results = std::thread::scope(|s| {
                 s.spawn(|| {
-                    tok1.start(axum_main(8888));
+                    tok1.tokio.spawn(axum_main(8888));
                 });
                 let jh = match regime {
                     Regime::Single => s.spawn(|| {
@@ -151,7 +151,7 @@ fn main() -> anyhow::Result<()> {
                     }),
                     _ => {
                         s.spawn(|| {
-                            tok2.start(axum_main(8889));
+                            tok2.tokio.spawn(axum_main(8889));
                         });
                         s.spawn(|| {
                             run_wrk(&[8888, 8889], &wrk_cores, wrk_cores.len(), 1000).unwrap()

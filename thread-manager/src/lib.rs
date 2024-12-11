@@ -10,7 +10,7 @@ pub mod rayon_runtime;
 pub mod tokio_runtime;
 
 pub use {
-    native_thread_runtime::{NativeConfig, NativeThreadRuntime},
+    native_thread_runtime::{JoinHandle, NativeConfig, NativeThreadRuntime},
     policy::CoreAllocation,
     rayon_runtime::{RayonConfig, RayonRuntime},
     tokio_runtime::{TokioConfig, TokioRuntime},
@@ -18,7 +18,7 @@ pub use {
 pub type ConstString = Box<str>;
 
 #[derive(Default, Debug)]
-pub struct RuntimeManager {
+pub struct ThreadManager {
     pub tokio_runtimes: HashMap<ConstString, TokioRuntime>,
     pub tokio_runtime_mapping: HashMap<ConstString, ConstString>,
 
@@ -44,7 +44,7 @@ pub struct RuntimeManagerConfig {
     pub default_core_allocation: CoreAllocation,
 }
 
-impl RuntimeManager {
+impl ThreadManager {
     pub fn get_native(&self, name: &str) -> Option<&NativeThreadRuntime> {
         let n = self.native_runtime_mapping.get(name)?;
         self.native_thread_runtimes.get(n)
@@ -64,36 +64,50 @@ impl RuntimeManager {
         Ok(chosen_cores_mask)
     }
 
+    /// Populates mappings with copies of config names, overrides as appropriate
+    fn populate_mappings(&mut self, config: &RuntimeManagerConfig) {
+        //TODO: this should probably be cleaned up with a macro at some point...
+
+        for name in config.native_configs.keys() {
+            self.native_runtime_mapping
+                .insert(name.clone().into_boxed_str(), name.clone().into_boxed_str());
+        }
+        for (k, v) in config.native_runtime_mapping.iter() {
+            self.native_runtime_mapping
+                .insert(k.clone().into_boxed_str(), v.clone().into_boxed_str());
+        }
+
+        for name in config.tokio_configs.keys() {
+            self.tokio_runtime_mapping
+                .insert(name.clone().into_boxed_str(), name.clone().into_boxed_str());
+        }
+        for (k, v) in config.tokio_runtime_mapping.iter() {
+            self.tokio_runtime_mapping
+                .insert(k.clone().into_boxed_str(), v.clone().into_boxed_str());
+        }
+
+        for name in config.rayon_configs.keys() {
+            self.rayon_runtime_mapping
+                .insert(name.clone().into_boxed_str(), name.clone().into_boxed_str());
+        }
+        for (k, v) in config.rayon_runtime_mapping.iter() {
+            self.rayon_runtime_mapping
+                .insert(k.clone().into_boxed_str(), v.clone().into_boxed_str());
+        }
+    }
     pub fn new(config: RuntimeManagerConfig) -> anyhow::Result<Self> {
         let mut core_allocations = HashMap::<ConstString, Vec<usize>>::new();
         Self::set_process_affinity(&config)?;
         let mut manager = Self::default();
-
-        //TODO: this should probably be cleaned up at some point...
-        for (k, v) in config.tokio_runtime_mapping.iter() {
-            manager
-                .tokio_runtime_mapping
-                .insert(k.clone().into_boxed_str(), v.clone().into_boxed_str());
-        }
-        for (k, v) in config.native_runtime_mapping.iter() {
-            manager
-                .native_runtime_mapping
-                .insert(k.clone().into_boxed_str(), v.clone().into_boxed_str());
-        }
-        for (k, v) in config.rayon_runtime_mapping.iter() {
-            manager
-                .rayon_runtime_mapping
-                .insert(k.clone().into_boxed_str(), v.clone().into_boxed_str());
-        }
-
+        manager.populate_mappings(&config);
         for (name, cfg) in config.native_configs.iter() {
-            let nrt = NativeThreadRuntime::new(cfg.clone());
+            let nrt = NativeThreadRuntime::new(name.clone(), cfg.clone());
             manager
                 .native_thread_runtimes
                 .insert(name.clone().into_boxed_str(), nrt);
         }
         for (name, cfg) in config.rayon_configs.iter() {
-            let rrt = RayonRuntime::new(cfg.clone())?;
+            let rrt = RayonRuntime::new(name.clone(), cfg.clone())?;
             manager
                 .rayon_runtimes
                 .insert(name.clone().into_boxed_str(), rrt);
@@ -117,10 +131,30 @@ impl RuntimeManager {
 #[cfg(test)]
 mod tests {
     use {
-        crate::{CoreAllocation, NativeConfig, RayonConfig, RuntimeManager, RuntimeManagerConfig},
-        std::collections::HashMap,
+        crate::{CoreAllocation, NativeConfig, RayonConfig, RuntimeManagerConfig, ThreadManager},
+        std::{collections::HashMap, io::Read},
     };
 
+    #[test]
+    fn configtest() {
+        let experiments = [
+            "examples/core_contention_dedicated_set.toml",
+            "examples/core_contention_contending_set.toml",
+        ];
+
+        for exp in experiments {
+            println!("Loading config {exp}");
+            let mut conffile = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            conffile.push(exp);
+            let mut buf = String::new();
+            std::fs::File::open(conffile)
+                .unwrap()
+                .read_to_string(&mut buf)
+                .unwrap();
+            let cfg: RuntimeManagerConfig = toml::from_str(&buf).unwrap();
+            println!("{:?}", cfg);
+        }
+    }
     // Nobody runs Agave on windows, and on Mac we can not set mask affinity without patching external crate
     #[cfg(target_os = "linux")]
     fn validate_affinity(expect_cores: &[usize], error_msg: &str) {
@@ -147,7 +181,7 @@ mod tests {
             ..Default::default()
         };
 
-        let rtm = RuntimeManager::new(conf).unwrap();
+        let rtm = ThreadManager::new(conf).unwrap();
         let r = rtm.get_native("test").unwrap();
 
         let t2 = r
@@ -199,7 +233,7 @@ mod tests {
             ..Default::default()
         };
 
-        let rtm = RuntimeManager::new(conf).unwrap();
+        let rtm = ThreadManager::new(conf).unwrap();
         let r = rtm.get_native("test").unwrap();
 
         let t2 = r
