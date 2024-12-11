@@ -21,7 +21,7 @@ use {
     solana_gossip::{
         cluster_info::{ClusterInfo, ClusterInfoError},
         contact_info::{ContactInfo, Protocol},
-        ping_pong::{self, PingCache, Pong},
+        ping_pong::{self, Pong},
         weighted_shuffle::WeightedShuffle,
     },
     solana_ledger::{
@@ -81,7 +81,7 @@ pub const MAX_ANCESTOR_BYTES_IN_PACKET: usize =
 pub const MAX_ANCESTOR_RESPONSES: usize =
     MAX_ANCESTOR_BYTES_IN_PACKET / std::mem::size_of::<(Slot, Hash)>();
 /// Number of bytes in the randomly generated token sent with ping messages.
-pub(crate) const REPAIR_PING_TOKEN_SIZE: usize = HASH_BYTES;
+const REPAIR_PING_TOKEN_SIZE: usize = HASH_BYTES;
 pub const REPAIR_PING_CACHE_CAPACITY: usize = 65536;
 pub const REPAIR_PING_CACHE_TTL: Duration = Duration::from_secs(1280);
 const REPAIR_PING_CACHE_RATE_LIMIT_DELAY: Duration = Duration::from_secs(2);
@@ -141,11 +141,6 @@ impl AncestorHashesRepairType {
     }
 }
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiEnumVisitor, AbiExample),
-    frozen_abi(digest = "GPS6e6pgUdbXLwXN6XHTqrUVMwAL2YKLPDawgMi5hHzi")
-)]
 #[derive(Debug, Deserialize, Serialize)]
 pub enum AncestorHashesResponse {
     Hashes(Vec<(Slot, Hash)>),
@@ -219,7 +214,8 @@ impl RepairRequestHeader {
     }
 }
 
-pub(crate) type Ping = ping_pong::Ping<[u8; REPAIR_PING_TOKEN_SIZE]>;
+type Ping = ping_pong::Ping<REPAIR_PING_TOKEN_SIZE>;
+type PingCache = ping_pong::PingCache<REPAIR_PING_TOKEN_SIZE>;
 
 /// Window protocol messages
 #[cfg_attr(
@@ -270,11 +266,6 @@ fn discard_malformed_repair_requests(
     requests.len()
 }
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiEnumVisitor, AbiExample),
-    frozen_abi(digest = "9A6ae44qpdT7PaxiDZbybMM2mewnSnPs3C4CxhpbbYuV")
-)]
 #[derive(Debug, Deserialize, Serialize)]
 pub(crate) enum RepairResponse {
     Ping(Ping),
@@ -824,6 +815,8 @@ impl ServeRepair {
         assert!(REPAIR_PING_CACHE_RATE_LIMIT_DELAY > Duration::from_millis(REPAIR_MS));
 
         let mut ping_cache = PingCache::new(
+            &mut rand::thread_rng(),
+            Instant::now(),
             REPAIR_PING_CACHE_TTL,
             REPAIR_PING_CACHE_RATE_LIMIT_DELAY,
             REPAIR_PING_CACHE_CAPACITY,
@@ -924,10 +917,16 @@ impl ServeRepair {
         identity_keypair: &Keypair,
     ) -> (bool, Option<Packet>) {
         let mut rng = rand::thread_rng();
-        let mut pingf = move || Ping::new_rand(&mut rng, identity_keypair).ok();
         let (check, ping) = request
             .sender()
-            .map(|&sender| ping_cache.check(Instant::now(), (sender, *from_addr), &mut pingf))
+            .map(|&sender| {
+                ping_cache.check(
+                    &mut rng,
+                    identity_keypair,
+                    Instant::now(),
+                    (sender, *from_addr),
+                )
+            })
             .unwrap_or_default();
         let ping_pkt = if let Some(ping) = ping {
             match request {
@@ -1232,12 +1231,10 @@ impl ServeRepair {
                 }
                 packet.meta_mut().set_discard(true);
                 stats.ping_count += 1;
-                if let Ok(pong) = Pong::new(&ping, keypair) {
-                    let pong = RepairProtocol::Pong(pong);
-                    if let Ok(pong_bytes) = serialize(&pong) {
-                        let from_addr = packet.meta().socket_addr();
-                        pending_pongs.push((pong_bytes, from_addr));
-                    }
+                let pong = RepairProtocol::Pong(Pong::new(&ping, keypair));
+                if let Ok(pong) = bincode::serialize(&pong) {
+                    let from_addr = packet.meta().socket_addr();
+                    pending_pongs.push((pong, from_addr));
                 }
             }
         }
@@ -1462,7 +1459,7 @@ mod tests {
     fn test_serialized_ping_size() {
         let mut rng = rand::thread_rng();
         let keypair = Keypair::new();
-        let ping = Ping::new_rand(&mut rng, &keypair).unwrap();
+        let ping = Ping::new(rng.gen(), &keypair);
         let ping = RepairResponse::Ping(ping);
         let pkt = Packet::from_data(None, ping).unwrap();
         assert_eq!(pkt.meta().size, REPAIR_RESPONSE_SERIALIZED_PING_BYTES);
@@ -1516,8 +1513,8 @@ mod tests {
     fn test_check_well_formed_repair_request() {
         let mut rng = rand::thread_rng();
         let keypair = Keypair::new();
-        let ping = ping_pong::Ping::<[u8; 32]>::new_rand(&mut rng, &keypair).unwrap();
-        let pong = Pong::new(&ping, &keypair).unwrap();
+        let ping = Ping::new(rng.gen(), &keypair);
+        let pong = Pong::new(&ping, &keypair);
         let request = RepairProtocol::Pong(pong);
         let mut pkt = Packet::from_data(None, request).unwrap();
         let mut batch = vec![make_remote_request(&pkt)];
