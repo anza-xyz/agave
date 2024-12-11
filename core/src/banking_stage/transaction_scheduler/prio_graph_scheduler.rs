@@ -6,7 +6,6 @@ use {
         transaction_state::SanitizedTransactionTTL,
     },
     crate::banking_stage::{
-        consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
         read_write_account_set::ReadWriteAccountSet,
         scheduler_messages::{
             ConsumeWork, FinishedConsumeWork, MaxAge, TransactionBatchId, TransactionId,
@@ -44,6 +43,7 @@ pub(crate) struct PrioGraphSchedulerConfig {
     pub max_cu_per_thread: u64,
     pub max_transactions_per_scheduling_pass: usize,
     pub look_ahead_window_size: usize,
+    pub target_transactions_per_batch: usize,
 }
 
 pub(crate) struct PrioGraphScheduler<Tx> {
@@ -112,7 +112,7 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
             });
         }
 
-        let mut batches = Batches::new(num_threads);
+        let mut batches = Batches::new(num_threads, self.config.target_transactions_per_batch);
         // Some transactions may be unschedulable due to multi-thread conflicts.
         // These transactions cannot be scheduled until some conflicting work is completed.
         // However, the scheduler should not allow other transactions that conflict with
@@ -176,8 +176,9 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
         // Check transactions against filter, remove from container if it fails.
         chunked_pops(container, &mut self.prio_graph, &mut window_budget);
 
-        let mut unblock_this_batch =
-            Vec::with_capacity(self.consume_work_senders.len() * TARGET_NUM_TRANSACTIONS_PER_BATCH);
+        let mut unblock_this_batch = Vec::with_capacity(
+            self.consume_work_senders.len() * self.config.target_transactions_per_batch,
+        );
         let mut num_scheduled: usize = 0;
         let mut num_sent: usize = 0;
         let mut num_unschedulable: usize = 0;
@@ -234,7 +235,8 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
                         saturating_add_assign!(batches.total_cus[thread_id], cost);
 
                         // If target batch size is reached, send only this batch.
-                        if batches.ids[thread_id].len() >= TARGET_NUM_TRANSACTIONS_PER_BATCH {
+                        if batches.ids[thread_id].len() >= self.config.target_transactions_per_batch
+                        {
                             saturating_add_assign!(
                                 num_sent,
                                 self.send_batch(&mut batches, thread_id)?
@@ -413,7 +415,8 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
             return Ok(0);
         }
 
-        let (ids, transactions, max_ages, total_cus) = batches.take_batch(thread_index);
+        let (ids, transactions, max_ages, total_cus) =
+            batches.take_batch(thread_index, self.config.target_transactions_per_batch);
 
         let batch_id = self
             .in_flight_tracker
@@ -503,14 +506,14 @@ struct Batches<Tx> {
 }
 
 impl<Tx> Batches<Tx> {
-    fn new(num_threads: usize) -> Self {
+    fn new(num_threads: usize, target_num_transactions_per_batch: usize) -> Self {
         Self {
-            ids: vec![Vec::with_capacity(TARGET_NUM_TRANSACTIONS_PER_BATCH); num_threads],
+            ids: vec![Vec::with_capacity(target_num_transactions_per_batch); num_threads],
 
             transactions: (0..num_threads)
-                .map(|_| Vec::with_capacity(TARGET_NUM_TRANSACTIONS_PER_BATCH))
+                .map(|_| Vec::with_capacity(target_num_transactions_per_batch))
                 .collect(),
-            max_ages: vec![Vec::with_capacity(TARGET_NUM_TRANSACTIONS_PER_BATCH); num_threads],
+            max_ages: vec![Vec::with_capacity(target_num_transactions_per_batch); num_threads],
             total_cus: vec![0; num_threads],
         }
     }
@@ -518,19 +521,20 @@ impl<Tx> Batches<Tx> {
     fn take_batch(
         &mut self,
         thread_id: ThreadId,
+        target_num_transactions_per_batch: usize,
     ) -> (Vec<TransactionId>, Vec<Tx>, Vec<MaxAge>, u64) {
         (
             core::mem::replace(
                 &mut self.ids[thread_id],
-                Vec::with_capacity(TARGET_NUM_TRANSACTIONS_PER_BATCH),
+                Vec::with_capacity(target_num_transactions_per_batch),
             ),
             core::mem::replace(
                 &mut self.transactions[thread_id],
-                Vec::with_capacity(TARGET_NUM_TRANSACTIONS_PER_BATCH),
+                Vec::with_capacity(target_num_transactions_per_batch),
             ),
             core::mem::replace(
                 &mut self.max_ages[thread_id],
-                Vec::with_capacity(TARGET_NUM_TRANSACTIONS_PER_BATCH),
+                Vec::with_capacity(target_num_transactions_per_batch),
             ),
             core::mem::replace(&mut self.total_cus[thread_id], 0),
         )
@@ -647,6 +651,7 @@ mod tests {
             max_cu_per_thread: MAX_BLOCK_UNITS / num_threads as u64,
             max_transactions_per_scheduling_pass: 100_000,
             look_ahead_window_size: 2048,
+            target_transactions_per_batch: TARGET_NUM_TRANSACTIONS_PER_BATCH,
         };
         let scheduler = PrioGraphScheduler::new(
             consume_work_senders,
