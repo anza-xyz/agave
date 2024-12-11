@@ -1560,7 +1560,7 @@ mod tests {
             &processing_config,
         );
 
-        assert_eq!(error_metrics.instruction_error, 1);
+        assert_eq!(error_metrics.instruction_error.0, 1);
     }
 
     #[test]
@@ -2311,7 +2311,7 @@ mod tests {
                 &mut error_counters,
             );
 
-        assert_eq!(error_counters.account_not_found, 1);
+        assert_eq!(error_counters.account_not_found.0, 1);
         assert_eq!(result, Err(TransactionError::AccountNotFound));
     }
 
@@ -2345,7 +2345,7 @@ mod tests {
                 &mut error_counters,
             );
 
-        assert_eq!(error_counters.insufficient_funds, 1);
+        assert_eq!(error_counters.insufficient_funds.0, 1);
         assert_eq!(result, Err(TransactionError::InsufficientFundsForFee));
     }
 
@@ -2419,7 +2419,7 @@ mod tests {
                 &mut error_counters,
             );
 
-        assert_eq!(error_counters.invalid_account_for_fee, 1);
+        assert_eq!(error_counters.invalid_account_for_fee.0, 1);
         assert_eq!(result, Err(TransactionError::InvalidAccountForFee));
     }
 
@@ -2451,7 +2451,7 @@ mod tests {
                 &mut error_counters,
             );
 
-        assert_eq!(error_counters.invalid_compute_budget, 1);
+        assert_eq!(error_counters.invalid_compute_budget.0, 1);
         assert_eq!(result, Err(TransactionError::DuplicateInstruction(1u8)));
     }
 
@@ -2585,7 +2585,7 @@ mod tests {
                 &mut error_counters,
             );
 
-            assert_eq!(error_counters.insufficient_funds, 1);
+            assert_eq!(error_counters.insufficient_funds.0, 1);
             assert_eq!(result, Err(TransactionError::InsufficientFundsForFee));
         }
     }
