@@ -444,7 +444,6 @@ mod tests {
                 transaction_scheduler::receive_and_buffer::SanitizedTransactionReceiveAndBuffer,
             },
             banking_trace::BankingPacketBatch,
-            sigverify::SigverifyTracerPacketStats,
         },
         crossbeam_channel::{unbounded, Receiver, Sender},
         itertools::Itertools,
@@ -453,7 +452,9 @@ mod tests {
             blockstore::Blockstore, genesis_utils::GenesisConfigInfo,
             get_tmp_ledger_path_auto_delete, leader_schedule_cache::LeaderScheduleCache,
         },
-        solana_perf::packet::{to_packet_batches, PacketBatch, NUM_PACKETS},
+        solana_perf::packet::{
+            to_packet_batches, PacketBatch, SigverifyTracerPacketStats, NUM_PACKETS,
+        },
         solana_poh::poh_recorder::{PohRecorder, Record, WorkingBankEntry},
         solana_runtime::bank::Bank,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,

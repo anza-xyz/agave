@@ -189,6 +189,13 @@ example_impls! { i32, 0 }
 example_impls! { i64, 0 }
 example_impls! { i128, 0 }
 
+impl<T: AbiExample> AbiExample for std::num::Saturating<T> {
+    fn example() -> Self {
+        info!("AbiExample for (Saturating<T>): {}", type_name::<Self>());
+        std::num::Saturating(T::example())
+    }
+}
+
 example_impls! { f32, 0.0f32 }
 example_impls! { f64, 0.0f64 }
 example_impls! { String, String::new() }

@@ -5,7 +5,7 @@ pub use solana_sdk::net::DEFAULT_TPU_COALESCE;
 use {
     crate::{
         banking_stage::BankingStage,
-        banking_trace::{BankingTracer, TracerThread},
+        banking_trace::{BankingTracer, Channels, TracerThread},
         cluster_info_vote_listener::{
             ClusterInfoVoteListener, DuplicateConfirmedSlotsSender, GossipVerifiedVoteHashSender,
             VerifiedVoteSender, VoteTracker,
@@ -33,6 +33,7 @@ use {
     solana_runtime::{
         bank_forks::BankForks,
         prioritization_fee_cache::PrioritizationFeeCache,
+        root_bank_cache::RootBankCache,
         vote_sender_types::{ReplayVoteReceiver, ReplayVoteSender},
     },
     solana_sdk::{clock::Slot, pubkey::Pubkey, quic::NotifyKeyUpdate, signature::Keypair},
@@ -44,6 +45,7 @@ use {
         streamer::StakedNodes,
     },
     solana_turbine::broadcast_stage::{BroadcastStage, BroadcastStageType},
+    solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{
         collections::HashMap,
         net::{SocketAddr, UdpSocket},
@@ -99,6 +101,7 @@ impl Tpu {
         shred_version: u16,
         vote_tracker: Arc<VoteTracker>,
         bank_forks: Arc<RwLock<BankForks>>,
+        root_bank_cache: RootBankCache,
         verified_vote_sender: VerifiedVoteSender,
         gossip_verified_vote_hash_sender: GossipVerifiedVoteHashSender,
         replay_vote_receiver: ReplayVoteReceiver,
@@ -120,6 +123,7 @@ impl Tpu {
         block_production_method: BlockProductionMethod,
         enable_block_production_forwarding: bool,
         _generator_config: Option<GeneratorConfig>, /* vestigial code for replay invalidator */
+        unified_scheduler_pool: Option<Arc<DefaultSchedulerPool>>,
     ) -> (Self, Vec<Arc<dyn NotifyKeyUpdate + Sync + Send>>) {
         let TpuSockets {
             transactions: transactions_sockets,
@@ -156,7 +160,14 @@ impl Tpu {
             shared_staked_nodes_overrides,
         );
 
-        let (non_vote_sender, non_vote_receiver) = banking_tracer.create_channel_non_vote();
+        let Channels {
+            non_vote_sender,
+            non_vote_receiver,
+            tpu_vote_sender,
+            tpu_vote_receiver,
+            gossip_vote_sender,
+            gossip_vote_receiver,
+        } = banking_tracer.create_channels(unified_scheduler_pool.as_ref());
 
         // Streamer for Votes:
         let SpawnServerResult {
@@ -235,8 +246,6 @@ impl Tpu {
             SigVerifyStage::new(packet_receiver, verifier, "solSigVerTpu", "tpu-verifier")
         };
 
-        let (tpu_vote_sender, tpu_vote_receiver) = banking_tracer.create_channel_tpu_vote();
-
         let vote_sigverify_stage = {
             let verifier = TransactionSigVerifier::new_reject_non_vote(tpu_vote_sender);
             SigVerifyStage::new(
@@ -247,14 +256,13 @@ impl Tpu {
             )
         };
 
-        let (gossip_vote_sender, gossip_vote_receiver) =
-            banking_tracer.create_channel_gossip_vote();
         let cluster_info_vote_listener = ClusterInfoVoteListener::new(
             exit.clone(),
             cluster_info.clone(),
             gossip_vote_sender,
             vote_tracker,
             bank_forks.clone(),
+            root_bank_cache,
             subscriptions.clone(),
             verified_vote_sender,
             gossip_verified_vote_hash_sender,
@@ -278,6 +286,7 @@ impl Tpu {
             bank_forks.clone(),
             prioritization_fee_cache,
             enable_block_production_forwarding,
+            unified_scheduler_pool,
         );
 
         let (entry_receiver, tpu_entry_notifier) =

@@ -5,12 +5,9 @@ use {
         immutable_deserialized_packet::{DeserializedPacketError, ImmutableDeserializedPacket},
         packet_filter::PacketFilterFailure,
     },
-    crate::{
-        banking_trace::{BankingPacketBatch, BankingPacketReceiver},
-        sigverify::SigverifyTracerPacketStats,
-    },
+    crate::banking_trace::{BankingPacketBatch, BankingPacketReceiver},
     crossbeam_channel::RecvTimeoutError,
-    solana_perf::packet::PacketBatch,
+    solana_perf::packet::{PacketBatch, SigverifyTracerPacketStats},
     solana_sdk::saturating_add_assign,
     std::time::{Duration, Instant},
 };
@@ -217,6 +214,18 @@ impl PacketDeserializer {
                     None
                 }
             }
+        })
+    }
+
+    pub(crate) fn deserialize_packets_with_indexes(
+        packet_batch: &PacketBatch,
+    ) -> impl Iterator<Item = (ImmutableDeserializedPacket, usize)> + '_ {
+        let packet_indexes = PacketDeserializer::generate_packet_indexes(packet_batch);
+        packet_indexes.into_iter().filter_map(move |packet_index| {
+            let packet = packet_batch[packet_index].clone();
+            ImmutableDeserializedPacket::new(packet)
+                .ok()
+                .map(|packet| (packet, packet_index))
         })
     }
 }
