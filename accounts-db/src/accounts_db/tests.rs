@@ -8153,7 +8153,7 @@ fn compute_merkle_root(hashes: impl IntoIterator<Item = Hash>) -> Hash {
 /// newer versions of the accounts in other newer storages *not* explicitly marked to be visited by
 /// `clean`.  In this case, `clean` should still reclaim the old versions of these accounts.
 #[test]
-fn test_clean_old_storages_with_reclaims() {
+fn test_clean_old_storages_with_reclaims_rooted() {
     let accounts_db = AccountsDb::new_single_for_tests();
     let pubkey = Pubkey::new_unique();
     let old_slot = 11;
@@ -8171,6 +8171,11 @@ fn test_clean_old_storages_with_reclaims() {
         accounts_db.add_root_and_flush_write_cache(slot);
     }
 
+    // for this test, `new_slot` must not be in the uncleaned_roots list
+    accounts_db.accounts_index.remove_uncleaned_root(new_slot);
+    assert!(accounts_db.accounts_index.is_uncleaned_root(old_slot));
+    assert!(!accounts_db.accounts_index.is_uncleaned_root(new_slot));
+
     // ensure the slot list for `pubkey` has both the old and new slots
     let slot_list = accounts_db
         .accounts_index
@@ -8180,16 +8185,11 @@ fn test_clean_old_storages_with_reclaims() {
     assert_eq!(slot_list.len(), slots.len());
     assert!(slot_list.iter().map(|(slot, _)| slot).eq(slots.iter()));
 
-    // for this test, `new_slot` must not be in the uncleaned_roots list
-    accounts_db.accounts_index.remove_uncleaned_root(new_slot);
-    assert!(accounts_db.accounts_index.is_uncleaned_root(old_slot));
-    assert!(!accounts_db.accounts_index.is_uncleaned_root(new_slot));
-
     // `clean` should now reclaim the account in `old_slot`, even though `new_slot` is not
     // explicitly being cleaned
     accounts_db.clean_accounts_for_tests();
 
-    // ensure we've reclaimed the account `old_slot`
+    // ensure we've reclaimed the account in `old_slot`
     let slot_list = accounts_db
         .accounts_index
         .get_bin(&pubkey)
@@ -8200,4 +8200,55 @@ fn test_clean_old_storages_with_reclaims() {
         .iter()
         .map(|(slot, _)| slot)
         .eq(iter::once(&new_slot)));
+}
+
+/// Test that `clean` respects rooted vs unrooted slots w.r.t. reclaims
+///
+/// When an account is in multiple slots, and the latest is unrooted, `clean` should *not* reclaim
+/// all the rooted versions.
+#[test]
+fn test_clean_old_storages_with_reclaims_unrooted() {
+    let accounts_db = AccountsDb::new_single_for_tests();
+    let pubkey = Pubkey::new_unique();
+    let old_slot = 11;
+    let new_slot = 22;
+    let slots = [old_slot, new_slot];
+    for &slot in &slots {
+        let account = AccountSharedData::new(slot, 0, &Pubkey::new_unique());
+        // store `pubkey` into multiple slots, and also store another unique pubkey
+        // to prevent the whole storage from being marked as dead by `clean`.
+        accounts_db.store_for_tests(
+            slot,
+            &[(&pubkey, &account), (&Pubkey::new_unique(), &account)],
+        );
+        accounts_db.calculate_accounts_delta_hash(slot);
+    }
+    // do not root `new_slot`!
+    accounts_db.add_root_and_flush_write_cache(old_slot);
+
+    // for this test, `new_slot` must not be a root
+    assert!(accounts_db.accounts_index.is_uncleaned_root(old_slot));
+    assert!(!accounts_db.accounts_index.is_uncleaned_root(new_slot));
+    assert!(!accounts_db.accounts_index.is_alive_root(new_slot));
+
+    // ensure the slot list for `pubkey` has both the old and new slots
+    let slot_list = accounts_db
+        .accounts_index
+        .get_bin(&pubkey)
+        .slot_list_mut(&pubkey, |slot_list| slot_list.clone())
+        .unwrap();
+    assert_eq!(slot_list.len(), slots.len());
+    assert!(slot_list.iter().map(|(slot, _)| slot).eq(slots.iter()));
+
+    // `clean` should *not* reclaim the account in `old_slot` because `new_slot` is not a root
+    accounts_db.clean_accounts_for_tests();
+
+    // ensure we have NOT reclaimed the account in `old_slot`
+    let slot_list = accounts_db
+        .accounts_index
+        .get_bin(&pubkey)
+        .slot_list_mut(&pubkey, |slot_list| slot_list.clone())
+        .unwrap();
+    assert_eq!(slot_list.len(), slots.len());
+    assert!(slot_list.iter().map(|(slot, _)| slot).eq(slots.iter()));
 }
