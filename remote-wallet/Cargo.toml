@@ -20,12 +20,16 @@ parking_lot = { workspace = true }
 qstring = { workspace = true }
 semver = { workspace = true }
 solana-derivation-path = { workspace = true }
-solana-sdk = { workspace = true }
+solana-offchain-message = { workspace = true }
+solana-pubkey = { workspace = true, features = ["std"] }
+solana-signature = { workspace = true, features = ["std"] }
+solana-signer = { workspace = true }
 thiserror = { workspace = true }
 uriparse = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
 
 [features]
 default = ["linux-static-hidraw", "hidapi"]

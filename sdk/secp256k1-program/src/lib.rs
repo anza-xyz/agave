@@ -326,7 +326,7 @@
 //! use solana_msg::msg;
 //! use solana_program_error::{ProgramError, ProgramResult};
 //! use solana_sdk_ids::secp256k1_program;
-//! use solana_sysvar::instructions;
+//! use solana_instructions_sysvar::load_instruction_at_checked;
 //!
 //! /// An Ethereum address corresponding to a secp256k1 secret key that is
 //! /// authorized to sign our messages.
@@ -354,7 +354,7 @@
 //!     // Load the secp256k1 instruction.
 //!     // `new_secp256k1_instruction` generates an instruction that must be at index 0.
 //!     let secp256k1_instr =
-//!         instructions::load_instruction_at_checked(0, instructions_sysvar_account)?;
+//!         solana_instructions_sysvar::load_instruction_at_checked(0, instructions_sysvar_account)?;
 //!
 //!     // Verify it is a secp256k1 instruction.
 //!     // This is security-critical - what if the transaction uses an imposter secp256k1 program?
@@ -533,7 +533,7 @@
 //! use solana_program_error::{ProgramError, ProgramResult};
 //! use solana_msg::msg;
 //! use solana_sdk_ids::secp256k1_program;
-//! use solana_sysvar::instructions;
+//! use solana_instructions_sysvar::{get_instruction_relative, load_instruction_at_checked};
 //!
 //! /// A struct to hold the values specified in the `SecpSignatureOffsets` struct.
 //! struct SecpSignature {
@@ -553,15 +553,15 @@
 //! ) -> Result<Vec<SecpSignature>, ProgramError> {
 //!     let mut sigs = vec![];
 //!     for offsets in secp256k1_defs::iter_signature_offsets(secp256k1_instr_data)? {
-//!         let signature_instr = instructions::load_instruction_at_checked(
+//!         let signature_instr = load_instruction_at_checked(
 //!             offsets.signature_instruction_index as usize,
 //!             instructions_sysvar_account,
 //!         )?;
-//!         let eth_address_instr = instructions::load_instruction_at_checked(
+//!         let eth_address_instr = load_instruction_at_checked(
 //!             offsets.eth_address_instruction_index as usize,
 //!             instructions_sysvar_account,
 //!         )?;
-//!         let message_instr = instructions::load_instruction_at_checked(
+//!         let message_instr = load_instruction_at_checked(
 //!             offsets.message_instruction_index as usize,
 //!             instructions_sysvar_account,
 //!         )?;
@@ -603,7 +603,7 @@
 //!     ));
 //!
 //!     let secp256k1_instr =
-//!         instructions::get_instruction_relative(-1, instructions_sysvar_account)?;
+//!         solana_instructions_sysvar::get_instruction_relative(-1, instructions_sysvar_account)?;
 //!
 //!     assert!(secp256k1_program::check_id(&secp256k1_instr.program_id));
 //!
@@ -635,7 +635,6 @@
 //! };
 //! use solana_signer::Signer;
 //! use solana_keypair::Keypair;
-//! use solana_sysvar::instructions;
 //! use solana_sdk::transaction::Transaction;
 //!
 //! /// A struct to hold the values specified in the `SecpSignatureOffsets` struct.

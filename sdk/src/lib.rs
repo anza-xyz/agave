@@ -68,13 +68,14 @@ pub mod example_mocks;
 pub mod exit;
 pub mod feature;
 pub mod genesis_config;
-pub mod hard_forks;
+#[cfg(feature = "full")]
+#[deprecated(since = "2.2.0", note = "Use `solana-hard-forks` crate instead")]
+pub use solana_hard_forks as hard_forks;
 pub mod hash;
 pub mod inner_instruction;
 pub mod log;
 pub mod native_loader;
 pub mod net;
-pub mod nonce_account;
 pub mod precompiles;
 pub mod program_utils;
 pub mod pubkey;
@@ -133,6 +134,8 @@ pub use solana_feature_set as feature_set;
 pub use solana_fee_structure as fee;
 #[deprecated(since = "2.1.0", note = "Use `solana-inflation` crate instead")]
 pub use solana_inflation as inflation;
+#[deprecated(since = "2.2.0", note = "Use `solana-nonce-account` crate instead")]
+pub use solana_nonce_account as nonce_account;
 #[cfg(feature = "full")]
 #[deprecated(since = "2.2.0", note = "Use `solana-offchain-message` crate instead")]
 pub use solana_offchain_message as offchain_message;

@@ -6,7 +6,6 @@ use {
         accounts_hash_verifier::AccountsHashVerifier,
         admin_rpc_post_init::AdminRpcRequestMetadataPostInit,
         banking_trace::{self, BankingTracer, TraceError},
-        cache_block_meta_service::{CacheBlockMetaSender, CacheBlockMetaService},
         cluster_info_vote_listener::VoteTracker,
         completed_data_sets_service::CompletedDataSetsService,
         consensus::{
@@ -82,6 +81,7 @@ use {
     },
     solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
     solana_rpc::{
+        cache_block_meta_service::{CacheBlockMetaSender, CacheBlockMetaService},
         max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::{
             BankNotificationSenderConfig, OptimisticallyConfirmedBank,
