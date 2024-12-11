@@ -451,7 +451,6 @@ mod tests {
         },
         crossbeam_channel::{unbounded, Receiver, Sender},
         itertools::Itertools,
-        solana_cost_model::block_cost_limits::MAX_BLOCK_UNITS,
         solana_gossip::cluster_info::ClusterInfo,
         solana_ledger::{
             blockstore::Blockstore, genesis_utils::GenesisConfigInfo,
@@ -554,18 +553,11 @@ mod tests {
             false,
         );
 
-        let scheduler_config = PrioGraphSchedulerConfig {
-            max_cu_per_thread: MAX_BLOCK_UNITS / num_threads as u64,
-            max_transactions_per_scheduling_pass: 100_000,
-            look_ahead_window_size: 2048,
-            target_transactions_per_batch: TARGET_NUM_TRANSACTIONS_PER_BATCH,
-        };
         let scheduler = PrioGraphScheduler::new(
             consume_work_senders,
             finished_consume_work_receiver,
-            scheduler_config,
+            PrioGraphSchedulerConfig::default(),
         );
-
         let scheduler_controller = SchedulerController::new(
             decision_maker,
             receive_and_buffer,

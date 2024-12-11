@@ -6,6 +6,7 @@ use {
         transaction_state::SanitizedTransactionTTL,
     },
     crate::banking_stage::{
+        consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
         read_write_account_set::ReadWriteAccountSet,
         scheduler_messages::{
             ConsumeWork, FinishedConsumeWork, MaxAge, TransactionBatchId, TransactionId,
@@ -18,6 +19,7 @@ use {
     crossbeam_channel::{Receiver, Sender, TryRecvError},
     itertools::izip,
     prio_graph::{AccessKind, GraphNode, PrioGraph},
+    solana_cost_model::block_cost_limits::MAX_BLOCK_UNITS,
     solana_measure::measure_us,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_sdk::{pubkey::Pubkey, saturating_add_assign},
@@ -40,10 +42,21 @@ type SchedulerPrioGraph = PrioGraph<
 >;
 
 pub(crate) struct PrioGraphSchedulerConfig {
-    pub max_cu_per_thread: u64,
+    pub max_scheduled_cus: u64,
     pub max_transactions_per_scheduling_pass: usize,
     pub look_ahead_window_size: usize,
     pub target_transactions_per_batch: usize,
+}
+
+impl Default for PrioGraphSchedulerConfig {
+    fn default() -> Self {
+        Self {
+            max_scheduled_cus: MAX_BLOCK_UNITS,
+            max_transactions_per_scheduling_pass: 100_000,
+            look_ahead_window_size: 2048,
+            target_transactions_per_batch: TARGET_NUM_TRANSACTIONS_PER_BATCH,
+        }
+    }
 }
 
 pub(crate) struct PrioGraphScheduler<Tx> {
@@ -95,7 +108,7 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
         pre_lock_filter: impl Fn(&Tx) -> bool,
     ) -> Result<SchedulingSummary, SchedulerError> {
         let num_threads = self.consume_work_senders.len();
-        let max_cu_per_thread = self.config.max_cu_per_thread;
+        let max_cu_per_thread = self.config.max_scheduled_cus / num_threads as u64;
 
         let mut schedulable_threads = ThreadSet::any(num_threads);
         for thread_id in 0..num_threads {
@@ -614,13 +627,11 @@ mod tests {
     use {
         super::*,
         crate::banking_stage::{
-            consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
             immutable_deserialized_packet::ImmutableDeserializedPacket,
             transaction_scheduler::transaction_state_container::TransactionStateContainer,
         },
         crossbeam_channel::{unbounded, Receiver},
         itertools::Itertools,
-        solana_cost_model::block_cost_limits::MAX_BLOCK_UNITS,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
             compute_budget::ComputeBudgetInstruction,
@@ -647,16 +658,10 @@ mod tests {
         let (consume_work_senders, consume_work_receivers) =
             (0..num_threads).map(|_| unbounded()).unzip();
         let (finished_consume_work_sender, finished_consume_work_receiver) = unbounded();
-        let scheduler_config = PrioGraphSchedulerConfig {
-            max_cu_per_thread: MAX_BLOCK_UNITS / num_threads as u64,
-            max_transactions_per_scheduling_pass: 100_000,
-            look_ahead_window_size: 2048,
-            target_transactions_per_batch: TARGET_NUM_TRANSACTIONS_PER_BATCH,
-        };
         let scheduler = PrioGraphScheduler::new(
             consume_work_senders,
             finished_consume_work_receiver,
-            scheduler_config,
+            PrioGraphSchedulerConfig::default(),
         );
         (
             scheduler,

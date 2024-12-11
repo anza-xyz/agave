@@ -28,11 +28,9 @@ use {
         tracer_packet_stats::TracerPacketStats,
         validator::BlockProductionMethod,
     },
-    consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     histogram::Histogram,
     solana_client::connection_cache::ConnectionCache,
-    solana_cost_model::block_cost_limits::MAX_BLOCK_UNITS,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     solana_ledger::blockstore_processor::TransactionStatusSender,
     solana_measure::measure_us,
@@ -624,14 +622,11 @@ impl BankingStage {
                 bank_forks.clone(),
                 forwarder.is_some(),
             );
-            let scheduler_config = PrioGraphSchedulerConfig {
-                max_cu_per_thread: MAX_BLOCK_UNITS / num_threads as u64,
-                max_transactions_per_scheduling_pass: 100_000,
-                look_ahead_window_size: 2048,
-                target_transactions_per_batch: TARGET_NUM_TRANSACTIONS_PER_BATCH,
-            };
-            let scheduler =
-                PrioGraphScheduler::new(work_senders, finished_work_receiver, scheduler_config);
+            let scheduler = PrioGraphScheduler::new(
+                work_senders,
+                finished_work_receiver,
+                PrioGraphSchedulerConfig::default(),
+            );
             let scheduler_controller = SchedulerController::new(
                 decision_maker.clone(),
                 receive_and_buffer,
