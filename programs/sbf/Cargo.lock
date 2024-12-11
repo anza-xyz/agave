@@ -6419,7 +6419,6 @@ dependencies = [
  "bincode",
  "enum-iterator",
  "itertools 0.12.1",
- "libc",
  "log",
  "num-derive",
  "num-traits",

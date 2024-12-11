@@ -6690,8 +6690,11 @@ dependencies = [
  "criterion",
  "solana-compute-budget",
  "solana-compute-budget-instruction",
+ "solana-compute-budget-interface",
  "solana-compute-budget-program",
- "solana-sdk",
+ "solana-feature-set",
+ "solana-message",
+ "solana-sdk-ids",
  "solana-svm-transaction",
 ]
 
@@ -8151,7 +8154,6 @@ dependencies = [
  "criterion-stats",
  "enum-iterator",
  "itertools 0.12.1",
- "libc",
  "log",
  "num-derive",
  "num-traits",
@@ -8170,7 +8172,6 @@ dependencies = [
  "solana-instruction",
  "solana-last-restart-slot",
  "solana-log-collector",
- "solana-logger",
  "solana-measure",
  "solana-metrics",
  "solana-precompiles",
@@ -10040,9 +10041,17 @@ version = "2.2.0"
 dependencies = [
  "bytemuck",
  "curve25519-dalek 4.1.3",
+ "solana-account",
  "solana-compute-budget",
+ "solana-compute-budget-interface",
+ "solana-instruction",
+ "solana-keypair",
  "solana-program-test",
- "solana-sdk",
+ "solana-pubkey",
+ "solana-signer",
+ "solana-system-interface",
+ "solana-transaction",
+ "solana-transaction-error",
  "solana-zk-token-sdk",
 ]
 
