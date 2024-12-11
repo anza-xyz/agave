@@ -618,7 +618,7 @@ pub mod apply_cost_tracker_during_replay {
     solana_pubkey::declare_id!("2ry7ygxiYURULZCrypHhveanvP5tzZ4toRwVp89oCNSj");
 }
 pub mod bpf_account_data_direct_mapping {
-    solana_pubkey::declare_id!("EenyoWx9UMXYKpR8mW5Jmfmy2fRjzUtM7NduYMY8bx33");
+    solana_pubkey::declare_id!("GJVDwRkUPNdk9QaK4VsU4g1N41QNxhy1hevjf8kz45Mq");
 }
 
 pub mod add_set_tx_loaded_accounts_data_size_instruction {
