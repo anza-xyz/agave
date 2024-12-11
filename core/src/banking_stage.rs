@@ -31,6 +31,7 @@ use {
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     histogram::Histogram,
     solana_client::connection_cache::ConnectionCache,
+    solana_cost_model::block_cost_limits::MAX_BLOCK_UNITS,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     solana_ledger::blockstore_processor::TransactionStatusSender,
     solana_measure::measure_us,
@@ -52,6 +53,7 @@ use {
         time::{Duration, Instant},
     },
     transaction_scheduler::{
+        prio_graph_scheduler::PrioGraphSchedulerConfig,
         receive_and_buffer::SanitizedTransactionReceiveAndBuffer,
         transaction_state_container::TransactionStateContainer,
     },
@@ -621,7 +623,12 @@ impl BankingStage {
                 bank_forks.clone(),
                 forwarder.is_some(),
             );
-            let scheduler = PrioGraphScheduler::new(work_senders, finished_work_receiver);
+            let scheduler_config = PrioGraphSchedulerConfig {
+                max_cu_per_thread: MAX_BLOCK_UNITS / num_threads as u64,
+                max_transactions_per_scheduling_pass: 100_000,
+            };
+            let scheduler =
+                PrioGraphScheduler::new(work_senders, finished_work_receiver, scheduler_config);
             let scheduler_controller = SchedulerController::new(
                 decision_maker.clone(),
                 receive_and_buffer,
