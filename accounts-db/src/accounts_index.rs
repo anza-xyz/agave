@@ -1834,7 +1834,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                 .into_par_iter()
                 .map(|pubkey_bin| {
                     let r_account_maps = &self.account_maps[pubkey_bin];
-                    r_account_maps.get_duplicates_from_in_memory_only_startup()
+                    r_account_maps.startup_take_duplicates_from_in_memory_only()
                 })
                 .for_each(f);
         }

@@ -1172,7 +1172,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             .collect()
     }
 
-    pub fn get_duplicates_from_in_memory_only_startup(&self) -> Vec<(Slot, Pubkey)> {
+    pub fn startup_take_duplicates_from_in_memory_only(&self) -> Vec<(Slot, Pubkey)> {
         let mut duplicates = self
             .startup_info
             .duplicates_from_in_memory_only
