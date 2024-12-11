@@ -71,12 +71,12 @@ use {
         hash::Hash,
         pubkey::Pubkey,
         saturating_add_assign,
-        scheduling::SchedulingMode,
         signature::{Keypair, Signature, Signer},
         timing::timestamp,
         transaction::Transaction,
     },
     solana_timings::ExecuteTimings,
+    solana_unified_scheduler_logic::SchedulingMode,
     solana_vote_program::vote_state::{VoteState, VoteTransaction},
     std::{
         collections::{HashMap, HashSet},

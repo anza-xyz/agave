@@ -43,7 +43,8 @@ use {
         bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
         vote_sender_types::ReplayVoteSender,
     },
-    solana_sdk::{pubkey::Pubkey, scheduling::SchedulingMode, timing::AtomicInterval},
+    solana_sdk::{pubkey::Pubkey, timing::AtomicInterval},
+    solana_unified_scheduler_logic::SchedulingMode,
     solana_unified_scheduler_pool::{BankingStageAdapter, DefaultSchedulerPool},
     std::{
         cmp, env,

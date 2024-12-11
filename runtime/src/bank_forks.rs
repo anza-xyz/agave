@@ -17,8 +17,8 @@ use {
     solana_sdk::{
         clock::{BankId, Slot},
         hash::Hash,
-        scheduling::SchedulingMode,
     },
+    solana_unified_scheduler_logic::SchedulingMode,
     std::{
         collections::{hash_map::Entry, HashMap, HashSet},
         ops::Index,

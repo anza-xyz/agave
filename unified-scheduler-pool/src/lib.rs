@@ -34,11 +34,13 @@ use {
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk::{
         pubkey::Pubkey,
-        scheduling::SchedulingMode::{self, BlockProduction, BlockVerification},
         transaction::{Result, SanitizedTransaction, TransactionError},
     },
     solana_timings::ExecuteTimings,
-    solana_unified_scheduler_logic::{SchedulingStateMachine, Task, UsageQueue},
+    solana_unified_scheduler_logic::{
+        SchedulingMode::{self, BlockProduction, BlockVerification},
+        SchedulingStateMachine, Task, UsageQueue,
+    },
     static_assertions::const_assert_eq,
     std::{
         fmt::Debug,

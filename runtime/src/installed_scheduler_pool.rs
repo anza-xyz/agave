@@ -28,10 +28,10 @@ use {
     solana_sdk::{
         clock::Slot,
         hash::Hash,
-        scheduling::SchedulingMode,
         transaction::{Result, SanitizedTransaction, TransactionError},
     },
     solana_timings::ExecuteTimings,
+    solana_unified_scheduler_logic::SchedulingMode,
     std::{
         fmt::{self, Debug},
         mem,

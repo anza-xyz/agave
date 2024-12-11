@@ -6087,6 +6087,7 @@ dependencies = [
  "solana-sdk",
  "solana-streamer",
  "solana-tpu-client",
+ "solana-unified-scheduler-logic",
  "solana-unified-scheduler-pool",
  "solana-version",
 ]
@@ -8726,6 +8727,7 @@ dependencies = [
  "solana-system-program",
  "solana-timings",
  "solana-transaction-status-client-types",
+ "solana-unified-scheduler-logic",
  "solana-version",
  "solana-vote",
  "solana-vote-program",

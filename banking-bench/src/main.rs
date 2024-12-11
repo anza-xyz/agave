@@ -30,7 +30,6 @@ use {
         hash::Hash,
         message::Message,
         pubkey::{self, Pubkey},
-        scheduling::SchedulingMode,
         signature::{Keypair, Signature, Signer},
         system_instruction, system_transaction,
         timing::timestamp,
@@ -38,6 +37,7 @@ use {
     },
     solana_streamer::socket::SocketAddrSpace,
     solana_tpu_client::tpu_client::DEFAULT_TPU_CONNECTION_POOL_SIZE,
+    solana_unified_scheduler_logic::SchedulingMode,
     solana_unified_scheduler_pool::{DefaultSchedulerPool, SupportedSchedulingMode},
     std::{
         sync::{atomic::Ordering, Arc, RwLock},
