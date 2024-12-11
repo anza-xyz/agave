@@ -156,7 +156,7 @@ struct StartupInfo<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
 
     /// (slot, pubkey) pairs that are duplicates when we are starting from in-memory only index.
     /// And this field is only populated and used when we are building the in-memory only index.
-    duplicate_from_in_memory_only: Mutex<Vec<(Slot, Pubkey)>>,
+    duplicates_from_in_memory_only: Mutex<Vec<(Slot, Pubkey)>>,
 }
 
 #[derive(Default, Debug)]
@@ -737,7 +737,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
         let mut duplicates = self
             .startup_info
-            .duplicate_from_in_memory_only
+            .duplicates_from_in_memory_only
             .lock()
             .unwrap();
 
@@ -1175,7 +1175,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     pub fn get_duplicates_from_in_memory_only_startup(&self) -> Vec<(Slot, Pubkey)> {
         let mut duplicates = self
             .startup_info
-            .duplicate_from_in_memory_only
+            .duplicates_from_in_memory_only
             .lock()
             .unwrap();
         std::mem::take(&mut *duplicates)
