@@ -10,7 +10,6 @@ use {
             immutable_deserialized_packet::ImmutableDeserializedPacket, LikeClusterInfo,
         },
         next_leader::{next_leader, next_leader_tpu_vote},
-        tracer_packet_stats::TracerPacketStats,
     },
     solana_client::connection_cache::ConnectionCache,
     solana_connection_cache::client_connection::ClientConnection as TpuConnection,
@@ -96,7 +95,6 @@ impl<T: LikeClusterInfo> Forwarder<T> {
         hold: bool,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
         banking_stage_stats: &BankingStageStats,
-        tracer_packet_stats: &mut TracerPacketStats,
     ) {
         let forward_option = unprocessed_transaction_storage.forward_option();
 
@@ -139,19 +137,13 @@ impl<T: LikeClusterInfo> Forwarder<T> {
                 slot_metrics_tracker.increment_forwardable_batches_count(1);
 
                 let batched_forwardable_packets_count = forward_batch.len();
-                let (_forward_result, successful_forwarded_packets_count, leader_pubkey) = self
+                let (_forward_result, successful_forwarded_packets_count, _leader_pubkey) = self
                     .forward_buffered_packets(
                         &forward_option,
                         forward_batch.get_forwardable_packets(),
                         banking_stage_stats,
                     );
 
-                if let Some(leader_pubkey) = leader_pubkey {
-                    tracer_packet_stats.increment_total_forwardable_tracer_packets(
-                        filter_forwarding_result.total_forwardable_tracer_packets,
-                        leader_pubkey,
-                    );
-                }
                 let failed_forwarded_packets_count = batched_forwardable_packets_count
                     .saturating_sub(successful_forwarded_packets_count);
 
@@ -173,9 +165,6 @@ impl<T: LikeClusterInfo> Forwarder<T> {
         if !hold {
             slot_metrics_tracker.increment_cleared_from_buffer_after_forward_count(
                 filter_forwarding_result.total_forwardable_packets as u64,
-            );
-            tracer_packet_stats.increment_total_cleared_from_buffer_after_forward(
-                filter_forwarding_result.total_tracer_packets_in_buffer,
             );
             unprocessed_transaction_storage.clear_forwarded_packets();
         }
@@ -485,7 +474,6 @@ mod tests {
                 true,
                 &mut LeaderSlotMetricsTracker::new(0),
                 &stats,
-                &mut TracerPacketStats::new(0),
             );
 
             let recv_socket = &local_node.sockets.tpu_forwards_quic[0];
@@ -584,7 +572,6 @@ mod tests {
                 hold,
                 &mut LeaderSlotMetricsTracker::new(0),
                 &stats,
-                &mut TracerPacketStats::new(0),
             );
 
             let recv_socket = &local_node.sockets.tpu_forwards_quic[0];

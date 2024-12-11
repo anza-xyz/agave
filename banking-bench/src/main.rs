@@ -504,7 +504,7 @@ fn main() {
                 timestamp(),
             );
             non_vote_sender
-                .send(BankingPacketBatch::new((vec![packet_batch.clone()], None)))
+                .send(BankingPacketBatch::new(vec![packet_batch.clone()]))
                 .unwrap();
         }
 

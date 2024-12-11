@@ -265,7 +265,7 @@ impl ClusterInfoVoteListener {
             if !votes.is_empty() {
                 let (vote_txs, packets) = Self::verify_votes(votes, root_bank_cache);
                 verified_vote_transactions_sender.send(vote_txs)?;
-                verified_packets_sender.send(BankingPacketBatch::new((packets, None)))?;
+                verified_packets_sender.send(BankingPacketBatch::new(packets))?;
             }
             sleep(Duration::from_millis(GOSSIP_SLEEP_MILLIS));
         }

@@ -20,13 +20,6 @@ use {
     std::{convert::TryFrom, mem::size_of},
 };
 
-// Representing key tKeYE4wtowRb8yRroZShTipE18YVnqwXjsSAoNsFU6g
-const TRACER_KEY_BYTES: [u8; 32] = [
-    13, 37, 180, 170, 252, 137, 36, 194, 183, 143, 161, 193, 201, 207, 211, 23, 189, 93, 33, 110,
-    155, 90, 30, 39, 116, 115, 238, 38, 126, 21, 232, 133,
-];
-const TRACER_KEY: Pubkey = Pubkey::new_from_array(TRACER_KEY_BYTES);
-const TRACER_KEY_OFFSET_IN_TRANSACTION: usize = 69;
 // Empirically derived to constrain max verify latency to ~8ms at lower packet counts
 pub const VERIFY_PACKET_CHUNK_SIZE: usize = 128;
 
@@ -306,21 +299,6 @@ fn do_get_packet_offsets(
         u32::try_from(pubkey_start)?,
         u32::try_from(pubkey_len)?,
     ))
-}
-
-pub fn check_for_tracer_packet(packet: &mut Packet) -> bool {
-    let first_pubkey_start: usize = TRACER_KEY_OFFSET_IN_TRANSACTION;
-    let Some(first_pubkey_end) = first_pubkey_start.checked_add(size_of::<Pubkey>()) else {
-        return false;
-    };
-    // Check for tracer pubkey
-    match packet.data(first_pubkey_start..first_pubkey_end) {
-        Some(pubkey) if pubkey == TRACER_KEY.as_ref() => {
-            packet.meta_mut().set_tracer(true);
-            true
-        }
-        _ => false,
-    }
 }
 
 fn get_packet_offsets(

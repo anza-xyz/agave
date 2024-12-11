@@ -3,15 +3,12 @@ extern crate test;
 use {
     itertools::Itertools,
     solana_client::connection_cache::ConnectionCache,
-    solana_core::{
-        banking_stage::{
-            forwarder::Forwarder,
-            leader_slot_metrics::LeaderSlotMetricsTracker,
-            unprocessed_packet_batches::{DeserializedPacket, UnprocessedPacketBatches},
-            unprocessed_transaction_storage::{ThreadType, UnprocessedTransactionStorage},
-            BankingStageStats,
-        },
-        tracer_packet_stats::TracerPacketStats,
+    solana_core::banking_stage::{
+        forwarder::Forwarder,
+        leader_slot_metrics::LeaderSlotMetricsTracker,
+        unprocessed_packet_batches::{DeserializedPacket, UnprocessedPacketBatches},
+        unprocessed_transaction_storage::{ThreadType, UnprocessedTransactionStorage},
+        BankingStageStats,
     },
     solana_gossip::cluster_info::{ClusterInfo, Node},
     solana_ledger::{
@@ -38,7 +35,6 @@ struct BenchSetup {
     unprocessed_packet_batches: UnprocessedTransactionStorage,
     tracker: LeaderSlotMetricsTracker,
     stats: BankingStageStats,
-    tracer_stats: TracerPacketStats,
 }
 
 fn setup(num_packets: usize, contentious_transaction: bool) -> BenchSetup {
@@ -88,7 +84,6 @@ fn setup(num_packets: usize, contentious_transaction: bool) -> BenchSetup {
                 transaction.message.account_keys[0] = solana_sdk::pubkey::Pubkey::new_unique();
             }
             let mut packet = Packet::from_data(None, transaction).unwrap();
-            packet.meta_mut().set_tracer(true);
             packet.meta_mut().set_from_staked_node(true);
             DeserializedPacket::new(packet).unwrap()
         })
@@ -118,7 +113,6 @@ fn setup(num_packets: usize, contentious_transaction: bool) -> BenchSetup {
         unprocessed_packet_batches,
         tracker: LeaderSlotMetricsTracker::new(0),
         stats: BankingStageStats::default(),
-        tracer_stats: TracerPacketStats::new(0),
     }
 }
 
@@ -132,19 +126,12 @@ fn bench_forwarder_handle_forwading_contentious_transaction(bencher: &mut Benche
         mut unprocessed_packet_batches,
         mut tracker,
         stats,
-        mut tracer_stats,
     } = setup(num_packets, true);
 
     // hold packets so they can be reused for benching
     let hold = true;
     bencher.iter(|| {
-        forwarder.handle_forwarding(
-            &mut unprocessed_packet_batches,
-            hold,
-            &mut tracker,
-            &stats,
-            &mut tracer_stats,
-        );
+        forwarder.handle_forwarding(&mut unprocessed_packet_batches, hold, &mut tracker, &stats);
         // reset packet.forwarded flag to reuse `unprocessed_packet_batches`
         if let UnprocessedTransactionStorage::LocalTransactionStorage(unprocessed_packets) =
             &mut unprocessed_packet_batches
@@ -169,19 +156,12 @@ fn bench_forwarder_handle_forwading_parallel_transactions(bencher: &mut Bencher)
         mut unprocessed_packet_batches,
         mut tracker,
         stats,
-        mut tracer_stats,
     } = setup(num_packets, false);
 
     // hold packets so they can be reused for benching
     let hold = true;
     bencher.iter(|| {
-        forwarder.handle_forwarding(
-            &mut unprocessed_packet_batches,
-            hold,
-            &mut tracker,
-            &stats,
-            &mut tracer_stats,
-        );
+        forwarder.handle_forwarding(&mut unprocessed_packet_batches, hold, &mut tracker, &stats);
         // reset packet.forwarded flag to reuse `unprocessed_packet_batches`
         if let UnprocessedTransactionStorage::LocalTransactionStorage(unprocessed_packets) =
             &mut unprocessed_packet_batches

@@ -827,8 +827,7 @@ impl BankingSimulator {
         let timed_batches_to_send = packet_batches_by_time.split_off(&base_event_time);
         let batch_and_tx_counts = timed_batches_to_send
             .values()
-            .map(|(_label, batches_with_stats)| {
-                let batches = &batches_with_stats.0;
+            .map(|(_label, batches)| {
                 (
                     batches.len(),
                     batches.iter().map(|batch| batch.len()).sum::<usize>(),

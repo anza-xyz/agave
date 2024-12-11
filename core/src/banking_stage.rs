@@ -25,7 +25,6 @@ use {
             },
         },
         banking_trace::BankingPacketReceiver,
-        tracer_packet_stats::TracerPacketStats,
         validator::BlockProductionMethod,
     },
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
@@ -319,8 +318,6 @@ pub enum ForwardOption {
 #[derive(Debug, Default)]
 pub struct FilterForwardingResults {
     pub(crate) total_forwardable_packets: usize,
-    pub(crate) total_tracer_packets_in_buffer: usize,
-    pub(crate) total_forwardable_tracer_packets: usize,
     pub(crate) total_dropped_packets: usize,
     pub(crate) total_packet_conversion_us: u64,
     pub(crate) total_filter_packets_us: u64,
@@ -686,7 +683,6 @@ impl BankingStage {
         unprocessed_transaction_storage: &mut UnprocessedTransactionStorage,
         banking_stage_stats: &BankingStageStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
-        tracer_packet_stats: &mut TracerPacketStats,
     ) {
         if unprocessed_transaction_storage.should_not_process() {
             return;
@@ -722,7 +718,6 @@ impl BankingStage {
                     false,
                     slot_metrics_tracker,
                     banking_stage_stats,
-                    tracer_packet_stats,
                 ));
                 slot_metrics_tracker.increment_forward_us(forward_us);
                 // Take metrics action after forwarding packets to include forwarded
@@ -735,7 +730,6 @@ impl BankingStage {
                     true,
                     slot_metrics_tracker,
                     banking_stage_stats,
-                    tracer_packet_stats,
                 ));
                 slot_metrics_tracker.increment_forward_and_hold_us(forward_and_hold_us);
                 // Take metrics action after forwarding packets
@@ -754,7 +748,6 @@ impl BankingStage {
         mut unprocessed_transaction_storage: UnprocessedTransactionStorage,
     ) {
         let mut banking_stage_stats = BankingStageStats::new(id);
-        let mut tracer_packet_stats = TracerPacketStats::new(id);
 
         let mut slot_metrics_tracker = LeaderSlotMetricsTracker::new(id);
         let mut last_metrics_update = Instant::now();
@@ -770,19 +763,15 @@ impl BankingStage {
                     &mut unprocessed_transaction_storage,
                     &banking_stage_stats,
                     &mut slot_metrics_tracker,
-                    &mut tracer_packet_stats,
                 ));
                 slot_metrics_tracker
                     .increment_process_buffered_packets_us(process_buffered_packets_us);
                 last_metrics_update = Instant::now();
             }
 
-            tracer_packet_stats.report(1000);
-
             match packet_receiver.receive_and_buffer_packets(
                 &mut unprocessed_transaction_storage,
                 &mut banking_stage_stats,
-                &mut tracer_packet_stats,
                 &mut slot_metrics_tracker,
             ) {
                 Ok(()) | Err(RecvTimeoutError::Timeout) => (),
@@ -1073,7 +1062,7 @@ mod tests {
                 .collect();
             let packet_batches = convert_from_old_verified(packet_batches);
             non_vote_sender // no_ver, anf, tx
-                .send(BankingPacketBatch::new((packet_batches, None)))
+                .send(BankingPacketBatch::new(packet_batches))
                 .unwrap();
 
             drop(non_vote_sender);
@@ -1152,7 +1141,7 @@ mod tests {
             .collect();
         let packet_batches = convert_from_old_verified(packet_batches);
         non_vote_sender
-            .send(BankingPacketBatch::new((packet_batches, None)))
+            .send(BankingPacketBatch::new(packet_batches))
             .unwrap();
 
         // Process a second batch that uses the same from account, so conflicts with above TX
@@ -1165,7 +1154,7 @@ mod tests {
             .collect();
         let packet_batches = convert_from_old_verified(packet_batches);
         non_vote_sender
-            .send(BankingPacketBatch::new((packet_batches, None)))
+            .send(BankingPacketBatch::new(packet_batches))
             .unwrap();
 
         let (tpu_vote_sender, tpu_vote_receiver) = banking_tracer.create_channel_tpu_vote();
@@ -1472,7 +1461,7 @@ mod tests {
                 Builder::new()
                     .spawn(move || {
                         sender
-                            .send(BankingPacketBatch::new((packet_batches, None)))
+                            .send(BankingPacketBatch::new(packet_batches))
                             .unwrap()
                     })
                     .unwrap()
