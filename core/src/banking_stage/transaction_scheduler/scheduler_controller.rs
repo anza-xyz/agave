@@ -557,6 +557,7 @@ mod tests {
         let scheduler_config = PrioGraphSchedulerConfig {
             max_cu_per_thread: MAX_BLOCK_UNITS / num_threads as u64,
             max_transactions_per_scheduling_pass: 100_000,
+            look_ahead_window_size: 2048,
         };
         let scheduler = PrioGraphScheduler::new(
             consume_work_senders,

@@ -43,6 +43,7 @@ type SchedulerPrioGraph = PrioGraph<
 pub(crate) struct PrioGraphSchedulerConfig {
     pub max_cu_per_thread: u64,
     pub max_transactions_per_scheduling_pass: usize,
+    pub look_ahead_window_size: usize,
 }
 
 pub(crate) struct PrioGraphScheduler<Tx> {
@@ -50,7 +51,6 @@ pub(crate) struct PrioGraphScheduler<Tx> {
     account_locks: ThreadAwareAccountLocks,
     consume_work_senders: Vec<Sender<ConsumeWork<Tx>>>,
     finished_consume_work_receiver: Receiver<FinishedConsumeWork<Tx>>,
-    look_ahead_window_size: usize,
     prio_graph: SchedulerPrioGraph,
     config: PrioGraphSchedulerConfig,
 }
@@ -67,7 +67,6 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
             account_locks: ThreadAwareAccountLocks::new(num_threads),
             consume_work_senders,
             finished_consume_work_receiver,
-            look_ahead_window_size: 2048,
             prio_graph: PrioGraph::new(passthrough_priority),
             config,
         }
@@ -125,7 +124,7 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
         let mut num_filtered_out: usize = 0;
         let mut total_filter_time_us: u64 = 0;
 
-        let mut window_budget = self.look_ahead_window_size;
+        let mut window_budget = self.config.look_ahead_window_size;
         let mut chunked_pops = |container: &mut S,
                                 prio_graph: &mut PrioGraph<_, _, _, _>,
                                 window_budget: &mut usize| {
@@ -647,6 +646,7 @@ mod tests {
         let scheduler_config = PrioGraphSchedulerConfig {
             max_cu_per_thread: MAX_BLOCK_UNITS / num_threads as u64,
             max_transactions_per_scheduling_pass: 100_000,
+            look_ahead_window_size: 2048,
         };
         let scheduler = PrioGraphScheduler::new(
             consume_work_senders,
@@ -835,7 +835,7 @@ mod tests {
     fn test_schedule_priority_guard() {
         let (mut scheduler, work_receivers, finished_work_sender) = create_test_frame(2);
         // intentionally shorten the look-ahead window to cause unschedulable conflicts
-        scheduler.look_ahead_window_size = 2;
+        scheduler.config.look_ahead_window_size = 2;
 
         let accounts = (0..8).map(|_| Keypair::new()).collect_vec();
         let mut container = create_container([
