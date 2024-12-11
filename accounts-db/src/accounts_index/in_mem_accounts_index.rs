@@ -737,7 +737,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         let entry = map.entry(pubkey);
         m.stop();
         let new_entry_zero_lamports = new_entry.is_zero_lamport();
-        let upsert_reclaim = UpsertReclaim::IgnoreReclaims;
         let (found_in_mem, already_existed) = match entry {
             Entry::Occupied(occupied) => {
                 // in cache, so merge into cache
@@ -747,7 +746,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                     (slot, account_info),
                     None, // should be None because we don't expect a different slot # during index generation
                     &mut Vec::default(),
-                    upsert_reclaim,
+                    UpsertReclaim::IgnoreReclaims,
                 );
                 (
                     true, /* found in mem */
@@ -767,7 +766,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         // There can be no 'other' slot in the list.
                         None,
                         &mut Vec::default(),
-                        upsert_reclaim,
+                        UpsertReclaim::IgnoreReclaims,
                     );
                     vacant.insert(disk_entry);
                     (
