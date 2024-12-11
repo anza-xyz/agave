@@ -1821,23 +1821,17 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         &self,
         f: impl Fn(Vec<(Slot, Pubkey)>) + Sync + Send,
     ) {
-        if self.storage.storage.is_disk_index_enabled() {
-            (0..self.bins())
-                .into_par_iter()
-                .map(|pubkey_bin| {
-                    let r_account_maps = &self.account_maps[pubkey_bin];
+        (0..self.bins())
+            .into_par_iter()
+            .map(|pubkey_bin| {
+                let r_account_maps = &self.account_maps[pubkey_bin];
+                if self.storage.storage.is_disk_index_enabled() {
                     r_account_maps.populate_and_retrieve_duplicate_keys_from_startup()
-                })
-                .for_each(f);
-        } else {
-            (0..self.bins())
-                .into_par_iter()
-                .map(|pubkey_bin| {
-                    let r_account_maps = &self.account_maps[pubkey_bin];
+                } else {
                     r_account_maps.startup_take_duplicates_from_in_memory_only()
-                })
-                .for_each(f);
-        }
+                }
+            })
+            .for_each(f);
     }
 
     /// Updates the given pubkey at the given slot with the new account information.
