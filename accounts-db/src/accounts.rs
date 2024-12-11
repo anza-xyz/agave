@@ -346,7 +346,9 @@ impl Accounts {
         some_account_tuple: Option<(&Pubkey, AccountSharedData, Slot)>,
     ) {
         if let Some(mapped_account_tuple) = some_account_tuple
-            .filter(|(_, account, _)| Self::is_loadable(account.lamports()))
+            .filter(|(_, account, _)| {
+                account.data().len() > 0 || Self::is_loadable(account.lamports())
+            })
             .map(|(pubkey, account, slot)| (*pubkey, account, slot))
         {
             collector.push(mapped_account_tuple)
