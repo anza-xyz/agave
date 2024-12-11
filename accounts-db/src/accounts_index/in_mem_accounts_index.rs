@@ -147,7 +147,7 @@ struct StartupInfoDuplicates<T: IndexValue> {
     duplicates_put_on_disk: HashSet<(Slot, Pubkey)>,
 
     /// (slot, pubkey) pairs that are found to be duplicates when we are
-    /// starting from in-memory only index. This filed is used only when disk
+    /// starting from in-memory only index. This field is used only when disk
     /// index is disabled.
     duplicates_from_in_memory_only: Vec<(Slot, Pubkey)>,
 }
