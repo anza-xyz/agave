@@ -731,7 +731,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             .fetch_add(m.end_as_us(), Ordering::Relaxed);
     }
 
-    pub fn update_duplicates_from_in_memory_only_startup(&self, items: Vec<(Slot, Pubkey)>) {
+    pub fn startup_update_duplicates_from_in_memory_only(&self, items: Vec<(Slot, Pubkey)>) {
         assert!(self.storage.get_startup());
         assert!(self.bucket.is_none());
 

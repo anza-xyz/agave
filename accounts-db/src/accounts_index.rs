@@ -1800,7 +1800,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                     });
 
                 r_account_maps
-                    .update_duplicates_from_in_memory_only_startup(duplicates_from_in_memory);
+                    .startup_update_duplicates_from_in_memory_only(duplicates_from_in_memory);
             }
             insert_time.stop();
             insertion_time.fetch_add(insert_time.as_us(), Ordering::Relaxed);
