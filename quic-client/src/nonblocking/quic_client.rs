@@ -75,7 +75,7 @@ impl QuicLazyInitializedEndpoint {
         let mut endpoint = if let Some(endpoint) = &self.client_endpoint {
             endpoint.clone()
         } else {
-            let config = SocketConfig::default();
+            let config = SocketConfig::default_rw();
             let client_socket = solana_net_utils::bind_in_range_with_config(
                 IpAddr::V4(Ipv4Addr::UNSPECIFIED),
                 VALIDATOR_PORT_RANGE,

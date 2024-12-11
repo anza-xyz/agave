@@ -98,7 +98,7 @@ fn main() -> Result<()> {
     let (_port, read_sockets) = solana_net_utils::multi_bind_in_range_with_config(
         ip_addr,
         (port, port + num_sockets as u16),
-        SocketConfig::default().reuseport(true),
+        SocketConfig::default_rw().reuseport(true),
         num_sockets,
     )
     .unwrap();

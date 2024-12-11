@@ -75,7 +75,7 @@ mod tests {
         let addr = addr_str.parse().unwrap();
         let socket = solana_net_utils::bind_with_any_port_with_config(
             IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-            SocketConfig::default(),
+            SocketConfig::default_rw(),
         )
         .unwrap();
         let connection = UdpClientConnection::new_from_addr(socket, addr);

@@ -574,7 +574,7 @@ mod tests {
                 udp_socket: Arc::new(
                     solana_net_utils::bind_with_any_port_with_config(
                         IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-                        SocketConfig::default(),
+                        SocketConfig::default_rw(),
                     )
                     .expect("Unable to bind to UDP socket"),
                 ),
@@ -588,7 +588,7 @@ mod tests {
                 udp_socket: Arc::new(
                     solana_net_utils::bind_with_any_port_with_config(
                         IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-                        SocketConfig::default(),
+                        SocketConfig::default_rw(),
                     )
                     .map_err(Into::<ClientError>::into)?,
                 ),
