@@ -145,6 +145,11 @@ struct StartupInfoDuplicates<T: IndexValue> {
     duplicates: Vec<(Slot, Pubkey, T)>,
     /// pubkeys that were already added to disk and later found to be duplicates,
     duplicates_put_on_disk: HashSet<(Slot, Pubkey)>,
+
+    /// (slot, pubkey) pairs that are found to be duplicates when we are
+    /// starting from in-memory only index. This filed is used only when disk
+    /// index is disabled.
+    duplicates_from_in_memory_only: Vec<(Slot, Pubkey)>,
 }
 
 #[derive(Default, Debug)]
@@ -153,10 +158,6 @@ struct StartupInfo<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
     insert: Mutex<Vec<(Pubkey, (Slot, U))>>,
     /// pubkeys with more than 1 entry
     duplicates: Mutex<StartupInfoDuplicates<T>>,
-
-    /// (slot, pubkey) pairs that are duplicates when we are starting from in-memory only index.
-    /// And this field is only populated and used when we are building the in-memory only index.
-    duplicates_from_in_memory_only: Mutex<Vec<(Slot, Pubkey)>>,
 }
 
 #[derive(Default, Debug)]
@@ -735,13 +736,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         assert!(self.storage.get_startup());
         assert!(self.bucket.is_none());
 
-        let mut duplicates = self
-            .startup_info
-            .duplicates_from_in_memory_only
-            .lock()
-            .unwrap();
-
-        duplicates.extend(items);
+        let mut duplicates = self.startup_info.duplicates.lock().unwrap();
+        duplicates.duplicates_from_in_memory_only.extend(items);
     }
 
     pub fn insert_new_entry_if_missing_with_lock(
@@ -1173,12 +1169,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     }
 
     pub fn startup_take_duplicates_from_in_memory_only(&self) -> Vec<(Slot, Pubkey)> {
-        let mut duplicates = self
-            .startup_info
-            .duplicates_from_in_memory_only
-            .lock()
-            .unwrap();
-        std::mem::take(&mut *duplicates)
+        let mut duplicates = self.startup_info.duplicates.lock().unwrap();
+        std::mem::take(&mut duplicates.duplicates_from_in_memory_only)
     }
 
     /// synchronize the in-mem index with the disk index
