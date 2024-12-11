@@ -1457,7 +1457,11 @@ pub(crate) mod tests {
         for filter in Vec::<CrdsFilter>::from(filters) {
             let request_bytes = 4 + request_bytes + bincode::serialized_size(&filter).unwrap();
             let request = Protocol::PullRequest(filter, caller.clone());
-            let request = bincode::serialize(&request).unwrap();
+            let request = {
+                let mut buffer = Vec::<u8>::new();
+                request.bincode_serialize(&mut buffer).unwrap();
+                buffer
+            };
             assert!(packet_data_size_range.contains(&request.len()));
             assert_eq!(request.len() as u64, request_bytes);
         }
