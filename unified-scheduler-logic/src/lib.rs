@@ -105,7 +105,7 @@ use {
     std::{collections::VecDeque, mem, sync::Arc},
 };
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SchedulingMode {
     BlockVerification,
     BlockProduction,
