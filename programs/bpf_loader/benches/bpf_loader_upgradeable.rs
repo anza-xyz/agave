@@ -141,6 +141,31 @@ impl TestSetup {
             bincode::serialize(&UpgradeableLoaderInstruction::SetAuthority).unwrap();
     }
 
+    fn prep_close(&mut self) {
+        self.instruction_accounts = vec![
+            AccountMeta {
+                pubkey: self.buffer_address,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: self.authority_address,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: self.authority_address,
+                is_signer: true,
+                is_writable: false,
+            },
+        ];
+
+        // lets use the same account for recipient and authority
+        self.transaction_accounts
+            .push(self.transaction_accounts[1].clone());
+        self.instruction_data = bincode::serialize(&UpgradeableLoaderInstruction::Close).unwrap();
+    }
+
     fn run(&self) {
         mock_process_instruction(
             &self.loader_address,
@@ -337,11 +362,23 @@ fn bench_set_authority(c: &mut Criterion) {
     });
 }
 
+fn bench_close(c: &mut Criterion) {
+    let mut test_setup = TestSetup::new();
+    test_setup.prep_close();
+
+    c.bench_function("close", |bencher| {
+        bencher.iter(|| {
+            test_setup.run();
+        })
+    });
+}
+
 criterion_group!(
     benches,
     bench_initialize_buffer,
     bench_write,
     bench_upgradeable_upgrade,
-    bench_set_authority
+    bench_set_authority,
+    bench_close
 );
 criterion_main!(benches);
