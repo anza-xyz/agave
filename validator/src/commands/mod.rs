@@ -7,5 +7,6 @@ pub mod repair_shred_from_peer;
 pub mod repair_whitelist;
 pub mod set_identity;
 pub mod set_log_filter;
+pub mod set_public_address;
 pub mod staked_nodes_overrides;
 pub mod wait_for_restart_window;

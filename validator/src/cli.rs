@@ -1,8 +1,6 @@
 use {
     crate::commands,
-    clap::{
-        crate_description, crate_name, App, AppSettings, Arg, ArgGroup, ArgMatches, SubCommand,
-    },
+    clap::{crate_description, crate_name, App, AppSettings, Arg, ArgMatches, SubCommand},
     log::warn,
     solana_accounts_db::{
         accounts_db::{
@@ -1749,33 +1747,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         .subcommand(commands::set_log_filter::command(default_args))
         .subcommand(commands::staked_nodes_overrides::command(default_args))
         .subcommand(commands::wait_for_restart_window::command(default_args))
-        .subcommand(
-            SubCommand::with_name("set-public-address")
-                .about("Specify addresses to advertise in gossip")
-                .arg(
-                    Arg::with_name("tpu_addr")
-                        .long("tpu")
-                        .value_name("HOST:PORT")
-                        .takes_value(true)
-                        .validator(solana_net_utils::is_host_port)
-                        .help("TPU address to advertise in gossip"),
-                )
-                .arg(
-                    Arg::with_name("tpu_forwards_addr")
-                        .long("tpu-forwards")
-                        .value_name("HOST:PORT")
-                        .takes_value(true)
-                        .validator(solana_net_utils::is_host_port)
-                        .help("TPU Forwards address to advertise in gossip"),
-                )
-                .group(
-                    ArgGroup::with_name("set_public_address_details")
-                        .args(&["tpu_addr", "tpu_forwards_addr"])
-                        .required(true)
-                        .multiple(true),
-                )
-                .after_help("Note: At least one arg must be used. Using multiple is ok"),
-        );
+        .subcommand(commands::set_public_address::command(default_args));
 }
 
 /// Deprecated argument description should be moved into the [`deprecated_arguments()`] function,
