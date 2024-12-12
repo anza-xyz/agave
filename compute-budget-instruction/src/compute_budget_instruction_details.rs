@@ -48,7 +48,7 @@ pub struct ComputeBudgetInstructionDetails {
     requested_loaded_accounts_data_size_limit: Option<(u8, u32)>,
     num_non_compute_budget_instructions: u16,
     // Additional builtin program counters
-    num_builtin_instructions: u16,
+    num_non_migratable_builtin_instructions: u16,
     num_non_builtin_instructions: u16,
     migrating_builtin_feature_counters: MigrationBuiltinFeatureCounter,
 }
@@ -81,7 +81,8 @@ impl ComputeBudgetInstructionDetails {
                 match filter.get_program_kind(instruction.program_id_index as usize, program_id) {
                     ProgramKind::Builtin => {
                         saturating_add_assign!(
-                            compute_budget_instruction_details.num_builtin_instructions,
+                            compute_budget_instruction_details
+                                .num_non_migratable_builtin_instructions,
                             1
                         );
                     }
@@ -223,7 +224,7 @@ impl ComputeBudgetInstructionDetails {
                     }
                 });
 
-            u32::from(self.num_builtin_instructions)
+            u32::from(self.num_non_migratable_builtin_instructions)
                 .saturating_add(u32::from(num_not_migrated))
                 .saturating_mul(MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT)
                 .saturating_add(
@@ -272,7 +273,7 @@ mod test {
         let expected_details = Ok(ComputeBudgetInstructionDetails {
             requested_heap_size: Some((1, 40 * 1024)),
             num_non_compute_budget_instructions: 2,
-            num_builtin_instructions: 1,
+            num_non_migratable_builtin_instructions: 1,
             num_non_builtin_instructions: 2,
             ..ComputeBudgetInstructionDetails::default()
         });
@@ -330,7 +331,7 @@ mod test {
         let expected_details = Ok(ComputeBudgetInstructionDetails {
             requested_compute_unit_price: Some((1, u64::MAX)),
             num_non_compute_budget_instructions: 2,
-            num_builtin_instructions: 1,
+            num_non_migratable_builtin_instructions: 1,
             num_non_builtin_instructions: 2,
             ..ComputeBudgetInstructionDetails::default()
         });
@@ -360,7 +361,7 @@ mod test {
         let expected_details = Ok(ComputeBudgetInstructionDetails {
             requested_loaded_accounts_data_size_limit: Some((1, u32::MAX)),
             num_non_compute_budget_instructions: 2,
-            num_builtin_instructions: 1,
+            num_non_migratable_builtin_instructions: 1,
             num_non_builtin_instructions: 2,
             ..ComputeBudgetInstructionDetails::default()
         });
@@ -387,7 +388,7 @@ mod test {
         let mut feature_set = FeatureSet::default();
         let ComputeBudgetInstructionDetails {
             num_non_compute_budget_instructions,
-            num_builtin_instructions,
+            num_non_migratable_builtin_instructions,
             num_non_builtin_instructions,
             ..
         } = *instruction_details;
@@ -397,7 +398,8 @@ mod test {
                 0,
             );
             u32::from(num_non_builtin_instructions) * DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
-                + u32::from(num_builtin_instructions) * MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT
+                + u32::from(num_non_migratable_builtin_instructions)
+                    * MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT
         } else {
             u32::from(num_non_compute_budget_instructions) * DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
         };
@@ -421,7 +423,7 @@ mod test {
         // no compute-budget instructions, all default ComputeBudgetLimits except cu-limit
         let instruction_details = ComputeBudgetInstructionDetails {
             num_non_compute_budget_instructions: 4,
-            num_builtin_instructions: 1,
+            num_non_migratable_builtin_instructions: 1,
             num_non_builtin_instructions: 3,
             ..ComputeBudgetInstructionDetails::default()
         };
