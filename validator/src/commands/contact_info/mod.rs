@@ -1,8 +1,21 @@
 use {
-    crate::{admin_rpc_service, cli::DefaultArgs},
+    crate::{admin_rpc_service, cli::DefaultArgs, commands::FromClapArgMatches},
     clap::{App, Arg, ArgMatches, SubCommand},
     std::{path::Path, process::exit},
 };
+
+#[derive(Debug, PartialEq)]
+pub struct ContactInfoArg {
+    pub output: Option<String>,
+}
+
+impl FromClapArgMatches for ContactInfoArg {
+    fn from_clap_arg_match(matches: &ArgMatches) -> Self {
+        ContactInfoArg {
+            output: matches.value_of("output").map(String::from),
+        }
+    }
+}
 
 pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
     SubCommand::with_name("contact-info")
@@ -18,7 +31,8 @@ pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
 }
 
 pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
-    let output_mode = matches.value_of("output");
+    let contact_info_arg = ContactInfoArg::from_clap_arg_match(matches);
+
     let admin_client = admin_rpc_service::connect(ledger_path);
     let contact_info = admin_rpc_service::runtime()
         .block_on(async move { admin_client.await?.contact_info().await })
@@ -26,13 +40,53 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
             eprintln!("Contact info query failed: {err}");
             exit(1);
         });
-    if let Some(mode) = output_mode {
-        match mode {
+    if let Some(mode) = contact_info_arg.output {
+        match mode.as_str() {
             "json" => println!("{}", serde_json::to_string_pretty(&contact_info).unwrap()),
             "json-compact" => print!("{}", serde_json::to_string(&contact_info).unwrap()),
             _ => unreachable!(),
         }
     } else {
         print!("{contact_info}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        crate::commands::tests::{
+            verify_args_struct_by_command, verify_args_struct_by_command_is_error,
+        },
+    };
+
+    #[test]
+    fn verify_args_struct_by_command_contact_info_output_json() {
+        verify_args_struct_by_command(
+            command(&DefaultArgs::default()),
+            vec!["contact-info", "--output", "json"],
+            ContactInfoArg {
+                output: Some("json".to_string()),
+            },
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_contact_info_output_json_compact() {
+        verify_args_struct_by_command(
+            command(&DefaultArgs::default()),
+            vec!["contact-info", "--output", "json-compact"],
+            ContactInfoArg {
+                output: Some("json-compact".to_string()),
+            },
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_contact_info_output_invalid() {
+        verify_args_struct_by_command_is_error::<ContactInfoArg>(
+            command(&DefaultArgs::default()),
+            vec!["contact-info", "--output", "xxx"],
+        );
     }
 }
