@@ -19,7 +19,6 @@ use {
 #[derive(Default)]
 struct TestSetup {
     loader_address: Pubkey,
-    buffer_address: Pubkey,
     authority_address: Pubkey,
     transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
 
@@ -37,6 +36,11 @@ impl TestSetup {
         let buffer_address = Pubkey::new_unique();
         let authority_address = Pubkey::new_unique();
 
+        let instruction_accounts = vec![AccountMeta {
+            pubkey: buffer_address,
+            is_signer: false,
+            is_writable: true,
+        }];
         let transaction_accounts = vec![
             (
                 buffer_address,
@@ -54,43 +58,29 @@ impl TestSetup {
 
         Self {
             loader_address,
-            buffer_address,
             authority_address,
             transaction_accounts,
+            instruction_accounts,
             ..TestSetup::default()
         }
     }
 
     fn prep_initialize_buffer(&mut self) {
-        self.instruction_accounts = vec![
-            AccountMeta {
-                pubkey: self.buffer_address,
-                is_signer: false,
-                is_writable: true,
-            },
-            AccountMeta {
-                pubkey: self.authority_address,
-                is_signer: false,
-                is_writable: false,
-            },
-        ];
+        self.instruction_accounts.push(AccountMeta {
+            pubkey: self.authority_address,
+            is_signer: false,
+            is_writable: false,
+        });
         self.instruction_data =
             bincode::serialize(&UpgradeableLoaderInstruction::InitializeBuffer).unwrap();
     }
 
     fn prep_write(&mut self) {
-        self.instruction_accounts = vec![
-            AccountMeta {
-                pubkey: self.buffer_address,
-                is_signer: false,
-                is_writable: true,
-            },
-            AccountMeta {
-                pubkey: self.authority_address,
-                is_signer: true,
-                is_writable: false,
-            },
-        ];
+        self.instruction_accounts.push(AccountMeta {
+            pubkey: self.authority_address,
+            is_signer: true,
+            is_writable: false,
+        });
 
         self.transaction_accounts[0]
             .1
@@ -108,23 +98,16 @@ impl TestSetup {
 
     fn prep_set_authority(&mut self, checked: bool) {
         let new_authority_address = Pubkey::new_unique();
-        self.instruction_accounts = vec![
-            AccountMeta {
-                pubkey: self.buffer_address,
-                is_signer: false,
-                is_writable: true,
-            },
-            AccountMeta {
-                pubkey: self.authority_address,
-                is_signer: true,
-                is_writable: false,
-            },
-            AccountMeta {
-                pubkey: new_authority_address,
-                is_signer: checked,
-                is_writable: false,
-            },
-        ];
+        self.instruction_accounts.push(AccountMeta {
+            pubkey: self.authority_address,
+            is_signer: true,
+            is_writable: false,
+        });
+        self.instruction_accounts.push(AccountMeta {
+            pubkey: new_authority_address,
+            is_signer: checked,
+            is_writable: false,
+        });
 
         self.transaction_accounts[0]
             .1
@@ -146,23 +129,16 @@ impl TestSetup {
     }
 
     fn prep_close(&mut self) {
-        self.instruction_accounts = vec![
-            AccountMeta {
-                pubkey: self.buffer_address,
-                is_signer: false,
-                is_writable: true,
-            },
-            AccountMeta {
-                pubkey: self.authority_address,
-                is_signer: false,
-                is_writable: true,
-            },
-            AccountMeta {
-                pubkey: self.authority_address,
-                is_signer: true,
-                is_writable: false,
-            },
-        ];
+        self.instruction_accounts.push(AccountMeta {
+            pubkey: self.authority_address,
+            is_signer: false,
+            is_writable: true,
+        });
+        self.instruction_accounts.push(AccountMeta {
+            pubkey: self.authority_address,
+            is_signer: true,
+            is_writable: false,
+        });
 
         // lets use the same account for recipient and authority
         self.transaction_accounts
