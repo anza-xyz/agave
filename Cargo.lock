@@ -173,6 +173,7 @@ dependencies = [
  "rayon",
  "regex",
  "serde",
+ "serde_bytes",
  "serde_derive",
  "serde_json",
  "signal-hook",
