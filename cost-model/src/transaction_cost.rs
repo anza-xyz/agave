@@ -1,5 +1,5 @@
 #[cfg(feature = "dev-context-only-utils")]
-use solana_runtime_transaction::compute_budget_instruction_details::ComputeBudgetInstructionDetails;
+use solana_compute_budget_instruction::compute_budget_instruction_details::ComputeBudgetInstructionDetails;
 use {
     crate::block_cost_limits,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,

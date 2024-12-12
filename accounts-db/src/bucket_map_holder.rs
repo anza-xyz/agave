@@ -134,7 +134,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
     /// return when the bg threads have reached an 'idle' state
     pub fn wait_for_idle(&self) {
         assert!(self.get_startup());
-        if self.disk.is_none() {
+        if !self.is_disk_index_enabled() {
             return;
         }
 
@@ -315,7 +315,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> BucketMapHolder<T, U>
         can_advance_age: bool,
     ) {
         let bins = in_mem.len();
-        let flush = self.disk.is_some();
+        let flush = self.is_disk_index_enabled();
         let mut throttling_wait_ms = None;
         loop {
             if !flush {

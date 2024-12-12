@@ -1330,9 +1330,9 @@ dependencies = [
 
 [[package]]
 name = "chrono"
-version = "0.4.38"
+version = "0.4.39"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a21f936df1771bf62b77f047b726c4625ff2e8aa607c01ec06e5a05bd8463401"
+checksum = "7e36cc9d416881d2e24f9a963be5fb1cd90966419ac844274161d10488b3e825"
 dependencies = [
  "android-tzdata",
  "iana-time-zone",
@@ -1546,18 +1546,18 @@ dependencies = [
 
 [[package]]
 name = "const_format"
-version = "0.2.33"
+version = "0.2.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "50c655d81ff1114fb0dcdea9225ea9f0cc712a6f8d189378e82bdf62a473a64b"
+checksum = "126f97965c8ad46d6d9163268ff28432e8f6a1196a55578867832e3049df63dd"
 dependencies = [
  "const_format_proc_macros",
 ]
 
 [[package]]
 name = "const_format_proc_macros"
-version = "0.2.33"
+version = "0.2.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eff1a44b93f47b1bac19a27932f5c591e43d1ba357ee4f61526c8a25603f0eb1"
+checksum = "1d57c2eccfb16dbac1f4e61e206105db5820c9d26c3c472bc17c774259ef7744"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3491,9 +3491,9 @@ checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
 name = "libc"
-version = "0.2.167"
+version = "0.2.168"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09d6582e104315a817dff97f75133544b2e094ee22447d2acf4a74e189ba06fc"
+checksum = "5aaeb2981e0606ca11d79718f8bb01164f1d6ed75080182d3abf017e6d244b6d"
 
 [[package]]
 name = "libloading"
@@ -6646,6 +6646,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-compute-budget-instruction"
+version = "2.2.0"
+dependencies = [
+ "bincode",
+ "criterion",
+ "log",
+ "rand 0.8.5",
+ "solana-builtins-default-costs",
+ "solana-compute-budget",
+ "solana-program",
+ "solana-pubkey",
+ "solana-sdk",
+ "solana-svm-transaction",
+ "thiserror 2.0.6",
+]
+
+[[package]]
 name = "solana-compute-budget-interface"
 version = "2.2.0"
 dependencies = [
@@ -6672,9 +6689,12 @@ version = "2.2.0"
 dependencies = [
  "criterion",
  "solana-compute-budget",
+ "solana-compute-budget-instruction",
+ "solana-compute-budget-interface",
  "solana-compute-budget-program",
- "solana-runtime-transaction",
- "solana-sdk",
+ "solana-feature-set",
+ "solana-message",
+ "solana-sdk-ids",
  "solana-svm-transaction",
 ]
 
@@ -6763,6 +6783,7 @@ dependencies = [
  "solana-builtins-default-costs",
  "solana-client",
  "solana-compute-budget",
+ "solana-compute-budget-instruction",
  "solana-compute-budget-program",
  "solana-connection-cache",
  "solana-core",
@@ -6803,6 +6824,7 @@ dependencies = [
  "solana-tpu-client",
  "solana-transaction-status",
  "solana-turbine",
+ "solana-unified-scheduler-logic",
  "solana-unified-scheduler-pool",
  "solana-version",
  "solana-vote",
@@ -6833,6 +6855,7 @@ dependencies = [
  "rand 0.8.5",
  "solana-builtins-default-costs",
  "solana-compute-budget",
+ "solana-compute-budget-instruction",
  "solana-compute-budget-program",
  "solana-cost-model",
  "solana-feature-set",
@@ -7310,6 +7333,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-hard-forks"
+version = "2.2.0"
+dependencies = [
+ "byteorder",
+ "serde",
+ "serde_derive",
+ "solana-frozen-abi",
+ "solana-frozen-abi-macro",
+]
+
+[[package]]
 name = "solana-hash"
 version = "2.2.0"
 dependencies = [
@@ -7363,6 +7397,22 @@ dependencies = [
  "solana-instruction",
  "solana-pubkey",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "solana-instructions-sysvar"
+version = "2.2.0"
+dependencies = [
+ "bitflags 2.6.0",
+ "qualifier_attr",
+ "solana-account-info",
+ "solana-instruction",
+ "solana-program-error",
+ "solana-pubkey",
+ "solana-sanitize",
+ "solana-sdk-ids",
+ "solana-serialize-utils",
+ "solana-sysvar-id",
 ]
 
 [[package]]
@@ -7763,6 +7813,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-nonce-account"
+version = "2.2.0"
+dependencies = [
+ "solana-account",
+ "solana-fee-calculator",
+ "solana-hash",
+ "solana-nonce",
+ "solana-pubkey",
+ "solana-sdk-ids",
+]
+
+[[package]]
 name = "solana-notifier"
 version = "2.2.0"
 dependencies = [
@@ -8004,6 +8066,7 @@ dependencies = [
  "solana-frozen-abi-macro",
  "solana-hash",
  "solana-instruction",
+ "solana-instructions-sysvar",
  "solana-keccak-hasher",
  "solana-last-restart-slot",
  "solana-logger",
@@ -8088,7 +8151,6 @@ dependencies = [
  "bincode",
  "enum-iterator",
  "itertools 0.12.1",
- "libc",
  "log",
  "num-derive",
  "num-traits",
@@ -8107,7 +8169,6 @@ dependencies = [
  "solana-instruction",
  "solana-last-restart-slot",
  "solana-log-collector",
- "solana-logger",
  "solana-measure",
  "solana-metrics",
  "solana-precompiles",
@@ -8285,7 +8346,10 @@ dependencies = [
  "qstring",
  "semver 1.0.23",
  "solana-derivation-path",
- "solana-sdk",
+ "solana-offchain-message",
+ "solana-pubkey",
+ "solana-signature",
+ "solana-signer",
  "thiserror 2.0.6",
  "uriparse",
 ]
@@ -8589,6 +8653,7 @@ dependencies = [
  "solana-bucket-map",
  "solana-builtins",
  "solana-compute-budget",
+ "solana-compute-budget-instruction",
  "solana-config-program",
  "solana-cost-model",
  "solana-feature-set",
@@ -8638,8 +8703,8 @@ dependencies = [
  "criterion",
  "log",
  "rand 0.8.5",
- "solana-builtins-default-costs",
  "solana-compute-budget",
+ "solana-compute-budget-instruction",
  "solana-program",
  "solana-pubkey",
  "solana-sdk",
@@ -8705,11 +8770,14 @@ dependencies = [
  "solana-fee-structure",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
+ "solana-hard-forks",
  "solana-inflation",
  "solana-instruction",
+ "solana-instructions-sysvar",
  "solana-keypair",
  "solana-logger",
  "solana-native-token",
+ "solana-nonce-account",
  "solana-offchain-message",
  "solana-packet",
  "solana-poh-config",
@@ -8738,7 +8806,6 @@ dependencies = [
  "solana-signature",
  "solana-signer",
  "solana-system-transaction",
- "solana-sysvar",
  "solana-time-utils",
  "solana-transaction",
  "solana-transaction-context",
@@ -8783,6 +8850,7 @@ dependencies = [
  "solana-feature-set",
  "solana-hash",
  "solana-instruction",
+ "solana-instructions-sysvar",
  "solana-keccak-hasher",
  "solana-keypair",
  "solana-logger",
@@ -8793,7 +8861,6 @@ dependencies = [
  "solana-sdk-ids",
  "solana-secp256k1-program",
  "solana-signer",
- "solana-sysvar",
 ]
 
 [[package]]
@@ -9151,6 +9218,7 @@ dependencies = [
  "shuttle",
  "solana-bpf-loader-program",
  "solana-compute-budget",
+ "solana-compute-budget-instruction",
  "solana-compute-budget-program",
  "solana-ed25519-program",
  "solana-feature-set",
@@ -9162,7 +9230,6 @@ dependencies = [
  "solana-logger",
  "solana-measure",
  "solana-program-runtime",
- "solana-runtime-transaction",
  "solana-sdk",
  "solana-secp256r1-program",
  "solana-svm",
@@ -9234,12 +9301,25 @@ dependencies = [
  "log",
  "serde",
  "serde_derive",
+ "solana-account",
+ "solana-bincode",
  "solana-compute-budget",
  "solana-feature-set",
+ "solana-hash",
+ "solana-instruction",
  "solana-log-collector",
  "solana-logger",
+ "solana-nonce",
+ "solana-packet",
  "solana-program-runtime",
+ "solana-pubkey",
+ "solana-rent",
  "solana-sdk",
+ "solana-sdk-ids",
+ "solana-sha256-hasher",
+ "solana-system-interface",
+ "solana-sysvar",
+ "solana-transaction-context",
  "solana-type-overrides",
 ]
 
@@ -9263,11 +9343,9 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "bincode",
- "bitflags 2.6.0",
  "bytemuck",
  "bytemuck_derive",
  "lazy_static",
- "qualifier_attr",
  "serde",
  "serde_derive",
  "serial_test",
@@ -9281,6 +9359,7 @@ dependencies = [
  "solana-frozen-abi-macro",
  "solana-hash",
  "solana-instruction",
+ "solana-instructions-sysvar",
  "solana-last-restart-slot",
  "solana-msg",
  "solana-program",
@@ -9293,7 +9372,6 @@ dependencies = [
  "solana-sdk",
  "solana-sdk-ids",
  "solana-sdk-macro",
- "solana-serialize-utils",
  "solana-sha256-hasher",
  "solana-slot-hashes",
  "solana-slot-history",
@@ -9874,9 +9952,10 @@ dependencies = [
  "bytemuck",
  "num-derive",
  "num-traits",
+ "solana-instruction",
  "solana-log-collector",
  "solana-program-runtime",
- "solana-sdk",
+ "solana-sdk-ids",
  "solana-zk-sdk",
 ]
 
@@ -9946,9 +10025,10 @@ dependencies = [
  "num-derive",
  "num-traits",
  "solana-feature-set",
+ "solana-instruction",
  "solana-log-collector",
  "solana-program-runtime",
- "solana-sdk",
+ "solana-sdk-ids",
  "solana-zk-token-sdk",
 ]
 
@@ -9958,9 +10038,17 @@ version = "2.2.0"
 dependencies = [
  "bytemuck",
  "curve25519-dalek 4.1.3",
+ "solana-account",
  "solana-compute-budget",
+ "solana-compute-budget-interface",
+ "solana-instruction",
+ "solana-keypair",
  "solana-program-test",
- "solana-sdk",
+ "solana-pubkey",
+ "solana-signer",
+ "solana-system-interface",
+ "solana-transaction",
+ "solana-transaction-error",
  "solana-zk-token-sdk",
 ]
 

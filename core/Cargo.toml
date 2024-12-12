@@ -50,6 +50,7 @@ solana-bloom = { workspace = true }
 solana-builtins-default-costs = { workspace = true }
 solana-client = { workspace = true }
 solana-compute-budget = { workspace = true }
+solana-compute-budget-instruction = { workspace = true }
 solana-connection-cache = { workspace = true }
 solana-cost-model = { workspace = true }
 solana-entry = { workspace = true }
@@ -119,6 +120,7 @@ solana-program-runtime = { workspace = true }
 solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
 solana-stake-program = { workspace = true }
 solana-system-program = { workspace = true }
+solana-unified-scheduler-logic = { workspace = true }
 solana-unified-scheduler-pool = { workspace = true, features = [
     "dev-context-only-utils",
 ] }

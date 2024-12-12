@@ -27,16 +27,16 @@
 //!
 //! [`secp256k1_instruction`]: https://docs.rs/solana-sdk/latest/solana_sdk/secp256k1_instruction/index.html
 
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
 #![allow(clippy::arithmetic_side_effects)]
 
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
-#[deprecated(since = "2.2.0", note = "Use solana-instruction crate instead")]
-pub use solana_instruction::{BorrowedAccountMeta, BorrowedInstruction};
 pub use solana_sdk_ids::sysvar::instructions::{check_id, id, ID};
 #[cfg(not(target_os = "solana"))]
 use {
     bitflags::bitflags,
+    solana_instruction::BorrowedInstruction,
     solana_serialize_utils::{append_slice, append_u16, append_u8},
 };
 use {
@@ -284,11 +284,6 @@ mod tests {
         solana_pubkey::Pubkey,
         solana_sanitize::SanitizeError,
         solana_sdk_ids::sysvar::instructions::id,
-        solana_sysvar::instructions::{
-            construct_instructions_data, deserialize_instruction, get_instruction_relative,
-            load_current_index_checked, load_instruction_at_checked, serialize_instructions,
-            store_current_index,
-        },
     };
 
     #[test]

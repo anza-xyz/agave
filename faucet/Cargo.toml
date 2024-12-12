@@ -27,7 +27,7 @@ solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-native-token = { workspace = true }
 solana-packet = { workspace = true }
-solana-pubkey = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
 solana-signer = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-system-transaction = { workspace = true }
@@ -36,9 +36,6 @@ solana-version = { workspace = true }
 spl-memo = { workspace = true, features = ["no-entrypoint"] }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
-
-[dev-dependencies]
-solana-pubkey = { workspace = true, features = ["rand"] }
 
 [lib]
 crate-type = ["lib"]

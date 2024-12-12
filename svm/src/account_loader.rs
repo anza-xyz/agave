@@ -20,7 +20,6 @@ use {
         rent::RentDue,
         rent_collector::{CollectedInfo, RENT_EXEMPT_RENT_EPOCH},
         rent_debits::RentDebits,
-        saturating_add_assign,
         sysvar::{
             self,
             instructions::{construct_instructions_data, BorrowedAccountMeta, BorrowedInstruction},
@@ -32,7 +31,11 @@ use {
     solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_system_program::{get_system_account_kind, SystemAccountKind},
-    std::{collections::HashMap, num::NonZeroU32, sync::Arc},
+    std::{
+        collections::HashMap,
+        num::{NonZeroU32, Saturating},
+        sync::Arc,
+    },
 };
 
 // for the load instructions
@@ -431,7 +434,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     let mut accounts = Vec::with_capacity(account_keys.len());
     let mut validated_loaders = AHashSet::with_capacity(PROGRAM_OWNERS.len());
     let mut rent_debits = RentDebits::default();
-    let mut accumulated_accounts_data_size: u32 = 0;
+    let mut accumulated_accounts_data_size: Saturating<u32> = Saturating(0);
 
     let mut collect_loaded_account = |key, loaded_account| -> Result<()> {
         let LoadedTransactionAccount {
@@ -564,7 +567,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
         program_indices,
         rent: tx_rent,
         rent_debits,
-        loaded_accounts_data_size: accumulated_accounts_data_size,
+        loaded_accounts_data_size: accumulated_accounts_data_size.0,
     })
 }
 
@@ -637,7 +640,7 @@ fn account_shared_data_from_program(
 /// `accumulated_accounts_data_size` exceeds
 /// `requested_loaded_accounts_data_size_limit`.
 fn accumulate_and_check_loaded_account_data_size(
-    accumulated_loaded_accounts_data_size: &mut u32,
+    accumulated_loaded_accounts_data_size: &mut Saturating<u32>,
     account_data_size: usize,
     requested_loaded_accounts_data_size_limit: NonZeroU32,
     error_metrics: &mut TransactionErrorMetrics,
@@ -646,8 +649,8 @@ fn accumulate_and_check_loaded_account_data_size(
         error_metrics.max_loaded_accounts_data_size_exceeded += 1;
         return Err(TransactionError::MaxLoadedAccountsDataSizeExceeded);
     };
-    saturating_add_assign!(*accumulated_loaded_accounts_data_size, account_data_size);
-    if *accumulated_loaded_accounts_data_size > requested_loaded_accounts_data_size_limit.get() {
+    *accumulated_loaded_accounts_data_size += account_data_size;
+    if accumulated_loaded_accounts_data_size.0 > requested_loaded_accounts_data_size_limit.get() {
         error_metrics.max_loaded_accounts_data_size_exceeded += 1;
         Err(TransactionError::MaxLoadedAccountsDataSizeExceeded)
     } else {
@@ -906,7 +909,7 @@ mod tests {
 
         let load_results = load_accounts_aux_test(tx, &accounts, &mut error_metrics);
 
-        assert_eq!(error_metrics.account_not_found, 1);
+        assert_eq!(error_metrics.account_not_found.0, 1);
         assert!(matches!(
             load_results,
             TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
@@ -945,7 +948,7 @@ mod tests {
         let loaded_accounts =
             load_accounts_with_excluded_features(tx, &accounts, &mut error_metrics, None);
 
-        assert_eq!(error_metrics.account_not_found, 0);
+        assert_eq!(error_metrics.account_not_found.0, 0);
         match &loaded_accounts {
             TransactionLoadResult::Loaded(loaded_transaction) => {
                 assert_eq!(loaded_transaction.accounts.len(), 3);
@@ -986,7 +989,7 @@ mod tests {
 
         let load_results = load_accounts_aux_test(tx, &accounts, &mut error_metrics);
 
-        assert_eq!(error_metrics.account_not_found, 1);
+        assert_eq!(error_metrics.account_not_found.0, 1);
         assert!(matches!(
             load_results,
             TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
@@ -1030,7 +1033,7 @@ mod tests {
             &mut feature_set,
         );
 
-        assert_eq!(error_metrics.invalid_program_for_execution, 1);
+        assert_eq!(error_metrics.invalid_program_for_execution.0, 1);
         assert!(matches!(
             load_results,
             TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
@@ -1081,7 +1084,7 @@ mod tests {
         let loaded_accounts =
             load_accounts_with_excluded_features(tx, &accounts, &mut error_metrics, None);
 
-        assert_eq!(error_metrics.account_not_found, 0);
+        assert_eq!(error_metrics.account_not_found.0, 0);
         match &loaded_accounts {
             TransactionLoadResult::Loaded(loaded_transaction) => {
                 assert_eq!(loaded_transaction.accounts.len(), 3);
@@ -1188,7 +1191,7 @@ mod tests {
     #[test]
     fn test_accumulate_and_check_loaded_account_data_size() {
         let mut error_metrics = TransactionErrorMetrics::default();
-        let mut accumulated_data_size: u32 = 0;
+        let mut accumulated_data_size: Saturating<u32> = Saturating(0);
         let data_size: usize = 123;
         let requested_data_size_limit = NonZeroU32::new(data_size as u32).unwrap();
 
@@ -1200,7 +1203,7 @@ mod tests {
             &mut error_metrics
         )
         .is_ok());
-        assert_eq!(data_size as u32, accumulated_data_size);
+        assert_eq!(data_size as u32, accumulated_data_size.0);
 
         // fail - loading more data that would exceed limit
         let another_byte: usize = 1;
