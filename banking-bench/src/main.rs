@@ -554,11 +554,6 @@ fn main() {
             bank = bank_forks.read().unwrap().working_bank();
             insert_time.stop();
 
-            // set cost tracker limits to MAX so it will not filter out TXs
-            bank.write_cost_tracker()
-                .unwrap()
-                .set_limits(u64::MAX, u64::MAX, u64::MAX);
-
             assert!(poh_recorder.read().unwrap().bank().is_none());
             poh_recorder
                 .write()
