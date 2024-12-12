@@ -6,7 +6,6 @@ use {
     rolling_file::{RollingCondition, RollingConditionBasic, RollingFileAppender},
     solana_perf::packet::PacketBatch,
     solana_sdk::{hash::Hash, slot_history::Slot},
-    solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{
         fs::{create_dir_all, remove_dir_all},
         io::{self, Write},
@@ -230,8 +229,8 @@ impl BankingTracer {
         self.active_tracer.is_some()
     }
 
-    pub fn create_channels(&self, pool: Option<&Arc<DefaultSchedulerPool>>) -> Channels {
-        if let Some(true) = pool.map(|pool| pool.block_production_supported()) {
+    pub fn create_channels(&self, unify_channels: bool) -> Channels {
+        if unify_channels {
             // Returning the same channel is needed when unified scheduler supports block
             // production because unified scheduler doesn't distinguish them and treats them as
             // unified as the single source of incoming transactions. This is to reduce the number

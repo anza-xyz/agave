@@ -354,11 +354,6 @@ where
         self.scheduler_inners.lock().expect("not poisoned").len()
     }
 
-    pub fn block_production_supported(&self) -> bool {
-        // to be implemented later, for now always pretend as if block production isn't supported
-        false
-    }
-
     pub fn default_handler_count() -> usize {
         Self::calculate_default_handler_count(
             thread::available_parallelism()

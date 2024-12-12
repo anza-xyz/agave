@@ -881,7 +881,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = banking_tracer.create_channels(None);
+        } = banking_tracer.create_channels(false);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         {
             let blockstore = Arc::new(
@@ -937,7 +937,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = banking_tracer.create_channels(None);
+        } = banking_tracer.create_channels(false);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         {
             let blockstore = Arc::new(
@@ -1019,7 +1019,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = banking_tracer.create_channels(None);
+        } = banking_tracer.create_channels(false);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         {
             let blockstore = Arc::new(
@@ -1157,7 +1157,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = banking_tracer.create_channels(None);
+        } = banking_tracer.create_channels(false);
 
         // Process a batch that includes a transaction that receives two lamports.
         let alice = Keypair::new();
@@ -1384,7 +1384,7 @@ mod tests {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = banking_tracer.create_channels(None);
+        } = banking_tracer.create_channels(false);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         {
             let blockstore = Arc::new(

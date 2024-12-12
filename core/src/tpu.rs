@@ -163,7 +163,7 @@ impl Tpu {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = banking_tracer.create_channels(None /*unified_scheduler_pool.as_ref()*/);
+        } = banking_tracer.create_channels(false);
 
         // Streamer for Votes:
         let SpawnServerResult {

@@ -449,7 +449,7 @@ fn main() {
         tpu_vote_receiver,
         gossip_vote_sender,
         gossip_vote_receiver,
-    } = banking_tracer.create_channels(None /*scheduler_pool.as_ref()*/);
+    } = banking_tracer.create_channels(false);
     let cluster_info = {
         let keypair = Arc::new(Keypair::new());
         let node = Node::new_localhost_with_pubkey(&keypair.pubkey());

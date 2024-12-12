@@ -766,7 +766,7 @@ impl BankingSimulator {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = retracer.create_channels(None /*unified_scheduler_pool.as_ref()*/);
+        } = retracer.create_channels(false);
 
         let connection_cache = Arc::new(ConnectionCache::new("connection_cache_sim"));
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
