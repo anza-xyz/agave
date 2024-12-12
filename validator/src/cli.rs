@@ -1737,35 +1737,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         .subcommand(commands::exit::command(default_args))
         .subcommand(commands::authorized_voter::command(default_args))
         .subcommand(commands::contact_info::command(default_args))
-        .subcommand(
-            SubCommand::with_name("repair-shred-from-peer")
-                .about("Request a repair from the specified validator")
-                .arg(
-                    Arg::with_name("pubkey")
-                        .long("pubkey")
-                        .value_name("PUBKEY")
-                        .required(false)
-                        .takes_value(true)
-                        .validator(is_pubkey)
-                        .help("Identity pubkey of the validator to repair from"),
-                )
-                .arg(
-                    Arg::with_name("slot")
-                        .long("slot")
-                        .value_name("SLOT")
-                        .takes_value(true)
-                        .validator(is_parsable::<u64>)
-                        .help("Slot to repair"),
-                )
-                .arg(
-                    Arg::with_name("shred")
-                        .long("shred")
-                        .value_name("SHRED")
-                        .takes_value(true)
-                        .validator(is_parsable::<u64>)
-                        .help("Shred to repair"),
-                ),
-        )
+        .subcommand(commands::repair_shred_from_peer::command(default_args))
         .subcommand(
             SubCommand::with_name("repair-whitelist")
                 .about("Manage the validator's repair protocol whitelist")
