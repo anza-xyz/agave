@@ -14,7 +14,7 @@ use {
         hidden_unless_forced,
         input_validators::{
             is_keypair, is_keypair_or_ask_keyword, is_parsable, is_pow2, is_pubkey,
-            is_pubkey_or_keypair, is_slot, is_url_or_moniker, is_valid_percentage, is_within_range,
+            is_pubkey_or_keypair, is_slot, is_url_or_moniker, is_within_range,
             validate_maximum_full_snapshot_archives_to_retain,
             validate_maximum_incremental_snapshot_archives_to_retain,
         },
@@ -1734,58 +1734,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         .args(&thread_args(&default_args.thread_args))
         .args(&get_deprecated_arguments())
         .after_help("The default subcommand is run")
-        .subcommand(
-            SubCommand::with_name("exit")
-                .about("Send an exit request to the validator")
-                .arg(
-                    Arg::with_name("force")
-                        .short("f")
-                        .long("force")
-                        .takes_value(false)
-                        .help(
-                            "Request the validator exit immediately instead of waiting for a \
-                             restart window",
-                        ),
-                )
-                .arg(
-                    Arg::with_name("monitor")
-                        .short("m")
-                        .long("monitor")
-                        .takes_value(false)
-                        .help("Monitor the validator after sending the exit request"),
-                )
-                .arg(
-                    Arg::with_name("min_idle_time")
-                        .long("min-idle-time")
-                        .takes_value(true)
-                        .validator(is_parsable::<usize>)
-                        .value_name("MINUTES")
-                        .default_value(&default_args.exit_min_idle_time)
-                        .help(
-                            "Minimum time that the validator should not be leader before \
-                             restarting",
-                        ),
-                )
-                .arg(
-                    Arg::with_name("max_delinquent_stake")
-                        .long("max-delinquent-stake")
-                        .takes_value(true)
-                        .validator(is_valid_percentage)
-                        .default_value(&default_args.exit_max_delinquent_stake)
-                        .value_name("PERCENT")
-                        .help("The maximum delinquent stake % permitted for an exit"),
-                )
-                .arg(
-                    Arg::with_name("skip_new_snapshot_check")
-                        .long("skip-new-snapshot-check")
-                        .help("Skip check for a new snapshot"),
-                )
-                .arg(
-                    Arg::with_name("skip_health_check")
-                        .long("skip-health-check")
-                        .help("Skip health check"),
-                ),
-        )
+        .subcommand(commands::exit::command(default_args))
         .subcommand(commands::authorized_voter::command(default_args))
         .subcommand(
             SubCommand::with_name("contact-info")

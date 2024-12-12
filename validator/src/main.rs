@@ -290,41 +290,7 @@ pub fn main() {
         }
         ("init", _) => Operation::Initialize,
         ("exit", Some(subcommand_matches)) => {
-            let min_idle_time = value_t_or_exit!(subcommand_matches, "min_idle_time", usize);
-            let force = subcommand_matches.is_present("force");
-            let monitor = subcommand_matches.is_present("monitor");
-            let skip_new_snapshot_check = subcommand_matches.is_present("skip_new_snapshot_check");
-            let skip_health_check = subcommand_matches.is_present("skip_health_check");
-            let max_delinquent_stake =
-                value_t_or_exit!(subcommand_matches, "max_delinquent_stake", u8);
-
-            if !force {
-                commands::wait_for_restart_window::wait_for_restart_window(
-                    &ledger_path,
-                    None,
-                    min_idle_time,
-                    max_delinquent_stake,
-                    skip_new_snapshot_check,
-                    skip_health_check,
-                )
-                .unwrap_or_else(|err| {
-                    println!("{err}");
-                    exit(1);
-                });
-            }
-
-            let admin_client = admin_rpc_service::connect(&ledger_path);
-            admin_rpc_service::runtime()
-                .block_on(async move { admin_client.await?.exit().await })
-                .unwrap_or_else(|err| {
-                    println!("exit request failed: {err}");
-                    exit(1);
-                });
-            println!("Exit request sent");
-
-            if monitor {
-                commands::monitor::monitor_validator(&ledger_path);
-            }
+            commands::exit::execute(subcommand_matches, &ledger_path);
             return;
         }
         ("monitor", _) => {
