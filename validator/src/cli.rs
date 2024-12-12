@@ -1738,50 +1738,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         .subcommand(commands::authorized_voter::command(default_args))
         .subcommand(commands::contact_info::command(default_args))
         .subcommand(commands::repair_shred_from_peer::command(default_args))
-        .subcommand(
-            SubCommand::with_name("repair-whitelist")
-                .about("Manage the validator's repair protocol whitelist")
-                .setting(AppSettings::SubcommandRequiredElseHelp)
-                .setting(AppSettings::InferSubcommands)
-                .subcommand(
-                    SubCommand::with_name("get")
-                        .about("Display the validator's repair protocol whitelist")
-                        .arg(
-                            Arg::with_name("output")
-                                .long("output")
-                                .takes_value(true)
-                                .value_name("MODE")
-                                .possible_values(&["json", "json-compact"])
-                                .help("Output display mode"),
-                        ),
-                )
-                .subcommand(
-                    SubCommand::with_name("set")
-                        .about("Set the validator's repair protocol whitelist")
-                        .setting(AppSettings::ArgRequiredElseHelp)
-                        .arg(
-                            Arg::with_name("whitelist")
-                                .long("whitelist")
-                                .validator(is_pubkey)
-                                .value_name("VALIDATOR IDENTITY")
-                                .multiple(true)
-                                .takes_value(true)
-                                .help("Set the validator's repair protocol whitelist"),
-                        )
-                        .after_help(
-                            "Note: repair protocol whitelist changes only apply to the currently \
-                             running validator instance",
-                        ),
-                )
-                .subcommand(
-                    SubCommand::with_name("remove-all")
-                        .about("Clear the validator's repair protocol whitelist")
-                        .after_help(
-                            "Note: repair protocol whitelist changes only apply to the currently \
-                             running validator instance",
-                        ),
-                ),
-        )
+        .subcommand(commands::repair_whitelist::command(default_args))
         .subcommand(
             SubCommand::with_name("init").about("Initialize the ledger directory then exit"),
         )

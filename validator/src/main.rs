@@ -96,22 +96,6 @@ enum Operation {
 
 const MILLIS_PER_SECOND: u64 = 1000;
 
-fn set_repair_whitelist(
-    ledger_path: &Path,
-    whitelist: Vec<Pubkey>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let admin_client = admin_rpc_service::connect(ledger_path);
-    admin_rpc_service::runtime()
-        .block_on(async move { admin_client.await?.set_repair_whitelist(whitelist).await })
-        .map_err(|err| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("setRepairWhitelist request failed: {err}"),
-            )
-        })?;
-    Ok(())
-}
-
 // This function is duplicated in ledger-tool/src/main.rs...
 fn hardforks_of(matches: &ArgMatches<'_>, name: &str) -> Option<Vec<Slot>> {
     if matches.is_present(name) {
@@ -233,57 +217,8 @@ pub fn main() {
             return;
         }
         ("repair-whitelist", Some(repair_whitelist_subcommand_matches)) => {
-            match repair_whitelist_subcommand_matches.subcommand() {
-                ("get", Some(subcommand_matches)) => {
-                    let output_mode = subcommand_matches.value_of("output");
-                    let admin_client = admin_rpc_service::connect(&ledger_path);
-                    let repair_whitelist = admin_rpc_service::runtime()
-                        .block_on(async move { admin_client.await?.repair_whitelist().await })
-                        .unwrap_or_else(|err| {
-                            eprintln!("Repair whitelist query failed: {err}");
-                            exit(1);
-                        });
-                    if let Some(mode) = output_mode {
-                        match mode {
-                            "json" => println!(
-                                "{}",
-                                serde_json::to_string_pretty(&repair_whitelist).unwrap()
-                            ),
-                            "json-compact" => {
-                                print!("{}", serde_json::to_string(&repair_whitelist).unwrap())
-                            }
-                            _ => unreachable!(),
-                        }
-                    } else {
-                        print!("{repair_whitelist}");
-                    }
-                    return;
-                }
-                ("set", Some(subcommand_matches)) => {
-                    let whitelist = if subcommand_matches.is_present("whitelist") {
-                        let validators_set: HashSet<_> =
-                            values_t_or_exit!(subcommand_matches, "whitelist", Pubkey)
-                                .into_iter()
-                                .collect();
-                        validators_set.into_iter().collect::<Vec<_>>()
-                    } else {
-                        return;
-                    };
-                    set_repair_whitelist(&ledger_path, whitelist).unwrap_or_else(|err| {
-                        eprintln!("{err}");
-                        exit(1);
-                    });
-                    return;
-                }
-                ("remove-all", _) => {
-                    set_repair_whitelist(&ledger_path, Vec::default()).unwrap_or_else(|err| {
-                        eprintln!("{err}");
-                        exit(1);
-                    });
-                    return;
-                }
-                _ => unreachable!(),
-            }
+            commands::repair_whitelist::execute(repair_whitelist_subcommand_matches, &ledger_path);
+            return;
         }
         ("set-public-address", Some(subcommand_matches)) => {
             let parse_arg_addr = |arg_name: &str, arg_long: &str| -> Option<SocketAddr> {
