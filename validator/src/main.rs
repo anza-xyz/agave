@@ -196,77 +196,8 @@ pub fn main() {
             return;
         }
         ("plugin", Some(plugin_subcommand_matches)) => {
-            match plugin_subcommand_matches.subcommand() {
-                ("list", _) => {
-                    let admin_client = admin_rpc_service::connect(&ledger_path);
-                    let plugins = admin_rpc_service::runtime()
-                        .block_on(async move { admin_client.await?.list_plugins().await })
-                        .unwrap_or_else(|err| {
-                            println!("Failed to list plugins: {err}");
-                            exit(1);
-                        });
-                    if !plugins.is_empty() {
-                        println!("Currently the following plugins are loaded:");
-                        for (plugin, i) in plugins.into_iter().zip(1..) {
-                            println!("  {i}) {plugin}");
-                        }
-                    } else {
-                        println!("There are currently no plugins loaded");
-                    }
-                    return;
-                }
-                ("unload", Some(subcommand_matches)) => {
-                    if let Ok(name) = value_t!(subcommand_matches, "name", String) {
-                        let admin_client = admin_rpc_service::connect(&ledger_path);
-                        admin_rpc_service::runtime()
-                            .block_on(async {
-                                admin_client.await?.unload_plugin(name.clone()).await
-                            })
-                            .unwrap_or_else(|err| {
-                                println!("Failed to unload plugin {name}: {err:?}");
-                                exit(1);
-                            });
-                        println!("Successfully unloaded plugin: {name}");
-                    }
-                    return;
-                }
-                ("load", Some(subcommand_matches)) => {
-                    if let Ok(config) = value_t!(subcommand_matches, "config", String) {
-                        let admin_client = admin_rpc_service::connect(&ledger_path);
-                        let name = admin_rpc_service::runtime()
-                            .block_on(async {
-                                admin_client.await?.load_plugin(config.clone()).await
-                            })
-                            .unwrap_or_else(|err| {
-                                println!("Failed to load plugin {config}: {err:?}");
-                                exit(1);
-                            });
-                        println!("Successfully loaded plugin: {name}");
-                    }
-                    return;
-                }
-                ("reload", Some(subcommand_matches)) => {
-                    if let Ok(name) = value_t!(subcommand_matches, "name", String) {
-                        if let Ok(config) = value_t!(subcommand_matches, "config", String) {
-                            let admin_client = admin_rpc_service::connect(&ledger_path);
-                            admin_rpc_service::runtime()
-                                .block_on(async {
-                                    admin_client
-                                        .await?
-                                        .reload_plugin(name.clone(), config.clone())
-                                        .await
-                                })
-                                .unwrap_or_else(|err| {
-                                    println!("Failed to reload plugin {name}: {err:?}");
-                                    exit(1);
-                                });
-                            println!("Successfully reloaded plugin: {name}");
-                        }
-                    }
-                    return;
-                }
-                _ => unreachable!(),
-            }
+            commands::plugin::execute(plugin_subcommand_matches, &ledger_path);
+            return;
         }
         ("contact-info", Some(subcommand_matches)) => {
             let output_mode = subcommand_matches.value_of("output");
