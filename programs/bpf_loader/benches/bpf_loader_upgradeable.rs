@@ -106,6 +106,41 @@ impl TestSetup {
         .unwrap();
     }
 
+    fn prep_set_authority(&mut self) {
+        let new_authority_address = Pubkey::new_unique();
+        self.instruction_accounts = vec![
+            AccountMeta {
+                pubkey: self.buffer_address,
+                is_signer: false,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: self.authority_address,
+                is_signer: true,
+                is_writable: false,
+            },
+            AccountMeta {
+                pubkey: new_authority_address,
+                is_signer: false,
+                is_writable: false,
+            },
+        ];
+
+        self.transaction_accounts[0]
+            .1
+            .set_state(&UpgradeableLoaderState::ProgramData {
+                slot: 0,
+                upgrade_authority_address: Some(self.authority_address),
+            })
+            .unwrap();
+        self.transaction_accounts.push((
+            new_authority_address,
+            AccountSharedData::new(ACCOUNT_BALANCE, 0, &self.loader_address),
+        ));
+        self.instruction_data =
+            bincode::serialize(&UpgradeableLoaderInstruction::SetAuthority).unwrap();
+    }
+
     fn run(&self) {
         mock_process_instruction(
             &self.loader_address,
@@ -291,10 +326,22 @@ fn bench_upgradeable_upgrade(c: &mut Criterion) {
     });
 }
 
+fn bench_set_authority(c: &mut Criterion) {
+    let mut test_setup = TestSetup::new();
+    test_setup.prep_set_authority();
+
+    c.bench_function("set_authority", |bencher| {
+        bencher.iter(|| {
+            test_setup.run();
+        })
+    });
+}
+
 criterion_group!(
     benches,
     bench_initialize_buffer,
     bench_write,
-    bench_upgradeable_upgrade
+    bench_upgradeable_upgrade,
+    bench_set_authority
 );
 criterion_main!(benches);
