@@ -106,7 +106,7 @@ impl TestSetup {
         .unwrap();
     }
 
-    fn prep_set_authority(&mut self) {
+    fn prep_set_authority(&mut self, checked: bool) {
         let new_authority_address = Pubkey::new_unique();
         self.instruction_accounts = vec![
             AccountMeta {
@@ -121,7 +121,7 @@ impl TestSetup {
             },
             AccountMeta {
                 pubkey: new_authority_address,
-                is_signer: false,
+                is_signer: checked,
                 is_writable: false,
             },
         ];
@@ -137,8 +137,12 @@ impl TestSetup {
             new_authority_address,
             AccountSharedData::new(ACCOUNT_BALANCE, 0, &self.loader_address),
         ));
-        self.instruction_data =
-            bincode::serialize(&UpgradeableLoaderInstruction::SetAuthority).unwrap();
+        let instruction = if checked {
+            UpgradeableLoaderInstruction::SetAuthorityChecked
+        } else {
+            UpgradeableLoaderInstruction::SetAuthority
+        };
+        self.instruction_data = bincode::serialize(&instruction).unwrap();
     }
 
     fn prep_close(&mut self) {
@@ -353,7 +357,7 @@ fn bench_upgradeable_upgrade(c: &mut Criterion) {
 
 fn bench_set_authority(c: &mut Criterion) {
     let mut test_setup = TestSetup::new();
-    test_setup.prep_set_authority();
+    test_setup.prep_set_authority(false);
 
     c.bench_function("set_authority", |bencher| {
         bencher.iter(|| {
@@ -373,12 +377,24 @@ fn bench_close(c: &mut Criterion) {
     });
 }
 
+fn bench_set_authority_checked(c: &mut Criterion) {
+    let mut test_setup = TestSetup::new();
+    test_setup.prep_set_authority(true);
+
+    c.bench_function("set_authority_checked", |bencher| {
+        bencher.iter(|| {
+            test_setup.run();
+        })
+    });
+}
+
 criterion_group!(
     benches,
     bench_initialize_buffer,
     bench_write,
     bench_upgradeable_upgrade,
     bench_set_authority,
-    bench_close
+    bench_close,
+    bench_set_authority_checked
 );
 criterion_main!(benches);
