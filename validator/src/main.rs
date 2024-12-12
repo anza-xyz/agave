@@ -206,82 +206,8 @@ pub fn main() {
     let operation = match matches.subcommand() {
         ("", _) | ("run", _) => Operation::Run,
         ("authorized-voter", Some(authorized_voter_subcommand_matches)) => {
-            match authorized_voter_subcommand_matches.subcommand() {
-                ("add", Some(subcommand_matches)) => {
-                    if let Ok(authorized_voter_keypair) =
-                        value_t!(subcommand_matches, "authorized_voter_keypair", String)
-                    {
-                        let authorized_voter_keypair = fs::canonicalize(&authorized_voter_keypair)
-                            .unwrap_or_else(|err| {
-                                println!(
-                                    "Unable to access path: {authorized_voter_keypair}: {err:?}"
-                                );
-                                exit(1);
-                            });
-                        println!(
-                            "Adding authorized voter path: {}",
-                            authorized_voter_keypair.display()
-                        );
-
-                        let admin_client = admin_rpc_service::connect(&ledger_path);
-                        admin_rpc_service::runtime()
-                            .block_on(async move {
-                                admin_client
-                                    .await?
-                                    .add_authorized_voter(
-                                        authorized_voter_keypair.display().to_string(),
-                                    )
-                                    .await
-                            })
-                            .unwrap_or_else(|err| {
-                                println!("addAuthorizedVoter request failed: {err}");
-                                exit(1);
-                            });
-                    } else {
-                        let mut stdin = std::io::stdin();
-                        let authorized_voter_keypair =
-                            read_keypair(&mut stdin).unwrap_or_else(|err| {
-                                println!("Unable to read JSON keypair from stdin: {err:?}");
-                                exit(1);
-                            });
-                        println!(
-                            "Adding authorized voter: {}",
-                            authorized_voter_keypair.pubkey()
-                        );
-
-                        let admin_client = admin_rpc_service::connect(&ledger_path);
-                        admin_rpc_service::runtime()
-                            .block_on(async move {
-                                admin_client
-                                    .await?
-                                    .add_authorized_voter_from_bytes(Vec::from(
-                                        authorized_voter_keypair.to_bytes(),
-                                    ))
-                                    .await
-                            })
-                            .unwrap_or_else(|err| {
-                                println!("addAuthorizedVoterFromBytes request failed: {err}");
-                                exit(1);
-                            });
-                    }
-
-                    return;
-                }
-                ("remove-all", _) => {
-                    let admin_client = admin_rpc_service::connect(&ledger_path);
-                    admin_rpc_service::runtime()
-                        .block_on(async move {
-                            admin_client.await?.remove_all_authorized_voters().await
-                        })
-                        .unwrap_or_else(|err| {
-                            println!("removeAllAuthorizedVoters request failed: {err}");
-                            exit(1);
-                        });
-                    println!("All authorized voters removed");
-                    return;
-                }
-                _ => unreachable!(),
-            }
+            commands::authorized_voter::execute(authorized_voter_subcommand_matches, &ledger_path);
+            return;
         }
         ("plugin", Some(plugin_subcommand_matches)) => {
             match plugin_subcommand_matches.subcommand() {

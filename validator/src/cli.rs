@@ -1786,40 +1786,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                         .help("Skip health check"),
                 ),
         )
-        .subcommand(
-            SubCommand::with_name("authorized-voter")
-                .about("Adjust the validator authorized voters")
-                .setting(AppSettings::SubcommandRequiredElseHelp)
-                .setting(AppSettings::InferSubcommands)
-                .subcommand(
-                    SubCommand::with_name("add")
-                        .about("Add an authorized voter")
-                        .arg(
-                            Arg::with_name("authorized_voter_keypair")
-                                .index(1)
-                                .value_name("KEYPAIR")
-                                .required(false)
-                                .takes_value(true)
-                                .validator(is_keypair)
-                                .help(
-                                    "Path to keypair of the authorized voter to add [default: \
-                                     read JSON keypair from stdin]",
-                                ),
-                        )
-                        .after_help(
-                            "Note: the new authorized voter only applies to the currently running \
-                             validator instance",
-                        ),
-                )
-                .subcommand(
-                    SubCommand::with_name("remove-all")
-                        .about("Remove all authorized voters")
-                        .after_help(
-                            "Note: the removal only applies to the currently running validator \
-                             instance",
-                        ),
-                ),
-        )
+        .subcommand(commands::authorized_voter::command(default_args))
         .subcommand(
             SubCommand::with_name("contact-info")
                 .about("Display the validator's contact info")
