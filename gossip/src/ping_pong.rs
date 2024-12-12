@@ -11,8 +11,8 @@ use {
     },
     std::{
         borrow::Cow,
-        hash::Hasher,
-        net::{IpAddr, SocketAddr},
+        hash::{Hash as _, Hasher},
+        net::SocketAddr,
         time::{Duration, Instant},
     },
 };
@@ -255,17 +255,7 @@ fn make_ping_token<const N: usize>(
     remote_node: &(Pubkey, SocketAddr),
 ) -> [u8; N] {
     // TODO: Consider including local node's (pubkey, socket-addr).
-    let (pubkey, addr) = remote_node;
-    hasher.write(pubkey.as_ref());
-    hasher.write_u128(
-        // Canonicalize IP addresses.
-        match addr.ip() {
-            IpAddr::V4(ip) => ip.to_ipv6_mapped(),
-            IpAddr::V6(ip) => ip,
-        }
-        .to_bits(),
-    );
-    hasher.write_u16(addr.port());
+    remote_node.hash(&mut hasher);
     let hash = hasher.finish().to_le_bytes();
     debug_assert!(N >= std::mem::size_of::<u64>());
     let mut token = [0u8; N];
