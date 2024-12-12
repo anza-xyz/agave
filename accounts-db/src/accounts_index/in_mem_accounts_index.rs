@@ -757,6 +757,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 let (slot, account_info) = new_entry.into();
 
                 let slot_list = occupied.get().slot_list.read().unwrap();
+
+                // If there is only one entry in the slot list, it means that
+                // the previous entry inserted was a duplicate, which should be
+                // added to the duplicates list too. Note that we only need to do
+                // this for slot_list.len() == 1. For slot_list.len() > 1, the
+                // items, previously inserted into the slot_list, have already
+                // been added. We don't need to add them again.
                 if slot_list.len() == 1 {
                     other_slot = Some(slot_list[0].0);
                 }
