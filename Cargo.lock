@@ -6131,6 +6131,7 @@ dependencies = [
  "solana-stake-program",
  "solana-system-program",
  "solana-vote-program",
+ "static_assertions",
 ]
 
 [[package]]
