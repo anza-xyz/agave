@@ -5,7 +5,6 @@ pub use solana_ledger::blockstore_processor::CacheBlockMetaSender;
 use {
     crossbeam_channel::{Receiver, RecvTimeoutError},
     solana_ledger::blockstore::Blockstore,
-    solana_measure::measure::Measure,
     solana_runtime::bank::Bank,
     std::{
         sync::{
@@ -23,8 +22,6 @@ pub struct CacheBlockMetaService {
     thread_hdl: JoinHandle<()>,
 }
 
-const CACHE_BLOCK_TIME_WARNING_MS: u64 = 150;
-
 impl CacheBlockMetaService {
     pub fn new(
         cache_block_meta_receiver: CacheBlockMetaReceiver,
@@ -39,26 +36,18 @@ impl CacheBlockMetaService {
                     if exit.load(Ordering::Relaxed) {
                         break;
                     }
-                    let recv_result =
-                        cache_block_meta_receiver.recv_timeout(Duration::from_secs(1));
-                    match recv_result {
-                        Err(RecvTimeoutError::Disconnected) => {
+
+                    let bank = match cache_block_meta_receiver.recv_timeout(Duration::from_secs(1)) {
+                        Ok(bank) => bank,
+                        Err(RecvTimeoutError::Timeout) => continue,
+                        Err(err @ RecvTimeoutError::Disconnected) => {
+                            info!("CacheBlockMetaService is stopping because: {err}");
                             break;
-                        }
-                        Ok(bank) => {
-                            let mut cache_block_meta_timer =
-                                Measure::start("cache_block_meta_timer");
-                            Self::cache_block_meta(&bank, &blockstore);
-                            cache_block_meta_timer.stop();
-                            if cache_block_meta_timer.as_ms() > CACHE_BLOCK_TIME_WARNING_MS {
-                                warn!(
-                                    "cache_block_meta operation took: {}ms",
-                                    cache_block_meta_timer.as_ms()
-                                );
-                            }
-                        }
-                        _ => {}
-                    }
+                        },
+                    };
+
+                    Self::cache_block_meta(&bank, &blockstore);
+
                 }
                 info!("CacheBlockMetaService has stopped");
             })
