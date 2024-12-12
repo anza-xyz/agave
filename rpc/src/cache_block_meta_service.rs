@@ -1,3 +1,6 @@
+//! The `CacheBlockMetaService` is responsible for persisting block metadata
+//! from banks into the `Blockstore`
+
 pub use solana_ledger::blockstore_processor::CacheBlockMetaSender;
 use {
     crossbeam_channel::{Receiver, RecvTimeoutError},
@@ -30,28 +33,34 @@ impl CacheBlockMetaService {
     ) -> Self {
         let thread_hdl = Builder::new()
             .name("solCacheBlkTime".to_string())
-            .spawn(move || loop {
-                if exit.load(Ordering::Relaxed) {
-                    break;
-                }
-                let recv_result = cache_block_meta_receiver.recv_timeout(Duration::from_secs(1));
-                match recv_result {
-                    Err(RecvTimeoutError::Disconnected) => {
+            .spawn(move || {
+                info!("CacheBlockMetaService has started");
+                loop {
+                    if exit.load(Ordering::Relaxed) {
                         break;
                     }
-                    Ok(bank) => {
-                        let mut cache_block_meta_timer = Measure::start("cache_block_meta_timer");
-                        Self::cache_block_meta(&bank, &blockstore);
-                        cache_block_meta_timer.stop();
-                        if cache_block_meta_timer.as_ms() > CACHE_BLOCK_TIME_WARNING_MS {
-                            warn!(
-                                "cache_block_meta operation took: {}ms",
-                                cache_block_meta_timer.as_ms()
-                            );
+                    let recv_result =
+                        cache_block_meta_receiver.recv_timeout(Duration::from_secs(1));
+                    match recv_result {
+                        Err(RecvTimeoutError::Disconnected) => {
+                            break;
                         }
+                        Ok(bank) => {
+                            let mut cache_block_meta_timer =
+                                Measure::start("cache_block_meta_timer");
+                            Self::cache_block_meta(&bank, &blockstore);
+                            cache_block_meta_timer.stop();
+                            if cache_block_meta_timer.as_ms() > CACHE_BLOCK_TIME_WARNING_MS {
+                                warn!(
+                                    "cache_block_meta operation took: {}ms",
+                                    cache_block_meta_timer.as_ms()
+                                );
+                            }
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
+                info!("CacheBlockMetaService has stopped");
             })
             .unwrap();
         Self { thread_hdl }
