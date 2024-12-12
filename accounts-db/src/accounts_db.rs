@@ -2205,15 +2205,6 @@ impl AccountsDb {
         reclaim_result
     }
 
-    fn do_reset_uncleaned_roots(&self, max_clean_root: Option<Slot>) {
-        let mut measure = Measure::start("reset");
-        self.accounts_index.reset_uncleaned_roots(max_clean_root);
-        measure.stop();
-        self.clean_accounts_stats
-            .reset_uncleaned_roots_us
-            .fetch_add(measure.as_us(), Ordering::Relaxed);
-    }
-
     /// increment store_counts to non-zero for all stores that can not be deleted.
     /// a store cannot be deleted if:
     /// 1. one of the pubkeys in the store has account info to a store whose store count is not going to zero
@@ -2546,8 +2537,6 @@ impl AccountsDb {
                 slot_one_epoch_old.saturating_sub(acceptable_straggler_slot_count);
             let (old_storages, old_slots) = self.get_storages(..old_slot_cutoff);
             let num_old_storages = old_storages.len();
-            self.accounts_index
-                .add_uncleaned_roots(old_slots.iter().copied());
             for (old_slot, old_storage) in std::iter::zip(old_slots, old_storages) {
                 self.dirty_stores.entry(old_slot).or_insert(old_storage);
             }
@@ -2808,7 +2797,6 @@ impl AccountsDb {
 
         let num_candidates = Self::count_pubkeys(&candidates);
         let mut accounts_scan = Measure::start("accounts_scan");
-        let uncleaned_roots = self.accounts_index.clone_uncleaned_roots();
         let found_not_zero_accum = AtomicU64::new(0);
         let not_found_on_fork_accum = AtomicU64::new(0);
         let missing_accum = AtomicU64::new(0);
@@ -2872,22 +2860,6 @@ impl AccountsDb {
                                             should_collect_reclaims = true;
                                             purges_old_accounts_local += 1;
                                             useless = false;
-                                        }
-                                        // Note, this next if-block is only kept to maintain the
-                                        // `uncleaned_roots_slot_list_1` stat.
-                                        if uncleaned_roots.contains(slot) {
-                                            // Assertion enforced by `accounts_index.get()`, the latest slot
-                                            // will not be greater than the given `max_clean_root`
-                                            if let Some(max_clean_root_inclusive) =
-                                                max_clean_root_inclusive
-                                            {
-                                                assert!(slot <= &max_clean_root_inclusive);
-                                            }
-                                            if slot_list.len() == 1 {
-                                                self.clean_accounts_stats
-                                                    .uncleaned_roots_slot_list_1
-                                                    .fetch_add(1, Ordering::Relaxed);
-                                            }
                                         }
                                     }
                                     None => {
@@ -2954,7 +2926,6 @@ impl AccountsDb {
         let mut clean_old_rooted = Measure::start("clean_old_roots");
         let (purged_account_slots, removed_accounts) =
             self.clean_accounts_older_than_root(&reclaims, &pubkeys_removed_from_accounts_index);
-        self.do_reset_uncleaned_roots(max_clean_root_inclusive);
         clean_old_rooted.stop();
 
         let mut store_counts_time = Measure::start("store_counts");
@@ -3132,14 +3103,6 @@ impl AccountsDb {
                 i64
             ),
             ("scan_missing", missing_accum.load(Ordering::Relaxed), i64),
-            ("uncleaned_roots_len", uncleaned_roots.len(), i64),
-            (
-                "uncleaned_roots_slot_list_1",
-                self.clean_accounts_stats
-                    .uncleaned_roots_slot_list_1
-                    .swap(0, Ordering::Relaxed),
-                i64
-            ),
             (
                 "get_account_sizes_us",
                 self.clean_accounts_stats
@@ -3888,7 +3851,6 @@ impl AccountsDb {
 
                 if store.num_zero_lamport_single_ref_accounts() == store.count() {
                     // all accounts in this storage can be dead
-                    self.accounts_index.add_uncleaned_roots([slot]);
                     self.dirty_stores.entry(slot).or_insert(store);
                     self.shrink_stats
                         .num_dead_slots_added_to_clean
@@ -3913,7 +3875,7 @@ impl AccountsDb {
     }
 
     /// Shrinks `store` by rewriting the alive accounts to a new storage
-    fn shrink_storage(&self, store: &AccountStorageEntry) {
+    fn shrink_storage(&self, store: Arc<AccountStorageEntry>) {
         let slot = store.slot();
         if self.accounts_cache.contains(slot) {
             // It is not correct to shrink a slot while it is in the write cache until flush is complete and the slot is removed from the write cache.
@@ -3930,10 +3892,10 @@ impl AccountsDb {
             return;
         }
         let unique_accounts =
-            self.get_unique_accounts_from_storage_for_shrink(store, &self.shrink_stats);
+            self.get_unique_accounts_from_storage_for_shrink(&store, &self.shrink_stats);
         debug!("do_shrink_slot_store: slot: {}", slot);
         let shrink_collect =
-            self.shrink_collect::<AliveAccounts<'_>>(store, &unique_accounts, &self.shrink_stats);
+            self.shrink_collect::<AliveAccounts<'_>>(&store, &unique_accounts, &self.shrink_stats);
 
         // This shouldn't happen if alive_bytes is accurate.
         // However, it is possible that the remaining alive bytes could be 0. In that case, the whole slot should be marked dead by clean.
@@ -3944,7 +3906,7 @@ impl AccountsDb {
         {
             if shrink_collect.alive_total_bytes == 0 {
                 // clean needs to take care of this dead slot
-                self.accounts_index.add_uncleaned_roots([slot]);
+                self.dirty_stores.insert(slot, store.clone());
             }
 
             if !shrink_collect.all_are_zero_lamports {
@@ -4117,7 +4079,7 @@ impl AccountsDb {
             .get_slot_storage_entry_shrinking_in_progress_ok(slot)
         {
             if Self::is_shrinking_productive(&store) {
-                self.shrink_storage(&store)
+                self.shrink_storage(store)
             }
         }
     }
@@ -4678,7 +4640,7 @@ impl AccountsDb {
                                 .num_ancient_slots_shrunk
                                 .fetch_add(1, Ordering::Relaxed);
                         }
-                        self.shrink_storage(&slot_shrink_candidate);
+                        self.shrink_storage(slot_shrink_candidate);
                     });
             })
         });
@@ -6327,7 +6289,6 @@ impl AccountsDb {
         // Only add to the uncleaned roots set *after* we've flushed the previous roots,
         // so that clean will actually be able to clean the slots.
         let num_new_roots = cached_roots.len();
-        self.accounts_index.add_uncleaned_roots(cached_roots);
         (num_new_roots, num_roots_flushed, flush_stats)
     }
 
@@ -8936,8 +8897,6 @@ impl AccountsDb {
                 timings.slots_to_clean = uncleaned_roots.len() as u64;
                 timings.num_duplicate_accounts = num_duplicate_accounts;
 
-                self.accounts_index
-                    .add_uncleaned_roots(uncleaned_roots.into_iter());
                 accounts_data_len.fetch_sub(accounts_data_len_from_duplicates, Ordering::Relaxed);
                 if let Some(duplicates_lt_hash) = duplicates_lt_hash {
                     let old_val = outer_duplicates_lt_hash.replace(duplicates_lt_hash);
@@ -8956,7 +8915,6 @@ impl AccountsDb {
                 );
                 for (slot, storage) in all_zero_slots_to_clean {
                     self.dirty_stores.insert(slot, storage);
-                    self.accounts_index.add_uncleaned_roots([slot]);
                 }
             }
 

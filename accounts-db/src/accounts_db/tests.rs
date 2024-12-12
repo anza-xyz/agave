@@ -1976,43 +1976,6 @@ fn test_clean_max_slot_zero_lamport_account() {
     assert!(!accounts.accounts_index.contains_with(&pubkey, None, None));
 }
 
-#[test]
-fn test_uncleaned_roots_with_account() {
-    solana_logger::setup();
-
-    let accounts = AccountsDb::new_single_for_tests();
-    let pubkey = solana_sdk::pubkey::new_rand();
-    let account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
-    //store an account
-    accounts.store_for_tests(0, &[(&pubkey, &account)]);
-    assert_eq!(accounts.accounts_index.uncleaned_roots_len(), 0);
-
-    // simulate slots are rooted after while
-    accounts.add_root_and_flush_write_cache(0);
-    assert_eq!(accounts.accounts_index.uncleaned_roots_len(), 1);
-
-    //now uncleaned roots are cleaned up
-    accounts.clean_accounts_for_tests();
-    assert_eq!(accounts.accounts_index.uncleaned_roots_len(), 0);
-}
-
-#[test]
-fn test_uncleaned_roots_with_no_account() {
-    solana_logger::setup();
-
-    let accounts = AccountsDb::new_single_for_tests();
-
-    assert_eq!(accounts.accounts_index.uncleaned_roots_len(), 0);
-
-    // simulate slots are rooted after while
-    accounts.add_root_and_flush_write_cache(0);
-    assert_eq!(accounts.accounts_index.uncleaned_roots_len(), 1);
-
-    //now uncleaned roots are cleaned up
-    accounts.clean_accounts_for_tests();
-    assert_eq!(accounts.accounts_index.uncleaned_roots_len(), 0);
-}
-
 fn assert_no_stores(accounts: &AccountsDb, slot: Slot) {
     let store = accounts.storage.get_slot_storage_entry(slot);
     assert!(store.is_none());
@@ -4358,13 +4321,6 @@ fn test_accounts_db_cache_clean_dead_slots() {
     // If no `max_clean_root` is specified, cleaning should purge all flushed slots
     accounts_db.flush_accounts_cache(true, None);
     assert_eq!(accounts_db.accounts_cache.num_slots(), 0);
-    let mut uncleaned_roots = accounts_db
-        .accounts_index
-        .clear_uncleaned_roots(None)
-        .into_iter()
-        .collect::<Vec<_>>();
-    uncleaned_roots.sort_unstable();
-    assert_eq!(uncleaned_roots, slots);
     assert_eq!(
         accounts_db.accounts_cache.fetch_max_flush_root(),
         alive_slot,
@@ -4412,13 +4368,6 @@ fn test_accounts_db_cache_clean() {
     // If no `max_clean_root` is specified, cleaning should purge all flushed slots
     accounts_db.flush_accounts_cache(true, None);
     assert_eq!(accounts_db.accounts_cache.num_slots(), 0);
-    let mut uncleaned_roots = accounts_db
-        .accounts_index
-        .clear_uncleaned_roots(None)
-        .into_iter()
-        .collect::<Vec<_>>();
-    uncleaned_roots.sort_unstable();
-    assert_eq!(uncleaned_roots, slots);
     assert_eq!(
         accounts_db.accounts_cache.fetch_max_flush_root(),
         *slots.last().unwrap()
@@ -4469,13 +4418,6 @@ fn run_test_accounts_db_cache_clean_max_root(
         assert_eq!(accounts_db.accounts_cache.num_slots(), 0,);
     }
 
-    let mut uncleaned_roots = accounts_db
-        .accounts_index
-        .clear_uncleaned_roots(None)
-        .into_iter()
-        .collect::<Vec<_>>();
-    uncleaned_roots.sort_unstable();
-
     let expected_max_flushed_root = if !is_cache_at_limit {
         // Should flush all slots between 0..=requested_flush_root
         requested_flush_root
@@ -4484,10 +4426,6 @@ fn run_test_accounts_db_cache_clean_max_root(
         num_slots as Slot - 1
     };
 
-    assert_eq!(
-        uncleaned_roots,
-        slots[0..=expected_max_flushed_root as usize].to_vec()
-    );
     assert_eq!(
         accounts_db.accounts_cache.fetch_max_flush_root(),
         expected_max_flushed_root,
@@ -4865,7 +4803,6 @@ fn test_shrink_unref_handle_zero_lamport_single_ref_accounts() {
     // And now, slot 1 should be marked complete dead, which will be added
     // to uncleaned slots, which handle dropping dead storage. And it WON'T
     // be participating shrinking in the next round.
-    assert!(db.accounts_index.clone_uncleaned_roots().contains(&1));
     assert!(!db.shrink_candidate_slots.lock().unwrap().contains(&1));
 
     // Now, make slot 0 dead by updating the remaining key
@@ -7795,11 +7732,8 @@ fn test_handle_dropped_roots_for_ancient() {
     let slot0 = 0;
     let dropped_roots = vec![slot0];
     db.accounts_index.add_root(slot0);
-    db.accounts_index.add_uncleaned_roots([slot0]);
-    assert!(db.accounts_index.is_uncleaned_root(slot0));
     assert!(db.accounts_index.is_alive_root(slot0));
     db.handle_dropped_roots_for_ancient(dropped_roots.into_iter());
-    assert!(!db.accounts_index.is_uncleaned_root(slot0));
     assert!(!db.accounts_index.is_alive_root(slot0));
 }
 
@@ -8168,18 +8102,7 @@ fn test_clean_old_storages_with_reclaims_rooted() {
             &[(&pubkey, &account), (&Pubkey::new_unique(), &account)],
         );
         accounts_db.add_root_and_flush_write_cache(slot);
-        // ensure this slot is *not* in the dirty_stores or uncleaned_pubkeys, because we want to
-        // test cleaning *old* storages, i.e. when they aren't explicitly marked for cleaning
-        assert!(!accounts_db.dirty_stores.contains_key(&slot));
-        assert!(!accounts_db.uncleaned_pubkeys.contains_key(&slot));
     }
-
-    // add `old_slot` to the dirty stores list to mimic it being picked up as old
-    let old_storage = accounts_db
-        .storage
-        .get_slot_storage_entry_shrinking_in_progress_ok(old_slot)
-        .unwrap();
-    accounts_db.dirty_stores.insert(old_slot, old_storage);
 
     // ensure the slot list for `pubkey` has both the old and new slots
     let slot_list = accounts_db
@@ -8227,14 +8150,11 @@ fn test_clean_old_storages_with_reclaims_unrooted() {
             &[(&pubkey, &account), (&Pubkey::new_unique(), &account)],
         );
         accounts_db.calculate_accounts_delta_hash(slot);
-        // ensure this slot is in uncleaned_pubkeys (but not dirty_stores) so it'll be cleaned
-        assert!(!accounts_db.dirty_stores.contains_key(&slot));
-        assert!(accounts_db.uncleaned_pubkeys.contains_key(&slot));
     }
-
-    // only `old_slot` should be rooted, not `new_slot`
+    // do not root `new_slot`!
     accounts_db.add_root_and_flush_write_cache(old_slot);
-    assert!(accounts_db.accounts_index.is_alive_root(old_slot));
+
+    // for this test, `new_slot` must not be a root
     assert!(!accounts_db.accounts_index.is_alive_root(new_slot));
 
     // ensure the slot list for `pubkey` has both the old and new slots

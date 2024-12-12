@@ -18,7 +18,6 @@ use {
         ThreadPool,
     },
     solana_measure::measure::Measure,
-    solana_nohash_hasher::IntSet,
     solana_sdk::{
         account::ReadableAccount,
         clock::{BankId, Slot},
@@ -441,7 +440,6 @@ pub struct RootsTracker {
     /// Updated every time we add a new root or clean/shrink an append vec into irrelevancy.
     /// Range is approximately the last N slots where N is # slots per epoch.
     pub alive_roots: RollingBitField,
-    uncleaned_roots: IntSet<Slot>,
 }
 
 impl Default for RootsTracker {
@@ -457,7 +455,6 @@ impl RootsTracker {
     pub fn new(max_width: u64) -> Self {
         Self {
             alive_roots: RollingBitField::new(max_width),
-            uncleaned_roots: IntSet::default(),
         }
     }
 
@@ -2013,24 +2010,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         w_roots_tracker.alive_roots.insert(slot);
     }
 
-    pub fn add_uncleaned_roots<I>(&self, roots: I)
-    where
-        I: IntoIterator<Item = Slot>,
-    {
-        let mut w_roots_tracker = self.roots_tracker.write().unwrap();
-        w_roots_tracker.uncleaned_roots.extend(roots);
-    }
-
-    /// Removes `root` from `uncleaned_roots` and returns whether it was previously present
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn remove_uncleaned_root(&self, root: Slot) -> bool {
-        self.roots_tracker
-            .write()
-            .unwrap()
-            .uncleaned_roots
-            .remove(&root)
-    }
-
     pub fn max_root_inclusive(&self) -> Slot {
         self.roots_tracker
             .read()
@@ -2044,12 +2023,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     /// return true if slot was a root
     pub fn clean_dead_slot(&self, slot: Slot) -> bool {
         let mut w_roots_tracker = self.roots_tracker.write().unwrap();
-        let removed_from_unclean_roots = w_roots_tracker.uncleaned_roots.remove(&slot);
         if !w_roots_tracker.alive_roots.remove(&slot) {
-            if removed_from_unclean_roots {
-                error!("clean_dead_slot-removed_from_unclean_roots: {}", slot);
-                inc_new_counter_error!("clean_dead_slot-removed_from_unclean_roots", 1, 1);
-            }
             false
         } else {
             drop(w_roots_tracker);
@@ -2061,23 +2035,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     pub(crate) fn update_roots_stats(&self, stats: &mut AccountsIndexRootsStats) {
         let roots_tracker = self.roots_tracker.read().unwrap();
         stats.roots_len = Some(roots_tracker.alive_roots.len());
-        stats.uncleaned_roots_len = Some(roots_tracker.uncleaned_roots.len());
         stats.roots_range = Some(roots_tracker.alive_roots.range_width());
     }
 
     pub fn min_alive_root(&self) -> Option<Slot> {
         self.roots_tracker.read().unwrap().min_alive_root()
-    }
-
-    pub(crate) fn reset_uncleaned_roots(&self, max_clean_root: Option<Slot>) {
-        let mut w_roots_tracker = self.roots_tracker.write().unwrap();
-        w_roots_tracker.uncleaned_roots.retain(|root| {
-            let is_cleaned = max_clean_root
-                .map(|max_clean_root| *root <= max_clean_root)
-                .unwrap_or(true);
-            // Only keep the slots that have yet to be cleaned
-            !is_cleaned
-        });
     }
 
     pub fn num_alive_roots(&self) -> usize {
@@ -2087,14 +2049,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     pub fn all_alive_roots(&self) -> Vec<Slot> {
         let tracker = self.roots_tracker.read().unwrap();
         tracker.alive_roots.get_all()
-    }
-
-    pub fn clone_uncleaned_roots(&self) -> IntSet<Slot> {
-        self.roots_tracker.read().unwrap().uncleaned_roots.clone()
-    }
-
-    pub fn uncleaned_roots_len(&self) -> usize {
-        self.roots_tracker.read().unwrap().uncleaned_roots.len()
     }
 
     // These functions/fields are only usable from a dev context (i.e. tests and benches)
@@ -3142,34 +3096,6 @@ pub mod tests {
     }
 
     #[test]
-    fn test_clean_and_unclean_slot() {
-        let index = AccountsIndex::<bool, bool>::default_for_tests();
-        assert_eq!(0, index.roots_tracker.read().unwrap().uncleaned_roots.len());
-        index.add_root(0);
-        index.add_root(1);
-        index.add_uncleaned_roots([0, 1]);
-        assert_eq!(2, index.roots_tracker.read().unwrap().uncleaned_roots.len());
-
-        index.reset_uncleaned_roots(None);
-        assert_eq!(2, index.roots_tracker.read().unwrap().alive_roots.len());
-        assert_eq!(0, index.roots_tracker.read().unwrap().uncleaned_roots.len());
-
-        index.add_root(2);
-        index.add_root(3);
-        index.add_uncleaned_roots([2, 3]);
-        assert_eq!(4, index.roots_tracker.read().unwrap().alive_roots.len());
-        assert_eq!(2, index.roots_tracker.read().unwrap().uncleaned_roots.len());
-
-        index.clean_dead_slot(1);
-        assert_eq!(3, index.roots_tracker.read().unwrap().alive_roots.len());
-        assert_eq!(2, index.roots_tracker.read().unwrap().uncleaned_roots.len());
-
-        index.clean_dead_slot(2);
-        assert_eq!(2, index.roots_tracker.read().unwrap().alive_roots.len());
-        assert_eq!(1, index.roots_tracker.read().unwrap().uncleaned_roots.len());
-    }
-
-    #[test]
     fn test_update_last_wins() {
         let key = solana_sdk::pubkey::new_rand();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
@@ -4063,30 +3989,6 @@ pub mod tests {
                 UPSERT_POPULATE_RECLAIMS,
             );
             assert!(gc.is_empty());
-        }
-
-        pub fn clear_uncleaned_roots(&self, max_clean_root: Option<Slot>) -> HashSet<Slot> {
-            let mut cleaned_roots = HashSet::new();
-            let mut w_roots_tracker = self.roots_tracker.write().unwrap();
-            w_roots_tracker.uncleaned_roots.retain(|root| {
-                let is_cleaned = max_clean_root
-                    .map(|max_clean_root| *root <= max_clean_root)
-                    .unwrap_or(true);
-                if is_cleaned {
-                    cleaned_roots.insert(*root);
-                }
-                // Only keep the slots that have yet to be cleaned
-                !is_cleaned
-            });
-            cleaned_roots
-        }
-
-        pub(crate) fn is_uncleaned_root(&self, slot: Slot) -> bool {
-            self.roots_tracker
-                .read()
-                .unwrap()
-                .uncleaned_roots
-                .contains(&slot)
         }
 
         pub fn clear_roots(&self) {
