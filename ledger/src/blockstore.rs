@@ -760,11 +760,11 @@ impl Blockstore {
     }
 
     fn get_recovery_data_shreds<'a>(
+        &'a self,
         index: &'a Index,
         slot: Slot,
         erasure_meta: &'a ErasureMeta,
         prev_inserted_shreds: &'a HashMap<ShredId, Shred>,
-        data_cf: &'a LedgerColumn<cf::ShredData, { cf::ShredData::KEY_LEN }>,
     ) -> impl Iterator<Item = Shred> + 'a {
         erasure_meta.data_shreds_indices().filter_map(move |i| {
             let key = ShredId::new(slot, u32::try_from(i).unwrap(), ShredType::Data);
@@ -774,7 +774,7 @@ impl Blockstore {
             if !index.data().contains(i) {
                 return None;
             }
-            match data_cf.get_bytes((slot, i)).unwrap() {
+            match self.data_shred_cf.get_bytes((slot, i)).unwrap() {
                 None => {
                     error!(
                         "Unable to read the data shred with slot {slot}, index {i} for shred \
@@ -789,11 +789,11 @@ impl Blockstore {
     }
 
     fn get_recovery_coding_shreds<'a>(
+        &'a self,
         index: &'a Index,
         slot: Slot,
         erasure_meta: &'a ErasureMeta,
         prev_inserted_shreds: &'a HashMap<ShredId, Shred>,
-        code_cf: &'a LedgerColumn<cf::ShredCode, { cf::ShredCode::KEY_LEN }>,
     ) -> impl Iterator<Item = Shred> + 'a {
         erasure_meta.coding_shreds_indices().filter_map(move |i| {
             let key = ShredId::new(slot, u32::try_from(i).unwrap(), ShredType::Code);
@@ -803,7 +803,7 @@ impl Blockstore {
             if !index.coding().contains(i) {
                 return None;
             }
-            match code_cf.get_bytes((slot, i)).unwrap() {
+            match self.code_shred_cf.get_bytes((slot, i)).unwrap() {
                 None => {
                     error!(
                         "Unable to read the coding shred with slot {slot}, index {i} for shred \
@@ -818,31 +818,19 @@ impl Blockstore {
     }
 
     fn recover_shreds(
+        &self,
         index: &Index,
         erasure_meta: &ErasureMeta,
         prev_inserted_shreds: &HashMap<ShredId, Shred>,
         recovered_shreds: &mut Vec<Shred>,
-        data_cf: &LedgerColumn<cf::ShredData, { cf::ShredData::KEY_LEN }>,
-        code_cf: &LedgerColumn<cf::ShredCode, { cf::ShredCode::KEY_LEN }>,
         reed_solomon_cache: &ReedSolomonCache,
     ) {
         // Find shreds for this erasure set and try recovery
         let slot = index.slot;
-        let available_shreds: Vec<_> = Self::get_recovery_data_shreds(
-            index,
-            slot,
-            erasure_meta,
-            prev_inserted_shreds,
-            data_cf,
-        )
-        .chain(Self::get_recovery_coding_shreds(
-            index,
-            slot,
-            erasure_meta,
-            prev_inserted_shreds,
-            code_cf,
-        ))
-        .collect();
+        let available_shreds: Vec<_> = self
+            .get_recovery_data_shreds(index, slot, erasure_meta, prev_inserted_shreds)
+            .chain(self.get_recovery_coding_shreds(index, slot, erasure_meta, prev_inserted_shreds))
+            .collect();
         if let Ok(mut result) = shred::recover(available_shreds, reed_solomon_cache) {
             Self::submit_metrics(slot, erasure_meta, true, "complete".into(), result.len());
             recovered_shreds.append(&mut result);
@@ -991,13 +979,11 @@ impl Blockstore {
             let index = &mut index_meta_entry.index;
             match erasure_meta.status(index) {
                 ErasureMetaStatus::CanRecover => {
-                    Self::recover_shreds(
+                    self.recover_shreds(
                         index,
                         erasure_meta,
                         prev_inserted_shreds,
                         &mut recovered_shreds,
-                        &self.data_shred_cf,
-                        &self.code_shred_cf,
                         reed_solomon_cache,
                     );
                 }
