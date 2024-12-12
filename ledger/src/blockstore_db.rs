@@ -1422,12 +1422,12 @@ impl<C> LedgerColumn<C>
 where
     C: Column + ColumnName,
 {
-    pub fn get_bytes(&self, key: C::Index) -> Result<Option<Vec<u8>>> {
+    pub fn get_bytes(&self, index: C::Index) -> Result<Option<Vec<u8>>> {
         let is_perf_enabled = maybe_enable_rocksdb_perf(
             self.column_options.rocks_perf_sample_interval,
             &self.read_perf_status,
         );
-        let result = self.backend.get_cf(self.handle(), &C::key(key));
+        let result = self.backend.get_cf(self.handle(), &C::key(index));
         if let Some(op_start_instant) = is_perf_enabled {
             report_rocksdb_read_perf(
                 C::NAME,
@@ -1519,12 +1519,12 @@ where
         Ok(!iter.valid())
     }
 
-    pub fn put_bytes(&self, key: C::Index, value: &[u8]) -> Result<()> {
+    pub fn put_bytes(&self, index: C::Index, value: &[u8]) -> Result<()> {
         let is_perf_enabled = maybe_enable_rocksdb_perf(
             self.column_options.rocks_perf_sample_interval,
             &self.write_perf_status,
         );
-        let result = self.backend.put_cf(self.handle(), &C::key(key), value);
+        let result = self.backend.put_cf(self.handle(), &C::key(index), value);
         if let Some(op_start_instant) = is_perf_enabled {
             report_rocksdb_write_perf(
                 C::NAME,
@@ -1539,10 +1539,10 @@ where
     pub fn put_bytes_in_batch(
         &self,
         batch: &mut WriteBatch,
-        key: C::Index,
+        index: C::Index,
         value: &[u8],
     ) -> Result<()> {
-        let key = C::key(key);
+        let key = C::key(index);
         batch.put_cf(self.handle(), &key, value)
     }
 
@@ -1555,12 +1555,12 @@ where
         self.backend.get_int_property_cf(self.handle(), name)
     }
 
-    pub fn delete(&self, key: C::Index) -> Result<()> {
+    pub fn delete(&self, index: C::Index) -> Result<()> {
         let is_perf_enabled = maybe_enable_rocksdb_perf(
             self.column_options.rocks_perf_sample_interval,
             &self.write_perf_status,
         );
-        let result = self.backend.delete_cf(self.handle(), &C::key(key));
+        let result = self.backend.delete_cf(self.handle(), &C::key(index));
         if let Some(op_start_instant) = is_perf_enabled {
             report_rocksdb_write_perf(
                 C::NAME,
@@ -1572,8 +1572,8 @@ where
         result
     }
 
-    pub fn delete_in_batch(&self, batch: &mut WriteBatch, key: C::Index) -> Result<()> {
-        let key = C::key(key);
+    pub fn delete_in_batch(&self, batch: &mut WriteBatch, index: C::Index) -> Result<()> {
+        let key = C::key(index);
         batch.delete_cf(self.handle(), &key)
     }
 
@@ -1640,8 +1640,8 @@ where
         }
     }
 
-    pub fn get(&self, key: C::Index) -> Result<Option<C::Type>> {
-        self.get_raw(&C::key(key))
+    pub fn get(&self, index: C::Index) -> Result<Option<C::Type>> {
+        self.get_raw(&C::key(index))
     }
 
     pub fn get_raw(&self, key: &[u8]) -> Result<Option<C::Type>> {
@@ -1666,7 +1666,7 @@ where
         result
     }
 
-    pub fn put(&self, key: C::Index, value: &C::Type) -> Result<()> {
+    pub fn put(&self, index: C::Index, value: &C::Type) -> Result<()> {
         let is_perf_enabled = maybe_enable_rocksdb_perf(
             self.column_options.rocks_perf_sample_interval,
             &self.write_perf_status,
@@ -1675,7 +1675,7 @@ where
 
         let result = self
             .backend
-            .put_cf(self.handle(), &C::key(key), &serialized_value);
+            .put_cf(self.handle(), &C::key(index), &serialized_value);
 
         if let Some(op_start_instant) = is_perf_enabled {
             report_rocksdb_write_perf(
@@ -1691,10 +1691,10 @@ where
     pub fn put_in_batch(
         &self,
         batch: &mut WriteBatch,
-        key: C::Index,
+        index: C::Index,
         value: &C::Type,
     ) -> Result<()> {
-        let key = C::key(key);
+        let key = C::key(index);
         let serialized_value = serialize(value)?;
         batch.put_cf(self.handle(), &key, &serialized_value)
     }
@@ -1706,9 +1706,9 @@ where
 {
     pub fn get_protobuf_or_bincode<T: DeserializeOwned + Into<C::Type>>(
         &self,
-        key: C::Index,
+        index: C::Index,
     ) -> Result<Option<C::Type>> {
-        self.get_raw_protobuf_or_bincode::<T>(&C::key(key))
+        self.get_raw_protobuf_or_bincode::<T>(&C::key(index))
     }
 
     pub(crate) fn get_raw_protobuf_or_bincode<T: DeserializeOwned + Into<C::Type>>(
@@ -1740,12 +1740,12 @@ where
         }
     }
 
-    pub fn get_protobuf(&self, key: C::Index) -> Result<Option<C::Type>> {
+    pub fn get_protobuf(&self, index: C::Index) -> Result<Option<C::Type>> {
         let is_perf_enabled = maybe_enable_rocksdb_perf(
             self.column_options.rocks_perf_sample_interval,
             &self.read_perf_status,
         );
-        let result = self.backend.get_pinned_cf(self.handle(), &C::key(key));
+        let result = self.backend.get_pinned_cf(self.handle(), &C::key(index));
         if let Some(op_start_instant) = is_perf_enabled {
             report_rocksdb_read_perf(
                 C::NAME,
@@ -1762,7 +1762,7 @@ where
         }
     }
 
-    pub fn put_protobuf(&self, key: C::Index, value: &C::Type) -> Result<()> {
+    pub fn put_protobuf(&self, index: C::Index, value: &C::Type) -> Result<()> {
         let mut buf = Vec::with_capacity(value.encoded_len());
         value.encode(&mut buf)?;
 
@@ -1770,7 +1770,7 @@ where
             self.column_options.rocks_perf_sample_interval,
             &self.write_perf_status,
         );
-        let result = self.backend.put_cf(self.handle(), &C::key(key), &buf);
+        let result = self.backend.put_cf(self.handle(), &C::key(index), &buf);
         if let Some(op_start_instant) = is_perf_enabled {
             report_rocksdb_write_perf(
                 C::NAME,
@@ -1837,9 +1837,9 @@ where
     pub(crate) fn delete_deprecated_in_batch(
         &self,
         batch: &mut WriteBatch,
-        key: C::DeprecatedIndex,
+        index: C::DeprecatedIndex,
     ) -> Result<()> {
-        let key = C::deprecated_key(key);
+        let key = C::deprecated_key(index);
         batch.delete_cf(self.handle(), &key)
     }
 }
@@ -2174,13 +2174,13 @@ pub mod tests {
     {
         pub fn put_deprecated_protobuf(
             &self,
-            key: C::DeprecatedIndex,
+            index: C::DeprecatedIndex,
             value: &C::Type,
         ) -> Result<()> {
             let mut buf = Vec::with_capacity(value.encoded_len());
             value.encode(&mut buf)?;
             self.backend
-                .put_cf(self.handle(), &C::deprecated_key(key), &buf)
+                .put_cf(self.handle(), &C::deprecated_key(index), &buf)
         }
     }
 
@@ -2188,10 +2188,10 @@ pub mod tests {
     where
         C: ColumnIndexDeprecation + TypedColumn + ColumnName,
     {
-        pub fn put_deprecated(&self, key: C::DeprecatedIndex, value: &C::Type) -> Result<()> {
+        pub fn put_deprecated(&self, index: C::DeprecatedIndex, value: &C::Type) -> Result<()> {
             let serialized_value = serialize(value)?;
             self.backend
-                .put_cf(self.handle(), &C::deprecated_key(key), &serialized_value)
+                .put_cf(self.handle(), &C::deprecated_key(index), &serialized_value)
         }
     }
 
