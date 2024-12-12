@@ -13,8 +13,8 @@ use {
     solana_clap_utils::{
         hidden_unless_forced,
         input_validators::{
-            is_keypair, is_keypair_or_ask_keyword, is_parsable, is_pow2, is_pubkey,
-            is_pubkey_or_keypair, is_slot, is_url_or_moniker, is_within_range,
+            is_keypair_or_ask_keyword, is_parsable, is_pow2, is_pubkey, is_pubkey_or_keypair,
+            is_slot, is_url_or_moniker, is_within_range,
             validate_maximum_full_snapshot_archives_to_retain,
             validate_maximum_incremental_snapshot_archives_to_retain,
         },
@@ -1816,35 +1816,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         .subcommand(commands::monitor::command(default_args))
         .subcommand(SubCommand::with_name("run").about("Run the validator"))
         .subcommand(commands::plugin::command(default_args))
-        .subcommand(
-            SubCommand::with_name("set-identity")
-                .about("Set the validator identity")
-                .arg(
-                    Arg::with_name("identity")
-                        .index(1)
-                        .value_name("KEYPAIR")
-                        .required(false)
-                        .takes_value(true)
-                        .validator(is_keypair)
-                        .help(
-                            "Path to validator identity keypair [default: read JSON keypair from \
-                             stdin]",
-                        ),
-                )
-                .arg(
-                    clap::Arg::with_name("require_tower")
-                        .long("require-tower")
-                        .takes_value(false)
-                        .help(
-                            "Refuse to set the validator identity if saved tower state is not \
-                             found",
-                        ),
-                )
-                .after_help(
-                    "Note: the new identity only applies to the currently running validator \
-                     instance",
-                ),
-        )
+        .subcommand(commands::set_identity::command(default_args))
         .subcommand(
             SubCommand::with_name("set-log-filter")
                 .about("Adjust the validator log filter")

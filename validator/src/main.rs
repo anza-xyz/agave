@@ -65,7 +65,7 @@ use {
         clock::{Slot, DEFAULT_SLOTS_PER_EPOCH},
         hash::Hash,
         pubkey::Pubkey,
-        signature::{read_keypair, Keypair, Signer},
+        signature::{Keypair, Signer},
     },
     solana_send_transaction_service::send_transaction_service,
     solana_streamer::{quic::QuicServerParams, socket::SocketAddrSpace},
@@ -217,55 +217,7 @@ pub fn main() {
             return;
         }
         ("set-identity", Some(subcommand_matches)) => {
-            let require_tower = subcommand_matches.is_present("require_tower");
-
-            if let Ok(identity_keypair) = value_t!(subcommand_matches, "identity", String) {
-                let identity_keypair = fs::canonicalize(&identity_keypair).unwrap_or_else(|err| {
-                    println!("Unable to access path: {identity_keypair}: {err:?}");
-                    exit(1);
-                });
-                println!(
-                    "New validator identity path: {}",
-                    identity_keypair.display()
-                );
-
-                let admin_client = admin_rpc_service::connect(&ledger_path);
-                admin_rpc_service::runtime()
-                    .block_on(async move {
-                        admin_client
-                            .await?
-                            .set_identity(identity_keypair.display().to_string(), require_tower)
-                            .await
-                    })
-                    .unwrap_or_else(|err| {
-                        println!("setIdentity request failed: {err}");
-                        exit(1);
-                    });
-            } else {
-                let mut stdin = std::io::stdin();
-                let identity_keypair = read_keypair(&mut stdin).unwrap_or_else(|err| {
-                    println!("Unable to read JSON keypair from stdin: {err:?}");
-                    exit(1);
-                });
-                println!("New validator identity: {}", identity_keypair.pubkey());
-
-                let admin_client = admin_rpc_service::connect(&ledger_path);
-                admin_rpc_service::runtime()
-                    .block_on(async move {
-                        admin_client
-                            .await?
-                            .set_identity_from_bytes(
-                                Vec::from(identity_keypair.to_bytes()),
-                                require_tower,
-                            )
-                            .await
-                    })
-                    .unwrap_or_else(|err| {
-                        println!("setIdentityFromBytes request failed: {err}");
-                        exit(1);
-                    });
-            };
-
+            commands::set_identity::execute(subcommand_matches, &ledger_path);
             return;
         }
         ("set-log-filter", Some(subcommand_matches)) => {
