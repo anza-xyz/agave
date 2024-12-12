@@ -865,7 +865,10 @@ mod tests {
             leader_schedule_cache::LeaderScheduleCache,
         },
         solana_perf::packet::Packet,
-        solana_poh::poh_recorder::{PohRecorder, Record, WorkingBankEntry},
+        solana_poh::{
+            mpsc_ringbuffer::ArrayQueue,
+            poh_recorder::{PohRecorder, Record, WorkingBankEntry},
+        },
         solana_rpc::transaction_status_service::TransactionStatusService,
         solana_runtime::{bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache},
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
@@ -1259,7 +1262,7 @@ mod tests {
             let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
             fn poh_tick_before_returning_record_response(
-                record_receiver: Receiver<Record>,
+                record_receiver: Arc<ArrayQueue<Record>>,
                 poh_recorder: Arc<RwLock<PohRecorder>>,
             ) -> JoinHandle<()> {
                 let is_exited = poh_recorder.read().unwrap().is_exited.clone();
@@ -1267,17 +1270,17 @@ mod tests {
                     .name("solana-simulate_poh".to_string())
                     .spawn(move || loop {
                         let timeout = Duration::from_millis(10);
-                        let record = record_receiver.recv_timeout(timeout);
-                        if let Ok(record) = record {
+                        let record = record_receiver.pop_with_timeout(timeout);
+                        if let Some(record) = record {
                             let record_response = poh_recorder.write().unwrap().record(
                                 record.slot,
                                 record.mixin,
                                 record.transactions,
                             );
-                            poh_recorder.write().unwrap().tick();
-                            if record.sender.send(record_response).is_err() {
+                            if record_response.is_err() {
                                 panic!("Error returning mixin hash");
                             }
+                            poh_recorder.write().unwrap().tick();
                         }
                         if is_exited.load(Ordering::Relaxed) {
                             break;

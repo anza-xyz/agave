@@ -814,7 +814,7 @@ mod tests {
     use {
         super::*,
         crate::banking_trace::{BankingPacketBatch, BankingTracer},
-        crossbeam_channel::{unbounded, Receiver},
+        crossbeam_channel::unbounded,
         itertools::Itertools,
         solana_entry::entry::{self, Entry, EntrySlice},
         solana_gossip::cluster_info::Node,
@@ -828,6 +828,7 @@ mod tests {
         },
         solana_perf::packet::{to_packet_batches, PacketBatch},
         solana_poh::{
+            mpsc_ringbuffer::ArrayQueue,
             poh_recorder::{
                 create_test_recorder, PohRecorderError, Record, RecordTransactionsSummary,
             },
@@ -1330,7 +1331,7 @@ mod tests {
     }
 
     pub(crate) fn simulate_poh(
-        record_receiver: Receiver<Record>,
+        record_receiver: Arc<ArrayQueue<Record>>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
     ) -> JoinHandle<()> {
         let poh_recorder = poh_recorder.clone();
@@ -1340,7 +1341,7 @@ mod tests {
             .spawn(move || loop {
                 PohService::read_record_receiver_and_process(
                     &poh_recorder,
-                    &record_receiver,
+                    record_receiver.clone(),
                     Duration::from_millis(10),
                 );
                 if is_exited.load(Ordering::Relaxed) {
