@@ -213,27 +213,7 @@ pub fn main() {
             return;
         }
         ("staked-nodes-overrides", Some(subcommand_matches)) => {
-            if !subcommand_matches.is_present("path") {
-                println!(
-                    "staked-nodes-overrides requires argument of location of the configuration"
-                );
-                exit(1);
-            }
-
-            let path = subcommand_matches.value_of("path").unwrap();
-
-            let admin_client = admin_rpc_service::connect(&ledger_path);
-            admin_rpc_service::runtime()
-                .block_on(async move {
-                    admin_client
-                        .await?
-                        .set_staked_nodes_overrides(path.to_string())
-                        .await
-                })
-                .unwrap_or_else(|err| {
-                    println!("setStakedNodesOverrides request failed: {err}");
-                    exit(1);
-                });
+            commands::staked_nodes_overrides::execute(subcommand_matches, &ledger_path);
             return;
         }
         ("set-identity", Some(subcommand_matches)) => {

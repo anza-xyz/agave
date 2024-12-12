@@ -1857,24 +1857,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                     "Note: the new filter only applies to the currently running validator instance",
                 ),
         )
-        .subcommand(
-            SubCommand::with_name("staked-nodes-overrides")
-                .about("Overrides stakes of specific node identities.")
-                .arg(
-                    Arg::with_name("path")
-                        .value_name("PATH")
-                        .takes_value(true)
-                        .required(true)
-                        .help(
-                            "Provide path to a file with custom overrides for stakes of specific \
-                             validator identities.",
-                        ),
-                )
-                .after_help(
-                    "Note: the new staked nodes overrides only applies to the currently running \
-                     validator instance",
-                ),
-        )
+        .subcommand(commands::staked_nodes_overrides::command(default_args))
         .subcommand(commands::wait_for_restart_window::command(default_args))
         .subcommand(
             SubCommand::with_name("set-public-address")
