@@ -21,7 +21,6 @@ use {
         execute_batch, TransactionBatchWithIndexes, TransactionStatusSender,
     },
     solana_runtime::{
-        bank::Bank,
         installed_scheduler_pool::{
             initialized_result_with_timings, InstalledScheduler, InstalledSchedulerBox,
             InstalledSchedulerPool, InstalledSchedulerPoolArc, ResultWithTimings, ScheduleResult,
@@ -411,9 +410,8 @@ pub trait TaskHandler: Send + Sync + Debug + Sized + 'static {
     fn handle(
         result: &mut Result<()>,
         timings: &mut ExecuteTimings,
-        bank: &Arc<Bank>,
-        transaction: &RuntimeTransaction<SanitizedTransaction>,
-        index: usize,
+        scheduling_context: &SchedulingContext,
+        task: &Task,
         handler_context: &HandlerContext,
     );
 }
@@ -425,13 +423,16 @@ impl TaskHandler for DefaultTaskHandler {
     fn handle(
         result: &mut Result<()>,
         timings: &mut ExecuteTimings,
-        bank: &Arc<Bank>,
-        transaction: &RuntimeTransaction<SanitizedTransaction>,
-        index: usize,
+        scheduling_context: &SchedulingContext,
+        task: &Task,
         handler_context: &HandlerContext,
     ) {
         // scheduler must properly prevent conflicting tx executions. thus, task handler isn't
         // responsible for locking.
+        let bank = scheduling_context.bank();
+        let transaction = task.transaction();
+        let index = task.task_index();
+
         let batch = bank.prepare_unlocked_batch_from_single_tx(transaction);
         let batch_with_indexes = TransactionBatchWithIndexes {
             batch,
@@ -786,7 +787,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
     }
 
     fn execute_task_with_handler(
-        bank: &Arc<Bank>,
+        scheduling_context: &SchedulingContext,
         executed_task: &mut Box<ExecutedTask>,
         handler_context: &HandlerContext,
     ) {
@@ -794,9 +795,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         TH::handle(
             &mut executed_task.result_with_timings.0,
             &mut executed_task.result_with_timings.1,
-            bank,
-            executed_task.task.transaction(),
-            executed_task.task.task_index(),
+            scheduling_context,
+            &executed_task.task,
             handler_context,
         );
     }
@@ -1192,7 +1192,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 }
                 let mut task = ExecutedTask::new_boxed(task);
                 Self::execute_task_with_handler(
-                    runnable_task_receiver.context().bank(),
+                    runnable_task_receiver.context(),
                     &mut task,
                     &pool.handler_context,
                 );
@@ -1752,9 +1752,8 @@ mod tests {
             fn handle(
                 _result: &mut Result<()>,
                 timings: &mut ExecuteTimings,
-                _bank: &Arc<Bank>,
-                _transaction: &RuntimeTransaction<SanitizedTransaction>,
-                _index: usize,
+                _bank: &SchedulingContext,
+                _task: &Task,
                 _handler_context: &HandlerContext,
             ) {
                 timings.metrics[ExecuteTimingType::CheckUs] += 123;
@@ -1935,9 +1934,8 @@ mod tests {
         fn handle(
             result: &mut Result<()>,
             _timings: &mut ExecuteTimings,
-            _bank: &Arc<Bank>,
-            _transaction: &RuntimeTransaction<SanitizedTransaction>,
-            _index: usize,
+            _bank: &SchedulingContext,
+            _task: &Task,
             _handler_context: &HandlerContext,
         ) {
             *result = Err(TransactionError::AccountNotFound);
@@ -2046,9 +2044,8 @@ mod tests {
             fn handle(
                 _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
-                _bank: &Arc<Bank>,
-                _transaction: &RuntimeTransaction<SanitizedTransaction>,
-                _index: usize,
+                _bank: &SchedulingContext,
+                _task: &Task,
                 _handler_context: &HandlerContext,
             ) {
                 *TASK_COUNT.lock().unwrap() += 1;
@@ -2383,11 +2380,11 @@ mod tests {
             fn handle(
                 _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
-                _bank: &Arc<Bank>,
-                _transaction: &RuntimeTransaction<SanitizedTransaction>,
-                index: usize,
+                _bank: &SchedulingContext,
+                task: &Task,
                 _handler_context: &HandlerContext,
             ) {
+                let index = task.task_index();
                 if index == 0 {
                     sleepless_testing::at(PanickingHanlderCheckPoint::BeforeNotifiedPanic);
                 } else if index == 1 {
@@ -2463,11 +2460,11 @@ mod tests {
             fn handle(
                 result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
-                _bank: &Arc<Bank>,
-                _transaction: &RuntimeTransaction<SanitizedTransaction>,
-                index: usize,
+                _bank: &SchedulingContext,
+                task: &Task,
                 _handler_context: &HandlerContext,
             ) {
+                let index = task.task_index();
                 *TASK_COUNT.lock().unwrap() += 1;
                 if index == 1 {
                     *result = Err(TransactionError::AccountNotFound);
@@ -2532,24 +2529,17 @@ mod tests {
             fn handle(
                 result: &mut Result<()>,
                 timings: &mut ExecuteTimings,
-                bank: &Arc<Bank>,
-                transaction: &RuntimeTransaction<SanitizedTransaction>,
-                index: usize,
+                bank: &SchedulingContext,
+                task: &Task,
                 handler_context: &HandlerContext,
             ) {
+                let index = task.task_index();
                 match index {
                     STALLED_TRANSACTION_INDEX => *LOCK_TO_STALL.lock().unwrap(),
                     BLOCKED_TRANSACTION_INDEX => {}
                     _ => unreachable!(),
                 };
-                DefaultTaskHandler::handle(
-                    result,
-                    timings,
-                    bank,
-                    transaction,
-                    index,
-                    handler_context,
-                );
+                DefaultTaskHandler::handle(result, timings, bank, task, handler_context);
             }
         }
 
@@ -2617,13 +2607,12 @@ mod tests {
             fn handle(
                 _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
-                bank: &Arc<Bank>,
-                _transaction: &RuntimeTransaction<SanitizedTransaction>,
-                index: usize,
+                context: &SchedulingContext,
+                task: &Task,
                 _handler_context: &HandlerContext,
             ) {
                 // The task index must always be matched to the slot.
-                assert_eq!(index as Slot, bank.slot());
+                assert_eq!(task.task_index() as Slot, context.bank().slot());
             }
         }
 
@@ -2716,7 +2705,6 @@ mod tests {
             transaction: RuntimeTransaction<SanitizedTransaction>,
             index: usize,
         ) -> ScheduleResult {
-            let transaction_and_index = (transaction, index);
             let context = self.context().clone();
             let pool = self.3.clone();
 
@@ -2728,12 +2716,15 @@ mod tests {
                 let mut result = Ok(());
                 let mut timings = ExecuteTimings::default();
 
+                let task = SchedulingStateMachine::create_task(transaction, index, &mut |_| {
+                    UsageQueue::default()
+                });
+
                 <DefaultTaskHandler as TaskHandler>::handle(
                     &mut result,
                     &mut timings,
-                    context.bank(),
-                    &transaction_and_index.0,
-                    transaction_and_index.1,
+                    &context,
+                    &task,
                     &pool.handler_context,
                 );
                 (result, timings)
@@ -2923,6 +2914,7 @@ mod tests {
         let result = &mut Ok(());
         let timings = &mut ExecuteTimings::default();
         let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
+        let scheduling_context = &SchedulingContext::new(bank.clone());
         let handler_context = &HandlerContext {
             log_messages_bytes_limit: None,
             transaction_status_sender: None,
@@ -2930,7 +2922,8 @@ mod tests {
             prioritization_fee_cache,
         };
 
-        DefaultTaskHandler::handle(result, timings, bank, &tx, 0, handler_context);
+        let task = SchedulingStateMachine::create_task(tx, 0, &mut |_| UsageQueue::default());
+        DefaultTaskHandler::handle(result, timings, scheduling_context, &task, handler_context);
         assert_matches!(result, Err(TransactionError::AccountLoadedTwice));
     }
 }
