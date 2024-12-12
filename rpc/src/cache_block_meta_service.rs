@@ -4,7 +4,7 @@
 pub use solana_ledger::blockstore_processor::CacheBlockMetaSender;
 use {
     crossbeam_channel::{Receiver, RecvTimeoutError},
-    solana_ledger::blockstore::Blockstore,
+    solana_ledger::blockstore::{Blockstore, BlockstoreError},
     solana_runtime::bank::Bank,
     std::{
         sync::{
@@ -37,17 +37,22 @@ impl CacheBlockMetaService {
                         break;
                     }
 
-                    let bank = match cache_block_meta_receiver.recv_timeout(Duration::from_secs(1)) {
+                    let bank = match cache_block_meta_receiver.recv_timeout(Duration::from_secs(1))
+                    {
                         Ok(bank) => bank,
                         Err(RecvTimeoutError::Timeout) => continue,
                         Err(err @ RecvTimeoutError::Disconnected) => {
                             info!("CacheBlockMetaService is stopping because: {err}");
                             break;
-                        },
+                        }
                     };
 
-                    Self::cache_block_meta(&bank, &blockstore);
-
+                    if let Err(err) = Self::cache_block_meta(&bank, &blockstore) {
+                        error!("CacheBlockMetaService is stopping because: {err}");
+                        // Set the exit flag to allow other services to gracefully stop
+                        exit.store(true, Ordering::Relaxed);
+                        break;
+                    }
                 }
                 info!("CacheBlockMetaService has stopped");
             })
@@ -55,13 +60,9 @@ impl CacheBlockMetaService {
         Self { thread_hdl }
     }
 
-    fn cache_block_meta(bank: &Bank, blockstore: &Blockstore) {
-        if let Err(e) = blockstore.cache_block_time(bank.slot(), bank.clock().unix_timestamp) {
-            error!("cache_block_time failed: slot {:?} {:?}", bank.slot(), e);
-        }
-        if let Err(e) = blockstore.cache_block_height(bank.slot(), bank.block_height()) {
-            error!("cache_block_height failed: slot {:?} {:?}", bank.slot(), e);
-        }
+    fn cache_block_meta(bank: &Bank, blockstore: &Blockstore) -> Result<(), BlockstoreError> {
+        blockstore.cache_block_time(bank.slot(), bank.clock().unix_timestamp)?;
+        blockstore.cache_block_height(bank.slot(), bank.block_height())
     }
 
     pub fn join(self) -> thread::Result<()> {
