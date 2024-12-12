@@ -31,7 +31,7 @@ $ aws configure
 More information on AWS CLI configuration can be found [here](https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-getting-started.html#cli-quick-configuration)
 
 ## Metrics configuration (Optional)
-Metrics collection relies on 2 environment variables that are patched to the remote nodes:
+Metrics collection relies on 2 environment variables that are patched to the remote nodes by net.sh:
  * `RUST_LOG` to enable metrics reporting in principle
  * `SOLANA_METRICS_CONFIG` to tell agave where to log the metrics
 
@@ -50,15 +50,16 @@ You will normally only need to do this once. Once this is done, you will be able
 * Run `./init-metrics.sh -c testnet-dev-${user} ${user} `
   * Script will ask for a password, it is the same one you’ve created when making a user in the InfluxDB UI
   * Put the username you have used in preparation, not your login user name
-* Watch the script spit out a config line in the very end like the following:
+  * If you need to set influxDb host, edit the script
+* The script will configure the database (recreating one if necessary) and append a config line in the very end of `net/config/config` file like the following:
   * `export SOLANA_METRICS_CONFIG="host=${host},db=testnet-dev-${user},u=${user},p=some_secret"`
-  * You’ll want to store that into your shell’s environment so you can run `./init-metrics.sh -e` to quickly load it
-  * Alternatively, you'll need to run `./init-metrics.sh ${user}` every time you set up a new cluster
-* Assuming no errors, your influxDB setup is now done and stored in shell environment
-  * Source your shell environment to be sure the new `SOLANA_METRICS_CONFIG` is loaded
+  * You can store that line somewhere and append it to the config file when you need to reuse the database.
+  * You can also store it into your shell’s environment so you can run `./init-metrics.sh -e` to quickly load it
+  * Alternatively, you'll need to run `./init-metrics.sh` with appropriate arguments every time you set up a new cluster
+* Assuming no errors, your influxDB setup is now done.
 * For simple cases, storing `SOLANA_METRICS_CONFIG` in your env is appropriate, but you may want to use different databases for different runs of net.sh
   * You can call ./init-metrics.sh before you call net.sh start, this will change the metrics config for a particular run.
-  * You can manually rewrite `SOLANA_METRICS_CONFIG` in the `./net/config/config` file
+  * You can manually write `SOLANA_METRICS_CONFIG` in the `./net/config/config` file
 * By default, metrics are only logged by agave if `RUST_LOG` is set to `info` or higher. You can provide it as environment for `./net.sh start` command, or set this in your shell environment.
   ```bash
   RUST_LOG="info,solana_runtime=debug"
@@ -94,7 +95,7 @@ cd net/
 ./gce.sh create -n 4 -c 1
 
 # Configure the metrics database and validate credentials using environment variable `SOLANA_METRICS_CONFIG` (skip this if you are not using metrics)
-./init-metrics.sh -e
+./init-metrics.sh -c testnet-dev-${USER} ${USER}
 
 # Deploy the network from the local workspace and start processes on all nodes including bench-tps on the client node
 RUST_LOG=info ./net.sh start
@@ -121,9 +122,9 @@ RUST_LOG=info ./net.sh start
   * On GCE, if you do not delete nodes, they will self-destruct in 8 hours anyway, you can configure self-destruct timer by supplying `--self-destruct-hours=N` argument to `gce.sh`
   * On other cloud platforms the testnet will not self-destruct!
 * To enable metrics in the testnet, at this point you need to either:
-  * `./init-metrics.sh -e` to load metrics config from `SOLANA_METRICS_CONFIG` into the testnet config file or
-  * `./init-metrics.sh ${user}` to create a new metrics database from scratch
+  * `./init-metrics.sh -c testnet-dev-${user} ${user}` to create a new metrics database from scratch
   * Manually set `SOLANA_METRICS_CONFIG` in `./net/config/config` (which is exactly what `init-metrics.sh` does for you)
+  * `./init-metrics.sh -e` to load metrics config from `SOLANA_METRICS_CONFIG` into the testnet config file or
 * `./net.sh` controls the payload on the testnet nodes, i.e. bootstrapping, the validators and bench-tps. In principle, you can run everything by hand, but `./net.sh` makes it easier.
   * `./net.sh start` to actually run the test network.
     * This will actually upload your current sources to the bootstrap host, build them there and upload the result to all the nodes
