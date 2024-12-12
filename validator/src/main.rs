@@ -200,23 +200,7 @@ pub fn main() {
             return;
         }
         ("contact-info", Some(subcommand_matches)) => {
-            let output_mode = subcommand_matches.value_of("output");
-            let admin_client = admin_rpc_service::connect(&ledger_path);
-            let contact_info = admin_rpc_service::runtime()
-                .block_on(async move { admin_client.await?.contact_info().await })
-                .unwrap_or_else(|err| {
-                    eprintln!("Contact info query failed: {err}");
-                    exit(1);
-                });
-            if let Some(mode) = output_mode {
-                match mode {
-                    "json" => println!("{}", serde_json::to_string_pretty(&contact_info).unwrap()),
-                    "json-compact" => print!("{}", serde_json::to_string(&contact_info).unwrap()),
-                    _ => unreachable!(),
-                }
-            } else {
-                print!("{contact_info}");
-            }
+            commands::contact_info::execute(subcommand_matches, &ledger_path);
             return;
         }
         ("init", _) => Operation::Initialize,

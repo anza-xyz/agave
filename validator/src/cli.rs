@@ -1736,18 +1736,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         .after_help("The default subcommand is run")
         .subcommand(commands::exit::command(default_args))
         .subcommand(commands::authorized_voter::command(default_args))
-        .subcommand(
-            SubCommand::with_name("contact-info")
-                .about("Display the validator's contact info")
-                .arg(
-                    Arg::with_name("output")
-                        .long("output")
-                        .takes_value(true)
-                        .value_name("MODE")
-                        .possible_values(&["json", "json-compact"])
-                        .help("Output display mode"),
-                ),
-        )
+        .subcommand(commands::contact_info::command(default_args))
         .subcommand(
             SubCommand::with_name("repair-shred-from-peer")
                 .about("Request a repair from the specified validator")
