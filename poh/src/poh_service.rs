@@ -1,11 +1,15 @@
 //! The `poh_service` module implements a service that records the passing of
 //! "ticks", a measure of time in the PoH stream
+
+use std::time::Duration;
 use {
-    crate::poh_recorder::{PohRecorder, Record},
-    crossbeam_channel::Receiver,
+    crate::{
+        mpsc::{self, Consumer},
+        poh_recorder::{PohRecorder, Record},
+    },
     log::*,
     solana_entry::poh::Poh,
-    solana_measure::{measure::Measure, measure_us},
+    solana_measure::measure::Measure,
     solana_sdk::poh_config::PohConfig,
     std::{
         sync::{
@@ -13,7 +17,7 @@ use {
             Arc, Mutex, RwLock,
         },
         thread::{self, Builder, JoinHandle},
-        time::{Duration, Instant},
+        time::Instant,
     },
 };
 
@@ -101,7 +105,7 @@ impl PohService {
         ticks_per_slot: u64,
         pinned_cpu_core: usize,
         hashes_per_batch: u64,
-        record_receiver: Receiver<Record>,
+        record_receiver: mpsc::Consumer<Record>,
     ) -> Self {
         let poh_config = poh_config.clone();
         let tick_producer = Builder::new()
@@ -164,18 +168,14 @@ impl PohService {
         poh_recorder: Arc<RwLock<PohRecorder>>,
         poh_config: &PohConfig,
         poh_exit: &AtomicBool,
-        record_receiver: Receiver<Record>,
+        record_receiver: mpsc::Consumer<Record>,
     ) {
         let mut last_tick = Instant::now();
         while !poh_exit.load(Ordering::Relaxed) {
             let remaining_tick_time = poh_config
                 .target_tick_duration
                 .saturating_sub(last_tick.elapsed());
-            Self::read_record_receiver_and_process(
-                &poh_recorder,
-                &record_receiver,
-                remaining_tick_time,
-            );
+            Self::read_record_receiver_and_process(&poh_recorder, &record_receiver);
             if remaining_tick_time.is_zero() {
                 last_tick = Instant::now();
                 poh_recorder.write().unwrap().tick();
@@ -185,18 +185,15 @@ impl PohService {
 
     pub fn read_record_receiver_and_process(
         poh_recorder: &Arc<RwLock<PohRecorder>>,
-        record_receiver: &Receiver<Record>,
-        timeout: Duration,
+        record_receiver: &Consumer<Record>,
     ) {
-        let record = record_receiver.recv_timeout(timeout);
-        if let Ok(record) = record {
-            if record
-                .sender
-                .send(poh_recorder.write().unwrap().record(
-                    record.slot,
-                    record.mixin,
-                    record.transactions,
-                ))
+        let record = record_receiver.pop();
+        if let Some(record) = record {
+            // TODO: Where should we send the starting transaction index now?
+            if poh_recorder
+                .write()
+                .unwrap()
+                .record(record.slot, record.mixin, record.transactions)
                 .is_err()
             {
                 panic!("Error returning mixin hash");
@@ -208,7 +205,7 @@ impl PohService {
         poh_recorder: Arc<RwLock<PohRecorder>>,
         poh_config: &PohConfig,
         poh_exit: &AtomicBool,
-        record_receiver: Receiver<Record>,
+        record_receiver: Consumer<Record>,
     ) {
         let mut warned = false;
         let mut elapsed_ticks = 0;
@@ -218,11 +215,7 @@ impl PohService {
             let remaining_tick_time = poh_config
                 .target_tick_duration
                 .saturating_sub(last_tick.elapsed());
-            Self::read_record_receiver_and_process(
-                &poh_recorder,
-                &record_receiver,
-                Duration::from_millis(0),
-            );
+            Self::read_record_receiver_and_process(&poh_recorder, &record_receiver);
             if remaining_tick_time.is_zero() {
                 last_tick = Instant::now();
                 poh_recorder.write().unwrap().tick();
@@ -240,11 +233,24 @@ impl PohService {
         next_record: &mut Option<Record>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         timing: &mut PohTiming,
-        record_receiver: &Receiver<Record>,
+        record_receiver: &Consumer<Record>,
         hashes_per_batch: u64,
         poh: &Arc<Mutex<Poh>>,
         target_ns_per_tick: u64,
     ) -> bool {
+        // If the difference between min tick height and capacity is small then shutoff.
+        // remaining_tick_time, ticks_per_slot, compute_leader_slot_tick_heights
+        // tick_height, Bank::max_tick_height
+        let tick_height = poh_recorder.read().unwrap().tick_height();
+        let max_tick_height = poh_recorder.read().unwrap().bank().unwrap().max_tick_height();
+        let remaining_slots = max_tick_height - tick_height;
+        let min_gap = std::cmp::max(max_tick_height - record_receiver.ring_buffer.capacity(), 64);
+        if remaining_slots < min_gap {
+            record_receiver.shut_off_producers();
+            if remaining_slots == 0 {
+                record_receiver.enable_producers(); // TODO: Do we need to reset the queue?
+            }
+        }
         match next_record.take() {
             Some(mut record) => {
                 // received message to record
@@ -260,12 +266,9 @@ impl PohService {
                         record.mixin,
                         std::mem::take(&mut record.transactions),
                     );
-                    let (send_res, send_record_result_us) = measure_us!(record.sender.send(res));
-                    debug_assert!(send_res.is_ok(), "Record wasn't sent.");
-
-                    timing.total_send_record_result_us += send_record_result_us;
+                    debug_assert!(res.is_ok(), "Slot {0} wasn't recorded.", record.slot);
                     timing.num_hashes += 1; // note: may have also ticked inside record
-                    if let Ok(new_record) = record_receiver.try_recv() {
+                    if let Some(new_record) = record_receiver.pop() {
                         // we already have second request to record, so record again while we still have the mutex
                         record = new_record;
                     } else {
@@ -293,14 +296,16 @@ impl PohService {
                         // nothing else can be done. tick required.
                         return true;
                     }
+
                     // check to see if a record request has been sent
-                    if let Ok(record) = record_receiver.try_recv() {
+                    if let Some(record) = record_receiver.pop() {
                         // remember the record we just received as the next record to occur
                         *next_record = Some(record);
                         break;
                     }
                     // check to see if we need to wait to catch up to ideal
-                    let wait_start = Instant::now();
+                    let mut wait_start = Instant::now();
+
                     if ideal_time <= wait_start {
                         // no, keep hashing. We still hold the lock.
                         continue;
@@ -308,13 +313,18 @@ impl PohService {
 
                     // busy wait, polling for new records and after dropping poh lock (reset can occur, for example)
                     drop(poh_l);
-                    while ideal_time > Instant::now() {
+                    let d = Duration::from_nanos(target_ns_per_tick*64);
+                    while ideal_time > wait_start {
+                        if ideal_time.checked_duration_since(wait_start).unwrap().ge(&d) {
+                            record_receiver.shut_off_producers()
+                        }
                         // check to see if a record request has been sent
-                        if let Ok(record) = record_receiver.try_recv() {
+                        if let Some(record) = record_receiver.pop() {
                             // remember the record we just received as the next record to occur
                             *next_record = Some(record);
                             break;
                         }
+                        wait_start = Instant::now();
                     }
                     timing.total_sleep_us += wait_start.elapsed().as_micros() as u64;
                     break;
@@ -329,7 +339,7 @@ impl PohService {
         poh_exit: &AtomicBool,
         ticks_per_slot: u64,
         hashes_per_batch: u64,
-        record_receiver: Receiver<Record>,
+        record_receiver: Consumer<Record>,
         target_ns_per_tick: u64,
     ) {
         let poh = poh_recorder.read().unwrap().poh.clone();
