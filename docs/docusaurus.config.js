@@ -4,7 +4,7 @@ module.exports = {
   title: "Agave",
   tagline:
     "Agave is an open source project implementing a new, high-performance, permissionless blockchain.",
-  url: "https://docs.solanalabs.com",
+  url: "https://docs.anza.xyz",
   baseUrl: "/",
   favicon: "img/favicon.ico",
   organizationName: "anza-xyz", // Usually your GitHub org/user name.
@@ -89,7 +89,7 @@ module.exports = {
           href: "https://solana.com/discord",
           // label: "Discord",
           className: "header-link-icon header-discord-link",
-          "aria-label": "Solana Discord",
+          "aria-label": "Solana Tech Discord",
           position: "right",
         },
         {
