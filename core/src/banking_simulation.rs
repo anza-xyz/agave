@@ -488,8 +488,7 @@ impl SimulatorLoop {
                     .bank_forks
                     .read()
                     .unwrap()
-                    .working_bank_with_scheduler()
-                    .clone_with_scheduler();
+                    .working_bank_with_scheduler();
                 self.poh_recorder
                     .write()
                     .unwrap()
@@ -676,11 +675,7 @@ impl BankingSimulator {
         let parent_slot = self.parent_slot().unwrap();
         let mut packet_batches_by_time = self.banking_trace_events.packet_batches_by_time;
         let freeze_time_by_slot = self.banking_trace_events.freeze_time_by_slot;
-        let bank = bank_forks
-            .read()
-            .unwrap()
-            .working_bank_with_scheduler()
-            .clone_with_scheduler();
+        let bank = bank_forks.read().unwrap().working_bank_with_scheduler();
 
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
         assert_eq!(parent_slot, bank.slot());
