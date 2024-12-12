@@ -1875,7 +1875,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         .subcommand(
             SubCommand::with_name("init").about("Initialize the ledger directory then exit"),
         )
-        .subcommand(SubCommand::with_name("monitor").about("Monitor the validator"))
+        .subcommand(commands::monitor::command(default_args))
         .subcommand(SubCommand::with_name("run").about("Run the validator"))
         .subcommand(
             SubCommand::with_name("plugin")

@@ -98,18 +98,6 @@ enum Operation {
 
 const MILLIS_PER_SECOND: u64 = 1000;
 
-fn monitor_validator(ledger_path: &Path) {
-    let dashboard = Dashboard::new(ledger_path, None, None).unwrap_or_else(|err| {
-        println!(
-            "Error: Unable to connect to validator at {}: {:?}",
-            ledger_path.display(),
-            err,
-        );
-        exit(1);
-    });
-    dashboard.run(Duration::from_secs(2));
-}
-
 fn set_repair_whitelist(
     ledger_path: &Path,
     whitelist: Vec<Pubkey>,
@@ -342,7 +330,7 @@ pub fn main() {
             return;
         }
         ("monitor", _) => {
-            monitor_validator(&ledger_path);
+            commands::monitor::execute(&matches, &ledger_path);
             return;
         }
         ("staked-nodes-overrides", Some(subcommand_matches)) => {
