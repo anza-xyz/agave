@@ -3978,7 +3978,7 @@ dependencies = [
  "quinn-proto",
  "quinn-udp",
  "rustc-hash 2.0.0",
- "rustls 0.23.19",
+ "rustls 0.23.20",
  "socket2 0.5.8",
  "thiserror 2.0.6",
  "tokio",
@@ -3996,7 +3996,7 @@ dependencies = [
  "rand 0.8.5",
  "ring 0.17.3",
  "rustc-hash 2.0.0",
- "rustls 0.23.19",
+ "rustls 0.23.20",
  "rustls-pki-types",
  "rustls-platform-verifier",
  "slab",
@@ -4409,9 +4409,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.19"
+version = "0.23.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "934b404430bb06b3fae2cba809eb45a1ab1aecd64491213d7c3301b88393f8d1"
+checksum = "5065c3f250cbd332cd894be57c40fa52387247659b14a2d6041d121547903b1b"
 dependencies = [
  "once_cell",
  "ring 0.17.3",
@@ -4473,7 +4473,7 @@ dependencies = [
  "jni",
  "log",
  "once_cell",
- "rustls 0.23.19",
+ "rustls 0.23.20",
  "rustls-native-certs",
  "rustls-platform-verifier-android",
  "rustls-webpki 0.102.8",
@@ -5459,7 +5459,7 @@ dependencies = [
  "rand_chacha 0.3.1",
  "rayon",
  "rolling-file",
- "rustls 0.23.19",
+ "rustls 0.23.20",
  "serde",
  "serde_bytes",
  "serde_derive",
@@ -6548,7 +6548,7 @@ dependencies = [
  "log",
  "quinn",
  "quinn-proto",
- "rustls 0.23.19",
+ "rustls 0.23.20",
  "solana-connection-cache",
  "solana-keypair",
  "solana-measure",
@@ -7737,7 +7737,7 @@ dependencies = [
  "quinn",
  "quinn-proto",
  "rand 0.8.5",
- "rustls 0.23.19",
+ "rustls 0.23.20",
  "smallvec",
  "socket2 0.5.8",
  "solana-keypair",
@@ -7977,7 +7977,7 @@ dependencies = [
 name = "solana-tls-utils"
 version = "2.2.0"
 dependencies = [
- "rustls 0.23.19",
+ "rustls 0.23.20",
  "solana-keypair",
  "solana-pubkey",
  "solana-signer",
@@ -8024,7 +8024,7 @@ dependencies = [
  "log",
  "lru",
  "quinn",
- "rustls 0.23.19",
+ "rustls 0.23.20",
  "solana-clock",
  "solana-connection-cache",
  "solana-keypair",
@@ -8169,7 +8169,7 @@ dependencies = [
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rayon",
- "rustls 0.23.19",
+ "rustls 0.23.20",
  "solana-entry",
  "solana-feature-set",
  "solana-geyser-plugin-manager",
