@@ -9177,6 +9177,11 @@ impl AccountsDb {
             );
         }
     }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn get_len_of_slots_with_uncleaned_pubkeys(&self) -> usize {
+        self.uncleaned_pubkeys.len()
+    }
 }
 
 /// Specify the source of the accounts data when calculating the accounts hash
