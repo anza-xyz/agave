@@ -1027,7 +1027,7 @@ where
 
 impl<S, TH> PooledSchedulerInner<S, TH>
 where
-    S: SpawnableScheduler<TH, Inner = Self>,
+    S: SpawnableScheduler<TH>,
     TH: TaskHandler,
 {
     fn is_trashed(&self) -> bool {
@@ -1985,7 +1985,7 @@ where
 
 impl<S, TH> SchedulerInner for PooledSchedulerInner<S, TH>
 where
-    S: SpawnableScheduler<TH, Inner = Self>,
+    S: SpawnableScheduler<TH>,
     TH: TaskHandler,
 {
     fn id(&self) -> SchedulerId {
