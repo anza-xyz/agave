@@ -422,8 +422,14 @@ where
 
     // This fn needs to return immediately due to being part of the blocking
     // `::wait_for_termination()` call.
-    fn return_scheduler(&self, mut scheduler: S::Inner, should_trash: bool) {
+    fn return_scheduler(&self, mut scheduler: S::Inner) {
         let id = scheduler.id();
+        // Refer to the comment in is_trashed() as to the exact definition of the concept of
+        // _trashed_ and the interaction among different parts of unified scheduler.
+        let should_trash = scheduler.is_trashed();
+        if should_trash {
+            info!("trashing scheduler (id: {})...", scheduler.id());
+        }
         debug!("return_scheduler(): id: {id} should_trash: {should_trash}");
         let mut id_and_inner = self.block_production_scheduler_inner.lock().unwrap();
         let is_block_production_scheduler_returned = Some(id) == id_and_inner.0.as_ref().copied();
@@ -1030,10 +1036,6 @@ where
     S: SpawnableScheduler<TH>,
     TH: TaskHandler,
 {
-    fn is_trashed(&self) -> bool {
-        self.is_aborted() || self.is_overgrown()
-    }
-
     fn is_aborted(&self) -> bool {
         // Schedulers can be regarded as being _trashed_ (thereby will be cleaned up later), if
         // threads are joined. Remember that unified scheduler _doesn't normally join threads_ even
@@ -1787,6 +1789,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 pub trait SchedulerInner {
     fn id(&self) -> SchedulerId;
     fn is_overgrown(&self) -> bool;
+    fn is_trashed(&self) -> bool;
     fn reset(&self);
     fn ensure_abort(&mut self);
 }
@@ -1970,16 +1973,7 @@ where
     TH: TaskHandler,
 {
     fn return_to_pool(self: Box<Self>) {
-        // Refer to the comment in is_trashed() as to the exact definition of the concept of
-        // _trashed_ and the interaction among different parts of unified scheduler.
-        let should_trash = self.is_trashed();
-        if should_trash {
-            info!("trashing scheduler (id: {})...", self.id());
-        }
-        self.thread_manager
-            .pool
-            .clone()
-            .return_scheduler(*self, should_trash);
+        self.thread_manager.pool.clone().return_scheduler(*self);
     }
 }
 
@@ -1995,6 +1989,10 @@ where
     fn is_overgrown(&self) -> bool {
         self.task_creator
             .is_overgrown(self.thread_manager.pool.max_usage_queue_count)
+    }
+
+    fn is_trashed(&self) -> bool {
+        self.is_aborted() || self.is_overgrown()
     }
 
     fn reset(&self) {
@@ -2743,10 +2741,10 @@ mod tests {
 
         let (result_with_timings, scheduler1) = scheduler1.into_inner();
         assert_matches!(result_with_timings, (Ok(()), _));
-        pool.return_scheduler(scheduler1, false);
+        pool.return_scheduler(scheduler1);
         let (result_with_timings, scheduler2) = scheduler2.into_inner();
         assert_matches!(result_with_timings, (Ok(()), _));
-        pool.return_scheduler(scheduler2, false);
+        pool.return_scheduler(scheduler2);
 
         let scheduler3 = pool.do_take_scheduler(context.clone());
         assert_eq!(scheduler_id2, scheduler3.id());
@@ -2799,7 +2797,7 @@ mod tests {
 
         let scheduler = pool.do_take_scheduler(old_context.clone());
         let scheduler_id = scheduler.id();
-        pool.return_scheduler(scheduler.into_inner().1, false);
+        pool.return_scheduler(scheduler.into_inner().1);
 
         let scheduler = pool.take_scheduler(new_context.clone()).unwrap();
         assert_eq!(scheduler_id, scheduler.id());
@@ -3417,7 +3415,7 @@ mod tests {
         for AsyncScheduler<TRIGGER_RACE_CONDITION>
     {
         fn return_to_pool(self: Box<Self>) {
-            self.3.clone().return_scheduler(*self, false)
+            self.3.clone().return_scheduler(*self)
         }
     }
 
@@ -3427,6 +3425,10 @@ mod tests {
         }
 
         fn is_overgrown(&self) -> bool {
+            todo!()
+        }
+
+        fn is_trashed(&self) -> bool {
             todo!()
         }
 
