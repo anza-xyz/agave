@@ -2384,7 +2384,7 @@ impl DefaultArgs {
                 .retry_pool_max_size
                 .to_string(),
             rpc_threads: num_cpus::get().to_string(),
-            rpc_blocking_threads: 1.max(num_cpus::get() / 2).to_string(),
+            rpc_blocking_threads: 1.max(num_cpus::get() / 4).to_string(),
             rpc_niceness_adjustment: "0".to_string(),
             rpc_bigtable_timeout: "30".to_string(),
             rpc_bigtable_instance_name: solana_storage_bigtable::DEFAULT_INSTANCE_NAME.to_string(),
