@@ -426,6 +426,9 @@ where
         // _trashed_ and the interaction among different parts of unified scheduler.
         let should_trash = scheduler.is_trashed();
         let id = scheduler.id();
+        if should_trash {
+            info!("trashing scheduler (id: {})...", scheduler.id());
+        }
         debug!("return_scheduler(): id: {id} should_trash: {should_trash}");
         let mut id_and_inner = self.block_production_scheduler_inner.lock().unwrap();
         let is_block_production_scheduler_returned = Some(id) == id_and_inner.0.as_ref().copied();
@@ -1994,6 +1997,10 @@ where
             .is_overgrown(self.thread_manager.pool.max_usage_queue_count)
     }
 
+    fn is_trashed(&self) -> bool {
+        self.is_aborted() || self.is_overgrown()
+    }
+
     fn reset(&self) {
         if let Err(a) = self
             .thread_manager
@@ -3438,6 +3445,10 @@ mod tests {
         }
 
         fn is_overgrown(&self) -> bool {
+            todo!()
+        }
+
+        fn is_trashed(&self) -> bool {
             todo!()
         }
 
