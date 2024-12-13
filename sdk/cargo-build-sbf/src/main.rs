@@ -34,7 +34,7 @@ struct Config<'a> {
     features: Vec<String>,
     force_tools_install: bool,
     skip_tools_install: bool,
-    no_rustup: bool,
+    no_rustup_override: bool,
     generate_child_script_on_failure: bool,
     no_default_features: bool,
     offline: bool,
@@ -64,7 +64,7 @@ impl Default for Config<'_> {
             features: vec![],
             force_tools_install: false,
             skip_tools_install: false,
-            no_rustup: false,
+            no_rustup_override: false,
             generate_child_script_on_failure: false,
             no_default_features: false,
             offline: false,
@@ -704,7 +704,7 @@ fn build_solana_package(
     }
     let target = "sbf-solana-solana";
 
-    if config.no_rustup {
+    if config.no_rustup_override {
         check_solana_target_installed(target);
     } else {
         link_solana_toolchain(config);
@@ -766,7 +766,7 @@ fn build_solana_package(
 
     let cargo_build = PathBuf::from("cargo");
     let mut cargo_build_args = vec![];
-    if !config.no_rustup {
+    if !config.no_rustup_override {
         cargo_build_args.push("+solana");
     };
 
@@ -925,7 +925,7 @@ fn check_solana_target_installed(target: &str) {
     let rustc = PathBuf::from(rustc);
     let output = spawn(&rustc, ["--print", "target-list"], false);
     if !output.contains(target) {
-        error!("Provided {:?} does not have {} target.", rustc, target,);
+        error!("Provided {:?} does not have {} target. The Solana rustc must be available in $PATH or the $RUSTC environment variable for the build to succeed.", rustc, target);
         exit(1);
     }
 }
@@ -1068,11 +1068,11 @@ fn main() {
                 .help("Skip downloading and installing platform-tools, assuming they are properly mounted"),
             )
             .arg(
-                Arg::new("no_rustup")
-                .long("no-rustup")
+                Arg::new("no_rustup_override")
+                .long("no-rustup-override")
                 .takes_value(false)
                 .conflicts_with("force_tools_install")
-                .help("Do not use rustup to manage the toolchain"),
+                .help("Do not use rustup to manage the toolchain. By default, cargo-build-sbf invokes rustup to find the Solana rustc using a `+solana` toolchain override. This flag disables that behavior."),
         )
         .arg(
             Arg::new("generate_child_script_on_failure")
@@ -1198,7 +1198,7 @@ fn main() {
         features: matches.values_of_t("features").ok().unwrap_or_default(),
         force_tools_install: matches.is_present("force_tools_install"),
         skip_tools_install: matches.is_present("skip_tools_install"),
-        no_rustup: matches.is_present("no_rustup"),
+        no_rustup_override: matches.is_present("no_rustup_override"),
         generate_child_script_on_failure: matches.is_present("generate_child_script_on_failure"),
         no_default_features: matches.is_present("no_default_features"),
         remap_cwd: !matches.is_present("remap_cwd"),
