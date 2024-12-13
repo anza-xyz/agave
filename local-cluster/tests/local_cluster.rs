@@ -1644,7 +1644,6 @@ fn test_no_voting() {
 
 #[test]
 #[serial]
-#[ignore]
 fn test_optimistic_confirmation_violation_detection() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
     // First set up the cluster with 2 nodes
@@ -1685,26 +1684,29 @@ fn test_optimistic_confirmation_violation_detection() {
     let client = cluster
         .build_validator_tpu_quic_client(&node_to_restart)
         .unwrap();
-    let mut prev_voted_slot = 0;
+    let start = Instant::now();
+    let target_slot = 50;
+    let max_wait_time_seconds = 100;
+    let mut optimistically_confirmed_slot;
     loop {
-        let last_voted_slot = client
+        optimistically_confirmed_slot = client
             .rpc_client()
-            .get_slot_with_commitment(CommitmentConfig::processed())
+            .get_slot_with_commitment(CommitmentConfig::confirmed())
             .unwrap();
-        info!("last voted slot: {}", last_voted_slot);
-        if last_voted_slot > 50 {
-            if prev_voted_slot == 0 {
-                prev_voted_slot = last_voted_slot;
-            } else {
-                break;
-            }
+
+        if optimistically_confirmed_slot > target_slot {
+            break;
+        }
+        if start.elapsed() > Duration::from_secs(max_wait_time_seconds) {
+            cluster.exit();
+            panic!("Didn't get optimistcally confirmed slot > {target_slot} within {max_wait_time_seconds} seconds");
         }
         sleep(Duration::from_millis(100));
     }
 
     info!("exiting node");
     drop(client);
-    let exited_validator_info = cluster.exit_node(&node_to_restart);
+    let mut exited_validator_info = cluster.exit_node(&node_to_restart);
     info!("exiting node success");
 
     // Mark fork as dead on the heavier validator, this should make the fork effectively
@@ -1712,57 +1714,137 @@ fn test_optimistic_confirmation_violation_detection() {
     // create and jump over to a new fork
     // Also, remove saved tower to intentionally make the restarted validator to violate the
     // optimistic confirmation
-    {
+    let optimistically_confirmed_slot_parent = {
+        let tower = restore_tower(
+            &exited_validator_info.info.ledger_path,
+            &exited_validator_info.info.keypair.pubkey(),
+        )
+        .unwrap();
+
+        // Vote must exist since we waited for OC and so this node must have voted
+        let last_voted_slot = tower.last_voted_slot().expect("vote must exist");
         let blockstore = open_blockstore(&exited_validator_info.info.ledger_path);
+
+        // The last vote must be descended from the OC slot
+        assert!(
+            AncestorIterator::new_inclusive(last_voted_slot, &blockstore)
+                .contains(&optimistically_confirmed_slot)
+        );
+
         info!(
-            "Setting slot: {} on main fork as dead, should cause fork",
-            prev_voted_slot
+            "Setting slot: {optimistically_confirmed_slot} on main fork as dead, should cause fork"
         );
         // Necessary otherwise tower will inform this validator that it's latest
-        // vote is on slot `prev_voted_slot`. This will then prevent this validator
-        // from resetting to the parent of `prev_voted_slot` to create an alternative fork because
+        // vote is on slot `optimistically_confirmed_slot`. This will then prevent this validator
+        // from resetting to the parent of `optimistically_confirmed_slot` to create an alternative fork because
         // 1) Validator can't vote on earlier ancestor of last vote due to switch threshold (can't vote
         // on ancestors of last vote)
         // 2) Won't reset to this earlier ancestor because reset can only happen on same voted fork if
         // it's for the last vote slot or later
         remove_tower(&exited_validator_info.info.ledger_path, &node_to_restart);
-        blockstore.set_dead_slot(prev_voted_slot).unwrap();
-    }
+        blockstore
+            .set_dead_slot(optimistically_confirmed_slot)
+            .unwrap();
+        blockstore
+            .meta(optimistically_confirmed_slot)
+            .unwrap()
+            .unwrap()
+            .parent_slot
+            .unwrap()
+    };
 
     {
         // Buffer stderr to detect optimistic slot violation log
         let buf = std::env::var("OPTIMISTIC_CONF_TEST_DUMP_LOG")
             .err()
             .map(|_| BufferRedirect::stderr().unwrap());
+
+        // In order to prevent the node from voting on a slot it's already voted on
+        // which can potentially cause a panic in gossip, start up the validator as a
+        // non voter and wait for it to make a new block
+        exited_validator_info.config.voting_disabled = true;
         cluster.restart_node(
             &node_to_restart,
             exited_validator_info,
             SocketAddrSpace::Unspecified,
         );
 
-        // Wait for a root > prev_voted_slot to be set. Because the root is on a
-        // different fork than `prev_voted_slot`, then optimistic confirmation is
-        // violated
+        // Wait for this node to make a fork that doesn't include the `optimistically_confirmed_slot``
+        info!(
+            "Looking for slot not equal to {optimistically_confirmed_slot}
+            with parent {optimistically_confirmed_slot_parent}"
+        );
+        let start = Instant::now();
+        let new_fork_slot;
+        'outer: loop {
+            sleep(Duration::from_millis(1000));
+            let ledger_path = cluster.ledger_path(&node_to_restart);
+            let blockstore = open_blockstore(&ledger_path);
+            let potential_new_forks = blockstore
+                .meta(optimistically_confirmed_slot_parent)
+                .unwrap()
+                .unwrap()
+                .next_slots;
+            for slot in potential_new_forks {
+                // Wait for a fork to be created that does not include the OC slot
+
+                // Now on restart the validator should only vote for this new`slot` which they have
+                // never voted on before and thus avoids the panic in gossip
+                if slot > optimistically_confirmed_slot && blockstore.is_full(slot) {
+                    new_fork_slot = slot;
+                    break 'outer;
+                }
+            }
+            if start.elapsed() > Duration::from_secs(max_wait_time_seconds) {
+                cluster.exit();
+                panic!("Didn't get new fork within {max_wait_time_seconds} seconds");
+            }
+        }
+
+        // Exit again, restart with voting enabled
+        let mut exited_validator_info = cluster.exit_node(&node_to_restart);
+        exited_validator_info.config.voting_disabled = false;
+        cluster.restart_node(
+            &node_to_restart,
+            exited_validator_info,
+            SocketAddrSpace::Unspecified,
+        );
+
+        // Wait for a root descended from `new_fork_slot` to be set.
         let client = cluster
             .build_validator_tpu_quic_client(&node_to_restart)
             .unwrap();
+
+        info!("looking for root > {optimistically_confirmed_slot} on new fork {new_fork_slot}");
+        let start = Instant::now();
         loop {
             info!("Client connecting to: {}", client.rpc_client().url());
             let last_root = client
                 .rpc_client()
                 .get_slot_with_commitment(CommitmentConfig::finalized())
                 .unwrap();
-            if last_root > prev_voted_slot {
-                break;
+
+            if last_root > new_fork_slot {
+                info!("Found root: {last_root} > {new_fork_slot}");
+                let ledger_path = cluster.ledger_path(&node_to_restart);
+                let blockstore = open_blockstore(&ledger_path);
+                if AncestorIterator::new_inclusive(last_root, &blockstore).contains(&new_fork_slot)
+                {
+                    break;
+                }
+            }
+            if start.elapsed() > Duration::from_secs(max_wait_time_seconds) {
+                cluster.exit();
+                panic!("Didn't get root on new fork within {max_wait_time_seconds} seconds");
             }
             sleep(Duration::from_millis(100));
         }
 
         // Check to see that validator detected optimistic confirmation for
-        // `prev_voted_slot` failed
+        // `last_voted_slot` failed
         let expected_log =
             OptimisticConfirmationVerifier::format_optimistic_confirmed_slot_violation_log(
-                prev_voted_slot,
+                optimistically_confirmed_slot,
             );
         // Violation detection thread can be behind so poll logs up to 10 seconds
         if let Some(mut buf) = buf {
