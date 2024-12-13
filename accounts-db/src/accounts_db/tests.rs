@@ -4803,6 +4803,7 @@ fn test_shrink_unref_handle_zero_lamport_single_ref_accounts() {
     // And now, slot 1 should be marked complete dead, which will be added
     // to uncleaned slots, which handle dropping dead storage. And it WON'T
     // be participating shrinking in the next round.
+    assert!(db.dirty_stores.contains_key(&1));
     assert!(!db.shrink_candidate_slots.lock().unwrap().contains(&1));
 
     // Now, make slot 0 dead by updating the remaining key
@@ -8103,6 +8104,8 @@ fn test_clean_old_storages_with_reclaims_rooted() {
         );
         accounts_db.add_root_and_flush_write_cache(slot);
     }
+    // for this test, `new_slot` must be in `dirty_stores`.
+    assert!(!accounts_db.dirty_stores.contains_key(&new_slot));
 
     // ensure the slot list for `pubkey` has both the old and new slots
     let slot_list = accounts_db
@@ -8153,6 +8156,10 @@ fn test_clean_old_storages_with_reclaims_unrooted() {
     }
     // do not root `new_slot`!
     accounts_db.add_root_and_flush_write_cache(old_slot);
+
+    // Both slots should be in `uncleaned_pubkeys` after delta hash calculation
+    assert!(accounts_db.uncleaned_pubkeys.contains_key(&old_slot));
+    assert!(accounts_db.uncleaned_pubkeys.contains_key(&new_slot));
 
     // for this test, `new_slot` must not be a root
     assert!(!accounts_db.accounts_index.is_alive_root(new_slot));

@@ -9177,11 +9177,6 @@ impl AccountsDb {
             );
         }
     }
-
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn get_len_of_slots_with_uncleaned_pubkeys(&self) -> usize {
-        self.uncleaned_pubkeys.len()
-    }
 }
 
 /// Specify the source of the accounts data when calculating the accounts hash
@@ -9253,6 +9248,12 @@ impl AccountStorageEntry {
 // These functions/fields are only usable from a dev context (i.e. tests and benches)
 #[cfg(feature = "dev-context-only-utils")]
 impl AccountsDb {
+    /// Return the number of slots marked with uncleaned pubkeys.
+    /// This is useful for testing clean aglorithms.
+    pub fn get_len_of_slots_with_uncleaned_pubkeys(&self) -> usize {
+        self.uncleaned_pubkeys.len()
+    }
+
     /// useful to adapt tests written prior to introduction of the write cache
     /// to use the write cache
     pub fn add_root_and_flush_write_cache(&self, slot: Slot) {
