@@ -23,7 +23,6 @@ use {
     },
     solana_sdk::{
         hash::Hash,
-        packet::PacketFlags,
         signature::{Keypair, Signer},
         system_transaction,
     },
@@ -58,7 +57,7 @@ fn run_bench_packet_discard(num_ips: usize, bencher: &mut Bencher) {
     info!("total packets: {}", total);
 
     bencher.iter(move || {
-        SigVerifyStage::discard_excess_packets(&mut batches, 10_000, |_| ());
+        SigVerifyStage::discard_excess_packets(&mut batches, 10_000);
         let mut num_packets = 0;
         for batch in batches.iter_mut() {
             for p in batch.iter_mut() {
@@ -105,7 +104,7 @@ fn bench_packet_discard_mixed_senders(bencher: &mut Bencher) {
         }
     }
     bencher.iter(move || {
-        SigVerifyStage::discard_excess_packets(&mut batches, 10_000, |_| ());
+        SigVerifyStage::discard_excess_packets(&mut batches, 10_000);
         let mut num_packets = 0;
         for batch in batches.iter_mut() {
             for packet in batch.iter_mut() {
@@ -171,24 +170,17 @@ fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
         );
 
         let mut sent_len = 0;
-        for mut batch in batches.into_iter() {
+        for batch in batches.into_iter() {
             sent_len += batch.len();
-            batch
-                .iter_mut()
-                .for_each(|packet| packet.meta_mut().flags |= PacketFlags::TRACER_PACKET);
             packet_s.send(batch).unwrap();
         }
         let mut received = 0;
-        let mut total_tracer_packets_received_in_sigverify_stage = 0;
         trace!("sent: {}", sent_len);
         loop {
-            if let Ok(message) = verified_r.recv_timeout(Duration::from_millis(10)) {
-                let (verifieds, tracer_packet_stats) = (&message.0, message.1.as_ref().unwrap());
+            if let Ok(verifieds) = verified_r.recv_timeout(Duration::from_millis(10)) {
                 received += verifieds.iter().map(|batch| batch.len()).sum::<usize>();
-                total_tracer_packets_received_in_sigverify_stage +=
-                    tracer_packet_stats.total_tracer_packets_received_in_sigverify_stage;
-                test::black_box(message);
-                if total_tracer_packets_received_in_sigverify_stage >= sent_len {
+                test::black_box(verifieds);
+                if received >= sent_len {
                     break;
                 }
             }

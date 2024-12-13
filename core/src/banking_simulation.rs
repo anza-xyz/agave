@@ -3,8 +3,9 @@ use {
     crate::{
         banking_stage::{BankingStage, LikeClusterInfo},
         banking_trace::{
-            BankingPacketBatch, BankingTracer, ChannelLabel, TimedTracedEvent, TracedEvent,
-            TracedSender, TracerThread, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT, BASENAME,
+            BankingPacketBatch, BankingTracer, ChannelLabel, Channels, TimedTracedEvent,
+            TracedEvent, TracedSender, TracerThread, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
+            BASENAME,
         },
         validator::BlockProductionMethod,
     },
@@ -753,9 +754,14 @@ impl BankingSimulator {
             BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
         );
 
-        let (non_vote_sender, non_vote_receiver) = retracer.create_channel_non_vote();
-        let (tpu_vote_sender, tpu_vote_receiver) = retracer.create_channel_tpu_vote();
-        let (gossip_vote_sender, gossip_vote_receiver) = retracer.create_channel_gossip_vote();
+        let Channels {
+            non_vote_sender,
+            non_vote_receiver,
+            tpu_vote_sender,
+            tpu_vote_receiver,
+            gossip_vote_sender,
+            gossip_vote_receiver,
+        } = retracer.create_channels(false);
 
         let connection_cache = Arc::new(ConnectionCache::new("connection_cache_sim"));
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
@@ -822,8 +828,7 @@ impl BankingSimulator {
         let timed_batches_to_send = packet_batches_by_time.split_off(&base_event_time);
         let batch_and_tx_counts = timed_batches_to_send
             .values()
-            .map(|(_label, batches_with_stats)| {
-                let batches = &batches_with_stats.0;
+            .map(|(_label, batches)| {
                 (
                     batches.len(),
                     batches.iter().map(|batch| batch.len()).sum::<usize>(),
