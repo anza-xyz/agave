@@ -5016,7 +5016,6 @@ pub mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-
     async fn test_rpc_get_tx_count_tpu_client_next() {
         rpc_get_tx_count::<TpuClientNextClient<NullTpuInfo>>(Some(Handle::current()));
     }

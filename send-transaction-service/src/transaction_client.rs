@@ -302,8 +302,9 @@ where
             let Ok(mut lock) = handle.lock() else {
                 return Err("TpuClientNext task panicked.".into());
             };
-            lock.1.cancel();
-            lock.0.take() // Take the `join_handle` out of the critical section
+            let (handle, token) = std::mem::take(&mut *lock);
+            token.cancel();
+            handle
         };
 
         if let Some(join_handle) = join_handle {
