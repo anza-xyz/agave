@@ -386,12 +386,10 @@ pub fn is_host_port(string: String) -> Result<(), String> {
     parse_host_port(&string).map(|_| ())
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct SocketConfig {
     reuseport: bool,
-    #[cfg(not(any(windows, target_os = "ios")))]
     recv_buffer_size: Option<usize>,
-    #[cfg(not(any(windows, target_os = "ios")))]
     send_buffer_size: Option<usize>,
 }
 
@@ -401,35 +399,25 @@ impl SocketConfig {
         self
     }
 
-    /// Sets the receive buffer size for the socket.
+    /// Sets the receive buffer size for the socket (no effect on windows/ios).
     ///
     /// **Note:** On Linux the kernel will double the value you specify.
     /// For example, if you specify `16MB`, the kernel will configure the
     /// socket to use `32MB`.
     /// See: https://man7.org/linux/man-pages/man7/socket.7.html: SO_RCVBUF
-    // allow here to supress unused warnings from windows/ios builds
-    #[allow(unused_mut, unused_variables)]
     pub fn recv_buffer_size(mut self, size: usize) -> Self {
-        #[cfg(not(any(windows, target_os = "ios")))]
-        {
-            self.recv_buffer_size = Some(size);
-        }
+        self.recv_buffer_size = Some(size);
         self
     }
 
-    /// Sets the send buffer size for the socket.
+    /// Sets the send buffer size for the socket (no effect on windows/ios)
     ///
     /// **Note:** On Linux the kernel will double the value you specify.
     /// For example, if you specify `16MB`, the kernel will configure the
     /// socket to use `32MB`.
     /// See: https://man7.org/linux/man-pages/man7/socket.7.html: SO_SNDBUF
-    // allow here to supress unused warnings from windows/ios builds
-    #[allow(unused_mut, unused_variables)]
     pub fn send_buffer_size(mut self, size: usize) -> Self {
-        #[cfg(not(any(windows, target_os = "ios")))]
-        {
-            self.send_buffer_size = Some(size);
-        }
+        self.send_buffer_size = Some(size);
         self
     }
 }
@@ -474,7 +462,7 @@ pub fn bind_common_in_range_with_config(
     config: SocketConfig,
 ) -> io::Result<(u16, (UdpSocket, TcpListener))> {
     for port in range.0..range.1 {
-        if let Ok((sock, listener)) = bind_common_with_config(ip_addr, port, config.clone()) {
+        if let Ok((sock, listener)) = bind_common_with_config(ip_addr, port, config) {
             return Result::Ok((sock.local_addr().unwrap().port(), (sock, listener)));
         }
     }
@@ -577,7 +565,7 @@ pub fn multi_bind_in_range_with_config(
         }; // drop the probe, port should be available... briefly.
 
         for _ in 0..num {
-            let sock = bind_to_with_config(ip_addr, port, config.clone());
+            let sock = bind_to_with_config(ip_addr, port, config);
             if let Ok(sock) = sock {
                 sockets.push(sock);
             } else {
@@ -735,11 +723,9 @@ pub fn bind_two_in_range_with_offset_and_config(
         ));
     }
     for port in range.0..range.1 {
-        if let Ok(first_bind) = bind_to_with_config(ip_addr, port, sock1_config.clone()) {
+        if let Ok(first_bind) = bind_to_with_config(ip_addr, port, sock1_config) {
             if range.1.saturating_sub(port) >= offset {
-                if let Ok(second_bind) =
-                    bind_to_with_config(ip_addr, port + offset, sock2_config.clone())
-                {
+                if let Ok(second_bind) = bind_to_with_config(ip_addr, port + offset, sock2_config) {
                     return Ok((
                         (first_bind.local_addr().unwrap().port(), first_bind),
                         (second_bind.local_addr().unwrap().port(), second_bind),
@@ -788,7 +774,7 @@ pub fn bind_more_with_config(
     let ip = addr.ip();
     let port = addr.port();
     std::iter::once(Ok(socket))
-        .chain((1..num).map(|_| bind_to_with_config(ip, port, config.clone())))
+        .chain((1..num).map(|_| bind_to_with_config(ip, port, config)))
         .collect()
 }
 
@@ -896,8 +882,8 @@ mod tests {
         assert_eq!(bind_in_range(ip_addr, (2000, 2001)).unwrap().0, 2000);
         let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
         let config = SocketConfig::default().reuseport(true);
-        let x = bind_to_with_config(ip_addr, 2002, config.clone()).unwrap();
-        let y = bind_to_with_config(ip_addr, 2002, config.clone()).unwrap();
+        let x = bind_to_with_config(ip_addr, 2002, config).unwrap();
+        let y = bind_to_with_config(ip_addr, 2002, config).unwrap();
         assert_eq!(
             x.local_addr().unwrap().port(),
             y.local_addr().unwrap().port()
@@ -905,8 +891,7 @@ mod tests {
         bind_to(ip_addr, 2002, false).unwrap_err();
         bind_in_range(ip_addr, (2002, 2003)).unwrap_err();
 
-        let (port, v) =
-            multi_bind_in_range_with_config(ip_addr, (2010, 2110), config.clone(), 10).unwrap();
+        let (port, v) = multi_bind_in_range_with_config(ip_addr, (2010, 2110), config, 10).unwrap();
         for sock in &v {
             assert_eq!(port, sock.local_addr().unwrap().port());
         }
@@ -916,8 +901,8 @@ mod tests {
     fn test_bind_with_any_port() {
         let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
         let config = SocketConfig::default();
-        let x = bind_with_any_port_with_config(ip_addr, config.clone()).unwrap();
-        let y = bind_with_any_port_with_config(ip_addr, config.clone()).unwrap();
+        let x = bind_with_any_port_with_config(ip_addr, config).unwrap();
+        let y = bind_with_any_port_with_config(ip_addr, config).unwrap();
         assert_ne!(
             x.local_addr().unwrap().port(),
             y.local_addr().unwrap().port()
@@ -950,10 +935,10 @@ mod tests {
         let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
         let config = SocketConfig::default();
         let (port, _sockets) =
-            bind_common_in_range_with_config(ip_addr, (3100, 3150), config.clone()).unwrap();
+            bind_common_in_range_with_config(ip_addr, (3100, 3150), config).unwrap();
         assert!((3100..3150).contains(&port));
 
-        bind_common_in_range_with_config(ip_addr, (port, port + 1), config.clone()).unwrap_err();
+        bind_common_in_range_with_config(ip_addr, (port, port + 1), config).unwrap_err();
     }
 
     #[test]
@@ -985,7 +970,7 @@ mod tests {
         let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
         let config = SocketConfig::default();
         let (_server_port, (server_udp_socket, server_tcp_listener)) =
-            bind_common_in_range_with_config(ip_addr, (3200, 3250), config.clone()).unwrap();
+            bind_common_in_range_with_config(ip_addr, (3200, 3250), config).unwrap();
         let (client_port, (client_udp_socket, client_tcp_listener)) =
             bind_common_in_range_with_config(ip_addr, (3200, 3250), config).unwrap();
 
@@ -1014,7 +999,7 @@ mod tests {
         let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
         let config = SocketConfig::default();
         let (_server_port, (server_udp_socket, _server_tcp_listener)) =
-            bind_common_in_range_with_config(ip_addr, (3200, 3250), config.clone()).unwrap();
+            bind_common_in_range_with_config(ip_addr, (3200, 3250), config).unwrap();
 
         // make the socket unreachable by not running the ip echo server!
 
@@ -1038,7 +1023,7 @@ mod tests {
         let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
         let config = SocketConfig::default();
         let (_server_port, (server_udp_socket, _server_tcp_listener)) =
-            bind_common_in_range_with_config(ip_addr, (3200, 3250), config.clone()).unwrap();
+            bind_common_in_range_with_config(ip_addr, (3200, 3250), config).unwrap();
 
         // make the socket unreachable by not running the ip echo server!
 
