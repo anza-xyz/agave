@@ -2,16 +2,17 @@
 extern crate test;
 use {
     solana_entry::entry::{self, VerifyRecyclers},
+    solana_hash::Hash,
+    solana_message::SimpleAddressLoader,
     solana_perf::test_tx::test_tx,
+    solana_reserved_account_keys::ReservedAccountKeys,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk::{
-        hash::Hash,
-        reserved_account_keys::ReservedAccountKeys,
-        transaction::{
-            MessageHash, Result, SanitizedTransaction, SimpleAddressLoader,
-            TransactionVerificationMode, VersionedTransaction,
-        },
+    solana_transaction::{
+        sanitized::{MessageHash, SanitizedTransaction},
+        versioned::VersionedTransaction,
+        TransactionVerificationMode,
     },
+    solana_transaction_error::TransactionResult as Result,
     std::sync::Arc,
     test::Bencher,
 };

@@ -4,21 +4,21 @@ use {
         withdraw_nonce_account,
     },
     log::*,
+    solana_bincode::limited_deserialize,
+    solana_instruction::error::InstructionError,
     solana_log_collector::ic_msg,
+    solana_nonce as nonce,
     solana_program_runtime::{
         declare_process_instruction, invoke_context::InvokeContext,
         sysvar_cache::get_sysvar_with_account_check,
     },
-    solana_sdk::{
-        instruction::InstructionError,
-        nonce,
-        program_utils::limited_deserialize,
-        pubkey::Pubkey,
-        system_instruction::{SystemError, SystemInstruction, MAX_PERMITTED_DATA_LENGTH},
-        system_program,
-        transaction_context::{
-            BorrowedAccount, IndexOfAccount, InstructionContext, TransactionContext,
-        },
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::system_program,
+    solana_system_interface::{
+        error::SystemError, instruction::SystemInstruction, MAX_PERMITTED_DATA_LENGTH,
+    },
+    solana_transaction_context::{
+        BorrowedAccount, IndexOfAccount, InstructionContext, TransactionContext,
     },
     std::collections::HashSet,
 };
@@ -302,7 +302,8 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let instruction_data = instruction_context.get_instruction_data();
-    let instruction = limited_deserialize(instruction_data)?;
+    let instruction =
+        limited_deserialize(instruction_data, solana_packet::PACKET_DATA_SIZE as u64)?;
 
     trace!("process_instruction: {:?}", instruction);
 
@@ -479,7 +480,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             if !nonce_account.is_writable() {
                 return Err(InstructionError::InvalidArgument);
             }
-            let nonce_versions: nonce::state::Versions = nonce_account.get_state()?;
+            let nonce_versions: nonce::versions::Versions = nonce_account.get_state()?;
             match nonce_versions.upgrade() {
                 None => Err(InstructionError::InvalidArgument),
                 Some(nonce_versions) => nonce_account.set_state(&nonce_versions),

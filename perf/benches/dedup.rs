@@ -27,7 +27,7 @@ fn do_bench_dedup_packets(bencher: &mut Bencher, mut batches: Vec<PacketBatch>) 
     let mut rng = rand::thread_rng();
     let mut deduper = Deduper::<2, [u8]>::new(&mut rng, /*num_bits:*/ 63_999_979);
     bencher.iter(|| {
-        let _ans = deduper::dedup_packets_and_count_discards(&deduper, &mut batches, |_, _, _| ());
+        let _ans = deduper::dedup_packets_and_count_discards(&deduper, &mut batches);
         deduper.maybe_reset(
             &mut rng,
             0.001,                  // false_positive_rate

@@ -18,7 +18,7 @@ solana-cluster-type = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-derivation-path = { workspace = true }
 solana-hash = { workspace = true }
-solana-keypair = { workspace = true }
+solana-keypair = { workspace = true, features = ["seed-derivable"] }
 solana-native-token = { workspace = true }
 solana-presigner = { workspace = true }
 solana-program = { workspace = true }

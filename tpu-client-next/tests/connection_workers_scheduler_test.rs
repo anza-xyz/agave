@@ -2,12 +2,11 @@ use {
     crossbeam_channel::Receiver as CrossbeamReceiver,
     futures::future::BoxFuture,
     solana_cli_config::ConfigInput,
+    solana_commitment_config::CommitmentConfig,
+    solana_keypair::Keypair,
+    solana_pubkey::Pubkey,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
-    solana_sdk::{
-        commitment_config::CommitmentConfig,
-        pubkey::Pubkey,
-        signer::{keypair::Keypair, Signer},
-    },
+    solana_signer::Signer,
     solana_streamer::{
         nonblocking::testing_utilities::{
             make_client_endpoint, setup_quic_server, SpawnTestServerResult, TestServerConfig,

@@ -3,6 +3,7 @@ use {
         builtin_programs_filter::{BuiltinProgramsFilter, ProgramKind},
         compute_budget_program_id_filter::ComputeBudgetProgramIdFilter,
     },
+    solana_builtins_default_costs::{get_migration_feature_id, MIGRATING_BUILTINS_COSTS},
     solana_compute_budget::compute_budget_limits::*,
     solana_sdk::{
         borsh1::try_from_slice_unchecked,
@@ -19,6 +20,24 @@ use {
 
 #[cfg_attr(test, derive(Eq, PartialEq))]
 #[cfg_attr(feature = "dev-context-only-utils", derive(Clone))]
+#[derive(Debug)]
+struct MigrationBuiltinFeatureCounter {
+    // The vector of counters, matching the size of the static vector MIGRATION_FEATURE_IDS,
+    // each counter representing the number of times its corresponding feature ID is
+    // referenced in this transaction.
+    migrating_builtin: [u16; MIGRATING_BUILTINS_COSTS.len()],
+}
+
+impl Default for MigrationBuiltinFeatureCounter {
+    fn default() -> Self {
+        Self {
+            migrating_builtin: [0; MIGRATING_BUILTINS_COSTS.len()],
+        }
+    }
+}
+
+#[cfg_attr(test, derive(Eq, PartialEq))]
+#[cfg_attr(feature = "dev-context-only-utils", derive(Clone))]
 #[derive(Default, Debug)]
 pub struct ComputeBudgetInstructionDetails {
     // compute-budget instruction details:
@@ -29,8 +48,9 @@ pub struct ComputeBudgetInstructionDetails {
     requested_loaded_accounts_data_size_limit: Option<(u8, u32)>,
     num_non_compute_budget_instructions: u16,
     // Additional builtin program counters
-    num_builtin_instructions: u16,
+    num_non_migratable_builtin_instructions: u16,
     num_non_builtin_instructions: u16,
+    migrating_builtin_feature_counters: MigrationBuiltinFeatureCounter,
 }
 
 impl ComputeBudgetInstructionDetails {
@@ -61,13 +81,28 @@ impl ComputeBudgetInstructionDetails {
                 match filter.get_program_kind(instruction.program_id_index as usize, program_id) {
                     ProgramKind::Builtin => {
                         saturating_add_assign!(
-                            compute_budget_instruction_details.num_builtin_instructions,
+                            compute_budget_instruction_details
+                                .num_non_migratable_builtin_instructions,
                             1
                         );
                     }
                     ProgramKind::NotBuiltin => {
                         saturating_add_assign!(
                             compute_budget_instruction_details.num_non_builtin_instructions,
+                            1
+                        );
+                    }
+                    ProgramKind::MigratingBuiltin {
+                        core_bpf_migration_feature_index,
+                    } => {
+                        saturating_add_assign!(
+                            *compute_budget_instruction_details
+                                .migrating_builtin_feature_counters
+                                .migrating_builtin
+                                .get_mut(core_bpf_migration_feature_index)
+                                .expect(
+                                    "migrating feature index within range of MIGRATION_FEATURE_IDS"
+                                ),
                             1
                         );
                     }
@@ -175,10 +210,26 @@ impl ComputeBudgetInstructionDetails {
 
     fn calculate_default_compute_unit_limit(&self, feature_set: &FeatureSet) -> u32 {
         if feature_set.is_active(&feature_set::reserve_minimal_cus_for_builtin_instructions::id()) {
-            u32::from(self.num_builtin_instructions)
+            // evaluate if any builtin has migrated with feature_set
+            let (num_migrated, num_not_migrated) = self
+                .migrating_builtin_feature_counters
+                .migrating_builtin
+                .iter()
+                .enumerate()
+                .fold((0, 0), |(migrated, not_migrated), (index, count)| {
+                    if *count > 0 && feature_set.is_active(get_migration_feature_id(index)) {
+                        (migrated + count, not_migrated)
+                    } else {
+                        (migrated, not_migrated + count)
+                    }
+                });
+
+            u32::from(self.num_non_migratable_builtin_instructions)
+                .saturating_add(u32::from(num_not_migrated))
                 .saturating_mul(MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT)
                 .saturating_add(
                     u32::from(self.num_non_builtin_instructions)
+                        .saturating_add(u32::from(num_migrated))
                         .saturating_mul(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT),
                 )
         } else {
@@ -192,6 +243,7 @@ impl ComputeBudgetInstructionDetails {
 mod test {
     use {
         super::*,
+        solana_builtins_default_costs::get_migration_feature_position,
         solana_sdk::{
             instruction::Instruction,
             message::Message,
@@ -221,7 +273,7 @@ mod test {
         let expected_details = Ok(ComputeBudgetInstructionDetails {
             requested_heap_size: Some((1, 40 * 1024)),
             num_non_compute_budget_instructions: 2,
-            num_builtin_instructions: 1,
+            num_non_migratable_builtin_instructions: 1,
             num_non_builtin_instructions: 2,
             ..ComputeBudgetInstructionDetails::default()
         });
@@ -279,7 +331,7 @@ mod test {
         let expected_details = Ok(ComputeBudgetInstructionDetails {
             requested_compute_unit_price: Some((1, u64::MAX)),
             num_non_compute_budget_instructions: 2,
-            num_builtin_instructions: 1,
+            num_non_migratable_builtin_instructions: 1,
             num_non_builtin_instructions: 2,
             ..ComputeBudgetInstructionDetails::default()
         });
@@ -309,7 +361,7 @@ mod test {
         let expected_details = Ok(ComputeBudgetInstructionDetails {
             requested_loaded_accounts_data_size_limit: Some((1, u32::MAX)),
             num_non_compute_budget_instructions: 2,
-            num_builtin_instructions: 1,
+            num_non_migratable_builtin_instructions: 1,
             num_non_builtin_instructions: 2,
             ..ComputeBudgetInstructionDetails::default()
         });
@@ -336,7 +388,7 @@ mod test {
         let mut feature_set = FeatureSet::default();
         let ComputeBudgetInstructionDetails {
             num_non_compute_budget_instructions,
-            num_builtin_instructions,
+            num_non_migratable_builtin_instructions,
             num_non_builtin_instructions,
             ..
         } = *instruction_details;
@@ -346,7 +398,8 @@ mod test {
                 0,
             );
             u32::from(num_non_builtin_instructions) * DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
-                + u32::from(num_builtin_instructions) * MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT
+                + u32::from(num_non_migratable_builtin_instructions)
+                    * MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT
         } else {
             u32::from(num_non_compute_budget_instructions) * DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
         };
@@ -370,7 +423,7 @@ mod test {
         // no compute-budget instructions, all default ComputeBudgetLimits except cu-limit
         let instruction_details = ComputeBudgetInstructionDetails {
             num_non_compute_budget_instructions: 4,
-            num_builtin_instructions: 1,
+            num_non_migratable_builtin_instructions: 1,
             num_non_builtin_instructions: 3,
             ..ComputeBudgetInstructionDetails::default()
         };
@@ -520,5 +573,88 @@ mod test {
                 })
             );
         }
+    }
+
+    #[test]
+    fn test_builtin_program_migration() {
+        let tx = build_sanitized_transaction(&[
+            Instruction::new_with_bincode(Pubkey::new_unique(), &(), vec![]),
+            solana_sdk::stake::instruction::delegate_stake(
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+                &Pubkey::new_unique(),
+            ),
+        ]);
+        let feature_id_index =
+            get_migration_feature_position(&feature_set::migrate_stake_program_to_core_bpf::id());
+        let mut expected_details = ComputeBudgetInstructionDetails {
+            num_non_compute_budget_instructions: 2,
+            num_non_builtin_instructions: 1,
+            ..ComputeBudgetInstructionDetails::default()
+        };
+        expected_details
+            .migrating_builtin_feature_counters
+            .migrating_builtin[feature_id_index] = 1;
+        let expected_details = Ok(expected_details);
+        let details =
+            ComputeBudgetInstructionDetails::try_from(SVMMessage::program_instructions_iter(&tx));
+        assert_eq!(details, expected_details);
+        let details = details.unwrap();
+
+        // reserve_minimal_cus_for_builtin_instructions: false;
+        // migrate_stake_program_to_core_bpf: false;
+        // expect: 1 bpf ix, 1 non-compute-budget builtin, cu-limit = 2 * 200K
+        let mut feature_set = FeatureSet::default();
+        let cu_limits = details.sanitize_and_convert_to_compute_budget_limits(&feature_set);
+        assert_eq!(
+            cu_limits,
+            Ok(ComputeBudgetLimits {
+                compute_unit_limit: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT * 2,
+                ..ComputeBudgetLimits::default()
+            })
+        );
+
+        // reserve_minimal_cus_for_builtin_instructions: true;
+        // migrate_stake_program_to_core_bpf: false;
+        // expect: 1 bpf ix, 1 non-compute-budget builtin, cu-limit = 200K + 3K
+        feature_set.activate(
+            &feature_set::reserve_minimal_cus_for_builtin_instructions::id(),
+            0,
+        );
+        let cu_limits = details.sanitize_and_convert_to_compute_budget_limits(&feature_set);
+        assert_eq!(
+            cu_limits,
+            Ok(ComputeBudgetLimits {
+                compute_unit_limit: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
+                    + MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT,
+                ..ComputeBudgetLimits::default()
+            })
+        );
+
+        // reserve_minimal_cus_for_builtin_instructions: true;
+        // migrate_stake_program_to_core_bpf: true;
+        // expect: 2 bpf ix, cu-limit = 2 * 200K
+        feature_set.activate(&feature_set::migrate_stake_program_to_core_bpf::id(), 0);
+        let cu_limits = details.sanitize_and_convert_to_compute_budget_limits(&feature_set);
+        assert_eq!(
+            cu_limits,
+            Ok(ComputeBudgetLimits {
+                compute_unit_limit: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT * 2,
+                ..ComputeBudgetLimits::default()
+            })
+        );
+
+        // reserve_minimal_cus_for_builtin_instructions: false;
+        // migrate_stake_program_to_core_bpf: false;
+        // expect: 1 bpf ix, 1 non-compute-budget builtin, cu-limit = 2 * 200K
+        feature_set.deactivate(&feature_set::reserve_minimal_cus_for_builtin_instructions::id());
+        let cu_limits = details.sanitize_and_convert_to_compute_budget_limits(&feature_set);
+        assert_eq!(
+            cu_limits,
+            Ok(ComputeBudgetLimits {
+                compute_unit_limit: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT * 2,
+                ..ComputeBudgetLimits::default()
+            })
+        );
     }
 }

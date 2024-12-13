@@ -675,7 +675,7 @@ impl Blockstore {
         cf_name: &str,
     ) -> Result<impl Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_> {
         let cf = self.db.cf_handle(cf_name);
-        let iterator = self.db.iterator_cf_raw_key(cf, IteratorMode::Start);
+        let iterator = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
         Ok(iterator.map(|pair| pair.unwrap()))
     }
 
@@ -2350,7 +2350,7 @@ impl Blockstore {
         self.slot_data_iterator(slot, start_index)
             .expect("blockstore couldn't fetch iterator")
             .map(|(_, bytes)| {
-                Shred::new_from_serialized_shred(bytes.to_vec()).map_err(|err| {
+                Shred::new_from_serialized_shred(Vec::from(bytes)).map_err(|err| {
                     BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
                         format!("Could not reconstruct shred from shred payload: {err:?}"),
                     )))
@@ -2410,7 +2410,7 @@ impl Blockstore {
     ) -> std::result::Result<Vec<Shred>, shred::Error> {
         self.slot_coding_iterator(slot, start_index)
             .expect("blockstore couldn't fetch iterator")
-            .map(|code| Shred::new_from_serialized_shred(code.1.to_vec()))
+            .map(|(_, bytes)| Shred::new_from_serialized_shred(Vec::from(bytes)))
             .collect()
     }
 

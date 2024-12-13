@@ -18,6 +18,7 @@ Release channels have their own copy of this changelog:
   * CLI:
     * Add global `--skip-preflight` option for skipping preflight checks on all transactions sent through RPC. This flag, along with `--use-rpc`, can improve success rate with program deployments using the public RPC nodes.
   * Unhide `--accounts-db-access-storages-method` for agave-validator and agave-ledger-tool
+  * Remove tracer stats from banking-trace. `banking-trace` directory should be cleared when restarting on v2.2 for first time. It will not break if not cleared, but the file will be a mix of new/old format. (#4043)
 
 ## [2.1.0]
 * Breaking:

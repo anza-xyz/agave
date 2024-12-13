@@ -582,7 +582,7 @@ impl JsonRpcRequestProcessor {
                     processed_counts.processed_with_successful_result_count += 1;
                 }
                 Err(err) => {
-                    if *err_count == 0 {
+                    if err_count.0 == 0 {
                         debug!("tx error: {:?} {:?}", err, tx);
                     }
                     *err_count += 1;

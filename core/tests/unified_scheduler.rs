@@ -17,16 +17,13 @@ use {
     solana_ledger::genesis_utils::create_genesis_config,
     solana_runtime::{
         accounts_background_service::AbsRequestSender, bank::Bank, bank_forks::BankForks,
-        genesis_utils::GenesisConfigInfo, prioritization_fee_cache::PrioritizationFeeCache,
+        genesis_utils::GenesisConfigInfo, installed_scheduler_pool::SchedulingContext,
+        prioritization_fee_cache::PrioritizationFeeCache,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk::{
-        hash::Hash,
-        pubkey::Pubkey,
-        system_transaction,
-        transaction::{Result, SanitizedTransaction},
-    },
+    solana_sdk::{hash::Hash, pubkey::Pubkey, system_transaction, transaction::Result},
     solana_timings::ExecuteTimings,
+    solana_unified_scheduler_logic::Task,
     solana_unified_scheduler_pool::{
         DefaultTaskHandler, HandlerContext, PooledScheduler, SchedulerPool, TaskHandler,
     },
@@ -48,9 +45,8 @@ fn test_scheduler_waited_by_drop_bank_service() {
         fn handle(
             result: &mut Result<()>,
             timings: &mut ExecuteTimings,
-            bank: &Arc<Bank>,
-            transaction: &RuntimeTransaction<SanitizedTransaction>,
-            index: usize,
+            scheduling_context: &SchedulingContext,
+            task: &Task,
             handler_context: &HandlerContext,
         ) {
             info!("Stalling at StallingHandler::handle()...");
@@ -59,7 +55,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
             std::thread::sleep(std::time::Duration::from_secs(3));
             info!("Now entering into DefaultTaskHandler::handle()...");
 
-            DefaultTaskHandler::handle(result, timings, bank, transaction, index, handler_context);
+            DefaultTaskHandler::handle(result, timings, scheduling_context, task, handler_context);
         }
     }
 

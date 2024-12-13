@@ -357,76 +357,79 @@ impl ConsumeWorkerMetrics {
     ) {
         self.error_metrics
             .total
-            .fetch_add(*total, Ordering::Relaxed);
+            .fetch_add(total.0, Ordering::Relaxed);
         self.error_metrics
             .account_in_use
-            .fetch_add(*account_in_use, Ordering::Relaxed);
+            .fetch_add(account_in_use.0, Ordering::Relaxed);
         self.error_metrics
             .too_many_account_locks
-            .fetch_add(*too_many_account_locks, Ordering::Relaxed);
+            .fetch_add(too_many_account_locks.0, Ordering::Relaxed);
         self.error_metrics
             .account_loaded_twice
-            .fetch_add(*account_loaded_twice, Ordering::Relaxed);
+            .fetch_add(account_loaded_twice.0, Ordering::Relaxed);
         self.error_metrics
             .account_not_found
-            .fetch_add(*account_not_found, Ordering::Relaxed);
+            .fetch_add(account_not_found.0, Ordering::Relaxed);
         self.error_metrics
             .blockhash_not_found
-            .fetch_add(*blockhash_not_found, Ordering::Relaxed);
+            .fetch_add(blockhash_not_found.0, Ordering::Relaxed);
         self.error_metrics
             .blockhash_too_old
-            .fetch_add(*blockhash_too_old, Ordering::Relaxed);
+            .fetch_add(blockhash_too_old.0, Ordering::Relaxed);
         self.error_metrics
             .call_chain_too_deep
-            .fetch_add(*call_chain_too_deep, Ordering::Relaxed);
+            .fetch_add(call_chain_too_deep.0, Ordering::Relaxed);
         self.error_metrics
             .already_processed
-            .fetch_add(*already_processed, Ordering::Relaxed);
+            .fetch_add(already_processed.0, Ordering::Relaxed);
         self.error_metrics
             .instruction_error
-            .fetch_add(*instruction_error, Ordering::Relaxed);
+            .fetch_add(instruction_error.0, Ordering::Relaxed);
         self.error_metrics
             .insufficient_funds
-            .fetch_add(*insufficient_funds, Ordering::Relaxed);
+            .fetch_add(insufficient_funds.0, Ordering::Relaxed);
         self.error_metrics
             .invalid_account_for_fee
-            .fetch_add(*invalid_account_for_fee, Ordering::Relaxed);
+            .fetch_add(invalid_account_for_fee.0, Ordering::Relaxed);
         self.error_metrics
             .invalid_account_index
-            .fetch_add(*invalid_account_index, Ordering::Relaxed);
+            .fetch_add(invalid_account_index.0, Ordering::Relaxed);
         self.error_metrics
             .invalid_program_for_execution
-            .fetch_add(*invalid_program_for_execution, Ordering::Relaxed);
+            .fetch_add(invalid_program_for_execution.0, Ordering::Relaxed);
         self.error_metrics
             .invalid_compute_budget
-            .fetch_add(*invalid_compute_budget, Ordering::Relaxed);
+            .fetch_add(invalid_compute_budget.0, Ordering::Relaxed);
         self.error_metrics
             .not_allowed_during_cluster_maintenance
-            .fetch_add(*not_allowed_during_cluster_maintenance, Ordering::Relaxed);
+            .fetch_add(not_allowed_during_cluster_maintenance.0, Ordering::Relaxed);
         self.error_metrics
             .invalid_writable_account
-            .fetch_add(*invalid_writable_account, Ordering::Relaxed);
+            .fetch_add(invalid_writable_account.0, Ordering::Relaxed);
         self.error_metrics
             .invalid_rent_paying_account
-            .fetch_add(*invalid_rent_paying_account, Ordering::Relaxed);
+            .fetch_add(invalid_rent_paying_account.0, Ordering::Relaxed);
         self.error_metrics
             .would_exceed_max_block_cost_limit
-            .fetch_add(*would_exceed_max_block_cost_limit, Ordering::Relaxed);
+            .fetch_add(would_exceed_max_block_cost_limit.0, Ordering::Relaxed);
         self.error_metrics
             .would_exceed_max_account_cost_limit
-            .fetch_add(*would_exceed_max_account_cost_limit, Ordering::Relaxed);
+            .fetch_add(would_exceed_max_account_cost_limit.0, Ordering::Relaxed);
         self.error_metrics
             .would_exceed_max_vote_cost_limit
-            .fetch_add(*would_exceed_max_vote_cost_limit, Ordering::Relaxed);
+            .fetch_add(would_exceed_max_vote_cost_limit.0, Ordering::Relaxed);
         self.error_metrics
             .would_exceed_account_data_block_limit
-            .fetch_add(*would_exceed_account_data_block_limit, Ordering::Relaxed);
+            .fetch_add(would_exceed_account_data_block_limit.0, Ordering::Relaxed);
         self.error_metrics
             .max_loaded_accounts_data_size_exceeded
-            .fetch_add(*max_loaded_accounts_data_size_exceeded, Ordering::Relaxed);
+            .fetch_add(max_loaded_accounts_data_size_exceeded.0, Ordering::Relaxed);
         self.error_metrics
             .program_execution_temporarily_restricted
-            .fetch_add(*program_execution_temporarily_restricted, Ordering::Relaxed);
+            .fetch_add(
+                program_execution_temporarily_restricted.0,
+                Ordering::Relaxed,
+            );
     }
 }
 

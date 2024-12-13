@@ -1730,7 +1730,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         // this assumes the largest bin contains twice the expected amount of the average size per bin
         let bins = self.bins();
         let expected_items_per_bin = approx_items_len * 2 / bins;
-        let use_disk = self.storage.storage.disk.is_some();
+        let use_disk = self.storage.storage.is_disk_index_enabled();
         let mut binned = (0..bins)
             .map(|_| Vec::with_capacity(expected_items_per_bin))
             .collect::<Vec<_>>();
@@ -2019,6 +2019,16 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     {
         let mut w_roots_tracker = self.roots_tracker.write().unwrap();
         w_roots_tracker.uncleaned_roots.extend(roots);
+    }
+
+    /// Removes `root` from `uncleaned_roots` and returns whether it was previously present
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn remove_uncleaned_root(&self, root: Slot) -> bool {
+        self.roots_tracker
+            .write()
+            .unwrap()
+            .uncleaned_roots
+            .remove(&root)
     }
 
     pub fn max_root_inclusive(&self) -> Slot {

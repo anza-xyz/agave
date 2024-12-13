@@ -746,7 +746,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                     (slot, account_info),
                     None, // should be None because we don't expect a different slot # during index generation
                     &mut Vec::default(),
-                    UpsertReclaim::PopulateReclaims, // this should be ignore?
+                    UpsertReclaim::IgnoreReclaims,
                 );
                 (
                     true, /* found in mem */
@@ -766,7 +766,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         // There can be no 'other' slot in the list.
                         None,
                         &mut Vec::default(),
-                        UpsertReclaim::PopulateReclaims,
+                        UpsertReclaim::IgnoreReclaims,
                     );
                     vacant.insert(disk_entry);
                     (

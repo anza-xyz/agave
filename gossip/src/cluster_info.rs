@@ -35,11 +35,11 @@ use {
         epoch_slots::EpochSlots,
         gossip_error::GossipError,
         legacy_contact_info::LegacyContactInfo,
-        ping_pong::{PingCache, Pong},
+        ping_pong::Pong,
         protocol::{
-            split_gossip_messages, Ping, Protocol, PruneData, DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
-            MAX_INCREMENTAL_SNAPSHOT_HASHES, MAX_PRUNE_DATA_NODES,
-            PULL_RESPONSE_MIN_SERIALIZED_SIZE, PUSH_MESSAGE_MAX_PAYLOAD_SIZE,
+            split_gossip_messages, Ping, PingCache, Protocol, PruneData,
+            DUPLICATE_SHRED_MAX_PAYLOAD_SIZE, MAX_INCREMENTAL_SNAPSHOT_HASHES,
+            MAX_PRUNE_DATA_NODES, PULL_RESPONSE_MIN_SERIALIZED_SIZE, PUSH_MESSAGE_MAX_PAYLOAD_SIZE,
         },
         restart_crds_values::{
             RestartHeaviestFork, RestartLastVotedForkSlots, RestartLastVotedForkSlotsError,
@@ -217,6 +217,8 @@ impl ClusterInfo {
             outbound_budget: DataBudget::default(),
             my_contact_info: RwLock::new(contact_info),
             ping_cache: Mutex::new(PingCache::new(
+                &mut rand::thread_rng(),
+                Instant::now(),
                 GOSSIP_PING_CACHE_TTL,
                 GOSSIP_PING_CACHE_RATE_LIMIT_DELAY,
                 GOSSIP_PING_CACHE_CAPACITY,
@@ -1729,24 +1731,19 @@ impl ClusterInfo {
     // Returns a predicate checking if the pull request is from a valid
     // address, and if the address have responded to a ping request. Also
     // appends ping packets for the addresses which need to be (re)verified.
-    //
-    // allow lint false positive trait bound requirement (`CryptoRng` only
-    // implemented on `&'a mut T`
-    #[allow(clippy::needless_pass_by_ref_mut)]
     fn check_pull_request<'a, R>(
         &'a self,
         now: Instant,
-        mut rng: &'a mut R,
+        rng: &'a mut R,
         packet_batch: &'a mut PacketBatch,
     ) -> impl FnMut(&PullData) -> bool + 'a
     where
         R: Rng + CryptoRng,
     {
         let mut cache = HashMap::<(Pubkey, SocketAddr), bool>::new();
-        let mut pingf = move || Ping::new_rand(&mut rng, &self.keypair()).ok();
         let mut ping_cache = self.ping_cache.lock().unwrap();
         let mut hard_check = move |node| {
-            let (check, ping) = ping_cache.check(now, node, &mut pingf);
+            let (check, ping) = ping_cache.check(rng, &self.keypair(), now, node);
             if let Some(ping) = ping {
                 let ping = Protocol::PingMessage(ping);
                 match Packet::from_data(Some(&node.1), ping) {
@@ -1964,10 +1961,9 @@ impl ClusterInfo {
         let keypair = self.keypair();
         let pongs_and_dests: Vec<_> = pings
             .into_iter()
-            .filter_map(|(addr, ping)| {
-                let pong = Pong::new(&ping, &keypair).ok()?;
-                let pong = Protocol::PongMessage(pong);
-                Some((addr, pong))
+            .map(|(addr, ping)| {
+                let pong = Pong::new(&ping, &keypair);
+                (addr, Protocol::PongMessage(pong))
             })
             .collect();
         if pongs_and_dests.is_empty() {
@@ -3110,9 +3106,8 @@ fn verify_gossip_addr<R: Rng + CryptoRng>(
     };
     let (out, ping) = {
         let node = (*pubkey, addr);
-        let mut pingf = move || Ping::new_rand(rng, keypair).ok();
         let mut ping_cache = ping_cache.lock().unwrap();
-        ping_cache.check(Instant::now(), node, &mut pingf)
+        ping_cache.check(rng, keypair, Instant::now(), node)
     };
     if let Some(ping) = ping {
         pings.push((addr, Protocol::PingMessage(ping)));
@@ -3209,12 +3204,11 @@ mod tests {
                 .collect();
         let pings: Vec<_> = {
             let mut ping_cache = cluster_info.ping_cache.lock().unwrap();
-            let mut pingf = || Ping::new_rand(&mut rng, &this_node).ok();
             remote_nodes
                 .iter()
                 .map(|(keypair, socket)| {
                     let node = (keypair.pubkey(), *socket);
-                    let (check, ping) = ping_cache.check(now, node, &mut pingf);
+                    let (check, ping) = ping_cache.check(&mut rng, &this_node, now, node);
                     // Assert that initially remote nodes will not pass the
                     // ping/pong check.
                     assert!(!check);
@@ -3225,7 +3219,7 @@ mod tests {
         let pongs: Vec<(SocketAddr, Pong)> = pings
             .iter()
             .zip(&remote_nodes)
-            .map(|(ping, (keypair, socket))| (*socket, Pong::new(ping, keypair).unwrap()))
+            .map(|(ping, (keypair, socket))| (*socket, Pong::new(ping, keypair)))
             .collect();
         let now = now + Duration::from_millis(1);
         cluster_info.handle_batch_pong_messages(pongs, now);
@@ -3234,7 +3228,7 @@ mod tests {
             let mut ping_cache = cluster_info.ping_cache.lock().unwrap();
             for (keypair, socket) in &remote_nodes {
                 let node = (keypair.pubkey(), *socket);
-                let (check, _) = ping_cache.check(now, node, || -> Option<Ping> { None });
+                let (check, _) = ping_cache.check(&mut rng, &this_node, now, node);
                 assert!(check);
             }
         }
@@ -3243,7 +3237,7 @@ mod tests {
             let mut ping_cache = cluster_info.ping_cache.lock().unwrap();
             let (keypair, socket) = new_rand_remote_node(&mut rng);
             let node = (keypair.pubkey(), socket);
-            let (check, _) = ping_cache.check(now, node, || -> Option<Ping> { None });
+            let (check, _) = ping_cache.check(&mut rng, &this_node, now, node);
             assert!(!check);
         }
     }
@@ -3263,11 +3257,11 @@ mod tests {
                 .collect();
         let pings: Vec<_> = remote_nodes
             .iter()
-            .map(|(keypair, _)| Ping::new_rand(&mut rng, keypair).unwrap())
+            .map(|(keypair, _)| Ping::new(rng.gen(), keypair))
             .collect();
         let pongs: Vec<_> = pings
             .iter()
-            .map(|ping| Pong::new(ping, &this_node).unwrap())
+            .map(|ping| Pong::new(ping, &this_node))
             .collect();
         let recycler = PacketBatchRecycler::default();
         let packets = cluster_info

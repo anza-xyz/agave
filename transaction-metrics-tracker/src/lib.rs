@@ -54,12 +54,8 @@ pub fn get_signature_from_packet(packet: &Packet) -> Result<&[u8; SIGNATURE_BYTE
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
-        solana_sdk::{
-            hash::Hash,
-            signature::{Keypair, Signature},
-            system_transaction,
-        },
+        super::*, solana_hash::Hash, solana_keypair::Keypair, solana_signature::Signature,
+        solana_system_transaction as system_transaction,
     };
 
     #[test]
@@ -72,7 +68,7 @@ mod tests {
         // Use a valid transaction, it should succeed
         let tx = system_transaction::transfer(
             &Keypair::new(),
-            &solana_sdk::pubkey::new_rand(),
+            &solana_pubkey::new_rand(),
             1,
             Hash::new_unique(),
         );
@@ -116,7 +112,7 @@ mod tests {
         // Use a valid transaction which is not matched
         let tx = system_transaction::transfer(
             &Keypair::new(),
-            &solana_sdk::pubkey::new_rand(),
+            &solana_pubkey::new_rand(),
             1,
             Hash::new_unique(),
         );
@@ -127,7 +123,7 @@ mod tests {
         // Now simulate a txn matching the signature mask
         let mut tx = system_transaction::transfer(
             &Keypair::new(),
-            &solana_sdk::pubkey::new_rand(),
+            &solana_pubkey::new_rand(),
             1,
             Hash::new_unique(),
         );

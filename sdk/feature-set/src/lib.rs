@@ -614,10 +614,10 @@ pub mod delay_visibility_of_program_deployment {
 }
 
 pub mod apply_cost_tracker_during_replay {
-    solana_pubkey::declare_id!("B7H2caeia4ZFcpE3QcgMqbiWiBtWrdBRBSJ1DY6Ktxbq");
+    solana_pubkey::declare_id!("2ry7ygxiYURULZCrypHhveanvP5tzZ4toRwVp89oCNSj");
 }
 pub mod bpf_account_data_direct_mapping {
-    solana_pubkey::declare_id!("EenyoWx9UMXYKpR8mW5Jmfmy2fRjzUtM7NduYMY8bx33");
+    solana_pubkey::declare_id!("GJVDwRkUPNdk9QaK4VsU4g1N41QNxhy1hevjf8kz45Mq");
 }
 
 pub mod add_set_tx_loaded_accounts_data_size_instruction {
@@ -892,8 +892,16 @@ pub mod migrate_stake_program_to_core_bpf {
     solana_pubkey::declare_id!("6M4oQ6eXneVhtLoiAr4yRYQY43eVLjrKbiDZDJc892yk");
 }
 
+pub mod deplete_cu_meter_on_vm_failure {
+    solana_pubkey::declare_id!("B7H2caeia4ZFcpE3QcgMqbiWiBtWrdBRBSJ1DY6Ktxbq");
+}
+
 pub mod reserve_minimal_cus_for_builtin_instructions {
     solana_pubkey::declare_id!("C9oAhLxDBm3ssWtJx1yBGzPY55r2rArHmN1pbQn6HogH");
+}
+
+pub mod raise_block_limits_to_50m {
+    solana_pubkey::declare_id!("5oMCU3JPaFLr8Zr4ct7yFA7jdk6Mw1RmB8K4u9ZbS42z");
 }
 
 lazy_static! {
@@ -1114,7 +1122,9 @@ lazy_static! {
         (accounts_lt_hash::id(), "enables lattice-based accounts hash #3333"),
         (enable_secp256r1_precompile::id(), "Enable secp256r1 precompile SIMD-0075"),
         (migrate_stake_program_to_core_bpf::id(), "Migrate Stake program to Core BPF SIMD-0196 #3655"),
+        (deplete_cu_meter_on_vm_failure::id(), "Deplete compute meter for vm errors SIMD-0182 #3993"),
         (reserve_minimal_cus_for_builtin_instructions::id(), "Reserve minimal CUs for builtin instructions SIMD-170 #2562"),
+        (raise_block_limits_to_50m::id(), "Raise block limit to 50M SIMD-0207"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()

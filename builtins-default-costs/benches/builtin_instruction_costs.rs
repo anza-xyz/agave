@@ -3,10 +3,12 @@ extern crate test;
 use {
     rand::Rng,
     solana_builtins_default_costs::get_builtin_instruction_cost,
-    solana_sdk::{
+    solana_feature_set::FeatureSet,
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::{
         address_lookup_table, bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
-        compute_budget, ed25519_program, feature_set::FeatureSet, loader_v4, pubkey::Pubkey,
-        secp256k1_program,
+        compute_budget, config, ed25519_program, loader_v4, secp256k1_program, stake,
+        system_program, vote,
     },
     test::Bencher,
 };
@@ -20,12 +22,12 @@ const NUM_TRANSACTIONS_PER_ITER: usize = 1024;
 
 fn setup(all_features_enabled: bool) -> BenchSetup {
     let pubkeys: [Pubkey; 12] = [
-        solana_stake_program::id(),
-        solana_config_program::id(),
-        solana_vote_program::id(),
-        solana_system_program::id(),
+        stake::id(),
+        config::id(),
+        vote::id(),
+        system_program::id(),
         compute_budget::id(),
-        address_lookup_table::program::id(),
+        address_lookup_table::id(),
         bpf_loader_upgradeable::id(),
         bpf_loader_deprecated::id(),
         bpf_loader::id(),

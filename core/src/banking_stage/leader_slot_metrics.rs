@@ -403,88 +403,88 @@ fn report_transaction_error_metrics(errors: &TransactionErrorMetrics, id: &str, 
         "banking_stage-leader_slot_transaction_errors",
         "id" => id,
         ("slot", slot as i64, i64),
-        ("total", errors.total as i64, i64),
-        ("account_in_use", errors.account_in_use as i64, i64),
+        ("total", errors.total.0 as i64, i64),
+        ("account_in_use", errors.account_in_use.0 as i64, i64),
         (
             "too_many_account_locks",
-            errors.too_many_account_locks as i64,
+            errors.too_many_account_locks.0 as i64,
             i64
         ),
         (
             "account_loaded_twice",
-            errors.account_loaded_twice as i64,
+            errors.account_loaded_twice.0 as i64,
             i64
         ),
-        ("account_not_found", errors.account_not_found as i64, i64),
-        ("blockhash_not_found", errors.blockhash_not_found as i64, i64),
-        ("blockhash_too_old", errors.blockhash_too_old as i64, i64),
-        ("call_chain_too_deep", errors.call_chain_too_deep as i64, i64),
-        ("already_processed", errors.already_processed as i64, i64),
-        ("instruction_error", errors.instruction_error as i64, i64),
-        ("insufficient_funds", errors.insufficient_funds as i64, i64),
+        ("account_not_found", errors.account_not_found.0 as i64, i64),
+        ("blockhash_not_found", errors.blockhash_not_found.0 as i64, i64),
+        ("blockhash_too_old", errors.blockhash_too_old.0 as i64, i64),
+        ("call_chain_too_deep", errors.call_chain_too_deep.0 as i64, i64),
+        ("already_processed", errors.already_processed.0 as i64, i64),
+        ("instruction_error", errors.instruction_error.0 as i64, i64),
+        ("insufficient_funds", errors.insufficient_funds.0 as i64, i64),
         (
             "invalid_account_for_fee",
-            errors.invalid_account_for_fee as i64,
+            errors.invalid_account_for_fee.0 as i64,
             i64
         ),
         (
             "invalid_account_index",
-            errors.invalid_account_index as i64,
+            errors.invalid_account_index.0 as i64,
             i64
         ),
         (
             "invalid_program_for_execution",
-            errors.invalid_program_for_execution as i64,
+            errors.invalid_program_for_execution.0 as i64,
             i64
         ),
         (
             "invalid_compute_budget",
-            errors.invalid_compute_budget as i64,
+            errors.invalid_compute_budget.0 as i64,
             i64
         ),
         (
             "not_allowed_during_cluster_maintenance",
-            errors.not_allowed_during_cluster_maintenance as i64,
+            errors.not_allowed_during_cluster_maintenance.0 as i64,
             i64
         ),
         (
             "invalid_writable_account",
-            errors.invalid_writable_account as i64,
+            errors.invalid_writable_account.0 as i64,
             i64
         ),
         (
             "invalid_rent_paying_account",
-            errors.invalid_rent_paying_account as i64,
+            errors.invalid_rent_paying_account.0 as i64,
             i64
         ),
         (
             "would_exceed_max_block_cost_limit",
-            errors.would_exceed_max_block_cost_limit as i64,
+            errors.would_exceed_max_block_cost_limit.0 as i64,
             i64
         ),
         (
             "would_exceed_max_account_cost_limit",
-            errors.would_exceed_max_account_cost_limit as i64,
+            errors.would_exceed_max_account_cost_limit.0 as i64,
             i64
         ),
         (
             "would_exceed_max_vote_cost_limit",
-            errors.would_exceed_max_vote_cost_limit as i64,
+            errors.would_exceed_max_vote_cost_limit.0 as i64,
             i64
         ),
         (
             "would_exceed_account_data_block_limit",
-            errors.would_exceed_account_data_block_limit as i64,
+            errors.would_exceed_account_data_block_limit.0 as i64,
             i64
         ),
         (
             "max_loaded_accounts_data_size_exceeded",
-            errors.max_loaded_accounts_data_size_exceeded as i64,
+            errors.max_loaded_accounts_data_size_exceeded.0 as i64,
             i64
         ),
         (
             "program_execution_temporarily_restricted",
-            errors.program_execution_temporarily_restricted as i64,
+            errors.program_execution_temporarily_restricted.0 as i64,
             i64
         ),
     );
@@ -745,14 +745,14 @@ impl LeaderSlotMetricsTracker {
                 leader_slot_metrics
                     .packet_count_metrics
                     .account_lock_throttled_transactions_count,
-                error_counters.account_in_use as u64
+                error_counters.account_in_use.0 as u64
             );
 
             saturating_add_assign!(
                 leader_slot_metrics
                     .packet_count_metrics
                     .account_locks_limit_throttled_transactions_count,
-                error_counters.too_many_account_locks as u64
+                error_counters.too_many_account_locks.0 as u64
             );
 
             saturating_add_assign!(

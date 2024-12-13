@@ -1,15 +1,13 @@
 //! Functions related to nonce accounts.
 
 use {
-    crate::{
-        account_utils::StateMut,
-        hash::Hash,
-        nonce::{
-            state::{Data, Versions},
-            State,
-        },
+    solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount},
+    solana_hash::Hash,
+    solana_nonce::{
+        state::{Data, State},
+        versions::Versions,
     },
-    solana_account::{AccountSharedData, ReadableAccount},
+    solana_sdk_ids::system_program,
     std::cell::RefCell,
 };
 
@@ -19,7 +17,7 @@ pub fn create_account(lamports: u64) -> RefCell<AccountSharedData> {
             lamports,
             &Versions::new(State::Uninitialized),
             State::size(),
-            &crate::system_program::id(),
+            &system_program::id(),
         )
         .expect("nonce_account"),
     )
@@ -31,7 +29,7 @@ pub fn verify_nonce_account(
     account: &AccountSharedData,
     recent_blockhash: &Hash, // Transaction.message.recent_blockhash
 ) -> Option<Data> {
-    (account.owner() == &crate::system_program::id())
+    (account.owner() == &system_program::id())
         .then(|| {
             StateMut::<Versions>::state(account)
                 .ok()?
@@ -52,18 +50,15 @@ pub fn lamports_per_signature_of(account: &AccountSharedData) -> Option<u64> {
 mod tests {
     use {
         super::*,
-        crate::{
-            fee_calculator::FeeCalculator,
-            nonce::state::{Data, DurableNonce},
-            pubkey::Pubkey,
-            system_program,
-        },
+        solana_fee_calculator::FeeCalculator,
+        solana_nonce::state::{Data, DurableNonce},
+        solana_pubkey::Pubkey,
     };
 
     #[test]
     fn test_verify_bad_account_owner_fails() {
         let program_id = Pubkey::new_unique();
-        assert_ne!(program_id, crate::system_program::id());
+        assert_ne!(program_id, system_program::id());
         let account = AccountSharedData::new_data_with_space(
             42,
             &Versions::new(State::Uninitialized),

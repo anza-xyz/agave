@@ -284,8 +284,8 @@ impl BankForks {
         self[self.highest_slot()].clone()
     }
 
-    pub fn working_bank_with_scheduler(&self) -> &BankWithScheduler {
-        &self.banks[&self.highest_slot()]
+    pub fn working_bank_with_scheduler(&self) -> BankWithScheduler {
+        self.banks[&self.highest_slot()].clone_with_scheduler()
     }
 
     /// Register to be notified when a bank has been dumped (due to duplicate block handling)
