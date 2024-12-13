@@ -19,5 +19,6 @@ impl Default for CompressionType {
 pub(crate) struct EpochIncompleteSlots {
     first: Slot,
     compression: CompressionType,
+    #[serde(with = "serde_bytes")]
     compressed_list: Vec<u8>,
 }

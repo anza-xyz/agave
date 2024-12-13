@@ -441,7 +441,10 @@ mod tests {
                 packet_deserializer::PacketDeserializer,
                 scheduler_messages::{ConsumeWork, FinishedConsumeWork, TransactionBatchId},
                 tests::create_slow_genesis_config,
-                transaction_scheduler::receive_and_buffer::SanitizedTransactionReceiveAndBuffer,
+                transaction_scheduler::{
+                    prio_graph_scheduler::PrioGraphSchedulerConfig,
+                    receive_and_buffer::SanitizedTransactionReceiveAndBuffer,
+                },
             },
             banking_trace::BankingPacketBatch,
         },
@@ -549,11 +552,16 @@ mod tests {
             false,
         );
 
+        let scheduler = PrioGraphScheduler::new(
+            consume_work_senders,
+            finished_consume_work_receiver,
+            PrioGraphSchedulerConfig::default(),
+        );
         let scheduler_controller = SchedulerController::new(
             decision_maker,
             receive_and_buffer,
             bank_forks,
-            PrioGraphScheduler::new(consume_work_senders, finished_consume_work_receiver),
+            scheduler,
             vec![], // no actual workers with metrics to report, this can be empty
             None,
         );

@@ -129,11 +129,6 @@ impl CostTracker {
         self.in_flight_transaction_count = 0;
     }
 
-    /// Get the overall block limit.
-    pub fn get_block_limit(&self) -> u64 {
-        self.block_cost_limit
-    }
-
     /// allows to adjust limits initiated during construction
     pub fn set_limits(
         &mut self,
