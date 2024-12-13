@@ -1031,7 +1031,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             recv(finished_blocked_task_receiver) -> executed_task => {
                                 let Some(executed_task) = Self::accumulate_result_with_timings(
                                     &mut result_with_timings,
-                                    executed_task.expect("alive handler")
+                                    executed_task.expect("alive handler"),
                                 ) else {
                                     break 'nonaborted_main_loop;
                                 };
@@ -1071,7 +1071,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             recv(finished_idle_task_receiver) -> executed_task => {
                                 let Some(executed_task) = Self::accumulate_result_with_timings(
                                     &mut result_with_timings,
-                                    executed_task.expect("alive handler")
+                                    executed_task.expect("alive handler"),
                                 ) else {
                                     break 'nonaborted_main_loop;
                                 };
@@ -1091,26 +1091,28 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     state_machine.reinitialize();
                     session_ending = false;
 
-                    // Prepare for the new session.
-                    match new_task_receiver.recv() {
-                        Ok(NewTaskPayload::OpenSubchannel(context_and_result_with_timings)) => {
-                            let (new_context, new_result_with_timings) =
-                                *context_and_result_with_timings;
-                            // We just received subsequent (= not initial) session and about to
-                            // enter into the preceding `while(!is_finished) {...}` loop again.
-                            // Before that, propagate new SchedulingContext to handler threads
-                            runnable_task_sender
-                                .send_chained_channel(&new_context, handler_count)
-                                .unwrap();
-                            result_with_timings = new_result_with_timings;
+                    {
+                        // Prepare for the new session.
+                        match new_task_receiver.recv() {
+                            Ok(NewTaskPayload::OpenSubchannel(context_and_result_with_timings)) => {
+                                let (new_context, new_result_with_timings) =
+                                    *context_and_result_with_timings;
+                                // We just received subsequent (= not initial) session and about to
+                                // enter into the preceding `while(!is_finished) {...}` loop again.
+                                // Before that, propagate new SchedulingContext to handler threads
+                                runnable_task_sender
+                                    .send_chained_channel(&new_context, handler_count)
+                                    .unwrap();
+                                result_with_timings = new_result_with_timings;
+                            }
+                            Err(_) => {
+                                // This unusual condition must be triggered by ThreadManager::drop().
+                                // Initialize result_with_timings with a harmless value...
+                                result_with_timings = initialized_result_with_timings();
+                                break 'nonaborted_main_loop;
+                            }
+                            Ok(_) => unreachable!(),
                         }
-                        Err(_) => {
-                            // This unusual condition must be triggered by ThreadManager::drop().
-                            // Initialize result_with_timings with a harmless value...
-                            result_with_timings = initialized_result_with_timings();
-                            break 'nonaborted_main_loop;
-                        }
-                        Ok(_) => unreachable!(),
                     }
                 }
 
