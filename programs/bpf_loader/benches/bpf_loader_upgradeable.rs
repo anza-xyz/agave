@@ -11,7 +11,7 @@ use {
         loader_upgradeable_instruction::UpgradeableLoaderInstruction,
         pubkey::Pubkey,
         rent::Rent,
-        sysvar,
+        system_program, sysvar,
     },
     std::{fs::File, io::Read},
 };
@@ -353,6 +353,107 @@ fn bench_close(c: &mut Criterion) {
     });
 }
 
+fn get_accounts_for_bpf_loader_extend_program(
+    elf: &[u8],
+) -> (Vec<(Pubkey, AccountSharedData)>, Vec<AccountMeta>) {
+    let loader_id = bpf_loader_upgradeable::id();
+    let account_data_len = elf.len();
+    let rent = Rent::default();
+
+    let program_address = Pubkey::new_unique();
+    let (programdata_address, _) =
+        Pubkey::find_program_address(&[program_address.as_ref()], &loader_id);
+    let min_program_balance = ACCOUNT_BALANCE;
+    let mut program_account = AccountSharedData::new(
+        min_program_balance,
+        UpgradeableLoaderState::size_of_program(),
+        &loader_id,
+    );
+    program_account
+        .set_state(&UpgradeableLoaderState::Program {
+            programdata_address,
+        })
+        .expect("state failed to serialize into account data");
+
+    let programdata_data_offset = UpgradeableLoaderState::size_of_programdata_metadata();
+    let programdata_len: usize = account_data_len + programdata_data_offset;
+    let mut programdata_account =
+        AccountSharedData::new(min_program_balance, programdata_len, &loader_id);
+    programdata_account
+        .set_state(&UpgradeableLoaderState::ProgramData {
+            slot: 0,
+            upgrade_authority_address: Some(Pubkey::new_unique()),
+        })
+        .expect("state failed to serialize into account data");
+    programdata_account.data_as_mut_slice()[programdata_data_offset..].copy_from_slice(&elf);
+
+    let authority_address = Pubkey::new_unique();
+    let authority_account = AccountSharedData::new(ACCOUNT_BALANCE, 0, &Pubkey::new_unique());
+    let rent_account = create_account_shared_data_for_test(&rent);
+    let clock_account = create_account_shared_data_for_test(&Clock {
+        slot: SLOT.saturating_add(1),
+        ..Clock::default()
+    });
+    let transaction_accounts = vec![
+        (programdata_address, programdata_account),
+        (program_address, program_account),
+        (
+            system_program::id(),
+            AccountSharedData::new(0, 0, &system_program::id()),
+        ),
+        (authority_address, authority_account),
+        (sysvar::rent::id(), rent_account),
+        (sysvar::clock::id(), clock_account),
+    ];
+    let instruction_accounts = vec![
+        AccountMeta::new(programdata_address, false),
+        AccountMeta::new(program_address, false),
+        AccountMeta::new_readonly(system_program::id(), false),
+        AccountMeta::new(authority_address, true),
+        AccountMeta {
+            pubkey: sysvar::rent::id(),
+            is_signer: false,
+            is_writable: false,
+        },
+        AccountMeta {
+            pubkey: sysvar::clock::id(),
+            is_signer: false,
+            is_writable: false,
+        },
+    ];
+    (transaction_accounts, instruction_accounts)
+}
+
+fn bench_extend_program(c: &mut Criterion) {
+    let additional_bytes = 64;
+
+    let mut file = File::open("test_elfs/out/noop_aligned.so").expect("file open failed");
+    let mut elf = Vec::new();
+    file.read_to_end(&mut elf).unwrap();
+
+    let (transaction_accounts, instruction_accounts) =
+        get_accounts_for_bpf_loader_extend_program(&elf);
+
+    let instruction_data =
+        bincode::serialize(&UpgradeableLoaderInstruction::ExtendProgram { additional_bytes })
+            .unwrap();
+    c.bench_function("extend_program", |bencher| {
+        bencher.iter(|| {
+            mock_process_instruction(
+                &bpf_loader_upgradeable::id(),
+                Vec::new(),
+                &instruction_data,
+                transaction_accounts.clone(),
+                instruction_accounts.clone(),
+                Ok(()),
+                Entrypoint::vm,
+                |_invoke_context| {},
+                |_invoke_context| {},
+            )
+        })
+    });
+}
+
 fn bench_set_authority_checked(c: &mut Criterion) {
     let mut test_setup = TestSetup::new();
     test_setup.prep_set_authority(true);
@@ -371,6 +472,7 @@ criterion_group!(
     bench_upgradeable_upgrade,
     bench_set_authority,
     bench_close,
+    bench_extend_program,
     bench_set_authority_checked
 );
 criterion_main!(benches);
