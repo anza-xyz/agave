@@ -1041,7 +1041,7 @@ where
 
 impl<S, TH> PooledSchedulerInner<S, TH>
 where
-    S: SpawnableScheduler<TH, Inner = Self>,
+    S: SpawnableScheduler<TH>,
     TH: TaskHandler,
 {
     fn is_aborted(&self) -> bool {
@@ -1978,7 +1978,7 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
 
 impl<S, TH> SchedulerInner for PooledSchedulerInner<S, TH>
 where
-    S: SpawnableScheduler<TH, Inner = Self>,
+    S: SpawnableScheduler<TH>,
     TH: TaskHandler,
 {
     fn id(&self) -> SchedulerId {
