@@ -1,7 +1,7 @@
 use {
     crate::{send_transaction_service_stats::SendTransactionServiceStats, tpu_info::TpuInfo},
     async_trait::async_trait,
-    log::warn,
+    log::{debug, error, warn},
     solana_client::connection_cache::{ConnectionCache, Protocol},
     solana_connection_cache::client_connection::ClientConnection as TpuConnection,
     solana_measure::measure::Measure,
@@ -39,6 +39,8 @@ pub trait TransactionClient {
     );
 
     fn protocol(&self) -> Protocol;
+
+    fn exit(&self);
 }
 
 pub struct ConnectionCacheClient<T: TpuInfoWithSendStatic> {
@@ -150,6 +152,8 @@ where
     fn protocol(&self) -> Protocol {
         self.connection_cache.protocol()
     }
+
+    fn exit(&self) {}
 }
 
 impl<T> NotifyKeyUpdate for ConnectionCacheClient<T>
@@ -372,6 +376,26 @@ where
 
     fn protocol(&self) -> Protocol {
         Protocol::QUIC
+    }
+
+    fn exit(&self) {
+        let Ok(mut lock) = self.join_and_cancel.lock() else {
+            error!("Failed to stop scheduler: TpuClientNext task panicked.");
+            return;
+        };
+        let (handle, token) = std::mem::take(&mut *lock);
+        token.cancel();
+        if let Some(handle) = handle {
+            match self.runtime_handle.block_on(handle) {
+                Ok(result) => match result {
+                    Ok(stats) => {
+                        debug!("tpu-client-next statistics over all the connections: {stats:?}");
+                    }
+                    Err(error) => error!("tpu-client-next exits with error {error}."),
+                },
+                Err(error) => error!("Failed to join task {error}."),
+            }
+        }
     }
 }
 

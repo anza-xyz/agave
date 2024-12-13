@@ -52,10 +52,11 @@ const DEFAULT_BATCH_SEND_RATE_MS: u64 = 1;
 // The maximum transaction batch send rate in MS
 pub const MAX_BATCH_SEND_RATE_MS: usize = 100_000;
 
-pub struct SendTransactionService {
+pub struct SendTransactionService<Client: TransactionClient + Clone + std::marker::Send + 'static> {
     receive_txn_thread: JoinHandle<()>,
     retry_thread: JoinHandle<()>,
     exit: Arc<AtomicBool>,
+    client: Client,
 }
 
 pub struct TransactionInfo {
@@ -145,8 +146,10 @@ impl Default for Config {
 /// processing the transactions that need to be retried.
 pub const MAX_RETRY_SLEEP_MS: u64 = 1_000;
 
-impl SendTransactionService {
-    pub fn new<Client: TransactionClient + Clone + std::marker::Send + 'static>(
+impl<Client: TransactionClient + Clone + std::marker::Send + 'static>
+    SendTransactionService<Client>
+{
+    pub fn new(
         bank_forks: &Arc<RwLock<BankForks>>,
         receiver: Receiver<TransactionInfo>,
         client: Client,
@@ -157,10 +160,10 @@ impl SendTransactionService {
             retry_rate_ms,
             ..Config::default()
         };
-        Self::new_with_config::<Client>(bank_forks, receiver, client, config, exit)
+        Self::new_with_config(bank_forks, receiver, client, config, exit)
     }
 
-    pub fn new_with_config<Client: TransactionClient + Clone + std::marker::Send + 'static>(
+    pub fn new_with_config(
         bank_forks: &Arc<RwLock<BankForks>>,
         receiver: Receiver<TransactionInfo>,
         client: Client,
@@ -186,7 +189,7 @@ impl SendTransactionService {
 
         let retry_thread = Self::retry_thread(
             bank_forks.clone(),
-            client,
+            client.clone(),
             retry_transactions,
             config.retry_rate_ms,
             config.service_max_retries,
@@ -199,12 +202,13 @@ impl SendTransactionService {
             receive_txn_thread,
             retry_thread,
             exit,
+            client,
         }
     }
 
     /// Thread responsible for receiving transactions from RPC clients.
     #[allow(clippy::too_many_arguments)]
-    fn receive_txn_thread<Client: TransactionClient + std::marker::Send + 'static>(
+    fn receive_txn_thread(
         receiver: Receiver<TransactionInfo>,
         client: Client,
         retry_transactions: Arc<Mutex<HashMap<Signature, TransactionInfo>>>,
@@ -314,7 +318,7 @@ impl SendTransactionService {
     }
 
     /// Thread responsible for retrying transactions
-    fn retry_thread<Client: TransactionClient + std::marker::Send + 'static>(
+    fn retry_thread(
         bank_forks: Arc<RwLock<BankForks>>,
         client: Client,
         retry_transactions: Arc<Mutex<HashMap<Signature, TransactionInfo>>>,
@@ -377,7 +381,7 @@ impl SendTransactionService {
     }
 
     /// Retry transactions sent before.
-    fn process_transactions<Client: TransactionClient + std::marker::Send + 'static>(
+    fn process_transactions(
         working_bank: &Bank,
         root_bank: &Bank,
         transactions: &mut HashMap<Signature, TransactionInfo>,
@@ -528,7 +532,9 @@ impl SendTransactionService {
     pub fn join(self) -> thread::Result<()> {
         self.receive_txn_thread.join()?;
         self.exit.store(true, Ordering::Relaxed);
-        self.retry_thread.join()
+        let retry_result = self.retry_thread.join();
+        self.client.exit();
+        retry_result
     }
 }
 
