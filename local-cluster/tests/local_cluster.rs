@@ -3860,7 +3860,6 @@ fn test_kill_partition_switch_threshold_progress() {
 
 #[test]
 #[serial]
-#[ignore]
 #[allow(unused_attributes)]
 fn test_duplicate_shreds_broadcast_leader() {
     run_duplicate_shreds_broadcast_leader(true);
@@ -3892,7 +3891,13 @@ fn run_duplicate_shreds_broadcast_leader(vote_on_duplicate: bool) {
 
     // Critical that bad_leader_stake + good_node_stake < DUPLICATE_THRESHOLD and that
     // bad_leader_stake + good_node_stake + our_node_stake > DUPLICATE_THRESHOLD so that
-    // our vote is the determining factor
+    // our vote is the determining factor.
+    //
+    // Also critical that bad_leader_stake > 1 - DUPLICATE_THRESHOLD, so that the leader
+    // doesn't try and dump his own block, which will happen if:
+    // 1. A version is duplicate confirmed
+    // 2. The version they played/stored into blockstore isn't the one that is duplicated
+    // confirmed.
     let bad_leader_stake = 10_000_000 * DEFAULT_NODE_STAKE;
     // Ensure that the good_node_stake is always on the critical path, and the partition node
     // should never be on the critical path. This way, none of the bad shreds sent to the partition
@@ -3920,6 +3925,7 @@ fn run_duplicate_shreds_broadcast_leader(vote_on_duplicate: bool) {
         (bad_leader_stake + good_node_stake + our_node_stake) as f64 / total_stake as f64
             > DUPLICATE_THRESHOLD
     );
+    assert!((bad_leader_stake as f64 / total_stake as f64) >= 1.0 - DUPLICATE_THRESHOLD);
 
     // Important that the partition node stake is the smallest so that it gets selected
     // for the partition.

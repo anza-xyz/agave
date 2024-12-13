@@ -762,13 +762,10 @@ impl LeaderSlotMetricsTracker {
                 *cost_model_throttled_transactions_count
             );
 
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .timing_metrics
-                    .process_packets_timings
-                    .cost_model_us,
-                *cost_model_us
-            );
+            leader_slot_metrics
+                .timing_metrics
+                .process_packets_timings
+                .cost_model_us += cost_model_us;
 
             leader_slot_metrics
                 .packet_count_metrics
@@ -995,98 +992,74 @@ impl LeaderSlotMetricsTracker {
     // Processing buffer timing metrics
     pub(crate) fn increment_make_decision_us(&mut self, us: u64) {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .timing_metrics
-                    .process_buffered_packets_timings
-                    .make_decision_us,
-                us
-            );
+            leader_slot_metrics
+                .timing_metrics
+                .process_buffered_packets_timings
+                .make_decision_us += us;
         }
     }
 
     pub(crate) fn increment_consume_buffered_packets_us(&mut self, us: u64) {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .timing_metrics
-                    .process_buffered_packets_timings
-                    .consume_buffered_packets_us,
-                us
-            );
+            leader_slot_metrics
+                .timing_metrics
+                .process_buffered_packets_timings
+                .consume_buffered_packets_us += us;
         }
     }
 
     pub(crate) fn increment_forward_us(&mut self, us: u64) {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .timing_metrics
-                    .process_buffered_packets_timings
-                    .forward_us,
-                us
-            );
+            leader_slot_metrics
+                .timing_metrics
+                .process_buffered_packets_timings
+                .forward_us += us;
         }
     }
 
     pub(crate) fn increment_forward_and_hold_us(&mut self, us: u64) {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .timing_metrics
-                    .process_buffered_packets_timings
-                    .forward_and_hold_us,
-                us
-            );
+            leader_slot_metrics
+                .timing_metrics
+                .process_buffered_packets_timings
+                .forward_and_hold_us += us;
         }
     }
 
     pub(crate) fn increment_process_packets_transactions_us(&mut self, us: u64) {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .timing_metrics
-                    .consume_buffered_packets_timings
-                    .process_packets_transactions_us,
-                us
-            );
+            leader_slot_metrics
+                .timing_metrics
+                .consume_buffered_packets_timings
+                .process_packets_transactions_us += us
         }
     }
 
     // Processing packets timing metrics
     pub(crate) fn increment_transactions_from_packets_us(&mut self, us: u64) {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .timing_metrics
-                    .process_packets_timings
-                    .transactions_from_packets_us,
-                us
-            );
+            leader_slot_metrics
+                .timing_metrics
+                .process_packets_timings
+                .transactions_from_packets_us += us;
         }
     }
 
     pub(crate) fn increment_process_transactions_us(&mut self, us: u64) {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .timing_metrics
-                    .process_packets_timings
-                    .process_transactions_us,
-                us
-            );
+            leader_slot_metrics
+                .timing_metrics
+                .process_packets_timings
+                .process_transactions_us += us;
         }
     }
 
     pub(crate) fn increment_filter_retryable_packets_us(&mut self, us: u64) {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            saturating_add_assign!(
-                leader_slot_metrics
-                    .timing_metrics
-                    .process_packets_timings
-                    .filter_retryable_packets_us,
-                us
-            );
+            leader_slot_metrics
+                .timing_metrics
+                .process_packets_timings
+                .filter_retryable_packets_us += us;
         }
     }
 
