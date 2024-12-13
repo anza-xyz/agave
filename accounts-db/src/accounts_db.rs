@@ -8845,11 +8845,7 @@ impl AccountsDb {
                     duplicates_lt_hash: Option<Box<DuplicatesLtHash>>,
                 }
                 impl DuplicatePubkeysVisitedInfo {
-                    fn reduce(mut a: Self, b: Self) -> Self {
-                        a.merge(b);
-                        a
-                    }
-                    fn merge(&mut self, other: Self) {
+                    fn reduce(mut self, other: Self) -> Self {
                         self.accounts_data_len_from_duplicates +=
                             other.accounts_data_len_from_duplicates;
                         self.num_duplicate_accounts += other.num_duplicate_accounts;
@@ -8865,16 +8861,20 @@ impl AccountsDb {
                                     .unwrap()
                                     .0
                                     .mix_in(&other.duplicates_lt_hash.as_ref().unwrap().0);
+                                self
                             }
                             (true, false) => {
                                 // nothing to do; `other` doesn't have a duplicates lt hash
+                                self
                             }
                             (false, true) => {
                                 // `self` doesn't have a duplicates lt hash, so pilfer from `other`
                                 self.duplicates_lt_hash = other.duplicates_lt_hash;
+                                self
                             }
                             (false, false) => {
                                 // nothing to do; no duplicates lt hash at all
+                                self
                             }
                         }
                     }
