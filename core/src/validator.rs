@@ -1428,6 +1428,18 @@ impl Validator {
         let cluster_slots =
             Arc::new(crate::cluster_slots_service::cluster_slots::ClusterSlots::default());
 
+        // bank_forks could be write-locked temporarily here, if unified scheduler is enabled for
+        // block production. That's because the started ReplayStage inside Tvu could immediately
+        // try to insert a tpu bank into bank_forks, like with local development clusters
+        // consisting of a single staked node. Such insertion could be blocked with the lock held
+        // by unified scheduler until it's fully setup by the banking stage. This is needed,
+        // because completion of insertion needs to strictly correspond with the initiation of
+        // producing blocks in unified scheduler.
+        // As a consequence of this, there's a corner case where the banking stage hasn't called
+        // register_banking_stage() yet for unified scheduler because Tpu setup follows Tvu setup.
+        // This means any setup which accesses bank_forks must be done before or after the short
+        // duration of Tvu setup and Tpu setup to avoid deadlocks. So, RootBankCache must be setup
+        // here in advance as being one of such setups.
         let root_bank_cache = RootBankCache::new(bank_forks.clone());
         let tvu = Tvu::new(
             vote_account,
