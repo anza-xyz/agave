@@ -3445,19 +3445,19 @@ mod tests {
         }
 
         fn is_overgrown(&self) -> bool {
-            todo!()
+            unimplemented!()
         }
 
         fn is_trashed(&self) -> bool {
-            todo!()
+            false
         }
 
         fn reset(&self) {
-            todo!()
+            unimplemented!()
         }
 
         fn ensure_abort(&mut self) {
-            todo!()
+            unimplemented!()
         }
     }
 
