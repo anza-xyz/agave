@@ -485,35 +485,42 @@ where
     ) -> S {
         assert_matches!(result_with_timings, (Ok(_), _));
 
-        if matches!(context.mode(), BlockVerification) {
-            // pop is intentional for filo, expecting relatively warmed-up scheduler due to having been
-            // returned recently
-            if let Some((inner, _pooled_at)) =
-                self.scheduler_inners.lock().expect("not poisoned").pop()
-            {
-                S::from_inner(inner, context, result_with_timings)
-            } else {
-                S::spawn(
-                    self.block_verification_handler_count,
-                    self.self_arc(),
-                    context,
-                    result_with_timings,
-                    None,
-                )
+        match context.mode() {
+            BlockVerification => {
+                // pop is intentional for filo, expecting relatively warmed-up scheduler due to having been
+                // returned recently
+                if let Some((inner, _pooled_at)) =
+                    self.scheduler_inners.lock().expect("not poisoned").pop()
+                {
+                    S::from_inner(inner, context, result_with_timings)
+                } else {
+                    S::spawn(
+                        self.block_verification_handler_count,
+                        self.self_arc(),
+                        context,
+                        result_with_timings,
+                        None,
+                    )
+                }
             }
-        } else {
-            let mut id_and_inner = self
-                .block_production_scheduler_inner
-                .lock()
-                .expect("not poisoned");
-            id_and_inner = self
-                .block_production_scheduler_condvar
-                .wait_while(id_and_inner, |id_and_inner| id_and_inner.0.is_none())
-                .unwrap();
-            let Some(inner) = id_and_inner.1.take() else {
-                panic!("double take: {:?}, {:?}", context.slot(), context.mode());
-            };
-            S::from_inner(inner, context, result_with_timings)
+            BlockProduction => {
+                let id_and_inner = self
+                    .block_production_scheduler_inner
+                    .lock()
+                    .expect("not poisoned");
+                // Wait with condvar until scheduler is spawned elsewhere, which is guaranteed to
+                // be done eventually.
+                let (id, inner) = &mut *self
+                    .block_production_scheduler_condvar
+                    .wait_while(id_and_inner, |id_and_inner| id_and_inner.0.is_none())
+                    .unwrap();
+
+                let Some(inner) = inner.take() else {
+                    panic!("already taken: id: {id:?} slot: {:?}", context.slot());
+                };
+
+                S::from_inner(inner, context, result_with_timings)
+            }
         }
     }
 
