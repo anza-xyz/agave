@@ -1249,14 +1249,13 @@ impl ServeRepair {
             }
         }
         if !pending_pongs.is_empty() {
-            match batch_send(repair_socket, &pending_pongs) {
+            let num_pkts = pending_pongs.len();
+            let pending_pongs = pending_pongs.iter().map(|(bytes, addr)| (bytes, addr));
+            match batch_send(repair_socket, pending_pongs) {
                 Ok(()) => (),
                 Err(SendPktsError::IoError(err, num_failed)) => {
                     warn!(
-                        "batch_send failed to send {}/{} packets. First error: {:?}",
-                        num_failed,
-                        pending_pongs.len(),
-                        err
+                        "batch_send failed to send {num_failed}/{num_pkts} packets. First error: {err:?}"
                     );
                 }
             }

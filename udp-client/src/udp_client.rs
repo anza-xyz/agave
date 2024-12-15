@@ -2,7 +2,6 @@
 //! an interface for sending data
 
 use {
-    core::iter::repeat,
     solana_connection_cache::client_connection::ClientConnection,
     solana_streamer::sendmmsg::batch_send,
     solana_transaction_error::TransportResult,
@@ -37,18 +36,15 @@ impl ClientConnection for UdpClientConnection {
     }
 
     fn send_data_batch(&self, buffers: &[Vec<u8>]) -> TransportResult<()> {
-        let pkts: Vec<_> = buffers.iter().zip(repeat(self.server_addr())).collect();
-        batch_send(&self.socket, &pkts)?;
-        Ok(())
+        let addr = self.server_addr();
+        let pkts = buffers.iter().map(|bytes| (bytes, addr));
+        Ok(batch_send(&self.socket, pkts)?)
     }
 
     fn send_data_batch_async(&self, buffers: Vec<Vec<u8>>) -> TransportResult<()> {
-        let pkts: Vec<_> = buffers
-            .into_iter()
-            .zip(repeat(self.server_addr()))
-            .collect();
-        batch_send(&self.socket, &pkts)?;
-        Ok(())
+        let addr = self.server_addr();
+        let pkts = buffers.iter().map(|bytes| (bytes, addr));
+        Ok(batch_send(&self.socket, pkts)?)
     }
 
     fn send_data(&self, buffer: &[u8]) -> TransportResult<()> {

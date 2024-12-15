@@ -23,7 +23,6 @@ use {
     solana_sdk::{pubkey::Pubkey, transport::TransportError},
     solana_streamer::sendmmsg::batch_send,
     std::{
-        iter::repeat,
         net::{SocketAddr, UdpSocket},
         sync::{atomic::Ordering, Arc, RwLock},
     },
@@ -281,8 +280,8 @@ impl<T: LikeClusterInfo> Forwarder<T> {
         match forward_option {
             ForwardOption::ForwardTpuVote => {
                 // The vote must be forwarded using only UDP.
-                let pkts: Vec<_> = packet_vec.into_iter().zip(repeat(*addr)).collect();
-                batch_send(&self.socket, &pkts).map_err(|err| err.into())
+                let pkts = packet_vec.iter().map(|pkt| (pkt, addr));
+                batch_send(&self.socket, pkts).map_err(TransportError::from)
             }
             ForwardOption::ForwardTransaction => {
                 let conn = self.connection_cache.get_connection(addr);

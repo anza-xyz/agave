@@ -72,7 +72,8 @@ impl VoteClient {
     }
 
     fn send_batch(&self, batch: &mut Vec<(Vec<u8>, SocketAddr)>) {
-        let _res = batch_send(&self.udp_socket, batch);
+        let pkts = batch.iter().map(|(bytes, addr)| (bytes, addr));
+        let _res = batch_send(&self.udp_socket, pkts);
         batch.clear();
     }
 }

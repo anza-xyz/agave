@@ -477,8 +477,9 @@ pub fn broadcast_shreds(
     shred_select.stop();
     transmit_stats.shred_select += shred_select.as_us();
 
+    let num_udp_packets = packets.len();
     let mut send_mmsg_time = Measure::start("send_mmsg");
-    match batch_send(s, &packets[..]) {
+    match batch_send(s, packets) {
         Ok(()) => (),
         Err(SendPktsError::IoError(ioerr, num_failed)) => {
             transmit_stats.dropped_packets_udp += num_failed;
@@ -487,7 +488,7 @@ pub fn broadcast_shreds(
     }
     send_mmsg_time.stop();
     transmit_stats.send_mmsg_elapsed += send_mmsg_time.as_us();
-    transmit_stats.total_packets += packets.len() + quic_packets.len();
+    transmit_stats.total_packets += num_udp_packets + quic_packets.len();
     for (shred, addr) in quic_packets {
         let shred = Bytes::from(shred::Payload::unwrap_or_clone(shred.clone()));
         if let Err(err) = quic_endpoint_sender.blocking_send((addr, shred)) {

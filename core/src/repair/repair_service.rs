@@ -646,15 +646,13 @@ impl RepairService {
 
             let mut batch_send_repairs_elapsed = Measure::start("batch_send_repairs_elapsed");
             if !batch.is_empty() {
-                match batch_send(repair_socket, &batch) {
+                let num_pkts = batch.len();
+                let batch = batch.iter().map(|(bytes, addr)| (bytes, addr));
+                match batch_send(repair_socket, batch) {
                     Ok(()) => (),
                     Err(SendPktsError::IoError(err, num_failed)) => {
                         error!(
-                            "{} batch_send failed to send {}/{} packets first error {:?}",
-                            id,
-                            num_failed,
-                            batch.len(),
-                            err
+                            "{id} batch_send failed to send {num_failed}/{num_pkts} packets first error {err:?}"
                         );
                     }
                 }
@@ -954,10 +952,10 @@ impl RepairService {
             ServeRepair::repair_proto_to_bytes(&request_proto, &identity_keypair).unwrap();
 
         // Prepare packet batch to send
-        let reqs = [(packet_buf, address)];
+        let reqs = [(&packet_buf, address)];
 
         // Send packet batch
-        match batch_send(repair_socket, &reqs[..]) {
+        match batch_send(repair_socket, reqs) {
             Ok(()) => {
                 debug!("successfully sent repair request to {pubkey} / {address}!");
             }
