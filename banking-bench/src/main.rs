@@ -9,7 +9,7 @@ use {
     rayon::prelude::*,
     solana_client::connection_cache::ConnectionCache,
     solana_core::{
-        banking_stage::BankingStage,
+        banking_stage::{update_bank_forks_and_poh_recorder_for_new_tpu_bank, BankingStage},
         banking_trace::{BankingTracer, Channels, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT},
         validator::BlockProductionMethod,
     },
@@ -560,16 +560,16 @@ fn main() {
             new_bank_time.stop();
 
             let mut insert_time = Measure::start("insert_time");
-            bank_forks.write().unwrap().insert(new_bank);
+            assert_matches!(poh_recorder.read().unwrap().bank(), None);
+            update_bank_forks_and_poh_recorder_for_new_tpu_bank(
+                &bank_forks,
+                &poh_recorder,
+                new_bank,
+                false,
+            );
             bank = bank_forks.read().unwrap().working_bank_with_scheduler();
+            assert_matches!(poh_recorder.read().unwrap().bank(), Some(_));
             insert_time.stop();
-
-            assert!(poh_recorder.read().unwrap().bank().is_none());
-            poh_recorder
-                .write()
-                .unwrap()
-                .set_bank_for_test(bank.clone());
-            assert!(poh_recorder.read().unwrap().bank().is_some());
             debug!(
                 "new_bank_time: {}us insert_time: {}us poh_time: {}us",
                 new_bank_time.as_us(),
