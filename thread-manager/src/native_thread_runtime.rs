@@ -1,6 +1,7 @@
 use {
     crate::policy::{apply_policy, CoreAllocation},
     anyhow::bail,
+    log::error,
     serde::{Deserialize, Serialize},
     solana_metrics::datapoint_info,
     std::sync::{
@@ -72,7 +73,7 @@ impl<T> JoinHandle<T> {
 impl<T> Drop for JoinHandle<T> {
     fn drop(&mut self) {
         if self.std_handle.is_some() {
-            println!("Attempting to drop a Join Handle of a running thread will leak thread IDs, please join your managed threads!");
+            error!("Attempting to drop a Join Handle of a running thread will leak thread IDs, please join your managed threads!");
             self.join_inner().expect("Child thread panicked");
         }
     }
