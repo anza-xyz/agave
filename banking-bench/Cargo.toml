@@ -9,6 +9,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-banking-stage-ingress-types = { workspace = true }
 assert_matches = { workspace = true }
 clap = { version = "3.1.8", features = ["derive", "cargo"] }
 crossbeam-channel = { workspace = true }

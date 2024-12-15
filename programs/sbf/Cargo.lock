@@ -64,6 +64,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-banking-stage-ingress-types"
+version = "2.2.0"
+dependencies = [
+ "crossbeam-channel",
+ "solana-perf",
+]
+
+[[package]]
 name = "agave-geyser-plugin-interface"
 version = "2.2.0"
 dependencies = [
@@ -5449,6 +5457,7 @@ dependencies = [
 name = "solana-core"
 version = "2.2.0"
 dependencies = [
+ "agave-banking-stage-ingress-types",
  "ahash 0.8.11",
  "anyhow",
  "arrayvec",

@@ -435,19 +435,17 @@ impl<C: LikeClusterInfo, R: ReceiveAndBuffer> SchedulerController<C, R> {
 mod tests {
     use {
         super::*,
-        crate::{
-            banking_stage::{
-                consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
-                packet_deserializer::PacketDeserializer,
-                scheduler_messages::{ConsumeWork, FinishedConsumeWork, TransactionBatchId},
-                tests::create_slow_genesis_config,
-                transaction_scheduler::{
-                    prio_graph_scheduler::PrioGraphSchedulerConfig,
-                    receive_and_buffer::SanitizedTransactionReceiveAndBuffer,
-                },
+        crate::banking_stage::{
+            consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
+            packet_deserializer::PacketDeserializer,
+            scheduler_messages::{ConsumeWork, FinishedConsumeWork, TransactionBatchId},
+            tests::create_slow_genesis_config,
+            transaction_scheduler::{
+                prio_graph_scheduler::PrioGraphSchedulerConfig,
+                receive_and_buffer::SanitizedTransactionReceiveAndBuffer,
             },
-            banking_trace::BankingPacketBatch,
         },
+        agave_banking_stage_ingress_types::BankingPacketBatch,
         crossbeam_channel::{unbounded, Receiver, Sender},
         itertools::Itertools,
         solana_gossip::cluster_info::ClusterInfo,

@@ -2,6 +2,7 @@
 #![feature(test)]
 
 use {
+    agave_banking_stage_ingress_types::BankingPacketBatch,
     solana_core::{banking_trace::Channels, validator::BlockProductionMethod},
     solana_vote_program::{vote_state::TowerSync, vote_transaction::new_tower_sync_transaction},
 };
@@ -24,7 +25,7 @@ use {
             unprocessed_transaction_storage::{ThreadType, UnprocessedTransactionStorage},
             BankingStage, BankingStageStats,
         },
-        banking_trace::{BankingPacketBatch, BankingTracer},
+        banking_trace::BankingTracer,
     },
     solana_entry::entry::{next_hash, Entry},
     solana_gossip::cluster_info::{ClusterInfo, Node},

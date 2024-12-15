@@ -1,5 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
+    agave_banking_stage_ingress_types::BankingPacketBatch,
     assert_matches::assert_matches,
     clap::{crate_description, crate_name, Arg, ArgEnum, Command},
     crossbeam_channel::{unbounded, Receiver},
@@ -9,9 +10,7 @@ use {
     solana_client::connection_cache::ConnectionCache,
     solana_core::{
         banking_stage::BankingStage,
-        banking_trace::{
-            BankingPacketBatch, BankingTracer, Channels, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
-        },
+        banking_trace::{BankingTracer, Channels, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT},
         validator::BlockProductionMethod,
     },
     solana_gossip::cluster_info::{ClusterInfo, Node},

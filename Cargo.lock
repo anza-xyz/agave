@@ -80,6 +80,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-banking-stage-ingress-types"
+version = "2.2.0"
+dependencies = [
+ "crossbeam-channel",
+ "solana-perf",
+]
+
+[[package]]
 name = "agave-cargo-registry"
 version = "2.2.0"
 dependencies = [
@@ -6053,6 +6061,7 @@ dependencies = [
 name = "solana-banking-bench"
 version = "2.2.0"
 dependencies = [
+ "agave-banking-stage-ingress-types",
  "assert_matches",
  "clap 3.2.23",
  "crossbeam-channel",
@@ -6782,6 +6791,7 @@ dependencies = [
 name = "solana-core"
 version = "2.2.0"
 dependencies = [
+ "agave-banking-stage-ingress-types",
  "ahash 0.8.11",
  "anyhow",
  "arrayvec",

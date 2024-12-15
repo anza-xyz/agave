@@ -19,6 +19,7 @@ members = [
     "accounts-db/store-histogram",
     "accounts-db/store-tool",
     "banking-bench",
+    "banking-stage-ingress-types",
     "banks-client",
     "banks-interface",
     "banks-server",
@@ -255,6 +256,7 @@ check-cfg = [
 
 [workspace.dependencies]
 Inflector = "0.11.4"
+agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", version = "=2.2.0" }
 agave-transaction-view = { path = "transaction-view", version = "=2.2.0" }
 aquamarine = "0.3.3"
 aes-gcm-siv = "0.11.1"

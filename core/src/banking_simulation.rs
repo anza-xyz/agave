@@ -3,12 +3,12 @@ use {
     crate::{
         banking_stage::{BankingStage, LikeClusterInfo},
         banking_trace::{
-            BankingPacketBatch, BankingTracer, ChannelLabel, Channels, TimedTracedEvent,
-            TracedEvent, TracedSender, TracerThread, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
-            BASENAME,
+            BankingTracer, ChannelLabel, Channels, TimedTracedEvent, TracedEvent, TracedSender,
+            TracerThread, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT, BASENAME,
         },
         validator::BlockProductionMethod,
     },
+    agave_banking_stage_ingress_types::BankingPacketBatch,
     bincode::deserialize_from,
     crossbeam_channel::{unbounded, Sender},
     itertools::Itertools,
