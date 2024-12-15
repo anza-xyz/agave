@@ -194,6 +194,7 @@ impl ClusterInfoVoteListener {
         verified_packets_sender: BankingPacketSender,
         vote_tracker: Arc<VoteTracker>,
         bank_forks: Arc<RwLock<BankForks>>,
+        mut root_bank_cache: RootBankCache,
         subscriptions: Arc<RpcSubscriptions>,
         verified_vote_sender: VerifiedVoteSender,
         gossip_verified_vote_hash_sender: GossipVerifiedVoteHashSender,
@@ -205,7 +206,6 @@ impl ClusterInfoVoteListener {
         let (verified_vote_transactions_sender, verified_vote_transactions_receiver) = unbounded();
         let listen_thread = {
             let exit = exit.clone();
-            let mut root_bank_cache = RootBankCache::new(bank_forks.clone());
             Builder::new()
                 .name("solCiVoteLstnr".to_string())
                 .spawn(move || {

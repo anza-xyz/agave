@@ -105,6 +105,7 @@ use {
         bank_forks::BankForks,
         commitment::BlockCommitmentCache,
         prioritization_fee_cache::PrioritizationFeeCache,
+        root_bank_cache::RootBankCache,
         runtime_config::RuntimeConfig,
         snapshot_archive_info::SnapshotArchiveInfoGetter,
         snapshot_bank_utils::{self, DISABLED_SNAPSHOT_ARCHIVE_INTERVAL},
@@ -1409,6 +1410,7 @@ impl Validator {
         let cluster_slots =
             Arc::new(crate::cluster_slots_service::cluster_slots::ClusterSlots::default());
 
+        let root_bank_cache = RootBankCache::new(bank_forks.clone());
         let tvu = Tvu::new(
             vote_account,
             authorized_voter_keypairs,
@@ -1517,6 +1519,7 @@ impl Validator {
             node.info.shred_version(),
             vote_tracker,
             bank_forks.clone(),
+            root_bank_cache,
             verified_vote_sender,
             gossip_verified_vote_hash_sender,
             replay_vote_receiver,
