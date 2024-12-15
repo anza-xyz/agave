@@ -34,3 +34,10 @@ one may want to spawn many rayon pools.
  * better metrics integration
  * proper error handling everywhere
  * even more tests
+
+
+# Examples
+All examples need wrk for workload generation. Please install it before running.
+
+ * core_contention_basics will demonstrate why core contention is bad, and how thread configs can help
+ * core_contention_sweep will sweep across a range of core counts to show how benefits scale with core counts

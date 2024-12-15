@@ -46,16 +46,16 @@ pub struct RuntimeManagerConfig {
 
 impl ThreadManager {
     pub fn get_native(&self, name: &str) -> Option<&NativeThreadRuntime> {
-        let n = self.native_runtime_mapping.get(name)?;
-        self.native_thread_runtimes.get(n)
+        let name = self.native_runtime_mapping.get(name)?;
+        self.native_thread_runtimes.get(name)
     }
     pub fn get_rayon(&self, name: &str) -> Option<&RayonRuntime> {
-        let n = self.rayon_runtime_mapping.get(name)?;
-        self.rayon_runtimes.get(n)
+        let name = self.rayon_runtime_mapping.get(name)?;
+        self.rayon_runtimes.get(name)
     }
     pub fn get_tokio(&self, name: &str) -> Option<&TokioRuntime> {
-        let n = self.tokio_runtime_mapping.get(name)?;
-        self.tokio_runtimes.get(n)
+        let name = self.tokio_runtime_mapping.get(name)?;
+        self.tokio_runtimes.get(name)
     }
     pub fn set_process_affinity(config: &RuntimeManagerConfig) -> anyhow::Result<Vec<usize>> {
         let chosen_cores_mask = config.default_core_allocation.as_core_mask_vector();
@@ -158,8 +158,8 @@ mod tests {
     // Nobody runs Agave on windows, and on Mac we can not set mask affinity without patching external crate
     #[cfg(target_os = "linux")]
     fn validate_affinity(expect_cores: &[usize], error_msg: &str) {
-        let aff = affinity::get_thread_affinity().unwrap();
-        assert_eq!(aff, expect_cores, "{}", error_msg);
+        let affinity = affinity::get_thread_affinity().unwrap();
+        assert_eq!(affinity, expect_cores, "{}", error_msg);
     }
     #[cfg(not(target_os = "linux"))]
     fn validate_affinity(_expect_cores: &[usize], _error_msg: &str) {}
@@ -181,44 +181,35 @@ mod tests {
             ..Default::default()
         };
 
-        let rtm = ThreadManager::new(conf).unwrap();
-        let r = rtm.get_native("test").unwrap();
+        let manager = ThreadManager::new(conf).unwrap();
+        let runtime = manager.get_native("test").unwrap();
 
-        let t2 = r
+        let thread1 = runtime
             .spawn(|| {
                 validate_affinity(&[0, 1, 2, 3], "Managed thread allocation should be 0-3");
             })
             .unwrap();
 
-        let t = std::thread::spawn(|| {
+        let thread2 = std::thread::spawn(|| {
             validate_affinity(&[4, 5, 6, 7], "Default thread allocation should be 4-7");
 
-            let tt = std::thread::spawn(|| {
+            let inner_thread = std::thread::spawn(|| {
                 validate_affinity(
                     &[4, 5, 6, 7],
                     "Nested thread allocation should still be 4-7",
                 );
             });
-            tt.join().unwrap();
+            inner_thread.join().unwrap();
         });
-        t.join().unwrap();
-        t2.join().unwrap();
+        thread1.join().unwrap();
+        thread2.join().unwrap();
     }
 
     #[test]
     fn rayon_affinity() {
         let conf = RuntimeManagerConfig {
-            native_configs: HashMap::from([(
-                "pool1".to_owned(),
-                NativeConfig {
-                    core_allocation: CoreAllocation::DedicatedCoreSet { min: 0, max: 4 },
-                    max_threads: 5,
-                    priority: 0,
-                    ..Default::default()
-                },
-            )]),
             rayon_configs: HashMap::from([(
-                "rayon1".to_owned(),
+                "test".to_owned(),
                 RayonConfig {
                     core_allocation: CoreAllocation::DedicatedCoreSet { min: 1, max: 4 },
                     worker_threads: 3,
@@ -227,38 +218,16 @@ mod tests {
                 },
             )]),
             default_core_allocation: CoreAllocation::DedicatedCoreSet { min: 4, max: 8 },
-            native_runtime_mapping: HashMap::from([("test".to_owned(), "pool1".to_owned())]),
 
-            rayon_runtime_mapping: HashMap::from([("test".to_owned(), "rayon1".to_owned())]),
             ..Default::default()
         };
 
-        let rtm = ThreadManager::new(conf).unwrap();
-        let r = rtm.get_native("test").unwrap();
+        let manager = ThreadManager::new(conf).unwrap();
+        let rayon_runtime = manager.get_rayon("test").unwrap();
 
-        let t2 = r
-            .spawn(|| {
-                validate_affinity(&[0, 1, 2, 3], "Managed thread allocation should be 0-3");
-            })
-            .unwrap();
-        let rrt = rtm.get_rayon("test").unwrap();
-
-        let t = std::thread::spawn(|| {
-            validate_affinity(&[4, 5, 6, 7], "Default thread allocation should be 4-7");
-
-            let tt = std::thread::spawn(|| {
-                validate_affinity(
-                    &[4, 5, 6, 7],
-                    "Nested thread allocation should still be 4-7",
-                );
-            });
-            tt.join().unwrap();
-        });
-        let _rr = rrt.rayon_pool.broadcast(|ctx| {
+        let _rr = rayon_runtime.rayon_pool.broadcast(|ctx| {
             println!("Rayon thread {} reporting", ctx.index());
             validate_affinity(&[1, 2, 3], "Rayon thread allocation should still be 1-3");
         });
-        t.join().unwrap();
-        t2.join().unwrap();
     }
 }
