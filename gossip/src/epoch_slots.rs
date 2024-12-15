@@ -45,6 +45,7 @@ impl Sanitize for Uncompressed {
 pub struct Flate2 {
     pub first_slot: Slot,
     pub num: usize,
+    #[serde(with = "serde_bytes")]
     pub compressed: Vec<u8>,
 }
 

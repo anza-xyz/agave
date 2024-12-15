@@ -1471,7 +1471,7 @@ pub fn execute<'a, 'b: 'a>(
             ProgramResult::Err(mut error) => {
                 if invoke_context
                     .get_feature_set()
-                    .is_active(&solana_feature_set::apply_cost_tracker_during_replay::id())
+                    .is_active(&solana_feature_set::deplete_cu_meter_on_vm_failure::id())
                     && !matches!(error, EbpfError::SyscallError(_))
                 {
                     // when an exception is thrown during the execution of a

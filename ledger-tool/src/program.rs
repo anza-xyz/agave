@@ -60,6 +60,7 @@ struct Account {
 struct Input {
     program_id: String,
     accounts: Vec<Account>,
+    #[serde(with = "serde_bytes")]
     instruction_data: Vec<u8>,
 }
 fn load_accounts(path: &Path) -> Result<Input> {

@@ -7,7 +7,7 @@ use {
         for_test::{
             drop_and_clean_temp_dir_unless_suppressed, sample_packet_batch, terminate_tracer,
         },
-        receiving_loop_with_minimized_sender_overhead, BankingPacketBatch, BankingTracer,
+        receiving_loop_with_minimized_sender_overhead, BankingPacketBatch, BankingTracer, Channels,
         TraceError, TracerThreadResult, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
     },
     std::{
@@ -35,7 +35,11 @@ fn black_box_packet_batch(packet_batch: BankingPacketBatch) -> TracerThreadResul
 fn bench_banking_tracer_main_thread_overhead_noop_baseline(bencher: &mut Bencher) {
     let exit = Arc::<AtomicBool>::default();
     let tracer = BankingTracer::new_disabled();
-    let (non_vote_sender, non_vote_receiver) = tracer.create_channel_non_vote();
+    let Channels {
+        non_vote_sender,
+        non_vote_receiver,
+        ..
+    } = tracer.create_channels(false);
 
     let exit_for_dummy_thread = exit.clone();
     let dummy_main_thread = thread::spawn(move || {
@@ -64,7 +68,11 @@ fn bench_banking_tracer_main_thread_overhead_under_peak_write(bencher: &mut Benc
         BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
     )))
     .unwrap();
-    let (non_vote_sender, non_vote_receiver) = tracer.create_channel_non_vote();
+    let Channels {
+        non_vote_sender,
+        non_vote_receiver,
+        ..
+    } = tracer.create_channels(false);
 
     let exit_for_dummy_thread = exit.clone();
     let dummy_main_thread = thread::spawn(move || {
@@ -101,7 +109,11 @@ fn bench_banking_tracer_main_thread_overhead_under_sustained_write(bencher: &mut
         1024 * 1024, // cause more frequent trace file rotation
     )))
     .unwrap();
-    let (non_vote_sender, non_vote_receiver) = tracer.create_channel_non_vote();
+    let Channels {
+        non_vote_sender,
+        non_vote_receiver,
+        ..
+    } = tracer.create_channels(false);
 
     let exit_for_dummy_thread = exit.clone();
     let dummy_main_thread = thread::spawn(move || {
@@ -142,7 +154,11 @@ fn bench_banking_tracer_background_thread_throughput(bencher: &mut Bencher) {
 
         let (tracer, tracer_thread) =
             BankingTracer::new(Some((&path, exit.clone(), 50 * 1024 * 1024))).unwrap();
-        let (non_vote_sender, non_vote_receiver) = tracer.create_channel_non_vote();
+        let Channels {
+            non_vote_sender,
+            non_vote_receiver,
+            ..
+        } = tracer.create_channels(false);
 
         let dummy_main_thread = thread::spawn(move || {
             receiving_loop_with_minimized_sender_overhead::<_, TraceError, 0>(

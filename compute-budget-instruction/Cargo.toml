@@ -26,6 +26,7 @@ name = "solana_compute_budget_instruction"
 bincode = { workspace = true }
 criterion = { workspace = true }
 rand = { workspace = true }
+solana-builtins-default-costs =  { workspace = true, features = ["dev-context-only-utils"] }
 solana-program = { workspace = true }
 
 [package.metadata.docs.rs]

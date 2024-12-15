@@ -4642,13 +4642,13 @@ fn test_deplete_cost_meter_with_access_violation() {
         ..
     } = create_genesis_config(100_123_456_789);
 
-    for apply_cost_tracker in [false, true] {
+    for deplete_cu_meter_on_vm_failure in [false, true] {
         let mut bank = Bank::new_for_tests(&genesis_config);
         let feature_set = Arc::make_mut(&mut bank.feature_set);
         // by default test banks have all features enabled, so we only need to
         // disable when needed
-        if !apply_cost_tracker {
-            feature_set.deactivate(&feature_set::apply_cost_tracker_during_replay::id());
+        if !deplete_cu_meter_on_vm_failure {
+            feature_set.deactivate(&feature_set::deplete_cu_meter_on_vm_failure::id());
         }
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let mut bank_client = BankClient::new_shared(bank.clone());
@@ -4696,7 +4696,7 @@ fn test_deplete_cost_meter_with_access_violation() {
             TransactionError::InstructionError(1, InstructionError::ReadonlyDataModified)
         );
 
-        if apply_cost_tracker {
+        if deplete_cu_meter_on_vm_failure {
             assert_eq!(result.executed_units, u64::from(compute_unit_limit));
         } else {
             assert!(result.executed_units < u64::from(compute_unit_limit));
@@ -4715,13 +4715,13 @@ fn test_program_sbf_deplete_cost_meter_with_divide_by_zero() {
         ..
     } = create_genesis_config(50);
 
-    for apply_cost_tracker in [false, true] {
+    for deplete_cu_meter_on_vm_failure in [false, true] {
         let mut bank = Bank::new_for_tests(&genesis_config);
         let feature_set = Arc::make_mut(&mut bank.feature_set);
         // by default test banks have all features enabled, so we only need to
         // disable when needed
-        if !apply_cost_tracker {
-            feature_set.deactivate(&feature_set::apply_cost_tracker_during_replay::id());
+        if !deplete_cu_meter_on_vm_failure {
+            feature_set.deactivate(&feature_set::deplete_cu_meter_on_vm_failure::id());
         }
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let mut bank_client = BankClient::new_shared(bank.clone());
@@ -4752,7 +4752,7 @@ fn test_program_sbf_deplete_cost_meter_with_divide_by_zero() {
             TransactionError::InstructionError(1, InstructionError::ProgramFailedToComplete)
         );
 
-        if apply_cost_tracker {
+        if deplete_cu_meter_on_vm_failure {
             assert_eq!(result.executed_units, u64::from(compute_unit_limit));
         } else {
             assert!(result.executed_units < u64::from(compute_unit_limit));

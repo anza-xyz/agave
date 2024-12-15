@@ -695,36 +695,11 @@ impl Rocks {
         Ok(())
     }
 
-    fn iterator_cf<C>(&self, cf: &ColumnFamily, iterator_mode: IteratorMode<C::Index>) -> DBIterator
-    where
-        C: Column,
-    {
-        let start_key;
-        let iterator_mode = match iterator_mode {
-            IteratorMode::From(start_from, direction) => {
-                start_key = C::key(start_from);
-                RocksIteratorMode::From(&start_key, direction)
-            }
-            IteratorMode::Start => RocksIteratorMode::Start,
-            IteratorMode::End => RocksIteratorMode::End,
-        };
-        self.db.iterator_cf(cf, iterator_mode)
-    }
-
-    pub(crate) fn iterator_cf_raw_key(
+    pub(crate) fn iterator_cf(
         &self,
         cf: &ColumnFamily,
-        iterator_mode: IteratorMode<Vec<u8>>,
+        iterator_mode: RocksIteratorMode,
     ) -> DBIterator {
-        let start_key;
-        let iterator_mode = match iterator_mode {
-            IteratorMode::From(start_from, direction) => {
-                start_key = start_from;
-                RocksIteratorMode::From(&start_key, direction)
-            }
-            IteratorMode::Start => RocksIteratorMode::Start,
-            IteratorMode::End => RocksIteratorMode::End,
-        };
         self.db.iterator_cf(cf, iterator_mode)
     }
 
@@ -1498,7 +1473,17 @@ where
         iterator_mode: IteratorMode<C::Index>,
     ) -> Result<impl Iterator<Item = (C::Index, Box<[u8]>)> + '_> {
         let cf = self.handle();
-        let iter = self.backend.iterator_cf::<C>(cf, iterator_mode);
+        let start_key;
+        let iterator_mode = match iterator_mode {
+            IteratorMode::Start => RocksIteratorMode::Start,
+            IteratorMode::End => RocksIteratorMode::End,
+            IteratorMode::From(start_from, direction) => {
+                start_key = C::key(start_from);
+                RocksIteratorMode::From(&start_key, direction)
+            }
+        };
+
+        let iter = self.backend.iterator_cf(cf, iterator_mode);
         Ok(iter.map(|pair| {
             let (key, value) = pair.unwrap();
             (C::index(&key), value)
@@ -1808,7 +1793,17 @@ where
         iterator_mode: IteratorMode<C::Index>,
     ) -> Result<impl Iterator<Item = (C::Index, Box<[u8]>)> + '_> {
         let cf = self.handle();
-        let iter = self.backend.iterator_cf::<C>(cf, iterator_mode);
+        let start_key;
+        let iterator_mode = match iterator_mode {
+            IteratorMode::Start => RocksIteratorMode::Start,
+            IteratorMode::End => RocksIteratorMode::End,
+            IteratorMode::From(start_from, direction) => {
+                start_key = C::key(start_from);
+                RocksIteratorMode::From(&start_key, direction)
+            }
+        };
+
+        let iter = self.backend.iterator_cf(cf, iterator_mode);
         Ok(iter.filter_map(|pair| {
             let (key, value) = pair.unwrap();
             C::try_current_index(&key).ok().map(|index| (index, value))
@@ -1820,16 +1815,18 @@ where
         iterator_mode: IteratorMode<C::DeprecatedIndex>,
     ) -> Result<impl Iterator<Item = (C::DeprecatedIndex, Box<[u8]>)> + '_> {
         let cf = self.handle();
-        let iterator_mode_raw_key = match iterator_mode {
-            IteratorMode::Start => IteratorMode::Start,
-            IteratorMode::End => IteratorMode::End,
+        let start_key;
+        let iterator_mode = match iterator_mode {
+            IteratorMode::Start => RocksIteratorMode::Start,
+            IteratorMode::End => RocksIteratorMode::End,
             IteratorMode::From(start_from, direction) => {
-                let raw_key = C::deprecated_key(start_from);
-                IteratorMode::From(raw_key, direction)
+                start_key = C::deprecated_key(start_from);
+                RocksIteratorMode::From(&start_key, direction)
             }
         };
-        let iter = self.backend.iterator_cf_raw_key(cf, iterator_mode_raw_key);
-        Ok(iter.filter_map(|pair| {
+
+        let iterator = self.backend.iterator_cf(cf, iterator_mode);
+        Ok(iterator.filter_map(|pair| {
             let (key, value) = pair.unwrap();
             C::try_deprecated_index(&key)
                 .ok()
@@ -2204,10 +2201,14 @@ pub mod tests {
     {
         pub(crate) fn iterator_cf_raw_key(
             &self,
-            iterator_mode: IteratorMode<Vec<u8>>,
-        ) -> DBIterator {
-            let cf = self.handle();
-            self.backend.iterator_cf_raw_key(cf, iterator_mode)
+            iterator_mode: IteratorMode<C::Index>,
+        ) -> impl Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_ {
+            // The conversion of key back into Box<[u8]> incurs an extra
+            // allocation. However, this is test code and the goal is to
+            // maximize code reuse over efficiency
+            self.iter(iterator_mode)
+                .unwrap()
+                .map(|(key, value)| (Box::from(C::key(key)), value))
         }
     }
 }
