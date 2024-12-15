@@ -9,6 +9,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+assert_matches = { workspace = true }
 clap = { version = "3.1.8", features = ["derive", "cargo"] }
 crossbeam-channel = { workspace = true }
 log = { workspace = true }
