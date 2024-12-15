@@ -1,5 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
+    assert_matches::assert_matches,
     clap::{crate_description, crate_name, Arg, ArgEnum, Command},
     crossbeam_channel::{unbounded, Receiver},
     log::*,
@@ -349,7 +350,7 @@ fn main() {
     let (replay_vote_sender, _replay_vote_receiver) = unbounded();
     let bank0 = Bank::new_for_benches(&genesis_config);
     let bank_forks = BankForks::new_rw_arc(bank0);
-    let mut bank = bank_forks.read().unwrap().working_bank();
+    let mut bank = bank_forks.read().unwrap().working_bank_with_scheduler();
 
     // set cost tracker limits to MAX so it will not filter out TXs
     bank.write_cost_tracker()
@@ -552,13 +553,16 @@ fn main() {
             poh_time.stop();
 
             let mut new_bank_time = Measure::start("new_bank");
+            if let Some((result, _timings)) = bank.wait_for_completed_scheduler() {
+                assert_matches!(result, Ok(_));
+            }
             let new_slot = bank.slot() + 1;
-            let new_bank = Bank::new_from_parent(bank, &collector, new_slot);
+            let new_bank = Bank::new_from_parent(bank.clone(), &collector, new_slot);
             new_bank_time.stop();
 
             let mut insert_time = Measure::start("insert_time");
             bank_forks.write().unwrap().insert(new_bank);
-            bank = bank_forks.read().unwrap().working_bank();
+            bank = bank_forks.read().unwrap().working_bank_with_scheduler();
             insert_time.stop();
 
             assert!(poh_recorder.read().unwrap().bank().is_none());

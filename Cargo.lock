@@ -6053,6 +6053,7 @@ dependencies = [
 name = "solana-banking-bench"
 version = "2.2.0"
 dependencies = [
+ "assert_matches",
  "clap 3.2.23",
  "crossbeam-channel",
  "log",
