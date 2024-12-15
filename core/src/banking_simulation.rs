@@ -3,9 +3,8 @@ use {
     crate::{
         banking_stage::{BankingStage, LikeClusterInfo},
         banking_trace::{
-            BankingPacketBatch, BankingTracer, ChannelLabel, Channels, TimedTracedEvent,
-            TracedEvent, TracedSender, TracerThread, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
-            BASENAME,
+            BankingTracer, ChannelLabel, Channels, TimedTracedEvent, TracedEvent, TracedSender,
+            TracerThread, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT, BASENAME,
         },
         validator::BlockProductionMethod,
     },
@@ -23,6 +22,7 @@ use {
         leader_schedule_cache::LeaderScheduleCache,
     },
     solana_net_utils::bind_to_localhost,
+    solana_perf::packet::BankingPacketBatch,
     solana_poh::{
         poh_recorder::{PohRecorder, GRACE_TICKS_FACTOR, MAX_GRACE_SLOTS},
         poh_service::{PohService, DEFAULT_HASHES_PER_BATCH, DEFAULT_PINNED_CPU_CORE},

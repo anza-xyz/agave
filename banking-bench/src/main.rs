@@ -9,9 +9,7 @@ use {
     solana_client::connection_cache::ConnectionCache,
     solana_core::{
         banking_stage::BankingStage,
-        banking_trace::{
-            BankingPacketBatch, BankingTracer, Channels, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
-        },
+        banking_trace::{BankingTracer, Channels, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT},
         validator::BlockProductionMethod,
     },
     solana_gossip::cluster_info::{ClusterInfo, Node},
@@ -22,7 +20,7 @@ use {
         leader_schedule_cache::LeaderScheduleCache,
     },
     solana_measure::measure::Measure,
-    solana_perf::packet::{to_packet_batches, PacketBatch},
+    solana_perf::packet::{to_packet_batches, BankingPacketBatch, PacketBatch},
     solana_poh::poh_recorder::{create_test_recorder, PohRecorder, WorkingBankEntry},
     solana_runtime::{
         bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,

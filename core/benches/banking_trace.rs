@@ -7,9 +7,10 @@ use {
         for_test::{
             drop_and_clean_temp_dir_unless_suppressed, sample_packet_batch, terminate_tracer,
         },
-        receiving_loop_with_minimized_sender_overhead, BankingPacketBatch, BankingTracer, Channels,
-        TraceError, TracerThreadResult, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
+        receiving_loop_with_minimized_sender_overhead, BankingTracer, Channels, TraceError,
+        TracerThreadResult, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
     },
+    solana_perf::packet::BankingPacketBatch,
     std::{
         path::PathBuf,
         sync::{atomic::AtomicBool, Arc},

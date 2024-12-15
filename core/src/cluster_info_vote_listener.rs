@@ -1,6 +1,6 @@
 use {
     crate::{
-        banking_trace::{BankingPacketBatch, BankingPacketSender},
+        banking_trace::BankingPacketSender,
         consensus::vote_stake_tracker::VoteStakeTracker,
         optimistic_confirmation_verifier::OptimisticConfirmationVerifier,
         replay_stage::DUPLICATE_THRESHOLD,
@@ -16,7 +16,7 @@ use {
     solana_ledger::blockstore::Blockstore,
     solana_measure::measure::Measure,
     solana_metrics::inc_new_counter_debug,
-    solana_perf::packet::{self, PacketBatch},
+    solana_perf::packet::{self, BankingPacketBatch, PacketBatch},
     solana_rpc::{
         optimistically_confirmed_bank_tracker::{BankNotification, BankNotificationSender},
         rpc_subscriptions::RpcSubscriptions,

@@ -6,9 +6,9 @@ use {
         unprocessed_transaction_storage::UnprocessedTransactionStorage,
         BankingStageStats,
     },
-    crate::banking_trace::BankingPacketReceiver,
     crossbeam_channel::RecvTimeoutError,
     solana_measure::{measure::Measure, measure_us},
+    solana_perf::packet::BankingPacketReceiver,
     solana_sdk::{saturating_add_assign, timing::timestamp},
     std::{sync::atomic::Ordering, time::Duration},
 };

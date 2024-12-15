@@ -24,7 +24,6 @@ use {
                 scheduler_controller::SchedulerController, scheduler_error::SchedulerError,
             },
         },
-        banking_trace::BankingPacketReceiver,
         validator::BlockProductionMethod,
     },
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
@@ -33,7 +32,10 @@ use {
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     solana_ledger::blockstore_processor::TransactionStatusSender,
     solana_measure::measure_us,
-    solana_perf::{data_budget::DataBudget, packet::PACKETS_PER_BATCH},
+    solana_perf::{
+        data_budget::DataBudget,
+        packet::{BankingPacketReceiver, PACKETS_PER_BATCH},
+    },
     solana_poh::poh_recorder::{PohRecorder, TransactionRecorder},
     solana_runtime::{
         bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
@@ -807,7 +809,7 @@ impl BankingStage {
 mod tests {
     use {
         super::*,
-        crate::banking_trace::{BankingPacketBatch, BankingTracer, Channels},
+        crate::banking_trace::{BankingTracer, Channels},
         crossbeam_channel::{unbounded, Receiver},
         itertools::Itertools,
         solana_entry::entry::{self, Entry, EntrySlice},
@@ -820,7 +822,7 @@ mod tests {
             get_tmp_ledger_path_auto_delete,
             leader_schedule_cache::LeaderScheduleCache,
         },
-        solana_perf::packet::{to_packet_batches, PacketBatch},
+        solana_perf::packet::{to_packet_batches, BankingPacketBatch, PacketBatch},
         solana_poh::{
             poh_recorder::{
                 create_test_recorder, PohRecorderError, Record, RecordTransactionsSummary,
