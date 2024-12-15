@@ -65,6 +65,7 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 bs58 = { workspace = true }
+criterion = { workspace = true }
 num_cpus = { workspace = true }
 rand0-7 = { workspace = true }
 rand_chacha0-2 = { workspace = true }
@@ -99,6 +100,7 @@ name = "crds_shards"
 
 [[bench]]
 name = "weighted_shuffle"
+harness = false
 
 [[bin]]
 name = "solana-gossip"

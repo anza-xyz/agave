@@ -7800,6 +7800,7 @@ dependencies = [
  "bs58",
  "bv",
  "clap 2.33.3",
+ "criterion",
  "crossbeam-channel",
  "flate2",
  "indexmap 2.7.1",
