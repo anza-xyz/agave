@@ -5461,6 +5461,7 @@ dependencies = [
  "ahash 0.8.11",
  "anyhow",
  "arrayvec",
+ "assert_matches",
  "base64 0.22.1",
  "bincode",
  "bs58",
