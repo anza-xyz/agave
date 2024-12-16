@@ -165,6 +165,7 @@ impl ClusterNodes<RetransmitStage> {
         slot_leader: &Pubkey,
         shred: &ShredId,
         fanout: usize,
+        socket_addr_space: &SocketAddrSpace,
     ) -> Result<(/*root_distance:*/ usize, Vec<SocketAddr>), Error> {
         let mut weighted_shuffle = self.weighted_shuffle.clone();
         // Exclude slot leader from list of nodes.
@@ -195,7 +196,10 @@ impl ClusterNodes<RetransmitStage> {
         };
         let (index, peers) =
             get_retransmit_peers(fanout, |(node, _)| node.pubkey() == self.pubkey, nodes);
-        let peers = peers.filter_map(|(_, addr)| addr).collect();
+        let peers = peers
+            .filter_map(|(_, addr)| addr)
+            .filter(|addr| socket_addr_space.check(addr))
+            .collect();
         let root_distance = get_root_distance(index, fanout);
         Ok((root_distance, peers))
     }
