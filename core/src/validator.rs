@@ -619,12 +619,12 @@ impl Validator {
 
         let start_time = Instant::now();
 
-        // Initialize the global rayon pool first to ensure the value in config
-        // is honored. Otherwise, some code accessing the global pool could
-        // cause it to get initialized with Rayon's default (not ours)
+        // Initialize the global rayon pool with one thread to ensure people do not use
+        // it accidentally. Otherwise, some code accessing the global pool could
+        // cause it to get initialized with Rayon's default of all cores which is always wrong for agave
         if rayon::ThreadPoolBuilder::new()
             .thread_name(|i| format!("solRayonGlob{i:02}"))
-            .num_threads(config.rayon_global_threads.get())
+            .num_threads(1)
             .build_global()
             .is_err()
         {
@@ -689,7 +689,6 @@ impl Validator {
         for cluster_entrypoint in &cluster_entrypoints {
             info!("entrypoint: {:?}", cluster_entrypoint);
         }
-
         if solana_perf::perf_libs::api().is_some() {
             info!("Initializing sigverify, this could take a while...");
         } else {
