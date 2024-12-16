@@ -16,7 +16,6 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         rpc_config: config.rpc_config.clone(),
         on_start_geyser_plugin_config_files: config.on_start_geyser_plugin_config_files.clone(),
         geyser_plugin_always_enabled: config.geyser_plugin_always_enabled,
-        geyser_plugin_snapshot_disabled: config.geyser_plugin_snapshot_disabled,
         rpc_addrs: config.rpc_addrs,
         pubsub_config: config.pubsub_config.clone(),
         snapshot_config: config.snapshot_config.clone(),
