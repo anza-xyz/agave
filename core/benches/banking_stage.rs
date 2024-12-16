@@ -3,6 +3,7 @@
 
 use {
     solana_core::{banking_trace::Channels, validator::BlockProductionMethod},
+    solana_perf::packet::BankingPacketBatch,
     solana_vote_program::{vote_state::TowerSync, vote_transaction::new_tower_sync_transaction},
 };
 
@@ -24,7 +25,7 @@ use {
             unprocessed_transaction_storage::{ThreadType, UnprocessedTransactionStorage},
             BankingStage, BankingStageStats,
         },
-        banking_trace::{BankingPacketBatch, BankingTracer},
+        banking_trace::BankingTracer,
     },
     solana_entry::entry::{next_hash, Entry},
     solana_gossip::cluster_info::{ClusterInfo, Node},
@@ -309,6 +310,7 @@ fn bench_banking(bencher: &mut Bencher, tx_type: TransactionType) {
         bank_forks,
         &Arc::new(PrioritizationFeeCache::new(0u64)),
         false,
+        None,
     );
 
     let chunk_len = verified.len() / CHUNKS;

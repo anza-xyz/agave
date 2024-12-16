@@ -1,14 +1,16 @@
 #![cfg(feature = "dev-context-only-utils")]
 use {
     crate::{
-        banking_stage::{BankingStage, LikeClusterInfo},
+        banking_stage::{
+            update_bank_forks_and_poh_recorder_for_new_tpu_bank, BankingStage, LikeClusterInfo,
+        },
         banking_trace::{
-            BankingPacketBatch, BankingTracer, ChannelLabel, Channels, TimedTracedEvent,
-            TracedEvent, TracedSender, TracerThread, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
-            BASENAME,
+            BankingTracer, ChannelLabel, Channels, TimedTracedEvent, TracedEvent, TracedSender,
+            TracerThread, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT, BASENAME,
         },
         validator::BlockProductionMethod,
     },
+    assert_matches::assert_matches,
     bincode::deserialize_from,
     crossbeam_channel::{unbounded, Sender},
     itertools::Itertools,
@@ -23,8 +25,9 @@ use {
         leader_schedule_cache::LeaderScheduleCache,
     },
     solana_net_utils::bind_to_localhost,
+    solana_perf::packet::BankingPacketBatch,
     solana_poh::{
-        poh_recorder::{PohRecorder, GRACE_TICKS_FACTOR, MAX_GRACE_SLOTS},
+        poh_recorder::{NewPohRecorder, PohRecorder, GRACE_TICKS_FACTOR, MAX_GRACE_SLOTS},
         poh_service::{PohService, DEFAULT_HASHES_PER_BATCH, DEFAULT_PINNED_CPU_CORE},
     },
     solana_runtime::{
@@ -43,6 +46,7 @@ use {
     },
     solana_streamer::socket::SocketAddrSpace,
     solana_turbine::broadcast_stage::{BroadcastStage, BroadcastStageType},
+    solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{
         collections::BTreeMap,
         fmt::Display,
@@ -450,6 +454,9 @@ impl SimulatorLoop {
                 info!("Bank::new_from_parent()!");
 
                 logger.log_jitter(&bank);
+                if let Some((result, _execute_timings)) = bank.wait_for_completed_scheduler() {
+                    assert_matches!(result, Ok(()));
+                }
                 bank.freeze();
                 let new_slot = if bank.slot() == self.parent_slot {
                     info!("initial leader block!");
@@ -484,16 +491,17 @@ impl SimulatorLoop {
                     logger.log_frozen_bank_cost(&bank);
                 }
                 self.retransmit_slots_sender.send(bank.slot()).unwrap();
-                self.bank_forks.write().unwrap().insert(new_bank);
+                update_bank_forks_and_poh_recorder_for_new_tpu_bank(
+                    &self.bank_forks,
+                    &self.poh_recorder,
+                    new_bank,
+                    false,
+                );
                 bank = self
                     .bank_forks
                     .read()
                     .unwrap()
                     .working_bank_with_scheduler();
-                self.poh_recorder
-                    .write()
-                    .unwrap()
-                    .set_bank(bank.clone_with_scheduler(), false);
             } else {
                 logger.log_ongoing_bank_cost(&bank);
             }
@@ -672,6 +680,8 @@ impl BankingSimulator {
         bank_forks: Arc<RwLock<BankForks>>,
         blockstore: Arc<Blockstore>,
         block_production_method: BlockProductionMethod,
+        unified_scheduler_pool: Option<Arc<DefaultSchedulerPool>>,
+        new_poh_recorder: Option<NewPohRecorder>,
     ) -> (SenderLoop, SimulatorLoop, SimulatorThreads) {
         let parent_slot = self.parent_slot().unwrap();
         let mut packet_batches_by_time = self.banking_trace_events.packet_batches_by_time;
@@ -689,7 +699,10 @@ impl BankingSimulator {
             simulated_leader, self.first_simulated_slot,
         );
 
-        let exit = Arc::new(AtomicBool::default());
+        let exit = new_poh_recorder
+            .as_ref()
+            .map(|(poh_recorder, ..)| poh_recorder.is_exited.clone())
+            .unwrap_or_else(|| Arc::new(AtomicBool::default()));
 
         if let Some(end_slot) = blockstore
             .slot_meta_iterator(self.first_simulated_slot)
@@ -707,20 +720,23 @@ impl BankingSimulator {
 
         info!("Poh is starting!");
 
-        let (poh_recorder, entry_receiver, record_receiver) = PohRecorder::new_with_clear_signal(
-            bank.tick_height(),
-            bank.last_blockhash(),
-            bank.clone(),
-            None,
-            bank.ticks_per_slot(),
-            false,
-            blockstore.clone(),
-            blockstore.get_new_shred_signal(0),
-            &leader_schedule_cache,
-            &genesis_config.poh_config,
-            None,
-            exit.clone(),
-        );
+        let (poh_recorder, entry_receiver, record_receiver) =
+            new_poh_recorder.unwrap_or_else(|| {
+                PohRecorder::new_with_clear_signal(
+                    bank.tick_height(),
+                    bank.last_blockhash(),
+                    bank.clone(),
+                    None,
+                    bank.ticks_per_slot(),
+                    false,
+                    blockstore.clone(),
+                    blockstore.get_new_shred_signal(0),
+                    &leader_schedule_cache,
+                    &genesis_config.poh_config,
+                    None,
+                    exit.clone(),
+                )
+            });
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
         let poh_service = PohService::new(
             poh_recorder.clone(),
@@ -761,7 +777,7 @@ impl BankingSimulator {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = retracer.create_channels(false);
+        } = retracer.create_channels_for_scheduler_pool(unified_scheduler_pool.as_ref());
 
         let connection_cache = Arc::new(ConnectionCache::new("connection_cache_sim"));
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
@@ -816,6 +832,7 @@ impl BankingSimulator {
             bank_forks.clone(),
             prioritization_fee_cache,
             false,
+            unified_scheduler_pool,
         );
 
         let (&_slot, &raw_base_event_time) = freeze_time_by_slot
@@ -889,12 +906,16 @@ impl BankingSimulator {
         bank_forks: Arc<RwLock<BankForks>>,
         blockstore: Arc<Blockstore>,
         block_production_method: BlockProductionMethod,
+        unified_scheduler_pool: Option<Arc<DefaultSchedulerPool>>,
+        new_poh_recorder: Option<NewPohRecorder>,
     ) -> Result<(), SimulateError> {
         let (sender_loop, simulator_loop, simulator_threads) = self.prepare_simulation(
             genesis_config,
             bank_forks,
             blockstore,
             block_production_method,
+            unified_scheduler_pool,
+            new_poh_recorder,
         );
 
         sender_loop.log_starting();

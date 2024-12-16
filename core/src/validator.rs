@@ -105,6 +105,7 @@ use {
         bank_forks::BankForks,
         commitment::BlockCommitmentCache,
         prioritization_fee_cache::PrioritizationFeeCache,
+        root_bank_cache::RootBankCache,
         runtime_config::RuntimeConfig,
         snapshot_archive_info::SnapshotArchiveInfoGetter,
         snapshot_bank_utils::{self, DISABLED_SNAPSHOT_ARCHIVE_INTERVAL},
@@ -127,7 +128,8 @@ use {
     solana_send_transaction_service::send_transaction_service,
     solana_streamer::{socket::SocketAddrSpace, streamer::StakedNodes},
     solana_turbine::{self, broadcast_stage::BroadcastStageType},
-    solana_unified_scheduler_pool::DefaultSchedulerPool,
+    solana_unified_scheduler_logic::SchedulingMode,
+    solana_unified_scheduler_pool::{DefaultSchedulerPool, SupportedSchedulingMode},
     solana_vote_program::vote_state,
     solana_wen_restart::wen_restart::{wait_for_wen_restart, WenRestartConfig},
     std::{
@@ -184,11 +186,14 @@ impl BlockVerificationMethod {
     }
 }
 
-#[derive(Clone, EnumString, EnumVariantNames, Default, IntoStaticStr, Display)]
+#[derive(
+    Clone, EnumCount, EnumIter, EnumString, EnumVariantNames, Default, IntoStaticStr, Display,
+)]
 #[strum(serialize_all = "kebab-case")]
 pub enum BlockProductionMethod {
-    #[default]
     CentralScheduler,
+    #[default]
+    UnifiedScheduler,
 }
 
 impl BlockProductionMethod {
@@ -205,6 +210,23 @@ impl BlockProductionMethod {
         };
 
         &MESSAGE
+    }
+}
+
+pub fn supported_scheduling_mode(
+    (verification, production): (&BlockVerificationMethod, &BlockProductionMethod),
+) -> SupportedSchedulingMode {
+    match (verification, production) {
+        (BlockVerificationMethod::UnifiedScheduler, BlockProductionMethod::UnifiedScheduler) => {
+            SupportedSchedulingMode::Both
+        }
+        (BlockVerificationMethod::UnifiedScheduler, _) => {
+            SupportedSchedulingMode::Either(SchedulingMode::BlockVerification)
+        }
+        (_, BlockProductionMethod::UnifiedScheduler) => {
+            SupportedSchedulingMode::Either(SchedulingMode::BlockProduction)
+        }
+        _ => unreachable!("seems unified scheduler is disabled"),
     }
 }
 
@@ -885,32 +907,61 @@ impl Validator {
         // (by both replay stage and banking stage)
         let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::default());
 
-        match &config.block_verification_method {
-            BlockVerificationMethod::BlockstoreProcessor => {
-                info!("no scheduler pool is installed for block verification...");
+        let leader_schedule_cache = Arc::new(leader_schedule_cache);
+        let startup_verification_complete;
+        let (poh_recorder, entry_receiver, record_receiver) = {
+            let bank = &bank_forks.read().unwrap().working_bank();
+            startup_verification_complete = Arc::clone(bank.get_startup_verification_complete());
+            PohRecorder::new_with_clear_signal(
+                bank.tick_height(),
+                bank.last_blockhash(),
+                bank.clone(),
+                None,
+                bank.ticks_per_slot(),
+                config.delay_leader_block_for_pending_fork,
+                blockstore.clone(),
+                blockstore.get_new_shred_signal(0),
+                &leader_schedule_cache,
+                &genesis_config.poh_config,
+                Some(poh_timing_point_sender),
+                exit.clone(),
+            )
+        };
+        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
+
+        let unified_scheduler_pool = match (
+            &config.block_verification_method,
+            &config.block_production_method,
+        ) {
+            methods @ (BlockVerificationMethod::UnifiedScheduler, _)
+            | methods @ (_, BlockProductionMethod::UnifiedScheduler) => {
+                let pool = DefaultSchedulerPool::new(
+                    supported_scheduling_mode(methods),
+                    config.unified_scheduler_handler_threads,
+                    config.runtime_config.log_messages_bytes_limit,
+                    transaction_status_sender.clone(),
+                    Some(replay_vote_sender.clone()),
+                    prioritization_fee_cache.clone(),
+                    poh_recorder.read().unwrap().new_recorder(),
+                );
+                bank_forks
+                    .write()
+                    .unwrap()
+                    .install_scheduler_pool(pool.clone());
+                Some(pool)
+            }
+            _ => {
+                info!("no scheduler pool is installed for block verification/production...");
                 if let Some(count) = config.unified_scheduler_handler_threads {
                     warn!(
                         "--unified-scheduler-handler-threads={count} is ignored because unified \
                          scheduler isn't enabled"
                     );
                 }
+                None
             }
-            BlockVerificationMethod::UnifiedScheduler => {
-                let scheduler_pool = DefaultSchedulerPool::new_dyn(
-                    config.unified_scheduler_handler_threads,
-                    config.runtime_config.log_messages_bytes_limit,
-                    transaction_status_sender.clone(),
-                    Some(replay_vote_sender.clone()),
-                    prioritization_fee_cache.clone(),
-                );
-                bank_forks
-                    .write()
-                    .unwrap()
-                    .install_scheduler_pool(scheduler_pool);
-            }
-        }
+        };
 
-        let leader_schedule_cache = Arc::new(leader_schedule_cache);
         let entry_notification_sender = entry_notifier_service
             .as_ref()
             .map(|service| service.sender());
@@ -985,27 +1036,6 @@ impl Validator {
         ));
 
         let max_slots = Arc::new(MaxSlots::default());
-
-        let startup_verification_complete;
-        let (poh_recorder, entry_receiver, record_receiver) = {
-            let bank = &bank_forks.read().unwrap().working_bank();
-            startup_verification_complete = Arc::clone(bank.get_startup_verification_complete());
-            PohRecorder::new_with_clear_signal(
-                bank.tick_height(),
-                bank.last_blockhash(),
-                bank.clone(),
-                None,
-                bank.ticks_per_slot(),
-                config.delay_leader_block_for_pending_fork,
-                blockstore.clone(),
-                blockstore.get_new_shred_signal(0),
-                &leader_schedule_cache,
-                &genesis_config.poh_config,
-                Some(poh_timing_point_sender),
-                exit.clone(),
-            )
-        };
-        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
 
@@ -1409,6 +1439,19 @@ impl Validator {
         let cluster_slots =
             Arc::new(crate::cluster_slots_service::cluster_slots::ClusterSlots::default());
 
+        // bank_forks could be write-locked temporarily here, if unified scheduler is enabled for
+        // block production. That's because ReplayStage started inside Tvu could immediately try to
+        // insert a tpu bank into bank_forks, like with local development clusters consisting of a
+        // single staked node. Such insertion could be blocked with the lock held by unified
+        // scheduler until it's fully setup by the banking stage. This is intentional because
+        // completion of insertion needs to strictly correspond with the initiation of producing
+        // blocks in unified scheduler. Because Tpu setup follows Tvu setup, there's a corner case
+        // where the banking stage hasn't yet called register_banking_stage() to finish the unified
+        // scheduler setup.
+        // This means any setup which accesses bank_forks must be done before
+        // or after the short duration of Tvu and Tpu setups to avoid deadlocks. So,
+        // RootBankCache needs to be created here in advance as being one of such setups.
+        let root_bank_cache = RootBankCache::new(bank_forks.clone());
         let tvu = Tvu::new(
             vote_account,
             authorized_voter_keypairs,
@@ -1517,6 +1560,7 @@ impl Validator {
             node.info.shred_version(),
             vote_tracker,
             bank_forks.clone(),
+            root_bank_cache,
             verified_vote_sender,
             gossip_verified_vote_hash_sender,
             replay_vote_receiver,
@@ -1538,6 +1582,7 @@ impl Validator {
             config.block_production_method.clone(),
             config.enable_block_production_forwarding,
             config.generator_config.clone(),
+            unified_scheduler_pool,
         );
 
         datapoint_info!(

@@ -3,6 +3,7 @@ pub use solana_packet::{self, Meta, Packet, PacketFlags, PACKET_DATA_SIZE};
 use {
     crate::{cuda_runtime::PinnedVec, recycler::Recycler},
     bincode::config::Options,
+    crossbeam_channel::Receiver,
     rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator},
     serde::{de::DeserializeOwned, Deserialize, Serialize},
     std::{
@@ -10,6 +11,7 @@ use {
         net::SocketAddr,
         ops::{Index, IndexMut},
         slice::{Iter, IterMut, SliceIndex},
+        sync::Arc,
     },
 };
 
@@ -225,6 +227,9 @@ pub fn to_packet_batches<T: Serialize>(items: &[T], chunk_size: usize) -> Vec<Pa
         })
         .collect()
 }
+
+pub type BankingPacketBatch = Arc<Vec<PacketBatch>>;
+pub type BankingPacketReceiver = Receiver<BankingPacketBatch>;
 
 #[cfg(test)]
 fn to_packet_batches_for_tests<T: Serialize>(items: &[T]) -> Vec<PacketBatch> {

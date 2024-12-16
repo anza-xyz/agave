@@ -13,6 +13,7 @@ edition = { workspace = true }
 ahash = { workspace = true }
 aquamarine = { workspace = true }
 arrayref = { workspace = true }
+assert_matches = { workspace = true }
 base64 = { workspace = true }
 bincode = { workspace = true }
 blake3 = { workspace = true }
@@ -81,6 +82,7 @@ solana-svm-transaction = { workspace = true }
 solana-system-program = { workspace = true, optional = true }
 solana-timings = { workspace = true }
 solana-transaction-status-client-types = { workspace = true }
+solana-unified-scheduler-logic = { workspace = true }
 solana-version = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
@@ -99,7 +101,6 @@ name = "solana_runtime"
 
 [dev-dependencies]
 agave-transaction-view = { workspace = true }
-assert_matches = { workspace = true }
 ed25519-dalek = { workspace = true }
 libsecp256k1 = { workspace = true }
 memoffset = { workspace = true }
