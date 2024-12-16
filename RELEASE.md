@@ -91,7 +91,7 @@ Alternatively use the Github UI.
      ```
 1. Push all the changed Cargo.toml and Cargo.lock files to the `master` branch with something like:
     ```
-    git co -b version_update
+    git checkout -b version_update
     git ls-files -m | xargs git add
     git commit -m 'Bump version to X.Y+1.0'
     git push -u origin version_update
