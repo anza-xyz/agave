@@ -1974,16 +1974,6 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
     }
 }
 
-impl<S, TH> UninstalledScheduler for PooledSchedulerInner<S, TH>
-where
-    S: SpawnableScheduler<TH, Inner = Self>,
-    TH: TaskHandler,
-{
-    fn return_to_pool(self: Box<Self>) {
-        self.thread_manager.pool.clone().return_scheduler(*self);
-    }
-}
-
 impl<S, TH> SchedulerInner for PooledSchedulerInner<S, TH>
 where
     S: SpawnableScheduler<TH>,
@@ -2017,6 +2007,16 @@ where
             return;
         }
         self.thread_manager.disconnect_new_task_sender()
+    }
+}
+
+impl<S, TH> UninstalledScheduler for PooledSchedulerInner<S, TH>
+where
+    S: SpawnableScheduler<TH, Inner = Self>,
+    TH: TaskHandler,
+{
+    fn return_to_pool(self: Box<Self>) {
+        self.thread_manager.pool.clone().return_scheduler(*self);
     }
 }
 
@@ -3418,14 +3418,6 @@ mod tests {
         }
     }
 
-    impl<const TRIGGER_RACE_CONDITION: bool> UninstalledScheduler
-        for AsyncScheduler<TRIGGER_RACE_CONDITION>
-    {
-        fn return_to_pool(self: Box<Self>) {
-            self.3.clone().return_scheduler(*self)
-        }
-    }
-
     impl<const TRIGGER_RACE_CONDITION: bool> SchedulerInner for AsyncScheduler<TRIGGER_RACE_CONDITION> {
         fn id(&self) -> SchedulerId {
             42
@@ -3445,6 +3437,14 @@ mod tests {
 
         fn ensure_abort(&mut self) {
             unimplemented!()
+        }
+    }
+
+    impl<const TRIGGER_RACE_CONDITION: bool> UninstalledScheduler
+        for AsyncScheduler<TRIGGER_RACE_CONDITION>
+    {
+        fn return_to_pool(self: Box<Self>) {
+            self.3.clone().return_scheduler(*self)
         }
     }
 
