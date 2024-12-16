@@ -96,12 +96,7 @@ use {
         create_program_runtime_environment_v1, create_program_runtime_environment_v2,
     },
     solana_compute_budget::compute_budget::ComputeBudget,
-<<<<<<< HEAD
-    solana_cost_model::cost_tracker::CostTracker,
-=======
-    solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_cost_model::{block_cost_limits::simd_0207_block_limits, cost_tracker::CostTracker},
->>>>>>> 9e59baae7 (SIMD-0207: Raise block limit to 50M (#4112))
     solana_feature_set::{
         self as feature_set, remove_rounding_in_fee_calculation, reward_full_priority_fee,
         FeatureSet,
@@ -6660,53 +6655,6 @@ impl Bank {
         if new_feature_activations.contains(&feature_set::update_hashes_per_tick6::id()) {
             self.apply_updated_hashes_per_tick(UPDATED_HASHES_PER_TICK6);
         }
-<<<<<<< HEAD
-=======
-
-        if new_feature_activations.contains(&feature_set::accounts_lt_hash::id()) {
-            // Activating the accounts lt hash feature means we need to have an accounts lt hash
-            // value at the end of this if-block.  If the cli arg has been used, that means we
-            // already have an accounts lt hash and do not need to recalculate it.
-            if self
-                .rc
-                .accounts
-                .accounts_db
-                .is_experimental_accumulator_hash_enabled()
-            {
-                // We already have an accounts lt hash value, so no need to recalculate it.
-                // Nothing else to do here.
-            } else {
-                let parent_slot = self.parent_slot;
-                info!(
-                    "Calculating the accounts lt hash for slot {parent_slot} \
-                     as part of feature activation; this may take some time...",
-                );
-                // We must calculate the accounts lt hash now as part of feature activation.
-                // Note, this bank is *not* frozen yet, which means it will later call
-                // `update_accounts_lt_hash()`.  Therefore, we calculate the accounts lt hash based
-                // on *our parent*, not us!
-                let parent_ancestors = {
-                    let mut ancestors = self.ancestors.clone();
-                    ancestors.remove(&self.slot());
-                    ancestors
-                };
-                let (parent_accounts_lt_hash, duration) = meas_dur!({
-                    self.rc
-                        .accounts
-                        .accounts_db
-                        .calculate_accounts_lt_hash_at_startup_from_index(
-                            &parent_ancestors,
-                            parent_slot,
-                        )
-                });
-                *self.accounts_lt_hash.get_mut().unwrap() = parent_accounts_lt_hash;
-                info!(
-                    "Calculating the accounts lt hash for slot {parent_slot} \
-                     completed in {duration:?}, accounts_lt_hash checksum: {}",
-                    self.accounts_lt_hash.get_mut().unwrap().0.checksum(),
-                );
-            }
-        }
 
         if new_feature_activations.contains(&feature_set::raise_block_limits_to_50m::id()) {
             let (account_cost_limit, block_cost_limit, vote_cost_limit) = simd_0207_block_limits();
@@ -6716,7 +6664,6 @@ impl Bank {
                 vote_cost_limit,
             );
         }
->>>>>>> 9e59baae7 (SIMD-0207: Raise block limit to 50M (#4112))
     }
 
     fn apply_updated_hashes_per_tick(&mut self, hashes_per_tick: u64) {

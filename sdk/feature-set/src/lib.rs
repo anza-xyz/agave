@@ -881,21 +881,10 @@ pub mod migrate_stake_program_to_core_bpf {
     solana_pubkey::declare_id!("6M4oQ6eXneVhtLoiAr4yRYQY43eVLjrKbiDZDJc892yk");
 }
 
-<<<<<<< HEAD
-=======
-pub mod deplete_cu_meter_on_vm_failure {
-    solana_pubkey::declare_id!("B7H2caeia4ZFcpE3QcgMqbiWiBtWrdBRBSJ1DY6Ktxbq");
-}
-
-pub mod reserve_minimal_cus_for_builtin_instructions {
-    solana_pubkey::declare_id!("C9oAhLxDBm3ssWtJx1yBGzPY55r2rArHmN1pbQn6HogH");
-}
-
 pub mod raise_block_limits_to_50m {
     solana_pubkey::declare_id!("5oMCU3JPaFLr8Zr4ct7yFA7jdk6Mw1RmB8K4u9ZbS42z");
 }
 
->>>>>>> 9e59baae7 (SIMD-0207: Raise block limit to 50M (#4112))
 lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
@@ -1111,12 +1100,7 @@ lazy_static! {
         (disable_account_loader_special_case::id(), "Disable account loader special case #3513"),
         (enable_secp256r1_precompile::id(), "Enable secp256r1 precompile SIMD-0075"),
         (migrate_stake_program_to_core_bpf::id(), "Migrate Stake program to Core BPF SIMD-0196 #3655"),
-<<<<<<< HEAD
-=======
-        (deplete_cu_meter_on_vm_failure::id(), "Deplete compute meter for vm errors SIMD-0182 #3993"),
-        (reserve_minimal_cus_for_builtin_instructions::id(), "Reserve minimal CUs for builtin instructions SIMD-170 #2562"),
         (raise_block_limits_to_50m::id(), "Raise block limit to 50M SIMD-0207"),
->>>>>>> 9e59baae7 (SIMD-0207: Raise block limit to 50M (#4112))
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
