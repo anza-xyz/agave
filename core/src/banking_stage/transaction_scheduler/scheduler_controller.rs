@@ -441,10 +441,12 @@ mod tests {
                 packet_deserializer::PacketDeserializer,
                 scheduler_messages::{ConsumeWork, FinishedConsumeWork, TransactionBatchId},
                 tests::create_slow_genesis_config,
-                transaction_scheduler::receive_and_buffer::SanitizedTransactionReceiveAndBuffer,
+                transaction_scheduler::{
+                    prio_graph_scheduler::PrioGraphSchedulerConfig,
+                    receive_and_buffer::SanitizedTransactionReceiveAndBuffer,
+                },
             },
             banking_trace::BankingPacketBatch,
-            sigverify::SigverifyTracerPacketStats,
         },
         crossbeam_channel::{unbounded, Receiver, Sender},
         itertools::Itertools,
@@ -486,7 +488,7 @@ mod tests {
         _entry_receiver: Receiver<WorkingBankEntry>,
         _record_receiver: Receiver<Record>,
         poh_recorder: Arc<RwLock<PohRecorder>>,
-        banking_packet_sender: Sender<Arc<(Vec<PacketBatch>, Option<SigverifyTracerPacketStats>)>>,
+        banking_packet_sender: Sender<Arc<Vec<PacketBatch>>>,
 
         consume_work_receivers:
             Vec<Receiver<ConsumeWork<RuntimeTransaction<SanitizedTransaction>>>>,
@@ -550,11 +552,16 @@ mod tests {
             false,
         );
 
+        let scheduler = PrioGraphScheduler::new(
+            consume_work_senders,
+            finished_consume_work_receiver,
+            PrioGraphSchedulerConfig::default(),
+        );
         let scheduler_controller = SchedulerController::new(
             decision_maker,
             receive_and_buffer,
             bank_forks,
-            PrioGraphScheduler::new(consume_work_senders, finished_consume_work_receiver),
+            scheduler,
             vec![], // no actual workers with metrics to report, this can be empty
             None,
         );
@@ -589,8 +596,7 @@ mod tests {
     }
 
     fn to_banking_packet_batch(txs: &[Transaction]) -> BankingPacketBatch {
-        let packet_batch = to_packet_batches(txs, NUM_PACKETS);
-        Arc::new((packet_batch, None))
+        BankingPacketBatch::new(to_packet_batches(txs, NUM_PACKETS))
     }
 
     // Helper function to let test receive and then schedule packets.

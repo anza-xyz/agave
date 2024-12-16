@@ -5301,6 +5301,22 @@ impl Bank {
             debug_do_not_add_builtins,
         );
 
+        // Cost-Tracker is not serialized in snapshot or any configs.
+        // We must apply previously activated features related to limits here
+        // so that the initial bank state is consistent with the feature set.
+        // Cost-tracker limits are propagated through children banks.
+        if self
+            .feature_set
+            .is_active(&feature_set::raise_block_limits_to_50m::id())
+        {
+            let (account_cost_limit, block_cost_limit, vote_cost_limit) = simd_0207_block_limits();
+            self.write_cost_tracker().unwrap().set_limits(
+                account_cost_limit,
+                block_cost_limit,
+                vote_cost_limit,
+            );
+        }
+
         if !debug_do_not_add_builtins {
             for builtin in BUILTINS
                 .iter()

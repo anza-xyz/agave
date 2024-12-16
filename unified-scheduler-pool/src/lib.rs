@@ -551,7 +551,7 @@ mod chained_channel {
 
         pub(super) fn send_chained_channel(
             &mut self,
-            context: C,
+            context: &C,
             count: usize,
         ) -> std::result::Result<(), SendError<ChainedChannel<P, C>>> {
             let (chained_sender, chained_receiver) = crossbeam_channel::unbounded();
@@ -771,7 +771,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
     fn new(pool: Arc<SchedulerPool<S, TH>>) -> Self {
         let (new_task_sender, new_task_receiver) = crossbeam_channel::unbounded();
         let (session_result_sender, session_result_receiver) = crossbeam_channel::unbounded();
-        let handler_count = pool.handler_count;
 
         Self {
             scheduler_id: pool.new_scheduler_id(),
@@ -782,7 +781,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             session_result_receiver,
             session_result_with_timings: None,
             scheduler_thread: None,
-            handler_threads: Vec::with_capacity(handler_count),
+            handler_threads: vec![],
         }
     }
 
@@ -1032,7 +1031,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             recv(finished_blocked_task_receiver) -> executed_task => {
                                 let Some(executed_task) = Self::accumulate_result_with_timings(
                                     &mut result_with_timings,
-                                    executed_task.expect("alive handler")
+                                    executed_task.expect("alive handler"),
                                 ) else {
                                     break 'nonaborted_main_loop;
                                 };
@@ -1072,7 +1071,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             recv(finished_idle_task_receiver) -> executed_task => {
                                 let Some(executed_task) = Self::accumulate_result_with_timings(
                                     &mut result_with_timings,
-                                    executed_task.expect("alive handler")
+                                    executed_task.expect("alive handler"),
                                 ) else {
                                     break 'nonaborted_main_loop;
                                 };
@@ -1092,26 +1091,28 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     state_machine.reinitialize();
                     session_ending = false;
 
-                    // Prepare for the new session.
-                    match new_task_receiver.recv() {
-                        Ok(NewTaskPayload::OpenSubchannel(context_and_result_with_timings)) => {
-                            let (new_context, new_result_with_timings) =
-                                *context_and_result_with_timings;
-                            // We just received subsequent (= not initial) session and about to
-                            // enter into the preceding `while(!is_finished) {...}` loop again.
-                            // Before that, propagate new SchedulingContext to handler threads
-                            runnable_task_sender
-                                .send_chained_channel(new_context, handler_count)
-                                .unwrap();
-                            result_with_timings = new_result_with_timings;
+                    {
+                        // Prepare for the new session.
+                        match new_task_receiver.recv() {
+                            Ok(NewTaskPayload::OpenSubchannel(context_and_result_with_timings)) => {
+                                let (new_context, new_result_with_timings) =
+                                    *context_and_result_with_timings;
+                                // We just received subsequent (= not initial) session and about to
+                                // enter into the preceding `while(!is_finished) {...}` loop again.
+                                // Before that, propagate new SchedulingContext to handler threads
+                                runnable_task_sender
+                                    .send_chained_channel(&new_context, handler_count)
+                                    .unwrap();
+                                result_with_timings = new_result_with_timings;
+                            }
+                            Err(_) => {
+                                // This unusual condition must be triggered by ThreadManager::drop().
+                                // Initialize result_with_timings with a harmless value...
+                                result_with_timings = initialized_result_with_timings();
+                                break 'nonaborted_main_loop;
+                            }
+                            Ok(_) => unreachable!(),
                         }
-                        Err(_) => {
-                            // This unusual condition must be triggered by ThreadManager::drop().
-                            // Initialize result_with_timings with a harmless value...
-                            result_with_timings = initialized_result_with_timings();
-                            break 'nonaborted_main_loop;
-                        }
-                        Ok(_) => unreachable!(),
                     }
                 }
 
@@ -1152,53 +1153,55 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             // 2. Subsequent contexts are propagated explicitly inside `.after_select()` as part of
             //    `select_biased!`, which are sent from `.send_chained_channel()` in the scheduler
             //    thread for all-but-initial sessions.
-            move || loop {
-                let (task, sender) = select_biased! {
-                    recv(runnable_task_receiver.for_select()) -> message => {
-                        let Ok(message) = message else {
-                            break;
-                        };
-                        if let Some(task) = runnable_task_receiver.after_select(message) {
-                            (task, &finished_blocked_task_sender)
-                        } else {
-                            continue;
+            move || {
+                loop {
+                    let (task, sender) = select_biased! {
+                        recv(runnable_task_receiver.for_select()) -> message => {
+                            let Ok(message) = message else {
+                                break;
+                            };
+                            if let Some(task) = runnable_task_receiver.after_select(message) {
+                                (task, &finished_blocked_task_sender)
+                            } else {
+                                continue;
+                            }
+                        },
+                        recv(runnable_task_receiver.aux_for_select()) -> task => {
+                            if let Ok(task) = task {
+                                (task, &finished_idle_task_sender)
+                            } else {
+                                runnable_task_receiver.never_receive_from_aux();
+                                continue;
+                            }
+                        },
+                    };
+                    defer! {
+                        if !thread::panicking() {
+                            return;
                         }
-                    },
-                    recv(runnable_task_receiver.aux_for_select()) -> task => {
-                        if let Ok(task) = task {
-                            (task, &finished_idle_task_sender)
-                        } else {
-                            runnable_task_receiver.never_receive_from_aux();
-                            continue;
-                        }
-                    },
-                };
-                defer! {
-                    if !thread::panicking() {
-                        return;
-                    }
 
-                    // The scheduler thread can't detect panics in handler threads with
-                    // disconnected channel errors, unless all of them has died. So, send an
-                    // explicit Err promptly.
-                    let current_thread = thread::current();
-                    error!("handler thread is panicking: {:?}", current_thread);
-                    if sender.send(Err(HandlerPanicked)).is_ok() {
-                        info!("notified a panic from {:?}", current_thread);
-                    } else {
-                        // It seems that the scheduler thread has been aborted already...
-                        warn!("failed to notify a panic from {:?}", current_thread);
+                        // The scheduler thread can't detect panics in handler threads with
+                        // disconnected channel errors, unless all of them has died. So, send an
+                        // explicit Err promptly.
+                        let current_thread = thread::current();
+                        error!("handler thread is panicking: {:?}", current_thread);
+                        if sender.send(Err(HandlerPanicked)).is_ok() {
+                            info!("notified a panic from {:?}", current_thread);
+                        } else {
+                            // It seems that the scheduler thread has been aborted already...
+                            warn!("failed to notify a panic from {:?}", current_thread);
+                        }
                     }
-                }
-                let mut task = ExecutedTask::new_boxed(task);
-                Self::execute_task_with_handler(
-                    runnable_task_receiver.context(),
-                    &mut task,
-                    &pool.handler_context,
-                );
-                if sender.send(Ok(task)).is_err() {
-                    warn!("handler_thread: scheduler thread aborted...");
-                    break;
+                    let mut task = ExecutedTask::new_boxed(task);
+                    Self::execute_task_with_handler(
+                        runnable_task_receiver.context(),
+                        &mut task,
+                        &pool.handler_context,
+                    );
+                    if sender.send(Ok(task)).is_err() {
+                        warn!("handler_thread: scheduler thread aborted...");
+                        break;
+                    }
                 }
             }
         };
@@ -1441,7 +1444,7 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
 
 impl<S, TH> UninstalledScheduler for PooledSchedulerInner<S, TH>
 where
-    S: SpawnableScheduler<TH, Inner = PooledSchedulerInner<S, TH>>,
+    S: SpawnableScheduler<TH, Inner = Self>,
     TH: TaskHandler,
 {
     fn return_to_pool(self: Box<Self>) {

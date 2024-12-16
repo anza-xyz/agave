@@ -1,5 +1,4 @@
 use {
-    crate::sigverify::SigverifyTracerPacketStats,
     bincode::serialize_into,
     chrono::{DateTime, Local},
     crossbeam_channel::{unbounded, Receiver, SendError, Sender, TryRecvError},
@@ -20,7 +19,7 @@ use {
     thiserror::Error,
 };
 
-pub type BankingPacketBatch = Arc<(Vec<PacketBatch>, Option<SigverifyTracerPacketStats>)>;
+pub type BankingPacketBatch = Arc<Vec<PacketBatch>>;
 pub type BankingPacketSender = TracedSender;
 pub type BankingPacketReceiver = Receiver<BankingPacketBatch>;
 pub type TracerThreadResult = Result<(), TraceError>;
@@ -62,11 +61,6 @@ pub struct BankingTracer {
     active_tracer: Option<ActiveTracer>,
 }
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "6PCDw6YSEivfbwhbPmE4NAsXb88ZX6hkFnruP8B38nma")
-)]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct TimedTracedEvent(pub std::time::SystemTime, pub TracedEvent);
 
@@ -178,6 +172,15 @@ pub fn receiving_loop_with_minimized_sender_overhead<T, E, const SLEEP_MS: u64>(
     Ok(())
 }
 
+pub struct Channels {
+    pub non_vote_sender: BankingPacketSender,
+    pub non_vote_receiver: BankingPacketReceiver,
+    pub tpu_vote_sender: BankingPacketSender,
+    pub tpu_vote_receiver: BankingPacketReceiver,
+    pub gossip_vote_sender: BankingPacketSender,
+    pub gossip_vote_receiver: BankingPacketReceiver,
+}
+
 impl BankingTracer {
     pub fn new(
         maybe_config: Option<(&PathBuf, Arc<AtomicBool>, DirByteLimit)>,
@@ -220,20 +223,83 @@ impl BankingTracer {
         self.active_tracer.is_some()
     }
 
+    pub fn create_channels(&self, unify_channels: bool) -> Channels {
+        if unify_channels {
+            // Returning the same channel is needed when unified scheduler supports block
+            // production because unified scheduler doesn't distinguish them and treats them as
+            // unified as the single source of incoming transactions. This is to reduce the number
+            // of recv operation per loop and load balance evenly as much as possible there.
+            let (non_vote_sender, non_vote_receiver) = self.create_channel_non_vote();
+            // Tap into some private helper fns so that banking trace labelling works as before.
+            let (tpu_vote_sender, tpu_vote_receiver) =
+                self.create_unified_channel_tpu_vote(&non_vote_sender, &non_vote_receiver);
+            let (gossip_vote_sender, gossip_vote_receiver) =
+                self.create_unified_channel_gossip_vote(&non_vote_sender, &non_vote_receiver);
+
+            Channels {
+                non_vote_sender,
+                non_vote_receiver,
+                tpu_vote_sender,
+                tpu_vote_receiver,
+                gossip_vote_sender,
+                gossip_vote_receiver,
+            }
+        } else {
+            let (non_vote_sender, non_vote_receiver) = self.create_channel_non_vote();
+            let (tpu_vote_sender, tpu_vote_receiver) = self.create_channel_tpu_vote();
+            let (gossip_vote_sender, gossip_vote_receiver) = self.create_channel_gossip_vote();
+
+            Channels {
+                non_vote_sender,
+                non_vote_receiver,
+                tpu_vote_sender,
+                tpu_vote_receiver,
+                gossip_vote_sender,
+                gossip_vote_receiver,
+            }
+        }
+    }
+
     fn create_channel(&self, label: ChannelLabel) -> (BankingPacketSender, BankingPacketReceiver) {
         Self::channel(label, self.active_tracer.as_ref().cloned())
     }
 
-    pub fn create_channel_non_vote(&self) -> (BankingPacketSender, BankingPacketReceiver) {
+    fn create_channel_non_vote(&self) -> (BankingPacketSender, BankingPacketReceiver) {
         self.create_channel(ChannelLabel::NonVote)
     }
 
-    pub fn create_channel_tpu_vote(&self) -> (BankingPacketSender, BankingPacketReceiver) {
+    fn create_channel_tpu_vote(&self) -> (BankingPacketSender, BankingPacketReceiver) {
         self.create_channel(ChannelLabel::TpuVote)
     }
 
-    pub fn create_channel_gossip_vote(&self) -> (BankingPacketSender, BankingPacketReceiver) {
+    fn create_channel_gossip_vote(&self) -> (BankingPacketSender, BankingPacketReceiver) {
         self.create_channel(ChannelLabel::GossipVote)
+    }
+
+    fn create_unified_channel_tpu_vote(
+        &self,
+        sender: &TracedSender,
+        receiver: &BankingPacketReceiver,
+    ) -> (BankingPacketSender, BankingPacketReceiver) {
+        Self::channel_inner(
+            ChannelLabel::TpuVote,
+            self.active_tracer.as_ref().cloned(),
+            sender.sender.clone(),
+            receiver.clone(),
+        )
+    }
+
+    fn create_unified_channel_gossip_vote(
+        &self,
+        sender: &TracedSender,
+        receiver: &BankingPacketReceiver,
+    ) -> (BankingPacketSender, BankingPacketReceiver) {
+        Self::channel_inner(
+            ChannelLabel::GossipVote,
+            self.active_tracer.as_ref().cloned(),
+            sender.sender.clone(),
+            receiver.clone(),
+        )
     }
 
     pub fn hash_event(&self, slot: Slot, blockhash: &Hash, bank_hash: &Hash) {
@@ -264,6 +330,15 @@ impl BankingTracer {
         active_tracer: Option<ActiveTracer>,
     ) -> (TracedSender, Receiver<BankingPacketBatch>) {
         let (sender, receiver) = unbounded();
+        Self::channel_inner(label, active_tracer, sender, receiver)
+    }
+
+    fn channel_inner(
+        label: ChannelLabel,
+        active_tracer: Option<ActiveTracer>,
+        sender: Sender<BankingPacketBatch>,
+        receiver: BankingPacketReceiver,
+    ) -> (TracedSender, Receiver<BankingPacketBatch>) {
         (TracedSender::new(label, sender, active_tracer), receiver)
     }
 
@@ -378,7 +453,7 @@ pub mod for_test {
     };
 
     pub fn sample_packet_batch() -> BankingPacketBatch {
-        BankingPacketBatch::new((to_packet_batches(&vec![test_tx(); 4], 10), None))
+        BankingPacketBatch::new(to_packet_batches(&vec![test_tx(); 4], 10))
     }
 
     pub fn drop_and_clean_temp_dir_unless_suppressed(temp_dir: TempDir) {
@@ -435,7 +510,7 @@ mod tests {
         });
 
         non_vote_sender
-            .send(BankingPacketBatch::new((vec![], None)))
+            .send(BankingPacketBatch::new(vec![]))
             .unwrap();
         for_test::terminate_tracer(tracer, None, dummy_main_thread, non_vote_sender, None);
     }

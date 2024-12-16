@@ -17,8 +17,7 @@ use {
         crds::{Crds, CrdsError, Cursor, GossipRoute},
         crds_gossip,
         crds_value::CrdsValue,
-        ping_pong::PingCache,
-        protocol::Ping,
+        protocol::{Ping, PingCache},
         push_active_set::PushActiveSet,
         received_cache::ReceivedCache,
     },
@@ -287,6 +286,8 @@ mod tests {
 
     fn new_ping_cache() -> PingCache {
         PingCache::new(
+            &mut rand::thread_rng(),
+            Instant::now(),
             Duration::from_secs(20 * 60),      // ttl
             Duration::from_secs(20 * 60) / 64, // rate_limit_delay
             128,                               // capacity

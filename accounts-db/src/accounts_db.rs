@@ -2862,6 +2862,19 @@ impl AccountsDb {
                                         } else {
                                             found_not_zero += 1;
                                         }
+
+                                        // If this candidate has multiple rooted slot list entries,
+                                        // we should reclaim the older ones.
+                                        if slot_list.len() > 1
+                                            && *slot
+                                                <= max_clean_root_inclusive.unwrap_or(Slot::MAX)
+                                        {
+                                            should_collect_reclaims = true;
+                                            purges_old_accounts_local += 1;
+                                            useless = false;
+                                        }
+                                        // Note, this next if-block is only kept to maintain the
+                                        // `uncleaned_roots_slot_list_1` stat.
                                         if uncleaned_roots.contains(slot) {
                                             // Assertion enforced by `accounts_index.get()`, the latest slot
                                             // will not be greater than the given `max_clean_root`
@@ -2870,12 +2883,7 @@ impl AccountsDb {
                                             {
                                                 assert!(slot <= &max_clean_root_inclusive);
                                             }
-                                            if slot_list.len() > 1 {
-                                                // no need to reclaim old accounts if there is only 1 slot in the slot list
-                                                should_collect_reclaims = true;
-                                                purges_old_accounts_local += 1;
-                                                useless = false;
-                                            } else {
+                                            if slot_list.len() == 1 {
                                                 self.clean_accounts_stats
                                                     .uncleaned_roots_slot_list_1
                                                     .fetch_add(1, Ordering::Relaxed);
@@ -7528,15 +7536,6 @@ impl AccountsDb {
         }
     }
 
-    /// Wrapper function to calculate accounts delta hash for `slot` (only used for testing and benchmarking.)
-    ///
-    /// As part of calculating the accounts delta hash, get a list of accounts modified this slot
-    /// (aka dirty pubkeys) and add them to `self.uncleaned_pubkeys` for future cleaning.
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn calculate_accounts_delta_hash(&self, slot: Slot) -> AccountsDeltaHash {
-        self.calculate_accounts_delta_hash_internal(slot, None, HashMap::default())
-    }
-
     /// Calculate accounts delta hash for `slot`
     ///
     /// As part of calculating the accounts delta hash, get a list of accounts modified this slot
@@ -9291,6 +9290,21 @@ impl AccountStorageEntry {
 // These functions/fields are only usable from a dev context (i.e. tests and benches)
 #[cfg(feature = "dev-context-only-utils")]
 impl AccountsDb {
+    /// useful to adapt tests written prior to introduction of the write cache
+    /// to use the write cache
+    pub fn add_root_and_flush_write_cache(&self, slot: Slot) {
+        self.add_root(slot);
+        self.flush_root_write_cache(slot);
+    }
+
+    /// Wrapper function to calculate accounts delta hash for `slot` (only used for testing and benchmarking.)
+    ///
+    /// As part of calculating the accounts delta hash, get a list of accounts modified this slot
+    /// (aka dirty pubkeys) and add them to `self.uncleaned_pubkeys` for future cleaning.
+    pub fn calculate_accounts_delta_hash(&self, slot: Slot) -> AccountsDeltaHash {
+        self.calculate_accounts_delta_hash_internal(slot, None, HashMap::default())
+    }
+
     pub fn load_without_fixed_root(
         &self,
         ancestors: &Ancestors,
@@ -9426,13 +9440,6 @@ impl AccountsDb {
                     .map(|slot_cache| slot_cache.len())
                     .unwrap_or_default(),
             )
-    }
-
-    /// useful to adapt tests written prior to introduction of the write cache
-    /// to use the write cache
-    pub fn add_root_and_flush_write_cache(&self, slot: Slot) {
-        self.add_root(slot);
-        self.flush_root_write_cache(slot);
     }
 
     /// useful to adapt tests written prior to introduction of the write cache

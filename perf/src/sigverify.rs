@@ -20,13 +20,6 @@ use {
     std::{convert::TryFrom, mem::size_of},
 };
 
-// Representing key tKeYE4wtowRb8yRroZShTipE18YVnqwXjsSAoNsFU6g
-const TRACER_KEY_BYTES: [u8; 32] = [
-    13, 37, 180, 170, 252, 137, 36, 194, 183, 143, 161, 193, 201, 207, 211, 23, 189, 93, 33, 110,
-    155, 90, 30, 39, 116, 115, 238, 38, 126, 21, 232, 133,
-];
-const TRACER_KEY: Pubkey = Pubkey::new_from_array(TRACER_KEY_BYTES);
-const TRACER_KEY_OFFSET_IN_TRANSACTION: usize = 69;
 // Empirically derived to constrain max verify latency to ~8ms at lower packet counts
 pub const VERIFY_PACKET_CHUNK_SIZE: usize = 128;
 
@@ -153,24 +146,10 @@ pub fn count_packets_in_batches(batches: &[PacketBatch]) -> usize {
     batches.iter().map(|batch| batch.len()).sum()
 }
 
-pub fn count_valid_packets(
-    batches: &[PacketBatch],
-    mut process_valid_packet: impl FnMut(&Packet),
-) -> usize {
+pub fn count_valid_packets(batches: &[PacketBatch]) -> usize {
     batches
         .iter()
-        .map(|batch| {
-            batch
-                .iter()
-                .filter(|p| {
-                    let should_keep = !p.meta().discard();
-                    if should_keep {
-                        process_valid_packet(p);
-                    }
-                    should_keep
-                })
-                .count()
-        })
+        .map(|batch| batch.iter().filter(|p| !p.meta().discard()).count())
         .sum()
 }
 
@@ -306,21 +285,6 @@ fn do_get_packet_offsets(
         u32::try_from(pubkey_start)?,
         u32::try_from(pubkey_len)?,
     ))
-}
-
-pub fn check_for_tracer_packet(packet: &mut Packet) -> bool {
-    let first_pubkey_start: usize = TRACER_KEY_OFFSET_IN_TRANSACTION;
-    let Some(first_pubkey_end) = first_pubkey_start.checked_add(size_of::<Pubkey>()) else {
-        return false;
-    };
-    // Check for tracer pubkey
-    match packet.data(first_pubkey_start..first_pubkey_end) {
-        Some(pubkey) if pubkey == TRACER_KEY.as_ref() => {
-            packet.meta_mut().set_tracer(true);
-            true
-        }
-        _ => false,
-    }
 }
 
 fn get_packet_offsets(
@@ -1484,7 +1448,7 @@ mod tests {
             });
             start.sort_by(|a, b| a.data(..).cmp(&b.data(..)));
 
-            let packet_count = count_valid_packets(&batches, |_| ());
+            let packet_count = count_valid_packets(&batches);
             shrink_batches(&mut batches);
 
             //make sure all the non discarded packets are the same
@@ -1495,7 +1459,7 @@ mod tests {
                     .for_each(|p| end.push(p.clone()))
             });
             end.sort_by(|a, b| a.data(..).cmp(&b.data(..)));
-            let packet_count2 = count_valid_packets(&batches, |_| ());
+            let packet_count2 = count_valid_packets(&batches);
             assert_eq!(packet_count, packet_count2);
             assert_eq!(start, end);
         }
@@ -1659,13 +1623,13 @@ mod tests {
                 PACKETS_PER_BATCH,
             );
             assert_eq!(batches.len(), BATCH_COUNT);
-            assert_eq!(count_valid_packets(&batches, |_| ()), PACKET_COUNT);
+            assert_eq!(count_valid_packets(&batches), PACKET_COUNT);
             batches.iter_mut().enumerate().for_each(|(i, b)| {
                 b.iter_mut()
                     .enumerate()
                     .for_each(|(j, p)| p.meta_mut().set_discard(set_discard(i, j)))
             });
-            assert_eq!(count_valid_packets(&batches, |_| ()), *expect_valid_packets);
+            assert_eq!(count_valid_packets(&batches), *expect_valid_packets);
             debug!("show valid packets for case {}", i);
             batches.iter_mut().enumerate().for_each(|(i, b)| {
                 b.iter_mut().enumerate().for_each(|(j, p)| {
@@ -1679,7 +1643,7 @@ mod tests {
             let shrunken_batch_count = batches.len();
             debug!("shrunk batch test {} count: {}", i, shrunken_batch_count);
             assert_eq!(shrunken_batch_count, *expect_batch_count);
-            assert_eq!(count_valid_packets(&batches, |_| ()), *expect_valid_packets);
+            assert_eq!(count_valid_packets(&batches), *expect_valid_packets);
         }
     }
 }
