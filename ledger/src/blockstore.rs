@@ -4789,8 +4789,7 @@ impl Blockstore {
         let mut total_start = Measure::start("Total elapsed");
         let res = index_working_set.entry(slot).or_insert_with(|| {
             let newly_inserted_meta = self
-                .index_cf
-                .get(slot)
+                .get_index(slot)
                 .unwrap()
                 .unwrap_or_else(|| Index::new(slot));
             IndexMetaWorkingSetEntry {
