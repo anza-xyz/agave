@@ -249,7 +249,7 @@ struct RentMetrics {
 pub type BankStatusCache = StatusCache<Result<()>>;
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "BHg4qpwegtaJypLUqAdjQYzYeLfEGf6tA4U5cREbHMHi")
+    frozen_abi(digest = "Fj6ATu6Rr5ossAykzbRSkCsuUzjdAZbYo5JaqfR1A72G")
 )]
 pub type BankSlotDelta = SlotDelta<Result<()>>;
 
@@ -343,7 +343,7 @@ pub struct TransactionSimulationResult {
     pub inner_instructions: Option<Vec<InnerInstructions>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TransactionBalancesSet {
     pub pre_balances: TransactionBalances,
     pub post_balances: TransactionBalances,
@@ -4520,6 +4520,29 @@ impl Bank {
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
     ) -> (Vec<TransactionCommitResult>, TransactionBalancesSet) {
+        self.load_execute_and_commit_transactions_with_pre_commit_callback(
+            batch,
+            max_age,
+            collect_balances,
+            recording_config,
+            timings,
+            log_messages_bytes_limit,
+            None::<fn() -> bool>,
+        )
+        .unwrap()
+    }
+
+    #[must_use]
+    pub fn load_execute_and_commit_transactions_with_pre_commit_callback(
+        &self,
+        batch: &TransactionBatch<impl TransactionWithMeta>,
+        max_age: usize,
+        collect_balances: bool,
+        recording_config: ExecutionRecordingConfig,
+        timings: &mut ExecuteTimings,
+        log_messages_bytes_limit: Option<usize>,
+        pre_commit_callback: Option<impl FnOnce() -> bool>,
+    ) -> Option<(Vec<TransactionCommitResult>, TransactionBalancesSet)> {
         let pre_balances = if collect_balances {
             self.collect_balances(batch)
         } else {
@@ -4545,6 +4568,15 @@ impl Bank {
             },
         );
 
+        if let Some(pre_commit_callback) = pre_commit_callback {
+            if let Some(e) = processing_results.first() {
+                assert_eq!(processing_results.len(), 1);
+                if e.is_ok() && !pre_commit_callback() {
+                    return None;
+                }
+            }
+        }
+
         let commit_results = self.commit_transactions(
             batch.sanitized_transactions(),
             processing_results,
@@ -4556,10 +4588,10 @@ impl Bank {
         } else {
             vec![]
         };
-        (
+        Some((
             commit_results,
             TransactionBalancesSet::new(pre_balances, post_balances),
-        )
+        ))
     }
 
     /// Process a Transaction. This is used for unit tests and simply calls the vector

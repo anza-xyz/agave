@@ -30,6 +30,7 @@ use {
         transaction::{Result, SanitizedTransaction, TransactionError},
     },
     solana_timings::ExecuteTimings,
+    solana_unified_scheduler_logic::SchedulingMode,
     std::{
         fmt::{self, Debug},
         mem,
@@ -227,13 +228,29 @@ pub type SchedulerId = u64;
 /// `SchedulingContext`s.
 #[derive(Clone, Debug)]
 pub struct SchedulingContext {
-    // mode: SchedulingMode, // this will be added later.
+    mode: SchedulingMode,
     bank: Arc<Bank>,
 }
 
 impl SchedulingContext {
     pub fn new(bank: Arc<Bank>) -> Self {
-        Self { bank }
+        // mode will be configurable later
+        Self {
+            mode: SchedulingMode::BlockVerification,
+            bank,
+        }
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn for_production(bank: Arc<Bank>) -> Self {
+        Self {
+            mode: SchedulingMode::BlockProduction,
+            bank,
+        }
+    }
+
+    pub fn mode(&self) -> SchedulingMode {
+        self.mode
     }
 
     pub fn bank(&self) -> &Arc<Bank> {

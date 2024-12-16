@@ -110,6 +110,7 @@ fn first_err(results: &[Result<()>]) -> Result<()> {
 fn get_first_error(
     batch: &TransactionBatch<impl SVMTransaction>,
     commit_results: &[TransactionCommitResult],
+    is_block_producing_unified_scheduler: bool,
 ) -> Option<(Result<()>, Signature)> {
     let mut first_err = None;
     for (commit_result, transaction) in commit_results.iter().zip(batch.sanitized_transactions()) {
@@ -117,18 +118,22 @@ fn get_first_error(
             if first_err.is_none() {
                 first_err = Some((Err(err.clone()), *transaction.signature()));
             }
-            warn!(
-                "Unexpected validator error: {:?}, transaction: {:?}",
-                err, transaction
-            );
-            datapoint_error!(
-                "validator_process_entry_error",
-                (
-                    "error",
-                    format!("error: {err:?}, transaction: {transaction:?}"),
-                    String
-                )
-            );
+            // Skip with block producing unified scheduler because it's quite common to observe
+            // transaction errors...
+            if !is_block_producing_unified_scheduler {
+                warn!(
+                    "Unexpected validator error: {:?}, transaction: {:?}",
+                    err, transaction
+                );
+                datapoint_error!(
+                    "validator_process_entry_error",
+                    (
+                        "error",
+                        format!("error: {err:?}, transaction: {transaction:?}"),
+                        String
+                    )
+                );
+            }
         }
     }
     first_err
@@ -150,12 +155,14 @@ pub fn execute_batch(
     timings: &mut ExecuteTimings,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
+    pre_commit_callback: Option<impl FnOnce() -> Option<Option<usize>>>,
 ) -> Result<()> {
     let TransactionBatchWithIndexes {
         batch,
         transaction_indexes,
     } = batch;
     let record_token_balances = transaction_status_sender.is_some();
+    let mut transaction_indexes = transaction_indexes.to_vec();
 
     let mut mint_decimals: HashMap<Pubkey, u8> = HashMap::new();
 
@@ -165,14 +172,34 @@ pub fn execute_batch(
         vec![]
     };
 
-    let (commit_results, balances) = batch.bank().load_execute_and_commit_transactions(
-        batch,
-        MAX_PROCESSING_AGE,
-        transaction_status_sender.is_some(),
-        ExecutionRecordingConfig::new_single_setting(transaction_status_sender.is_some()),
-        timings,
-        log_messages_bytes_limit,
-    );
+    let is_block_producing_unified_scheduler = pre_commit_callback.is_some();
+    let pre_commit_callback = pre_commit_callback.map(|wrapped_callback| {
+        || {
+            wrapped_callback()
+                .inspect(|&maybe_index| {
+                    if let Some(index) = maybe_index {
+                        assert!(transaction_indexes.is_empty());
+                        transaction_indexes.push(index);
+                    }
+                })
+                .is_some()
+        }
+    });
+
+    let Some((commit_results, balances)) = batch
+        .bank()
+        .load_execute_and_commit_transactions_with_pre_commit_callback(
+            batch,
+            MAX_PROCESSING_AGE,
+            transaction_status_sender.is_some(),
+            ExecutionRecordingConfig::new_single_setting(transaction_status_sender.is_some()),
+            timings,
+            log_messages_bytes_limit,
+            pre_commit_callback,
+        )
+    else {
+        return Err(TransactionError::CommitFailed);
+    };
 
     bank_utils::find_and_send_votes(
         batch.sanitized_transactions(),
@@ -201,7 +228,7 @@ pub fn execute_batch(
         .filter_map(|(commit_result, tx)| commit_result.was_committed().then_some(tx))
         .collect_vec();
 
-    let first_err = get_first_error(batch, &commit_results);
+    let first_err = get_first_error(batch, &commit_results, is_block_producing_unified_scheduler);
 
     if let Some(transaction_status_sender) = transaction_status_sender {
         let transactions: Vec<SanitizedTransaction> = batch
@@ -224,7 +251,7 @@ pub fn execute_batch(
             commit_results,
             balances,
             token_balances,
-            transaction_indexes.to_vec(),
+            transaction_indexes,
         );
     }
 
@@ -322,6 +349,7 @@ fn execute_batches_internal(
                     &mut timings,
                     log_messages_bytes_limit,
                     prioritization_fee_cache,
+                    None::<fn() -> Option<Option<usize>>>,
                 ));
 
                 let thread_index = replay_tx_thread_pool.current_thread_index().unwrap();
@@ -2202,11 +2230,13 @@ pub fn process_single_slot(
 }
 
 #[allow(clippy::large_enum_variant)]
+#[derive(Debug)]
 pub enum TransactionStatusMessage {
     Batch(TransactionStatusBatch),
     Freeze(Slot),
 }
 
+#[derive(Debug)]
 pub struct TransactionStatusBatch {
     pub slot: Slot,
     pub transactions: Vec<SanitizedTransaction>,
@@ -4392,7 +4422,7 @@ pub mod tests {
             &mut ExecuteTimings::default(),
             None,
         );
-        let (err, signature) = get_first_error(&batch, &commit_results).unwrap();
+        let (err, signature) = get_first_error(&batch, &commit_results, false).unwrap();
         assert_eq!(err.unwrap_err(), TransactionError::AccountNotFound);
         assert_eq!(signature, account_not_found_sig);
     }
@@ -5039,6 +5069,85 @@ pub mod tests {
     #[test]
     fn test_schedule_batches_for_execution_failure() {
         do_test_schedule_batches_for_execution(false);
+    }
+
+    fn do_test_execute_batch_pre_commit_callback(poh_result: Option<Option<usize>>) {
+        solana_logger::setup();
+        let dummy_leader_pubkey = solana_sdk::pubkey::new_rand();
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config_with_leader(500, &dummy_leader_pubkey, 100);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
+        let bank = Arc::new(bank);
+        let txs = create_test_transactions(&mint_keypair, &genesis_config.hash());
+        let mut batch = TransactionBatch::new(
+            vec![Ok(()); 1],
+            &bank,
+            OwnedOrBorrowed::Borrowed(&txs[0..1]),
+        );
+        batch.set_needs_unlock(false);
+        let poh_with_index = matches!(poh_result, Some(Some(_)));
+        let transaction_indexes = if poh_with_index { vec![] } else { vec![3] };
+        let batch = TransactionBatchWithIndexes {
+            batch,
+            transaction_indexes,
+        };
+        let prioritization_fee_cache = PrioritizationFeeCache::default();
+        let mut timing = ExecuteTimings::default();
+        let (sender, receiver) = crossbeam_channel::unbounded();
+
+        assert_eq!(bank.transaction_count(), 0);
+        let result = execute_batch(
+            &batch,
+            &bank,
+            Some(&TransactionStatusSender { sender }),
+            None,
+            &mut timing,
+            None,
+            &prioritization_fee_cache,
+            Some(|| poh_result),
+        );
+        let should_succeed = poh_result.is_some();
+        if should_succeed {
+            assert_matches!(result, Ok(()));
+            assert_eq!(bank.transaction_count(), 1);
+        } else {
+            assert_matches!(result, Err(TransactionError::CommitFailed));
+            assert_eq!(bank.transaction_count(), 0);
+        }
+        if poh_with_index {
+            assert_matches!(
+                receiver.try_recv(),
+                Ok(TransactionStatusMessage::Batch(TransactionStatusBatch{transaction_indexes, ..}))
+                    if transaction_indexes == vec![4_usize]
+            );
+        } else if should_succeed {
+            assert_matches!(
+                receiver.try_recv(),
+                Ok(TransactionStatusMessage::Batch(TransactionStatusBatch{transaction_indexes, ..}))
+                    if transaction_indexes == vec![3_usize]
+            );
+        } else {
+            assert_matches!(receiver.try_recv(), Err(_));
+        }
+    }
+
+    #[test]
+    fn test_execute_batch_pre_commit_callback_success() {
+        do_test_execute_batch_pre_commit_callback(Some(None));
+    }
+
+    #[test]
+    fn test_execute_batch_pre_commit_callback_success_with_index() {
+        do_test_execute_batch_pre_commit_callback(Some(Some(4)));
+    }
+
+    #[test]
+    fn test_execute_batch_pre_commit_callback_failure() {
+        do_test_execute_batch_pre_commit_callback(None);
     }
 
     #[test]
