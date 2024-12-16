@@ -1,5 +1,5 @@
 use {
-    criterion::{criterion_group, criterion_main, Criterion},
+    criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput},
     solana_bpf_loader_program::Entrypoint,
     solana_program_runtime::invoke_context::mock_process_instruction,
     solana_sdk::{
@@ -376,7 +376,9 @@ fn get_accounts_for_bpf_loader_extend_program(
         .expect("state failed to serialize into account data");
 
     let programdata_data_offset = UpgradeableLoaderState::size_of_programdata_metadata();
-    let programdata_len: usize = account_data_len + programdata_data_offset;
+    let programdata_len: usize = account_data_len
+        .checked_add(programdata_data_offset)
+        .expect("Arithmetic overflow should not happen for programdata size.");
     let mut programdata_account =
         AccountSharedData::new(min_program_balance, programdata_len, &loader_id);
     programdata_account
@@ -385,7 +387,7 @@ fn get_accounts_for_bpf_loader_extend_program(
             upgrade_authority_address: Some(Pubkey::new_unique()),
         })
         .expect("state failed to serialize into account data");
-    programdata_account.data_as_mut_slice()[programdata_data_offset..].copy_from_slice(&elf);
+    programdata_account.data_as_mut_slice()[programdata_data_offset..].copy_from_slice(elf);
 
     let authority_address = Pubkey::new_unique();
     let authority_account = AccountSharedData::new(ACCOUNT_BALANCE, 0, &Pubkey::new_unique());
@@ -425,8 +427,6 @@ fn get_accounts_for_bpf_loader_extend_program(
 }
 
 fn bench_extend_program(c: &mut Criterion) {
-    let additional_bytes = 64;
-
     let mut file = File::open("test_elfs/out/noop_aligned.so").expect("file open failed");
     let mut elf = Vec::new();
     file.read_to_end(&mut elf).unwrap();
@@ -434,24 +434,36 @@ fn bench_extend_program(c: &mut Criterion) {
     let (transaction_accounts, instruction_accounts) =
         get_accounts_for_bpf_loader_extend_program(&elf);
 
-    let instruction_data =
-        bincode::serialize(&UpgradeableLoaderInstruction::ExtendProgram { additional_bytes })
-            .unwrap();
-    c.bench_function("extend_program", |bencher| {
-        bencher.iter(|| {
-            mock_process_instruction(
-                &bpf_loader_upgradeable::id(),
-                Vec::new(),
-                &instruction_data,
-                transaction_accounts.clone(),
-                instruction_accounts.clone(),
-                Ok(()),
-                Entrypoint::vm,
-                |_invoke_context| {},
-                |_invoke_context| {},
-            )
-        })
-    });
+    let mut group = c.benchmark_group("extend_program");
+
+    for size in [64u32, 256, 1024, 4096].iter() {
+        group.throughput(Throughput::Bytes(*size as u64));
+        group.bench_with_input(
+            BenchmarkId::from_parameter(size),
+            size,
+            |bencher, additional_bytes| {
+                bencher.iter(|| {
+                    let instruction_data =
+                        bincode::serialize(&UpgradeableLoaderInstruction::ExtendProgram {
+                            additional_bytes: *additional_bytes,
+                        })
+                        .unwrap();
+                    mock_process_instruction(
+                        &bpf_loader_upgradeable::id(),
+                        Vec::new(),
+                        &instruction_data,
+                        transaction_accounts.clone(),
+                        instruction_accounts.clone(),
+                        Ok(()),
+                        Entrypoint::vm,
+                        |_invoke_context| {},
+                        |_invoke_context| {},
+                    )
+                })
+            },
+        );
+    }
+    group.finish();
 }
 
 fn bench_set_authority_checked(c: &mut Criterion) {
