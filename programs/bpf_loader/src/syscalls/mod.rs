@@ -306,6 +306,7 @@ pub fn create_program_runtime_environment_v1<'a>(
     } else {
         SBPFVersion::V0
     };
+    debug_assert!(min_sbpf_version <= max_sbpf_version);
 
     let config = Config {
         max_call_depth: compute_budget.max_call_depth,

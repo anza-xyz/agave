@@ -12084,14 +12084,13 @@ fn test_feature_activation_loaded_programs_cache_preparation_phase() {
     solana_logger::setup();
 
     // Bank Setup
-    let (mut genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
-    genesis_config
-        .accounts
-        .remove(&feature_set::disable_sbpf_v0_execution::id());
-    genesis_config
-        .accounts
-        .remove(&feature_set::reenable_sbpf_v0_execution::id());
-    let (root_bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let (genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    let mut feature_set = FeatureSet::all_enabled();
+    feature_set.deactivate(&feature_set::disable_sbpf_v0_execution::id());
+    feature_set.deactivate(&feature_set::reenable_sbpf_v0_execution::id());
+    bank.feature_set = Arc::new(feature_set);
+    let (root_bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
 
     // Program Setup
     let program_keypair = Keypair::new();
@@ -12183,7 +12182,7 @@ fn test_feature_activation_loaded_programs_cache_preparation_phase() {
         result_with_feature_enabled,
         Err(TransactionError::InstructionError(
             0,
-            InstructionError::InvalidAccountData
+            InstructionError::UnsupportedProgramId
         ))
     );
 }
