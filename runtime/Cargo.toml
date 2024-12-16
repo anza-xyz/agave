@@ -82,6 +82,7 @@ solana-svm-transaction = { workspace = true }
 solana-system-program = { workspace = true, optional = true }
 solana-timings = { workspace = true }
 solana-transaction-status-client-types = { workspace = true }
+solana-unified-scheduler-logic = { workspace = true }
 solana-version = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }

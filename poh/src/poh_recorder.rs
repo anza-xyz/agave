@@ -135,7 +135,7 @@ pub struct RecordTransactionsSummary {
     pub starting_transaction_index: Option<usize>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TransactionRecorder {
     // shared by all users of PohRecorder
     pub record_sender: Sender<Record>,
@@ -1139,11 +1139,12 @@ impl PohRecorder {
     }
 }
 
-pub fn create_test_recorder(
+fn do_create_test_recorder(
     bank: Arc<Bank>,
     blockstore: Arc<Blockstore>,
     poh_config: Option<PohConfig>,
     leader_schedule_cache: Option<Arc<LeaderScheduleCache>>,
+    track_transaction_indexes: bool,
 ) -> (
     Arc<AtomicBool>,
     Arc<RwLock<PohRecorder>>,
@@ -1169,7 +1170,10 @@ pub fn create_test_recorder(
     );
     let ticks_per_slot = bank.ticks_per_slot();
 
-    poh_recorder.set_bank(BankWithScheduler::new_without_scheduler(bank), false);
+    poh_recorder.set_bank(
+        BankWithScheduler::new_without_scheduler(bank),
+        track_transaction_indexes,
+    );
     let poh_recorder = Arc::new(RwLock::new(poh_recorder));
     let poh_service = PohService::new(
         poh_recorder.clone(),
@@ -1182,6 +1186,34 @@ pub fn create_test_recorder(
     );
 
     (exit, poh_recorder, poh_service, entry_receiver)
+}
+
+pub fn create_test_recorder(
+    bank: Arc<Bank>,
+    blockstore: Arc<Blockstore>,
+    poh_config: Option<PohConfig>,
+    leader_schedule_cache: Option<Arc<LeaderScheduleCache>>,
+) -> (
+    Arc<AtomicBool>,
+    Arc<RwLock<PohRecorder>>,
+    PohService,
+    Receiver<WorkingBankEntry>,
+) {
+    do_create_test_recorder(bank, blockstore, poh_config, leader_schedule_cache, false)
+}
+
+pub fn create_test_recorder_with_index_tracking(
+    bank: Arc<Bank>,
+    blockstore: Arc<Blockstore>,
+    poh_config: Option<PohConfig>,
+    leader_schedule_cache: Option<Arc<LeaderScheduleCache>>,
+) -> (
+    Arc<AtomicBool>,
+    Arc<RwLock<PohRecorder>>,
+    PohService,
+    Receiver<WorkingBankEntry>,
+) {
+    do_create_test_recorder(bank, blockstore, poh_config, leader_schedule_cache, true)
 }
 
 #[cfg(test)]
