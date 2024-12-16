@@ -3132,13 +3132,6 @@ impl AccountsDb {
                 i64
             ),
             (
-                "reset_uncleaned_roots_us",
-                self.clean_accounts_stats
-                    .reset_uncleaned_roots_us
-                    .swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
                 "remove_dead_accounts_remove_us",
                 self.clean_accounts_stats
                     .remove_dead_accounts_remove_us
