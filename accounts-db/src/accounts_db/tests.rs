@@ -8108,6 +8108,7 @@ fn test_clean_old_storages_with_reclaims_rooted() {
         assert!(!accounts_db.dirty_stores.contains_key(&slot));
         assert!(!accounts_db.uncleaned_pubkeys.contains_key(&slot));
     }
+
     // add `old_slot` to the dirty stores list to mimic it being picked up as old
     let old_storage = accounts_db
         .storage
@@ -8165,6 +8166,7 @@ fn test_clean_old_storages_with_reclaims_unrooted() {
         assert!(!accounts_db.dirty_stores.contains_key(&slot));
         assert!(accounts_db.uncleaned_pubkeys.contains_key(&slot));
     }
+
     // only `old_slot` should be rooted, not `new_slot`
     accounts_db.add_root_and_flush_write_cache(old_slot);
     assert!(accounts_db.accounts_index.is_alive_root(old_slot));
