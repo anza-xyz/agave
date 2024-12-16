@@ -8104,7 +8104,7 @@ fn test_clean_old_storages_with_reclaims_rooted() {
         );
         accounts_db.add_root_and_flush_write_cache(slot);
     }
-    // for this test, `new_slot` must be in `dirty_stores`.
+    // for this test, `new_slot` must not be in `dirty_stores`.
     assert!(!accounts_db.dirty_stores.contains_key(&new_slot));
 
     // ensure the slot list for `pubkey` has both the old and new slots
