@@ -43,13 +43,15 @@ impl AccountsDb {
             return;
         };
 
-        let mut slots = self.storage.all_slots();
-        let mut notified_accounts: HashSet<Pubkey> = HashSet::default();
         let mut notify_stats = GeyserPluginNotifyAtSnapshotRestoreStats::default();
+        if accounts_update_notifier.snapshot_notifications_enabled() {
+            let mut slots = self.storage.all_slots();
+            let mut notified_accounts: HashSet<Pubkey> = HashSet::default();
 
-        slots.sort_by(|a, b| b.cmp(a));
-        for slot in slots {
-            self.notify_accounts_in_slot(slot, &mut notified_accounts, &mut notify_stats);
+            slots.sort_by(|a, b| b.cmp(a));
+            for slot in slots {
+                self.notify_accounts_in_slot(slot, &mut notified_accounts, &mut notify_stats);
+            }
         }
 
         accounts_update_notifier.notify_end_of_restore_from_snapshot();
@@ -195,6 +197,10 @@ pub mod tests {
     }
 
     impl AccountsUpdateNotifierInterface for GeyserTestPlugin {
+        fn snapshot_notifications_enabled(&self) -> bool {
+            true
+        }
+
         /// Notified when an account is updated at runtime, due to transaction activities
         fn notify_account_update(
             &self,
