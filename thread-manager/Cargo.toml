@@ -26,5 +26,6 @@ affinity = "0.1.2"
 
 [dev-dependencies]
 axum = "0.7.9"
+env_logger = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }

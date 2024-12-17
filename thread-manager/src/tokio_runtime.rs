@@ -2,9 +2,12 @@ use {
     crate::policy::{apply_policy, CoreAllocation},
     serde::{Deserialize, Serialize},
     solana_metrics::datapoint_info,
-    std::sync::{
-        atomic::{AtomicI64, AtomicUsize, Ordering},
-        Arc, Mutex,
+    std::{
+        sync::{
+            atomic::{AtomicI64, AtomicUsize, Ordering},
+            Arc, Mutex,
+        },
+        time::Duration,
     },
     thread_priority::ThreadExt,
 };
@@ -36,35 +39,6 @@ impl Default for TokioConfig {
 }
 
 #[derive(Debug)]
-pub struct ThreadCounters {
-    pub namespace: &'static str,
-    pub parked_threads_cnt: AtomicI64,
-    pub active_threads_cnt: AtomicI64,
-}
-
-impl ThreadCounters {
-    pub fn on_park(&self) {
-        let parked = self.parked_threads_cnt.fetch_add(1, Ordering::Relaxed);
-        let active = self.active_threads_cnt.fetch_sub(1, Ordering::Relaxed);
-        datapoint_info!(
-            self.namespace,
-            ("threads_parked", parked, i64),
-            ("threads_active", active, i64),
-        );
-    }
-
-    pub fn on_unpark(&self) {
-        let parked = self.parked_threads_cnt.fetch_sub(1, Ordering::Relaxed);
-        let active = self.active_threads_cnt.fetch_add(1, Ordering::Relaxed);
-        datapoint_info!(
-            self.namespace,
-            ("threads_parked", parked, i64),
-            ("threads_active", active, i64),
-        );
-    }
-}
-
-#[derive(Debug)]
 pub struct TokioRuntime {
     pub tokio: tokio::runtime::Runtime,
     pub config: TokioConfig,
@@ -72,6 +46,12 @@ pub struct TokioRuntime {
 }
 
 impl TokioRuntime {
+    /// Starts the metrics sampling task on the runtime to monitor how many workers are busy doing useful things.
+    pub fn start_metrics_sampling(&self, period: Duration) {
+        let counters = self.counters.clone();
+        self.tokio.spawn(metrics_sampler(counters, period));
+    }
+
     pub fn new(name: String, cfg: TokioConfig) -> anyhow::Result<Self> {
         let num_workers = if cfg.worker_threads == 0 {
             num_cpus::get()
@@ -94,7 +74,9 @@ impl TokioRuntime {
         let counters = Arc::new(ThreadCounters {
             namespace: format!("thread-manager-tokio-{}", &base_name).leak(), // no workaround, metrics crate will only consume 'static str
             parked_threads_cnt: AtomicI64::new(0),
-            active_threads_cnt: AtomicI64::new(0),
+            active_threads_cnt: AtomicI64::new(
+                (num_workers.wrapping_add(cfg.max_blocking_threads)) as i64,
+            ),
         });
         let counters_clone1 = counters.clone();
         let counters_clone2 = counters.clone();
@@ -132,5 +114,39 @@ impl TokioRuntime {
             config: cfg.clone(),
             counters,
         })
+    }
+}
+
+///Internal counters to keep track of worker pool utilization
+#[derive(Debug)]
+pub struct ThreadCounters {
+    pub namespace: &'static str,
+    pub parked_threads_cnt: AtomicI64,
+    pub active_threads_cnt: AtomicI64,
+}
+
+impl ThreadCounters {
+    pub fn on_park(&self) {
+        self.parked_threads_cnt.fetch_add(1, Ordering::Relaxed);
+        self.active_threads_cnt.fetch_sub(1, Ordering::Relaxed);
+    }
+
+    pub fn on_unpark(&self) {
+        self.parked_threads_cnt.fetch_sub(1, Ordering::Relaxed);
+        self.active_threads_cnt.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+async fn metrics_sampler(counters: Arc<ThreadCounters>, period: Duration) {
+    let mut interval = tokio::time::interval(period);
+    loop {
+        interval.tick().await;
+        let parked = counters.parked_threads_cnt.load(Ordering::Relaxed);
+        let active = counters.active_threads_cnt.load(Ordering::Relaxed);
+        datapoint_info!(
+            counters.namespace,
+            ("threads_parked", parked, i64),
+            ("threads_active", active, i64),
+        );
     }
 }

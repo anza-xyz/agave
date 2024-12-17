@@ -1,9 +1,13 @@
-use std::{
-    future::IntoFuture,
-    io::{Read, Write},
-    net::{IpAddr, Ipv4Addr, SocketAddr},
-    path::PathBuf,
-    time::Duration,
+use {
+    agave_thread_manager::*,
+    log::{debug, info},
+    std::{
+        future::IntoFuture,
+        io::{Read, Write},
+        net::{IpAddr, Ipv4Addr, SocketAddr},
+        path::PathBuf,
+        time::Duration,
+    },
 };
 
 async fn axum_main(port: u16) {
@@ -31,47 +35,50 @@ async fn axum_main(port: u16) {
     match timeout {
         Ok(v) => v.unwrap(),
         Err(_) => {
-            println!("Terminating server on port {port}");
+            info!("Terminating server on port {port}");
         }
     }
 }
-use agave_thread_manager::*;
 
 fn main() -> anyhow::Result<()> {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let experiments = [
-        "examples/core_contention_dedicated_set.json",
-        "examples/core_contention_contending_set.json",
+        "examples/core_contention_dedicated_set.toml",
+        "examples/core_contention_contending_set.toml",
     ];
 
     for exp in experiments {
-        println!("===================");
-        println!("Running {exp}");
-        let mut conffile = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        conffile.push(exp);
+        info!("===================");
+        info!("Running {exp}");
+        let mut conf_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        conf_file.push(exp);
         let mut buf = String::new();
-        std::fs::File::open(conffile)?.read_to_string(&mut buf)?;
+        std::fs::File::open(conf_file)?.read_to_string(&mut buf)?;
         let cfg: RuntimeManagerConfig = toml::from_str(&buf)?;
-        //println!("Loaded config {}", serde_json::to_string_pretty(&cfg)?);
 
-        let rtm = ThreadManager::new(cfg).unwrap();
-        let tok1 = rtm
+        let manager = ThreadManager::new(cfg).unwrap();
+        let tokio1 = manager
             .get_tokio("axum1")
             .expect("Expecting runtime named axum1");
-        let tok2 = rtm
+        tokio1.start_metrics_sampling(Duration::from_secs(1));
+        let tokio2 = manager
             .get_tokio("axum2")
             .expect("Expecting runtime named axum2");
+        tokio2.start_metrics_sampling(Duration::from_secs(1));
 
         let wrk_cores: Vec<_> = (32..64).collect();
-        let results = std::thread::scope(|s| {
-            s.spawn(|| {
-                tok1.tokio.block_on(axum_main(8888));
+        let results = std::thread::scope(|scope| {
+            scope.spawn(|| {
+                tokio1.tokio.block_on(axum_main(8888));
             });
-            s.spawn(|| {
-                tok2.tokio.block_on(axum_main(8889));
+            scope.spawn(|| {
+                tokio2.tokio.block_on(axum_main(8889));
             });
-            let jh = s.spawn(|| run_wrk(&[8888, 8889], &wrk_cores, wrk_cores.len(), 1000).unwrap());
-            jh.join().expect("WRK crashed!")
+            let join_handle =
+                scope.spawn(|| run_wrk(&[8888, 8889], &wrk_cores, wrk_cores.len(), 1000).unwrap());
+            join_handle.join().expect("WRK crashed!")
         });
+        //print out the results of the bench run
         println!("Results are: {:?}", results);
     }
     Ok(())
@@ -112,7 +119,7 @@ fn run_wrk(
     let mut all_latencies = vec![];
     let mut all_rps = vec![];
     for (out, port) in outs.zip(ports.iter()) {
-        println!("=========================");
+        debug!("=========================");
         std::io::stdout().write_all(&out.stderr)?;
         let res = str::from_utf8(&out.stdout)?;
         let mut res = res.lines().last().unwrap().split(' ');
@@ -122,7 +129,7 @@ fn run_wrk(
 
         let requests: usize = res.next().unwrap().parse()?;
         let rps = requests as f32 / 10.0;
-        println!("WRK results for port {port}: {latency:?} {rps}");
+        debug!("WRK results for port {port}: {latency:?} {rps}");
         all_latencies.push(Duration::from_micros(latency_us));
         all_rps.push(rps);
     }
