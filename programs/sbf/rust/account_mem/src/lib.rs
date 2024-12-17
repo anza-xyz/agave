@@ -2,6 +2,7 @@
 
 use solana_program::{
     account_info::AccountInfo,
+    blake3,
     entrypoint::ProgramResult,
     program_error::ProgramError,
     program_memory::{sol_memcmp, sol_memcpy, sol_memmove, sol_memset},
@@ -91,7 +92,7 @@ pub fn process_instruction(
             sol_memcpy(&mut data[data_len.saturating_sub(3)..], &buf, 10);
         }
         11 => {
-            // memmov dst overlaps end of account
+            // memmove dst overlaps end of account
             unsafe {
                 sol_memmove(
                     data[data_len.saturating_sub(3)..].as_mut_ptr(),
@@ -108,7 +109,57 @@ pub fn process_instruction(
             // memmov dst overlaps begin of account
             unsafe { sol_memmove(too_early(3).as_mut_ptr(), buf.as_ptr(), 10) };
         }
+        14 => {
+            // hash overlaps end of account
+            use solana_program::hash::{hashv, Hasher};
 
+            let mut hasher = Hasher::default();
+            let data = too_early(9);
+
+            hasher.hashv(&[data]);
+            assert_eq!(hashv(&[data]), hasher.result());
+        }
+        15 => {
+            // hash overlaps end of account
+            use solana_program::keccak::{hashv, Hasher};
+
+            let mut hasher = Hasher::default();
+            let data =
+                unsafe { std::slice::from_raw_parts_mut(data_ptr, data_len.wrapping_add(11)) };
+
+            hasher.hashv(&[data]);
+
+            assert_eq!(hashv(&[data]), hasher.result());
+        }
+        16 => {
+            // hash overlaps end of account
+            let _hash = blake3::hash(too_early(7));
+        }
+
+        20 => {
+            use solana_program::hash::{hashv, Hasher};
+
+            let mut hasher = Hasher::default();
+            hasher.hashv(&[data]);
+
+            assert_eq!(hashv(&[data]), hasher.result());
+        }
+
+        21 => {
+            use solana_program::keccak::{hashv, Hasher};
+
+            let mut hasher = Hasher::default();
+            hasher.hashv(&[data]);
+
+            assert_eq!(hashv(&[data]), hasher.result());
+        }
+
+        22 => {
+            use solana_program::blake3::hashv;
+
+            let hash = blake3::hash(data);
+            assert_eq!(hashv(&[data]).0, hash.to_bytes());
+        }
         _ => {}
     }
 
