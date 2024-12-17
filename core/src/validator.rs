@@ -104,7 +104,6 @@ use {
         bank_forks::BankForks,
         commitment::BlockCommitmentCache,
         prioritization_fee_cache::PrioritizationFeeCache,
-        root_bank_cache::RootBankCache,
         runtime_config::RuntimeConfig,
         snapshot_archive_info::SnapshotArchiveInfoGetter,
         snapshot_bank_utils::{self, DISABLED_SNAPSHOT_ARCHIVE_INTERVAL},
@@ -1428,19 +1427,6 @@ impl Validator {
         let cluster_slots =
             Arc::new(crate::cluster_slots_service::cluster_slots::ClusterSlots::default());
 
-        // bank_forks could be write-locked temporarily here, if unified scheduler is enabled for
-        // block production. That's because ReplayStage started inside Tvu could immediately try to
-        // insert a tpu bank into bank_forks, like with local development clusters consisting of a
-        // single staked node. Such insertion could be blocked with the lock held by unified
-        // scheduler until it's fully setup by the banking stage. This is intentional because
-        // completion of insertion needs to strictly correspond with the initiation of producing
-        // blocks in unified scheduler. Because Tpu setup follows Tvu setup, there's a corner case
-        // where the banking stage hasn't yet called register_banking_stage() to finish the unified
-        // scheduler setup.
-        // This means any setup which accesses bank_forks must be done before
-        // or after the short duration of Tvu and Tpu setups to avoid deadlocks. So,
-        // RootBankCache needs to be created here in advance as being one of such setups.
-        let root_bank_cache = RootBankCache::new(bank_forks.clone());
         let tvu = Tvu::new(
             vote_account,
             authorized_voter_keypairs,
@@ -1548,7 +1534,6 @@ impl Validator {
             node.info.shred_version(),
             vote_tracker,
             bank_forks.clone(),
-            root_bank_cache,
             verified_vote_sender,
             gossip_verified_vote_hash_sender,
             replay_vote_receiver,
