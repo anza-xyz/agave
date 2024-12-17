@@ -451,7 +451,7 @@ mod tests {
             ("budget-restricted", DataBudget::restricted(), 0),
             ("budget-available", DataBudget::default(), 1),
         ];
-        let runtime = rt("solQuicTestRt".to_string());
+        let runtime = rt("solQuicTestRt".to_string(), 0);
         for (_name, data_budget, expected_num_forwarded) in test_cases {
             let mut forwarder = Forwarder::new(
                 poh_recorder.clone(),
@@ -564,7 +564,7 @@ mod tests {
             Arc::new(connection_cache),
             Arc::new(DataBudget::default()),
         );
-        let runtime = rt("solQuicTestRt".to_string());
+        let runtime = rt("solQuicTestRt".to_string(), 0);
         for (name, hold, expected_num_unprocessed, expected_num_processed) in test_cases {
             let stats = BankingStageStats::default();
             forwarder.handle_forwarding(

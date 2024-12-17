@@ -15,7 +15,10 @@ use {
     solana_transaction_error::{TransportError, TransportResult},
     std::{
         net::SocketAddr,
-        sync::{atomic::Ordering, Arc, Condvar, Mutex, MutexGuard},
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc, Condvar, Mutex, MutexGuard,
+        },
         time::Duration,
     },
     tokio::{runtime::Runtime, time::timeout},
@@ -69,7 +72,11 @@ lazy_static! {
     static ref ASYNC_TASK_SEMAPHORE: AsyncTaskSemaphore =
         AsyncTaskSemaphore::new(MAX_OUTSTANDING_TASK);
     static ref RUNTIME: Runtime = tokio::runtime::Builder::new_multi_thread()
-        .thread_name("solQuicClientRt")
+        .thread_name_fn(|| {
+            static ATOMIC_ID: AtomicU64 = AtomicU64::new(0);
+            let id = ATOMIC_ID.fetch_add(1, Ordering::Relaxed);
+            format!("solQuicCltRt{id:02}")
+        })
         .enable_all()
         .build()
         .unwrap();

@@ -36,7 +36,7 @@ use {
         collections::{HashMap, HashSet},
         net::{SocketAddr, UdpSocket},
         sync::{
-            atomic::{AtomicBool, Ordering},
+            atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, Mutex, RwLock,
         },
         thread::{self, Builder, JoinHandle},
@@ -327,8 +327,10 @@ impl BroadcastStage {
                     return res;
                 }
             };
+            static ATOMIC_ID: AtomicU64 = AtomicU64::new(0);
+            let id = ATOMIC_ID.fetch_add(1, Ordering::Relaxed);
             Builder::new()
-                .name("solBroadcastTx".to_string())
+                .name(format!("solBrdcstTx{id:02}"))
                 .spawn(run_transmit)
                 .unwrap()
         }));
@@ -344,7 +346,10 @@ impl BroadcastStage {
                     return res;
                 }
             };
+            static ATOMIC_ID: AtomicU64 = AtomicU64::new(0);
+            let id = ATOMIC_ID.fetch_add(1, Ordering::Relaxed);
             Builder::new()
+                .name(format!("solBrdcstRec{id:02}"))
                 .name("solBroadcastRec".to_string())
                 .spawn(run_record)
                 .unwrap()
