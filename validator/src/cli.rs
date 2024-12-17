@@ -1,4 +1,5 @@
 use {
+    crate::commands,
     clap::{
         crate_description, crate_name, App, AppSettings, Arg, ArgGroup, ArgMatches, SubCommand,
     },
@@ -1921,53 +1922,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                      validator instance",
                 ),
         )
-        .subcommand(
-            SubCommand::with_name("wait-for-restart-window")
-                .about("Monitor the validator for a good time to restart")
-                .arg(
-                    Arg::with_name("min_idle_time")
-                        .long("min-idle-time")
-                        .takes_value(true)
-                        .validator(is_parsable::<usize>)
-                        .value_name("MINUTES")
-                        .default_value(&default_args.wait_for_restart_window_min_idle_time)
-                        .help(
-                            "Minimum time that the validator should not be leader before \
-                             restarting",
-                        ),
-                )
-                .arg(
-                    Arg::with_name("identity")
-                        .long("identity")
-                        .value_name("ADDRESS")
-                        .takes_value(true)
-                        .validator(is_pubkey_or_keypair)
-                        .help("Validator identity to monitor [default: your validator]"),
-                )
-                .arg(
-                    Arg::with_name("max_delinquent_stake")
-                        .long("max-delinquent-stake")
-                        .takes_value(true)
-                        .validator(is_valid_percentage)
-                        .default_value(&default_args.wait_for_restart_window_max_delinquent_stake)
-                        .value_name("PERCENT")
-                        .help("The maximum delinquent stake % permitted for a restart"),
-                )
-                .arg(
-                    Arg::with_name("skip_new_snapshot_check")
-                        .long("skip-new-snapshot-check")
-                        .help("Skip check for a new snapshot"),
-                )
-                .arg(
-                    Arg::with_name("skip_health_check")
-                        .long("skip-health-check")
-                        .help("Skip health check"),
-                )
-                .after_help(
-                    "Note: If this command exits with a non-zero status then this not a good time \
-                     for a restart",
-                ),
-        )
+        .subcommand(commands::wait_for_restart_window::command(default_args))
         .subcommand(
             SubCommand::with_name("set-public-address")
                 .about("Specify addresses to advertise in gossip")
