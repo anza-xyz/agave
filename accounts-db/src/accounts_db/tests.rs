@@ -8167,14 +8167,19 @@ fn test_clean_old_storages_with_reclaims_rooted() {
             slot,
             &[(&pubkey, &account), (&Pubkey::new_unique(), &account)],
         );
-        accounts_db.calculate_accounts_delta_hash(slot);
         accounts_db.add_root_and_flush_write_cache(slot);
+        // ensure this slot is *not* in the dirty_stores or uncleaned_pubkeys, because we want to
+        // test cleaning *old* storages, i.e. when they aren't explicitly marked for cleaning
+        assert!(!accounts_db.dirty_stores.contains_key(&slot));
+        assert!(!accounts_db.uncleaned_pubkeys.contains_key(&slot));
     }
 
-    // for this test, `new_slot` must not be in the uncleaned_roots list
-    accounts_db.accounts_index.remove_uncleaned_root(new_slot);
-    assert!(accounts_db.accounts_index.is_uncleaned_root(old_slot));
-    assert!(!accounts_db.accounts_index.is_uncleaned_root(new_slot));
+    // add `old_slot` to the dirty stores list to mimic it being picked up as old
+    let old_storage = accounts_db
+        .storage
+        .get_slot_storage_entry_shrinking_in_progress_ok(old_slot)
+        .unwrap();
+    accounts_db.dirty_stores.insert(old_slot, old_storage);
 
     // ensure the slot list for `pubkey` has both the old and new slots
     let slot_list = accounts_db
@@ -8222,13 +8227,14 @@ fn test_clean_old_storages_with_reclaims_unrooted() {
             &[(&pubkey, &account), (&Pubkey::new_unique(), &account)],
         );
         accounts_db.calculate_accounts_delta_hash(slot);
+        // ensure this slot is in uncleaned_pubkeys (but not dirty_stores) so it'll be cleaned
+        assert!(!accounts_db.dirty_stores.contains_key(&slot));
+        assert!(accounts_db.uncleaned_pubkeys.contains_key(&slot));
     }
-    // do not root `new_slot`!
-    accounts_db.add_root_and_flush_write_cache(old_slot);
 
-    // for this test, `new_slot` must not be a root
-    assert!(accounts_db.accounts_index.is_uncleaned_root(old_slot));
-    assert!(!accounts_db.accounts_index.is_uncleaned_root(new_slot));
+    // only `old_slot` should be rooted, not `new_slot`
+    accounts_db.add_root_and_flush_write_cache(old_slot);
+    assert!(accounts_db.accounts_index.is_alive_root(old_slot));
     assert!(!accounts_db.accounts_index.is_alive_root(new_slot));
 
     // ensure the slot list for `pubkey` has both the old and new slots

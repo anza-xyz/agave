@@ -96,6 +96,9 @@ name = "crds_gossip_pull"
 [[bench]]
 name = "crds_shards"
 
+[[bench]]
+name = "weighted_shuffle"
+
 [[bin]]
 name = "solana-gossip"
 path = "src/main.rs"
