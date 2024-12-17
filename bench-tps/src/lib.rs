@@ -6,3 +6,4 @@ mod log_transaction_service;
 mod perf_utils;
 mod rpc_with_retry_utils;
 pub mod send_batch;
+mod tx_latency;
