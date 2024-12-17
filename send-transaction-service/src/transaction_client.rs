@@ -1,11 +1,11 @@
 use {
     crate::{send_transaction_service_stats::SendTransactionServiceStats, tpu_info::TpuInfo},
     async_trait::async_trait,
-    log::warn,
+    log::{debug, error, warn},
     solana_client::connection_cache::{ConnectionCache, Protocol},
     solana_connection_cache::client_connection::ClientConnection as TpuConnection,
     solana_measure::measure::Measure,
-    solana_sdk::signature::Keypair,
+    solana_sdk::{quic::NotifyKeyUpdate, signature::Keypair},
     solana_tpu_client_next::{
         connection_workers_scheduler::{
             ConnectionWorkersSchedulerConfig, Fanout, TransactionStatsAndReceiver,
@@ -39,6 +39,8 @@ pub trait TransactionClient {
     );
 
     fn protocol(&self) -> Protocol;
+
+    fn exit(&self);
 }
 
 pub struct ConnectionCacheClient<T: TpuInfoWithSendStatic> {
@@ -150,6 +152,17 @@ where
     fn protocol(&self) -> Protocol {
         self.connection_cache.protocol()
     }
+
+    fn exit(&self) {}
+}
+
+impl<T> NotifyKeyUpdate for ConnectionCacheClient<T>
+where
+    T: TpuInfoWithSendStatic,
+{
+    fn update_key(&self, identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
+        self.connection_cache.update_key(identity)
+    }
 }
 
 #[derive(Clone)]
@@ -192,12 +205,6 @@ type TpuClientJoinHandle =
 /// * Update the validator identity keypair and propagate the changes to the
 ///   scheduler. Most of the complexity of this structure arises from this
 ///   functionality.
-///
-#[allow(
-    dead_code,
-    reason = "Unused fields will be utilized soon,\
-    added in advance to avoid larger changes in the code."
-)]
 #[derive(Clone)]
 pub struct TpuClientNextClient<T>
 where
@@ -285,6 +292,61 @@ where
         lock.1.cancel();
         Ok(())
     }
+
+    async fn do_update_key(&self, identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
+        let runtime_handle = self.runtime_handle.clone();
+        let config = Self::create_config(
+            Some(identity.insecure_clone()),
+            self.leader_forward_count as usize,
+        );
+        let leader_updater = self.leader_updater.clone();
+        let handle = self.join_and_cancel.clone();
+
+        let join_handle = {
+            let Ok(mut lock) = handle.lock() else {
+                return Err("TpuClientNext task panicked.".into());
+            };
+            let (handle, token) = std::mem::take(&mut *lock);
+            token.cancel();
+            handle
+        };
+
+        if let Some(join_handle) = join_handle {
+            let Ok(result) = join_handle.await else {
+                return Err("TpuClientNext task panicked.".into());
+            };
+
+            match result {
+                Ok((_stats, receiver)) => {
+                    let cancel = CancellationToken::new();
+                    let join_handle = runtime_handle.spawn(ConnectionWorkersScheduler::run(
+                        config,
+                        Box::new(leader_updater),
+                        receiver,
+                        cancel.clone(),
+                    ));
+
+                    let Ok(mut lock) = handle.lock() else {
+                        return Err("TpuClientNext task panicked.".into());
+                    };
+                    *lock = (Some(join_handle), cancel);
+                }
+                Err(error) => {
+                    return Err(Box::new(error));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<T> NotifyKeyUpdate for TpuClientNextClient<T>
+where
+    T: TpuInfoWithSendStatic + Clone,
+{
+    fn update_key(&self, identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
+        self.runtime_handle.block_on(self.do_update_key(identity))
+    }
 }
 
 impl<T> TransactionClient for TpuClientNextClient<T>
@@ -314,6 +376,26 @@ where
 
     fn protocol(&self) -> Protocol {
         Protocol::QUIC
+    }
+
+    fn exit(&self) {
+        let Ok(mut lock) = self.join_and_cancel.lock() else {
+            error!("Failed to stop scheduler: TpuClientNext task panicked.");
+            return;
+        };
+        let (handle, token) = std::mem::take(&mut *lock);
+        token.cancel();
+        if let Some(handle) = handle {
+            match self.runtime_handle.block_on(handle) {
+                Ok(result) => match result {
+                    Ok(stats) => {
+                        debug!("tpu-client-next statistics over all the connections: {stats:?}");
+                    }
+                    Err(error) => error!("tpu-client-next exits with error {error}."),
+                },
+                Err(error) => error!("Failed to join task {error}."),
+            }
+        }
     }
 }
 

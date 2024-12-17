@@ -1350,7 +1350,7 @@ mod tests {
     }
 
     impl TestValidatorWithAdminRpc {
-        fn new() -> Self {
+        fn new(use_tpu_client_next: bool) -> Self {
             let leader_keypair = Keypair::new();
             let leader_node = Node::new_localhost_with_pubkey(&leader_keypair.pubkey());
 
@@ -1369,6 +1369,7 @@ mod tests {
                     validator_node.info.rpc().unwrap(),
                     validator_node.info.rpc_pubsub().unwrap(),
                 )),
+                use_tpu_client_next,
                 ..ValidatorConfig::default_for_test()
             };
             let start_progress = Arc::new(RwLock::new(ValidatorStartProgress::default()));
@@ -1433,9 +1434,8 @@ mod tests {
     }
 
     // This test checks that `set_identity` call works with working validator and client.
-    #[test]
-    fn test_set_identity_with_validator() {
-        let test_validator = TestValidatorWithAdminRpc::new();
+    fn set_identity_with_validator(use_tpu_client_next: bool) {
+        let test_validator = TestValidatorWithAdminRpc::new(use_tpu_client_next);
         let expected_validator_id = Keypair::new();
         let validator_id_bytes = format!("{:?}", expected_validator_id.to_bytes());
 
@@ -1477,5 +1477,15 @@ mod tests {
             serde_json::from_str(&exit_response.expect("actual response"))
                 .expect("actual response deserialization");
         assert_eq!(actual_parsed_response, expected_parsed_response);
+    }
+
+    #[test]
+    fn test_set_identity_with_validator_connection_cache() {
+        set_identity_with_validator(false);
+    }
+
+    #[test]
+    fn test_set_identity_with_validator_tpu_client_next() {
+        set_identity_with_validator(true);
     }
 }
