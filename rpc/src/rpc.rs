@@ -22,7 +22,7 @@ use {
     },
     solana_accounts_db::{
         accounts::AccountAddressFilter,
-        accounts_index::{AccountIndex, AccountSecondaryIndexes, IndexKey, ScanConfig},
+        accounts_index::{AccountIndex, AccountSecondaryIndexes, IndexKey, ScanConfig, ScanResult},
     },
     solana_client::connection_cache::Protocol,
     solana_entry::entry::Entry,
@@ -59,7 +59,7 @@ use {
         bank_forks::BankForks,
         commitment::{BlockCommitmentArray, BlockCommitmentCache},
         installed_scheduler_pool::BankWithScheduler,
-        non_circulating_supply::calculate_non_circulating_supply,
+        non_circulating_supply::{calculate_non_circulating_supply, NonCirculatingSupply},
         prioritization_fee_cache::PrioritizationFeeCache,
         snapshot_config::SnapshotConfig,
         snapshot_utils,
@@ -280,6 +280,17 @@ impl JsonRpcRequestProcessor {
             }
         }
         Ok(bank)
+    }
+
+    async fn calculate_non_circulating_supply(
+        &self,
+        bank: &Arc<Bank>,
+    ) -> ScanResult<NonCirculatingSupply> {
+        let bank = Arc::clone(bank);
+        self.runtime
+            .spawn_blocking(move || calculate_non_circulating_supply(&bank))
+            .await
+            .expect("Failed to spawn blocking task")
     }
 
     #[allow(deprecated)]
@@ -989,7 +1000,7 @@ impl JsonRpcRequestProcessor {
         largest_accounts_cache.set_largest_accounts(filter, slot, accounts)
     }
 
-    fn get_largest_accounts(
+    async fn get_largest_accounts(
         &self,
         config: Option<RpcLargestAccountsConfig>,
     ) -> RpcCustomResult<RpcResponse<Vec<RpcAccountBalance>>> {
@@ -1004,11 +1015,11 @@ impl JsonRpcRequestProcessor {
             })
         } else {
             let (addresses, address_filter) = if let Some(filter) = config.clone().filter {
-                let non_circulating_supply =
-                    calculate_non_circulating_supply(&bank).map_err(|e| {
-                        RpcCustomError::ScanError {
-                            message: e.to_string(),
-                        }
+                let non_circulating_supply = self
+                    .calculate_non_circulating_supply(&bank)
+                    .await
+                    .map_err(|e| RpcCustomError::ScanError {
+                        message: e.to_string(),
                     })?;
                 let addresses = non_circulating_supply.accounts.into_iter().collect();
                 let address_filter = match filter {
@@ -1047,18 +1058,12 @@ impl JsonRpcRequestProcessor {
     ) -> RpcCustomResult<RpcResponse<RpcSupply>> {
         let config = config.unwrap_or_default();
         let bank = self.bank(config.commitment);
-        let non_circulating_supply = self
-            .runtime
-            .spawn_blocking({
-                let bank = bank.clone();
-                move || {
-                    calculate_non_circulating_supply(&bank).map_err(|e| RpcCustomError::ScanError {
-                        message: e.to_string(),
-                    })
-                }
-            })
-            .await
-            .expect("Failed to spawn blocking task")?;
+        let non_circulating_supply =
+            self.calculate_non_circulating_supply(&bank)
+                .await
+                .map_err(|e| RpcCustomError::ScanError {
+                    message: e.to_string(),
+                })?;
         let total_supply = bank.capitalization();
         let non_circulating_accounts = if config.exclude_non_circulating_accounts_list {
             vec![]
@@ -3309,7 +3314,7 @@ pub mod rpc_accounts_scan {
             &self,
             meta: Self::Metadata,
             config: Option<RpcLargestAccountsConfig>,
-        ) -> Result<RpcResponse<Vec<RpcAccountBalance>>>;
+        ) -> BoxFuture<Result<RpcResponse<Vec<RpcAccountBalance>>>>;
 
         #[rpc(meta, name = "getSupply")]
         fn get_supply(
@@ -3393,9 +3398,9 @@ pub mod rpc_accounts_scan {
             &self,
             meta: Self::Metadata,
             config: Option<RpcLargestAccountsConfig>,
-        ) -> Result<RpcResponse<Vec<RpcAccountBalance>>> {
+        ) -> BoxFuture<Result<RpcResponse<Vec<RpcAccountBalance>>>> {
             debug!("get_largest_accounts rpc request received");
-            Ok(meta.get_largest_accounts(config)?)
+            async move { Ok(meta.get_largest_accounts(config).await?) }.boxed()
         }
 
         fn get_supply(
