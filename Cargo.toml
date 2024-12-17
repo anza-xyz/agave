@@ -287,7 +287,7 @@ cfg_eval = "0.1.2"
 chrono = { version = "0.4.39", default-features = false }
 chrono-humanize = "0.2.3"
 clap = "2.33.1"
-console = "0.15.8"
+console = "0.15.10"
 console_error_panic_hook = "0.1.7"
 console_log = "0.2.2"
 const_format = "0.2.34"
