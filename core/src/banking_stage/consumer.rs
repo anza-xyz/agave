@@ -866,7 +866,7 @@ mod tests {
         solana_perf::packet::Packet,
         solana_poh::poh_recorder::{PohRecorder, Record, WorkingBankEntry},
         solana_rpc::transaction_status_service::TransactionStatusService,
-        solana_runtime::{bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache},
+        solana_runtime::bank_forks::BankForks,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
             account::AccountSharedData,
@@ -939,11 +939,7 @@ mod tests {
         let poh_simulator = simulate_poh(record_receiver, &poh_recorder);
 
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-        let committer = Committer::new(
-            None,
-            replay_vote_sender,
-            Arc::new(PrioritizationFeeCache::new(0u64)),
-        );
+        let committer = Committer::new(None, replay_vote_sender, None);
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
         let process_transactions_summary =
             consumer.process_transactions(&bank, &Instant::now(), &transactions);
@@ -1114,11 +1110,7 @@ mod tests {
                 .unwrap()
                 .set_bank_for_test(bank.clone());
             let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-            let committer = Committer::new(
-                None,
-                replay_vote_sender,
-                Arc::new(PrioritizationFeeCache::new(0u64)),
-            );
+            let committer = Committer::new(None, replay_vote_sender, None);
             let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
             let process_transactions_batch_output =
@@ -1304,11 +1296,7 @@ mod tests {
             }
 
             let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-            let committer = Committer::new(
-                None,
-                replay_vote_sender,
-                Arc::new(PrioritizationFeeCache::new(0u64)),
-            );
+            let committer = Committer::new(None, replay_vote_sender, None);
             let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
             let process_transactions_batch_output =
@@ -1408,11 +1396,7 @@ mod tests {
                 .unwrap()
                 .set_bank_for_test(bank.clone());
             let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-            let committer = Committer::new(
-                None,
-                replay_vote_sender,
-                Arc::new(PrioritizationFeeCache::new(0u64)),
-            );
+            let committer = Committer::new(None, replay_vote_sender, None);
             let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
             let process_transactions_batch_output =
@@ -1487,11 +1471,7 @@ mod tests {
                 .unwrap()
                 .set_bank_for_test(bank.clone());
             let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-            let committer = Committer::new(
-                None,
-                replay_vote_sender,
-                Arc::new(PrioritizationFeeCache::new(0u64)),
-            );
+            let committer = Committer::new(None, replay_vote_sender, None);
             let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
             let get_block_cost = || bank.read_cost_tracker().unwrap().block_cost();
@@ -1650,11 +1630,7 @@ mod tests {
             let poh_simulator = simulate_poh(record_receiver, &poh_recorder);
 
             let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-            let committer = Committer::new(
-                None,
-                replay_vote_sender,
-                Arc::new(PrioritizationFeeCache::new(0u64)),
-            );
+            let committer = Committer::new(None, replay_vote_sender, None);
             let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
             let process_transactions_batch_output =
@@ -1855,11 +1831,7 @@ mod tests {
             let poh_simulator = simulate_poh(record_receiver, &Arc::new(RwLock::new(poh_recorder)));
 
             let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-            let committer = Committer::new(
-                None,
-                replay_vote_sender,
-                Arc::new(PrioritizationFeeCache::new(0u64)),
-            );
+            let committer = Committer::new(None, replay_vote_sender, None);
             let consumer = Consumer::new(committer, recorder.clone(), QosService::new(1), None);
 
             let process_transactions_summary =
@@ -1987,7 +1959,7 @@ mod tests {
                     sender: transaction_status_sender,
                 }),
                 replay_vote_sender,
-                Arc::new(PrioritizationFeeCache::new(0u64)),
+                None,
             );
             let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
@@ -2132,7 +2104,7 @@ mod tests {
                     sender: transaction_status_sender,
                 }),
                 replay_vote_sender,
-                Arc::new(PrioritizationFeeCache::new(0u64)),
+                None,
             );
             let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
@@ -2189,11 +2161,7 @@ mod tests {
                 );
 
             let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-            let committer = Committer::new(
-                None,
-                replay_vote_sender,
-                Arc::new(PrioritizationFeeCache::new(0u64)),
-            );
+            let committer = Committer::new(None, replay_vote_sender, None);
             let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
             // When the working bank in poh_recorder is None, no packets should be processed (consume will not be called)
@@ -2274,11 +2242,7 @@ mod tests {
                 );
 
             let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-            let committer = Committer::new(
-                None,
-                replay_vote_sender,
-                Arc::new(PrioritizationFeeCache::new(0u64)),
-            );
+            let committer = Committer::new(None, replay_vote_sender, None);
             let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
             // When the working bank in poh_recorder is None, no packets should be processed
@@ -2326,11 +2290,7 @@ mod tests {
                 );
 
             let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-            let committer = Committer::new(
-                None,
-                replay_vote_sender,
-                Arc::new(PrioritizationFeeCache::new(0u64)),
-            );
+            let committer = Committer::new(None, replay_vote_sender, None);
             let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
             // When the working bank in poh_recorder is None, no packets should be processed (consume will not be called)
@@ -2458,11 +2418,7 @@ mod tests {
                 );
 
             let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-            let committer = Committer::new(
-                None,
-                replay_vote_sender,
-                Arc::new(PrioritizationFeeCache::new(0u64)),
-            );
+            let committer = Committer::new(None, replay_vote_sender, None);
             let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
             // When the working bank in poh_recorder is None, no packets should be processed (consume will not be called)

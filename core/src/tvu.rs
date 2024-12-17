@@ -151,7 +151,7 @@ impl Tvu {
         accounts_background_request_sender: AbsRequestSender,
         log_messages_bytes_limit: Option<usize>,
         connection_cache: Option<&Arc<ConnectionCache>>,
-        prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
+        prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         banking_tracer: Arc<BankingTracer>,
         turbine_quic_endpoint_sender: AsyncSender<(SocketAddr, Bytes)>,
         turbine_quic_endpoint_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
@@ -323,7 +323,7 @@ impl Tvu {
             vote_tracker,
             cluster_slots,
             log_messages_bytes_limit,
-            prioritization_fee_cache: prioritization_fee_cache.clone(),
+            prioritization_fee_cache,
             banking_tracer,
         };
 
@@ -505,7 +505,6 @@ pub mod tests {
         let (_, gossip_confirmed_slots_receiver) = unbounded();
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
         let max_complete_rewards_slot = Arc::new(AtomicU64::default());
-        let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let outstanding_repair_requests = Arc::<RwLock<OutstandingShredRepairs>>::default();
         let cluster_slots = Arc::new(ClusterSlots::default());
         let wen_restart_repair_slots = if enable_wen_restart {
@@ -574,7 +573,7 @@ pub mod tests {
             AbsRequestSender::default(),
             None,
             Some(&Arc::new(ConnectionCache::new("connection_cache_test"))),
-            &ignored_prioritization_fee_cache,
+            None,
             BankingTracer::new_disabled(),
             turbine_quic_endpoint_sender,
             turbine_quic_endpoint_receiver,
