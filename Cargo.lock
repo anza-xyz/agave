@@ -274,6 +274,7 @@ dependencies = [
  "affinity",
  "anyhow",
  "axum 0.7.9",
+ "env_logger",
  "log",
  "num_cpus",
  "rayon",
@@ -494,9 +495,9 @@ dependencies = [
 
 [[package]]
 name = "anstyle"
-version = "1.0.1"
+version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a30da5c5f2d5e72842e00bcb57657162cdabef0931f40e2deb9b4140440cecd"
+checksum = "55cc3b69f167a1ef2e161439aa98aed94e6028e5f9a59be9a6ffb47aef1651f9"
 
 [[package]]
 name = "anyhow"
