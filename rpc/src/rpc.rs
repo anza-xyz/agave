@@ -1276,30 +1276,39 @@ impl JsonRpcRequestProcessor {
                     .await
                     .expect("Failed to spawn blocking task");
                 self.check_blockstore_root(&result, slot)?;
-                let encode_block = |confirmed_block: ConfirmedBlock| -> Result<UiConfirmedBlock> {
-                    let mut encoded_block = confirmed_block
-                        .encode_with_options(encoding, encoding_options)
-                        .map_err(RpcCustomError::from)?;
+                let encode_block = |confirmed_block: ConfirmedBlock| async move {
+                    let mut encoded_block = self
+                        .runtime
+                        .spawn_blocking(move || {
+                            confirmed_block
+                                .encode_with_options(encoding, encoding_options)
+                                .map_err(RpcCustomError::from)
+                        })
+                        .await
+                        .expect("Failed to spawn blocking task")?;
                     if slot == 0 {
                         encoded_block.block_time = Some(self.genesis_creation_time());
                         encoded_block.block_height = Some(0);
                     }
-                    Ok(encoded_block)
+                    Ok::<UiConfirmedBlock, Error>(encoded_block)
                 };
                 if result.is_err() {
                     if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
                         let bigtable_result =
                             bigtable_ledger_storage.get_confirmed_block(slot).await;
                         self.check_bigtable_result(&bigtable_result)?;
-                        return bigtable_result.ok().map(encode_block).transpose();
+                        let encoded_block_future: OptionFuture<_> =
+                            bigtable_result.ok().map(encode_block).into();
+                        return encoded_block_future.await.transpose();
                     }
                 }
                 self.check_slot_cleaned_up(&result, slot).await?;
-                return result
+                let encoded_block_future: OptionFuture<_> = result
                     .ok()
                     .map(ConfirmedBlock::from)
                     .map(encode_block)
-                    .transpose();
+                    .into();
+                return encoded_block_future.await.transpose();
             } else if commitment.is_confirmed() {
                 // Check if block is confirmed
                 let confirmed_bank = self.bank(Some(CommitmentConfig::confirmed()));
@@ -1313,10 +1322,10 @@ impl JsonRpcRequestProcessor {
                         })
                         .await
                         .expect("Failed to spawn blocking task");
-                    return result
+                    let encoded_block_future: OptionFuture<_> = result
                         .ok()
                         .map(ConfirmedBlock::from)
-                        .map(|mut confirmed_block| -> Result<UiConfirmedBlock> {
+                        .map(|mut confirmed_block| async move {
                             if confirmed_block.block_time.is_none()
                                 || confirmed_block.block_height.is_none()
                             {
@@ -1331,12 +1340,20 @@ impl JsonRpcRequestProcessor {
                                     }
                                 }
                             }
+                            let encoded_block = self
+                                .runtime
+                                .spawn_blocking(move || {
+                                    confirmed_block
+                                        .encode_with_options(encoding, encoding_options)
+                                        .map_err(RpcCustomError::from)
+                                })
+                                .await
+                                .expect("Failed to spawn blocking task")?;
 
-                            Ok(confirmed_block
-                                .encode_with_options(encoding, encoding_options)
-                                .map_err(RpcCustomError::from)?)
+                            Ok(encoded_block)
                         })
-                        .transpose();
+                        .into();
+                    return encoded_block_future.await.transpose();
                 }
             }
         } else {
