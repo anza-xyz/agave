@@ -31,7 +31,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 solana-loader-v4-program = { workspace = true }
 solana-log-collector = { workspace = true }
 solana-measure = { workspace = true }
-solana-program-runtime = { workspace = true }
+solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-sdk = { workspace = true }
 solana-svm-rent-collector = { workspace = true }
 solana-svm-transaction = { workspace = true }
