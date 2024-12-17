@@ -42,7 +42,6 @@ use {
     },
     solana_sdk::{pubkey::Pubkey, timing::AtomicInterval},
     solana_unified_scheduler_logic::SchedulingMode,
-    solana_unified_scheduler_pool::{BankingStageAdapter, DefaultSchedulerPool},
     std::{
         cmp, env,
         ops::Deref,
@@ -70,7 +69,7 @@ pub mod unprocessed_packet_batches;
 pub mod unprocessed_transaction_storage;
 
 mod consume_worker;
-mod decision_maker;
+pub(crate) mod decision_maker;
 mod forward_packet_batches_by_accounts;
 mod immutable_deserialized_packet;
 mod latest_unprocessed_votes;
@@ -82,6 +81,7 @@ mod packet_receiver;
 mod read_write_account_set;
 mod scheduler_messages;
 mod transaction_scheduler;
+pub mod unified_scheduler;
 
 // Fixed thread size seems to be fastest on GCP setup
 pub const NUM_THREADS: u32 = 6;
@@ -365,7 +365,6 @@ impl BankingStage {
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
         enable_forwarding: bool,
-        unified_scheduler_pool: Option<Arc<DefaultSchedulerPool>>,
     ) -> Self {
         Self::new_num_threads(
             block_production_method,
@@ -382,7 +381,6 @@ impl BankingStage {
             bank_forks,
             prioritization_fee_cache,
             enable_forwarding,
-            unified_scheduler_pool,
         )
     }
 
@@ -402,12 +400,9 @@ impl BankingStage {
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
         enable_forwarding: bool,
-        unified_scheduler_pool: Option<Arc<DefaultSchedulerPool>>,
     ) -> Self {
-        use BlockProductionMethod::*;
-
         match block_production_method {
-            CentralScheduler => Self::new_central_scheduler(
+            BlockProductionMethod::CentralScheduler => Self::new_central_scheduler(
                 cluster_info,
                 poh_recorder,
                 non_vote_receiver,
@@ -422,16 +417,9 @@ impl BankingStage {
                 prioritization_fee_cache,
                 enable_forwarding,
             ),
-            UnifiedScheduler => Self::new_unified_scheduler(
-                cluster_info,
-                poh_recorder,
-                non_vote_receiver,
-                tpu_vote_receiver,
-                gossip_vote_receiver,
-                num_threads,
-                bank_forks,
-                unified_scheduler_pool.unwrap(),
-            ),
+            BlockProductionMethod::UnifiedScheduler => Self {
+                bank_thread_hdls: vec![],
+            },
         }
     }
 
@@ -577,69 +565,6 @@ impl BankingStage {
         });
 
         Self { bank_thread_hdls }
-    }
-
-    pub fn new_unified_scheduler(
-        cluster_info: &impl LikeClusterInfo,
-        poh_recorder: &Arc<RwLock<PohRecorder>>,
-        non_vote_receiver: BankingPacketReceiver,
-        tpu_vote_receiver: BankingPacketReceiver,
-        gossip_vote_receiver: BankingPacketReceiver,
-        _num_threads: u32,
-        bank_forks: Arc<RwLock<BankForks>>,
-        unified_scheduler_pool: Arc<DefaultSchedulerPool>,
-    ) -> Self {
-        assert!(non_vote_receiver.same_channel(&tpu_vote_receiver));
-        assert!(non_vote_receiver.same_channel(&gossip_vote_receiver));
-        drop((tpu_vote_receiver, gossip_vote_receiver));
-
-        let unified_receiver = non_vote_receiver;
-        let decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
-        let banking_stage_monitor = Box::new(decision_maker.clone());
-
-        unified_scheduler_pool.register_banking_stage(
-            unified_receiver,
-            1, /* todo */
-            banking_stage_monitor,
-            Box::new(move |adapter: Arc<BankingStageAdapter>| {
-                let decision_maker = decision_maker.clone();
-                let bank_forks = bank_forks.clone();
-
-                Box::new(move |batches, task_submitter| {
-                    let decision = decision_maker.make_consume_or_forward_decision();
-                    if matches!(decision, BufferedPacketsDecision::Forward) {
-                        return;
-                    }
-                    let bank = bank_forks.read().unwrap().root_bank();
-                    for batch in batches.iter() {
-                        // over-provision nevertheless some of packets could be invalid.
-                        let task_id_base = adapter.generate_task_ids(batch.len());
-                        let packets = PacketDeserializer::deserialize_packets_with_indexes(batch);
-
-                        for (packet, packet_index) in packets {
-                            let Some((transaction, _deactivation_slot)) = packet
-                                .build_sanitized_transaction(
-                                    bank.vote_only_bank(),
-                                    &bank,
-                                    bank.get_reserved_account_keys(),
-                                )
-                            else {
-                                continue;
-                            };
-
-                            let index = task_id_base + packet_index;
-
-                            let task = adapter.create_new_task(transaction, index);
-                            task_submitter(task);
-                        }
-                    }
-                })
-            }),
-        );
-
-        Self {
-            bank_thread_hdls: vec![],
-        }
     }
 
     fn spawn_thread_local_multi_iterator_thread<T: LikeClusterInfo>(
@@ -919,7 +844,6 @@ mod tests {
                 bank_forks,
                 &Arc::new(PrioritizationFeeCache::new(0u64)),
                 false,
-                None,
             );
             drop(non_vote_sender);
             drop(tpu_vote_sender);
@@ -980,7 +904,6 @@ mod tests {
                 bank_forks,
                 &Arc::new(PrioritizationFeeCache::new(0u64)),
                 false,
-                None,
             );
             trace!("sending bank");
             drop(non_vote_sender);
@@ -1065,7 +988,6 @@ mod tests {
                 bank_forks.clone(), // keep a local-copy of bank-forks so worker threads do not lose weak access to bank-forks
                 &Arc::new(PrioritizationFeeCache::new(0u64)),
                 false,
-                None,
             );
 
             // fund another account so we can send 2 good transactions in a single batch.
@@ -1433,7 +1355,6 @@ mod tests {
                 bank_forks,
                 &Arc::new(PrioritizationFeeCache::new(0u64)),
                 false,
-                None,
             );
 
             let keypairs = (0..100).map(|_| Keypair::new()).collect_vec();

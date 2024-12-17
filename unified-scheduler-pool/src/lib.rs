@@ -47,7 +47,7 @@ use {
         mem,
         sync::{
             atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed},
-            Arc, Condvar, Mutex, MutexGuard, OnceLock, Weak,
+            Arc, Mutex, MutexGuard, OnceLock, Weak,
         },
         thread::{self, sleep, JoinHandle},
         time::{Duration, Instant},
@@ -109,7 +109,6 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     supported_scheduling_mode: SupportedSchedulingMode,
     scheduler_inners: Mutex<Vec<(S::Inner, Instant)>>,
     block_production_scheduler_inner: Mutex<(Option<SchedulerId>, Option<S::Inner>)>,
-    block_production_scheduler_condvar: Condvar,
     block_production_scheduler_respawner: Mutex<Option<BlockProductionSchedulerRespawner>>,
     trashed_scheduler_inners: Mutex<Vec<S::Inner>>,
     timeout_listeners: Mutex<Vec<(TimeoutListener, Instant)>>,
@@ -169,7 +168,7 @@ trait_set! {
 
 clone_trait_object!(BatchConverter);
 
-type BatchConverterCreator =
+pub type BatchConverterCreator =
     Box<dyn (Fn(Arc<BankingStageAdapter>) -> Box<dyn BatchConverter>) + Send>;
 
 #[derive(derive_more::Debug)]
@@ -254,7 +253,6 @@ where
             supported_scheduling_mode,
             scheduler_inners: Mutex::default(),
             block_production_scheduler_inner: Mutex::default(),
-            block_production_scheduler_condvar: Condvar::default(),
             block_production_scheduler_respawner: Mutex::default(),
             trashed_scheduler_inners: Mutex::default(),
             timeout_listeners: Mutex::default(),
@@ -504,17 +502,10 @@ where
                 }
             }
             BlockProduction => {
-                let id_and_inner = self
+                let (id, inner) = &mut *self
                     .block_production_scheduler_inner
                     .lock()
                     .expect("not poisoned");
-                // Wait with condvar until scheduler is spawned elsewhere, which is guaranteed to
-                // be done eventually.
-                let (id, inner) = &mut *self
-                    .block_production_scheduler_condvar
-                    .wait_while(id_and_inner, |id_and_inner| id_and_inner.0.is_none())
-                    .unwrap();
-
                 let Some(inner) = inner.take() else {
                     panic!("already taken: id: {id:?} slot: {:?}", context.slot());
                 };
@@ -614,7 +605,6 @@ where
         };
         assert!(id_and_inner.0.replace(inner.id()).is_none());
         assert!(id_and_inner.1.replace(inner).is_none());
-        self.block_production_scheduler_condvar.notify_all();
         trace!("spawn block production scheduler: end!");
     }
 

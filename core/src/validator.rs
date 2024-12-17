@@ -922,12 +922,51 @@ impl Validator {
         };
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
-        let unified_scheduler_pool = match (
+        let (banking_tracer, tracer_thread) =
+            BankingTracer::new((config.banking_trace_dir_byte_limit > 0).then_some((
+                &blockstore.banking_trace_path(),
+                exit.clone(),
+                config.banking_trace_dir_byte_limit,
+            )))?;
+        if banking_tracer.is_enabled() {
+            info!(
+                "Enabled banking trace (dir_byte_limit: {})",
+                config.banking_trace_dir_byte_limit
+            );
+        } else {
+            info!("Disabled banking trace");
+        }
+
+        let banking_tracer_channels = match (
             &config.block_verification_method,
             &config.block_production_method,
         ) {
             methods @ (BlockVerificationMethod::UnifiedScheduler, _)
             | methods @ (_, BlockProductionMethod::UnifiedScheduler) => {
+                let banking_tracer_channels = banking_tracer.create_channels(true);
+                use crate::{
+                    banking_stage::{
+                        decision_maker::DecisionMaker, unified_scheduler, BankingStage,
+                    },
+                    banking_trace::Channels,
+                };
+
+                let Channels {
+                    non_vote_sender: _,
+                    non_vote_receiver,
+                    tpu_vote_sender: _,
+                    tpu_vote_receiver,
+                    gossip_vote_sender: _,
+                    gossip_vote_receiver,
+                } = &banking_tracer_channels;
+                let unified_receiver = unified_scheduler::unified_receiver(
+                    non_vote_receiver.clone(),
+                    tpu_vote_receiver.clone(),
+                    gossip_vote_receiver.clone(),
+                );
+                let block_producing_scheduler_handler_threads =
+                    BankingStage::num_threads() as usize;
+
                 let pool = DefaultSchedulerPool::new(
                     supported_scheduling_mode(methods),
                     config.unified_scheduler_handler_threads,
@@ -937,11 +976,23 @@ impl Validator {
                     prioritization_fee_cache.clone(),
                     poh_recorder.read().unwrap().new_recorder(),
                 );
+                let decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
+                let banking_stage_monitor = Box::new(decision_maker.clone());
+                let converter =
+                    unified_scheduler::batch_converter_creator(decision_maker, bank_forks.clone());
+                pool.register_banking_stage(
+                    unified_receiver,
+                    block_producing_scheduler_handler_threads,
+                    banking_stage_monitor,
+                    converter,
+                );
+
                 bank_forks
                     .write()
                     .unwrap()
                     .install_scheduler_pool(pool.clone());
-                Some(pool)
+                // this actually won't be used and but return this for type safety
+                banking_tracer_channels
             }
             _ => {
                 info!("no scheduler pool is installed for block verification/production...");
@@ -951,7 +1002,7 @@ impl Validator {
                          scheduler isn't enabled"
                     );
                 }
-                None
+                banking_tracer.create_channels(false)
             }
         };
 
@@ -1291,21 +1342,6 @@ impl Validator {
         let (gossip_verified_vote_hash_sender, gossip_verified_vote_hash_receiver) = unbounded();
         let (duplicate_confirmed_slot_sender, duplicate_confirmed_slots_receiver) = unbounded();
 
-        let (banking_tracer, tracer_thread) =
-            BankingTracer::new((config.banking_trace_dir_byte_limit > 0).then_some((
-                &blockstore.banking_trace_path(),
-                exit.clone(),
-                config.banking_trace_dir_byte_limit,
-            )))?;
-        if banking_tracer.is_enabled() {
-            info!(
-                "Enabled banking trace (dir_byte_limit: {})",
-                config.banking_trace_dir_byte_limit
-            );
-        } else {
-            info!("Disabled banking trace");
-        }
-
         let entry_notification_sender = entry_notifier_service
             .as_ref()
             .map(|service| service.sender_cloned());
@@ -1547,7 +1583,7 @@ impl Validator {
             config.runtime_config.log_messages_bytes_limit,
             &staked_nodes,
             config.staked_nodes_overrides.clone(),
-            banking_tracer,
+            banking_tracer_channels,
             tracer_thread,
             tpu_enable_udp,
             tpu_max_connections_per_ipaddr_per_minute,
@@ -1555,7 +1591,6 @@ impl Validator {
             config.block_production_method.clone(),
             config.enable_block_production_forwarding,
             config.generator_config.clone(),
-            unified_scheduler_pool,
         );
 
         datapoint_info!(

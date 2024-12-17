@@ -5,7 +5,7 @@ pub use solana_sdk::net::DEFAULT_TPU_COALESCE;
 use {
     crate::{
         banking_stage::BankingStage,
-        banking_trace::{BankingTracer, Channels, TracerThread},
+        banking_trace::{Channels, TracerThread},
         cluster_info_vote_listener::{
             ClusterInfoVoteListener, DuplicateConfirmedSlotsSender, GossipVerifiedVoteHashSender,
             VerifiedVoteSender, VoteTracker,
@@ -44,7 +44,6 @@ use {
         streamer::StakedNodes,
     },
     solana_turbine::broadcast_stage::{BroadcastStage, BroadcastStageType},
-    solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{
         collections::HashMap,
         net::{SocketAddr, UdpSocket},
@@ -113,7 +112,7 @@ impl Tpu {
         log_messages_bytes_limit: Option<usize>,
         staked_nodes: &Arc<RwLock<StakedNodes>>,
         shared_staked_nodes_overrides: Arc<RwLock<HashMap<Pubkey, u64>>>,
-        banking_tracer: Arc<BankingTracer>,
+        banking_tracer_channels: Channels,
         tracer_thread_hdl: TracerThread,
         tpu_enable_udp: bool,
         tpu_max_connections_per_ipaddr_per_minute: u64,
@@ -121,7 +120,6 @@ impl Tpu {
         block_production_method: BlockProductionMethod,
         enable_block_production_forwarding: bool,
         _generator_config: Option<GeneratorConfig>, /* vestigial code for replay invalidator */
-        unified_scheduler_pool: Option<Arc<DefaultSchedulerPool>>,
     ) -> (Self, Vec<Arc<dyn NotifyKeyUpdate + Sync + Send>>) {
         let TpuSockets {
             transactions: transactions_sockets,
@@ -165,7 +163,7 @@ impl Tpu {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = banking_tracer.create_channels_for_scheduler_pool(unified_scheduler_pool.as_ref());
+        } = banking_tracer_channels;
 
         // Streamer for Votes:
         let SpawnServerResult {
@@ -283,7 +281,6 @@ impl Tpu {
             bank_forks.clone(),
             prioritization_fee_cache,
             enable_block_production_forwarding,
-            unified_scheduler_pool,
         );
 
         let (entry_receiver, tpu_entry_notifier) =

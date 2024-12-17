@@ -507,7 +507,6 @@ fn main() {
         bank_forks.clone(),
         &prioritization_fee_cache,
         false,
-        scheduler_pool,
     );
 
     // This bench processes transactions, starting from the very first bank, so special-casing is
