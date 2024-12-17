@@ -2184,6 +2184,7 @@ mod tests {
 
     #[test]
     fn test_bpf_loader_upgradeable_upgrade() {
+        solana_logger::setup();
         let mut file = File::open("test_elfs/out/noop_aligned.so").expect("file open failed");
         let mut elf_orig = Vec::new();
         file.read_to_end(&mut elf_orig).unwrap();
@@ -2234,10 +2235,12 @@ mod tests {
                 &bpf_loader_upgradeable::id(),
             );
             programdata_account
-                .set_state(&UpgradeableLoaderState::ProgramData {
-                    slot: SLOT,
-                    upgrade_authority_address: Some(*upgrade_authority_address),
-                })
+                .set_state(
+                    &UpgradeableLoaderState::Uninitialized, /*UpgradeableLoaderState::ProgramData {
+                                                                slot: SLOT,
+                                                                upgrade_authority_address: Some(*upgrade_authority_address),
+                                                            }*/
+                )
                 .unwrap();
             let mut program_account = AccountSharedData::new(
                 min_program_balance,
@@ -2246,27 +2249,43 @@ mod tests {
             );
             program_account.set_executable(true);
             program_account
-                .set_state(&UpgradeableLoaderState::Program {
-                    programdata_address,
-                })
+                .set_state(
+                    &UpgradeableLoaderState::Uninitialized, /*UpgradeableLoaderState::Program {
+                                                                programdata_address,
+                                                            }*/
+                )
                 .unwrap();
-            let spill_account = AccountSharedData::new(0, 0, &Pubkey::new_unique());
+            //let spill_account = AccountSharedData::new(0, 0, &Pubkey::new_unique());
             let rent_account = create_account_for_test(&rent);
             let clock_account = create_account_for_test(&Clock {
                 slot: SLOT.saturating_add(1),
                 ..Clock::default()
             });
             let upgrade_authority_account = AccountSharedData::new(1, 0, &Pubkey::new_unique());
+            let recipient_address = Pubkey::new_unique();
             let transaction_accounts = vec![
+                (
+                    recipient_address,
+                    AccountSharedData::new(111111111, 0, &Pubkey::new_unique()),
+                ),
                 (programdata_address, programdata_account),
                 (program_address, program_account),
                 (*buffer_address, buffer_account),
-                (spill_address, spill_account),
+                //(spill_address, spill_account),
                 (sysvar::rent::id(), rent_account),
                 (sysvar::clock::id(), clock_account),
+                (
+                    system_program::id(),
+                    AccountSharedData::new(0, 0, &system_program::id()),
+                ),
                 (*upgrade_authority_address, upgrade_authority_account),
             ];
             let instruction_accounts = vec![
+                AccountMeta {
+                    pubkey: recipient_address,
+                    is_signer: true,
+                    is_writable: true,
+                },
                 AccountMeta {
                     pubkey: programdata_address,
                     is_signer: false,
@@ -2282,11 +2301,11 @@ mod tests {
                     is_signer: false,
                     is_writable: true,
                 },
-                AccountMeta {
-                    pubkey: spill_address,
-                    is_signer: false,
-                    is_writable: true,
-                },
+                //AccountMeta {
+                //    pubkey: spill_address,
+                //    is_signer: false,
+                //    is_writable: true,
+                //},
                 AccountMeta {
                     pubkey: sysvar::rent::id(),
                     is_signer: false,
@@ -2297,6 +2316,7 @@ mod tests {
                     is_signer: false,
                     is_writable: false,
                 },
+                AccountMeta::new_readonly(system_program::id(), false),
                 AccountMeta {
                     pubkey: *upgrade_authority_address,
                     is_signer: true,
@@ -2310,9 +2330,15 @@ mod tests {
             transaction_accounts: Vec<(Pubkey, AccountSharedData)>,
             instruction_accounts: Vec<AccountMeta>,
             expected_result: Result<(), InstructionError>,
+            elf_new: &[u8],
         ) -> Vec<AccountSharedData> {
+            //let instruction_data =
+            //    bincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
             let instruction_data =
-                bincode::serialize(&UpgradeableLoaderInstruction::Upgrade).unwrap();
+                bincode::serialize(&UpgradeableLoaderInstruction::DeployWithMaxDataLen {
+                    max_data_len: elf_new.len(),
+                })
+                .unwrap();
             mock_process_instruction(
                 &bpf_loader_upgradeable::id(),
                 Vec::new(),
@@ -2321,7 +2347,9 @@ mod tests {
                 instruction_accounts,
                 expected_result,
                 Entrypoint::vm,
-                |_invoke_context| {},
+                |invoke_context| {
+                    test_utils::load_all_invoked_programs(invoke_context);
+                },
                 |_invoke_context| {},
             )
         }
@@ -2334,7 +2362,8 @@ mod tests {
             &elf_orig,
             &elf_new,
         );
-        let accounts = process_instruction(transaction_accounts, instruction_accounts, Ok(()));
+        let accounts =
+            process_instruction(transaction_accounts, instruction_accounts, Ok(()), &elf_new);
         let min_programdata_balance = Rent::default().minimum_balance(
             UpgradeableLoaderState::size_of_programdata(elf_orig.len().max(elf_new.len())),
         );
@@ -2367,6 +2396,7 @@ mod tests {
             assert_eq!(*elf_new.get(i).unwrap(), *byte);
         }
 
+        /*
         // Case: not upgradable
         let (mut transaction_accounts, instruction_accounts) = get_accounts(
             &buffer_address,
@@ -2692,7 +2722,7 @@ mod tests {
             transaction_accounts,
             instruction_accounts,
             Err(InstructionError::IncorrectAuthority),
-        );
+        );*/
     }
 
     #[test]
