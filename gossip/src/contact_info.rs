@@ -404,6 +404,7 @@ impl ContactInfo {
         node.set_tpu((Ipv4Addr::LOCALHOST, 8003)).unwrap(); // quic: 8009
         node.set_tpu_forwards((Ipv4Addr::LOCALHOST, 8004)).unwrap(); // quic: 8010
         node.set_tpu_vote((Ipv4Addr::LOCALHOST, 8005)).unwrap();
+        node.set_tpu_vote_quic((Ipv4Addr::LOCALHOST, 8009)).unwrap();
         node.set_rpc((Ipv4Addr::LOCALHOST, DEFAULT_RPC_PORT))
             .unwrap();
         node.set_rpc_pubsub((Ipv4Addr::LOCALHOST, DEFAULT_RPC_PUBSUB_PORT))
@@ -429,6 +430,7 @@ impl ContactInfo {
         node.set_tpu((addr, port)).unwrap(); // quic: port + 6
         node.set_tpu_forwards((addr, port + 5)).unwrap(); // quic: port + 11
         node.set_tpu_vote((addr, port + 7)).unwrap();
+        node.set_tpu_vote_quic((addr, port + 9)).unwrap();
         node.set_rpc((addr, DEFAULT_RPC_PORT)).unwrap();
         node.set_rpc_pubsub((addr, DEFAULT_RPC_PUBSUB_PORT))
             .unwrap();
