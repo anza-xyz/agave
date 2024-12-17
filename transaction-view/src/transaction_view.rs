@@ -1,8 +1,11 @@
 use {
     crate::{
         address_table_lookup_frame::AddressTableLookupIterator,
-        instructions_frame::InstructionsIterator, result::Result, sanitize::sanitize,
-        transaction_data::TransactionData, transaction_frame::TransactionFrame,
+        instructions_frame::InstructionsIterator,
+        result::{Result, TransactionViewError},
+        sanitize::sanitize,
+        transaction_data::TransactionData,
+        transaction_frame::TransactionFrame,
         transaction_version::TransactionVersion,
     },
     core::fmt::{Debug, Formatter},
@@ -29,7 +32,15 @@ pub struct TransactionView<const SANITIZED: bool, D: TransactionData> {
 impl<D: TransactionData> TransactionView<false, D> {
     /// Creates a new `TransactionView` without running sanitization checks.
     pub fn try_new_unsanitized(data: D) -> Result<Self> {
-        let frame = TransactionFrame::try_new(data.data())?;
+        let bytes = data.data();
+        let (frame, offset) = TransactionFrame::try_new(bytes)?;
+
+        // Verify that the entire transaction was parsed.
+        // This is a necessary check for deserializing individual transactions.
+        if offset != bytes.len() {
+            return Err(TransactionViewError::ParseError);
+        }
+
         Ok(Self { data, frame })
     }
 
@@ -48,6 +59,20 @@ impl<D: TransactionData> TransactionView<true, D> {
     pub fn try_new_sanitized(data: D) -> Result<Self> {
         let unsanitized_view = TransactionView::try_new_unsanitized(data)?;
         unsanitized_view.sanitize()
+    }
+}
+
+impl<const SANITIZED: bool, D: TransactionData> TransactionView<SANITIZED, D> {
+    /// Construct a new `TransactionView` from a slice of bytes,
+    /// without running parsing or sanitization checks.
+    /// This is intentionally only exposed to the crate, so that
+    /// the `EntryView` can construct `TransactionView` instances
+    /// on the fly.
+    ///
+    /// # Safety
+    /// - The caller must ensure that the slice of bytes is a valid serialized transaction.
+    pub(crate) unsafe fn from_data_unchecked(data: D, frame: TransactionFrame) -> Self {
+        Self { data, frame }
     }
 }
 
