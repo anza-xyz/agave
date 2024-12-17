@@ -8,7 +8,7 @@ use {
         genesis_utils::{
             create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
         },
-        loader_utils::load_upgradeable_program_and_advance_slot,
+        loader_utils::load_program_of_loader_v4,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk::{
@@ -70,9 +70,9 @@ fn test_syscall_get_epoch_stake() {
     let mut bank_client = BankClient::new_shared(bank);
 
     let authority_keypair = Keypair::new();
-    let (bank, program_id) = load_upgradeable_program_and_advance_slot(
+    let (bank, program_id) = load_program_of_loader_v4(
         &mut bank_client,
-        bank_forks.as_ref(),
+        &bank_forks,
         &mint_keypair,
         &authority_keypair,
         "solana_sbf_syscall_get_epoch_stake",
