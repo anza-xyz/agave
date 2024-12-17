@@ -1190,19 +1190,15 @@ impl JsonRpcRequestProcessor {
         Ok(())
     }
 
-    async fn check_slot_cleaned_up<T>(
+    fn check_slot_cleaned_up<T>(
         &self,
         result: &std::result::Result<T, BlockstoreError>,
         slot: Slot,
     ) -> Result<()> {
         let first_available_block = self
-            .runtime
-            .spawn_blocking({
-                let blockstore = Arc::clone(&self.blockstore);
-                move || blockstore.get_first_available_block().unwrap_or_default()
-            })
-            .await
-            .expect("Failed to spawn blocking task");
+            .blockstore
+            .get_first_available_block()
+            .unwrap_or_default();
         let err: Error = RpcCustomError::BlockCleanedUp {
             slot,
             first_available_block,
@@ -1302,7 +1298,7 @@ impl JsonRpcRequestProcessor {
                         return encoded_block_future.await.transpose();
                     }
                 }
-                self.check_slot_cleaned_up(&result, slot).await?;
+                self.check_slot_cleaned_up(&result, slot)?;
                 let encoded_block_future: OptionFuture<_> = result
                     .ok()
                     .map(ConfirmedBlock::from)
@@ -1404,13 +1400,9 @@ impl JsonRpcRequestProcessor {
         }
 
         let lowest_blockstore_slot = self
-            .runtime
-            .spawn_blocking({
-                let blockstore = Arc::clone(&self.blockstore);
-                move || blockstore.get_first_available_block().unwrap_or_default()
-            })
-            .await
-            .expect("Failed to spawn blocking task");
+            .blockstore
+            .get_first_available_block()
+            .unwrap_or_default();
         if start_slot < lowest_blockstore_slot {
             // If the starting slot is lower than what's available in blockstore assume the entire
             // [start_slot..end_slot] can be fetched from BigTable. This range should not ever run
@@ -1434,20 +1426,11 @@ impl JsonRpcRequestProcessor {
 
         // Finalized blocks
         let mut blocks: Vec<_> = self
-            .runtime
-            .spawn_blocking({
-                let blockstore = Arc::clone(&self.blockstore);
-                move || -> Result<Vec<_>> {
-                    let blocks = blockstore
-                        .rooted_slot_iterator(max(start_slot, lowest_blockstore_slot))
-                        .map_err(|_| Error::internal_error())?
-                        .filter(|&slot| slot <= end_slot && slot <= highest_super_majority_root)
-                        .collect();
-                    Ok(blocks)
-                }
-            })
-            .await
-            .expect("Failed to spawn blocking task")?;
+            .blockstore
+            .rooted_slot_iterator(max(start_slot, lowest_blockstore_slot))
+            .map_err(|_| Error::internal_error())?
+            .filter(|&slot| slot <= end_slot && slot <= highest_super_majority_root)
+            .collect();
         let last_element = blocks
             .last()
             .cloned()
@@ -1570,7 +1553,7 @@ impl JsonRpcRequestProcessor {
                         .and_then(|confirmed_block| confirmed_block.block_time));
                 }
             }
-            self.check_slot_cleaned_up(&result, slot).await?;
+            self.check_slot_cleaned_up(&result, slot)?;
             Ok(result.ok())
         } else {
             let r_bank_forks = self.bank_forks.read().unwrap();
