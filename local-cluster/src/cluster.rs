@@ -40,9 +40,14 @@ impl ClusterValidatorInfo {
 
 pub trait Cluster {
     fn get_node_pubkeys(&self) -> Vec<Pubkey>;
-    fn get_validator_client(&self, pubkey: &Pubkey) -> Option<QuicTpuClient>;
-    fn build_tpu_quic_client(&self) -> Result<QuicTpuClient>;
-    fn build_tpu_quic_client_with_commitment(
+    fn build_validator_tpu_quic_client(&self, pubkey: &Pubkey) -> Result<QuicTpuClient>;
+    fn build_validator_tpu_quic_client_with_commitment(
+        &self,
+        pubkey: &Pubkey,
+        commitment_config: CommitmentConfig,
+    ) -> Result<QuicTpuClient>;
+    fn build_entrypoint_tpu_quic_client(&self) -> Result<QuicTpuClient>;
+    fn build_entrypoint_tpu_quic_client_with_commitment(
         &self,
         commitment_config: CommitmentConfig,
     ) -> Result<QuicTpuClient>;
