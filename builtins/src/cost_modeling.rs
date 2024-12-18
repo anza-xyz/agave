@@ -9,6 +9,11 @@ use {
     solana_sdk_ids::{ed25519_program, secp256k1_program},
 };
 
+/// CONTRIBUTOR: If you change any builtin Core BPF migration confiurations
+/// in this crate's `BUILTINS` list, you must update this constant to reflect
+/// the number of builtin programs that have Core BPF migration configurations.
+pub const NUM_COST_MODELED_BUILTINS_WITH_MIGRATIONS: usize = 3;
+
 /// Configuration for cost modeling of a builtin program.
 #[derive(Debug)]
 pub enum CostModelingConfig {
@@ -21,9 +26,22 @@ pub enum CostModelingConfig {
     NotCostModeled,
 }
 
+impl CostModelingConfig {
+    /// Returns `true` if the builtin program is cost modeled.
+    pub fn is_cost_modeled(&self) -> bool {
+        matches!(self, Self::CostModeled { .. })
+    }
+}
+
 struct BuiltinCost {
     default_cost: u64,
     core_bpf_migration_feature: Option<Pubkey>,
+}
+
+#[derive(Copy, Clone, Default)]
+struct BuiltinWithMigration {
+    program_id: Pubkey,
+    migration_feature_id: Pubkey,
 }
 
 lazy_static! {
@@ -82,6 +100,27 @@ lazy_static! {
     };
 }
 
+lazy_static! {
+    // This lazy-static list is designed to panic if any builtin migrations
+    // are changed without updating `NUM_COST_MODELED_BUILTINS_WITH_MIGRATIONS`.
+    static ref COST_MODELED_BUILTINS_WITH_MIGRATIONS: [BuiltinWithMigration; NUM_COST_MODELED_BUILTINS_WITH_MIGRATIONS] = {
+        let mut temp = [BuiltinWithMigration::default(); NUM_COST_MODELED_BUILTINS_WITH_MIGRATIONS];
+        let mut i: usize = 0;
+        for builtin in BUILTINS.iter() {
+            if builtin.cost_modeling_config.is_cost_modeled() {
+                if let Some(migration_config) = &builtin.core_bpf_migration_config {
+                    temp[i] = BuiltinWithMigration {
+                        program_id: builtin.program_id,
+                        migration_feature_id: migration_config.feature_id,
+                    };
+                    i = i.saturating_add(1);
+                }
+            }
+        }
+        temp
+    };
+}
+
 pub fn get_builtin_instruction_cost<'a>(
     program_id: &'a Pubkey,
     feature_set: &'a FeatureSet,
@@ -107,9 +146,42 @@ pub fn is_builtin_program(program_id: &Pubkey) -> bool {
     BUILTIN_INSTRUCTION_COSTS.contains_key(program_id)
 }
 
+/// Returns the index of a builtin in `COST_MODELED_BUILTINS_WITH_MIGRATIONS`,
+/// if it exists in the list.
+pub fn get_builtin_migration_feature_index(program_id: &Pubkey) -> Option<usize> {
+    COST_MODELED_BUILTINS_WITH_MIGRATIONS
+        .iter()
+        .position(|builtin| builtin.program_id == *program_id)
+}
+
+/// Returns the feature ID of a builtin in `COST_MODELED_BUILTINS_WITH_MIGRATIONS`
+/// by index. Panics if the index is out of bounds.
+pub fn get_builtin_migration_feature_id(index: usize) -> &'static Pubkey {
+    &COST_MODELED_BUILTINS_WITH_MIGRATIONS[index].migration_feature_id
+}
+
+/// Returns the index of a builtin in `COST_MODELED_BUILTINS_WITH_MIGRATIONS`
+/// by feature ID. If the feature ID is not found, returns `None`.
+pub fn get_builtin_migration_feature_index_from_feature_id(feature_id: &Pubkey) -> Option<usize> {
+    COST_MODELED_BUILTINS_WITH_MIGRATIONS
+        .iter()
+        .position(|builtin| builtin.migration_feature_id == *feature_id)
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[cfg(not(feature = "dev-context-only-utils"))]
+    #[test]
+    fn test_cost_modeled_builtins_with_migrations_compiles() {
+        // This test is a compile-time check to ensure that the number of
+        // cost-modeled builtins with migration features matches the constant.
+        assert_eq!(
+            COST_MODELED_BUILTINS_WITH_MIGRATIONS.len(),
+            NUM_COST_MODELED_BUILTINS_WITH_MIGRATIONS
+        );
+    }
 
     #[test]
     fn test_maybe_builtin_key() {
