@@ -46,11 +46,6 @@ pub trait Cluster {
         pubkey: &Pubkey,
         commitment_config: CommitmentConfig,
     ) -> Result<QuicTpuClient>;
-    fn build_entrypoint_tpu_quic_client(&self) -> Result<QuicTpuClient>;
-    fn build_entrypoint_tpu_quic_client_with_commitment(
-        &self,
-        commitment_config: CommitmentConfig,
-    ) -> Result<QuicTpuClient>;
     fn get_contact_info(&self, pubkey: &Pubkey) -> Option<&ContactInfo>;
     fn exit_node(&mut self, pubkey: &Pubkey) -> ClusterValidatorInfo;
     fn restart_node(

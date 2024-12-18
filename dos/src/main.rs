@@ -972,7 +972,7 @@ pub mod test {
 
         let client = Arc::new(
             cluster
-                .build_entrypoint_tpu_quic_client()
+                .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
                 .unwrap_or_else(|err| {
                     panic!("Could not create TpuClient with Quic Cache {err:?}");
                 }),
@@ -1106,7 +1106,7 @@ pub mod test {
 
         let client = Arc::new(
             cluster
-                .build_entrypoint_tpu_quic_client()
+                .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
                 .unwrap_or_else(|err| {
                     panic!("Could not create TpuClient with Quic Cache {err:?}");
                 }),

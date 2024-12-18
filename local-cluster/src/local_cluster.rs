@@ -493,7 +493,9 @@ impl LocalCluster {
         mut voting_keypair: Option<Arc<Keypair>>,
         socket_addr_space: SocketAddrSpace,
     ) -> Pubkey {
-        let client = self.build_entrypoint_tpu_quic_client().expect("tpu_client");
+        let client = self
+            .build_validator_tpu_quic_client(self.entry_point_info.pubkey())
+            .expect("tpu_client");
 
         // Must have enough tokens to fund vote account and set delegate
         let should_create_vote_pubkey = voting_keypair.is_none();
@@ -593,7 +595,7 @@ impl LocalCluster {
 
     pub fn transfer(&self, source_keypair: &Keypair, dest_pubkey: &Pubkey, lamports: u64) -> u64 {
         let client = self
-            .build_entrypoint_tpu_quic_client()
+            .build_validator_tpu_quic_client(self.entry_point_info.pubkey())
             .expect("new tpu quic client");
         Self::transfer_with_client(&client, source_keypair, dest_pubkey, lamports)
     }
@@ -993,20 +995,6 @@ impl Cluster for LocalCluster {
         let rpc_url = format!("http://{}", contact_info.rpc().unwrap());
         let rpc_client = Arc::new(RpcClient::new_with_commitment(rpc_url, commitment_config));
         self.build_tpu_client(rpc_client, contact_info.rpc_pubsub().unwrap())
-    }
-
-    fn build_entrypoint_tpu_quic_client(&self) -> Result<QuicTpuClient> {
-        self.build_validator_tpu_quic_client(self.entry_point_info.pubkey())
-    }
-
-    fn build_entrypoint_tpu_quic_client_with_commitment(
-        &self,
-        commitment_config: CommitmentConfig,
-    ) -> Result<QuicTpuClient> {
-        self.build_validator_tpu_quic_client_with_commitment(
-            self.entry_point_info.pubkey(),
-            commitment_config,
-        )
     }
 
     fn exit_node(&mut self, pubkey: &Pubkey) -> ClusterValidatorInfo {

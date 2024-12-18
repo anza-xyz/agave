@@ -80,7 +80,7 @@ fn test_bench_tps_local_cluster(config: Config) {
 
     let client = Arc::new(
         cluster
-            .build_entrypoint_tpu_quic_client()
+            .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
             .unwrap_or_else(|err| {
                 panic!("Could not create TpuClient with Quic Cache {err:?}");
             }),
