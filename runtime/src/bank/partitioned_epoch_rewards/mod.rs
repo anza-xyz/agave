@@ -192,14 +192,6 @@ impl Bank {
         }
     }
 
-    pub(super) fn is_partitioned_rewards_feature_enabled(&self) -> bool {
-        self.feature_set
-            .is_active(&feature_set::enable_partitioned_epoch_reward::id())
-            || self
-                .feature_set
-                .is_active(&feature_set::partitioned_epoch_rewards_superfeature::id())
-    }
-
     pub(crate) fn set_epoch_reward_status_active(
         &mut self,
         distribution_starting_block_height: u64,
@@ -460,16 +452,6 @@ mod tests {
 
         bank.force_reward_interval_end_for_tests();
         assert!(bank.get_reward_interval() == RewardInterval::OutsideInterval);
-    }
-
-    #[test]
-    fn test_is_partitioned_reward_feature_enable() {
-        let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
-
-        let mut bank = Bank::new_for_tests(&genesis_config);
-        assert!(!bank.is_partitioned_rewards_feature_enabled());
-        bank.activate_feature(&feature_set::partitioned_epoch_rewards_superfeature::id());
-        assert!(bank.is_partitioned_rewards_feature_enabled());
     }
 
     /// Test get_reward_distribution_num_blocks during small epoch
@@ -853,7 +835,6 @@ mod tests {
         let RewardBank { bank, .. } =
             create_reward_bank(num_rewards, stake_account_stores_per_block, starting_slot);
 
-        assert!(bank.is_partitioned_rewards_feature_enabled());
         // Slot before the epoch boundary contains empty rewards (since fees are
         // off), and no partitions because not at the epoch boundary
         assert_eq!(
@@ -869,7 +850,6 @@ mod tests {
             &Pubkey::default(),
             SLOTS_PER_EPOCH,
         ));
-        assert!(epoch_boundary_bank.is_partitioned_rewards_feature_enabled());
         // Slot at the epoch boundary contains voting rewards only, as well as partition data
         let KeyedRewardsAndNumPartitions {
             keyed_rewards,
@@ -891,7 +871,6 @@ mod tests {
             &Pubkey::default(),
             SLOTS_PER_EPOCH + 1,
         ));
-        assert!(partition0_bank.is_partitioned_rewards_feature_enabled());
         // Slot after the epoch boundary contains first partition of staking
         // rewards, and no partitions because not at the epoch boundary
         let KeyedRewardsAndNumPartitions {
@@ -909,7 +888,6 @@ mod tests {
             &Pubkey::default(),
             SLOTS_PER_EPOCH + 2,
         ));
-        assert!(partition1_bank.is_partitioned_rewards_feature_enabled());
         // Slot 2 after the epoch boundary contains second partition of staking
         // rewards, and no partitions because not at the epoch boundary
         let KeyedRewardsAndNumPartitions {
@@ -926,123 +904,8 @@ mod tests {
         assert_eq!(total_staking_rewards, num_rewards);
 
         let bank = Bank::new_from_parent(partition1_bank, &Pubkey::default(), SLOTS_PER_EPOCH + 3);
-        assert!(bank.is_partitioned_rewards_feature_enabled());
         // Next slot contains empty rewards (since fees are off), and no
         // partitions because not at the epoch boundary
-        assert_eq!(
-            bank.get_rewards_and_num_partitions(),
-            KeyedRewardsAndNumPartitions {
-                keyed_rewards: vec![],
-                num_partitions: None,
-            }
-        );
-    }
-
-    #[test]
-    fn test_get_rewards_and_partitions_before_feature() {
-        let starting_slot = SLOTS_PER_EPOCH - 1;
-        let num_rewards = 100;
-
-        let validator_keypairs = (0..num_rewards)
-            .map(|_| ValidatorVoteKeypairs::new_rand())
-            .collect::<Vec<_>>();
-
-        let GenesisConfigInfo {
-            mut genesis_config, ..
-        } = create_genesis_config_with_vote_accounts(
-            1_000_000_000,
-            &validator_keypairs,
-            vec![2_000_000_000; num_rewards],
-        );
-        genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
-
-        // Set feature to inactive
-        genesis_config
-            .accounts
-            .remove(&feature_set::enable_partitioned_epoch_reward::id());
-        genesis_config
-            .accounts
-            .remove(&feature_set::partitioned_epoch_rewards_superfeature::id());
-
-        let bank = Bank::new_for_tests(&genesis_config);
-
-        for validator_vote_keypairs in &validator_keypairs {
-            let vote_id = validator_vote_keypairs.vote_keypair.pubkey();
-            let mut vote_account = bank.get_account(&vote_id).unwrap();
-            // generate some rewards
-            let mut vote_state = Some(vote_state::from(&vote_account).unwrap());
-            for i in 0..MAX_LOCKOUT_HISTORY + 42 {
-                if let Some(v) = vote_state.as_mut() {
-                    vote_state::process_slot_vote_unchecked(v, i as u64)
-                }
-                let versioned = VoteStateVersions::Current(Box::new(vote_state.take().unwrap()));
-                vote_state::to(&versioned, &mut vote_account).unwrap();
-                match versioned {
-                    VoteStateVersions::Current(v) => {
-                        vote_state = Some(*v);
-                    }
-                    _ => panic!("Has to be of type Current"),
-                };
-            }
-            bank.store_account_and_update_capitalization(&vote_id, &vote_account);
-        }
-
-        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-        let bank = new_bank_from_parent_with_bank_forks(
-            &bank_forks,
-            bank,
-            &Pubkey::default(),
-            starting_slot,
-        );
-
-        assert!(!bank.is_partitioned_rewards_feature_enabled());
-        // Slot before the epoch boundary contains empty rewards (since fees are
-        // off), and no partitions because feature is inactive
-        assert_eq!(
-            bank.get_rewards_and_num_partitions(),
-            KeyedRewardsAndNumPartitions {
-                keyed_rewards: vec![],
-                num_partitions: None,
-            }
-        );
-
-        let epoch_boundary_bank = Arc::new(Bank::new_from_parent(
-            bank,
-            &Pubkey::default(),
-            SLOTS_PER_EPOCH,
-        ));
-        assert!(!epoch_boundary_bank.is_partitioned_rewards_feature_enabled());
-        // Slot at the epoch boundary contains voting rewards and staking rewards; still no partitions
-        let KeyedRewardsAndNumPartitions {
-            keyed_rewards,
-            num_partitions,
-        } = epoch_boundary_bank.get_rewards_and_num_partitions();
-        let mut voting_rewards_count = 0;
-        let mut staking_rewards_count = 0;
-        for (_pubkey, reward) in keyed_rewards.iter() {
-            match reward.reward_type {
-                RewardType::Voting => {
-                    voting_rewards_count += 1;
-                }
-                RewardType::Staking => {
-                    staking_rewards_count += 1;
-                }
-                _ => {}
-            }
-        }
-        assert_eq!(
-            keyed_rewards.len(),
-            voting_rewards_count + staking_rewards_count
-        );
-        assert_eq!(voting_rewards_count, num_rewards);
-        assert_eq!(staking_rewards_count, num_rewards);
-        assert!(num_partitions.is_none());
-
-        let bank =
-            Bank::new_from_parent(epoch_boundary_bank, &Pubkey::default(), SLOTS_PER_EPOCH + 1);
-        assert!(!bank.is_partitioned_rewards_feature_enabled());
-        // Slot after the epoch boundary contains empty rewards (since fees are
-        // off), and no partitions because feature is inactive
         assert_eq!(
             bank.get_rewards_and_num_partitions(),
             KeyedRewardsAndNumPartitions {

@@ -5665,16 +5665,13 @@ impl Bank {
         let measure_total = Measure::start("");
 
         let slot = self.slot();
-        let ignore = (!self.is_partitioned_rewards_feature_enabled()
-            && self.force_partition_rewards_in_first_block_of_epoch())
-        .then_some(sysvar::epoch_rewards::id());
         let (accounts_delta_hash, accounts_delta_hash_us) = measure_us!({
             self.rc
                 .accounts
                 .accounts_db
                 .calculate_accounts_delta_hash_internal(
                     slot,
-                    ignore,
+                    None,
                     self.skipped_rewrites.lock().unwrap().clone(),
                 )
         });
