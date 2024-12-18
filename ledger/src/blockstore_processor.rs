@@ -28,7 +28,7 @@ use {
     solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
     solana_runtime::{
         accounts_background_service::{AbsRequestSender, SnapshotRequestKind},
-        bank::{Bank, TransactionBalancesSet},
+        bank::{Bank, PreCommitCallbackResult, TransactionBalancesSet},
         bank_forks::{BankForks, SetRootError},
         bank_utils,
         commitment::VOTE_THRESHOLD_SIZE,
@@ -156,7 +156,7 @@ pub fn execute_batch(
     timings: &mut ExecuteTimings,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
-    pre_commit_callback: Option<impl FnOnce() -> Option<Option<usize>>>,
+    pre_commit_callback: Option<impl FnOnce() -> PreCommitCallbackResult<Option<usize>>>,
 ) -> Result<()> {
     let TransactionBatchWithIndexes {
         batch,
@@ -183,11 +183,11 @@ pub fn execute_batch(
                         transaction_indexes.to_mut().push(index);
                     }
                 })
-                .is_some()
+                .map(|_| ())
         }
     });
 
-    let Some((commit_results, balances)) = batch
+    let Ok((commit_results, balances)) = batch
         .bank()
         .load_execute_and_commit_transactions_with_pre_commit_callback(
             batch,
@@ -350,7 +350,7 @@ fn execute_batches_internal(
                     &mut timings,
                     log_messages_bytes_limit,
                     prioritization_fee_cache,
-                    None::<fn() -> Option<Option<usize>>>,
+                    None::<fn() -> PreCommitCallbackResult<Option<usize>>>,
                 ));
 
                 let thread_index = replay_tx_thread_pool.current_thread_index().unwrap();
@@ -2351,7 +2351,7 @@ pub mod tests {
         solana_entry::entry::{create_ticks, next_entry, next_entry_mut},
         solana_program_runtime::declare_process_instruction,
         solana_runtime::{
-            bank::bank_hash_details::SlotDetails,
+            bank::{bank_hash_details::SlotDetails, PreCommitCallbackFailed},
             genesis_utils::{
                 self, create_genesis_config_with_vote_accounts, ValidatorVoteKeypairs,
             },
@@ -5072,7 +5072,9 @@ pub mod tests {
         do_test_schedule_batches_for_execution(false);
     }
 
-    fn do_test_execute_batch_pre_commit_callback(poh_result: Option<Option<usize>>) {
+    fn do_test_execute_batch_pre_commit_callback(
+        poh_result: PreCommitCallbackResult<Option<usize>>,
+    ) {
         solana_logger::setup();
         let dummy_leader_pubkey = solana_sdk::pubkey::new_rand();
         let GenesisConfigInfo {
@@ -5090,7 +5092,7 @@ pub mod tests {
             OwnedOrBorrowed::Borrowed(&txs[0..1]),
         );
         batch.set_needs_unlock(false);
-        let poh_with_index = matches!(poh_result, Some(Some(_)));
+        let poh_with_index = matches!(poh_result, Ok(Some(_)));
         let transaction_indexes = if poh_with_index { vec![] } else { vec![3] };
         let batch = TransactionBatchWithIndexes {
             batch,
@@ -5111,7 +5113,7 @@ pub mod tests {
             &prioritization_fee_cache,
             Some(|| poh_result),
         );
-        let should_succeed = poh_result.is_some();
+        let should_succeed = poh_result.is_ok();
         if should_succeed {
             assert_matches!(result, Ok(()));
             assert_eq!(bank.transaction_count(), 1);
@@ -5138,17 +5140,17 @@ pub mod tests {
 
     #[test]
     fn test_execute_batch_pre_commit_callback_success() {
-        do_test_execute_batch_pre_commit_callback(Some(None));
+        do_test_execute_batch_pre_commit_callback(Ok(None));
     }
 
     #[test]
     fn test_execute_batch_pre_commit_callback_success_with_index() {
-        do_test_execute_batch_pre_commit_callback(Some(Some(4)));
+        do_test_execute_batch_pre_commit_callback(Ok(Some(4)));
     }
 
     #[test]
     fn test_execute_batch_pre_commit_callback_failure() {
-        do_test_execute_batch_pre_commit_callback(None);
+        do_test_execute_batch_pre_commit_callback(Err(PreCommitCallbackFailed));
     }
 
     #[test]
