@@ -2,12 +2,7 @@
 //!
 //! [shred]: https://solana.com/docs/terminology#shred
 
-#![cfg(feature = "full")]
-
-use solana_sdk::{
-    hard_forks::HardForks,
-    hash::{extend_and_hash, Hash},
-};
+use {solana_hard_forks::HardForks, solana_hash::Hash, solana_sha256_hasher::extend_and_hash};
 
 pub fn version_from_hash(hash: &Hash) -> u16 {
     let hash = hash.as_ref();

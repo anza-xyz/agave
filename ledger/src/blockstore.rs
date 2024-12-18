@@ -234,27 +234,28 @@ pub struct Blockstore {
     ledger_path: PathBuf,
     db: Arc<Rocks>,
     // Column families
-    address_signatures_cf: LedgerColumn<cf::AddressSignatures>,
-    bank_hash_cf: LedgerColumn<cf::BankHash>,
-    block_height_cf: LedgerColumn<cf::BlockHeight>,
-    blocktime_cf: LedgerColumn<cf::Blocktime>,
-    code_shred_cf: LedgerColumn<cf::ShredCode>,
-    data_shred_cf: LedgerColumn<cf::ShredData>,
-    dead_slots_cf: LedgerColumn<cf::DeadSlots>,
-    duplicate_slots_cf: LedgerColumn<cf::DuplicateSlots>,
-    erasure_meta_cf: LedgerColumn<cf::ErasureMeta>,
-    index_cf: LedgerColumn<cf::Index>,
-    merkle_root_meta_cf: LedgerColumn<cf::MerkleRootMeta>,
-    meta_cf: LedgerColumn<cf::SlotMeta>,
-    optimistic_slots_cf: LedgerColumn<cf::OptimisticSlots>,
-    orphans_cf: LedgerColumn<cf::Orphans>,
-    perf_samples_cf: LedgerColumn<cf::PerfSamples>,
-    program_costs_cf: LedgerColumn<cf::ProgramCosts>,
-    rewards_cf: LedgerColumn<cf::Rewards>,
-    roots_cf: LedgerColumn<cf::Root>,
-    transaction_memos_cf: LedgerColumn<cf::TransactionMemos>,
-    transaction_status_cf: LedgerColumn<cf::TransactionStatus>,
-    transaction_status_index_cf: LedgerColumn<cf::TransactionStatusIndex>,
+    address_signatures_cf: LedgerColumn<cf::AddressSignatures, { cf::AddressSignatures::KEY_LEN }>,
+    bank_hash_cf: LedgerColumn<cf::BankHash, { cf::BankHash::KEY_LEN }>,
+    block_height_cf: LedgerColumn<cf::BlockHeight, { cf::BlockHeight::KEY_LEN }>,
+    blocktime_cf: LedgerColumn<cf::Blocktime, { cf::Blocktime::KEY_LEN }>,
+    code_shred_cf: LedgerColumn<cf::ShredCode, { cf::ShredCode::KEY_LEN }>,
+    data_shred_cf: LedgerColumn<cf::ShredData, { cf::ShredData::KEY_LEN }>,
+    dead_slots_cf: LedgerColumn<cf::DeadSlots, { cf::DeadSlots::KEY_LEN }>,
+    duplicate_slots_cf: LedgerColumn<cf::DuplicateSlots, { cf::DuplicateSlots::KEY_LEN }>,
+    erasure_meta_cf: LedgerColumn<cf::ErasureMeta, { cf::ErasureMeta::KEY_LEN }>,
+    index_cf: LedgerColumn<cf::Index, { cf::Index::KEY_LEN }>,
+    merkle_root_meta_cf: LedgerColumn<cf::MerkleRootMeta, { cf::MerkleRootMeta::KEY_LEN }>,
+    meta_cf: LedgerColumn<cf::SlotMeta, { cf::SlotMeta::KEY_LEN }>,
+    optimistic_slots_cf: LedgerColumn<cf::OptimisticSlots, { cf::OptimisticSlots::KEY_LEN }>,
+    orphans_cf: LedgerColumn<cf::Orphans, { cf::Orphans::KEY_LEN }>,
+    perf_samples_cf: LedgerColumn<cf::PerfSamples, { cf::PerfSamples::KEY_LEN }>,
+    program_costs_cf: LedgerColumn<cf::ProgramCosts, { cf::ProgramCosts::KEY_LEN }>,
+    rewards_cf: LedgerColumn<cf::Rewards, { cf::Rewards::KEY_LEN }>,
+    roots_cf: LedgerColumn<cf::Root, { cf::Root::KEY_LEN }>,
+    transaction_memos_cf: LedgerColumn<cf::TransactionMemos, { cf::TransactionMemos::KEY_LEN }>,
+    transaction_status_cf: LedgerColumn<cf::TransactionStatus, { cf::TransactionStatus::KEY_LEN }>,
+    transaction_status_index_cf:
+        LedgerColumn<cf::TransactionStatusIndex, { cf::TransactionStatusIndex::KEY_LEN }>,
 
     highest_primary_index_slot: RwLock<Option<Slot>>,
     max_root: AtomicU64,
@@ -759,11 +760,11 @@ impl Blockstore {
     }
 
     fn get_recovery_data_shreds<'a>(
+        &'a self,
         index: &'a Index,
         slot: Slot,
         erasure_meta: &'a ErasureMeta,
         prev_inserted_shreds: &'a HashMap<ShredId, Shred>,
-        data_cf: &'a LedgerColumn<cf::ShredData>,
     ) -> impl Iterator<Item = Shred> + 'a {
         erasure_meta.data_shreds_indices().filter_map(move |i| {
             let key = ShredId::new(slot, u32::try_from(i).unwrap(), ShredType::Data);
@@ -773,7 +774,7 @@ impl Blockstore {
             if !index.data().contains(i) {
                 return None;
             }
-            match data_cf.get_bytes((slot, i)).unwrap() {
+            match self.data_shred_cf.get_bytes((slot, i)).unwrap() {
                 None => {
                     error!(
                         "Unable to read the data shred with slot {slot}, index {i} for shred \
@@ -788,11 +789,11 @@ impl Blockstore {
     }
 
     fn get_recovery_coding_shreds<'a>(
+        &'a self,
         index: &'a Index,
         slot: Slot,
         erasure_meta: &'a ErasureMeta,
         prev_inserted_shreds: &'a HashMap<ShredId, Shred>,
-        code_cf: &'a LedgerColumn<cf::ShredCode>,
     ) -> impl Iterator<Item = Shred> + 'a {
         erasure_meta.coding_shreds_indices().filter_map(move |i| {
             let key = ShredId::new(slot, u32::try_from(i).unwrap(), ShredType::Code);
@@ -802,7 +803,7 @@ impl Blockstore {
             if !index.coding().contains(i) {
                 return None;
             }
-            match code_cf.get_bytes((slot, i)).unwrap() {
+            match self.code_shred_cf.get_bytes((slot, i)).unwrap() {
                 None => {
                     error!(
                         "Unable to read the coding shred with slot {slot}, index {i} for shred \
@@ -817,31 +818,19 @@ impl Blockstore {
     }
 
     fn recover_shreds(
+        &self,
         index: &Index,
         erasure_meta: &ErasureMeta,
         prev_inserted_shreds: &HashMap<ShredId, Shred>,
         recovered_shreds: &mut Vec<Shred>,
-        data_cf: &LedgerColumn<cf::ShredData>,
-        code_cf: &LedgerColumn<cf::ShredCode>,
         reed_solomon_cache: &ReedSolomonCache,
     ) {
         // Find shreds for this erasure set and try recovery
         let slot = index.slot;
-        let available_shreds: Vec<_> = Self::get_recovery_data_shreds(
-            index,
-            slot,
-            erasure_meta,
-            prev_inserted_shreds,
-            data_cf,
-        )
-        .chain(Self::get_recovery_coding_shreds(
-            index,
-            slot,
-            erasure_meta,
-            prev_inserted_shreds,
-            code_cf,
-        ))
-        .collect();
+        let available_shreds: Vec<_> = self
+            .get_recovery_data_shreds(index, slot, erasure_meta, prev_inserted_shreds)
+            .chain(self.get_recovery_coding_shreds(index, slot, erasure_meta, prev_inserted_shreds))
+            .collect();
         if let Ok(mut result) = shred::recover(available_shreds, reed_solomon_cache) {
             Self::submit_metrics(slot, erasure_meta, true, "complete".into(), result.len());
             recovered_shreds.append(&mut result);
@@ -990,13 +979,11 @@ impl Blockstore {
             let index = &mut index_meta_entry.index;
             match erasure_meta.status(index) {
                 ErasureMetaStatus::CanRecover => {
-                    Self::recover_shreds(
+                    self.recover_shreds(
                         index,
                         erasure_meta,
                         prev_inserted_shreds,
                         &mut recovered_shreds,
-                        &self.data_shred_cf,
-                        &self.code_shred_cf,
                         reed_solomon_cache,
                     );
                 }
