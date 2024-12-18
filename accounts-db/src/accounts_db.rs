@@ -666,7 +666,7 @@ pub struct AccountsDbConfig {
     pub scan_filter_for_shrinking: ScanFilter,
     pub enable_experimental_accumulator_hash: bool,
     pub verify_experimental_accumulator_hash: bool,
-    /// Number of threads for background cleaning operations (`thread_pool_clean')
+    /// Number of threads for background and cleaning operations (`thread_pool_clean')
     pub num_clean_threads: Option<NonZeroUsize>,
     /// Number of threads for foreground operations (`thread_pool`)
     pub num_foreground_threads: Option<NonZeroUsize>,
@@ -1526,11 +1526,11 @@ pub struct AccountsDb {
     /// Starting file size of appendvecs
     file_size: u64,
 
-    /// Thread pool used for par_iter
+    /// Foreground thread pool used for par_iter
     pub thread_pool: ThreadPool,
-
+    /// Background operations
     pub thread_pool_clean: ThreadPool,
-
+    /// Background hashing thread pool
     pub thread_pool_hash: ThreadPool,
 
     accounts_delta_hashes: Mutex<HashMap<Slot, AccountsDeltaHash>>,
@@ -2687,7 +2687,7 @@ impl AccountsDb {
         let slots = self.storage.all_slots();
         let failed = AtomicBool::default();
         // populate
-        self.thread_pool.install(|| {
+        self.thread_pool_clean.install(|| {
             slots.into_par_iter().for_each(|slot| {
                 if slot > max_slot_inclusive {
                     return;
@@ -7634,10 +7634,8 @@ impl AccountsDb {
         update_index_thread_selection: UpdateIndexThreadSelection,
     ) -> SlotList<AccountInfo> {
         let target_slot = accounts.target_slot();
-        // using a thread pool here results in deadlock panics from bank_hashes.write()
-        // so, instead we limit how many threads will be created to the same size as the bg thread pool
         let len = std::cmp::min(accounts.len(), infos.len());
-        let threshold = 1;
+
         let update = |start, end| {
             let mut reclaims = Vec::with_capacity((end - start) / 2);
 
@@ -7659,6 +7657,8 @@ impl AccountsDb {
             });
             reclaims
         };
+
+        let threshold = 1;
         if matches!(
             update_index_thread_selection,
             UpdateIndexThreadSelection::PoolWithThreshold,
@@ -7666,7 +7666,7 @@ impl AccountsDb {
         {
             let chunk_size = std::cmp::max(1, len / quarter_thread_count()); // # pubkeys/thread
             let batches = 1 + len / chunk_size;
-            self.thread_pool.install(|| {
+            self.thread_pool_clean.install(|| {
                 (0..batches)
                     .into_par_iter()
                     .map(|batch| {
