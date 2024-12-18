@@ -403,6 +403,7 @@ mod tests {
     // Since a macro is used to initialize the test IDs from the `test_only`
     // module, best to ensure the lists have the expected values within a test
     // context.
+    #[cfg(feature = "dev-context-only-utils")]
     #[test]
     fn test_testable_prototypes() {
         assert_eq!(
