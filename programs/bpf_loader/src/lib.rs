@@ -1433,6 +1433,27 @@ fn execute<'a, 'b: 'a>(
                 Err(Box::new(error) as Box<dyn std::error::Error>)
             }
             ProgramResult::Err(mut error) => {
+<<<<<<< HEAD
+=======
+                if invoke_context
+                    .get_feature_set()
+                    .is_active(&solana_feature_set::deplete_cu_meter_on_vm_failure::id())
+                    && !matches!(error, EbpfError::SyscallError(_))
+                {
+                    // when an exception is thrown during the execution of a
+                    // Basic Block (e.g., a null memory dereference or other
+                    // faults), determining the exact number of CUs consumed
+                    // up to the point of failure requires additional effort
+                    // and is unnecessary since these cases are rare.
+                    //
+                    // In order to simplify CU tracking, simply consume all
+                    // remaining compute units so that the block cost
+                    // tracker uses the full requested compute unit cost for
+                    // this failed transaction.
+                    invoke_context.consume(invoke_context.get_remaining());
+                }
+
+>>>>>>> 11467d9221 (use new feature gate for cu depletion (#3994))
                 if direct_mapping {
                     if let EbpfError::AccessViolation(
                         AccessType::Store,

@@ -619,7 +619,11 @@ pub mod delay_visibility_of_program_deployment {
 }
 
 pub mod apply_cost_tracker_during_replay {
+<<<<<<< HEAD:sdk/src/feature_set.rs
     solana_sdk::declare_id!("2ry7ygxiYURULZCrypHhveanvP5tzZ4toRwVp89oCNSj");
+=======
+    solana_pubkey::declare_id!("2ry7ygxiYURULZCrypHhveanvP5tzZ4toRwVp89oCNSj");
+>>>>>>> 11467d9221 (use new feature gate for cu depletion (#3994)):sdk/feature-set/src/lib.rs
 }
 pub mod bpf_account_data_direct_mapping {
     solana_sdk::declare_id!("EenyoWx9UMXYKpR8mW5Jmfmy2fRjzUtM7NduYMY8bx33");
@@ -858,7 +862,31 @@ pub mod deprecate_legacy_vote_ixs {
 }
 
 pub mod disable_account_loader_special_case {
+<<<<<<< HEAD:sdk/src/feature_set.rs
     solana_program::declare_id!("EQUMpNFr7Nacb1sva56xn1aLfBxppEoSBH8RRVdkcD1x");
+=======
+    solana_pubkey::declare_id!("EQUMpNFr7Nacb1sva56xn1aLfBxppEoSBH8RRVdkcD1x");
+}
+
+pub mod enable_secp256r1_precompile {
+    solana_pubkey::declare_id!("sr11RdZWgbHTHxSroPALe6zgaT5A1K9LcE4nfsZS4gi");
+}
+
+pub mod accounts_lt_hash {
+    solana_pubkey::declare_id!("LtHaSHHsUge7EWTPVrmpuexKz6uVHZXZL6cgJa7W7Zn");
+}
+
+pub mod migrate_stake_program_to_core_bpf {
+    solana_pubkey::declare_id!("6M4oQ6eXneVhtLoiAr4yRYQY43eVLjrKbiDZDJc892yk");
+}
+
+pub mod deplete_cu_meter_on_vm_failure {
+    solana_pubkey::declare_id!("B7H2caeia4ZFcpE3QcgMqbiWiBtWrdBRBSJ1DY6Ktxbq");
+}
+
+pub mod reserve_minimal_cus_for_builtin_instructions {
+    solana_pubkey::declare_id!("C9oAhLxDBm3ssWtJx1yBGzPY55r2rArHmN1pbQn6HogH");
+>>>>>>> 11467d9221 (use new feature gate for cu depletion (#3994)):sdk/feature-set/src/lib.rs
 }
 
 lazy_static! {
@@ -1068,9 +1096,22 @@ lazy_static! {
         (verify_retransmitter_signature::id(), "Verify retransmitter signature #1840"),
         (vote_only_retransmitter_signed_fec_sets::id(), "vote only on retransmitter signed fec sets"),
         (partitioned_epoch_rewards_superfeature::id(), "replaces enable_partitioned_epoch_reward to enable partitioned rewards at epoch boundary SIMD-0118"),
+<<<<<<< HEAD:sdk/src/feature_set.rs
         (enable_turbine_extended_fanout_experiments::id(), "enable turbine extended fanout experiments #2373"),
         (deprecate_legacy_vote_ixs::id(), "Deprecate legacy vote instructions"),
         (disable_account_loader_special_case::id(), "Disable account loader special case"),
+=======
+        (disable_sbpf_v1_execution::id(), "Disables execution of SBPFv1 programs"),
+        (reenable_sbpf_v1_execution::id(), "Re-enables execution of SBPFv1 programs"),
+        (remove_accounts_executable_flag_checks::id(), "Remove checks of accounts is_executable flag SIMD-0162"),
+        (lift_cpi_caller_restriction::id(), "Lift the restriction in CPI that the caller must have the callee as an instruction account #2202"),
+        (disable_account_loader_special_case::id(), "Disable account loader special case #3513"),
+        (accounts_lt_hash::id(), "enables lattice-based accounts hash #3333"),
+        (enable_secp256r1_precompile::id(), "Enable secp256r1 precompile SIMD-0075"),
+        (migrate_stake_program_to_core_bpf::id(), "Migrate Stake program to Core BPF SIMD-0196 #3655"),
+        (deplete_cu_meter_on_vm_failure::id(), "Deplete compute meter for vm errors SIMD-0182 #3993"),
+        (reserve_minimal_cus_for_builtin_instructions::id(), "Reserve minimal CUs for builtin instructions SIMD-170 #2562"),
+>>>>>>> 11467d9221 (use new feature gate for cu depletion (#3994)):sdk/feature-set/src/lib.rs
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
