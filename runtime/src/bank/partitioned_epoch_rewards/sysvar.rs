@@ -31,8 +31,6 @@ impl Bank {
         num_partitions: u64,
         point_value: PointValue,
     ) {
-        assert!(self.is_partitioned_rewards_code_enabled());
-
         let total_rewards = if self
             .feature_set
             .is_active(&feature_set::partitioned_epoch_rewards_superfeature::id())
@@ -70,8 +68,6 @@ impl Bank {
         &self,
         distributed: u64,
     ) {
-        assert!(self.is_partitioned_rewards_code_enabled());
-
         let mut epoch_rewards = self.get_epoch_rewards_sysvar();
         assert!(epoch_rewards.active);
 

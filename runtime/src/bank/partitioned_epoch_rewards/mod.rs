@@ -248,15 +248,6 @@ impl Bank {
         }
     }
 
-    /// true if it is ok to run partitioned rewards code.
-    /// This means the feature is activated or certain testing situations.
-    pub(super) fn is_partitioned_rewards_code_enabled(&self) -> bool {
-        self.is_partitioned_rewards_feature_enabled()
-            || self
-                .partitioned_epoch_rewards_config()
-                .test_enable_partitioned_rewards
-    }
-
     /// For testing only
     pub fn force_reward_interval_end_for_tests(&mut self) {
         self.epoch_reward_status = EpochRewardStatus::Inactive;

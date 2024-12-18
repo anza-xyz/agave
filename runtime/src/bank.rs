@@ -1449,9 +1449,7 @@ impl Bank {
                 let leader_schedule_epoch = new.epoch_schedule().get_leader_schedule_epoch(slot);
                 new.update_epoch_stakes(leader_schedule_epoch);
             }
-            if new.is_partitioned_rewards_code_enabled() {
-                new.distribute_partitioned_epoch_rewards();
-            }
+            new.distribute_partitioned_epoch_rewards();
         });
 
         let (_epoch, slot_index) = new.epoch_schedule.get_epoch_and_slot_index(new.slot);
@@ -1620,24 +1618,15 @@ impl Bank {
 
         let mut rewards_metrics = RewardsMetrics::default();
         // After saving a snapshot of stakes, apply stake rewards and commission
-        let (_, update_rewards_with_thread_pool_time_us) =
-            measure_us!(if self.is_partitioned_rewards_code_enabled() {
-                self.begin_partitioned_rewards(
-                    reward_calc_tracer,
-                    &thread_pool,
-                    parent_epoch,
-                    parent_slot,
-                    parent_height,
-                    &mut rewards_metrics,
-                );
-            } else {
-                self.update_rewards_with_thread_pool(
-                    parent_epoch,
-                    reward_calc_tracer,
-                    &thread_pool,
-                    &mut rewards_metrics,
-                )
-            });
+        let (_, update_rewards_with_thread_pool_time_us) = measure_us!(self
+            .begin_partitioned_rewards(
+                reward_calc_tracer,
+                &thread_pool,
+                parent_epoch,
+                parent_slot,
+                parent_height,
+                &mut rewards_metrics,
+            ));
 
         report_new_epoch_metrics(
             epoch,
