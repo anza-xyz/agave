@@ -19,7 +19,7 @@ use {
     solana_feature_set::{self as feature_set, FeatureSet},
     solana_ledger::token_balances::collect_token_balances,
     solana_program_runtime::{
-        invoke_context::mock_process_instruction, solana_rbpf::vm::ContextObject,
+        invoke_context::mock_process_instruction, solana_sbpf::vm::ContextObject,
     },
     solana_runtime::{
         bank::{Bank, TransactionBalancesSet},

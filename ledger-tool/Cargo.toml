@@ -47,6 +47,7 @@ solana-program-runtime = { workspace = true }
 solana-rpc = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime-transaction = { workspace = true }
+solana-sbpf = { workspace = true, features = ["debugger"] }
 solana-sdk = { workspace = true, features = ["openssl-vendored"] }
 solana-stake-program = { workspace = true }
 solana-storage-bigtable = { workspace = true }
@@ -56,7 +57,6 @@ solana-type-overrides = { workspace = true }
 solana-unified-scheduler-pool = { workspace = true }
 solana-version = { workspace = true }
 solana-vote-program = { workspace = true }
-solana_rbpf = { workspace = true, features = ["debugger"] }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 

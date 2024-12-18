@@ -37,7 +37,7 @@ use {
             ForkGraph, ProgramCache, ProgramCacheEntry, ProgramCacheForTxBatch,
             ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
         },
-        solana_rbpf::{
+        solana_sbpf::{
             program::{BuiltinProgram, FunctionRegistry},
             vm::Config as VmConfig,
         },

@@ -3,7 +3,7 @@
 use {
     byteorder::{ByteOrder, LittleEndian},
     solana_program_runtime::invoke_context::SerializedAccountMetadata,
-    solana_rbpf::{
+    solana_sbpf::{
         aligned_memory::{AlignedMemory, Pod},
         ebpf::{HOST_ALIGN, MM_INPUT_START},
         memory_region::{MemoryRegion, MemoryState},

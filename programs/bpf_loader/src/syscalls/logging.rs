@@ -1,4 +1,4 @@
-use {super::*, solana_rbpf::vm::ContextObject};
+use {super::*, solana_sbpf::vm::ContextObject};
 
 declare_builtin_function!(
     /// Log a user's info message
