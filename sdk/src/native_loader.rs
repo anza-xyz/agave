@@ -1,10 +1,9 @@
 //! The native loader native program.
 
-use crate::account::{
+use solana_account::{
     Account, AccountSharedData, InheritableAccountFields, DUMMY_INHERITABLE_ACCOUNT_FIELDS,
 };
-
-crate::declare_id!("NativeLoader1111111111111111111111111111111");
+pub use solana_sdk_ids::native_loader::{check_id, id, ID};
 
 /// Create an executable account with the given shared object name.
 pub fn create_loadable_account_with_fields(

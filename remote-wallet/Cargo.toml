@@ -19,12 +19,17 @@ num-traits = { workspace = true }
 parking_lot = { workspace = true }
 qstring = { workspace = true }
 semver = { workspace = true }
-solana-sdk = { workspace = true }
+solana-derivation-path = { workspace = true }
+solana-offchain-message = { workspace = true }
+solana-pubkey = { workspace = true, features = ["std"] }
+solana-signature = { workspace = true, features = ["std"] }
+solana-signer = { workspace = true }
 thiserror = { workspace = true }
 uriparse = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
 
 [features]
 default = ["linux-static-hidraw", "hidapi"]
@@ -32,10 +37,6 @@ linux-shared-hidraw = ["hidapi/linux-shared-hidraw"]
 linux-shared-libusb = ["hidapi/linux-shared-libusb"]
 linux-static-hidraw = ["hidapi/linux-static-hidraw"]
 linux-static-libusb = ["hidapi/linux-static-libusb"]
-
-[[bin]]
-name = "solana-ledger-udev"
-path = "src/bin/ledger-udev.rs"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

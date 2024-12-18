@@ -17,11 +17,11 @@ use {
         },
         with_mock_invoke_context,
     },
-    solana_rbpf::{
+    solana_runtime::bank::Bank,
+    solana_sbpf::{
         assembler::assemble, elf::Executable, static_analysis::Analysis,
         verifier::RequisiteVerifier,
     },
-    solana_runtime::bank::Bank,
     solana_sdk::{
         account::{create_account_shared_data_for_test, AccountSharedData},
         account_utils::StateMut,
@@ -60,6 +60,7 @@ struct Account {
 struct Input {
     program_id: String,
     accounts: Vec<Account>,
+    #[serde(with = "serde_bytes")]
     instruction_data: Vec<u8>,
 }
 fn load_accounts(path: &Path) -> Result<Input> {

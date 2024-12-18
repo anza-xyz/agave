@@ -23,6 +23,7 @@
 use {
     crate::bank::Bank,
     log::*,
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk::{
         clock::Slot,
         hash::Hash,
@@ -134,11 +135,7 @@ impl Debug for TimeoutListener {
 #[cfg_attr(feature = "dev-context-only-utils", automock)]
 // suppress false clippy complaints arising from mockall-derive:
 //   warning: `#[must_use]` has no effect when applied to a struct field
-//   warning: the following explicit lifetimes could be elided: 'a
-#[cfg_attr(
-    feature = "dev-context-only-utils",
-    allow(unused_attributes, clippy::needless_lifetimes)
-)]
+#[cfg_attr(feature = "dev-context-only-utils", allow(unused_attributes))]
 pub trait InstalledScheduler: Send + Sync + Debug + 'static {
     fn id(&self) -> SchedulerId;
     fn context(&self) -> &SchedulingContext;
@@ -165,9 +162,10 @@ pub trait InstalledScheduler: Send + Sync + Debug + 'static {
     /// optimize the fast code-path of normal transaction scheduling to be multi-threaded at the
     /// cost of far slower error code-path while giving implementors increased flexibility by
     /// having &mut.
-    fn schedule_execution<'a>(
-        &'a self,
-        transaction_with_index: &'a (&'a SanitizedTransaction, usize),
+    fn schedule_execution(
+        &self,
+        transaction: RuntimeTransaction<SanitizedTransaction>,
+        index: usize,
     ) -> ScheduleResult;
 
     /// Return the error which caused the scheduler to abort.
@@ -444,10 +442,11 @@ impl BankWithScheduler {
     ///
     /// Calling this will panic if the installed scheduler is Unavailable (the bank is
     /// wait_for_termination()-ed or the unified scheduler is disabled in the first place).
-    // 'a is needed; anonymous_lifetime_in_impl_trait isn't stabilized yet...
-    pub fn schedule_transaction_executions<'a>(
+    pub fn schedule_transaction_executions(
         &self,
-        transactions_with_indexes: impl ExactSizeIterator<Item = (&'a SanitizedTransaction, &'a usize)>,
+        transactions_with_indexes: impl ExactSizeIterator<
+            Item = (RuntimeTransaction<SanitizedTransaction>, usize),
+        >,
     ) -> Result<()> {
         trace!(
             "schedule_transaction_executions(): {} txs",
@@ -455,8 +454,8 @@ impl BankWithScheduler {
         );
 
         let schedule_result: ScheduleResult = self.inner.with_active_scheduler(|scheduler| {
-            for (sanitized_transaction, &index) in transactions_with_indexes {
-                scheduler.schedule_execution(&(sanitized_transaction, index))?;
+            for (sanitized_transaction, index) in transactions_with_indexes {
+                scheduler.schedule_execution(sanitized_transaction, index)?;
             }
             Ok(())
         });
@@ -841,7 +840,7 @@ mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(10_000);
-        let tx0 = SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
+        let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
             &mint_keypair,
             &solana_sdk::pubkey::new_rand(),
             2,
@@ -856,12 +855,12 @@ mod tests {
                     mocked
                         .expect_schedule_execution()
                         .times(1)
-                        .returning(|(_, _)| Ok(()));
+                        .returning(|_, _| Ok(()));
                 } else {
                     mocked
                         .expect_schedule_execution()
                         .times(1)
-                        .returning(|(_, _)| Err(SchedulerAborted));
+                        .returning(|_, _| Err(SchedulerAborted));
                     mocked
                         .expect_recover_error_after_abort()
                         .times(1)
@@ -871,7 +870,7 @@ mod tests {
         );
 
         let bank = BankWithScheduler::new(bank, Some(mocked_scheduler));
-        let result = bank.schedule_transaction_executions([(&tx0, &0)].into_iter());
+        let result = bank.schedule_transaction_executions([(tx0, 0)].into_iter());
         if should_succeed {
             assert_matches!(result, Ok(()));
         } else {

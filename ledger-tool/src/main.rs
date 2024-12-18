@@ -31,12 +31,14 @@ use {
     },
     solana_cli_output::OutputFormat,
     solana_core::{
+        banking_simulation::{BankingSimulator, BankingTraceEvents},
         system_monitor_service::{SystemMonitorService, SystemMonitorStatsReportConfig},
-        validator::BlockVerificationMethod,
+        validator::{BlockProductionMethod, BlockVerificationMethod},
     },
     solana_cost_model::{cost_model::CostModel, cost_tracker::CostTracker},
+    solana_feature_set::{self as feature_set, FeatureSet},
     solana_ledger::{
-        blockstore::{create_new_ledger, Blockstore},
+        blockstore::{banking_trace_path, create_new_ledger, Blockstore},
         blockstore_options::{AccessType, LedgerColumnOptions},
         blockstore_processor::{
             ProcessSlotCallback, TransactionStatusMessage, TransactionStatusSender,
@@ -57,12 +59,12 @@ use {
             SUPPORTED_ARCHIVE_COMPRESSION,
         },
     },
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
         account_utils::StateMut,
         clock::{Epoch, Slot},
         feature::{self, Feature},
-        feature_set::{self, FeatureSet},
         genesis_config::ClusterType,
         inflation::Inflation,
         native_token::{lamports_to_sol, sol_to_lamports, Sol},
@@ -72,10 +74,10 @@ use {
         shred_version::compute_shred_version,
         stake::{self, state::StakeStateV2},
         system_program,
-        transaction::{MessageHash, SanitizedTransaction, SimpleAddressLoader},
+        transaction::{MessageHash, SimpleAddressLoader},
     },
     solana_stake_program::{points::PointValue, stake_state},
-    solana_transaction_status::UiInstruction,
+    solana_transaction_status::parse_ui_instruction,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_vote_program::{
         self,
@@ -83,8 +85,8 @@ use {
     },
     std::{
         collections::{HashMap, HashSet},
-        ffi::OsStr,
-        fs::File,
+        ffi::{OsStr, OsString},
+        fs::{read_dir, File},
         io::{self, Write},
         mem::swap,
         path::{Path, PathBuf},
@@ -471,7 +473,7 @@ fn compute_slot_cost(
             .transactions
             .into_iter()
             .filter_map(|transaction| {
-                SanitizedTransaction::try_create(
+                RuntimeTransaction::try_create(
                     transaction,
                     MessageHash::Compute,
                     None,
@@ -534,6 +536,70 @@ fn minimize_bank_for_snapshot(
 fn assert_capitalization(bank: &Bank) {
     let debug_verify = true;
     assert!(bank.calculate_and_verify_capitalization(debug_verify));
+}
+
+fn load_banking_trace_events_or_exit(ledger_path: &Path) -> BankingTraceEvents {
+    let file_paths = read_banking_trace_event_file_paths_or_exit(banking_trace_path(ledger_path));
+
+    info!("Using: banking trace event files: {file_paths:?}");
+    match BankingTraceEvents::load(&file_paths) {
+        Ok(banking_trace_events) => banking_trace_events,
+        Err(error) => {
+            eprintln!("Failed to load banking trace events: {error:?}");
+            exit(1)
+        }
+    }
+}
+
+fn read_banking_trace_event_file_paths_or_exit(banking_trace_path: PathBuf) -> Vec<PathBuf> {
+    info!("Using: banking trace events dir: {banking_trace_path:?}");
+
+    let entries = match read_dir(&banking_trace_path) {
+        Ok(entries) => entries,
+        Err(error) => {
+            eprintln!("Error: failed to open banking_trace_path: {error:?}");
+            exit(1);
+        }
+    };
+
+    let mut entry_names = entries
+        .flat_map(|entry| entry.ok().map(|entry| entry.file_name()))
+        .collect::<HashSet<OsString>>();
+
+    let mut event_file_paths = vec![];
+
+    if entry_names.is_empty() {
+        warn!("banking_trace_path dir is empty.");
+        return event_file_paths;
+    }
+
+    for index in 0.. {
+        let event_file_name: OsString = BankingSimulator::event_file_name(index).into();
+        if entry_names.remove(&event_file_name) {
+            event_file_paths.push(banking_trace_path.join(event_file_name));
+        } else {
+            break;
+        }
+    }
+
+    if event_file_paths.is_empty() {
+        warn!("Error: no event files found");
+    }
+
+    if !entry_names.is_empty() {
+        let full_names = entry_names
+            .into_iter()
+            .map(|name| banking_trace_path.join(name))
+            .collect::<Vec<_>>();
+        warn!(
+            "Some files in {banking_trace_path:?} is ignored due to gapped events file rotation \
+             or unrecognized names: {full_names:?}"
+        );
+    }
+
+    // Reverse to load in the chronicle order (note that this isn't strictly needed)
+    event_file_paths.reverse();
+    event_file_paths
 }
 
 struct SlotRecorderConfig {
@@ -694,7 +760,7 @@ fn record_transactions(
                     let instructions = message
                         .instructions()
                         .iter()
-                        .map(|ix| UiInstruction::parse(ix, &message.account_keys(), None))
+                        .map(|ix| parse_ui_instruction(ix, &message.account_keys(), None))
                         .collect();
 
                     let is_simple_vote_tx = tx.is_simple_vote_transaction();
@@ -730,10 +796,10 @@ fn record_transactions(
     }
 }
 
-#[cfg(not(target_env = "msvc"))]
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
 use jemallocator::Jemalloc;
 
-#[cfg(not(target_env = "msvc"))]
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
 
@@ -1146,6 +1212,30 @@ fn main() {
                             "geyser_plugin_config",
                         ])
                         .help("In addition to the bank hash, optionally include accounts and/or transactions details for the slot"),
+                )
+                .arg(
+                    Arg::with_name("abort_on_invalid_block")
+                        .long("abort-on-invalid-block")
+                        .takes_value(false)
+                        .help(
+                            "Exits with failed status early as soon as any bad block is detected",
+                        ),
+                )
+                .arg(
+                    Arg::with_name("no_block_cost_limits")
+                        .long("no-block-cost-limits")
+                        .takes_value(false)
+                        .help("Disable block cost limits effectively by setting them to the max"),
+                )
+                .arg(
+                    Arg::with_name("enable_hash_overrides")
+                        .long("enable-hash-overrides")
+                        .takes_value(false)
+                        .help(
+                            "Enable override of blockhashes and bank hashes from banking trace \
+                             event files to correctly verify blocks produced by \
+                             the simulate-block-production subcommand",
+                        ),
                 ),
         )
         .subcommand(
@@ -1386,6 +1476,36 @@ fn main() {
                         .long("enable-capitalization-change")
                         .takes_value(false)
                         .help("If snapshot creation should succeed with a capitalization delta."),
+                ),
+        )
+        .subcommand(
+            SubCommand::with_name("simulate-block-production")
+                .about("Simulate producing blocks with banking trace event files in the ledger")
+                .arg(&load_genesis_config_arg)
+                .args(&accounts_db_config_args)
+                .args(&snapshot_config_args)
+                .arg(
+                    Arg::with_name("block_production_method")
+                        .long("block-production-method")
+                        .value_name("METHOD")
+                        .takes_value(true)
+                        .possible_values(BlockProductionMethod::cli_names())
+                        .help(BlockProductionMethod::cli_message()),
+                )
+                .arg(
+                    Arg::with_name("first_simulated_slot")
+                        .long("first-simulated-slot")
+                        .value_name("SLOT")
+                        .validator(is_slot)
+                        .takes_value(true)
+                        .required(true)
+                        .help("Start simulation at the given slot")
+                )
+                .arg(
+                    Arg::with_name("no_block_cost_limits")
+                        .long("no-block-cost-limits")
+                        .takes_value(false)
+                        .help("Disable block cost limits effectively by setting them to the max"),
                 ),
         )
         .subcommand(
@@ -1662,6 +1782,12 @@ fn main() {
                     );
 
                     let mut process_options = parse_process_options(&ledger_path, arg_matches);
+                    if arg_matches.is_present("enable_hash_overrides") {
+                        let banking_trace_events = load_banking_trace_events_or_exit(&ledger_path);
+                        process_options.hash_overrides =
+                            Some(banking_trace_events.hash_overrides().clone());
+                    }
+
                     let (slot_callback, slot_recorder_config) = setup_slot_recording(arg_matches);
                     process_options.slot_callback = slot_callback;
                     let transaction_status_sender = slot_recorder_config
@@ -1798,11 +1924,11 @@ fn main() {
                     let is_minimized = arg_matches.is_present("minimized");
                     let output_directory = value_t!(arg_matches, "output_directory", PathBuf)
                         .unwrap_or_else(|_| {
-                            let snapshot_archive_path = value_t!(matches, "snapshots", String)
+                            let snapshot_archive_path = value_t!(arg_matches, "snapshots", String)
                                 .ok()
                                 .map(PathBuf::from);
                             let incremental_snapshot_archive_path =
-                                value_t!(matches, "incremental_snapshot_archive_path", String)
+                                value_t!(arg_matches, "incremental_snapshot_archive_path", String)
                                     .ok()
                                     .map(PathBuf::from);
                             match (
@@ -1975,7 +2101,7 @@ fn main() {
                         .accounts
                         .accounts_db
                         .verify_accounts_hash_in_bg
-                        .wait_for_complete();
+                        .join_background_thread();
 
                     let child_bank_required = rent_burn_percentage.is_ok()
                         || hashes_per_tick.is_some()
@@ -2349,6 +2475,61 @@ fn main() {
                         exit_signal.store(true, Ordering::Relaxed);
                         system_monitor_service.join().unwrap();
                     }
+                }
+                ("simulate-block-production", Some(arg_matches)) => {
+                    let mut process_options = parse_process_options(&ledger_path, arg_matches);
+
+                    let banking_trace_events = load_banking_trace_events_or_exit(&ledger_path);
+                    process_options.hash_overrides =
+                        Some(banking_trace_events.hash_overrides().clone());
+
+                    let slot = value_t!(arg_matches, "first_simulated_slot", Slot).unwrap();
+                    let simulator = BankingSimulator::new(banking_trace_events, slot);
+                    let Some(parent_slot) = simulator.parent_slot() else {
+                        eprintln!(
+                            "Couldn't determine parent_slot of first_simulated_slot: {slot} \
+                             due to missing banking_trace_event data."
+                        );
+                        exit(1);
+                    };
+                    process_options.halt_at_slot = Some(parent_slot);
+
+                    let blockstore = Arc::new(open_blockstore(
+                        &ledger_path,
+                        arg_matches,
+                        AccessType::Primary, // needed for purging already existing simulated block shreds...
+                    ));
+                    let genesis_config = open_genesis_config_by(&ledger_path, arg_matches);
+                    let LoadAndProcessLedgerOutput { bank_forks, .. } =
+                        load_and_process_ledger_or_exit(
+                            arg_matches,
+                            &genesis_config,
+                            blockstore.clone(),
+                            process_options,
+                            None, // transaction status sender
+                        );
+
+                    let block_production_method = value_t!(
+                        arg_matches,
+                        "block_production_method",
+                        BlockProductionMethod
+                    )
+                    .unwrap_or_default();
+
+                    info!("Using: block-production-method: {block_production_method}");
+
+                    match simulator.start(
+                        genesis_config,
+                        bank_forks,
+                        blockstore,
+                        block_production_method,
+                    ) {
+                        Ok(()) => println!("Ok"),
+                        Err(error) => {
+                            eprintln!("{error:?}");
+                            exit(1);
+                        }
+                    };
                 }
                 ("accounts", Some(arg_matches)) => {
                     let process_options = parse_process_options(&ledger_path, arg_matches);

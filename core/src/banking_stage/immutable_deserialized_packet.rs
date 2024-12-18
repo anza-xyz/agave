@@ -1,21 +1,26 @@
 use {
     super::packet_filter::PacketFilterFailure,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
+    solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_perf::packet::Packet,
-    solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
+    solana_runtime::bank::Bank,
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sanitize::SanitizeError,
     solana_sdk::{
+        clock::Slot,
+        feature_set::FeatureSet,
         hash::Hash,
-        message::Message,
+        message::{v0::LoadedAddresses, AddressLoaderError, Message, SimpleAddressLoader},
         pubkey::Pubkey,
         signature::Signature,
         transaction::{
-            AddressLoader, SanitizedTransaction, SanitizedVersionedTransaction,
-            VersionedTransaction,
+            MessageHash, SanitizedTransaction, SanitizedVersionedTransaction, VersionedTransaction,
         },
     },
     solana_short_vec::decode_shortu16_len,
-    solana_svm_transaction::instruction::SVMInstruction,
+    solana_svm_transaction::{
+        instruction::SVMInstruction, message_address_table_lookup::SVMMessageAddressTableLookup,
+    },
     std::{cmp::Ordering, collections::HashSet, mem::size_of},
     thiserror::Error,
 };
@@ -39,7 +44,13 @@ pub enum DeserializedPacketError {
     FailedFilter(#[from] PacketFilterFailure),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+lazy_static::lazy_static! {
+    // Make a dummy feature_set with all features enabled to
+    // fetch compute_unit_price and compute_unit_limit for legacy leader.
+    static ref FEATURE_SET: FeatureSet = FeatureSet::all_enabled();
+}
+
+#[derive(Debug)]
 pub struct ImmutableDeserializedPacket {
     original_packet: Packet,
     transaction: SanitizedVersionedTransaction,
@@ -67,6 +78,7 @@ impl ImmutableDeserializedPacket {
                 .get_message()
                 .program_instructions_iter()
                 .map(|(pubkey, ix)| (pubkey, SVMInstruction::from(ix))),
+            &FEATURE_SET,
         )
         .map_err(|_| DeserializedPacketError::PrioritizationFailure)?;
 
@@ -111,24 +123,59 @@ impl ImmutableDeserializedPacket {
 
     // This function deserializes packets into transactions, computes the blake3 hash of transaction
     // messages.
+    // Additionally, this returns the minimum deactivation slot of the resolved addresses.
     pub fn build_sanitized_transaction(
         &self,
         votes_only: bool,
-        address_loader: impl AddressLoader,
+        bank: &Bank,
         reserved_account_keys: &HashSet<Pubkey>,
-    ) -> Option<SanitizedTransaction> {
+    ) -> Option<(RuntimeTransaction<SanitizedTransaction>, Slot)> {
         if votes_only && !self.is_simple_vote() {
             return None;
         }
-        let tx = SanitizedTransaction::try_new(
-            self.transaction().clone(),
-            *self.message_hash(),
-            self.is_simple_vote(),
-            address_loader,
-            reserved_account_keys,
+
+        // Resolve the lookup addresses and retrieve the min deactivation slot
+        let (loaded_addresses, deactivation_slot) =
+            Self::resolve_addresses_with_deactivation(self.transaction(), bank).ok()?;
+        let address_loader = SimpleAddressLoader::Enabled(loaded_addresses);
+        let tx = RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
+            self.transaction.clone(),
+            MessageHash::Precomputed(self.message_hash),
+            Some(self.is_simple_vote),
         )
+        .and_then(|tx| {
+            RuntimeTransaction::<SanitizedTransaction>::try_from(
+                tx,
+                address_loader,
+                reserved_account_keys,
+            )
+        })
         .ok()?;
-        Some(tx)
+        Some((tx, deactivation_slot))
+    }
+
+    fn resolve_addresses_with_deactivation(
+        transaction: &SanitizedVersionedTransaction,
+        bank: &Bank,
+    ) -> Result<(LoadedAddresses, Slot), AddressLoaderError> {
+        let Some(address_table_lookups) = transaction.get_message().message.address_table_lookups()
+        else {
+            return Ok((LoadedAddresses::default(), Slot::MAX));
+        };
+
+        bank.load_addresses_from_ref(
+            address_table_lookups
+                .iter()
+                .map(SVMMessageAddressTableLookup::from),
+        )
+    }
+}
+
+// Eq and PartialEq MUST be consistent with PartialOrd and Ord
+impl Eq for ImmutableDeserializedPacket {}
+impl PartialEq for ImmutableDeserializedPacket {
+    fn eq(&self, other: &Self) -> bool {
+        self.compute_unit_price() == other.compute_unit_price()
     }
 }
 

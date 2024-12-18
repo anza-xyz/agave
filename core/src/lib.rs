@@ -1,4 +1,4 @@
-#![cfg_attr(RUSTC_WITH_SPECIALIZATION, feature(min_specialization))]
+#![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
 #![recursion_limit = "2048"]
 //! The `solana` library implements the Solana high-performance blockchain architecture.
@@ -10,9 +10,9 @@
 
 pub mod accounts_hash_verifier;
 pub mod admin_rpc_post_init;
+pub mod banking_simulation;
 pub mod banking_stage;
 pub mod banking_trace;
-pub mod cache_block_meta_service;
 pub mod cluster_info_vote_listener;
 pub mod cluster_slots_service;
 pub mod commitment_service;
@@ -29,7 +29,6 @@ pub mod poh_timing_reporter;
 pub mod repair;
 pub mod replay_stage;
 mod result;
-pub mod rewards_recorder_service;
 pub mod sample_performance_service;
 mod shred_fetch_stage;
 pub mod sigverify;
@@ -40,7 +39,6 @@ pub mod stats_reporter_service;
 pub mod system_monitor_service;
 pub mod tpu;
 mod tpu_entry_notifier;
-pub mod tracer_packet_stats;
 pub mod tvu;
 pub mod unfrozen_gossip_verified_vote_hashes;
 pub mod validator;

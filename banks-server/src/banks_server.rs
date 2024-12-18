@@ -8,16 +8,18 @@ use {
         TransactionSimulationDetails, TransactionStatus,
     },
     solana_client::connection_cache::ConnectionCache,
+    solana_feature_set::{move_precompile_verification_to_svm, FeatureSet},
     solana_runtime::{
         bank::{Bank, TransactionSimulationResult},
         bank_forks::BankForks,
         commitment::BlockCommitmentCache,
+        verify_precompiles::verify_precompiles,
     },
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk::{
         account::Account,
         clock::Slot,
         commitment_config::CommitmentLevel,
-        feature_set::{self, FeatureSet},
         hash::Hash,
         message::{Message, SanitizedMessage},
         pubkey::Pubkey,
@@ -27,6 +29,7 @@ use {
     solana_send_transaction_service::{
         send_transaction_service::{SendTransactionService, TransactionInfo},
         tpu_info::NullTpuInfo,
+        transaction_client::ConnectionCacheClient,
     },
     std::{
         io,
@@ -165,9 +168,9 @@ fn verify_transaction(
     transaction.verify()?;
 
     let move_precompile_verification_to_svm =
-        feature_set.is_active(&feature_set::move_precompile_verification_to_svm::id());
+        feature_set.is_active(&move_precompile_verification_to_svm::id());
     if !move_precompile_verification_to_svm {
-        transaction.verify_precompiles(feature_set)?;
+        verify_precompiles(transaction, feature_set)?;
     }
 
     Ok(())
@@ -177,7 +180,7 @@ fn simulate_transaction(
     bank: &Bank,
     transaction: VersionedTransaction,
 ) -> BanksTransactionResultWithSimulation {
-    let sanitized_transaction = match SanitizedTransaction::try_create(
+    let sanitized_transaction = match RuntimeTransaction::try_create(
         transaction,
         MessageHash::Compute,
         Some(false), // is_simple_vote_tx
@@ -452,16 +455,15 @@ pub async fn start_tcp_server(
         .map(move |chan| {
             let (sender, receiver) = unbounded();
 
-            SendTransactionService::new::<NullTpuInfo>(
+            let client = ConnectionCacheClient::<NullTpuInfo>::new(
+                connection_cache.clone(),
                 tpu_addr,
-                &bank_forks,
                 None,
-                receiver,
-                &connection_cache,
-                5_000,
+                None,
                 0,
-                exit.clone(),
             );
+
+            SendTransactionService::new(&bank_forks, receiver, client, 5_000, exit.clone());
 
             let server = BanksServer::new(
                 bank_forks.clone(),

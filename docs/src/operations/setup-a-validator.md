@@ -308,10 +308,8 @@ not start without the settings below.
 
 ```bash
 sudo bash -c "cat >/etc/sysctl.d/21-agave-validator.conf <<EOF
-# Increase UDP buffer sizes
-net.core.rmem_default = 134217728
+# Increase max UDP buffer sizes
 net.core.rmem_max = 134217728
-net.core.wmem_default = 134217728
 net.core.wmem_max = 134217728
 
 # Increase memory mapped files limit
@@ -435,6 +433,8 @@ Refer to `agave-validator --help` for more information on what each flag is
 doing in this script. Also refer to the section on
 [best practices for operating a validator](./best-practices/general.md).
 
+This startup script is specifically intended for testnet. For more startup script examples intended for other clusters, refer to the
+[clusters section.](./../clusters/available.md).
 ## Verifying Your Validator Is Working
 
 Test that your `validator.sh` file is running properly by executing the

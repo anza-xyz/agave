@@ -17,15 +17,13 @@ use {
     solana_ledger::genesis_utils::create_genesis_config,
     solana_runtime::{
         accounts_background_service::AbsRequestSender, bank::Bank, bank_forks::BankForks,
-        genesis_utils::GenesisConfigInfo, prioritization_fee_cache::PrioritizationFeeCache,
+        genesis_utils::GenesisConfigInfo, installed_scheduler_pool::SchedulingContext,
+        prioritization_fee_cache::PrioritizationFeeCache,
     },
-    solana_sdk::{
-        hash::Hash,
-        pubkey::Pubkey,
-        system_transaction,
-        transaction::{Result, SanitizedTransaction},
-    },
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_sdk::{hash::Hash, pubkey::Pubkey, system_transaction, transaction::Result},
     solana_timings::ExecuteTimings,
+    solana_unified_scheduler_logic::Task,
     solana_unified_scheduler_pool::{
         DefaultTaskHandler, HandlerContext, PooledScheduler, SchedulerPool, TaskHandler,
     },
@@ -47,9 +45,8 @@ fn test_scheduler_waited_by_drop_bank_service() {
         fn handle(
             result: &mut Result<()>,
             timings: &mut ExecuteTimings,
-            bank: &Arc<Bank>,
-            transaction: &SanitizedTransaction,
-            index: usize,
+            scheduling_context: &SchedulingContext,
+            task: &Task,
             handler_context: &HandlerContext,
         ) {
             info!("Stalling at StallingHandler::handle()...");
@@ -58,7 +55,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
             std::thread::sleep(std::time::Duration::from_secs(3));
             info!("Now entering into DefaultTaskHandler::handle()...");
 
-            DefaultTaskHandler::handle(result, timings, bank, transaction, index, handler_context);
+            DefaultTaskHandler::handle(result, timings, scheduling_context, task, handler_context);
         }
     }
 
@@ -97,7 +94,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
     let root_hash = root_bank.hash();
     bank_forks.write().unwrap().insert(root_bank);
 
-    let tx = SanitizedTransaction::from_transaction_for_tests(system_transaction::transfer(
+    let tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
         &mint_keypair,
         &solana_sdk::pubkey::new_rand(),
         2,
@@ -108,7 +105,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
     // been started
     let lock_to_stall = LOCK_TO_STALL.lock().unwrap();
     pruned_bank
-        .schedule_transaction_executions([(&tx, &0)].into_iter())
+        .schedule_transaction_executions([(tx, 0)].into_iter())
         .unwrap();
     drop(pruned_bank);
     assert_eq!(pool_raw.pooled_scheduler_count(), 0);

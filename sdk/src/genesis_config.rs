@@ -2,15 +2,18 @@
 
 #![cfg(feature = "full")]
 
+#[deprecated(
+    since = "2.2.0",
+    note = "Use `solana_cluster_type::ClusterType` instead."
+)]
+pub use solana_cluster_type::ClusterType;
 use {
     crate::{
-        account::{Account, AccountSharedData},
         clock::{UnixTimestamp, DEFAULT_TICKS_PER_SLOT},
         epoch_schedule::EpochSchedule,
         fee_calculator::FeeRateGovernor,
         hash::{hash, Hash},
         inflation::Inflation,
-        native_token::lamports_to_sol,
         poh_config::PohConfig,
         pubkey::Pubkey,
         rent::Rent,
@@ -22,13 +25,14 @@ use {
     bincode::{deserialize, serialize},
     chrono::{TimeZone, Utc},
     memmap2::Mmap,
+    solana_account::{Account, AccountSharedData},
+    solana_native_token::lamports_to_sol,
     std::{
         collections::BTreeMap,
         fmt,
         fs::{File, OpenOptions},
         io::Write,
         path::{Path, PathBuf},
-        str::FromStr,
         time::{SystemTime, UNIX_EPOCH},
     },
 };
@@ -40,54 +44,10 @@ pub const DEFAULT_GENESIS_DOWNLOAD_PATH: &str = "/genesis.tar.bz2";
 // deprecated default that is no longer used
 pub const UNUSED_DEFAULT: u64 = 1024;
 
-// The order can't align with release lifecycle only to remain ABI-compatible...
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ClusterType {
-    Testnet,
-    MainnetBeta,
-    Devnet,
-    Development,
-}
-
-impl ClusterType {
-    pub const STRINGS: [&'static str; 4] = ["development", "devnet", "testnet", "mainnet-beta"];
-
-    /// Get the known genesis hash for this ClusterType
-    pub fn get_genesis_hash(&self) -> Option<Hash> {
-        match self {
-            Self::MainnetBeta => {
-                Some(Hash::from_str("5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d").unwrap())
-            }
-            Self::Testnet => {
-                Some(Hash::from_str("4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY").unwrap())
-            }
-            Self::Devnet => {
-                Some(Hash::from_str("EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG").unwrap())
-            }
-            Self::Development => None,
-        }
-    }
-}
-
-impl FromStr for ClusterType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "development" => Ok(ClusterType::Development),
-            "devnet" => Ok(ClusterType::Devnet),
-            "testnet" => Ok(ClusterType::Testnet),
-            "mainnet-beta" => Ok(ClusterType::MainnetBeta),
-            _ => Err(format!("{s} is unrecognized for cluster type")),
-        }
-    }
-}
-
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "3V3ZVRyzNhRfe8RJwDeGpeTP8xBWGGFBEbwTkvKKVjEa")
+    frozen_abi(digest = "D9VFRSj4fodCuKFC9omQY2zY2Uw8wo6SzJFLeMJaVigm")
 )]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct GenesisConfig {

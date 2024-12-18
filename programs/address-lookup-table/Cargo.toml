@@ -15,6 +15,7 @@ bytemuck = { workspace = true }
 log = { workspace = true }
 num-derive = { workspace = true }
 num-traits = { workspace = true }
+solana-feature-set = { workspace = true }
 solana-program = { workspace = true }
 thiserror = { workspace = true }
 
@@ -22,9 +23,6 @@ thiserror = { workspace = true }
 solana-log-collector = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-sdk = { workspace = true }
-
-[build-dependencies]
-rustc_version = { workspace = true, optional = true }
 
 [lib]
 crate-type = ["lib"]

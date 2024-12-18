@@ -349,7 +349,7 @@ pub fn process_set_validator_info(
         vec![config.signers[0]]
     };
 
-    let compute_unit_limit = ComputeUnitLimit::Default;
+    let compute_unit_limit = ComputeUnitLimit::Simulated;
     let build_message = |lamports| {
         let keys = keys.clone();
         if balance == 0 {
@@ -408,7 +408,11 @@ pub fn process_set_validator_info(
     )?;
     let mut tx = Transaction::new_unsigned(message);
     tx.try_sign(&signers, latest_blockhash)?;
-    let signature_str = rpc_client.send_and_confirm_transaction_with_spinner(&tx)?;
+    let signature_str = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
+        &tx,
+        config.commitment,
+        config.send_transaction_config,
+    )?;
 
     println!("Success! Validator info published at: {info_pubkey:?}");
     println!("{signature_str}");

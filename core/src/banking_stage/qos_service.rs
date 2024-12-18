@@ -8,13 +8,14 @@ use {
     solana_cost_model::{
         cost_model::CostModel, cost_tracker::UpdatedCosts, transaction_cost::TransactionCost,
     },
+    solana_feature_set::FeatureSet,
     solana_measure::measure::Measure,
     solana_runtime::bank::Bank,
+    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_sdk::{
         clock::Slot,
-        feature_set::FeatureSet,
         saturating_add_assign,
-        transaction::{self, SanitizedTransaction, TransactionError},
+        transaction::{self, TransactionError},
     },
     std::sync::atomic::{AtomicU64, Ordering},
 };
@@ -39,12 +40,12 @@ impl QosService {
     /// include in the slot, and accumulate costs in the cost tracker.
     /// Returns a vector of results containing selected transaction costs, and the number of
     /// transactions that were *NOT* selected.
-    pub fn select_and_accumulate_transaction_costs(
+    pub fn select_and_accumulate_transaction_costs<'a, Tx: TransactionWithMeta>(
         &self,
         bank: &Bank,
-        transactions: &[SanitizedTransaction],
+        transactions: &'a [Tx],
         pre_results: impl Iterator<Item = transaction::Result<()>>,
-    ) -> (Vec<transaction::Result<TransactionCost>>, u64) {
+    ) -> (Vec<transaction::Result<TransactionCost<'a, Tx>>>, u64) {
         let transaction_costs =
             self.compute_transaction_costs(&bank.feature_set, transactions.iter(), pre_results);
         let (transactions_qos_cost_results, num_included) = self.select_transactions_per_cost(
@@ -66,12 +67,12 @@ impl QosService {
 
     // invoke cost_model to calculate cost for the given list of transactions that have not
     // been filtered out already.
-    fn compute_transaction_costs<'a>(
+    fn compute_transaction_costs<'a, Tx: TransactionWithMeta>(
         &self,
         feature_set: &FeatureSet,
-        transactions: impl Iterator<Item = &'a SanitizedTransaction>,
+        transactions: impl Iterator<Item = &'a Tx>,
         pre_results: impl Iterator<Item = transaction::Result<()>>,
-    ) -> Vec<transaction::Result<TransactionCost>> {
+    ) -> Vec<transaction::Result<TransactionCost<'a, Tx>>> {
         let mut compute_cost_time = Measure::start("compute_cost_time");
         let txs_costs: Vec<_> = transactions
             .zip(pre_results)
@@ -92,12 +93,12 @@ impl QosService {
     /// Given a list of transactions and their costs, this function returns a corresponding
     /// list of Results that indicate if a transaction is selected to be included in the current block,
     /// and a count of the number of transactions that would fit in the block
-    fn select_transactions_per_cost<'a>(
+    fn select_transactions_per_cost<'a, Tx: TransactionWithMeta>(
         &self,
-        transactions: impl Iterator<Item = &'a SanitizedTransaction>,
-        transactions_costs: impl Iterator<Item = transaction::Result<TransactionCost>>,
+        transactions: impl Iterator<Item = &'a Tx>,
+        transactions_costs: impl Iterator<Item = transaction::Result<TransactionCost<'a, Tx>>>,
         bank: &Bank,
-    ) -> (Vec<transaction::Result<TransactionCost>>, usize) {
+    ) -> (Vec<transaction::Result<TransactionCost<'a, Tx>>>, usize) {
         let mut cost_tracking_time = Measure::start("cost_tracking_time");
         let mut cost_tracker = bank.write_cost_tracker().unwrap();
         let mut num_included = 0;
@@ -152,8 +153,8 @@ impl QosService {
 
     /// Removes transaction costs from the cost tracker if not committed or recorded, or
     /// updates the transaction costs for committed transactions.
-    pub fn remove_or_update_costs<'a>(
-        transaction_cost_results: impl Iterator<Item = &'a transaction::Result<TransactionCost>>,
+    pub fn remove_or_update_costs<'a, Tx: TransactionWithMeta + 'a>(
+        transaction_cost_results: impl Iterator<Item = &'a transaction::Result<TransactionCost<'a, Tx>>>,
         transaction_committed_status: Option<&Vec<CommitTransactionDetails>>,
         bank: &Bank,
     ) {
@@ -171,8 +172,8 @@ impl QosService {
 
     /// For recorded transactions, remove units reserved by uncommitted transaction, or update
     /// units for committed transactions.
-    fn remove_or_update_recorded_transaction_costs<'a>(
-        transaction_cost_results: impl Iterator<Item = &'a transaction::Result<TransactionCost>>,
+    fn remove_or_update_recorded_transaction_costs<'a, Tx: TransactionWithMeta + 'a>(
+        transaction_cost_results: impl Iterator<Item = &'a transaction::Result<TransactionCost<'a, Tx>>>,
         transaction_committed_status: &Vec<CommitTransactionDetails>,
         bank: &Bank,
     ) {
@@ -209,8 +210,8 @@ impl QosService {
     }
 
     /// Remove reserved units for transaction batch that unsuccessfully recorded.
-    fn remove_unrecorded_transaction_costs<'a>(
-        transaction_cost_results: impl Iterator<Item = &'a transaction::Result<TransactionCost>>,
+    fn remove_unrecorded_transaction_costs<'a, Tx: TransactionWithMeta + 'a>(
+        transaction_cost_results: impl Iterator<Item = &'a transaction::Result<TransactionCost<'a, Tx>>>,
         bank: &Bank,
     ) {
         let mut cost_tracker = bank.write_cost_tracker().unwrap();
@@ -326,8 +327,8 @@ impl QosService {
 
     // rollup transaction cost details, eg signature_cost, write_lock_cost, data_bytes_cost and
     // execution_cost from the batch of transactions selected for block.
-    fn accumulate_batched_transaction_costs<'a>(
-        transactions_costs: impl Iterator<Item = &'a transaction::Result<TransactionCost>>,
+    fn accumulate_batched_transaction_costs<'a, Tx: TransactionWithMeta + 'a>(
+        transactions_costs: impl Iterator<Item = &'a transaction::Result<TransactionCost<'a, Tx>>>,
     ) -> BatchedTransactionDetails {
         let mut batched_transaction_details = BatchedTransactionDetails::default();
         transactions_costs.for_each(|cost| match cost {
@@ -609,8 +610,9 @@ mod tests {
     use {
         super::*,
         itertools::Itertools,
-        solana_cost_model::transaction_cost::UsageCostDetails,
+        solana_cost_model::transaction_cost::{UsageCostDetails, WritableKeysTransaction},
         solana_runtime::genesis_utils::{create_genesis_config, GenesisConfigInfo},
+        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
             hash::Hash,
             signature::{Keypair, Signer},
@@ -626,10 +628,10 @@ mod tests {
 
         // make a vec of txs
         let keypair = Keypair::new();
-        let transfer_tx = SanitizedTransaction::from_transaction_for_tests(
+        let transfer_tx = RuntimeTransaction::from_transaction_for_tests(
             system_transaction::transfer(&keypair, &keypair.pubkey(), 1, Hash::default()),
         );
-        let vote_tx = SanitizedTransaction::from_transaction_for_tests(
+        let vote_tx = RuntimeTransaction::from_transaction_for_tests(
             vote_transaction::new_tower_sync_transaction(
                 TowerSync::from(vec![(42, 1)]),
                 Hash::default(),
@@ -669,10 +671,10 @@ mod tests {
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
 
         let keypair = Keypair::new();
-        let transfer_tx = SanitizedTransaction::from_transaction_for_tests(
+        let transfer_tx = RuntimeTransaction::from_transaction_for_tests(
             system_transaction::transfer(&keypair, &keypair.pubkey(), 1, Hash::default()),
         );
-        let vote_tx = SanitizedTransaction::from_transaction_for_tests(
+        let vote_tx = RuntimeTransaction::from_transaction_for_tests(
             vote_transaction::new_tower_sync_transaction(
                 TowerSync::from(vec![(42, 1)]),
                 Hash::default(),
@@ -685,7 +687,6 @@ mod tests {
         let transfer_tx_cost =
             CostModel::calculate_cost(&transfer_tx, &FeatureSet::all_enabled()).sum();
         let vote_tx_cost = CostModel::calculate_cost(&vote_tx, &FeatureSet::all_enabled()).sum();
-
         // make a vec of txs
         let txs = vec![transfer_tx.clone(), vote_tx.clone(), transfer_tx, vote_tx];
 
@@ -731,8 +732,8 @@ mod tests {
             ],
             Some(&keypair.pubkey()),
         ));
-        let transfer_tx = SanitizedTransaction::from_transaction_for_tests(transaction.clone());
-        let txs: Vec<SanitizedTransaction> = (0..transaction_count)
+        let transfer_tx = RuntimeTransaction::from_transaction_for_tests(transaction.clone());
+        let txs: Vec<_> = (0..transaction_count)
             .map(|_| transfer_tx.clone())
             .collect();
         let execute_units_adjustment: u64 = 10;
@@ -801,11 +802,15 @@ mod tests {
         // calculate their costs, apply to cost_tracker
         let transaction_count = 5;
         let keypair = Keypair::new();
-        let transfer_tx = SanitizedTransaction::from_transaction_for_tests(
-            system_transaction::transfer(&keypair, &keypair.pubkey(), 1, Hash::default()),
-        );
-        let txs: Vec<SanitizedTransaction> = (0..transaction_count)
-            .map(|_| transfer_tx.clone())
+        let txs: Vec<_> = (0..transaction_count)
+            .map(|_| {
+                RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+                    &keypair,
+                    &keypair.pubkey(),
+                    1,
+                    Hash::default(),
+                ))
+            })
             .collect();
 
         // assert all tx_costs should be removed from cost_tracker if all execution_results are all Not Committed
@@ -851,9 +856,8 @@ mod tests {
             ],
             Some(&keypair.pubkey()),
         ));
-        let transfer_tx = SanitizedTransaction::from_transaction_for_tests(transaction.clone());
-        let txs: Vec<SanitizedTransaction> = (0..transaction_count)
-            .map(|_| transfer_tx.clone())
+        let txs: Vec<_> = (0..transaction_count)
+            .map(|_| RuntimeTransaction::from_transaction_for_tests(transaction.clone()))
             .collect();
         let execute_units_adjustment: u64 = 10;
         let loaded_accounts_data_size_adjustment: u32 = 32000;
@@ -935,15 +939,18 @@ mod tests {
         let programs_execution_cost = 10;
         let num_txs = 4;
 
+        let dummy_transaction = WritableKeysTransaction(vec![]);
         let tx_cost_results: Vec<_> = (0..num_txs)
             .map(|n| {
                 if n % 2 == 0 {
                     Ok(TransactionCost::Transaction(UsageCostDetails {
+                        transaction: &dummy_transaction,
                         signature_cost,
                         write_lock_cost,
                         data_bytes_cost,
                         programs_execution_cost,
-                        ..UsageCostDetails::default()
+                        loaded_accounts_data_size_cost: 0,
+                        allocated_accounts_data_size: 0,
                     }))
                 } else {
                     Err(TransactionError::WouldExceedMaxBlockCostLimit)

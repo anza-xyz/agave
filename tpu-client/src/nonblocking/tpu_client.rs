@@ -2,11 +2,10 @@ pub use crate::tpu_client::Result;
 use {
     crate::tpu_client::{RecentLeaderSlots, TpuClientConfig, MAX_FANOUT_SLOTS},
     bincode::serialize,
-    futures_util::{
-        future::{join_all, FutureExt},
-        stream::StreamExt,
-    },
+    futures_util::{future::join_all, stream::StreamExt},
     log::*,
+    solana_clock::{Slot, DEFAULT_MS_PER_SLOT, NUM_CONSECUTIVE_LEADER_SLOTS},
+    solana_commitment_config::CommitmentConfig,
     solana_connection_cache::{
         connection_cache::{
             ConnectionCache, ConnectionManager, ConnectionPool, NewConnectionConfig, Protocol,
@@ -14,27 +13,21 @@ use {
         },
         nonblocking::client_connection::ClientConnection,
     },
+    solana_epoch_info::EpochInfo,
+    solana_pubkey::Pubkey,
     solana_pubsub_client::nonblocking::pubsub_client::{PubsubClient, PubsubClientError},
+    solana_quic_definitions::QUIC_PORT_OFFSET,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_rpc_client_api::{
         client_error::{Error as ClientError, ErrorKind, Result as ClientResult},
         request::RpcError,
         response::{RpcContactInfo, SlotUpdate},
     },
-    solana_sdk::{
-        clock::{Slot, DEFAULT_MS_PER_SLOT},
-        commitment_config::CommitmentConfig,
-        epoch_info::EpochInfo,
-        pubkey::Pubkey,
-        quic::QUIC_PORT_OFFSET,
-        signature::SignerError,
-        transaction::Transaction,
-        transport::{Result as TransportResult, TransportError},
-    },
+    solana_signer::SignerError,
+    solana_transaction::Transaction,
+    solana_transaction_error::{TransportError, TransportResult},
     std::{
         collections::{HashMap, HashSet},
-        future::Future,
-        iter,
         net::SocketAddr,
         str::FromStr,
         sync::{
@@ -51,10 +44,14 @@ use {
 #[cfg(feature = "spinner")]
 use {
     crate::tpu_client::{SEND_TRANSACTION_INTERVAL, TRANSACTION_RESEND_INTERVAL},
+    futures_util::FutureExt,
     indicatif::ProgressBar,
+    solana_message::Message,
     solana_rpc_client::spinner::{self, SendTransactionProgress},
     solana_rpc_client_api::request::MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS,
-    solana_sdk::{message::Message, signers::Signers, transaction::TransactionError},
+    solana_signer::signers::Signers,
+    solana_transaction_error::TransactionError,
+    std::{future::Future, iter},
 };
 
 #[derive(Error, Debug)]
@@ -125,24 +122,43 @@ impl LeaderTpuCache {
         )
     }
 
-    // Get the TPU sockets for the current leader and upcoming leaders according to fanout size
+    // Get the TPU sockets for the current leader and upcoming *unique* leaders according to fanout size.
+    fn get_unique_leader_sockets(
+        &self,
+        estimated_current_slot: Slot,
+        fanout_slots: u64,
+    ) -> Vec<SocketAddr> {
+        let all_leader_sockets = self.get_leader_sockets(estimated_current_slot, fanout_slots);
+
+        let mut unique_sockets = Vec::new();
+        let mut seen = HashSet::new();
+
+        for socket in all_leader_sockets {
+            if seen.insert(socket) {
+                unique_sockets.push(socket);
+            }
+        }
+
+        unique_sockets
+    }
+
+    // Get the TPU sockets for the current leader and upcoming leaders according to fanout size.
     fn get_leader_sockets(
         &self,
         estimated_current_slot: Slot,
         fanout_slots: u64,
     ) -> Vec<SocketAddr> {
-        let mut leader_set = HashSet::new();
         let mut leader_sockets = Vec::new();
         // `first_slot` might have been advanced since caller last read the `estimated_current_slot`
         // value. Take the greater of the two values to ensure we are reading from the latest
         // leader schedule.
         let current_slot = std::cmp::max(estimated_current_slot, self.first_slot);
-        for leader_slot in current_slot..current_slot + fanout_slots {
+        for leader_slot in (current_slot..current_slot + fanout_slots)
+            .step_by(NUM_CONSECUTIVE_LEADER_SLOTS as usize)
+        {
             if let Some(leader) = self.get_slot_leader(leader_slot) {
                 if let Some(tpu_socket) = self.leader_tpu_map.get(leader) {
-                    if leader_set.insert(*leader) {
-                        leader_sockets.push(*tpu_socket);
-                    }
+                    leader_sockets.push(*tpu_socket);
                 } else {
                     // The leader is probably delinquent
                     trace!("TPU not available for leader {}", leader);
@@ -308,6 +324,7 @@ where
 //
 // Useful for end-users who don't need a persistent connection to each validator,
 // and want to abort more quickly.
+#[cfg(feature = "spinner")]
 async fn timeout_future<Fut: Future<Output = TransportResult<()>>>(
     timeout_duration: Duration,
     future: Fut,
@@ -333,6 +350,7 @@ async fn sleep_and_set_message(
     Ok(())
 }
 
+#[cfg(feature = "spinner")]
 async fn sleep_and_send_wire_transaction_to_addr<P, M, C>(
     sleep_duration: Duration,
     connection_cache: &ConnectionCache<P, M, C>,
@@ -412,7 +430,7 @@ where
     ) -> TransportResult<()> {
         let leaders = self
             .leader_tpu_service
-            .leader_tpu_sockets(self.fanout_slots);
+            .unique_leader_tpu_sockets(self.fanout_slots);
         let futures = leaders
             .iter()
             .map(|addr| {
@@ -456,7 +474,7 @@ where
     ) -> TransportResult<()> {
         let leaders = self
             .leader_tpu_service
-            .leader_tpu_sockets(self.fanout_slots);
+            .unique_leader_tpu_sockets(self.fanout_slots);
         let futures = leaders
             .iter()
             .map(|addr| {
@@ -569,7 +587,7 @@ where
                         let wire_transaction = serialize(transaction).unwrap();
                         let leaders = self
                             .leader_tpu_service
-                            .leader_tpu_sockets(self.fanout_slots);
+                            .unique_leader_tpu_sockets(self.fanout_slots);
                         futures.extend(send_wire_transaction_futures(
                             &progress_bar,
                             &progress,
@@ -802,6 +820,14 @@ impl LeaderTpuService {
 
     pub fn estimated_current_slot(&self) -> Slot {
         self.recent_slots.estimated_current_slot()
+    }
+
+    pub fn unique_leader_tpu_sockets(&self, fanout_slots: u64) -> Vec<SocketAddr> {
+        let current_slot = self.recent_slots.estimated_current_slot();
+        self.leader_tpu_cache
+            .read()
+            .unwrap()
+            .get_unique_leader_sockets(current_slot, fanout_slots)
     }
 
     pub fn leader_tpu_sockets(&self, fanout_slots: u64) -> Vec<SocketAddr> {

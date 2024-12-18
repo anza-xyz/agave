@@ -48,7 +48,7 @@ use {
         self, MAX_BATCH_SEND_RATE_MS, MAX_TRANSACTION_BATCH_SIZE,
     },
     solana_streamer::quic::DEFAULT_QUIC_ENDPOINTS,
-    solana_tpu_client::tpu_client::DEFAULT_TPU_CONNECTION_POOL_SIZE,
+    solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{path::PathBuf, str::FromStr},
 };
@@ -666,28 +666,12 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .long("rocksdb-shred-compaction")
                 .value_name("ROCKSDB_COMPACTION_STYLE")
                 .takes_value(true)
-                .possible_values(&["level", "fifo"])
+                .possible_values(&["level"])
                 .default_value(&default_args.rocksdb_shred_compaction)
                 .help(
                     "Controls how RocksDB compacts shreds. *WARNING*: You will lose your \
                      Blockstore data when you switch between options. Possible values are: \
-                     'level': stores shreds using RocksDB's default (level) compaction. \
-                     'fifo': stores shreds under RocksDB's FIFO compaction. This option is more \
-                     efficient on disk-write-bytes of the Blockstore.",
-                ),
-        )
-        .arg(
-            Arg::with_name("rocksdb_fifo_shred_storage_size")
-                .long("rocksdb-fifo-shred-storage-size")
-                .value_name("SHRED_STORAGE_SIZE_BYTES")
-                .takes_value(true)
-                .validator(is_parsable::<u64>)
-                .help(
-                    "The shred storage size in bytes. The suggested value is at least 50% of your \
-                     ledger storage size. If this argument is unspecified, we will assign a \
-                     proper value based on --limit-ledger-size. If --limit-ledger-size is not \
-                     presented, it means there is no limitation on the ledger size and thus \
-                     rocksdb_fifo_shred_storage_size will also be unbounded.",
+                     'level': stores shreds using RocksDB's default (level) compaction.",
                 ),
         )
         .arg(
@@ -913,6 +897,14 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .validator(is_parsable::<u32>)
                 .hidden(hidden_unless_forced())
                 .help("Controls the rate of the clients connections per IpAddr per minute."),
+        )
+        .arg(
+            Arg::with_name("vote_use_quic")
+                .long("vote-use-quic")
+                .takes_value(true)
+                .default_value(&default_args.vote_use_quic)
+                .hidden(hidden_unless_forced())
+                .help("Controls if to use QUIC to send votes."),
         )
         .arg(
             Arg::with_name("num_quic_endpoints")
@@ -1206,8 +1198,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
             Arg::with_name("geyser_plugin_always_enabled")
                 .long("geyser-plugin-always-enabled")
                 .value_name("BOOLEAN")
-                .takes_value(true)
-                .default_value("false")
+                .takes_value(false)
                 .help("Еnable Geyser interface even if no Geyser configs are specified."),
         )
         .arg(
@@ -1360,8 +1351,7 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .value_name("METHOD")
                 .takes_value(true)
                 .possible_values(&["mmap", "file"])
-                .help("Access account storage using this method")
-                .hidden(hidden_unless_forced()),
+                .help("Access account storages using this method")
         )
         .arg(
             Arg::with_name("accounts_db_ancient_append_vecs")
@@ -1373,6 +1363,33 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                     "AppendVecs that are older than (slots_per_epoch - SLOT-OFFSET) are squashed \
                      together.",
                 )
+                .hidden(hidden_unless_forced()),
+        )
+        .arg(
+            Arg::with_name("accounts_db_ancient_storage_ideal_size")
+                .long("accounts-db-ancient-storage-ideal-size")
+                .value_name("BYTES")
+                .validator(is_parsable::<u64>)
+                .takes_value(true)
+                .help("The smallest size of ideal ancient storage.")
+                .hidden(hidden_unless_forced()),
+        )
+        .arg(
+            Arg::with_name("accounts_db_max_ancient_storages")
+                .long("accounts-db-max-ancient-storages")
+                .value_name("USIZE")
+                .validator(is_parsable::<usize>)
+                .takes_value(true)
+                .help("The number of ancient storages the ancient slot combining should converge to.")
+                .hidden(hidden_unless_forced()),
+        )
+        .arg(
+            Arg::with_name("accounts_db_hash_calculation_pubkey_bins")
+                .long("accounts-db-hash-calculation-pubkey-bins")
+                .value_name("USIZE")
+                .validator(is_parsable::<usize>)
+                .takes_value(true)
+                .help("The number of pubkey bins used for accounts hash calculation.")
                 .hidden(hidden_unless_forced()),
         )
         .arg(
@@ -1403,6 +1420,18 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                      for the cache. When the cache exceeds the high watermark, entries will \
                      be evicted until the size reaches the low watermark."
                 )
+                .hidden(hidden_unless_forced()),
+        )
+        .arg(
+            Arg::with_name("accounts_db_experimental_accumulator_hash")
+                .long("accounts-db-experimental-accumulator-hash")
+                .help("Enables the experimental accumulator hash")
+                .hidden(hidden_unless_forced()),
+        )
+        .arg(
+            Arg::with_name("accounts_db_verify_experimental_accumulator_hash")
+                .long("accounts-db-verify-experimental-accumulator-hash")
+                .help("Verifies the experimental accumulator hash")
                 .hidden(hidden_unless_forced()),
         )
         .arg(
@@ -1582,8 +1611,11 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .takes_value(true)
                 .required(false)
                 .conflicts_with("wait_for_supermajority")
+                .requires("wen_restart_coordinator")
                 .help(
                     "Only used during coordinated cluster restarts.\
+                    \n\n\
+                    Need to also specify the leader's pubkey in --wen-restart-leader.\
                     \n\n\
                     When specified, the validator will enter Wen Restart mode which \
                     pauses normal activity. Validators in this mode will gossip their last \
@@ -1602,6 +1634,19 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                     \n\n\
                     If wen_restart fails, refer to the progress file (in proto3 format) for \
                     further debugging and watch the discord channel for instructions.",
+                ),
+        )
+        .arg(
+            Arg::with_name("wen_restart_coordinator")
+                .long("wen-restart-coordinator")
+                .hidden(hidden_unless_forced())
+                .value_name("PUBKEY")
+                .takes_value(true)
+                .required(false)
+                .requires("wen_restart")
+                .help(
+                    "Specifies the pubkey of the leader used in wen restart. \
+                    May get stuck if the leader used is different from others.",
                 ),
         )
         .args(&thread_args(&default_args.thread_args))
@@ -2106,6 +2151,19 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         .value_name("ROCKSDB_COMPACTION_INTERVAL_SLOTS")
         .takes_value(true)
         .help("Number of slots between compacting ledger"));
+    // Deprecated in v2.2
+    add_arg!(Arg::with_name("rocksdb_fifo_shred_storage_size")
+        .long("rocksdb-fifo-shred-storage-size")
+        .value_name("SHRED_STORAGE_SIZE_BYTES")
+        .takes_value(true)
+        .validator(is_parsable::<u64>)
+        .help(
+            "The shred storage size in bytes. The suggested value is at least 50% of your ledger \
+             storage size. If this argument is unspecified, we will assign a proper value based \
+             on --limit-ledger-size. If --limit-ledger-size is not presented, it means there is \
+             no limitation on the ledger size and thus rocksdb_fifo_shred_storage_size will also \
+             be unbounded.",
+        ));
     add_arg!(Arg::with_name("rocksdb_max_compaction_jitter")
         .long("rocksdb-max-compaction-jitter-slots")
         .value_name("ROCKSDB_MAX_COMPACTION_JITTER_SLOTS")
@@ -2244,6 +2302,7 @@ pub struct DefaultArgs {
     pub tpu_connection_pool_size: String,
     pub tpu_max_connections_per_ipaddr_per_minute: String,
     pub num_quic_endpoints: String,
+    pub vote_use_quic: String,
 
     // Exit subcommand
     pub exit_min_idle_time: String,
@@ -2335,6 +2394,7 @@ impl DefaultArgs {
             tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE.to_string(),
             tpu_max_connections_per_ipaddr_per_minute:
                 DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE.to_string(),
+            vote_use_quic: DEFAULT_VOTE_USE_QUIC.to_string(),
             num_quic_endpoints: DEFAULT_QUIC_ENDPOINTS.to_string(),
             rpc_max_request_body_size: MAX_REQUEST_BODY_SIZE.to_string(),
             exit_min_idle_time: "10".to_string(),

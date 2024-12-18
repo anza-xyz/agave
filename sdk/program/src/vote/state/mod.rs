@@ -9,7 +9,6 @@ use {
 };
 use {
     crate::{
-        clock::{Epoch, Slot, UnixTimestamp},
         hash::Hash,
         instruction::InstructionError,
         pubkey::Pubkey,
@@ -20,6 +19,7 @@ use {
     },
     bincode::{serialize_into, ErrorKind},
     serde_derive::{Deserialize, Serialize},
+    solana_clock::{Epoch, Slot, UnixTimestamp},
     std::{
         collections::VecDeque,
         fmt::Debug,
@@ -54,7 +54,7 @@ pub const VOTE_CREDITS_MAXIMUM_PER_SLOT: u8 = 16;
 
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "Ch2vVEwos2EjAVqSHCyJjnN2MNX1yrpapZTGhMSCjWUH"),
+    frozen_abi(digest = "GvUzgtcxhKVVxPAjSntXGPqjLZK5ovgZzCiUP1tDpB9q"),
     derive(AbiExample)
 )]
 #[derive(Serialize, Default, Deserialize, Debug, PartialEq, Eq, Clone)]
@@ -168,7 +168,7 @@ impl From<Lockout> for LandedVote {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "GwJfVFsATSj7nvKwtUkHYzqPRaPY6SLxPGXApuCya3x5"),
+    frozen_abi(digest = "DRKTb72wifCUcCTSJs6PqWrQQK5Pfis4SCLEvXqWnDaL"),
     derive(AbiExample)
 )]
 #[derive(Serialize, Default, Deserialize, Debug, PartialEq, Eq, Clone)]
@@ -221,7 +221,7 @@ impl VoteStateUpdate {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "5VUusSTenF9vZ9eHiCprVe9ABJUHCubeDNCCDxykybZY"),
+    frozen_abi(digest = "5PFw9pyF1UG1DXVsw7gpjHegNyRycAAxWf2GA9wUXPs5"),
     derive(AbiExample)
 )]
 #[derive(Serialize, Default, Deserialize, Debug, PartialEq, Eq, Clone)]
@@ -406,7 +406,7 @@ impl<I> CircBuf<I> {
 
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "EeenjJaSrm9hRM39gK6raRNtzG61hnk7GciUCJJRDUSQ"),
+    frozen_abi(digest = "87ULMjjHnMsPmCTEyzj4KPn2u5gdX1rmgtSdycpbSaLs"),
     derive(AbiExample)
 )]
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq, Clone)]
@@ -697,7 +697,6 @@ impl VoteState {
         next_vote_slot: Slot,
         epoch: Epoch,
         current_slot: Slot,
-        timely_vote_credits: bool,
     ) {
         // Ignore votes for slots earlier than we already have votes for
         if self
@@ -710,17 +709,13 @@ impl VoteState {
         self.pop_expired_votes(next_vote_slot);
 
         let landed_vote = LandedVote {
-            latency: if timely_vote_credits {
-                Self::compute_vote_latency(next_vote_slot, current_slot)
-            } else {
-                0
-            },
+            latency: Self::compute_vote_latency(next_vote_slot, current_slot),
             lockout: Lockout::new(next_vote_slot),
         };
 
         // Once the stack is full, pop the oldest lockout and distribute rewards
         if self.votes.len() == MAX_LOCKOUT_HISTORY {
-            let credits = self.credits_for_vote_at_index(0, timely_vote_credits);
+            let credits = self.credits_for_vote_at_index(0);
             let landed_vote = self.votes.pop_front().unwrap();
             self.root_slot = Some(landed_vote.slot());
 
@@ -765,7 +760,7 @@ impl VoteState {
     }
 
     /// Returns the credits to award for a vote at the given lockout slot index
-    pub fn credits_for_vote_at_index(&self, index: usize, timely_vote_credits: bool) -> u64 {
+    pub fn credits_for_vote_at_index(&self, index: usize) -> u64 {
         let latency = self
             .votes
             .get(index)
@@ -773,7 +768,7 @@ impl VoteState {
 
         // If latency is 0, this means that the Lockout was created and stored from a software version that did not
         // store vote latencies; in this case, 1 credit is awarded
-        if latency == 0 || !timely_vote_credits {
+        if latency == 0 {
             1
         } else {
             match latency.checked_sub(VOTE_CREDITS_GRACE_SLOTS) {
@@ -978,13 +973,9 @@ impl VoteState {
 pub mod serde_compact_vote_state_update {
     use {
         super::*,
-        crate::{
-            clock::{Slot, UnixTimestamp},
-            serde_varint,
-            vote::state::Lockout,
-        },
+        crate::vote::state::Lockout,
         serde::{Deserialize, Deserializer, Serialize, Serializer},
-        solana_short_vec as short_vec,
+        solana_serde_varint as serde_varint, solana_short_vec as short_vec,
     };
 
     #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -1076,13 +1067,9 @@ pub mod serde_compact_vote_state_update {
 pub mod serde_tower_sync {
     use {
         super::*,
-        crate::{
-            clock::{Slot, UnixTimestamp},
-            serde_varint,
-            vote::state::Lockout,
-        },
+        crate::vote::state::Lockout,
         serde::{Deserialize, Deserializer, Serialize, Serializer},
-        solana_short_vec as short_vec,
+        solana_serde_varint as serde_varint, solana_short_vec as short_vec,
     };
 
     #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]

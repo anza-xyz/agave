@@ -402,15 +402,7 @@ enum InterestingLimit {
 #[cfg(target_os = "linux")]
 const INTERESTING_LIMITS: &[(&str, InterestingLimit)] = &[
     ("net.core.rmem_max", InterestingLimit::Recommend(134217728)),
-    (
-        "net.core.rmem_default",
-        InterestingLimit::Recommend(134217728),
-    ),
     ("net.core.wmem_max", InterestingLimit::Recommend(134217728)),
-    (
-        "net.core.wmem_default",
-        InterestingLimit::Recommend(134217728),
-    ),
     ("vm.max_map_count", InterestingLimit::Recommend(1000000)),
     ("net.core.optmem_max", InterestingLimit::QueryOnly),
     ("net.core.netdev_max_backlog", InterestingLimit::QueryOnly),
@@ -679,6 +671,8 @@ impl SystemMonitorService {
                 "memory-stats",
                 ("total", info.total * KB, i64),
                 ("swap_total", info.swap_total * KB, i64),
+                ("buffers_bytes", info.buffers * KB, i64),
+                ("cached_bytes", info.cached * KB, i64),
                 (
                     "free_percent",
                     Self::calc_percent(info.free, info.total),

@@ -11,7 +11,6 @@ use {
             },
         },
         clock::Slot,
-        feature_set,
         instruction::InstructionError,
         program_utils::limited_deserialize,
         pubkey::{Pubkey, PUBKEY_BYTES},
@@ -61,27 +60,11 @@ impl Processor {
         let lookup_table_lamports = lookup_table_account.get_lamports();
         let table_key = *lookup_table_account.get_key();
         let lookup_table_owner = *lookup_table_account.get_owner();
-        if !invoke_context
-            .get_feature_set()
-            .is_active(&feature_set::relax_authority_signer_check_for_lookup_table_creation::id())
-            && !lookup_table_account.get_data().is_empty()
-        {
-            ic_msg!(invoke_context, "Table account must not be allocated");
-            return Err(InstructionError::AccountAlreadyInitialized);
-        }
         drop(lookup_table_account);
 
         let authority_account =
             instruction_context.try_borrow_instruction_account(transaction_context, 1)?;
         let authority_key = *authority_account.get_key();
-        if !invoke_context
-            .get_feature_set()
-            .is_active(&feature_set::relax_authority_signer_check_for_lookup_table_creation::id())
-            && !authority_account.is_signer()
-        {
-            ic_msg!(invoke_context, "Authority account must be a signer");
-            return Err(InstructionError::MissingRequiredSignature);
-        }
         drop(authority_account);
 
         let payer_account =
@@ -127,11 +110,7 @@ impl Processor {
             return Err(InstructionError::InvalidArgument);
         }
 
-        if invoke_context
-            .get_feature_set()
-            .is_active(&feature_set::relax_authority_signer_check_for_lookup_table_creation::id())
-            && check_id(&lookup_table_owner)
-        {
+        if check_id(&lookup_table_owner) {
             return Ok(());
         }
 

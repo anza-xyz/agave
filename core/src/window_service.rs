@@ -8,7 +8,6 @@ use {
         completed_data_sets_service::CompletedDataSetsSender,
         repair::{
             ancestor_hashes_service::AncestorHashesReplayUpdateReceiver,
-            quic_endpoint::LocalRequest,
             repair_response,
             repair_service::{
                 DumpedSlotsReceiver, OutstandingShredRepairs, PopularPrunedForksSender, RepairInfo,
@@ -17,8 +16,10 @@ use {
         },
         result::{Error, Result},
     },
+    bytes::Bytes,
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     rayon::{prelude::*, ThreadPool},
+    solana_feature_set as feature_set,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred},
@@ -32,7 +33,7 @@ use {
     solana_runtime::bank_forks::BankForks,
     solana_sdk::{
         clock::{Slot, DEFAULT_MS_PER_SLOT},
-        feature_set,
+        pubkey::Pubkey,
     },
     solana_turbine::cluster_nodes,
     std::{
@@ -376,8 +377,9 @@ impl WindowService {
         retransmit_sender: Sender<Vec<ShredPayload>>,
         repair_socket: Arc<UdpSocket>,
         ancestor_hashes_socket: Arc<UdpSocket>,
-        repair_quic_endpoint_sender: AsyncSender<LocalRequest>,
-        repair_quic_endpoint_response_sender: Sender<(SocketAddr, Vec<u8>)>,
+        repair_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
+        ancestor_hashes_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
+        ancestor_hashes_response_quic_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
         exit: Arc<AtomicBool>,
         repair_info: RepairInfo,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
@@ -401,8 +403,9 @@ impl WindowService {
             exit.clone(),
             repair_socket,
             ancestor_hashes_socket,
-            repair_quic_endpoint_sender,
-            repair_quic_endpoint_response_sender,
+            repair_request_quic_sender,
+            ancestor_hashes_request_quic_sender,
+            ancestor_hashes_response_quic_receiver,
             repair_info,
             verified_vote_receiver,
             outstanding_repair_requests.clone(),

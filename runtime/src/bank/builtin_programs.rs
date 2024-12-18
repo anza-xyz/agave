@@ -2,9 +2,8 @@
 mod tests {
     use {
         crate::bank::*,
-        solana_sdk::{
-            ed25519_program, feature_set::FeatureSet, genesis_config::create_genesis_config,
-        },
+        solana_feature_set::FeatureSet,
+        solana_sdk::{ed25519_program, genesis_config::create_genesis_config},
     };
 
     #[test]
@@ -38,7 +37,7 @@ mod tests {
         let only_apply_transitions_for_new_features = true;
         bank.apply_builtin_program_feature_transitions(
             only_apply_transitions_for_new_features,
-            &HashSet::new(),
+            &AHashSet::new(),
         );
     }
 
@@ -67,21 +66,23 @@ mod tests {
 mod tests_core_bpf_migration {
     use {
         crate::bank::{
-            builtins::{
-                core_bpf_migration::{tests::TestContext, CoreBpfMigrationConfig},
-                BuiltinPrototype, StatelessBuiltinPrototype, BUILTINS, STATELESS_BUILTINS,
-            },
+            builtins::core_bpf_migration::tests::TestContext,
             test_utils::goto_end_of_slot,
             tests::{create_genesis_config, new_bank_from_parent_with_bank_forks},
             Bank,
         },
+        solana_builtins::{
+            core_bpf_migration::CoreBpfMigrationConfig,
+            prototype::{BuiltinPrototype, StatelessBuiltinPrototype},
+            BUILTINS, STATELESS_BUILTINS,
+        },
+        solana_feature_set::FeatureSet,
         solana_program_runtime::loaded_programs::ProgramCacheEntry,
         solana_sdk::{
             account::{AccountSharedData, ReadableAccount, WritableAccount},
             bpf_loader_upgradeable::{self, get_program_data_address, UpgradeableLoaderState},
             epoch_schedule::EpochSchedule,
             feature::{self, Feature},
-            feature_set::FeatureSet,
             instruction::{AccountMeta, Instruction},
             message::Message,
             native_loader,

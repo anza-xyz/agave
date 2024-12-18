@@ -1,0 +1,27 @@
+[package]
+name = "solana-compute-budget-program-bench"
+publish = false
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+criterion = { workspace = true }
+solana-compute-budget = { workspace = true }
+solana-compute-budget-instruction = { workspace = true }
+solana-compute-budget-interface = { workspace = true }
+solana-compute-budget-program = { workspace = true }
+solana-feature-set = { workspace = true }
+solana-message = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-svm-transaction = { workspace = true }
+
+[[bench]]
+name = "compute_budget"
+harness = false
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]

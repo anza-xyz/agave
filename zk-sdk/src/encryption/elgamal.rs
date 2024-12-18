@@ -14,6 +14,12 @@
 //! As the messages are encrypted as scalar elements (a.k.a. in the "exponent"), one must solve the
 //! discrete log to recover the originally encrypted value.
 
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
+// Currently, `wasm_bindgen` exports types and functions included in the current crate, but all
+// types and functions exported for wasm targets in all of its dependencies
+// (https://github.com/rustwasm/wasm-bindgen/issues/3759). We specifically exclude some of the
+// dependencies that will cause unnecessary bloat to the wasm binary.
 use {
     crate::{
         encryption::{
@@ -33,23 +39,24 @@ use {
     },
     rand::rngs::OsRng,
     serde::{Deserialize, Serialize},
-    sha3::{Digest, Sha3_512},
-    solana_sdk::{
-        derivation_path::DerivationPath,
-        signature::Signature,
-        signer::{
-            keypair::generate_seed_from_seed_phrase_and_passphrase, EncodableKey, EncodableKeypair,
-            SeedDerivable, Signer, SignerError,
-        },
-    },
+    sha3::Sha3_512,
+    std::{convert::TryInto, fmt},
+    subtle::{Choice, ConstantTimeEq},
+    zeroize::Zeroize,
+};
+#[cfg(not(target_arch = "wasm32"))]
+use {
+    sha3::Digest,
+    solana_derivation_path::DerivationPath,
+    solana_seed_derivable::SeedDerivable,
+    solana_seed_phrase::generate_seed_from_seed_phrase_and_passphrase,
+    solana_signature::Signature,
+    solana_signer::{EncodableKey, EncodableKeypair, Signer, SignerError},
     std::{
-        convert::TryInto,
-        error, fmt,
+        error,
         io::{Read, Write},
         path::Path,
     },
-    subtle::{Choice, ConstantTimeEq},
-    zeroize::Zeroize,
 };
 
 /// Algorithm handle for the twisted ElGamal encryption scheme
@@ -137,6 +144,7 @@ impl ElGamal {
 /// A (twisted) ElGamal encryption keypair.
 ///
 /// The instances of the secret key are zeroized on drop.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize, Zeroize)]
 pub struct ElGamalKeypair {
     /// The public half of this keypair.
@@ -145,6 +153,31 @@ pub struct ElGamalKeypair {
     secret: ElGamalSecretKey,
 }
 
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+impl ElGamalKeypair {
+    /// Generates the public and secret keys for ElGamal encryption.
+    ///
+    /// This function is randomized. It internally samples a scalar element using `OsRng`.
+    pub fn new_rand() -> Self {
+        ElGamal::keygen()
+    }
+
+    pub fn pubkey_owned(&self) -> ElGamalPubkey {
+        self.public
+    }
+}
+
+impl ElGamalKeypair {
+    pub fn pubkey(&self) -> &ElGamalPubkey {
+        &self.public
+    }
+
+    pub fn secret(&self) -> &ElGamalSecretKey {
+        &self.secret
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 impl ElGamalKeypair {
     /// Create an ElGamal keypair from an ElGamal public key and an ElGamal secret key.
     ///
@@ -187,21 +220,6 @@ impl ElGamalKeypair {
         Ok(Self::new(secret))
     }
 
-    /// Generates the public and secret keys for ElGamal encryption.
-    ///
-    /// This function is randomized. It internally samples a scalar element using `OsRng`.
-    pub fn new_rand() -> Self {
-        ElGamal::keygen()
-    }
-
-    pub fn pubkey(&self) -> &ElGamalPubkey {
-        &self.public
-    }
-
-    pub fn secret(&self) -> &ElGamalSecretKey {
-        &self.secret
-    }
-
     /// Reads a JSON-encoded keypair from a `Reader` implementor
     pub fn read_json<R: Read>(reader: &mut R) -> Result<Self, Box<dyn error::Error>> {
         let bytes: Vec<u8> = serde_json::from_reader(reader)?;
@@ -232,6 +250,7 @@ impl ElGamalKeypair {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl EncodableKey for ElGamalKeypair {
     fn read<R: Read>(reader: &mut R) -> Result<Self, Box<dyn error::Error>> {
         Self::read_json(reader)
@@ -276,6 +295,7 @@ impl From<&ElGamalKeypair> for [u8; ELGAMAL_KEYPAIR_LEN] {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl SeedDerivable for ElGamalKeypair {
     fn from_seed(seed: &[u8]) -> Result<Self, Box<dyn error::Error>> {
         let secret = ElGamalSecretKey::from_seed(seed)?;
@@ -301,6 +321,7 @@ impl SeedDerivable for ElGamalKeypair {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl EncodableKeypair for ElGamalKeypair {
     type Pubkey = ElGamalPubkey;
 
@@ -310,13 +331,14 @@ impl EncodableKeypair for ElGamalKeypair {
 }
 
 /// Public key for the ElGamal encryption scheme.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, Zeroize)]
 pub struct ElGamalPubkey(RistrettoPoint);
 impl ElGamalPubkey {
     /// Derives the `ElGamalPubkey` that uniquely corresponds to an `ElGamalSecretKey`.
     pub fn new(secret: &ElGamalSecretKey) -> Self {
         let s = &secret.0;
-        assert!(s != &Scalar::zero());
+        assert!(s != &Scalar::ZERO);
 
         ElGamalPubkey(s.invert() * &(*H))
     }
@@ -348,6 +370,7 @@ impl ElGamalPubkey {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl EncodableKey for ElGamalPubkey {
     fn read<R: Read>(reader: &mut R) -> Result<Self, Box<dyn error::Error>> {
         let bytes: Vec<u8> = serde_json::from_reader(reader)?;
@@ -380,9 +403,12 @@ impl TryFrom<&[u8]> for ElGamalPubkey {
         if bytes.len() != ELGAMAL_PUBKEY_LEN {
             return Err(ElGamalError::PubkeyDeserialization);
         }
+        let Ok(compressed_ristretto) = CompressedRistretto::from_slice(bytes) else {
+            return Err(ElGamalError::PubkeyDeserialization);
+        };
 
         Ok(ElGamalPubkey(
-            CompressedRistretto::from_slice(bytes)
+            compressed_ristretto
                 .decompress()
                 .ok_or(ElGamalError::PubkeyDeserialization)?,
         ))
@@ -407,6 +433,51 @@ impl From<&ElGamalPubkey> for [u8; ELGAMAL_PUBKEY_LEN] {
 #[derive(Clone, Debug, Deserialize, Serialize, Zeroize)]
 #[zeroize(drop)]
 pub struct ElGamalSecretKey(Scalar);
+impl ElGamalSecretKey {
+    /// Randomly samples an ElGamal secret key.
+    ///
+    /// This function is randomized. It internally samples a scalar element using `OsRng`.
+    pub fn new_rand() -> Self {
+        ElGamalSecretKey(Scalar::random(&mut OsRng))
+    }
+
+    /// Derive an ElGamal secret key from an entropy seed.
+    pub fn from_seed(seed: &[u8]) -> Result<Self, ElGamalError> {
+        const MINIMUM_SEED_LEN: usize = ELGAMAL_SECRET_KEY_LEN;
+        const MAXIMUM_SEED_LEN: usize = 65535;
+
+        if seed.len() < MINIMUM_SEED_LEN {
+            return Err(ElGamalError::SeedLengthTooShort);
+        }
+        if seed.len() > MAXIMUM_SEED_LEN {
+            return Err(ElGamalError::SeedLengthTooLong);
+        }
+        Ok(ElGamalSecretKey(Scalar::hash_from_bytes::<Sha3_512>(seed)))
+    }
+
+    pub fn get_scalar(&self) -> &Scalar {
+        &self.0
+    }
+
+    pub fn as_bytes(&self) -> &[u8; ELGAMAL_SECRET_KEY_LEN] {
+        self.0.as_bytes()
+    }
+
+    /// Decrypts a ciphertext using the ElGamal secret key.
+    ///
+    /// The output of this function is of type `DiscreteLog`. To recover, the originally encrypted
+    /// message, use `DiscreteLog::decode`.
+    pub fn decrypt(&self, ciphertext: &ElGamalCiphertext) -> DiscreteLog {
+        ElGamal::decrypt(self, ciphertext)
+    }
+
+    /// Decrypts a ciphertext using the ElGamal secret key interpretting the message as type `u32`.
+    pub fn decrypt_u32(&self, ciphertext: &ElGamalCiphertext) -> Option<u64> {
+        ElGamal::decrypt_u32(self, ciphertext)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 impl ElGamalSecretKey {
     /// Deterministically derives an ElGamal secret key from a Solana signer and a public seed.
     ///
@@ -454,50 +525,9 @@ impl ElGamalSecretKey {
 
         result.to_vec()
     }
-
-    /// Randomly samples an ElGamal secret key.
-    ///
-    /// This function is randomized. It internally samples a scalar element using `OsRng`.
-    pub fn new_rand() -> Self {
-        ElGamalSecretKey(Scalar::random(&mut OsRng))
-    }
-
-    /// Derive an ElGamal secret key from an entropy seed.
-    pub fn from_seed(seed: &[u8]) -> Result<Self, ElGamalError> {
-        const MINIMUM_SEED_LEN: usize = ELGAMAL_SECRET_KEY_LEN;
-        const MAXIMUM_SEED_LEN: usize = 65535;
-
-        if seed.len() < MINIMUM_SEED_LEN {
-            return Err(ElGamalError::SeedLengthTooShort);
-        }
-        if seed.len() > MAXIMUM_SEED_LEN {
-            return Err(ElGamalError::SeedLengthTooLong);
-        }
-        Ok(ElGamalSecretKey(Scalar::hash_from_bytes::<Sha3_512>(seed)))
-    }
-
-    pub fn get_scalar(&self) -> &Scalar {
-        &self.0
-    }
-
-    /// Decrypts a ciphertext using the ElGamal secret key.
-    ///
-    /// The output of this function is of type `DiscreteLog`. To recover, the originally encrypted
-    /// message, use `DiscreteLog::decode`.
-    pub fn decrypt(&self, ciphertext: &ElGamalCiphertext) -> DiscreteLog {
-        ElGamal::decrypt(self, ciphertext)
-    }
-
-    /// Decrypts a ciphertext using the ElGamal secret key interpretting the message as type `u32`.
-    pub fn decrypt_u32(&self, ciphertext: &ElGamalCiphertext) -> Option<u64> {
-        ElGamal::decrypt_u32(self, ciphertext)
-    }
-
-    pub fn as_bytes(&self) -> &[u8; ELGAMAL_SECRET_KEY_LEN] {
-        self.0.as_bytes()
-    }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl EncodableKey for ElGamalSecretKey {
     fn read<R: Read>(reader: &mut R) -> Result<Self, Box<dyn error::Error>> {
         let bytes: Vec<u8> = serde_json::from_reader(reader)?;
@@ -514,6 +544,7 @@ impl EncodableKey for ElGamalSecretKey {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl SeedDerivable for ElGamalSecretKey {
     fn from_seed(seed: &[u8]) -> Result<Self, Box<dyn error::Error>> {
         let key = Self::from_seed(seed)?;
@@ -551,6 +582,7 @@ impl TryFrom<&[u8]> for ElGamalSecretKey {
         match bytes.try_into() {
             Ok(bytes) => Ok(ElGamalSecretKey::from(
                 Scalar::from_canonical_bytes(bytes)
+                    .into_option()
                     .ok_or(ElGamalError::SecretKeyDeserialization)?,
             )),
             _ => Err(ElGamalError::SecretKeyDeserialization),
@@ -737,10 +769,11 @@ impl DecryptHandle {
         if bytes.len() != DECRYPT_HANDLE_LEN {
             return None;
         }
+        let Ok(compressed_ristretto) = CompressedRistretto::from_slice(bytes) else {
+            return None;
+        };
 
-        Some(DecryptHandle(
-            CompressedRistretto::from_slice(bytes).decompress()?,
-        ))
+        compressed_ristretto.decompress().map(DecryptHandle)
     }
 }
 
@@ -798,7 +831,9 @@ mod tests {
         super::*,
         crate::encryption::pedersen::Pedersen,
         bip39::{Language, Mnemonic, MnemonicType, Seed},
-        solana_sdk::{pubkey::Pubkey, signature::Keypair, signer::null_signer::NullSigner},
+        solana_keypair::Keypair,
+        solana_pubkey::Pubkey,
+        solana_signer::null_signer::NullSigner,
         std::fs::{self, File},
     };
 

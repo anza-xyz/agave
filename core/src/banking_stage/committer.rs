@@ -12,7 +12,8 @@ use {
         transaction_batch::TransactionBatch,
         vote_sender_types::ReplayVoteSender,
     },
-    solana_sdk::{hash::Hash, pubkey::Pubkey, saturating_add_assign},
+    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
+    solana_sdk::{pubkey::Pubkey, saturating_add_assign},
     solana_svm::{
         transaction_commit_result::{TransactionCommitResult, TransactionCommitResultExtensions},
         transaction_processing_result::{
@@ -65,13 +66,10 @@ impl Committer {
         self.transaction_status_sender.is_some()
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn commit_transactions(
         &self,
-        batch: &TransactionBatch,
+        batch: &TransactionBatch<impl TransactionWithMeta>,
         processing_results: Vec<TransactionProcessingResult>,
-        last_blockhash: Hash,
-        lamports_per_signature: u64,
         starting_transaction_index: Option<usize>,
         bank: &Arc<Bank>,
         pre_balance_info: &mut PreBalanceInfo,
@@ -87,8 +85,6 @@ impl Committer {
         let (commit_results, commit_time_us) = measure_us!(bank.commit_transactions(
             batch.sanitized_transactions(),
             processing_results,
-            last_blockhash,
-            lamports_per_signature,
             processed_counts,
             &mut execute_and_commit_timings.execute_timings,
         ));
@@ -134,12 +130,18 @@ impl Committer {
         &self,
         commit_results: Vec<TransactionCommitResult>,
         bank: &Arc<Bank>,
-        batch: &TransactionBatch,
+        batch: &TransactionBatch<impl TransactionWithMeta>,
         pre_balance_info: &mut PreBalanceInfo,
         starting_transaction_index: Option<usize>,
     ) {
         if let Some(transaction_status_sender) = &self.transaction_status_sender {
-            let txs = batch.sanitized_transactions().to_vec();
+            // Clone `SanitizedTransaction` out of `RuntimeTransaction`, this is
+            // done to send over the status sender.
+            let txs = batch
+                .sanitized_transactions()
+                .iter()
+                .map(|tx| tx.as_sanitized_transaction().into_owned())
+                .collect_vec();
             let post_balances = bank.collect_balances(batch);
             let post_token_balances =
                 collect_token_balances(bank, batch, &mut pre_balance_info.mint_decimals);

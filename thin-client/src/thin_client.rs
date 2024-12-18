@@ -6,30 +6,29 @@
 use {
     log::*,
     rayon::iter::{IntoParallelIterator, ParallelIterator},
+    solana_account::Account,
+    solana_client_traits::{AsyncClient, Client, SyncClient},
+    solana_clock::MAX_PROCESSING_AGE,
+    solana_commitment_config::CommitmentConfig,
     solana_connection_cache::{
         client_connection::ClientConnection,
         connection_cache::{
             ConnectionCache, ConnectionManager, ConnectionPool, NewConnectionConfig,
         },
     },
+    solana_epoch_info::EpochInfo,
+    solana_hash::Hash,
+    solana_instruction::Instruction,
+    solana_keypair::Keypair,
+    solana_message::Message,
+    solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::config::RpcProgramAccountsConfig,
-    solana_sdk::{
-        account::Account,
-        client::{AsyncClient, Client, SyncClient},
-        clock::MAX_PROCESSING_AGE,
-        commitment_config::CommitmentConfig,
-        epoch_info::EpochInfo,
-        hash::Hash,
-        instruction::Instruction,
-        message::Message,
-        pubkey::Pubkey,
-        signature::{Keypair, Signature, Signer},
-        signers::Signers,
-        system_instruction,
-        transaction::{self, Transaction, VersionedTransaction},
-        transport::Result as TransportResult,
-    },
+    solana_signature::Signature,
+    solana_signer::{signers::Signers, Signer},
+    solana_system_interface::instruction::transfer,
+    solana_transaction::{versioned::VersionedTransaction, Transaction},
+    solana_transaction_error::{TransactionResult, TransportResult},
     std::{
         io,
         net::SocketAddr,
@@ -368,8 +367,7 @@ where
         keypair: &Keypair,
         pubkey: &Pubkey,
     ) -> TransportResult<Signature> {
-        let transfer_instruction =
-            system_instruction::transfer(&keypair.pubkey(), pubkey, lamports);
+        let transfer_instruction = transfer(&keypair.pubkey(), pubkey, lamports);
         self.send_and_confirm_instruction(keypair, transfer_instruction)
     }
 
@@ -420,7 +418,7 @@ where
     fn get_signature_status(
         &self,
         signature: &Signature,
-    ) -> TransportResult<Option<transaction::Result<()>>> {
+    ) -> TransportResult<Option<TransactionResult<()>>> {
         let status = self
             .rpc_client()
             .get_signature_status(signature)
@@ -437,7 +435,7 @@ where
         &self,
         signature: &Signature,
         commitment_config: CommitmentConfig,
-    ) -> TransportResult<Option<transaction::Result<()>>> {
+    ) -> TransportResult<Option<TransactionResult<()>>> {
         let status = self
             .rpc_client()
             .get_signature_status_with_commitment(signature, commitment_config)

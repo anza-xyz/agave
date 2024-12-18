@@ -27,25 +27,10 @@ pub struct LegacyVersion2 {
     pub feature_set: u32,    // first 4 bytes of the FeatureSet identifier
 }
 
-impl From<LegacyVersion1> for LegacyVersion2 {
-    fn from(legacy_version: LegacyVersion1) -> Self {
-        Self {
-            major: legacy_version.major,
-            minor: legacy_version.minor,
-            patch: legacy_version.patch,
-            commit: legacy_version.commit,
-            feature_set: 0,
-        }
-    }
-}
-
 impl Default for LegacyVersion2 {
     fn default() -> Self {
-        let feature_set = u32::from_le_bytes(
-            solana_sdk::feature_set::ID.as_ref()[..4]
-                .try_into()
-                .unwrap(),
-        );
+        let feature_set =
+            u32::from_le_bytes(solana_feature_set::ID.as_ref()[..4].try_into().unwrap());
         Self {
             major: env!("CARGO_PKG_VERSION_MAJOR").parse().unwrap(),
             minor: env!("CARGO_PKG_VERSION_MINOR").parse().unwrap(),
@@ -53,12 +38,6 @@ impl Default for LegacyVersion2 {
             commit: compute_commit(option_env!("CI_COMMIT")),
             feature_set,
         }
-    }
-}
-
-impl fmt::Display for LegacyVersion2 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}.{}.{}", self.major, self.minor, self.patch,)
     }
 }
 

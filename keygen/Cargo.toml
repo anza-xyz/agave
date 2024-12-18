@@ -14,14 +14,22 @@ bs58 = { workspace = true }
 clap = { version = "3.1.5", features = ["cargo"] }
 dirs-next = { workspace = true }
 num_cpus = { workspace = true }
+serde_json = { workspace = true }
 solana-clap-v3-utils = { workspace = true }
 solana-cli-config = { workspace = true }
+solana-derivation-path = { workspace = true }
+solana-instruction = { workspace = true }
+solana-keypair = { workspace = true }
+solana-message = { workspace = true }
+solana-pubkey = { workspace = true }
 solana-remote-wallet = { workspace = true, features = ["default"] }
-solana-sdk = { workspace = true }
+solana-seed-derivable = { workspace = true }
+solana-signer = { workspace = true }
 solana-version = { workspace = true }
 tiny-bip39 = { workspace = true }
 
 [dev-dependencies]
+solana-pubkey = { workspace = true, features = ["rand"] }
 tempfile = { workspace = true }
 
 [[bin]]

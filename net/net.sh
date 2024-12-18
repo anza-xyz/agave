@@ -146,7 +146,7 @@ Operate a configured testnet
    -i [ip address]                    - IP Address of the node to start or stop
 
  startnode specific option:
-   --wen-restart [proto_file]         - Use given proto file (create if non-exist) and apply wen_restat
+   --wen-restart [coordinator_pubkey]      - Use given coordinator pubkey and apply wen_restat
 
  startclients-specific options:
    $CLIENT_OPTIONS
@@ -189,12 +189,12 @@ annotateBlockexplorerUrl() {
 }
 
 build() {
-  supported=("20.04")
+  supported=("22.04")
   declare MAYBE_DOCKER=
   if [[ $(uname) != Linux || ! " ${supported[*]} " =~ $(lsb_release -sr) ]]; then
-    # shellcheck source=ci/rust-version.sh
-    source "$SOLANA_ROOT"/ci/rust-version.sh
-    MAYBE_DOCKER="ci/docker-run.sh ${ci_docker_image:?}"
+    # shellcheck source=ci/docker/env.sh
+    source "$SOLANA_ROOT"/ci/docker/env.sh
+    MAYBE_DOCKER="ci/docker-run.sh ${CI_DOCKER_IMAGE:?}"
   fi
   SECONDS=0
   (

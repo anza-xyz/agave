@@ -61,15 +61,6 @@ impl OptimisticConfirmationVerifier {
             return;
         }
 
-        datapoint_info!(
-            "optimistic_slot_elapsed",
-            (
-                "average_elapsed_ms",
-                self.last_optimistic_slot_ts.elapsed().as_millis() as i64,
-                i64
-            ),
-        );
-
         // We don't have any information about ancestors before the snapshot root,
         // so ignore those slots
         for (new_optimistic_slot, hash) in new_optimistic_slots {
@@ -195,7 +186,7 @@ mod test {
         let snapshot_start_slot = 0;
         let mut optimistic_confirmation_verifier =
             OptimisticConfirmationVerifier::new(snapshot_start_slot);
-        let bad_bank_hash = Hash::new(&[42u8; 32]);
+        let bad_bank_hash = Hash::new_from_array([42u8; 32]);
         let blockstore_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(blockstore_path.path()).unwrap();
         let optimistic_slots = vec![(1, bad_bank_hash), (3, Hash::default())];

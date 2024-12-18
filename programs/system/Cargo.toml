@@ -14,19 +14,38 @@ bincode = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }
 serde_derive = { workspace = true }
+solana-account = { workspace = true }
+solana-bincode = { workspace = true }
+solana-instruction = { workspace = true }
 solana-log-collector = { workspace = true }
+solana-nonce = { workspace = true, features = ["serde"] }
+solana-packet = { workspace = true }
 solana-program-runtime = { workspace = true }
-solana-sdk = { workspace = true }
+solana-pubkey = { workspace = true, features = ["sha2"] }
+solana-sdk-ids = { workspace = true }
+solana-system-interface = { workspace = true, features = ["serde"] }
+solana-sysvar = { workspace = true }
+solana-transaction-context = { workspace = true, features = ["bincode"] }
 solana-type-overrides = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
+criterion = { workspace = true }
 solana-compute-budget = { workspace = true }
+solana-feature-set = { workspace = true }
+solana-hash = { workspace = true }
 solana-logger = { workspace = true }
+solana-rent = { workspace = true }
+solana-sdk = { workspace = true }
+solana-sha256-hasher = { workspace = true }
 
 [lib]
 crate-type = ["lib"]
 name = "solana_system_program"
+
+[[bench]]
+name = "system"
+harness = false
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

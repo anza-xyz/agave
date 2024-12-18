@@ -1,15 +1,16 @@
 use {
     log::*,
+    solana_feature_set::{FeatureSet, FEATURE_NAMES},
     solana_sdk::{
         account::{Account, AccountSharedData},
         feature::{self, Feature},
-        feature_set::{FeatureSet, FEATURE_NAMES},
         fee_calculator::FeeRateGovernor,
         genesis_config::{ClusterType, GenesisConfig},
         native_token::sol_to_lamports,
         pubkey::Pubkey,
         rent::Rent,
         signature::{Keypair, Signer},
+        signer::SeedDerivable,
         stake::state::StakeStateV2,
         system_program,
     },
@@ -169,15 +170,40 @@ pub fn create_genesis_config_with_leader(
     validator_pubkey: &Pubkey,
     validator_stake_lamports: u64,
 ) -> GenesisConfigInfo {
-    let mint_keypair = Keypair::new();
-    let voting_keypair = Keypair::new();
+    // Use deterministic keypair so we don't get confused by randomness in tests
+    let mint_keypair = Keypair::from_seed(&[
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+        25, 26, 27, 28, 29, 30, 31,
+    ])
+    .unwrap();
+
+    create_genesis_config_with_leader_with_mint_keypair(
+        mint_keypair,
+        mint_lamports,
+        validator_pubkey,
+        validator_stake_lamports,
+    )
+}
+
+pub fn create_genesis_config_with_leader_with_mint_keypair(
+    mint_keypair: Keypair,
+    mint_lamports: u64,
+    validator_pubkey: &Pubkey,
+    validator_stake_lamports: u64,
+) -> GenesisConfigInfo {
+    // Use deterministic keypair so we don't get confused by randomness in tests
+    let voting_keypair = Keypair::from_seed(&[
+        32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54,
+        55, 56, 57, 58, 59, 60, 61, 62, 63,
+    ])
+    .unwrap();
 
     let genesis_config = create_genesis_config_with_leader_ex(
         mint_lamports,
         &mint_keypair.pubkey(),
         validator_pubkey,
         &voting_keypair.pubkey(),
-        &solana_sdk::pubkey::new_rand(),
+        &Pubkey::new_unique(),
         validator_stake_lamports,
         VALIDATOR_LAMPORTS,
         FeeRateGovernor::new(0, 0), // most tests can't handle transaction fees
@@ -231,7 +257,7 @@ pub fn activate_feature(genesis_config: &mut GenesisConfig, feature_id: Pubkey) 
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn create_genesis_config_with_leader_ex(
+pub fn create_genesis_config_with_leader_ex_no_features(
     mint_lamports: u64,
     mint_pubkey: &Pubkey,
     validator_pubkey: &Pubkey,
@@ -295,6 +321,38 @@ pub fn create_genesis_config_with_leader_ex(
     };
 
     solana_stake_program::add_genesis_accounts(&mut genesis_config);
+
+    genesis_config
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn create_genesis_config_with_leader_ex(
+    mint_lamports: u64,
+    mint_pubkey: &Pubkey,
+    validator_pubkey: &Pubkey,
+    validator_vote_account_pubkey: &Pubkey,
+    validator_stake_account_pubkey: &Pubkey,
+    validator_stake_lamports: u64,
+    validator_lamports: u64,
+    fee_rate_governor: FeeRateGovernor,
+    rent: Rent,
+    cluster_type: ClusterType,
+    initial_accounts: Vec<(Pubkey, AccountSharedData)>,
+) -> GenesisConfig {
+    let mut genesis_config = create_genesis_config_with_leader_ex_no_features(
+        mint_lamports,
+        mint_pubkey,
+        validator_pubkey,
+        validator_vote_account_pubkey,
+        validator_stake_account_pubkey,
+        validator_stake_lamports,
+        validator_lamports,
+        fee_rate_governor,
+        rent,
+        cluster_type,
+        initial_accounts,
+    );
+
     if genesis_config.cluster_type == ClusterType::Development {
         activate_all_features(&mut genesis_config);
     }

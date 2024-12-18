@@ -27,6 +27,7 @@ use {
     std::{
         collections::{btree_map::BTreeMap, HashSet},
         fmt::Debug,
+        num::NonZeroUsize,
         ops::{
             Bound,
             Bound::{Excluded, Included, Unbounded},
@@ -45,10 +46,11 @@ pub const ITER_BATCH_SIZE: usize = 1000;
 pub const BINS_DEFAULT: usize = 8192;
 pub const BINS_FOR_TESTING: usize = 2; // we want > 1, but each bin is a few disk files with a disk based index, so fewer is better
 pub const BINS_FOR_BENCHMARKS: usize = 8192;
-pub const FLUSH_THREADS_TESTING: usize = 1;
+// The unsafe is safe because we're using a fixed, known non-zero value
+pub const FLUSH_THREADS_TESTING: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(1) };
 pub const ACCOUNTS_INDEX_CONFIG_FOR_TESTING: AccountsIndexConfig = AccountsIndexConfig {
     bins: Some(BINS_FOR_TESTING),
-    flush_threads: Some(FLUSH_THREADS_TESTING),
+    num_flush_threads: Some(FLUSH_THREADS_TESTING),
     drives: None,
     index_limit_mb: IndexLimitMb::Unlimited,
     ages_to_stay_in_cache: None,
@@ -57,7 +59,7 @@ pub const ACCOUNTS_INDEX_CONFIG_FOR_TESTING: AccountsIndexConfig = AccountsIndex
 };
 pub const ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS: AccountsIndexConfig = AccountsIndexConfig {
     bins: Some(BINS_FOR_BENCHMARKS),
-    flush_threads: Some(FLUSH_THREADS_TESTING),
+    num_flush_threads: Some(FLUSH_THREADS_TESTING),
     drives: None,
     index_limit_mb: IndexLimitMb::Unlimited,
     ages_to_stay_in_cache: None,
@@ -218,13 +220,17 @@ pub enum IndexLimitMb {
 #[derive(Debug, Default, Clone)]
 pub struct AccountsIndexConfig {
     pub bins: Option<usize>,
-    pub flush_threads: Option<usize>,
+    pub num_flush_threads: Option<NonZeroUsize>,
     pub drives: Option<Vec<PathBuf>>,
     pub index_limit_mb: IndexLimitMb,
     pub ages_to_stay_in_cache: Option<Age>,
     pub scan_results_limit_bytes: Option<usize>,
     /// true if the accounts index is being created as a result of being started as a validator (as opposed to test, etc.)
     pub started_from_validator: bool,
+}
+
+pub fn default_num_flush_threads() -> NonZeroUsize {
+    NonZeroUsize::new(std::cmp::max(2, num_cpus::get() / 4)).expect("non-zero system threads")
 }
 
 #[derive(Debug, Default, Clone)]
@@ -311,14 +317,15 @@ impl<T: IndexValue> AccountMapEntryInner<T> {
     }
 
     /// decrement the ref count
-    /// return true if the old refcount was already 0. This indicates an under refcounting error in the system.
-    pub fn unref(&self) -> bool {
+    /// return the refcount prior to subtracting 1
+    /// 0 indicates an under refcounting error in the system.
+    pub fn unref(&self) -> RefCount {
         let previous = self.ref_count.fetch_sub(1, Ordering::Release);
         self.set_dirty(true);
         if previous == 0 {
             inc_new_counter_info!("accounts_index-deref_from_0", 1);
         }
-        previous == 0
+        previous
     }
 
     pub fn dirty(&self) -> bool {
@@ -647,6 +654,10 @@ pub enum AccountsIndexScanResult {
     KeepInMemory,
     /// reduce refcount by 1
     Unref,
+    /// reduce refcount by 1 and assert that ref_count = 0 after unref
+    UnrefAssert0,
+    /// reduce refcount by 1 and log if ref_count != 0 after unref
+    UnrefLog0,
 }
 
 #[derive(Debug)]
@@ -1453,9 +1464,31 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                         };
                         cache = match result {
                             AccountsIndexScanResult::Unref => {
-                                if locked_entry.unref() {
+                                if locked_entry.unref() == 0 {
                                     info!("scan: refcount of item already at 0: {pubkey}");
                                     self.unref_zero_count.fetch_add(1, Ordering::Relaxed);
+                                }
+                                true
+                            }
+                            AccountsIndexScanResult::UnrefAssert0 => {
+                                assert_eq!(
+                                    locked_entry.unref(),
+                                    1,
+                                    "ref count expected to be zero, but is {}! {pubkey}, {:?}",
+                                    locked_entry.ref_count(),
+                                    locked_entry.slot_list.read().unwrap(),
+                                );
+                                true
+                            }
+                            AccountsIndexScanResult::UnrefLog0 => {
+                                let old_ref = locked_entry.unref();
+                                if old_ref != 1 {
+                                    info!("Unexpected unref {pubkey} with {old_ref} {:?}, expect old_ref to be 1", locked_entry.slot_list.read().unwrap());
+                                    datapoint_warn!(
+                                        "accounts_db-unexpected-unref-zero",
+                                        ("old_ref", old_ref, i64),
+                                        ("pubkey", pubkey.to_string(), String),
+                                    );
                                 }
                                 true
                             }
@@ -1697,7 +1730,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         // this assumes the largest bin contains twice the expected amount of the average size per bin
         let bins = self.bins();
         let expected_items_per_bin = approx_items_len * 2 / bins;
-        let use_disk = self.storage.storage.disk.is_some();
+        let use_disk = self.storage.storage.is_disk_index_enabled();
         let mut binned = (0..bins)
             .map(|_| Vec::with_capacity(expected_items_per_bin))
             .collect::<Vec<_>>();
@@ -1986,6 +2019,16 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     {
         let mut w_roots_tracker = self.roots_tracker.write().unwrap();
         w_roots_tracker.uncleaned_roots.extend(roots);
+    }
+
+    /// Removes `root` from `uncleaned_roots` and returns whether it was previously present
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn remove_uncleaned_root(&self, root: Slot) -> bool {
+        self.roots_tracker
+            .write()
+            .unwrap()
+            .uncleaned_roots
+            .remove(&root)
     }
 
     pub fn max_root_inclusive(&self) -> Slot {
@@ -4065,9 +4108,9 @@ pub mod tests {
             assert!(map.get_internal_inner(&key, |entry| {
                 // check refcount BEFORE the unref
                 assert_eq!(u64::from(!expected), entry.unwrap().ref_count());
-                // first time, ref count was at 1, we can unref once. Unref should return false.
-                // second time, ref count was at 0, it is an error to unref. Unref should return true
-                assert_eq!(expected, entry.unwrap().unref());
+                // first time, ref count was at 1, we can unref once. Unref should return 1.
+                // second time, ref count was at 0, it is an error to unref. Unref should return 0
+                assert_eq!(u64::from(!expected), entry.unwrap().unref());
                 // check refcount AFTER the unref
                 assert_eq!(
                     if expected {

@@ -2,6 +2,7 @@
 mod serde_snapshot_tests {
     use {
         crate::{
+            bank::BankHashStats,
             serde_snapshot::{
                 deserialize_accounts_db_fields, reconstruct_accountsdb_from_fields,
                 remap_append_vec_file, SerializableAccountsDb, SnapshotAccountsDbFields,
@@ -15,13 +16,11 @@ mod serde_snapshot_tests {
             account_storage::{AccountStorageMap, AccountStorageReference},
             accounts::Accounts,
             accounts_db::{
-                get_temp_accounts_paths, test_utils::create_test_accounts, AccountShrinkThreshold,
-                AccountStorageEntry, AccountsDb, AtomicAccountsFileId,
-                VerifyAccountsHashAndLamportsConfig,
+                get_temp_accounts_paths, test_utils::create_test_accounts, AccountStorageEntry,
+                AccountsDb, AtomicAccountsFileId, VerifyAccountsHashAndLamportsConfig,
             },
             accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
             accounts_hash::AccountsHash,
-            accounts_index::AccountSecondaryIndexes,
             ancestors::Ancestors,
         },
         solana_sdk::{
@@ -77,9 +76,7 @@ mod serde_snapshot_tests {
                 cluster_type: ClusterType::Development,
                 ..GenesisConfig::default()
             },
-            AccountSecondaryIndexes::default(),
             None,
-            AccountShrinkThreshold::default(),
             false,
             Some(solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING),
             None,
@@ -87,6 +84,7 @@ mod serde_snapshot_tests {
             None,
             (u64::default(), None),
             None,
+            false,
         )
         .map(|(accounts_db, _)| accounts_db)
     }
@@ -111,7 +109,7 @@ mod serde_snapshot_tests {
     where
         W: Write,
     {
-        let bank_hash_stats = accounts_db.get_bank_hash_stats(slot).unwrap();
+        let bank_hash_stats = BankHashStats::default();
         let accounts_delta_hash = accounts_db.get_accounts_delta_hash(slot).unwrap();
         let accounts_hash = accounts_db.get_accounts_hash(slot).unwrap().0;
         let write_version = accounts_db.write_version.load(Ordering::Acquire);
@@ -134,7 +132,7 @@ mod serde_snapshot_tests {
         output_dir: impl AsRef<Path>,
         storage_access: StorageAccess,
     ) -> Result<StorageAndNextAccountsFileId, AccountsFileError> {
-        let storage_entries = accounts_db.get_snapshot_storages(RangeFull).0;
+        let storage_entries = accounts_db.get_storages(RangeFull).0;
         let storage: AccountStorageMap = AccountStorageMap::with_capacity(storage_entries.len());
         let mut next_append_vec_id = 0;
         for storage_entry in storage_entries.into_iter() {
@@ -178,7 +176,7 @@ mod serde_snapshot_tests {
         storage_access: StorageAccess,
     ) -> AccountsDb {
         let mut writer = Cursor::new(vec![]);
-        let snapshot_storages = accounts.get_snapshot_storages(..=slot).0;
+        let snapshot_storages = accounts.get_storages(..=slot).0;
         accountsdb_to_stream(
             &mut writer,
             accounts,
@@ -225,7 +223,7 @@ mod serde_snapshot_tests {
     fn test_accounts_serialize(storage_access: StorageAccess) {
         solana_logger::setup();
         let (_accounts_dir, paths) = get_temp_accounts_paths(4).unwrap();
-        let accounts_db = AccountsDb::new_for_tests(paths, &ClusterType::Development);
+        let accounts_db = AccountsDb::new_for_tests(paths);
         let accounts = Accounts::new(Arc::new(accounts_db));
 
         let slot = 0;
@@ -244,7 +242,7 @@ mod serde_snapshot_tests {
             &mut writer,
             &accounts.accounts_db,
             slot,
-            &get_storages_to_serialize(&accounts.accounts_db.get_snapshot_storages(..=slot).0),
+            &get_storages_to_serialize(&accounts.accounts_db.get_storages(..=slot).0),
         )
         .unwrap();
 
@@ -324,7 +322,7 @@ mod serde_snapshot_tests {
             accounts.create_account(&mut pubkeys, 0, 100, 0, 0);
             if pass == 0 {
                 accounts.add_root_and_flush_write_cache(0);
-                accounts.check_storage(0, 100);
+                accounts.check_storage(0, 100, 100);
                 accounts.clean_accounts_for_tests();
                 accounts.check_accounts(&pubkeys, 0, 100, 1);
                 // clean should have done nothing
@@ -334,7 +332,7 @@ mod serde_snapshot_tests {
             // do some updates to those accounts and re-check
             accounts.modify_accounts(&pubkeys, 0, 100, 2);
             accounts.add_root_and_flush_write_cache(0);
-            accounts.check_storage(0, 100);
+            accounts.check_storage(0, 100, 100);
             accounts.check_accounts(&pubkeys, 0, 100, 2);
             accounts.calculate_accounts_delta_hash(0);
 
@@ -356,7 +354,7 @@ mod serde_snapshot_tests {
 
             accounts.calculate_accounts_delta_hash(latest_slot);
             accounts.add_root_and_flush_write_cache(latest_slot);
-            accounts.check_storage(1, 21);
+            accounts.check_storage(1, 21, 21);
 
             // CREATE SLOT 2
             let latest_slot = 2;
@@ -376,7 +374,7 @@ mod serde_snapshot_tests {
 
             accounts.calculate_accounts_delta_hash(latest_slot);
             accounts.add_root_and_flush_write_cache(latest_slot);
-            accounts.check_storage(2, 31);
+            accounts.check_storage(2, 31, 31);
 
             let ancestors = linear_ancestors(latest_slot);
             accounts.update_accounts_hash_for_tests(latest_slot, &ancestors, false, false);
@@ -385,11 +383,11 @@ mod serde_snapshot_tests {
             // The first 20 accounts of slot 0 have been updated in slot 2, as well as
             // accounts 30 and  31 (overwritten with zero-lamport accounts in slot 1 and
             // slot 2 respectively), so only 78 accounts are left in slot 0's storage entries.
-            accounts.check_storage(0, 78);
+            accounts.check_storage(0, 78, 100);
             // 10 of the 21 accounts have been modified in slot 2, so only 11
             // accounts left in slot 1.
-            accounts.check_storage(1, 11);
-            accounts.check_storage(2, 31);
+            accounts.check_storage(1, 11, 21);
+            accounts.check_storage(2, 31, 31);
 
             let daccounts =
                 reconstruct_accounts_db_via_serialization(&accounts, latest_slot, storage_access);
@@ -417,9 +415,9 @@ mod serde_snapshot_tests {
             // Don't check the first 35 accounts which have not been modified on slot 0
             daccounts.check_accounts(&pubkeys[35..], 0, 65, 37);
             daccounts.check_accounts(&pubkeys1, 1, 10, 1);
-            daccounts.check_storage(0, 100);
-            daccounts.check_storage(1, 21);
-            daccounts.check_storage(2, 31);
+            daccounts.check_storage(0, 100, 100);
+            daccounts.check_storage(1, 21, 21);
+            daccounts.check_storage(2, 31, 31);
 
             assert_eq!(
                 daccounts.update_accounts_hash_for_tests(latest_slot, &ancestors, false, false,),

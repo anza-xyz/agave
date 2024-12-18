@@ -2,28 +2,37 @@ use {
     super::{Bank, BankStatusCache},
     solana_accounts_db::blockhash_queue::BlockhashQueue,
     solana_perf::perf_libs,
+    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_sdk::{
+        account::AccountSharedData,
+        account_utils::StateMut,
         clock::{
             MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY,
             MAX_TRANSACTION_FORWARDING_DELAY_GPU,
         },
-        message::SanitizedMessage,
-        nonce::{self, state::DurableNonce, NONCED_TX_MARKER_IX_INDEX},
+        nonce::{
+            state::{
+                Data as NonceData, DurableNonce, State as NonceState, Versions as NonceVersions,
+            },
+            NONCED_TX_MARKER_IX_INDEX,
+        },
         nonce_account,
-        transaction::{Result as TransactionResult, SanitizedTransaction, TransactionError},
+        pubkey::Pubkey,
+        transaction::{Result as TransactionResult, TransactionError},
     },
     solana_svm::{
         account_loader::{CheckedTransactionDetails, TransactionCheckResult},
         nonce_info::NonceInfo,
         transaction_error_metrics::TransactionErrorMetrics,
     },
+    solana_svm_transaction::svm_message::SVMMessage,
 };
 
 impl Bank {
     /// Checks a batch of sanitized transactions again bank for age and status
     pub fn check_transactions_with_forwarding_delay(
         &self,
-        transactions: &[SanitizedTransaction],
+        transactions: &[impl TransactionWithMeta],
         filter: &[TransactionResult<()>],
         forward_transactions_to_leader_at_slot_offset: u64,
     ) -> Vec<TransactionCheckResult> {
@@ -50,9 +59,9 @@ impl Bank {
         )
     }
 
-    pub fn check_transactions(
+    pub fn check_transactions<Tx: TransactionWithMeta>(
         &self,
-        sanitized_txs: &[impl core::borrow::Borrow<SanitizedTransaction>],
+        sanitized_txs: &[impl core::borrow::Borrow<Tx>],
         lock_results: &[TransactionResult<()>],
         max_age: usize,
         error_counters: &mut TransactionErrorMetrics,
@@ -61,9 +70,9 @@ impl Bank {
         self.check_status_cache(sanitized_txs, lock_results, error_counters)
     }
 
-    fn check_age(
+    fn check_age<Tx: TransactionWithMeta>(
         &self,
-        sanitized_txs: &[impl core::borrow::Borrow<SanitizedTransaction>],
+        sanitized_txs: &[impl core::borrow::Borrow<Tx>],
         lock_results: &[TransactionResult<()>],
         max_age: usize,
         error_counters: &mut TransactionErrorMetrics,
@@ -71,6 +80,10 @@ impl Bank {
         let hash_queue = self.blockhash_queue.read().unwrap();
         let last_blockhash = hash_queue.last_hash();
         let next_durable_nonce = DurableNonce::from_blockhash(&last_blockhash);
+        // safe so long as the BlockhashQueue is consistent
+        let next_lamports_per_signature = hash_queue
+            .get_lamports_per_signature(&last_blockhash)
+            .unwrap();
 
         sanitized_txs
             .iter()
@@ -81,6 +94,7 @@ impl Bank {
                     max_age,
                     &next_durable_nonce,
                     &hash_queue,
+                    next_lamports_per_signature,
                     error_counters,
                 ),
                 Err(e) => Err(e.clone()),
@@ -90,24 +104,29 @@ impl Bank {
 
     fn check_transaction_age(
         &self,
-        tx: &SanitizedTransaction,
+        tx: &impl SVMMessage,
         max_age: usize,
         next_durable_nonce: &DurableNonce,
         hash_queue: &BlockhashQueue,
+        next_lamports_per_signature: u64,
         error_counters: &mut TransactionErrorMetrics,
     ) -> TransactionCheckResult {
-        let recent_blockhash = tx.message().recent_blockhash();
+        let recent_blockhash = tx.recent_blockhash();
         if let Some(hash_info) = hash_queue.get_hash_info_if_valid(recent_blockhash, max_age) {
             Ok(CheckedTransactionDetails {
                 nonce: None,
                 lamports_per_signature: hash_info.lamports_per_signature(),
             })
-        } else if let Some((nonce, nonce_data)) =
-            self.check_and_load_message_nonce_account(tx.message(), next_durable_nonce)
+        } else if let Some((nonce, previous_lamports_per_signature)) = self
+            .check_load_and_advance_message_nonce_account(
+                tx,
+                next_durable_nonce,
+                next_lamports_per_signature,
+            )
         {
             Ok(CheckedTransactionDetails {
                 nonce: Some(nonce),
-                lamports_per_signature: nonce_data.get_lamports_per_signature(),
+                lamports_per_signature: previous_lamports_per_signature,
             })
         } else {
             error_counters.blockhash_not_found += 1;
@@ -115,23 +134,40 @@ impl Bank {
         }
     }
 
-    pub(super) fn check_and_load_message_nonce_account(
+    pub(super) fn check_load_and_advance_message_nonce_account(
         &self,
-        message: &SanitizedMessage,
+        message: &impl SVMMessage,
         next_durable_nonce: &DurableNonce,
-    ) -> Option<(NonceInfo, nonce::state::Data)> {
+        next_lamports_per_signature: u64,
+    ) -> Option<(NonceInfo, u64)> {
         let nonce_is_advanceable = message.recent_blockhash() != next_durable_nonce.as_hash();
-        if nonce_is_advanceable {
-            self.load_message_nonce_account(message)
-        } else {
-            None
+        if !nonce_is_advanceable {
+            return None;
         }
+
+        let (nonce_address, mut nonce_account, nonce_data) =
+            self.load_message_nonce_account(message)?;
+
+        let previous_lamports_per_signature = nonce_data.get_lamports_per_signature();
+        let next_nonce_state = NonceState::new_initialized(
+            &nonce_data.authority,
+            *next_durable_nonce,
+            next_lamports_per_signature,
+        );
+        nonce_account
+            .set_state(&NonceVersions::new(next_nonce_state))
+            .ok()?;
+
+        Some((
+            NonceInfo::new(nonce_address, nonce_account),
+            previous_lamports_per_signature,
+        ))
     }
 
     pub(super) fn load_message_nonce_account(
         &self,
-        message: &SanitizedMessage,
-    ) -> Option<(NonceInfo, nonce::state::Data)> {
+        message: &impl SVMMessage,
+    ) -> Option<(Pubkey, AccountSharedData, NonceData)> {
         let nonce_address = message.get_durable_nonce()?;
         let nonce_account = self.get_account_with_fixed_root(nonce_address)?;
         let nonce_data =
@@ -144,20 +180,21 @@ impl Bank {
             return None;
         }
 
-        Some((NonceInfo::new(*nonce_address, nonce_account), nonce_data))
+        Some((*nonce_address, nonce_account, nonce_data))
     }
 
-    fn check_status_cache(
+    fn check_status_cache<Tx: TransactionWithMeta>(
         &self,
-        sanitized_txs: &[impl core::borrow::Borrow<SanitizedTransaction>],
+        sanitized_txs: &[impl core::borrow::Borrow<Tx>],
         lock_results: Vec<TransactionCheckResult>,
         error_counters: &mut TransactionErrorMetrics,
     ) -> Vec<TransactionCheckResult> {
+        // Do allocation before acquiring the lock on the status cache.
+        let mut check_results = Vec::with_capacity(sanitized_txs.len());
         let rcache = self.status_cache.read().unwrap();
-        sanitized_txs
-            .iter()
-            .zip(lock_results)
-            .map(|(sanitized_tx, lock_result)| {
+
+        check_results.extend(sanitized_txs.iter().zip(lock_results).map(
+            |(sanitized_tx, lock_result)| {
                 let sanitized_tx = sanitized_tx.borrow();
                 if lock_result.is_ok()
                     && self.is_transaction_already_processed(sanitized_tx, &rcache)
@@ -167,17 +204,18 @@ impl Bank {
                 }
 
                 lock_result
-            })
-            .collect()
+            },
+        ));
+        check_results
     }
 
     fn is_transaction_already_processed(
         &self,
-        sanitized_tx: &SanitizedTransaction,
+        sanitized_tx: &impl TransactionWithMeta,
         status_cache: &BankStatusCache,
     ) -> bool {
         let key = sanitized_tx.message_hash();
-        let transaction_blockhash = sanitized_tx.message().recent_blockhash();
+        let transaction_blockhash = sanitized_tx.recent_blockhash();
         status_cache
             .get_status(key, transaction_blockhash, &self.ancestors)
             .is_some()
@@ -200,6 +238,7 @@ mod tests {
 
     #[test]
     fn test_check_and_load_message_nonce_account_ok() {
+        const STALE_LAMPORTS_PER_SIGNATURE: u64 = 42;
         let (bank, _mint_keypair, custodian_keypair, nonce_keypair, _) = setup_nonce_with_bank(
             10_000_000,
             |_| {},
@@ -221,11 +260,37 @@ mod tests {
             Some(&custodian_pubkey),
             &nonce_hash,
         ));
-        let nonce_account = bank.get_account(&nonce_pubkey).unwrap();
+
+        // set a spurious lamports_per_signature value
+        let mut nonce_account = bank.get_account(&nonce_pubkey).unwrap();
         let nonce_data = get_nonce_data_from_account(&nonce_account).unwrap();
+        nonce_account
+            .set_state(&NonceVersions::new(NonceState::new_initialized(
+                &nonce_data.authority,
+                nonce_data.durable_nonce,
+                STALE_LAMPORTS_PER_SIGNATURE,
+            )))
+            .unwrap();
+        bank.store_account(&nonce_pubkey, &nonce_account);
+
+        let nonce_account = bank.get_account(&nonce_pubkey).unwrap();
+        let (_, next_lamports_per_signature) = bank.last_blockhash_and_lamports_per_signature();
+        let mut expected_nonce_info = NonceInfo::new(nonce_pubkey, nonce_account);
+        expected_nonce_info
+            .try_advance_nonce(bank.next_durable_nonce(), next_lamports_per_signature)
+            .unwrap();
+
+        // we now expect to:
+        // * advance the nonce account to the current durable nonce value
+        // * set the blockhash queue's last blockhash's lamports_per_signature value in the nonce data
+        // * retrieve the previous lamports_per_signature value set on the nonce data for transaction fee checks
         assert_eq!(
-            bank.check_and_load_message_nonce_account(&message, &bank.next_durable_nonce()),
-            Some((NonceInfo::new(nonce_pubkey, nonce_account), nonce_data))
+            bank.check_load_and_advance_message_nonce_account(
+                &message,
+                &bank.next_durable_nonce(),
+                next_lamports_per_signature
+            ),
+            Some((expected_nonce_info, STALE_LAMPORTS_PER_SIGNATURE)),
         );
     }
 
@@ -252,8 +317,13 @@ mod tests {
             Some(&custodian_pubkey),
             &nonce_hash,
         ));
+        let (_, lamports_per_signature) = bank.last_blockhash_and_lamports_per_signature();
         assert!(bank
-            .check_and_load_message_nonce_account(&message, &bank.next_durable_nonce())
+            .check_load_and_advance_message_nonce_account(
+                &message,
+                &bank.next_durable_nonce(),
+                lamports_per_signature
+            )
             .is_none());
     }
 
@@ -281,10 +351,12 @@ mod tests {
             &nonce_hash,
         );
         message.instructions[0].accounts.clear();
+        let (_, lamports_per_signature) = bank.last_blockhash_and_lamports_per_signature();
         assert!(bank
-            .check_and_load_message_nonce_account(
+            .check_load_and_advance_message_nonce_account(
                 &new_sanitized_message(message),
                 &bank.next_durable_nonce(),
+                lamports_per_signature,
             )
             .is_none());
     }
@@ -314,8 +386,13 @@ mod tests {
             Some(&custodian_pubkey),
             &nonce_hash,
         ));
+        let (_, lamports_per_signature) = bank.last_blockhash_and_lamports_per_signature();
         assert!(bank
-            .check_and_load_message_nonce_account(&message, &bank.next_durable_nonce())
+            .check_load_and_advance_message_nonce_account(
+                &message,
+                &bank.next_durable_nonce(),
+                lamports_per_signature
+            )
             .is_none());
     }
 
@@ -341,8 +418,13 @@ mod tests {
             Some(&custodian_pubkey),
             &Hash::default(),
         ));
+        let (_, lamports_per_signature) = bank.last_blockhash_and_lamports_per_signature();
         assert!(bank
-            .check_and_load_message_nonce_account(&message, &bank.next_durable_nonce())
+            .check_load_and_advance_message_nonce_account(
+                &message,
+                &bank.next_durable_nonce(),
+                lamports_per_signature
+            )
             .is_none());
     }
 }

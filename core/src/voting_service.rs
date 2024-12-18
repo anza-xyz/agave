@@ -3,8 +3,11 @@ use {
         consensus::tower_storage::{SavedTowerVersions, TowerStorage},
         next_leader::upcoming_leader_tpu_vote_sockets,
     },
+    bincode::serialize,
     crossbeam_channel::Receiver,
-    solana_gossip::cluster_info::ClusterInfo,
+    solana_client::connection_cache::ConnectionCache,
+    solana_connection_cache::client_connection::ClientConnection,
+    solana_gossip::{cluster_info::ClusterInfo, gossip_error::GossipError},
     solana_measure::measure::Measure,
     solana_poh::poh_recorder::PohRecorder,
     solana_sdk::{
@@ -12,6 +15,7 @@ use {
         transaction::Transaction,
     },
     std::{
+        net::SocketAddr,
         sync::{Arc, RwLock},
         thread::{self, Builder, JoinHandle},
     },
@@ -38,6 +42,26 @@ impl VoteOp {
     }
 }
 
+fn send_vote_transaction(
+    cluster_info: &ClusterInfo,
+    transaction: &Transaction,
+    tpu: Option<SocketAddr>,
+    connection_cache: &Arc<ConnectionCache>,
+) -> Result<(), GossipError> {
+    let tpu = tpu.map(Ok).unwrap_or_else(|| {
+        cluster_info
+            .my_contact_info()
+            .tpu(connection_cache.protocol())
+    })?;
+    let buf = serialize(transaction)?;
+    let client = connection_cache.get_connection(&tpu);
+
+    client.send_data_async(buf).map_err(|err| {
+        trace!("Ran into an error when sending vote: {err:?} to {tpu:?}");
+        GossipError::SendError
+    })
+}
+
 pub struct VotingService {
     thread_hdl: JoinHandle<()>,
 }
@@ -48,6 +72,7 @@ impl VotingService {
         cluster_info: Arc<ClusterInfo>,
         poh_recorder: Arc<RwLock<PohRecorder>>,
         tower_storage: Arc<dyn TowerStorage>,
+        connection_cache: Arc<ConnectionCache>,
     ) -> Self {
         let thread_hdl = Builder::new()
             .name("solVoteService".to_string())
@@ -58,6 +83,7 @@ impl VotingService {
                         &poh_recorder,
                         tower_storage.as_ref(),
                         vote_op,
+                        connection_cache.clone(),
                     );
                 }
             })
@@ -70,6 +96,7 @@ impl VotingService {
         poh_recorder: &RwLock<PohRecorder>,
         tower_storage: &dyn TowerStorage,
         vote_op: VoteOp,
+        connection_cache: Arc<ConnectionCache>,
     ) {
         if let VoteOp::PushVote { saved_tower, .. } = &vote_op {
             let mut measure = Measure::start("tower storage save");
@@ -89,15 +116,21 @@ impl VotingService {
             cluster_info,
             poh_recorder,
             UPCOMING_LEADER_FANOUT_SLOTS,
+            connection_cache.protocol(),
         );
 
         if !upcoming_leader_sockets.is_empty() {
             for tpu_vote_socket in upcoming_leader_sockets {
-                let _ = cluster_info.send_transaction(vote_op.tx(), Some(tpu_vote_socket));
+                let _ = send_vote_transaction(
+                    cluster_info,
+                    vote_op.tx(),
+                    Some(tpu_vote_socket),
+                    &connection_cache,
+                );
             }
         } else {
             // Send to our own tpu vote socket if we cannot find a leader to send to
-            let _ = cluster_info.send_transaction(vote_op.tx(), None);
+            let _ = send_vote_transaction(cluster_info, vote_op.tx(), None, &connection_cache);
         }
 
         match vote_op {

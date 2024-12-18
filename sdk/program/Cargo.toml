@@ -13,34 +13,70 @@ rust-version = "1.79.0"                          # solana platform-tools rust ve
 
 [dependencies]
 bincode = { workspace = true }
-blake3 = { workspace = true, features = ["digest", "traits-preview"] }
+blake3 = { workspace = true, features = ["traits-preview"] }
 borsh = { workspace = true, optional = true }
-borsh0-10 = { package = "borsh", version = "0.10.3", optional = true }
-bs58 = { workspace = true }
-bv = { workspace = true, features = ["serde"] }
+borsh0-10 = { workspace = true, optional = true }
+bs58 = { workspace = true, features = ["alloc"] }
 bytemuck = { workspace = true }
-bytemuck_derive = { workspace = true }
 lazy_static = { workspace = true }
 log = { workspace = true }
 memoffset = { workspace = true }
 num-derive = { workspace = true }
 num-traits = { workspace = true, features = ["i128"] }
-qualifier_attr = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_bytes = { workspace = true }
 serde_derive = { workspace = true }
-sha2 = { workspace = true }
-sha3 = { workspace = true }
+solana-account-info = { workspace = true, features = ["bincode"] }
 solana-atomic-u64 = { workspace = true }
+solana-bincode = { workspace = true }
+solana-borsh = { workspace = true, optional = true }
+solana-clock = { workspace = true, features = ["serde", "sysvar"] }
+solana-cpi = { workspace = true }
 solana-decode-error = { workspace = true }
+solana-epoch-rewards = { workspace = true, features = ["serde", "sysvar"] }
+solana-epoch-schedule = { workspace = true, features = ["serde", "sysvar"] }
+solana-feature-gate-interface = { workspace = true, features = ["bincode"] }
+solana-fee-calculator = { workspace = true, features = ["serde"] }
 solana-frozen-abi = { workspace = true, optional = true, features = ["frozen-abi"] }
 solana-frozen-abi-macro = { workspace = true, optional = true, features = ["frozen-abi"] }
+solana-hash = { workspace = true, features = [
+    "bytemuck",
+    "serde",
+    "std",
+] }
+solana-instruction = { workspace = true, default-features = false, features = [
+    "bincode",
+    "serde",
+    "std",
+] }
+solana-instructions-sysvar = { workspace = true }
+solana-keccak-hasher = { workspace = true, features = ["sha3"] }
+solana-last-restart-slot = { workspace = true, features = ["serde", "sysvar"] }
+solana-message = { workspace = true, features = ["bincode", "blake3"] }
 solana-msg = { workspace = true }
+solana-native-token = { workspace = true }
+solana-nonce = { workspace = true, features = ["serde"] }
+solana-program-entrypoint = { workspace = true }
+solana-program-error = { workspace = true, features = ["serde"] }
 solana-program-memory = { workspace = true }
+solana-program-option = { workspace = true }
+solana-program-pack = { workspace = true }
+solana-pubkey = { workspace = true, features = ["bytemuck", "curve25519", "serde", "std"] }
+solana-rent = { workspace = true, features = ["serde", "sysvar"] }
 solana-sanitize = { workspace = true }
+solana-sdk-ids = { workspace = true }
 solana-sdk-macro = { workspace = true }
 solana-secp256k1-recover = { workspace = true }
+solana-serde-varint = { workspace = true }
+solana-serialize-utils = { workspace = true }
+solana-sha256-hasher = { workspace = true, features = ["sha2"] }
 solana-short-vec = { workspace = true }
+solana-slot-hashes = { workspace = true, features = ["serde", "sysvar"] }
+solana-slot-history = { workspace = true, features = ["serde", "sysvar"] }
+solana-stable-layout = { workspace = true }
+solana-system-interface = { workspace = true, features = ["bincode"] }
+solana-sysvar = { workspace = true, features = ["bincode", "bytemuck"] }
+solana-sysvar-id = { workspace = true }
 thiserror = { workspace = true }
 
 # This is currently needed to build on-chain programs reliably.
@@ -54,55 +90,60 @@ getrandom = { workspace = true, features = ["custom"] }
 solana-define-syscall = { workspace = true }
 
 [target.'cfg(not(target_os = "solana"))'.dependencies]
-base64 = { workspace = true, features = ["alloc", "std"] }
-bitflags = { workspace = true }
-curve25519-dalek = { workspace = true }
 num-bigint = { workspace = true }
 rand = { workspace = true }
 
 [target.'cfg(not(target_os = "solana"))'.dev-dependencies]
 arbitrary = { workspace = true, features = ["derive"] }
-libsecp256k1 = { workspace = true, features = ["hmac"] } # used by doctests
 solana-logger = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = { workspace = true }
 console_log = { workspace = true }
 getrandom = { workspace = true, features = ["js", "wasm-bindgen"] }
-js-sys = { workspace = true }
 wasm-bindgen = { workspace = true }
 
-[target.'cfg(not(target_pointer_width = "64"))'.dependencies]
-parking_lot = { workspace = true }
-
 [dev-dependencies]
-anyhow = { workspace = true }
 array-bytes = { workspace = true }
 assert_matches = { workspace = true }
 itertools = { workspace = true }
 serde_json = { workspace = true }
-serial_test = { workspace = true }
-static_assertions = { workspace = true }
-test-case = { workspace = true }
-
-[build-dependencies]
-rustc_version = { workspace = true, optional = true }
+solana-pubkey = { workspace = true, features = ["dev-context-only-utils"] }
+solana-sysvar = { workspace = true, features = ["dev-context-only-utils"] }
 
 [package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
+targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [features]
 default = ["borsh"]
-borsh = ["dep:borsh", "dep:borsh0-10"]
-dev-context-only-utils = ["dep:qualifier_attr"]
+borsh = [
+    "dep:borsh",
+    "dep:borsh0-10",
+    "dep:solana-borsh",
+    "solana-hash/borsh",
+    "solana-instruction/borsh",
+    "solana-program-error/borsh",
+    "solana-pubkey/borsh"
+]
+dev-context-only-utils = []
 frozen-abi = [
-    "dep:rustc_version",
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
+    "solana-epoch-rewards/frozen-abi",
+    "solana-epoch-schedule/frozen-abi",
+    "solana-fee-calculator/frozen-abi",
+    "solana-hash/frozen-abi",
+    "solana-instruction/frozen-abi",
+    "solana-message/frozen-abi",
+    "solana-pubkey/frozen-abi",
+    "solana-rent/frozen-abi",
     "solana-short-vec/frozen-abi",
+    "solana-sysvar/frozen-abi"
 ]
 
 [lints]

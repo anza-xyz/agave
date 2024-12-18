@@ -3,12 +3,12 @@
 extern crate test;
 use {
     bincode::{deserialize, serialize},
+    solana_instructions_sysvar::{self as instructions, construct_instructions_data},
     solana_sdk::{
         instruction::{AccountMeta, Instruction},
         message::{Message, SanitizedMessage},
         pubkey::{self, Pubkey},
         reserved_account_keys::ReservedAccountKeys,
-        sysvar::instructions::{self, construct_instructions_data},
     },
     test::Bencher,
 };

@@ -3,11 +3,15 @@
 #[cfg(target_os = "linux")]
 use {
     itertools::izip,
-    libc::{iovec, mmsghdr, sockaddr_in, sockaddr_in6, sockaddr_storage},
-    std::os::unix::io::AsRawFd,
+    libc::{iovec, mmsghdr, msghdr, sockaddr_in, sockaddr_in6, sockaddr_storage, socklen_t},
+    std::{
+        mem::{self, MaybeUninit},
+        os::unix::io::AsRawFd,
+        ptr,
+    },
 };
 use {
-    solana_sdk::transport::TransportError,
+    solana_transaction_error::TransportError,
     std::{
         borrow::Borrow,
         io,
@@ -58,41 +62,69 @@ where
 fn mmsghdr_for_packet(
     packet: &[u8],
     dest: &SocketAddr,
-    iov: &mut iovec,
-    addr: &mut sockaddr_storage,
-    hdr: &mut mmsghdr,
+    iov: &mut MaybeUninit<iovec>,
+    addr: &mut MaybeUninit<sockaddr_storage>,
+    hdr: &mut MaybeUninit<mmsghdr>,
 ) {
-    const SIZE_OF_SOCKADDR_IN: usize = std::mem::size_of::<sockaddr_in>();
-    const SIZE_OF_SOCKADDR_IN6: usize = std::mem::size_of::<sockaddr_in6>();
+    const SIZE_OF_SOCKADDR_IN: usize = mem::size_of::<sockaddr_in>();
+    const SIZE_OF_SOCKADDR_IN6: usize = mem::size_of::<sockaddr_in6>();
 
-    *iov = iovec {
+    iov.write(iovec {
         iov_base: packet.as_ptr() as *mut libc::c_void,
         iov_len: packet.len(),
-    };
-    hdr.msg_hdr.msg_iov = iov;
-    hdr.msg_hdr.msg_iovlen = 1;
-    hdr.msg_hdr.msg_name = addr as *mut _ as *mut _;
+    });
 
-    match dest {
+    let msg_namelen = match dest {
         SocketAddr::V4(socket_addr_v4) => {
             unsafe {
-                std::ptr::write(
-                    addr as *mut _ as *mut _,
+                ptr::write(
+                    addr.as_mut_ptr() as *mut _,
                     *nix::sys::socket::SockaddrIn::from(*socket_addr_v4).as_ref(),
                 );
             }
-            hdr.msg_hdr.msg_namelen = SIZE_OF_SOCKADDR_IN as u32;
+            SIZE_OF_SOCKADDR_IN as socklen_t
         }
         SocketAddr::V6(socket_addr_v6) => {
             unsafe {
-                std::ptr::write(
-                    addr as *mut _ as *mut _,
+                ptr::write(
+                    addr.as_mut_ptr() as *mut _,
                     *nix::sys::socket::SockaddrIn6::from(*socket_addr_v6).as_ref(),
                 );
             }
-            hdr.msg_hdr.msg_namelen = SIZE_OF_SOCKADDR_IN6 as u32;
+            SIZE_OF_SOCKADDR_IN6 as socklen_t
         }
-    }
+    };
+
+    #[cfg(not(target_env = "musl"))]
+    let msg_hdr = msghdr {
+        msg_name: addr as *mut _ as *mut _,
+        msg_namelen,
+        msg_iov: iov.as_mut_ptr(),
+        msg_iovlen: 1,
+        msg_control: ptr::null::<libc::c_void>() as *mut _,
+        msg_controllen: 0,
+        msg_flags: 0,
+    };
+
+    #[cfg(target_env = "musl")]
+    let msg_hdr = {
+        // Cannot construct msghdr directly on musl
+        // See https://github.com/rust-lang/libc/issues/2344 for more info
+        let mut msg_hdr: msghdr = unsafe { std::mem::zeroed() };
+        msg_hdr.msg_name = addr as *mut _ as *mut _;
+        msg_hdr.msg_namelen = msg_namelen;
+        msg_hdr.msg_iov = iov.as_mut_ptr();
+        msg_hdr.msg_iovlen = 1;
+        msg_hdr.msg_control = ptr::null::<libc::c_void>() as *mut _;
+        msg_hdr.msg_controllen = 0;
+        msg_hdr.msg_flags = 0;
+        msg_hdr
+    };
+
+    hdr.write(mmsghdr {
+        msg_len: 0,
+        msg_hdr,
+    });
 }
 
 #[cfg(target_os = "linux")]
@@ -135,14 +167,20 @@ where
     T: AsRef<[u8]>,
 {
     let size = packets.len();
-    #[allow(clippy::uninit_assumed_init)]
-    let iovec = std::mem::MaybeUninit::<iovec>::uninit();
-    let mut iovs = vec![unsafe { iovec.assume_init() }; size];
-    let mut addrs = vec![unsafe { std::mem::zeroed() }; size];
-    let mut hdrs = vec![unsafe { std::mem::zeroed() }; size];
+    let mut iovs = vec![MaybeUninit::uninit(); size];
+    let mut addrs = vec![MaybeUninit::zeroed(); size];
+    let mut hdrs = vec![MaybeUninit::uninit(); size];
     for ((pkt, dest), hdr, iov, addr) in izip!(packets, &mut hdrs, &mut iovs, &mut addrs) {
         mmsghdr_for_packet(pkt.as_ref(), dest.borrow(), iov, addr, hdr);
     }
+    // mmsghdr_for_packet() performs initialization so we can safely transmute
+    // the Vecs to their initialized counterparts
+    let _iovs = unsafe { mem::transmute::<Vec<MaybeUninit<iovec>>, Vec<iovec>>(iovs) };
+    let _addrs = unsafe {
+        mem::transmute::<Vec<MaybeUninit<sockaddr_storage>>, Vec<sockaddr_storage>>(addrs)
+    };
+    let mut hdrs = unsafe { mem::transmute::<Vec<MaybeUninit<mmsghdr>>, Vec<mmsghdr>>(hdrs) };
+
     sendmmsg_retry(sock, &mut hdrs)
 }
 
@@ -169,18 +207,19 @@ mod tests {
             sendmmsg::{batch_send, multi_target_send, SendPktsError},
         },
         assert_matches::assert_matches,
-        solana_sdk::packet::PACKET_DATA_SIZE,
+        solana_net_utils::{bind_to_localhost, bind_to_unspecified},
+        solana_packet::PACKET_DATA_SIZE,
         std::{
             io::ErrorKind,
-            net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
+            net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
         },
     };
 
     #[test]
     pub fn test_send_mmsg_one_dest() {
-        let reader = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let reader = bind_to_localhost().expect("bind");
         let addr = reader.local_addr().unwrap();
-        let sender = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let sender = bind_to_localhost().expect("bind");
 
         let packets: Vec<_> = (0..32).map(|_| vec![0u8; PACKET_DATA_SIZE]).collect();
         let packet_refs: Vec<_> = packets.iter().map(|p| (&p[..], &addr)).collect();
@@ -195,13 +234,13 @@ mod tests {
 
     #[test]
     pub fn test_send_mmsg_multi_dest() {
-        let reader = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let reader = bind_to_localhost().expect("bind");
         let addr = reader.local_addr().unwrap();
 
-        let reader2 = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let reader2 = bind_to_localhost().expect("bind");
         let addr2 = reader2.local_addr().unwrap();
 
-        let sender = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let sender = bind_to_localhost().expect("bind");
 
         let packets: Vec<_> = (0..32).map(|_| vec![0u8; PACKET_DATA_SIZE]).collect();
         let packet_refs: Vec<_> = packets
@@ -230,19 +269,19 @@ mod tests {
 
     #[test]
     pub fn test_multicast_msg() {
-        let reader = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let reader = bind_to_localhost().expect("bind");
         let addr = reader.local_addr().unwrap();
 
-        let reader2 = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let reader2 = bind_to_localhost().expect("bind");
         let addr2 = reader2.local_addr().unwrap();
 
-        let reader3 = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let reader3 = bind_to_localhost().expect("bind");
         let addr3 = reader3.local_addr().unwrap();
 
-        let reader4 = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let reader4 = bind_to_localhost().expect("bind");
         let addr4 = reader4.local_addr().unwrap();
 
-        let sender = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let sender = bind_to_localhost().expect("bind");
 
         let packet = Packet::default();
 
@@ -283,7 +322,7 @@ mod tests {
         ];
         let dest_refs: Vec<_> = vec![&ip4, &ip6, &ip4];
 
-        let sender = UdpSocket::bind("0.0.0.0:0").expect("bind");
+        let sender = bind_to_unspecified().expect("bind");
         let res = batch_send(&sender, &packet_refs[..]);
         assert_matches!(res, Err(SendPktsError::IoError(_, /*num_failed*/ 1)));
         let res = multi_target_send(&sender, &packets[0], &dest_refs);
@@ -295,7 +334,7 @@ mod tests {
         let packets: Vec<_> = (0..5).map(|_| vec![0u8; PACKET_DATA_SIZE]).collect();
         let ipv4local = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080);
         let ipv4broadcast = SocketAddr::new(IpAddr::V4(Ipv4Addr::BROADCAST), 8080);
-        let sender = UdpSocket::bind("0.0.0.0:0").expect("bind");
+        let sender = bind_to_unspecified().expect("bind");
 
         // test intermediate failures for batch_send
         let packet_refs: Vec<_> = vec![

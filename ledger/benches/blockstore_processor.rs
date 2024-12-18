@@ -6,17 +6,20 @@ use {
         iter::IndexedParallelIterator,
         prelude::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
     },
+    solana_feature_set::apply_cost_tracker_during_replay,
     solana_ledger::{
         blockstore_processor::{execute_batch, TransactionBatchWithIndexes},
         genesis_utils::{create_genesis_config, GenesisConfigInfo},
     },
     solana_runtime::{
-        bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
-        transaction_batch::TransactionBatch,
+        bank::Bank,
+        bank_forks::BankForks,
+        prioritization_fee_cache::PrioritizationFeeCache,
+        transaction_batch::{OwnedOrBorrowed, TransactionBatch},
     },
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk::{
         account::{Account, ReadableAccount},
-        feature_set::apply_cost_tracker_during_replay,
         signature::Keypair,
         signer::Signer,
         stake_history::Epoch,
@@ -24,10 +27,7 @@ use {
         transaction::SanitizedTransaction,
     },
     solana_timings::ExecuteTimings,
-    std::{
-        borrow::Cow,
-        sync::{Arc, RwLock},
-    },
+    std::sync::{Arc, RwLock},
     test::Bencher,
 };
 
@@ -61,7 +61,7 @@ fn create_funded_accounts(bank: &Bank, num: usize) -> Vec<Keypair> {
     accounts
 }
 
-fn create_transactions(bank: &Bank, num: usize) -> Vec<SanitizedTransaction> {
+fn create_transactions(bank: &Bank, num: usize) -> Vec<RuntimeTransaction<SanitizedTransaction>> {
     let funded_accounts = create_funded_accounts(bank, 2 * num);
     funded_accounts
         .into_par_iter()
@@ -71,7 +71,7 @@ fn create_transactions(bank: &Bank, num: usize) -> Vec<SanitizedTransaction> {
             let to = &chunk[1];
             system_transaction::transfer(from, &to.pubkey(), 1, bank.last_blockhash())
         })
-        .map(SanitizedTransaction::from_transaction_for_tests)
+        .map(RuntimeTransaction::from_transaction_for_tests)
         .collect()
 }
 
@@ -136,8 +136,11 @@ fn bench_execute_batch(
     let batches: Vec<_> = transactions
         .chunks(batch_size)
         .map(|txs| {
-            let mut batch =
-                TransactionBatch::new(vec![Ok(()); txs.len()], &bank, Cow::Borrowed(txs));
+            let mut batch = TransactionBatch::new(
+                vec![Ok(()); txs.len()],
+                &bank,
+                OwnedOrBorrowed::Borrowed(txs),
+            );
             batch.set_needs_unlock(false);
             TransactionBatchWithIndexes {
                 batch,

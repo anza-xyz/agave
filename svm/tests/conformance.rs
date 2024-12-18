@@ -7,45 +7,36 @@ use {
     prost::Message,
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
     solana_compute_budget::compute_budget::ComputeBudget,
+    solana_feature_set::{FeatureSet, FEATURE_NAMES},
     solana_log_collector::LogCollector,
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext},
-        loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch, ProgramRuntimeEnvironments},
-        solana_rbpf::{
-            program::{BuiltinProgram, FunctionRegistry},
-            vm::Config,
-        },
+        loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
     },
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
-        bpf_loader_upgradeable,
-        feature_set::{FeatureSet, FEATURE_NAMES},
+        clock::Clock,
+        epoch_schedule::EpochSchedule,
         hash::Hash,
         instruction::AccountMeta,
         message::SanitizedMessage,
         pubkey::Pubkey,
         rent::Rent,
         signature::Signature,
-        transaction::TransactionError,
+        sysvar::{last_restart_slot, SysvarId},
         transaction_context::{
             ExecutionRecord, IndexOfAccount, InstructionAccount, TransactionAccount,
             TransactionContext,
         },
     },
     solana_svm::{
-        account_loader::CheckedTransactionDetails,
-        program_loader,
-        transaction_processing_callback::TransactionProcessingCallback,
-        transaction_processing_result::TransactionProcessingResultExtensions,
-        transaction_processor::{
-            ExecutionRecordingConfig, TransactionBatchProcessor, TransactionProcessingConfig,
-            TransactionProcessingEnvironment,
-        },
+        program_loader, transaction_processing_callback::TransactionProcessingCallback,
+        transaction_processor::TransactionBatchProcessor,
     },
-    solana_svm_conformance::proto::{InstrEffects, InstrFixture},
+    solana_svm_conformance::proto::{AcctState, InstrEffects, InstrFixture},
     solana_timings::ExecuteTimings,
     std::{
-        collections::{HashMap, HashSet},
+        collections::{hash_map::Entry, HashMap},
         env,
         ffi::OsString,
         fs::{self, File},
@@ -94,10 +85,10 @@ fn setup() -> PathBuf {
             .status()
             .expect("Failed to download test-vectors");
 
-        std::println!("Checking out commit 90a8ad069f8a07d2fdad3cf03b3fb486a00fe988");
+        std::println!("Checking out commit 4abb2046cf51efe809498f4fd717023684050d2f");
         Command::new("git")
             .current_dir(&dir)
-            .args(["checkout", "90a8ad069f8a07d2fdad3cf03b3fb486a00fe988"])
+            .args(["checkout", "4abb2046cf51efe809498f4fd717023684050d2f"])
             .status()
             .expect("Failed to checkout to proper test-vector commit");
 
@@ -124,38 +115,28 @@ fn execute_fixtures() {
 
     // bpf-loader tests
     base_dir.push("bpf-loader");
-    run_from_folder(&base_dir, &HashSet::new());
+    run_from_folder(&base_dir);
     base_dir.pop();
 
     // System program tests
     base_dir.push("system");
-    // These cases hit a debug_assert here:
-    // https://github.com/anza-xyz/agave/blob/0142c7fa1c46b05d201552102eb91b6d4b10f077/svm/src/transaction_account_state_info.rs#L34
-    let run_as_instr = HashSet::from([
-        OsString::from("7fcde5cb94e1dc44.bin.fix"),
-        OsString::from("9f3c001dcd1803fe.bin.fix"),
-        OsString::from("34ee00c659dc5aa6.bin.fix"),
-        OsString::from("8fd951ecde987723.bin.fix"),
-    ]);
-    run_from_folder(&base_dir, &run_as_instr);
+    run_from_folder(&base_dir);
 
     cleanup();
 }
 
-fn run_from_folder(base_dir: &PathBuf, run_as_instr: &HashSet<OsString>) {
+fn run_from_folder(base_dir: &PathBuf) {
     for path in std::fs::read_dir(base_dir).unwrap() {
         let filename = path.as_ref().unwrap().file_name();
         let mut file = File::open(path.as_ref().unwrap().path()).expect("file not found");
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer).expect("Failed to read file");
-
         let fixture = InstrFixture::decode(buffer.as_slice()).unwrap();
-        let execute_as_instr = run_as_instr.contains(&filename);
-        run_fixture(fixture, filename, execute_as_instr);
+        run_fixture(fixture, filename);
     }
 }
 
-fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool) {
+fn run_fixture(fixture: InstrFixture, filename: OsString) {
     let input = fixture.input.unwrap();
     let output = fixture.output.as_ref().unwrap();
 
@@ -178,7 +159,6 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
             is_signer: item.is_signer,
             is_writable: item.is_writable,
         });
-
         if item.is_signer {
             signatures.insert(pubkey, Signature::new_unique());
         }
@@ -204,7 +184,9 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
             let mut account_data = AccountSharedData::default();
             account_data.set_lamports(item.lamports);
             account_data.set_data(item.data);
-            account_data.set_owner(Pubkey::new_from_array(item.owner.try_into().unwrap()));
+            account_data.set_owner(Pubkey::new_from_array(
+                item.owner.clone().try_into().unwrap(),
+            ));
             account_data.set_executable(item.executable);
             account_data.set_rent_epoch(item.rent_epoch);
 
@@ -220,9 +202,12 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
         account_data_map.insert(fee_payer, account_data);
     }
 
-    let Ok(transaction) =
-        transaction_builder.build(Hash::default(), (fee_payer, Signature::new_unique()), false)
-    else {
+    let Ok(transaction) = transaction_builder.build(
+        Hash::default(),
+        (fee_payer, Signature::new_unique()),
+        false,
+        true,
+    ) else {
         // If we can't build a sanitized transaction,
         // the output must be a failed instruction as well
         assert_ne!(output.result, 0);
@@ -230,10 +215,6 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
     };
 
     let transactions = vec![transaction];
-    let transaction_check = vec![Ok(CheckedTransactionDetails {
-        nonce: None,
-        lamports_per_signature: 30,
-    })];
 
     let compute_budget = ComputeBudget {
         compute_unit_limit: input.cu_avail,
@@ -244,144 +225,53 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
         create_program_runtime_environment_v1(&feature_set, &compute_budget, false, false).unwrap();
 
     mock_bank.override_feature_set(feature_set);
-    let batch_processor = TransactionBatchProcessor::<MockForkGraph>::new(42, 2, HashSet::new());
 
     let fork_graph = Arc::new(RwLock::new(MockForkGraph {}));
-    {
-        let mut program_cache = batch_processor.program_cache.write().unwrap();
-        program_cache.environments = ProgramRuntimeEnvironments {
-            program_runtime_v1: Arc::new(v1_environment),
-            program_runtime_v2: Arc::new(BuiltinProgram::new_loader(
-                Config::default(),
-                FunctionRegistry::default(),
-            )),
-        };
-        program_cache.fork_graph = Some(Arc::downgrade(&fork_graph.clone()));
-    }
+    let batch_processor = TransactionBatchProcessor::new(
+        42,
+        2,
+        Arc::downgrade(&fork_graph),
+        Some(Arc::new(v1_environment)),
+        None,
+    );
 
-    batch_processor.fill_missing_sysvar_cache_entries(&mock_bank);
-    register_builtins(&batch_processor, &mock_bank);
+    batch_processor
+        .writable_sysvar_cache()
+        .write()
+        .unwrap()
+        .fill_missing_entries(|pubkey, callbackback| {
+            if let Some(account) = mock_bank.get_account_shared_data(pubkey) {
+                if account.lamports() > 0 {
+                    callbackback(account.data());
+                    return;
+                }
+            }
 
-    #[allow(deprecated)]
-    let (blockhash, lamports_per_signature) = batch_processor
-        .sysvar_cache()
-        .get_recent_blockhashes()
-        .ok()
-        .and_then(|x| (*x).last().cloned())
-        .map(|x| (x.blockhash, x.fee_calculator.lamports_per_signature))
-        .unwrap_or_default();
+            if *pubkey == Clock::id() {
+                let default_clock = Clock {
+                    slot: 10,
+                    ..Default::default()
+                };
+                let clock_data = bincode::serialize(&default_clock).unwrap();
+                callbackback(&clock_data);
+            } else if *pubkey == EpochSchedule::id() {
+                callbackback(&bincode::serialize(&EpochSchedule::default()).unwrap());
+            } else if *pubkey == Rent::id() {
+                callbackback(&bincode::serialize(&Rent::default()).unwrap());
+            } else if *pubkey == last_restart_slot::id() {
+                let slot_val = 5000_u64;
+                callbackback(&bincode::serialize(&slot_val).unwrap());
+            }
+        });
 
-    let recording_config = ExecutionRecordingConfig {
-        enable_log_recording: true,
-        enable_return_data_recording: true,
-        enable_cpi_recording: false,
-    };
-    let processor_config = TransactionProcessingConfig {
-        account_overrides: None,
-        check_program_modification_slot: false,
-        compute_budget: None,
-        log_messages_bytes_limit: None,
-        limit_to_load_programs: true,
-        recording_config,
-        transaction_account_lock_limit: None,
-    };
-
-    if execute_as_instr {
-        execute_fixture_as_instr(
-            &mock_bank,
-            &batch_processor,
-            transactions[0].message(),
-            compute_budget,
-            output,
-            filename,
-            input.cu_avail,
-        );
-        return;
-    }
-
-    let result = batch_processor.load_and_execute_sanitized_transactions(
+    execute_fixture_as_instr(
         &mock_bank,
-        &transactions,
-        transaction_check,
-        &TransactionProcessingEnvironment {
-            blockhash,
-            lamports_per_signature,
-            ..Default::default()
-        },
-        &processor_config,
-    );
-
-    // Assert that the transaction has worked without errors.
-    if let Err(err) = result.processing_results[0].flattened_result() {
-        if matches!(err, TransactionError::InsufficientFundsForRent { .. }) {
-            // This is a transaction error not an instruction error, so execute the instruction
-            // instead.
-            execute_fixture_as_instr(
-                &mock_bank,
-                &batch_processor,
-                transactions[0].message(),
-                compute_budget,
-                output,
-                filename,
-                input.cu_avail,
-            );
-            return;
-        }
-
-        assert_ne!(
-            output.result, 0,
-            "Transaction was not successful, but should have been: file {:?}",
-            filename
-        );
-        return;
-    }
-
-    let processed_tx = result.processing_results[0]
-        .processed_transaction()
-        .unwrap();
-    let executed_tx = processed_tx.executed_transaction().unwrap();
-    let execution_details = &executed_tx.execution_details;
-    let loaded_accounts = &executed_tx.loaded_transaction.accounts;
-    verify_accounts_and_data(
-        loaded_accounts,
+        &batch_processor,
+        transactions[0].message(),
+        compute_budget,
         output,
-        execution_details.executed_units,
-        input.cu_avail,
-        execution_details
-            .return_data
-            .as_ref()
-            .map(|x| &x.data)
-            .unwrap_or(&Vec::new()),
         filename,
-    );
-}
-
-fn register_builtins(
-    batch_processor: &TransactionBatchProcessor<MockForkGraph>,
-    mock_bank: &MockBankCallback,
-) {
-    let bpf_loader = "solana_bpf_loader_upgradeable_program";
-    batch_processor.add_builtin(
-        mock_bank,
-        bpf_loader_upgradeable::id(),
-        bpf_loader,
-        ProgramCacheEntry::new_builtin(
-            0,
-            bpf_loader.len(),
-            solana_bpf_loader_program::Entrypoint::vm,
-        ),
-    );
-
-    let system_program = "system_program";
-    batch_processor.add_builtin(
-        mock_bank,
-        solana_system_program::id(),
-        system_program,
-        ProgramCacheEntry::new_builtin(
-            0,
-            system_program.len(),
-            solana_system_program::system_processor::Entrypoint::vm,
-        ),
+        input.cu_avail,
     );
 }
 
@@ -412,6 +302,7 @@ fn execute_fixture_as_instr(
         compute_budget.max_instruction_stack_depth,
         compute_budget.max_instruction_trace_length,
     );
+    transaction_context.set_remove_accounts_executable_flag_checks(false);
 
     let mut loaded_programs = ProgramCacheForTxBatch::new(
         42,
@@ -433,6 +324,7 @@ fn execute_fixture_as_instr(
         &batch_processor.get_environments_for_epoch(2).unwrap(),
         &program_id,
         42,
+        &mut ExecuteTimings::default(),
         false,
     )
     .unwrap();
@@ -450,12 +342,21 @@ fn execute_fixture_as_instr(
     let log_collector = LogCollector::new_ref();
 
     let sysvar_cache = &batch_processor.sysvar_cache();
+    #[allow(deprecated)]
+    let (blockhash, lamports_per_signature) = batch_processor
+        .sysvar_cache()
+        .get_recent_blockhashes()
+        .ok()
+        .and_then(|x| (*x).last().cloned())
+        .map(|x| (x.blockhash, x.fee_calculator.lamports_per_signature))
+        .unwrap_or_default();
+
     let env_config = EnvironmentConfig::new(
-        Hash::default(),
-        None,
-        None,
-        mock_bank.feature_set.clone(),
+        blockhash,
+        lamports_per_signature,
         0,
+        &|_| 0,
+        mock_bank.feature_set.clone(),
         sysvar_cache,
     );
 
@@ -541,53 +442,43 @@ fn verify_accounts_and_data(
     return_data: &Vec<u8>,
     filename: OsString,
 ) {
-    let idx_map: HashMap<Pubkey, usize> = accounts
-        .iter()
-        .enumerate()
-        .map(|(idx, item)| (item.0, idx))
-        .collect();
+    // The input created by firedancer is malformed in that there may be repeated accounts in the
+    // instruction execution output. This happens because the set system program as the program ID,
+    // as pass it as an account to be modified in the instruction.
+    let mut idx_map: HashMap<Pubkey, Vec<usize>> = HashMap::new();
+    for (idx, item) in accounts.iter().enumerate() {
+        match idx_map.entry(item.0) {
+            Entry::Occupied(mut this) => {
+                this.get_mut().push(idx);
+            }
+            Entry::Vacant(this) => {
+                this.insert(vec![idx]);
+            }
+        }
+    }
 
     for item in &output.modified_accounts {
         let pubkey = Pubkey::new_from_array(item.address.clone().try_into().unwrap());
-        let index = *idx_map
+        let indexes = *idx_map
             .get(&pubkey)
+            .as_ref()
             .expect("Account not in expected results");
 
-        let received_data = &accounts[index].1;
+        let mut error: Option<String> = Some("err".to_string());
+        for idx in indexes {
+            let received_data = &accounts[*idx].1;
+            let check_result = check_account(received_data, item, &filename);
 
-        assert_eq!(
-            received_data.lamports(),
-            item.lamports,
-            "Lamports differ in case: {:?}",
-            filename
-        );
-        assert_eq!(
-            received_data.data(),
-            item.data.as_slice(),
-            "Account data differs in case: {:?}",
-            filename
-        );
-        assert_eq!(
-            received_data.owner(),
-            &Pubkey::new_from_array(item.owner.clone().try_into().unwrap()),
-            "Account owner differs in case: {:?}",
-            filename
-        );
-        assert_eq!(
-            received_data.executable(),
-            item.executable,
-            "Executable boolean differs in case: {:?}",
-            filename
-        );
+            if error.is_some() && check_result.is_none() {
+                // If at least one of the accounts pass the check, we have no error.
+                error = None;
+            } else if error.is_some() && check_result.is_some() {
+                error = check_result;
+            }
+        }
 
-        // u64::MAX means we are not considering the epoch
-        if item.rent_epoch != u64::MAX && received_data.rent_epoch() != u64::MAX {
-            assert_eq!(
-                received_data.rent_epoch(),
-                item.rent_epoch,
-                "Rent epoch differs in case: {:?}",
-                filename
-            );
+        if let Some(error) = error {
+            panic!("{}", error);
         }
     }
 
@@ -603,4 +494,58 @@ fn verify_accounts_and_data(
     } else {
         assert_eq!(&output.return_data, return_data);
     }
+}
+
+fn check_account(
+    received: &AccountSharedData,
+    expected: &AcctState,
+    filename: &OsString,
+) -> Option<String> {
+    macro_rules! format_args {
+        ($received:expr, $expected:expr) => {
+            format!("received: {:?}\nexpected: {:?}", $received, $expected).as_str()
+        };
+    }
+
+    if received.lamports() != expected.lamports {
+        return Some(
+            format!("Lamports differ in case: {:?}\n", filename)
+                + format_args!(received.lamports(), expected.lamports),
+        );
+    }
+
+    if received.data() != expected.data.as_slice() {
+        return Some(
+            format!("Account data differs in case: {:?}\n", filename)
+                + format_args!(received.data(), expected.data.as_slice()),
+        );
+    }
+
+    let expected_owner = Pubkey::new_from_array(expected.owner.clone().try_into().unwrap());
+    if received.owner() != &expected_owner {
+        return Some(
+            format!("Account owner differs in case: {:?}\n", filename)
+                + format_args!(received.owner(), expected_owner),
+        );
+    }
+
+    if received.executable() != expected.executable {
+        return Some(
+            format!("Executable boolean differs in case: {:?}\n", filename)
+                + format_args!(received.executable(), expected.executable),
+        );
+    }
+
+    // u64::MAX means we are not considering the epoch
+    if received.rent_epoch() != u64::MAX
+        && expected.rent_epoch != u64::MAX
+        && received.rent_epoch() != expected.rent_epoch
+    {
+        return Some(
+            format!("Rent epoch differs in case: {:?}\n", filename)
+                + format_args!(received.rent_epoch(), expected.rent_epoch),
+        );
+    }
+
+    None
 }

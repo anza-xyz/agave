@@ -4,39 +4,28 @@
 use {
     super::{
         prio_graph_scheduler::PrioGraphScheduler,
+        receive_and_buffer::ReceiveAndBuffer,
         scheduler_error::SchedulerError,
         scheduler_metrics::{
             SchedulerCountMetrics, SchedulerLeaderDetectionMetrics, SchedulerTimingMetrics,
         },
-        transaction_id_generator::TransactionIdGenerator,
-        transaction_state::SanitizedTransactionTTL,
-        transaction_state_container::TransactionStateContainer,
     },
     crate::banking_stage::{
         consume_worker::ConsumeWorkerMetrics,
         consumer::Consumer,
         decision_maker::{BufferedPacketsDecision, DecisionMaker},
         forwarder::Forwarder,
-        immutable_deserialized_packet::ImmutableDeserializedPacket,
-        packet_deserializer::PacketDeserializer,
-        ForwardOption, TOTAL_BUFFERED_PACKETS,
+        transaction_scheduler::transaction_state_container::StateContainer,
+        ForwardOption, LikeClusterInfo, TOTAL_BUFFERED_PACKETS,
     },
-    arrayvec::ArrayVec,
-    crossbeam_channel::RecvTimeoutError,
-    solana_accounts_db::account_locks::validate_account_locks,
-    solana_cost_model::cost_model::CostModel,
     solana_measure::measure_us,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
-    solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
     solana_sdk::{
         self,
         clock::{FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, MAX_PROCESSING_AGE},
-        fee::FeeBudgetLimits,
         saturating_add_assign,
-        transaction::SanitizedTransaction,
     },
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
-    solana_svm_transaction::svm_message::SVMMessage,
     std::{
         sync::{Arc, RwLock},
         time::{Duration, Instant},
@@ -44,19 +33,16 @@ use {
 };
 
 /// Controls packet and transaction flow into scheduler, and scheduling execution.
-pub(crate) struct SchedulerController {
+pub(crate) struct SchedulerController<C: LikeClusterInfo, R: ReceiveAndBuffer> {
     /// Decision maker for determining what should be done with transactions.
     decision_maker: DecisionMaker,
-    /// Packet/Transaction ingress.
-    packet_receiver: PacketDeserializer,
+    receive_and_buffer: R,
     bank_forks: Arc<RwLock<BankForks>>,
-    /// Generates unique IDs for incoming transactions.
-    transaction_id_generator: TransactionIdGenerator,
     /// Container for transaction state.
     /// Shared resource between `packet_receiver` and `scheduler`.
-    container: TransactionStateContainer,
+    container: R::Container,
     /// State for scheduling and communicating with worker threads.
-    scheduler: PrioGraphScheduler,
+    scheduler: PrioGraphScheduler<R::Transaction>,
     /// Metrics tracking time for leader bank detection.
     leader_detection_metrics: SchedulerLeaderDetectionMetrics,
     /// Metrics tracking counts on transactions in different states
@@ -68,24 +54,23 @@ pub(crate) struct SchedulerController {
     /// Metric report handles for the worker threads.
     worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
     /// State for forwarding packets to the leader, if enabled.
-    forwarder: Option<Forwarder>,
+    forwarder: Option<Forwarder<C>>,
 }
 
-impl SchedulerController {
+impl<C: LikeClusterInfo, R: ReceiveAndBuffer> SchedulerController<C, R> {
     pub fn new(
         decision_maker: DecisionMaker,
-        packet_deserializer: PacketDeserializer,
+        receive_and_buffer: R,
         bank_forks: Arc<RwLock<BankForks>>,
-        scheduler: PrioGraphScheduler,
+        scheduler: PrioGraphScheduler<R::Transaction>,
         worker_metrics: Vec<Arc<ConsumeWorkerMetrics>>,
-        forwarder: Option<Forwarder>,
+        forwarder: Option<Forwarder<C>>,
     ) -> Self {
         Self {
             decision_maker,
-            packet_receiver: packet_deserializer,
+            receive_and_buffer,
             bank_forks,
-            transaction_id_generator: TransactionIdGenerator::default(),
-            container: TransactionStateContainer::with_capacity(TOTAL_BUFFERED_PACKETS),
+            container: R::Container::with_capacity(TOTAL_BUFFERED_PACKETS),
             scheduler,
             leader_detection_metrics: SchedulerLeaderDetectionMetrics::default(),
             count_metrics: SchedulerCountMetrics::default(),
@@ -138,7 +123,7 @@ impl SchedulerController {
                 .maybe_report_and_reset_interval(should_report);
             self.worker_metrics
                 .iter()
-                .for_each(|metrics| metrics.maybe_report_and_reset());
+                .for_each(|metrics| metrics.maybe_report_and_reset(new_leader_slot));
         }
 
         Ok(())
@@ -221,27 +206,28 @@ impl SchedulerController {
     }
 
     fn pre_graph_filter(
-        transactions: &[&SanitizedTransaction],
+        transactions: &[&R::Transaction],
         results: &mut [bool],
         bank: &Bank,
         max_age: usize,
     ) {
         let lock_results = vec![Ok(()); transactions.len()];
         let mut error_counters = TransactionErrorMetrics::default();
-        let check_results =
-            bank.check_transactions(transactions, &lock_results, max_age, &mut error_counters);
+        let check_results = bank.check_transactions::<R::Transaction>(
+            transactions,
+            &lock_results,
+            max_age,
+            &mut error_counters,
+        );
 
-        let fee_check_results: Vec<_> = check_results
+        for ((check_result, tx), result) in check_results
             .into_iter()
             .zip(transactions)
-            .map(|(result, tx)| {
-                result?; // if there's already error do nothing
-                Consumer::check_fee_payer_unlocked(bank, tx.message(), &mut error_counters)
-            })
-            .collect();
-
-        for (fee_check_result, result) in fee_check_results.into_iter().zip(results.iter_mut()) {
-            *result = fee_check_result.is_ok();
+            .zip(results.iter_mut())
+        {
+            *result = check_result
+                .and_then(|_| Consumer::check_fee_payer_unlocked(bank, *tx, &mut error_counters))
+                .is_ok();
         }
     }
 
@@ -273,7 +259,7 @@ impl SchedulerController {
             }
             let chunk_size = ids.len();
             ids.iter().for_each(|id| {
-                let transaction = self.container.get_transaction_ttl(&id.id).unwrap();
+                let transaction = self.container.get_transaction_ttl(id.id).unwrap();
                 txs.push(&transaction.transaction);
             });
 
@@ -289,12 +275,12 @@ impl SchedulerController {
 
             for (id, filter_result) in ids.iter().zip(&filter_array[..chunk_size]) {
                 if !*filter_result {
-                    self.container.remove_by_id(&id.id);
+                    self.container.remove_by_id(id.id);
                     continue;
                 }
 
                 ids_to_add_back.push(*id); // add back to the queue at end
-                let state = self.container.get_mut_transaction_state(&id.id).unwrap();
+                let state = self.container.get_mut_transaction_state(id.id).unwrap();
                 let sanitized_transaction = &state.transaction_ttl().transaction;
                 let immutable_packet = state.packet().clone();
 
@@ -326,7 +312,7 @@ impl SchedulerController {
         // leader slot.
         if max_time_reached {
             while let Some(id) = self.container.pop() {
-                self.container.remove_by_id(&id.id);
+                self.container.remove_by_id(id.id);
             }
         }
 
@@ -336,7 +322,7 @@ impl SchedulerController {
             }
         } else {
             for priority_id in ids_to_add_back {
-                self.container.remove_by_id(&priority_id.id);
+                self.container.remove_by_id(priority_id.id);
             }
         }
 
@@ -350,7 +336,7 @@ impl SchedulerController {
     fn clear_container(&mut self) {
         let mut num_dropped_on_clear: usize = 0;
         while let Some(id) = self.container.pop() {
-            self.container.remove_by_id(&id.id);
+            self.container.remove_by_id(id.id);
             saturating_add_assign!(num_dropped_on_clear, 1);
         }
 
@@ -384,13 +370,13 @@ impl SchedulerController {
                 .map(|id| {
                     &self
                         .container
-                        .get_transaction_ttl(&id.id)
+                        .get_transaction_ttl(id.id)
                         .expect("transaction must exist")
                         .transaction
                 })
                 .collect();
 
-            let check_results = bank.check_transactions(
+            let check_results = bank.check_transactions::<R::Transaction>(
                 &sanitized_txs,
                 &lock_results,
                 MAX_PROCESSING_AGE,
@@ -400,7 +386,7 @@ impl SchedulerController {
             for (result, id) in check_results.into_iter().zip(chunk.iter()) {
                 if result.is_err() {
                     saturating_add_assign!(num_dropped_on_age_and_status, 1);
-                    self.container.remove_by_id(&id.id);
+                    self.container.remove_by_id(id.id);
                 } else {
                     self.container.push_id_into_queue(*id);
                 }
@@ -436,221 +422,11 @@ impl SchedulerController {
 
     /// Returns whether the packet receiver is still connected.
     fn receive_and_buffer_packets(&mut self, decision: &BufferedPacketsDecision) -> bool {
-        let remaining_queue_capacity = self.container.remaining_queue_capacity();
-
-        const MAX_PACKET_RECEIVE_TIME: Duration = Duration::from_millis(100);
-        let (recv_timeout, should_buffer) = match decision {
-            BufferedPacketsDecision::Consume(_) => (
-                if self.container.is_empty() {
-                    MAX_PACKET_RECEIVE_TIME
-                } else {
-                    Duration::ZERO
-                },
-                true,
-            ),
-            BufferedPacketsDecision::Forward => (MAX_PACKET_RECEIVE_TIME, self.forwarder.is_some()),
-            BufferedPacketsDecision::ForwardAndHold | BufferedPacketsDecision::Hold => {
-                (MAX_PACKET_RECEIVE_TIME, true)
-            }
-        };
-
-        let (received_packet_results, receive_time_us) = measure_us!(self
-            .packet_receiver
-            .receive_packets(recv_timeout, remaining_queue_capacity, |packet| {
-                packet.check_excessive_precompiles()?;
-                Ok(packet)
-            }));
-
-        self.timing_metrics.update(|timing_metrics| {
-            saturating_add_assign!(timing_metrics.receive_time_us, receive_time_us);
-        });
-
-        match received_packet_results {
-            Ok(receive_packet_results) => {
-                let num_received_packets = receive_packet_results.deserialized_packets.len();
-
-                self.count_metrics.update(|count_metrics| {
-                    saturating_add_assign!(count_metrics.num_received, num_received_packets);
-                });
-
-                if should_buffer {
-                    let (_, buffer_time_us) = measure_us!(
-                        self.buffer_packets(receive_packet_results.deserialized_packets)
-                    );
-                    self.timing_metrics.update(|timing_metrics| {
-                        saturating_add_assign!(timing_metrics.buffer_time_us, buffer_time_us);
-                    });
-                } else {
-                    self.count_metrics.update(|count_metrics| {
-                        saturating_add_assign!(
-                            count_metrics.num_dropped_on_receive,
-                            num_received_packets
-                        );
-                    });
-                }
-            }
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => return false,
-        }
-
-        true
-    }
-
-    fn buffer_packets(&mut self, packets: Vec<ImmutableDeserializedPacket>) {
-        // Convert to Arcs
-        let packets: Vec<_> = packets.into_iter().map(Arc::new).collect();
-        // Sanitize packets, generate IDs, and insert into the container.
-        let bank = self.bank_forks.read().unwrap().working_bank();
-        let last_slot_in_epoch = bank.epoch_schedule().get_last_slot_in_epoch(bank.epoch());
-        let transaction_account_lock_limit = bank.get_transaction_account_lock_limit();
-        let vote_only = bank.vote_only_bank();
-
-        const CHUNK_SIZE: usize = 128;
-        let lock_results: [_; CHUNK_SIZE] = core::array::from_fn(|_| Ok(()));
-
-        let mut arc_packets = ArrayVec::<_, CHUNK_SIZE>::new();
-        let mut transactions = ArrayVec::<_, CHUNK_SIZE>::new();
-        let mut fee_budget_limits_vec = ArrayVec::<_, CHUNK_SIZE>::new();
-
-        let mut error_counts = TransactionErrorMetrics::default();
-        for chunk in packets.chunks(CHUNK_SIZE) {
-            let mut post_sanitization_count: usize = 0;
-            chunk
-                .iter()
-                .filter_map(|packet| {
-                    packet
-                        .build_sanitized_transaction(
-                            vote_only,
-                            bank.as_ref(),
-                            bank.get_reserved_account_keys(),
-                        )
-                        .map(|tx| (packet.clone(), tx))
-                })
-                .inspect(|_| saturating_add_assign!(post_sanitization_count, 1))
-                .filter(|(_packet, tx)| {
-                    validate_account_locks(
-                        tx.message().account_keys(),
-                        transaction_account_lock_limit,
-                    )
-                    .is_ok()
-                })
-                .filter_map(|(packet, tx)| {
-                    process_compute_budget_instructions(SVMMessage::program_instructions_iter(&tx))
-                        .map(|compute_budget| (packet, tx, compute_budget.into()))
-                        .ok()
-                })
-                .for_each(|(packet, tx, fee_budget_limits)| {
-                    arc_packets.push(packet);
-                    transactions.push(tx);
-                    fee_budget_limits_vec.push(fee_budget_limits);
-                });
-
-            let check_results = bank.check_transactions(
-                &transactions,
-                &lock_results[..transactions.len()],
-                MAX_PROCESSING_AGE,
-                &mut error_counts,
-            );
-            let post_lock_validation_count = transactions.len();
-
-            let mut post_transaction_check_count: usize = 0;
-            let mut num_dropped_on_capacity: usize = 0;
-            let mut num_buffered: usize = 0;
-            for (((packet, transaction), fee_budget_limits), _check_result) in arc_packets
-                .drain(..)
-                .zip(transactions.drain(..))
-                .zip(fee_budget_limits_vec.drain(..))
-                .zip(check_results)
-                .filter(|(_, check_result)| check_result.is_ok())
-            {
-                saturating_add_assign!(post_transaction_check_count, 1);
-                let transaction_id = self.transaction_id_generator.next();
-
-                let (priority, cost) =
-                    Self::calculate_priority_and_cost(&transaction, &fee_budget_limits, &bank);
-                let transaction_ttl = SanitizedTransactionTTL {
-                    transaction,
-                    max_age_slot: last_slot_in_epoch,
-                };
-
-                if self.container.insert_new_transaction(
-                    transaction_id,
-                    transaction_ttl,
-                    packet,
-                    priority,
-                    cost,
-                ) {
-                    saturating_add_assign!(num_dropped_on_capacity, 1);
-                }
-                saturating_add_assign!(num_buffered, 1);
-            }
-
-            // Update metrics for transactions that were dropped.
-            let num_dropped_on_sanitization = chunk.len().saturating_sub(post_sanitization_count);
-            let num_dropped_on_lock_validation =
-                post_sanitization_count.saturating_sub(post_lock_validation_count);
-            let num_dropped_on_transaction_checks =
-                post_lock_validation_count.saturating_sub(post_transaction_check_count);
-
-            self.count_metrics.update(|count_metrics| {
-                saturating_add_assign!(
-                    count_metrics.num_dropped_on_capacity,
-                    num_dropped_on_capacity
-                );
-                saturating_add_assign!(count_metrics.num_buffered, num_buffered);
-                saturating_add_assign!(
-                    count_metrics.num_dropped_on_sanitization,
-                    num_dropped_on_sanitization
-                );
-                saturating_add_assign!(
-                    count_metrics.num_dropped_on_validate_locks,
-                    num_dropped_on_lock_validation
-                );
-                saturating_add_assign!(
-                    count_metrics.num_dropped_on_receive_transaction_checks,
-                    num_dropped_on_transaction_checks
-                );
-            });
-        }
-    }
-
-    /// Calculate priority and cost for a transaction:
-    ///
-    /// Cost is calculated through the `CostModel`,
-    /// and priority is calculated through a formula here that attempts to sell
-    /// blockspace to the highest bidder.
-    ///
-    /// The priority is calculated as:
-    /// P = R / (1 + C)
-    /// where P is the priority, R is the reward,
-    /// and C is the cost towards block-limits.
-    ///
-    /// Current minimum costs are on the order of several hundred,
-    /// so the denominator is effectively C, and the +1 is simply
-    /// to avoid any division by zero due to a bug - these costs
-    /// are calculated by the cost-model and are not direct
-    /// from user input. They should never be zero.
-    /// Any difference in the prioritization is negligible for
-    /// the current transaction costs.
-    fn calculate_priority_and_cost(
-        transaction: &SanitizedTransaction,
-        fee_budget_limits: &FeeBudgetLimits,
-        bank: &Bank,
-    ) -> (u64, u64) {
-        let cost = CostModel::calculate_cost(transaction, &bank.feature_set).sum();
-        let reward = bank.calculate_reward_for_transaction(transaction, fee_budget_limits);
-
-        // We need a multiplier here to avoid rounding down too aggressively.
-        // For many transactions, the cost will be greater than the fees in terms of raw lamports.
-        // For the purposes of calculating prioritization, we multiply the fees by a large number so that
-        // the cost is a small fraction.
-        // An offset of 1 is used in the denominator to explicitly avoid division by zero.
-        const MULTIPLIER: u64 = 1_000_000;
-        (
-            reward
-                .saturating_mul(MULTIPLIER)
-                .saturating_div(cost.saturating_add(1)),
-            cost,
+        self.receive_and_buffer.receive_and_buffer_packets(
+            &mut self.container,
+            &mut self.timing_metrics,
+            &mut self.count_metrics,
+            decision,
         )
     }
 }
@@ -662,14 +438,19 @@ mod tests {
         crate::{
             banking_stage::{
                 consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
+                packet_deserializer::PacketDeserializer,
                 scheduler_messages::{ConsumeWork, FinishedConsumeWork, TransactionBatchId},
                 tests::create_slow_genesis_config,
+                transaction_scheduler::{
+                    prio_graph_scheduler::PrioGraphSchedulerConfig,
+                    receive_and_buffer::SanitizedTransactionReceiveAndBuffer,
+                },
             },
             banking_trace::BankingPacketBatch,
-            sigverify::SigverifyTracerPacketStats,
         },
         crossbeam_channel::{unbounded, Receiver, Sender},
         itertools::Itertools,
+        solana_gossip::cluster_info::ClusterInfo,
         solana_ledger::{
             blockstore::Blockstore, genesis_utils::GenesisConfigInfo,
             get_tmp_ledger_path_auto_delete, leader_schedule_cache::LeaderScheduleCache,
@@ -677,10 +458,18 @@ mod tests {
         solana_perf::packet::{to_packet_batches, PacketBatch, NUM_PACKETS},
         solana_poh::poh_recorder::{PohRecorder, Record, WorkingBankEntry},
         solana_runtime::bank::Bank,
+        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
-            compute_budget::ComputeBudgetInstruction, fee_calculator::FeeRateGovernor, hash::Hash,
-            message::Message, poh_config::PohConfig, pubkey::Pubkey, signature::Keypair,
-            signer::Signer, system_instruction, system_transaction, transaction::Transaction,
+            compute_budget::ComputeBudgetInstruction,
+            fee_calculator::FeeRateGovernor,
+            hash::Hash,
+            message::Message,
+            poh_config::PohConfig,
+            pubkey::Pubkey,
+            signature::Keypair,
+            signer::Signer,
+            system_instruction, system_transaction,
+            transaction::{SanitizedTransaction, Transaction},
         },
         std::sync::{atomic::AtomicBool, Arc, RwLock},
         tempfile::TempDir,
@@ -699,13 +488,21 @@ mod tests {
         _entry_receiver: Receiver<WorkingBankEntry>,
         _record_receiver: Receiver<Record>,
         poh_recorder: Arc<RwLock<PohRecorder>>,
-        banking_packet_sender: Sender<Arc<(Vec<PacketBatch>, Option<SigverifyTracerPacketStats>)>>,
+        banking_packet_sender: Sender<Arc<Vec<PacketBatch>>>,
 
-        consume_work_receivers: Vec<Receiver<ConsumeWork>>,
-        finished_consume_work_sender: Sender<FinishedConsumeWork>,
+        consume_work_receivers:
+            Vec<Receiver<ConsumeWork<RuntimeTransaction<SanitizedTransaction>>>>,
+        finished_consume_work_sender:
+            Sender<FinishedConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
     }
 
-    fn create_test_frame(num_threads: usize) -> (TestFrame, SchedulerController) {
+    #[allow(clippy::type_complexity)]
+    fn create_test_frame(
+        num_threads: usize,
+    ) -> (
+        TestFrame,
+        SchedulerController<Arc<ClusterInfo>, SanitizedTransactionReceiveAndBuffer>,
+    ) {
         let GenesisConfigInfo {
             mut genesis_config,
             mint_keypair,
@@ -732,8 +529,7 @@ mod tests {
         let decision_maker = DecisionMaker::new(Pubkey::new_unique(), poh_recorder.clone());
 
         let (banking_packet_sender, banking_packet_receiver) = unbounded();
-        let packet_deserializer =
-            PacketDeserializer::new(banking_packet_receiver, bank_forks.clone());
+        let packet_deserializer = PacketDeserializer::new(banking_packet_receiver);
 
         let (consume_work_senders, consume_work_receivers) = create_channels(num_threads);
         let (finished_consume_work_sender, finished_consume_work_receiver) = unbounded();
@@ -750,11 +546,22 @@ mod tests {
             finished_consume_work_sender,
         };
 
+        let receive_and_buffer = SanitizedTransactionReceiveAndBuffer::new(
+            packet_deserializer,
+            bank_forks.clone(),
+            false,
+        );
+
+        let scheduler = PrioGraphScheduler::new(
+            consume_work_senders,
+            finished_consume_work_receiver,
+            PrioGraphSchedulerConfig::default(),
+        );
         let scheduler_controller = SchedulerController::new(
             decision_maker,
-            packet_deserializer,
+            receive_and_buffer,
             bank_forks,
-            PrioGraphScheduler::new(consume_work_senders, finished_consume_work_receiver),
+            scheduler,
             vec![], // no actual workers with metrics to report, this can be empty
             None,
         );
@@ -789,8 +596,7 @@ mod tests {
     }
 
     fn to_banking_packet_batch(txs: &[Transaction]) -> BankingPacketBatch {
-        let packet_batch = to_packet_batches(txs, NUM_PACKETS);
-        Arc::new((packet_batch, None))
+        BankingPacketBatch::new(to_packet_batches(txs, NUM_PACKETS))
     }
 
     // Helper function to let test receive and then schedule packets.
@@ -800,7 +606,12 @@ mod tests {
     // in order to keep the decision as recent as possible for processing.
     // In the tests, the decision will not become stale, so it is more convenient
     // to receive first and then schedule.
-    fn test_receive_then_schedule(scheduler_controller: &mut SchedulerController) {
+    fn test_receive_then_schedule(
+        scheduler_controller: &mut SchedulerController<
+            Arc<ClusterInfo>,
+            SanitizedTransactionReceiveAndBuffer,
+        >,
+    ) {
         let decision = scheduler_controller
             .decision_maker
             .make_consume_or_forward_decision();
@@ -825,7 +636,7 @@ mod tests {
                     batch_id: TransactionBatchId::new(0),
                     ids: vec![],
                     transactions: vec![],
-                    max_age_slots: vec![],
+                    max_ages: vec![],
                 },
                 retryable_indexes: vec![],
             })
@@ -858,7 +669,7 @@ mod tests {
             &Keypair::new(),
             &Pubkey::new_unique(),
             1,
-            1,
+            1000,
             bank.last_blockhash(),
         );
         let tx2 = create_and_fund_prioritized_transfer(
@@ -867,7 +678,7 @@ mod tests {
             &Keypair::new(),
             &Pubkey::new_unique(),
             1,
-            2,
+            2000,
             bank.last_blockhash(),
         );
         let tx1_hash = tx1.message().hash();
@@ -914,7 +725,7 @@ mod tests {
             &Keypair::new(),
             &pk,
             1,
-            1,
+            1000,
             bank.last_blockhash(),
         );
         let tx2 = create_and_fund_prioritized_transfer(
@@ -923,7 +734,7 @@ mod tests {
             &Keypair::new(),
             &pk,
             1,
-            2,
+            2000,
             bank.last_blockhash(),
         );
         let tx1_hash = tx1.message().hash();
@@ -1105,7 +916,7 @@ mod tests {
             &Keypair::new(),
             &Pubkey::new_unique(),
             1,
-            1,
+            1000,
             bank.last_blockhash(),
         );
         let tx2 = create_and_fund_prioritized_transfer(
@@ -1114,7 +925,7 @@ mod tests {
             &Keypair::new(),
             &Pubkey::new_unique(),
             1,
-            2,
+            2000,
             bank.last_blockhash(),
         );
         let tx1_hash = tx1.message().hash();

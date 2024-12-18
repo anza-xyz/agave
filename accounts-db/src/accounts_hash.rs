@@ -1,6 +1,6 @@
 use {
     crate::{
-        accounts_db::{AccountStorageEntry, PUBKEY_BINS_FOR_CALCULATING_HASHES},
+        accounts_db::AccountStorageEntry,
         active_stats::{ActiveStatItem, ActiveStats},
         ancestors::Ancestors,
         pubkey_bins::PubkeyBinCalculator24,
@@ -22,7 +22,7 @@ use {
         borrow::Borrow,
         convert::TryInto,
         io::{Seek, SeekFrom, Write},
-        path::PathBuf,
+        path::{Path, PathBuf},
         sync::{
             atomic::{AtomicU64, AtomicUsize, Ordering},
             Arc,
@@ -61,18 +61,103 @@ impl MmapAccountHashesFile {
 
 /// 1 file containing account hashes sorted by pubkey
 struct AccountHashesFile {
-    /// # hashes and an open file that will be deleted on drop. None if there are zero hashes to represent, and thus, no file.
+    /// The mmap hash file created in the temp directory, which will be deleted on drop.
     writer: Option<MmapAccountHashesFile>,
-    /// The directory where temporary cache files are put
-    dir_for_temp_cache_files: PathBuf,
-    /// # bytes allocated
-    capacity: usize,
 }
 
 impl AccountHashesFile {
+    /// create a new AccountHashesFile
+    fn new(num_hashes: usize, dir_for_temp_cache_files: impl AsRef<Path>) -> Self {
+        if num_hashes == 0 {
+            return Self { writer: None };
+        }
+
+        let capacity = num_hashes * std::mem::size_of::<Hash>();
+        let get_file = || -> Result<_, std::io::Error> {
+            let mut data = tempfile_in(&dir_for_temp_cache_files).unwrap_or_else(|err| {
+                panic!(
+                    "Unable to create file within {}: {err}",
+                    dir_for_temp_cache_files.as_ref().display(),
+                )
+            });
+
+            // Theoretical performance optimization: write a zero to the end of
+            // the file so that we won't have to resize it later, which may be
+            // expensive.
+            assert!(capacity > 0);
+            data.seek(SeekFrom::Start((capacity - 1) as u64))?;
+            data.write_all(&[0])?;
+            data.rewind()?;
+            data.flush()?;
+            Ok(data)
+        };
+
+        // Retry 5 times to allocate the AccountHashesFile. The memory might be fragmented and
+        // causes memory allocation failure. Therefore, let's retry after failure. Hoping that the
+        // kernel has the chance to defrag the memory between the retries, and retries succeed.
+        let mut num_retries = 0;
+        let data = loop {
+            num_retries += 1;
+
+            match get_file() {
+                Ok(data) => {
+                    break data;
+                }
+                Err(err) => {
+                    info!(
+                        "Unable to create account hashes file within {}: {}, retry counter {}",
+                        dir_for_temp_cache_files.as_ref().display(),
+                        err,
+                        num_retries
+                    );
+
+                    if num_retries > 5 {
+                        panic!(
+                            "Unable to create account hashes file within {}: after {} retries",
+                            dir_for_temp_cache_files.as_ref().display(),
+                            num_retries
+                        );
+                    }
+                    datapoint_info!(
+                        "retry_account_hashes_file_allocation",
+                        ("retry", num_retries, i64)
+                    );
+                    thread::sleep(time::Duration::from_millis(num_retries * 100));
+                }
+            }
+        };
+
+        //UNSAFE: Required to create a Mmap
+        let map = unsafe { MmapMut::map_mut(&data) };
+        let map = map.unwrap_or_else(|e| {
+            error!(
+                "Failed to map the data file (size: {}): {}.\n
+                    Please increase sysctl vm.max_map_count or equivalent for your platform.",
+                capacity, e
+            );
+            std::process::exit(1);
+        });
+
+        let writer = MmapAccountHashesFile {
+            mmap: map,
+            count: 0,
+        };
+
+        AccountHashesFile {
+            writer: Some(writer),
+        }
+    }
+
     /// return a mmap reader that can be accessed  by slice
+    /// The reader will be None if there are no hashes in the file. And this function should only be called once after all writes are done.
+    /// After calling this function, the writer will be None. No more writes are allowed.
     fn get_reader(&mut self) -> Option<MmapAccountHashesFile> {
-        std::mem::take(&mut self.writer)
+        let mmap = self.writer.take();
+        if mmap.is_some() && mmap.as_ref().unwrap().count > 0 {
+            mmap
+        } else {
+            None
+        }
     }
 
     /// # hashes stored in this file
@@ -84,81 +169,8 @@ impl AccountHashesFile {
     }
 
     /// write 'hash' to the file
-    /// If the file isn't open, create it first.
     fn write(&mut self, hash: &Hash) {
-        if self.writer.is_none() {
-            // we have hashes to write but no file yet, so create a file that will auto-delete on drop
-
-            let get_file = || -> Result<_, std::io::Error> {
-                let mut data = tempfile_in(&self.dir_for_temp_cache_files).unwrap_or_else(|err| {
-                    panic!(
-                        "Unable to create file within {}: {err}",
-                        self.dir_for_temp_cache_files.display()
-                    )
-                });
-
-                // Theoretical performance optimization: write a zero to the end of
-                // the file so that we won't have to resize it later, which may be
-                // expensive.
-                assert!(self.capacity > 0);
-                data.seek(SeekFrom::Start((self.capacity - 1) as u64))?;
-                data.write_all(&[0])?;
-                data.rewind()?;
-                data.flush()?;
-                Ok(data)
-            };
-
-            // Retry 5 times to allocate the AccountHashesFile. The memory might be fragmented and
-            // causes memory allocation failure. Therefore, let's retry after failure. Hoping that the
-            // kernel has the chance to defrag the memory between the retries, and retries succeed.
-            let mut num_retries = 0;
-            let data = loop {
-                num_retries += 1;
-
-                match get_file() {
-                    Ok(data) => {
-                        break data;
-                    }
-                    Err(err) => {
-                        info!(
-                            "Unable to create account hashes file within {}: {}, retry counter {}",
-                            self.dir_for_temp_cache_files.display(),
-                            err,
-                            num_retries
-                        );
-
-                        if num_retries > 5 {
-                            panic!(
-                                "Unable to create account hashes file within {}: after {} retries",
-                                self.dir_for_temp_cache_files.display(),
-                                num_retries
-                            );
-                        }
-                        datapoint_info!(
-                            "retry_account_hashes_file_allocation",
-                            ("retry", num_retries, i64)
-                        );
-                        thread::sleep(time::Duration::from_millis(num_retries * 100));
-                    }
-                }
-            };
-
-            //UNSAFE: Required to create a Mmap
-            let map = unsafe { MmapMut::map_mut(&data) };
-            let map = map.unwrap_or_else(|e| {
-                error!(
-                    "Failed to map the data file (size: {}): {}.\n
-                        Please increase sysctl vm.max_map_count or equivalent for your platform.",
-                    self.capacity, e
-                );
-                std::process::exit(1);
-            });
-
-            self.writer = Some(MmapAccountHashesFile {
-                mmap: map,
-                count: 0,
-            });
-        }
+        debug_assert!(self.writer.is_some());
         self.writer.as_mut().unwrap().write(hash);
     }
 }
@@ -189,6 +201,7 @@ pub struct HashStats {
     pub scan_time_total_us: u64,
     pub zeros_time_total_us: u64,
     pub hash_time_total_us: u64,
+    pub drop_hash_files_us: u64,
     pub sort_time_total_us: u64,
     pub hash_total: usize,
     pub num_snapshot_storage: usize,
@@ -245,6 +258,7 @@ impl HashStats {
             ("accounts_scan_us", self.scan_time_total_us, i64),
             ("eliminate_zeros_us", self.zeros_time_total_us, i64),
             ("hash_us", self.hash_time_total_us, i64),
+            ("drop_hash_files_us", self.drop_hash_files_us, i64),
             ("sort_us", self.sort_time_total_us, i64),
             ("hash_total", self.hash_total, i64),
             ("storage_sort_us", self.storage_sort_us, i64),
@@ -1154,11 +1168,8 @@ impl<'a> AccountsHasher<'a> {
             stats,
         );
 
-        let mut hashes = AccountHashesFile {
-            writer: None,
-            dir_for_temp_cache_files: self.dir_for_temp_cache_files.clone(),
-            capacity: max_inclusive_num_pubkeys * std::mem::size_of::<Hash>(),
-        };
+        let mut hashes =
+            AccountHashesFile::new(max_inclusive_num_pubkeys, &self.dir_for_temp_cache_files);
 
         let mut overall_sum: u64 = 0;
 
@@ -1211,13 +1222,10 @@ impl<'a> AccountsHasher<'a> {
     pub fn rest_of_hash_calculation(
         &self,
         sorted_data_by_pubkey: &[&[CalculateHashIntermediate]],
+        bins: usize,
         stats: &mut HashStats,
     ) -> (Hash, u64) {
-        let (hashes, total_lamports) = self.de_dup_accounts(
-            sorted_data_by_pubkey,
-            stats,
-            PUBKEY_BINS_FOR_CALCULATING_HASHES,
-        );
+        let (hashes, total_lamports) = self.de_dup_accounts(sorted_data_by_pubkey, stats, bins);
 
         let cumulative = CumulativeHashesFromFiles::from_files(hashes);
 
@@ -1232,6 +1240,9 @@ impl<'a> AccountsHasher<'a> {
         );
         hash_time.stop();
         stats.hash_time_total_us += hash_time.as_us();
+
+        let (_, drop_us) = measure_us!(drop(cumulative));
+        stats.drop_hash_files_us += drop_us;
         (hash, total_lamports)
     }
 }
@@ -1262,8 +1273,11 @@ pub const ZERO_LAMPORT_ACCOUNT_HASH: AccountHash =
 pub struct AccountLtHash(pub LtHash);
 
 /// The AccountLtHash for a zero-lamport account
-pub const ZERO_LAMPORT_ACCOUNT_LT_HASH: AccountLtHash =
-    AccountLtHash(LtHash([0; LtHash::NUM_ELEMENTS]));
+pub const ZERO_LAMPORT_ACCOUNT_LT_HASH: AccountLtHash = AccountLtHash(LtHash::identity());
+
+/// Lattice hash of all accounts
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct AccountsLtHash(pub LtHash);
 
 /// Hash of accounts
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -1352,7 +1366,10 @@ impl From<IncrementalAccountsHash> for SerdeIncrementalAccountsHash {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, itertools::Itertools, std::str::FromStr, tempfile::tempdir};
+    use {
+        super::*, crate::accounts_db::DEFAULT_HASH_CALCULATION_PUBKEY_BINS, itertools::Itertools,
+        std::str::FromStr, tempfile::tempdir,
+    };
 
     lazy_static! {
         static ref ACTIVE_STATS: ActiveStats = ActiveStats::default();
@@ -1364,16 +1381,6 @@ mod tests {
                 zero_lamport_accounts: ZeroLamportAccounts::Excluded,
                 dir_for_temp_cache_files,
                 active_stats: &ACTIVE_STATS,
-            }
-        }
-    }
-
-    impl AccountHashesFile {
-        fn new(dir_for_temp_cache_files: PathBuf) -> Self {
-            Self {
-                writer: None,
-                dir_for_temp_cache_files,
-                capacity: 1024, /* default 1k for tests */
             }
         }
     }
@@ -1463,19 +1470,21 @@ mod tests {
     fn test_account_hashes_file() {
         let dir_for_temp_cache_files = tempdir().unwrap();
         // 0 hashes
-        let mut file = AccountHashesFile::new(dir_for_temp_cache_files.path().to_path_buf());
+        let mut file = AccountHashesFile::new(0, dir_for_temp_cache_files.path());
         assert!(file.get_reader().is_none());
-        let hashes = (0..2).map(|i| Hash::new(&[i; 32])).collect::<Vec<_>>();
+        let hashes = (0..2)
+            .map(|i| Hash::new_from_array([i; 32]))
+            .collect::<Vec<_>>();
 
         // 1 hash
+        let mut file = AccountHashesFile::new(1, dir_for_temp_cache_files.path());
         file.write(&hashes[0]);
         let reader = file.get_reader().unwrap();
         assert_eq!(&[hashes[0]][..], reader.read(0));
         assert!(reader.read(1).is_empty());
 
         // multiple hashes
-        let mut file = AccountHashesFile::new(dir_for_temp_cache_files.path().to_path_buf());
-        assert!(file.get_reader().is_none());
+        let mut file = AccountHashesFile::new(hashes.len(), dir_for_temp_cache_files.path());
         hashes.iter().for_each(|hash| file.write(hash));
         let reader = file.get_reader().unwrap();
         (0..2).for_each(|i| assert_eq!(&hashes[i..], reader.read(i)));
@@ -1486,20 +1495,22 @@ mod tests {
     fn test_cumulative_hashes_from_files() {
         let dir_for_temp_cache_files = tempdir().unwrap();
         (0..4).for_each(|permutation| {
-            let hashes = (0..2).map(|i| Hash::new(&[i + 1; 32])).collect::<Vec<_>>();
+            let hashes = (0..2)
+                .map(|i| Hash::new_from_array([i + 1; 32]))
+                .collect::<Vec<_>>();
 
             let mut combined = Vec::default();
 
             // 0 hashes
-            let file0 = AccountHashesFile::new(dir_for_temp_cache_files.path().to_path_buf());
+            let file0 = AccountHashesFile::new(0, dir_for_temp_cache_files.path());
 
             // 1 hash
-            let mut file1 = AccountHashesFile::new(dir_for_temp_cache_files.path().to_path_buf());
+            let mut file1 = AccountHashesFile::new(1, dir_for_temp_cache_files.path());
             file1.write(&hashes[0]);
             combined.push(hashes[0]);
 
             // multiple hashes
-            let mut file2 = AccountHashesFile::new(dir_for_temp_cache_files.path().to_path_buf());
+            let mut file2 = AccountHashesFile::new(hashes.len(), dir_for_temp_cache_files.path());
             hashes.iter().for_each(|hash| {
                 file2.write(hash);
                 combined.push(*hash);
@@ -1512,9 +1523,9 @@ mod tests {
                 vec![
                     file0,
                     file1,
-                    AccountHashesFile::new(dir_for_temp_cache_files.path().to_path_buf()),
+                    AccountHashesFile::new(0, dir_for_temp_cache_files.path()),
                     file2,
-                    AccountHashesFile::new(dir_for_temp_cache_files.path().to_path_buf()),
+                    AccountHashesFile::new(0, dir_for_temp_cache_files.path()),
                 ]
             } else if permutation == 2 {
                 vec![file1, file2]
@@ -1524,8 +1535,8 @@ mod tests {
                 combined.push(one);
                 vec![
                     file2,
-                    AccountHashesFile::new(dir_for_temp_cache_files.path().to_path_buf()),
-                    AccountHashesFile::new(dir_for_temp_cache_files.path().to_path_buf()),
+                    AccountHashesFile::new(0, dir_for_temp_cache_files.path()),
+                    AccountHashesFile::new(0, dir_for_temp_cache_files.path()),
                     file1,
                 ]
             };
@@ -1578,7 +1589,7 @@ mod tests {
         let mut account_maps = Vec::new();
 
         let pubkey = Pubkey::from([11u8; 32]);
-        let hash = AccountHash(Hash::new(&[1u8; 32]));
+        let hash = AccountHash(Hash::new_from_array([1u8; 32]));
         let val = CalculateHashIntermediate {
             hash,
             lamports: 88,
@@ -1588,7 +1599,7 @@ mod tests {
 
         // 2nd key - zero lamports, so will be removed
         let pubkey = Pubkey::from([12u8; 32]);
-        let hash = AccountHash(Hash::new(&[2u8; 32]));
+        let hash = AccountHash(Hash::new_from_array([2u8; 32]));
         let val = CalculateHashIntermediate {
             hash,
             lamports: 0,
@@ -1598,14 +1609,17 @@ mod tests {
 
         let dir_for_temp_cache_files = tempdir().unwrap();
         let accounts_hash = AccountsHasher::new(dir_for_temp_cache_files.path().to_path_buf());
-        let result = accounts_hash
-            .rest_of_hash_calculation(&for_rest(&account_maps), &mut HashStats::default());
+        let result = accounts_hash.rest_of_hash_calculation(
+            &for_rest(&account_maps),
+            DEFAULT_HASH_CALCULATION_PUBKEY_BINS,
+            &mut HashStats::default(),
+        );
         let expected_hash = Hash::from_str("8j9ARGFv4W2GfML7d3sVJK2MePwrikqYnu6yqer28cCa").unwrap();
         assert_eq!((result.0, result.1), (expected_hash, 88));
 
         // 3rd key - with pubkey value before 1st key so it will be sorted first
         let pubkey = Pubkey::from([10u8; 32]);
-        let hash = AccountHash(Hash::new(&[2u8; 32]));
+        let hash = AccountHash(Hash::new_from_array([2u8; 32]));
         let val = CalculateHashIntermediate {
             hash,
             lamports: 20,
@@ -1613,14 +1627,17 @@ mod tests {
         };
         account_maps.insert(0, val);
 
-        let result = accounts_hash
-            .rest_of_hash_calculation(&for_rest(&account_maps), &mut HashStats::default());
+        let result = accounts_hash.rest_of_hash_calculation(
+            &for_rest(&account_maps),
+            DEFAULT_HASH_CALCULATION_PUBKEY_BINS,
+            &mut HashStats::default(),
+        );
         let expected_hash = Hash::from_str("EHv9C5vX7xQjjMpsJMzudnDTzoTSRwYkqLzY8tVMihGj").unwrap();
         assert_eq!((result.0, result.1), (expected_hash, 108));
 
         // 3rd key - with later slot
         let pubkey = Pubkey::from([10u8; 32]);
-        let hash = AccountHash(Hash::new(&[99u8; 32]));
+        let hash = AccountHash(Hash::new_from_array([99u8; 32]));
         let val = CalculateHashIntermediate {
             hash,
             lamports: 30,
@@ -1628,8 +1645,11 @@ mod tests {
         };
         account_maps.insert(1, val);
 
-        let result = accounts_hash
-            .rest_of_hash_calculation(&for_rest(&account_maps), &mut HashStats::default());
+        let result = accounts_hash.rest_of_hash_calculation(
+            &for_rest(&account_maps),
+            DEFAULT_HASH_CALCULATION_PUBKEY_BINS,
+            &mut HashStats::default(),
+        );
         let expected_hash = Hash::from_str("7NNPg5A8Xsg1uv4UFm6KZNwsipyyUnmgCrznP6MBWoBZ").unwrap();
         assert_eq!((result.0, result.1), (expected_hash, 118));
     }
@@ -1713,7 +1733,7 @@ mod tests {
         let key_b = Pubkey::from([2u8; 32]);
         let key_c = Pubkey::from([3u8; 32]);
         const COUNT: usize = 6;
-        let hashes = (0..COUNT).map(|i| AccountHash(Hash::new(&[i as u8; 32])));
+        let hashes = (0..COUNT).map(|i| AccountHash(Hash::new_from_array([i as u8; 32])));
         // create this vector
         // abbbcc
         let keys = [key_a, key_b, key_b, key_b, key_c, key_c];
@@ -2376,7 +2396,8 @@ mod tests {
                 let mut input: Vec<_> = (0..count)
                     .map(|i| {
                         let key = Pubkey::from([(pass * iterations + count) as u8; 32]);
-                        let hash = Hash::new(&[(pass * iterations + count + i + 1) as u8; 32]);
+                        let hash =
+                            Hash::new_from_array([(pass * iterations + count + i + 1) as u8; 32]);
                         (key, hash)
                     })
                     .collect();
@@ -2420,12 +2441,12 @@ mod tests {
         let offset = 2;
         let input = vec![
             CalculateHashIntermediate {
-                hash: AccountHash(Hash::new(&[1u8; 32])),
+                hash: AccountHash(Hash::new_from_array([1u8; 32])),
                 lamports: u64::MAX - offset,
                 pubkey: Pubkey::new_unique(),
             },
             CalculateHashIntermediate {
-                hash: AccountHash(Hash::new(&[2u8; 32])),
+                hash: AccountHash(Hash::new_from_array([2u8; 32])),
                 lamports: offset + 1,
                 pubkey: Pubkey::new_unique(),
             },
@@ -2454,12 +2475,12 @@ mod tests {
         let offset = 2;
         let input = vec![
             vec![CalculateHashIntermediate {
-                hash: AccountHash(Hash::new(&[1u8; 32])),
+                hash: AccountHash(Hash::new_from_array([1u8; 32])),
                 lamports: u64::MAX - offset,
                 pubkey: Pubkey::new_unique(),
             }],
             vec![CalculateHashIntermediate {
-                hash: AccountHash(Hash::new(&[2u8; 32])),
+                hash: AccountHash(Hash::new_from_array([2u8; 32])),
                 lamports: offset + 1,
                 pubkey: Pubkey::new_unique(),
             }],

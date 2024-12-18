@@ -81,12 +81,33 @@ impl Accounts {
         }
     }
 
+    /// Return loaded addresses and the deactivation slot.
+    /// If the table hasn't been deactivated, the deactivation slot is `u64::MAX`.
     pub fn load_lookup_table_addresses(
         &self,
         ancestors: &Ancestors,
         address_table_lookup: SVMMessageAddressTableLookup,
         slot_hashes: &SlotHashes,
-    ) -> std::result::Result<LoadedAddresses, AddressLookupError> {
+    ) -> std::result::Result<(LoadedAddresses, Slot), AddressLookupError> {
+        let mut loaded_addresses = LoadedAddresses::default();
+        self.load_lookup_table_addresses_into(
+            ancestors,
+            address_table_lookup,
+            slot_hashes,
+            &mut loaded_addresses,
+        )
+        .map(|deactivation_slot| (loaded_addresses, deactivation_slot))
+    }
+
+    /// Fill `loaded_addresses` and return the deactivation slot.
+    /// If no tables are de-activating, the deactivation slot is `u64::MAX`.
+    pub fn load_lookup_table_addresses_into(
+        &self,
+        ancestors: &Ancestors,
+        address_table_lookup: SVMMessageAddressTableLookup,
+        slot_hashes: &SlotHashes,
+        loaded_addresses: &mut LoadedAddresses,
+    ) -> std::result::Result<Slot, AddressLookupError> {
         let table_account = self
             .accounts_db
             .load_with_fixed_root(ancestors, address_table_lookup.account_key)
@@ -98,23 +119,46 @@ impl Accounts {
             let lookup_table = AddressLookupTable::deserialize(table_account.data())
                 .map_err(|_ix_err| AddressLookupError::InvalidAccountData)?;
 
-            Ok(LoadedAddresses {
-                writable: lookup_table.lookup(
-                    current_slot,
-                    address_table_lookup.writable_indexes,
-                    slot_hashes,
-                )?,
-                readonly: lookup_table.lookup(
-                    current_slot,
-                    address_table_lookup.readonly_indexes,
-                    slot_hashes,
-                )?,
-            })
+            // Load iterators for addresses.
+            let writable_addresses = lookup_table.lookup_iter(
+                current_slot,
+                address_table_lookup.writable_indexes,
+                slot_hashes,
+            )?;
+            let readonly_addresses = lookup_table.lookup_iter(
+                current_slot,
+                address_table_lookup.readonly_indexes,
+                slot_hashes,
+            )?;
+
+            // Reserve space in vectors to avoid reallocations.
+            // If `loaded_addresses` is pre-allocated, this only does a simple
+            // bounds check.
+            loaded_addresses
+                .writable
+                .reserve(address_table_lookup.writable_indexes.len());
+            loaded_addresses
+                .readonly
+                .reserve(address_table_lookup.readonly_indexes.len());
+
+            // Append to the loaded addresses.
+            // Check if **any** of the addresses are not available.
+            for address in writable_addresses {
+                loaded_addresses
+                    .writable
+                    .push(address.ok_or(AddressLookupError::InvalidLookupIndex)?);
+            }
+            for address in readonly_addresses {
+                loaded_addresses
+                    .readonly
+                    .push(address.ok_or(AddressLookupError::InvalidLookupIndex)?);
+            }
+
+            Ok(lookup_table.meta.deactivation_slot)
         } else {
             Err(AddressLookupError::InvalidAccountOwner)
         }
     }
-
     /// Slow because lock is held for 1 operation instead of many
     /// This always returns None for zero-lamport accounts.
     fn load_slow(
@@ -514,9 +558,9 @@ impl Accounts {
     /// This function will prevent multiple threads from modifying the same account state at the
     /// same time
     #[must_use]
-    pub fn lock_accounts<'a>(
+    pub fn lock_accounts<'a, Tx: SVMMessage + 'a>(
         &self,
-        txs: impl Iterator<Item = &'a SanitizedTransaction>,
+        txs: impl Iterator<Item = &'a Tx>,
         tx_account_lock_limit: usize,
     ) -> Vec<Result<()>> {
         // Validate the account locks, then get iterator if successful validation.
@@ -566,9 +610,9 @@ impl Accounts {
     }
 
     /// Once accounts are unlocked, new transactions that modify that state can enter the pipeline
-    pub fn unlock_accounts<'a>(
+    pub fn unlock_accounts<'a, Tx: SVMMessage + 'a>(
         &self,
-        txs_and_results: impl Iterator<Item = (&'a SanitizedTransaction, &'a Result<()>)> + Clone,
+        txs_and_results: impl Iterator<Item = (&'a Tx, &'a Result<()>)> + Clone,
     ) {
         if !txs_and_results.clone().any(|(_, res)| res.is_ok()) {
             return;
@@ -578,7 +622,7 @@ impl Accounts {
         debug!("bank unlock accounts");
         for (tx, res) in txs_and_results {
             if res.is_ok() {
-                let tx_account_locks = TransactionAccountLocksIterator::new(tx.message());
+                let tx_account_locks = TransactionAccountLocksIterator::new(tx);
                 account_locks.unlock_accounts(tx_account_locks.accounts_with_is_writable());
             }
         }
@@ -806,10 +850,13 @@ mod tests {
                 SVMMessageAddressTableLookup::from(&address_table_lookup),
                 &SlotHashes::default(),
             ),
-            Ok(LoadedAddresses {
-                writable: vec![table_addresses[0]],
-                readonly: vec![table_addresses[1]],
-            }),
+            Ok((
+                LoadedAddresses {
+                    writable: vec![table_addresses[0]],
+                    readonly: vec![table_addresses[1]],
+                },
+                u64::MAX
+            )),
         );
     }
 
@@ -835,14 +882,6 @@ mod tests {
         assert_eq!(loaded, vec![(pubkey2, account2)]);
         let loaded = accounts.load_by_program_slot(0, Some(&Pubkey::from([4; 32])));
         assert_eq!(loaded, vec![]);
-    }
-
-    #[test]
-    fn test_accounts_empty_bank_hash_stats() {
-        let accounts_db = AccountsDb::new_single_for_tests();
-        let accounts = Accounts::new(Arc::new(accounts_db));
-        assert!(accounts.accounts_db.get_bank_hash_stats(0).is_some());
-        assert!(accounts.accounts_db.get_bank_hash_stats(1).is_none());
     }
 
     #[test]

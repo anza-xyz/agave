@@ -25,15 +25,22 @@ rand = { workspace = true }
 rand_chacha = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
+serde-big-array = { workspace = true }
 serde_bytes = { workspace = true }
 serde_derive = { workspace = true }
+siphasher = { workspace = true }
 solana-bloom = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-client = { workspace = true }
 solana-connection-cache = { workspace = true }
 solana-entry = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true }
-solana-frozen-abi-macro = { workspace = true, optional = true }
+solana-feature-set = { workspace = true }
+solana-frozen-abi = { workspace = true, optional = true, features = [
+    "frozen-abi",
+] }
+solana-frozen-abi-macro = { workspace = true, optional = true, features = [
+    "frozen-abi",
+] }
 solana-ledger = { workspace = true }
 solana-logger = { workspace = true }
 solana-measure = { workspace = true }
@@ -45,6 +52,7 @@ solana-rpc-client = { workspace = true }
 solana-runtime = { workspace = true }
 solana-sanitize = { workspace = true }
 solana-sdk = { workspace = true }
+solana-serde-varint = { workspace = true }
 solana-short-vec = { workspace = true }
 solana-streamer = { workspace = true }
 solana-tpu-client = { workspace = true }
@@ -55,17 +63,17 @@ static_assertions = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+bs58 = { workspace = true }
 num_cpus = { workspace = true }
+rand0-7 = { workspace = true }
+rand_chacha0-2 = { workspace = true }
 serial_test = { workspace = true }
+solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 test-case = { workspace = true }
 
-[build-dependencies]
-rustc_version = { workspace = true, optional = true }
-
 [features]
 frozen-abi = [
-    "dep:rustc_version",
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-bloom/frozen-abi",
@@ -87,6 +95,9 @@ name = "crds_gossip_pull"
 
 [[bench]]
 name = "crds_shards"
+
+[[bench]]
+name = "weighted_shuffle"
 
 [[bin]]
 name = "solana-gossip"

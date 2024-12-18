@@ -18,15 +18,16 @@ scopeguard = { workspace = true }
 solana-bn254 = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-curve25519 = { workspace = true }
+solana-feature-set = { workspace = true }
 solana-log-collector = { workspace = true }
 solana-measure = { workspace = true }
 solana-poseidon = { workspace = true }
 solana-program-memory = { workspace = true }
 solana-program-runtime = { workspace = true }
+solana-sbpf = { workspace = true }
 solana-sdk = { workspace = true }
 solana-timings = { workspace = true }
 solana-type-overrides = { workspace = true }
-solana_rbpf = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
@@ -34,7 +35,6 @@ assert_matches = { workspace = true }
 memoffset = { workspace = true }
 rand = { workspace = true }
 solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
-solana-vote = { workspace = true, features = ["dev-context-only-utils"] }
 test-case = { workspace = true }
 
 [lib]
@@ -48,5 +48,5 @@ targets = ["x86_64-unknown-linux-gnu"]
 shuttle-test = [
     "solana-type-overrides/shuttle-test",
     "solana-program-runtime/shuttle-test",
-    "solana_rbpf/shuttle-test"
+    "solana-sbpf/shuttle-test"
 ]

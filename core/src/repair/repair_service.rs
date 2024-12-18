@@ -13,7 +13,6 @@ use {
             ancestor_hashes_service::{AncestorHashesReplayUpdateReceiver, AncestorHashesService},
             duplicate_repair_status::AncestorDuplicateSlotToRepair,
             outstanding_requests::OutstandingRequests,
-            quic_endpoint::LocalRequest,
             repair_weight::RepairWeight,
             serve_repair::{
                 self, RepairProtocol, RepairRequestHeader, ServeRepair, ShredRepairType,
@@ -21,6 +20,7 @@ use {
             },
         },
     },
+    bytes::Bytes,
     crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender},
     lru::LruCache,
     rand::seq::SliceRandom,
@@ -31,7 +31,7 @@ use {
         shred,
     },
     solana_measure::measure::Measure,
-    solana_runtime::bank_forks::BankForks,
+    solana_runtime::{bank_forks::BankForks, root_bank_cache::RootBankCache},
     solana_sdk::{
         clock::{Slot, DEFAULT_TICKS_PER_SECOND, MS_PER_TICK},
         epoch_schedule::EpochSchedule,
@@ -254,8 +254,9 @@ impl RepairService {
         exit: Arc<AtomicBool>,
         repair_socket: Arc<UdpSocket>,
         ancestor_hashes_socket: Arc<UdpSocket>,
-        quic_endpoint_sender: AsyncSender<LocalRequest>,
-        quic_endpoint_response_sender: CrossbeamSender<(SocketAddr, Vec<u8>)>,
+        repair_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
+        ancestor_hashes_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
+        ancestor_hashes_response_quic_receiver: CrossbeamReceiver<(Pubkey, SocketAddr, Bytes)>,
         repair_info: RepairInfo,
         verified_vote_receiver: VerifiedVoteReceiver,
         outstanding_requests: Arc<RwLock<OutstandingShredRepairs>>,
@@ -267,7 +268,6 @@ impl RepairService {
             let blockstore = blockstore.clone();
             let exit = exit.clone();
             let repair_info = repair_info.clone();
-            let quic_endpoint_sender = quic_endpoint_sender.clone();
             Builder::new()
                 .name("solRepairSvc".to_string())
                 .spawn(move || {
@@ -275,8 +275,7 @@ impl RepairService {
                         &blockstore,
                         &exit,
                         &repair_socket,
-                        &quic_endpoint_sender,
-                        &quic_endpoint_response_sender,
+                        &repair_request_quic_sender,
                         repair_info,
                         verified_vote_receiver,
                         &outstanding_requests,
@@ -291,7 +290,8 @@ impl RepairService {
             exit,
             blockstore,
             ancestor_hashes_socket,
-            quic_endpoint_sender,
+            ancestor_hashes_request_quic_sender,
+            ancestor_hashes_response_quic_receiver,
             repair_info,
             ancestor_hashes_replay_update_receiver,
         );
@@ -307,15 +307,15 @@ impl RepairService {
         blockstore: &Blockstore,
         exit: &AtomicBool,
         repair_socket: &UdpSocket,
-        quic_endpoint_sender: &AsyncSender<LocalRequest>,
-        quic_endpoint_response_sender: &CrossbeamSender<(SocketAddr, Vec<u8>)>,
+        repair_request_quic_sender: &AsyncSender<(SocketAddr, Bytes)>,
         repair_info: RepairInfo,
         verified_vote_receiver: VerifiedVoteReceiver,
         outstanding_requests: &RwLock<OutstandingShredRepairs>,
         dumped_slots_receiver: DumpedSlotsReceiver,
         popular_pruned_forks_sender: PopularPrunedForksSender,
     ) {
-        let mut repair_weight = RepairWeight::new(repair_info.bank_forks.read().unwrap().root());
+        let mut root_bank_cache = RootBankCache::new(repair_info.bank_forks.clone());
+        let mut repair_weight = RepairWeight::new(root_bank_cache.root_bank().slot());
         let serve_repair = ServeRepair::new(
             repair_info.cluster_info.clone(),
             repair_info.bank_forks.clone(),
@@ -335,7 +335,7 @@ impl RepairService {
             let mut get_votes_elapsed;
             let mut add_votes_elapsed;
 
-            let root_bank = repair_info.bank_forks.read().unwrap().root_bank();
+            let root_bank = root_bank_cache.root_bank();
             let repair_protocol = serve_repair::get_repair_protocol(root_bank.cluster_type());
             let repairs = {
                 let new_root = root_bank.slot();
@@ -464,8 +464,7 @@ impl RepairService {
                                 &repair_info.repair_validators,
                                 &mut outstanding_requests,
                                 identity_keypair,
-                                quic_endpoint_sender,
-                                quic_endpoint_response_sender,
+                                repair_request_quic_sender,
                                 repair_protocol,
                             )
                             .ok()??;
@@ -1076,6 +1075,7 @@ mod test {
             get_tmp_ledger_path_auto_delete,
             shred::max_ticks_per_n_shreds,
         },
+        solana_net_utils::{bind_to_localhost, bind_to_unspecified},
         solana_runtime::bank::Bank,
         solana_sdk::{
             signature::{Keypair, Signer},
@@ -1098,9 +1098,9 @@ mod test {
         let pubkey = cluster_info.id();
         let slot = 100;
         let shred_index = 50;
-        let reader = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let reader = bind_to_localhost().expect("bind");
         let address = reader.local_addr().unwrap();
-        let sender = UdpSocket::bind("127.0.0.1:0").expect("bind");
+        let sender = bind_to_localhost().expect("bind");
         let outstanding_repair_requests = Arc::new(RwLock::new(OutstandingShredRepairs::default()));
 
         // Send a repair request
@@ -1124,8 +1124,7 @@ mod test {
         let remote_request = RemoteRequest {
             remote_pubkey: None,
             remote_address: packet.meta().socket_addr(),
-            bytes,
-            response_sender: None,
+            bytes: Bytes::from(bytes),
         };
 
         // Deserialize and check the request
@@ -1454,7 +1453,7 @@ mod test {
         );
         let mut duplicate_slot_repair_statuses = HashMap::new();
         let dead_slot = 9;
-        let receive_socket = &UdpSocket::bind("0.0.0.0:0").unwrap();
+        let receive_socket = &bind_to_unspecified().unwrap();
         let duplicate_status = DuplicateSlotRepairStatus {
             correct_ancestor_to_repair: (dead_slot, Hash::default()),
             start_ts: u64::MAX,
@@ -1483,7 +1482,7 @@ mod test {
             &blockstore,
             &serve_repair,
             &mut RepairStats::default(),
-            &UdpSocket::bind("0.0.0.0:0").unwrap(),
+            &bind_to_unspecified().unwrap(),
             &None,
             &RwLock::new(OutstandingRequests::default()),
             &identity_keypair,
@@ -1509,7 +1508,7 @@ mod test {
             &blockstore,
             &serve_repair,
             &mut RepairStats::default(),
-            &UdpSocket::bind("0.0.0.0:0").unwrap(),
+            &bind_to_unspecified().unwrap(),
             &None,
             &RwLock::new(OutstandingRequests::default()),
             &identity_keypair,
@@ -1528,7 +1527,7 @@ mod test {
             &blockstore,
             &serve_repair,
             &mut RepairStats::default(),
-            &UdpSocket::bind("0.0.0.0:0").unwrap(),
+            &bind_to_unspecified().unwrap(),
             &None,
             &RwLock::new(OutstandingRequests::default()),
             &identity_keypair,
@@ -1543,7 +1542,7 @@ mod test {
         let bank_forks = BankForks::new_rw_arc(bank);
         let dummy_addr = Some((
             Pubkey::default(),
-            UdpSocket::bind("0.0.0.0:0").unwrap().local_addr().unwrap(),
+            bind_to_unspecified().unwrap().local_addr().unwrap(),
         ));
         let cluster_info = Arc::new(new_test_cluster_info());
         let serve_repair = ServeRepair::new(

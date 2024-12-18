@@ -421,12 +421,36 @@ impl ThreadSet {
 
     #[inline(always)]
     pub(crate) fn contained_threads_iter(self) -> impl Iterator<Item = ThreadId> {
-        (0..MAX_THREADS).filter(move |thread_id| self.contains(*thread_id))
+        ThreadSetIterator(self.0)
     }
 
     #[inline(always)]
     const fn as_flag(thread_id: ThreadId) -> u64 {
         0b1 << thread_id
+    }
+}
+
+struct ThreadSetIterator(u64);
+
+impl Iterator for ThreadSetIterator {
+    type Item = ThreadId;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.0 == 0 {
+            None
+        } else {
+            // Find the first set bit by counting trailing zeros.
+            // This is guaranteed to be < 64 because self.0 != 0.
+            let thread_id = self.0.trailing_zeros() as ThreadId;
+            // Clear the lowest set bit. The subtraction is safe because
+            // we know that self.0 != 0.
+            // Example (with 4 bits):
+            //  self.0 = 0b1010           // initial value
+            //  self.0 - 1 = 0b1001       // all bits at or after the lowest set bit are flipped
+            //  0b1010 & 0b1001 = 0b1000  // the lowest bit has been cleared
+            self.0 &= self.0 - 1;
+            Some(thread_id)
+        }
     }
 }
 
@@ -738,5 +762,40 @@ mod tests {
     fn test_thread_set_any_max() {
         let any_threads = ThreadSet::any(MAX_THREADS);
         assert_eq!(any_threads.num_threads(), MAX_THREADS as u32);
+    }
+
+    #[test]
+    fn test_thread_set_iter() {
+        let mut thread_set = ThreadSet::none();
+        assert!(thread_set.contained_threads_iter().next().is_none());
+
+        thread_set.insert(4);
+        assert_eq!(
+            thread_set.contained_threads_iter().collect::<Vec<_>>(),
+            vec![4]
+        );
+
+        thread_set.insert(5);
+        assert_eq!(
+            thread_set.contained_threads_iter().collect::<Vec<_>>(),
+            vec![4, 5]
+        );
+        thread_set.insert(63);
+        assert_eq!(
+            thread_set.contained_threads_iter().collect::<Vec<_>>(),
+            vec![4, 5, 63]
+        );
+
+        thread_set.remove(5);
+        assert_eq!(
+            thread_set.contained_threads_iter().collect::<Vec<_>>(),
+            vec![4, 63]
+        );
+
+        let thread_set = ThreadSet::any(64);
+        assert_eq!(
+            thread_set.contained_threads_iter().collect::<Vec<_>>(),
+            (0..64).collect::<Vec<_>>()
+        );
     }
 }

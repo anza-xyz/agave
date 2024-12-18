@@ -1,7 +1,6 @@
 use {
-    super::immutable_deserialized_packet::ImmutableDeserializedPacket,
-    solana_sdk::{clock::Slot, transaction::SanitizedTransaction},
-    std::{fmt::Display, sync::Arc},
+    solana_sdk::clock::{Epoch, Slot},
+    std::fmt::Display,
 };
 
 /// A unique identifier for a transaction batch.
@@ -20,47 +19,33 @@ impl Display for TransactionBatchId {
     }
 }
 
-/// A unique identifier for a transaction.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
-pub struct TransactionId(u64);
+pub type TransactionId = usize;
 
-impl TransactionId {
-    pub fn new(index: u64) -> Self {
-        Self(index)
-    }
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct MaxAge {
+    pub sanitized_epoch: Epoch,
+    pub alt_invalidation_slot: Slot,
 }
 
-impl Display for TransactionId {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
+impl MaxAge {
+    pub const MAX: Self = Self {
+        sanitized_epoch: Epoch::MAX,
+        alt_invalidation_slot: Slot::MAX,
+    };
 }
 
 /// Message: [Scheduler -> Worker]
 /// Transactions to be consumed (i.e. executed, recorded, and committed)
-pub struct ConsumeWork {
+pub struct ConsumeWork<Tx> {
     pub batch_id: TransactionBatchId,
     pub ids: Vec<TransactionId>,
-    pub transactions: Vec<SanitizedTransaction>,
-    pub max_age_slots: Vec<Slot>,
-}
-
-/// Message: [Scheduler -> Worker]
-/// Transactions to be forwarded to the next leader(s)
-pub struct ForwardWork {
-    pub packets: Vec<Arc<ImmutableDeserializedPacket>>,
+    pub transactions: Vec<Tx>,
+    pub max_ages: Vec<MaxAge>,
 }
 
 /// Message: [Worker -> Scheduler]
 /// Processed transactions.
-pub struct FinishedConsumeWork {
-    pub work: ConsumeWork,
+pub struct FinishedConsumeWork<Tx> {
+    pub work: ConsumeWork<Tx>,
     pub retryable_indexes: Vec<usize>,
-}
-
-/// Message: [Worker -> Scheduler]
-/// Forwarded transactions.
-pub struct FinishedForwardWork {
-    pub work: ForwardWork,
-    pub successful: bool,
 }

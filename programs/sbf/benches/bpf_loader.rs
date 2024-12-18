@@ -8,9 +8,8 @@
 )]
 
 use {
-    solana_rbpf::memory_region::MemoryState,
-    solana_sdk::{feature_set::bpf_account_data_direct_mapping, signer::keypair::Keypair},
-    std::slice,
+    solana_feature_set::bpf_account_data_direct_mapping, solana_sbpf::memory_region::MemoryState,
+    solana_sdk::signer::keypair::Keypair, std::slice,
 };
 
 extern crate test;
@@ -22,24 +21,24 @@ use {
         syscalls::create_program_runtime_environment_v1,
     },
     solana_compute_budget::compute_budget::ComputeBudget,
+    solana_feature_set::FeatureSet,
     solana_measure::measure::Measure,
     solana_program_runtime::invoke_context::InvokeContext,
-    solana_rbpf::{
-        ebpf::MM_INPUT_START, elf::Executable, memory_region::MemoryRegion,
-        verifier::RequisiteVerifier, vm::ContextObject,
-    },
     solana_runtime::{
         bank::Bank,
         bank_client::BankClient,
         genesis_utils::{create_genesis_config, GenesisConfigInfo},
         loader_utils::{load_program_from_file, load_upgradeable_program_and_advance_slot},
     },
+    solana_sbpf::{
+        ebpf::MM_INPUT_START, elf::Executable, memory_region::MemoryRegion,
+        verifier::RequisiteVerifier, vm::ContextObject,
+    },
     solana_sdk::{
         account::AccountSharedData,
         bpf_loader,
         client::SyncClient,
         entrypoint::SUCCESS,
-        feature_set::FeatureSet,
         instruction::{AccountMeta, Instruction},
         message::Message,
         native_loader,

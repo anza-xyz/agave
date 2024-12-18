@@ -2,9 +2,8 @@ use {
     crate::{
         contact_info::ContactInfo,
         crds::VersionedCrdsValue,
-        crds_value::{
-            CrdsData, CrdsValue, CrdsValueLabel, LegacyVersion, LowestSlot, SnapshotHashes, Version,
-        },
+        crds_data::{CrdsData, LowestSlot, SnapshotHashes},
+        crds_value::{CrdsValue, CrdsValueLabel},
     },
     indexmap::IndexMap,
     solana_sdk::pubkey::Pubkey,
@@ -37,7 +36,7 @@ macro_rules! impl_crds_entry (
             type Key = Pubkey;
             fn get_entry(table:&'a CrdsTable, key: Self::Key) -> Option<Self> {
                 let key = CrdsValueLabel::$name(key);
-                match &table.get(&key)?.value.data {
+                match table.get(&key)?.value.data() {
                     $pat => Some($expr),
                     _ => None,
                 }
@@ -47,15 +46,13 @@ macro_rules! impl_crds_entry (
 );
 
 // Lookup by CrdsValueLabel.
-impl_crds_entry!(CrdsData, |entry| Some(&entry?.value.data));
+impl_crds_entry!(CrdsData, |entry| Some(entry?.value.data()));
 impl_crds_entry!(CrdsValue, |entry| Some(&entry?.value));
 impl_crds_entry!(VersionedCrdsValue, |entry| entry);
 
 // Lookup by Pubkey.
 impl_crds_entry!(ContactInfo, CrdsData::ContactInfo(node), node);
-impl_crds_entry!(LegacyVersion, CrdsData::LegacyVersion(version), version);
 impl_crds_entry!(LowestSlot, CrdsData::LowestSlot(_, slot), slot);
-impl_crds_entry!(Version, CrdsData::Version(version), version);
 impl_crds_entry!(
     SnapshotHashes,
     CrdsData::SnapshotHashes(snapshot_hashes),
@@ -68,7 +65,7 @@ mod tests {
         super::*,
         crate::{
             crds::{Crds, GossipRoute},
-            crds_value::new_rand_timestamp,
+            crds_data::new_rand_timestamp,
         },
         rand::seq::SliceRandom,
         solana_sdk::signature::Keypair,
@@ -98,19 +95,15 @@ mod tests {
         for entry in entries.values() {
             let key = entry.label();
             assert_eq!(crds.get::<&CrdsValue>(&key), Some(entry));
-            assert_eq!(crds.get::<&CrdsData>(&key), Some(&entry.data));
+            assert_eq!(crds.get::<&CrdsData>(&key), Some(entry.data()));
             assert_eq!(crds.get::<&VersionedCrdsValue>(&key).unwrap().value, *entry);
             let key = entry.pubkey();
-            match &entry.data {
+            match entry.data() {
                 CrdsData::ContactInfo(node) => {
                     assert_eq!(crds.get::<&ContactInfo>(key), Some(node))
                 }
                 CrdsData::LowestSlot(_, slot) => {
                     assert_eq!(crds.get::<&LowestSlot>(key), Some(slot))
-                }
-                CrdsData::Version(version) => assert_eq!(crds.get::<&Version>(key), Some(version)),
-                CrdsData::LegacyVersion(version) => {
-                    assert_eq!(crds.get::<&LegacyVersion>(key), Some(version))
                 }
                 CrdsData::SnapshotHashes(hash) => {
                     assert_eq!(crds.get::<&SnapshotHashes>(key), Some(hash))

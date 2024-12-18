@@ -1,4 +1,4 @@
-#![cfg_attr(RUSTC_WITH_SPECIALIZATION, feature(min_specialization))]
+#![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 //! Public key recovery from [secp256k1] ECDSA signatures.
 //!
 //! [secp256k1]: https://en.bitcoin.it/wiki/Secp256k1
@@ -87,7 +87,7 @@ impl Secp256k1Pubkey {
 }
 
 #[cfg(target_os = "solana")]
-solana_define_syscall::define_syscall!(fn sol_secp256k1_recover(hash: *const u8, recovery_id: u64, signature: *const u8, result: *mut u8) -> u64);
+pub use solana_define_syscall::definitions::sol_secp256k1_recover;
 
 /// Recover the public key from a [secp256k1] ECDSA signature and
 /// cryptographically-hashed message.
@@ -137,7 +137,7 @@ solana_define_syscall::define_syscall!(fn sol_secp256k1_recover(hash: *const u8,
 /// # Hashing messages
 ///
 /// In ECDSA signing and key recovery the signed "message" is always a
-/// crytographic hash, not the original message itself. If not a cryptographic
+/// cryptographic hash, not the original message itself. If not a cryptographic
 /// hash, then an adversary can craft signatures that recover to arbitrary
 /// public keys. This means the caller of this function generally must hash the
 /// original message themselves and not rely on another party to provide the
@@ -165,7 +165,7 @@ solana_define_syscall::define_syscall!(fn sol_secp256k1_recover(hash: *const u8,
 /// signatures with high-order `S` values. The following code will accomplish
 /// this:
 ///
-/// ```rust,ignore
+/// ```rust
 /// # use solana_program::program_error::ProgramError;
 /// # let signature_bytes = [
 /// #     0x83, 0x55, 0x81, 0xDF, 0xB1, 0x02, 0xA7, 0xD2,
@@ -228,7 +228,7 @@ solana_define_syscall::define_syscall!(fn sol_secp256k1_recover(hash: *const u8,
 /// lengths of `hash` and `signature` beforehand.
 ///
 /// When run on-chain this function will not directly validate the lengths of
-/// `hash` and `signature`. It will assume they are the the correct lengths and
+/// `hash` and `signature`. It will assume they are the correct lengths and
 /// pass their pointers to the runtime, which will interpret them as 32-byte and
 /// 64-byte buffers. If the provided slices are too short, the runtime will read
 /// invalid data and attempt to interpret it, most likely returning an error,
@@ -239,7 +239,7 @@ solana_define_syscall::define_syscall!(fn sol_secp256k1_recover(hash: *const u8,
 ///
 /// # Examples
 ///
-/// This example demonstrates recovering a public key and using it to very a
+/// This example demonstrates recovering a public key and using it to verify a
 /// signature with the `secp256k1_recover` syscall. It has three parts: a Solana
 /// program, an RPC client to call the program, and common definitions shared
 /// between the two.
@@ -261,7 +261,7 @@ solana_define_syscall::define_syscall!(fn sol_secp256k1_recover(hash: *const u8,
 /// The Solana program. Note that it uses `libsecp256k1` version 0.7.0 to parse
 /// the secp256k1 signature to prevent malleability.
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use solana_program::{
 ///     entrypoint::ProgramResult,
 ///     keccak, msg,
@@ -331,7 +331,7 @@ solana_define_syscall::define_syscall!(fn sol_secp256k1_recover(hash: *const u8,
 ///
 /// The RPC client program:
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// # use solana_program::example_mocks::solana_rpc_client;
 /// # use solana_program::example_mocks::solana_sdk;
 /// use anyhow::Result;

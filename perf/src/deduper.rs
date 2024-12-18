@@ -1,7 +1,7 @@
 //! Utility to deduplicate baches of incoming network packets.
 
 use {
-    crate::packet::{Packet, PacketBatch},
+    crate::packet::PacketBatch,
     ahash::RandomState,
     rand::Rng,
     std::{
@@ -90,23 +90,18 @@ fn new_random_state<R: Rng>(rng: &mut R) -> RandomState {
 pub fn dedup_packets_and_count_discards<const K: usize>(
     deduper: &Deduper<K, [u8]>,
     batches: &mut [PacketBatch],
-    mut process_received_packet: impl FnMut(&mut Packet, bool, bool),
 ) -> u64 {
     batches
         .iter_mut()
         .flat_map(PacketBatch::iter_mut)
         .map(|packet| {
-            if packet.meta().discard() {
-                process_received_packet(packet, true, false);
-            } else if packet
-                .data(..)
-                .map(|data| deduper.dedup(data))
-                .unwrap_or(true)
+            if !packet.meta().discard()
+                && packet
+                    .data(..)
+                    .map(|data| deduper.dedup(data))
+                    .unwrap_or(true)
             {
                 packet.meta_mut().set_discard(true);
-                process_received_packet(packet, false, true);
-            } else {
-                process_received_packet(packet, false, false);
             }
             u64::from(packet.meta().discard())
         })
@@ -118,10 +113,14 @@ pub fn dedup_packets_and_count_discards<const K: usize>(
 mod tests {
     use {
         super::*,
-        crate::{packet::to_packet_batches, sigverify, test_tx::test_tx},
+        crate::{
+            packet::{to_packet_batches, Packet},
+            sigverify,
+            test_tx::test_tx,
+        },
         rand::SeedableRng,
         rand_chacha::ChaChaRng,
-        solana_sdk::packet::{Meta, PACKET_DATA_SIZE},
+        solana_packet::{Meta, PACKET_DATA_SIZE},
         test_case::test_case,
     };
 
@@ -134,15 +133,7 @@ mod tests {
         let packet_count = sigverify::count_packets_in_batches(&batches);
         let mut rng = rand::thread_rng();
         let filter = Deduper::<2, [u8]>::new(&mut rng, /*num_bits:*/ 63_999_979);
-        let mut num_deduped = 0;
-        let discard = dedup_packets_and_count_discards(
-            &filter,
-            &mut batches,
-            |_deduped_packet, _removed_before_sigverify_stage, _is_dup| {
-                num_deduped += 1;
-            },
-        ) as usize;
-        assert_eq!(num_deduped, discard + 1);
+        let discard = dedup_packets_and_count_discards(&filter, &mut batches) as usize;
         assert_eq!(packet_count, discard + 1);
     }
 
@@ -151,8 +142,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         let mut filter = Deduper::<2, [u8]>::new(&mut rng, /*num_bits:*/ 63_999_979);
         let mut batches = to_packet_batches(&(0..1024).map(|_| test_tx()).collect::<Vec<_>>(), 128);
-        let discard =
-            dedup_packets_and_count_discards(&filter, &mut batches, |_, _, _| ()) as usize;
+        let discard = dedup_packets_and_count_discards(&filter, &mut batches) as usize;
         // because dedup uses a threadpool, there maybe up to N threads of txs that go through
         assert_eq!(discard, 0);
         assert!(!filter.maybe_reset(
@@ -182,8 +172,7 @@ mod tests {
         for i in 0..1000 {
             let mut batches =
                 to_packet_batches(&(0..1000).map(|_| test_tx()).collect::<Vec<_>>(), 128);
-            discard +=
-                dedup_packets_and_count_discards(&filter, &mut batches, |_, _, _| ()) as usize;
+            discard += dedup_packets_and_count_discards(&filter, &mut batches) as usize;
             trace!("{} {}", i, discard);
             if filter.popcount.load(Ordering::Relaxed) > capacity {
                 break;
@@ -206,8 +195,7 @@ mod tests {
         for i in 0..10 {
             let mut batches =
                 to_packet_batches(&(0..1024).map(|_| test_tx()).collect::<Vec<_>>(), 128);
-            discard +=
-                dedup_packets_and_count_discards(&filter, &mut batches, |_, _, _| ()) as usize;
+            discard += dedup_packets_and_count_discards(&filter, &mut batches) as usize;
             debug!("false positive rate: {}/{}", discard, i * 1024);
         }
         //allow for 1 false positive even if extremely unlikely
@@ -241,12 +229,12 @@ mod tests {
         ));
     }
 
-    #[test_case([0xf9; 32],  3_199_997, 101_192,  51_414,  66, 101_121)]
-    #[test_case([0xdc; 32],  3_200_003, 101_192,  51_414,  60, 101_092)]
-    #[test_case([0xa5; 32],  6_399_971, 202_384, 102_828, 125, 202_178)]
-    #[test_case([0xdb; 32],  6_400_013, 202_386, 102_828, 135, 202_235)]
-    #[test_case([0xcd; 32], 12_799_987, 404_771, 205_655, 285, 404_410)]
-    #[test_case([0xc3; 32], 12_800_009, 404_771, 205_656, 293, 404_397)]
+    #[test_case([0xf9; 32],  3_199_997, 101_192,  51_414,  77, 101_083)]
+    #[test_case([0xdc; 32],  3_200_003, 101_192,  51_414,  64, 101_097)]
+    #[test_case([0xa5; 32],  6_399_971, 202_384, 102_828, 117, 202_257)]
+    #[test_case([0xdb; 32],  6_400_013, 202_386, 102_828, 135, 202_254)]
+    #[test_case([0xcd; 32], 12_799_987, 404_771, 205_655, 273, 404_521)]
+    #[test_case([0xc3; 32], 12_800_009, 404_771, 205_656, 283, 404_365)]
     fn test_dedup_seeded(
         seed: [u8; 32],
         num_bits: u64,

@@ -1,12 +1,12 @@
 use {
     crate::{
         address_lookup_table::program::id,
-        clock::Slot,
         instruction::{AccountMeta, Instruction},
         pubkey::Pubkey,
         system_program,
     },
     serde_derive::{Deserialize, Serialize},
+    solana_clock::Slot,
 };
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
@@ -113,6 +113,7 @@ fn create_lookup_table_common(
 /// This instruction requires the authority to be a signer but
 /// in v1.12 the address lookup table program will no longer require
 /// the authority to sign the transaction.
+#[deprecated(since = "2.2.0", note = "use `create_lookup_table` instead")]
 pub fn create_lookup_table_signed(
     authority_address: Pubkey,
     payer_address: Pubkey,

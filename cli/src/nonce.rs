@@ -415,6 +415,7 @@ pub fn process_authorize_nonce_account(
     let latest_blockhash = rpc_client.get_latest_blockhash()?;
 
     let nonce_authority = config.signers[nonce_authority];
+    let compute_unit_limit = ComputeUnitLimit::Simulated;
     let ixs = vec![authorize_nonce_account(
         nonce_account,
         &nonce_authority.pubkey(),
@@ -423,10 +424,10 @@ pub fn process_authorize_nonce_account(
     .with_memo(memo)
     .with_compute_unit_config(&ComputeUnitConfig {
         compute_unit_price,
-        compute_unit_limit: ComputeUnitLimit::Simulated,
+        compute_unit_limit,
     });
     let mut message = Message::new(&ixs, Some(&config.signers[0].pubkey()));
-    simulate_and_update_compute_unit_limit(rpc_client, &mut message)?;
+    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message)?;
     let mut tx = Transaction::new_unsigned(message);
     tx.try_sign(&config.signers, latest_blockhash)?;
 
@@ -436,7 +437,11 @@ pub fn process_authorize_nonce_account(
         &tx.message,
         config.commitment,
     )?;
-    let result = rpc_client.send_and_confirm_transaction_with_spinner(&tx);
+    let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
+        &tx,
+        config.commitment,
+        config.send_transaction_config,
+    );
 
     log_instruction_custom_error::<SystemError>(result, config)
 }
@@ -536,7 +541,11 @@ pub fn process_create_nonce_account(
 
     let mut tx = Transaction::new_unsigned(message);
     tx.try_sign(&config.signers, latest_blockhash)?;
-    let result = rpc_client.send_and_confirm_transaction_with_spinner(&tx);
+    let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
+        &tx,
+        config.commitment,
+        config.send_transaction_config,
+    );
 
     log_instruction_custom_error::<SystemError>(result, config)
 }
@@ -575,6 +584,7 @@ pub fn process_new_nonce(
     }
 
     let nonce_authority = config.signers[nonce_authority];
+    let compute_unit_limit = ComputeUnitLimit::Simulated;
     let ixs = vec![advance_nonce_account(
         nonce_account,
         &nonce_authority.pubkey(),
@@ -582,11 +592,11 @@ pub fn process_new_nonce(
     .with_memo(memo)
     .with_compute_unit_config(&ComputeUnitConfig {
         compute_unit_price,
-        compute_unit_limit: ComputeUnitLimit::Simulated,
+        compute_unit_limit,
     });
     let latest_blockhash = rpc_client.get_latest_blockhash()?;
     let mut message = Message::new(&ixs, Some(&config.signers[0].pubkey()));
-    simulate_and_update_compute_unit_limit(rpc_client, &mut message)?;
+    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message)?;
     let mut tx = Transaction::new_unsigned(message);
     tx.try_sign(&config.signers, latest_blockhash)?;
     check_account_for_fee_with_commitment(
@@ -595,7 +605,11 @@ pub fn process_new_nonce(
         &tx.message,
         config.commitment,
     )?;
-    let result = rpc_client.send_and_confirm_transaction_with_spinner(&tx);
+    let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
+        &tx,
+        config.commitment,
+        config.send_transaction_config,
+    );
 
     log_instruction_custom_error::<SystemError>(result, config)
 }
@@ -643,6 +657,7 @@ pub fn process_withdraw_from_nonce_account(
     let latest_blockhash = rpc_client.get_latest_blockhash()?;
 
     let nonce_authority = config.signers[nonce_authority];
+    let compute_unit_limit = ComputeUnitLimit::Simulated;
     let ixs = vec![withdraw_nonce_account(
         nonce_account,
         &nonce_authority.pubkey(),
@@ -652,10 +667,10 @@ pub fn process_withdraw_from_nonce_account(
     .with_memo(memo)
     .with_compute_unit_config(&ComputeUnitConfig {
         compute_unit_price,
-        compute_unit_limit: ComputeUnitLimit::Simulated,
+        compute_unit_limit,
     });
     let mut message = Message::new(&ixs, Some(&config.signers[0].pubkey()));
-    simulate_and_update_compute_unit_limit(rpc_client, &mut message)?;
+    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message)?;
     let mut tx = Transaction::new_unsigned(message);
     tx.try_sign(&config.signers, latest_blockhash)?;
     check_account_for_fee_with_commitment(
@@ -664,7 +679,11 @@ pub fn process_withdraw_from_nonce_account(
         &tx.message,
         config.commitment,
     )?;
-    let result = rpc_client.send_and_confirm_transaction_with_spinner(&tx);
+    let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
+        &tx,
+        config.commitment,
+        config.send_transaction_config,
+    );
 
     log_instruction_custom_error::<SystemError>(result, config)
 }
@@ -677,14 +696,15 @@ pub(crate) fn process_upgrade_nonce_account(
     compute_unit_price: Option<u64>,
 ) -> ProcessResult {
     let latest_blockhash = rpc_client.get_latest_blockhash()?;
+    let compute_unit_limit = ComputeUnitLimit::Simulated;
     let ixs = vec![upgrade_nonce_account(nonce_account)]
         .with_memo(memo)
         .with_compute_unit_config(&ComputeUnitConfig {
             compute_unit_price,
-            compute_unit_limit: ComputeUnitLimit::Simulated,
+            compute_unit_limit,
         });
     let mut message = Message::new(&ixs, Some(&config.signers[0].pubkey()));
-    simulate_and_update_compute_unit_limit(rpc_client, &mut message)?;
+    simulate_and_update_compute_unit_limit(&compute_unit_limit, rpc_client, &mut message)?;
     let mut tx = Transaction::new_unsigned(message);
     tx.try_sign(&config.signers, latest_blockhash)?;
     check_account_for_fee_with_commitment(
@@ -693,7 +713,11 @@ pub(crate) fn process_upgrade_nonce_account(
         &tx.message,
         config.commitment,
     )?;
-    let result = rpc_client.send_and_confirm_transaction_with_spinner(&tx);
+    let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
+        &tx,
+        config.commitment,
+        config.send_transaction_config,
+    );
     log_instruction_custom_error::<SystemError>(result, config)
 }
 
@@ -1114,7 +1138,7 @@ mod tests {
         let mut nonce_account = nonce_account::create_account(1).into_inner();
         assert_eq!(state_from_account(&nonce_account), Ok(State::Uninitialized));
 
-        let durable_nonce = DurableNonce::from_blockhash(&Hash::new(&[42u8; 32]));
+        let durable_nonce = DurableNonce::from_blockhash(&Hash::new_from_array([42u8; 32]));
         let data = nonce::state::Data::new(Pubkey::from([1u8; 32]), durable_nonce, 42);
         nonce_account
             .set_state(&Versions::new(State::Initialized(data.clone())))
@@ -1144,7 +1168,7 @@ mod tests {
             Err(Error::InvalidStateForOperation)
         );
 
-        let durable_nonce = DurableNonce::from_blockhash(&Hash::new(&[42u8; 32]));
+        let durable_nonce = DurableNonce::from_blockhash(&Hash::new_from_array([42u8; 32]));
         let data = nonce::state::Data::new(Pubkey::from([1u8; 32]), durable_nonce, 42);
         nonce_account
             .set_state(&Versions::new(State::Initialized(data.clone())))

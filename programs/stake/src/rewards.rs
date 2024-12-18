@@ -183,13 +183,14 @@ fn calculate_stake_rewards(
         return None;
     }
 
+    // The final unwrap is safe, as points_value.points is guaranteed to be non zero above.
     let rewards = points
         .checked_mul(u128::from(point_value.rewards))
-        .unwrap()
+        .expect("Rewards intermediate calculation should fit within u128")
         .checked_div(point_value.points)
         .unwrap();
 
-    let rewards = u64::try_from(rewards).unwrap();
+    let rewards = u64::try_from(rewards).expect("Rewards should fit within u64");
 
     // don't bother trying to split if fractional lamports got truncated
     if rewards == 0 {
@@ -231,6 +232,7 @@ mod tests {
         super::*,
         crate::{points::null_tracer, stake_state::new_stake},
         solana_sdk::{native_token, pubkey::Pubkey},
+        test_case::test_case,
     };
 
     #[test]
@@ -607,6 +609,26 @@ mod tests {
                 null_tracer(),
                 None,
             )
+        );
+    }
+
+    #[test_case(u64::MAX, 1_000, u64::MAX => panics "Rewards intermediate calculation should fit within u128")]
+    #[test_case(1, u64::MAX, u64::MAX => panics "Rewards should fit within u64")]
+    fn calculate_rewards_tests(stake: u64, rewards: u64, credits: u64) {
+        let mut vote_state = VoteState::default();
+
+        let stake = new_stake(stake, &Pubkey::default(), &vote_state, u64::MAX);
+
+        vote_state.increment_credits(0, credits);
+
+        calculate_stake_rewards(
+            0,
+            &stake,
+            &PointValue { rewards, points: 1 },
+            &vote_state,
+            &StakeHistory::default(),
+            null_tracer(),
+            None,
         );
     }
 

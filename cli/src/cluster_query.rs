@@ -46,7 +46,6 @@ use {
         clock::{self, Clock, Slot},
         commitment_config::CommitmentConfig,
         epoch_schedule::Epoch,
-        feature_set,
         hash::Hash,
         message::Message,
         native_token::lamports_to_sol,
@@ -1437,9 +1436,10 @@ pub fn process_ping(
     rpc_client: &RpcClient,
 ) -> ProcessResult {
     let (signal_sender, signal_receiver) = unbounded();
-    match ctrlc::try_set_handler(move || {
+    let handler = move || {
         let _ = signal_sender.send(());
-    }) {
+    };
+    match ctrlc::try_set_handler(handler) {
         // It's possible to set the ctrl-c handler more than once in testing
         // situations, so let that case through
         Err(ctrlc::Error::MultipleHandlers) => {}
@@ -1898,8 +1898,10 @@ pub fn process_show_stakes(
     let stake_history = from_account(&stake_history_account).ok_or_else(|| {
         CliError::RpcRequestError("Failed to deserialize stake history".to_string())
     })?;
-    let new_rate_activation_epoch =
-        get_feature_activation_epoch(rpc_client, &feature_set::reduce_stake_warmup_cooldown::id())?;
+    let new_rate_activation_epoch = get_feature_activation_epoch(
+        rpc_client,
+        &solana_feature_set::reduce_stake_warmup_cooldown::id(),
+    )?;
     stake_account_progress_bar.finish_and_clear();
 
     let mut stake_accounts: Vec<CliKeyedStakeState> = vec![];

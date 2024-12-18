@@ -3,63 +3,45 @@ use {
     super::quic::{
         spawn_server_multi, SpawnNonBlockingServerResult, ALPN_TPU_PROTOCOL_ID,
         DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_STREAMS_PER_MS,
+        DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
     },
     crate::{
-        quic::{StreamerStats, MAX_STAKED_CONNECTIONS, MAX_UNSTAKED_CONNECTIONS},
+        quic::{
+            QuicServerParams, StreamerStats, DEFAULT_TPU_COALESCE, MAX_STAKED_CONNECTIONS,
+            MAX_UNSTAKED_CONNECTIONS,
+        },
         streamer::StakedNodes,
-        tls_certificates::new_dummy_x509_certificate,
     },
     crossbeam_channel::unbounded,
-    quinn::{ClientConfig, Connection, EndpointConfig, IdleTimeout, TokioRuntime, TransportConfig},
-    solana_perf::packet::PacketBatch,
-    solana_sdk::{
-        net::DEFAULT_TPU_COALESCE,
-        quic::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT},
-        signer::keypair::Keypair,
+    quinn::{
+        crypto::rustls::QuicClientConfig, ClientConfig, Connection, EndpointConfig, IdleTimeout,
+        TokioRuntime, TransportConfig,
     },
+    solana_keypair::Keypair,
+    solana_net_utils::bind_to_localhost,
+    solana_perf::packet::PacketBatch,
+    solana_quic_definitions::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT},
+    solana_tls_utils::{new_dummy_x509_certificate, SkipServerVerification},
     std::{
         net::{SocketAddr, UdpSocket},
         sync::{atomic::AtomicBool, Arc, RwLock},
-        time::Duration,
     },
     tokio::task::JoinHandle,
 };
-
-struct SkipServerVerification;
-
-impl SkipServerVerification {
-    fn new() -> Arc<Self> {
-        Arc::new(Self)
-    }
-}
-
-impl rustls::client::ServerCertVerifier for SkipServerVerification {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &rustls::Certificate,
-        _intermediates: &[rustls::Certificate],
-        _server_name: &rustls::ServerName,
-        _scts: &mut dyn Iterator<Item = &[u8]>,
-        _ocsp_response: &[u8],
-        _now: std::time::SystemTime,
-    ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::ServerCertVerified::assertion())
-    }
-}
 
 pub fn get_client_config(keypair: &Keypair) -> ClientConfig {
     let (cert, key) = new_dummy_x509_certificate(keypair);
 
     let mut crypto = rustls::ClientConfig::builder()
-        .with_safe_defaults()
+        .dangerous()
         .with_custom_certificate_verifier(SkipServerVerification::new())
         .with_client_auth_cert(vec![cert], key)
-        .expect("Provided key should be correctly set.");
+        .expect("Failed to use client certificate");
 
     crypto.enable_early_data = true;
     crypto.alpn_protocols = vec![ALPN_TPU_PROTOCOL_ID.to_vec()];
 
-    let mut config = ClientConfig::new(Arc::new(crypto));
+    let mut config = ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto).unwrap()));
 
     let mut transport_config = TransportConfig::default();
     let timeout = IdleTimeout::try_from(QUIC_MAX_TIMEOUT).unwrap();
@@ -76,7 +58,7 @@ pub struct TestServerConfig {
     pub max_staked_connections: usize,
     pub max_unstaked_connections: usize,
     pub max_streams_per_ms: u64,
-    pub max_connections_per_ipaddr_per_minute: u64,
+    pub max_connections_per_ipaddr_per_min: u64,
 }
 
 impl Default for TestServerConfig {
@@ -86,7 +68,7 @@ impl Default for TestServerConfig {
             max_staked_connections: MAX_STAKED_CONNECTIONS,
             max_unstaked_connections: MAX_UNSTAKED_CONNECTIONS,
             max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS,
-            max_connections_per_ipaddr_per_minute: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
+            max_connections_per_ipaddr_per_min: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
         }
     }
 }
@@ -101,47 +83,59 @@ pub struct SpawnTestServerResult {
 
 pub fn setup_quic_server(
     option_staked_nodes: Option<StakedNodes>,
-    TestServerConfig {
-        max_connections_per_peer,
-        max_staked_connections,
-        max_unstaked_connections,
-        max_streams_per_ms,
-        max_connections_per_ipaddr_per_minute,
-    }: TestServerConfig,
+    config: TestServerConfig,
 ) -> SpawnTestServerResult {
     let sockets = {
         #[cfg(not(target_os = "windows"))]
         {
-            use std::{
-                os::fd::{FromRawFd, IntoRawFd},
-                str::FromStr as _,
+            use {
+                solana_net_utils::bind_to,
+                std::net::{IpAddr, Ipv4Addr},
             };
             (0..10)
                 .map(|_| {
-                    let sock = socket2::Socket::new(
-                        socket2::Domain::IPV4,
-                        socket2::Type::DGRAM,
-                        Some(socket2::Protocol::UDP),
+                    bind_to(
+                        IpAddr::V4(Ipv4Addr::LOCALHOST),
+                        /*port*/ 0,
+                        /*reuseport:*/ true,
                     )
-                    .unwrap();
-                    sock.set_reuse_port(true).unwrap();
-                    sock.bind(&SocketAddr::from_str("127.0.0.1:0").unwrap().into())
-                        .unwrap();
-                    unsafe { UdpSocket::from_raw_fd(sock.into_raw_fd()) }
+                    .unwrap()
                 })
                 .collect::<Vec<_>>()
         }
         #[cfg(target_os = "windows")]
         {
-            vec![UdpSocket::bind("127.0.0.1:0").unwrap()]
+            vec![bind_to_localhost().unwrap()]
         }
     };
+    setup_quic_server_with_sockets(sockets, option_staked_nodes, config)
+}
 
+pub fn setup_quic_server_with_sockets(
+    sockets: Vec<UdpSocket>,
+    option_staked_nodes: Option<StakedNodes>,
+    TestServerConfig {
+        max_connections_per_peer,
+        max_staked_connections,
+        max_unstaked_connections,
+        max_streams_per_ms,
+        max_connections_per_ipaddr_per_min,
+    }: TestServerConfig,
+) -> SpawnTestServerResult {
     let exit = Arc::new(AtomicBool::new(false));
     let (sender, receiver) = unbounded();
     let keypair = Keypair::new();
     let server_address = sockets[0].local_addr().unwrap();
     let staked_nodes = Arc::new(RwLock::new(option_staked_nodes.unwrap_or_default()));
+    let quic_server_params = QuicServerParams {
+        max_connections_per_peer,
+        max_staked_connections,
+        max_unstaked_connections,
+        max_streams_per_ms,
+        max_connections_per_ipaddr_per_min,
+        wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
+        coalesce: DEFAULT_TPU_COALESCE,
+    };
     let SpawnNonBlockingServerResult {
         endpoints: _,
         stats,
@@ -153,14 +147,8 @@ pub fn setup_quic_server(
         &keypair,
         sender,
         exit.clone(),
-        max_connections_per_peer,
         staked_nodes,
-        max_staked_connections,
-        max_unstaked_connections,
-        max_streams_per_ms,
-        max_connections_per_ipaddr_per_minute,
-        Duration::from_secs(2),
-        DEFAULT_TPU_COALESCE,
+        quic_server_params,
     )
     .unwrap();
     SpawnTestServerResult {
@@ -176,7 +164,7 @@ pub async fn make_client_endpoint(
     addr: &SocketAddr,
     client_keypair: Option<&Keypair>,
 ) -> Connection {
-    let client_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let client_socket = bind_to_localhost().unwrap();
     let mut endpoint = quinn::Endpoint::new(
         EndpointConfig::default(),
         None,

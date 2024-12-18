@@ -1,4 +1,4 @@
-use {crate::replay_stage::DUPLICATE_THRESHOLD, solana_sdk::feature_set};
+use crate::replay_stage::DUPLICATE_THRESHOLD;
 
 pub mod fork_choice;
 pub mod heaviest_subtree_fork_choice;
@@ -239,7 +239,7 @@ pub(crate) enum BlockhashStatus {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "H6T5A66kgJYANFXVrUprxV76WD5ce7Gf62q9SiBC2uYk")
+    frozen_abi(digest = "9ziHa1vA7WG5RCvXiE3g1f2qjSTNa47FB7e2czo7en7a")
 )]
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct Tower {
@@ -590,11 +590,19 @@ impl Tower {
     pub fn record_bank_vote(&mut self, bank: &Bank) -> Option<Slot> {
         // Returns the new root if one is made after applying a vote for the given bank to
         // `self.vote_state`
+        let block_id = bank.block_id().unwrap_or_else(|| {
+            // This can only happen for our leader bank
+            // Note: since the new shred format is yet to be rolled out to all clusters,
+            // this can also happen for non-leader banks. Once rolled out we can assert
+            // here that this is our leader bank.
+            Hash::default()
+        });
         self.record_bank_vote_and_update_lockouts(
             bank.slot(),
             bank.hash(),
             bank.feature_set
-                .is_active(&feature_set::enable_tower_sync_ix::id()),
+                .is_active(&solana_feature_set::enable_tower_sync_ix::id()),
+            block_id,
         )
     }
 
@@ -604,6 +612,7 @@ impl Tower {
         &mut self,
         vote_hash: Hash,
         enable_tower_sync_ix: bool,
+        block_id: Hash,
     ) {
         let mut new_vote = if enable_tower_sync_ix {
             VoteTransaction::from(TowerSync::new(
@@ -614,7 +623,7 @@ impl Tower {
                     .collect(),
                 self.vote_state.root_slot,
                 vote_hash,
-                Hash::default(), // TODO: block_id will fill in upcoming pr
+                block_id,
             ))
         } else {
             VoteTransaction::from(VoteStateUpdate::new(
@@ -637,6 +646,7 @@ impl Tower {
         vote_slot: Slot,
         vote_hash: Hash,
         enable_tower_sync_ix: bool,
+        block_id: Hash,
     ) -> Option<Slot> {
         trace!("{} record_vote for {}", self.node_pubkey, vote_slot);
         let old_root = self.root();
@@ -649,7 +659,7 @@ impl Tower {
                 vote_slot, vote_hash, result
             );
         }
-        self.update_last_vote_from_vote_state(vote_hash, enable_tower_sync_ix);
+        self.update_last_vote_from_vote_state(vote_hash, enable_tower_sync_ix, block_id);
 
         let new_root = self.root();
 
@@ -667,10 +677,10 @@ impl Tower {
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn record_vote(&mut self, slot: Slot, hash: Hash) -> Option<Slot> {
-        self.record_bank_vote_and_update_lockouts(slot, hash, true)
+        self.record_bank_vote_and_update_lockouts(slot, hash, true, Hash::default())
     }
 
-    /// Used for tests
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn increase_lockout(&mut self, confirmation_count_increase: u32) {
         for vote in self.vote_state.votes.iter_mut() {
             vote.lockout
@@ -1238,6 +1248,27 @@ impl Tower {
         self.last_switch_threshold_check.is_none()
     }
 
+    // Optimistically skip the stake check if casting a vote would not increase
+    // the lockout at this threshold. This is because if you bounce back to
+    // voting on the main fork after not voting for a while, your latest vote
+    // might pop off a lot of the votes in the tower. The stake from these votes
+    // would have rolled up to earlier votes in the tower, which presumably
+    // could have helped us pass the threshold check. Worst case, we'll just
+    // recheck later without having increased lockouts.
+    fn optimistically_bypass_vote_stake_threshold_check(
+        vote_state_before_applying_vote: &VoteState,
+        threshold_vote: &Lockout,
+    ) -> bool {
+        for old_vote in &vote_state_before_applying_vote.votes {
+            if old_vote.slot() == threshold_vote.slot()
+                && old_vote.confirmation_count() == threshold_vote.confirmation_count()
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Checks a single vote threshold for `slot`
     fn check_vote_stake_threshold(
         threshold_vote: Option<&Lockout>,
@@ -1267,19 +1298,11 @@ impl Tower {
             fork_stake,
             total_stake
         );
-        for old_vote in &vote_state_before_applying_vote.votes {
-            if old_vote.slot() == threshold_vote.slot()
-                && old_vote.confirmation_count() == threshold_vote.confirmation_count()
-            {
-                // If you bounce back to voting on the main fork after not
-                // voting for a while, your latest vote N on the main fork
-                // might pop off a lot of the stake of votes in the tower.
-                // This stake would have rolled up to earlier votes in the
-                // tower, so skip the stake check.
-                return ThresholdDecision::PassedThreshold;
-            }
-        }
-        if lockout > threshold_size {
+        if Self::optimistically_bypass_vote_stake_threshold_check(
+            vote_state_before_applying_vote,
+            threshold_vote,
+        ) || lockout > threshold_size
+        {
             return ThresholdDecision::PassedThreshold;
         }
         ThresholdDecision::FailedThreshold(threshold_depth as u64, *fork_stake)

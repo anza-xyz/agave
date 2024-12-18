@@ -1,22 +1,24 @@
 #[allow(deprecated)]
-use solana_sdk::sysvar::{fees::Fees, recent_blockhashes::RecentBlockhashes};
+use solana_sysvar::{fees::Fees, recent_blockhashes::RecentBlockhashes};
 use {
     crate::invoke_context::InvokeContext,
     serde::de::DeserializeOwned,
-    solana_sdk::{
-        instruction::InstructionError,
-        pubkey::Pubkey,
-        sysvar::{
-            self, clock::Clock, epoch_rewards::EpochRewards, epoch_schedule::EpochSchedule,
-            last_restart_slot::LastRestartSlot, rent::Rent, slot_hashes::SlotHashes,
-            stake_history::StakeHistory, Sysvar, SysvarId,
-        },
-        transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
-    },
+    solana_clock::Clock,
+    solana_epoch_rewards::EpochRewards,
+    solana_epoch_schedule::EpochSchedule,
+    solana_instruction::error::InstructionError,
+    solana_last_restart_slot::LastRestartSlot,
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
+    solana_sdk_ids::sysvar,
+    solana_slot_hashes::SlotHashes,
+    solana_sysvar::{stake_history::StakeHistory, Sysvar},
+    solana_sysvar_id::SysvarId,
+    solana_transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
     solana_type_overrides::sync::Arc,
 };
 
-#[cfg(all(RUSTC_WITH_SPECIALIZATION, feature = "frozen-abi"))]
+#[cfg(feature = "frozen-abi")]
 impl ::solana_frozen_abi::abi_example::AbiExample for SysvarCache {
     fn example() -> Self {
         // SysvarCache is not Serialize so just rely on Default.
@@ -50,9 +52,9 @@ pub struct SysvarCache {
 
 // declare_deprecated_sysvar_id doesn't support const.
 // These sysvars are going away anyway.
-const FEES_ID: Pubkey = solana_sdk::pubkey!("SysvarFees111111111111111111111111111111111");
+const FEES_ID: Pubkey = Pubkey::from_str_const("SysvarFees111111111111111111111111111111111");
 const RECENT_BLOCKHASHES_ID: Pubkey =
-    solana_sdk::pubkey!("SysvarRecentB1ockHashes11111111111111111111");
+    Pubkey::from_str_const("SysvarRecentB1ockHashes11111111111111111111");
 
 impl SysvarCache {
     /// Overwrite a sysvar. For testing purposes only.

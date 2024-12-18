@@ -5,34 +5,16 @@ use {
         input_validators::is_url_or_moniker,
         keypair::{DefaultSigner, SignerIndex},
     },
-    solana_cli::{
-        cli::{DEFAULT_CONFIRM_TX_TIMEOUT_SECONDS, DEFAULT_RPC_TIMEOUT_SECONDS},
-        program_v4::ProgramV4CommandConfig,
-    },
+    solana_cli::cli::{CliConfig, DEFAULT_CONFIRM_TX_TIMEOUT_SECONDS, DEFAULT_RPC_TIMEOUT_SECONDS},
     solana_cli_config::{Config, ConfigInput},
-    solana_cli_output::OutputFormat,
     solana_rpc_client::rpc_client::RpcClient,
+    solana_rpc_client_api::config::RpcSendTransactionConfig,
     solana_sdk::{
         commitment_config,
         signature::{read_keypair_file, Keypair},
     },
     std::{error, sync::Arc, time::Duration},
 };
-
-pub(crate) struct RPCCommandConfig<'a>(pub ProgramV4CommandConfig<'a>);
-
-impl<'a> RPCCommandConfig<'a> {
-    pub fn new(client: &'a Client) -> Self {
-        Self(ProgramV4CommandConfig {
-            websocket_url: &client.websocket_url,
-            commitment: client.commitment,
-            payer: &client.cli_signers[0],
-            authority: &client.cli_signers[client.authority_signer_index],
-            output_format: &OutputFormat::Display,
-            use_quic: true,
-        })
-    }
-}
 
 pub(crate) struct Client {
     pub rpc_client: Arc<RpcClient>,
@@ -41,10 +23,21 @@ pub(crate) struct Client {
     websocket_url: String,
     commitment: commitment_config::CommitmentConfig,
     cli_signers: Vec<Keypair>,
-    authority_signer_index: SignerIndex,
+    pub authority_signer_index: SignerIndex,
+    send_transaction_config: RpcSendTransactionConfig,
 }
 
 impl Client {
+    pub fn get_cli_config(&'_ self) -> CliConfig<'_> {
+        CliConfig {
+            websocket_url: self.websocket_url.clone(),
+            commitment: self.commitment,
+            signers: vec![&self.cli_signers[0], &self.cli_signers[1]],
+            send_transaction_config: self.send_transaction_config,
+            ..CliConfig::default()
+        }
+    }
+
     fn get_keypair(
         matches: &ArgMatches<'_>,
         config_path: &str,
@@ -64,6 +57,13 @@ impl Client {
         App::new(name)
             .about(about)
             .version(version)
+            .arg(
+                Arg::with_name("skip_preflight")
+                    .long("skip-preflight")
+                    .global(true)
+                    .takes_value(false)
+                    .help("Skip the preflight check when sending transactions"),
+            )
             .arg(
                 Arg::with_name("config_file")
                     .short("C")
@@ -208,6 +208,8 @@ impl Client {
         let server_url =
             value_t!(matches, "server_url", String).unwrap_or(format!("http://0.0.0.0:{}", port));
 
+        let skip_preflight = matches.is_present("skip_preflight");
+
         Ok(Client {
             rpc_client: Arc::new(RpcClient::new_with_timeouts_and_commitment(
                 json_rpc_url.to_string(),
@@ -221,6 +223,11 @@ impl Client {
             commitment,
             cli_signers: vec![payer_keypair, authority_keypair],
             authority_signer_index: 1,
+            send_transaction_config: RpcSendTransactionConfig {
+                skip_preflight,
+                preflight_commitment: Some(commitment.commitment),
+                ..RpcSendTransactionConfig::default()
+            },
         })
     }
 }

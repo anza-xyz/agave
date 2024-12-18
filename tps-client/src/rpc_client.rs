@@ -1,5 +1,6 @@
 use {
     crate::{TpsClient, TpsClientError, TpsClientResult},
+    solana_client::rpc_config::RpcSendTransactionConfig,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::config::RpcBlockConfig,
     solana_sdk::{
@@ -18,7 +19,15 @@ use {
 
 impl TpsClient for RpcClient {
     fn send_transaction(&self, transaction: Transaction) -> TpsClientResult<Signature> {
-        RpcClient::send_transaction(self, &transaction).map_err(|err| err.into())
+        RpcClient::send_transaction_with_config(
+            self,
+            &transaction,
+            RpcSendTransactionConfig {
+                skip_preflight: true,
+                ..Default::default()
+            },
+        )
+        .map_err(|err| err.into())
     }
 
     fn send_batch(&self, transactions: Vec<Transaction>) -> TpsClientResult<()> {

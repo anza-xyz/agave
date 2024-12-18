@@ -61,10 +61,6 @@ impl SlotCacheInner {
         );
     }
 
-    pub fn get_all_pubkeys(&self) -> Vec<Pubkey> {
-        self.cache.iter().map(|item| *item.key()).collect()
-    }
-
     pub fn insert(&self, pubkey: &Pubkey, account: AccountSharedData) -> CachedAccount {
         let data_len = account.data().len() as u64;
         let item = Arc::new(CachedAccountInner {
@@ -217,7 +213,7 @@ impl AccountsCache {
             self
                 .cache
                 .entry(slot)
-                .or_insert(self.new_inner())
+                .or_insert_with(|| self.new_inner())
                 .clone());
 
         slot_cache.insert(pubkey, account)
@@ -263,20 +259,13 @@ impl AccountsCache {
     }
 
     pub fn cached_frozen_slots(&self) -> Vec<Slot> {
-        let mut slots: Vec<_> = self
-            .cache
+        self.cache
             .iter()
             .filter_map(|item| {
                 let (slot, slot_cache) = item.pair();
-                if slot_cache.is_frozen() {
-                    Some(*slot)
-                } else {
-                    None
-                }
+                slot_cache.is_frozen().then_some(*slot)
             })
-            .collect();
-        slots.sort_unstable();
-        slots
+            .collect()
     }
 
     pub fn contains(&self, slot: Slot) -> bool {

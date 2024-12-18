@@ -1,0 +1,32 @@
+[package]
+name = "solana-builtins"
+description = "Solana builtin programs"
+documentation = "https://docs.rs/solana-builtins"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[features]
+dev-context-only-utils = []
+
+[dependencies]
+solana-address-lookup-table-program = { workspace = true }
+solana-bpf-loader-program = { workspace = true }
+solana-compute-budget-program = { workspace = true }
+solana-config-program = { workspace = true }
+solana-feature-set = { workspace = true }
+solana-loader-v4-program = { workspace = true }
+solana-program-runtime = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-stake-program = { workspace = true }
+solana-system-program = { workspace = true }
+solana-vote-program = { workspace = true }
+solana-zk-elgamal-proof-program = { workspace = true }
+solana-zk-token-proof-program = { workspace = true }
+
+[lints]
+workspace = true

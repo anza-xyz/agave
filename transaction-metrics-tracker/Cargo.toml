@@ -16,9 +16,16 @@ bincode = { workspace = true }
 lazy_static = { workspace = true }
 log = { workspace = true }
 rand = { workspace = true }
+solana-packet = { workspace = true }
 solana-perf = { workspace = true }
-solana-sdk = { workspace = true }
 solana-short-vec = { workspace = true }
+solana-signature = { workspace = true }
+
+[dev-dependencies]
+solana-hash = { workspace = true }
+solana-keypair = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
+solana-system-transaction = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

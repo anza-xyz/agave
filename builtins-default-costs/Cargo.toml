@@ -17,9 +17,13 @@ solana-address-lookup-table-program = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
 solana-compute-budget-program = { workspace = true }
 solana-config-program = { workspace = true }
-solana-frozen-abi = { workspace = true, optional = true }
+solana-feature-set = { workspace = true }
+solana-frozen-abi = { workspace = true, optional = true, features = [
+    "frozen-abi",
+] }
 solana-loader-v4-program = { workspace = true }
-solana-sdk = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-sdk-ids = { workspace = true }
 solana-stake-program = { workspace = true }
 solana-system-program = { workspace = true }
 solana-vote-program = { workspace = true }
@@ -31,19 +35,17 @@ name = "solana_builtins_default_costs"
 
 [dev-dependencies]
 rand = "0.8.5"
+static_assertions = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
-[build-dependencies]
-rustc_version = { workspace = true, optional = true }
-
 [features]
 frozen-abi = [
-    "dep:rustc_version",
     "dep:solana-frozen-abi",
     "solana-vote-program/frozen-abi",
 ]
+dev-context-only-utils = []
 
 [lints]
 workspace = true

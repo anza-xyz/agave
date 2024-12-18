@@ -1,6 +1,6 @@
 use {
     base64::{display::Base64Display, prelude::BASE64_STANDARD},
-    std::fmt,
+    std::{fmt, str},
 };
 
 /// A 16-bit, 1024 element lattice-based incremental hash based on blake3
@@ -14,15 +14,21 @@ pub struct LtHash(pub [u16; LtHash::NUM_ELEMENTS]);
 impl LtHash {
     pub const NUM_ELEMENTS: usize = 1024;
 
+    /// Returns the identity value for LtHash
+    #[must_use]
+    pub const fn identity() -> Self {
+        Self([0; Self::NUM_ELEMENTS])
+    }
+
     /// Creates a new LtHash from `hasher`
     ///
     /// The caller should hash in all inputs of interest prior to calling.
     #[must_use]
     pub fn with(hasher: &blake3::Hasher) -> Self {
         let mut reader = hasher.finalize_xof();
-        let mut inner = [0; Self::NUM_ELEMENTS];
-        reader.fill(bytemuck::must_cast_slice_mut(inner.as_mut_slice()));
-        Self(inner)
+        let mut new = Self::identity();
+        reader.fill(bytemuck::must_cast_slice_mut(new.0.as_mut_slice()));
+        new
     }
 
     /// Mixes `other` into `self`
@@ -71,8 +77,14 @@ impl Checksum {
 
 impl fmt::Display for Checksum {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let base64 = Base64Display::new(&self.0, &BASE64_STANDARD);
-        write!(f, "{base64}")
+        /// Maximum string length of a base58 encoded Checksum.
+        const MAX_BASE58_LEN: usize = 44;
+        let mut buf = [0u8; MAX_BASE58_LEN];
+        // SAFETY: The only error is if the buffer is too small
+        let len = bs58::encode(&self.0).onto(buf.as_mut_slice()).unwrap();
+        // SAFETY: The base58 alphabet is utf8
+        let str = str::from_utf8(&buf[..len]).unwrap();
+        write!(f, "{str}")
     }
 }
 
@@ -85,12 +97,8 @@ mod tests {
     };
 
     impl LtHash {
-        const fn new_zeroed() -> Self {
-            Self([0; Self::NUM_ELEMENTS])
-        }
-
         fn new_random() -> Self {
-            let mut new = Self::new_zeroed();
+            let mut new = Self::identity();
             thread_rng().fill(&mut new.0);
             new
         }
@@ -112,12 +120,23 @@ mod tests {
         }
     }
 
+    impl Copy for LtHash {}
+
+    // Ensure that if you mix-in or mix-out with the identity, you get the original value
+    #[test]
+    fn test_identity() {
+        let a = LtHash::new_random();
+        assert_eq!(a, a + LtHash::identity());
+        assert_eq!(a, a - LtHash::identity());
+    }
+
     // Ensure that if you mix-in then mix-out a hash, you get the original value
     #[test]
     fn test_inverse() {
         let a = LtHash::new_random();
         let b = LtHash::new_random();
-        assert_eq!(a.clone(), a.clone() + b.clone() - b.clone());
+        assert_eq!(a, a + b - b);
+        assert_eq!(a, a - b + b);
     }
 
     // Ensure that mixing is commutative
@@ -125,7 +144,7 @@ mod tests {
     fn test_commutative() {
         let a = LtHash::new_random();
         let b = LtHash::new_random();
-        assert_eq!(a.clone() + b.clone(), b.clone() + a.clone());
+        assert_eq!(a + b, b + a);
     }
 
     // Ensure that mixing is associative
@@ -134,10 +153,17 @@ mod tests {
         let a = LtHash::new_random();
         let b = LtHash::new_random();
         let c = LtHash::new_random();
-        assert_eq!(
-            (a.clone() + b.clone()) + c.clone(),
-            a.clone() + (b.clone() + c.clone()),
-        );
+        assert_eq!((a + b) + c, a + (b + c));
+    }
+
+    // Ensure that mixing out respects distribution
+    #[test]
+    fn test_distribute() {
+        let a = LtHash::new_random();
+        let b = LtHash::new_random();
+        let c = LtHash::new_random();
+        let d = LtHash::new_random();
+        assert_eq!(a - b - c - d, a - (b + c + d));
     }
 
     // Ensure the correct lattice hash and checksum values are produced
@@ -356,5 +382,13 @@ mod tests {
             let actual_checksum = actual_lt_hash.checksum();
             assert_eq!(actual_checksum, expected_checksum);
         }
+    }
+
+    #[test]
+    fn test_checksum_display() {
+        let lt_hash = LtHash::identity();
+        let checksum = lt_hash.checksum();
+        let str = checksum.to_string();
+        assert_eq!(str.as_str(), "DoL6fvKuTpTQCyUh83NxQw2ewKzWYtq9gsTKp1eQiGC2");
     }
 }

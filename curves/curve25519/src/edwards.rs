@@ -63,7 +63,10 @@ mod target_arch {
         type Error = Curve25519Error;
 
         fn try_from(pod: &PodEdwardsPoint) -> Result<Self, Self::Error> {
-            CompressedEdwardsY::from_slice(&pod.0)
+            let Ok(compressed_edwards_y) = CompressedEdwardsY::from_slice(&pod.0) else {
+                return Err(Curve25519Error::PodConversion);
+            };
+            compressed_edwards_y
                 .decompress()
                 .ok_or(Curve25519Error::PodConversion)
         }
@@ -73,9 +76,10 @@ mod target_arch {
         type Point = Self;
 
         fn validate_point(&self) -> bool {
-            CompressedEdwardsY::from_slice(&self.0)
-                .decompress()
-                .is_some()
+            let Ok(compressed_edwards_y) = CompressedEdwardsY::from_slice(&self.0) else {
+                return false;
+            };
+            compressed_edwards_y.decompress().is_some()
         }
     }
 
@@ -144,7 +148,7 @@ mod target_arch {
     pub fn validate_edwards(point: &PodEdwardsPoint) -> bool {
         let mut validate_result = 0u8;
         let result = unsafe {
-            solana_program::syscalls::sol_curve_validate_point(
+            solana_define_syscall::definitions::sol_curve_validate_point(
                 CURVE25519_EDWARDS,
                 &point.0 as *const u8,
                 &mut validate_result,
@@ -159,7 +163,7 @@ mod target_arch {
     ) -> Option<PodEdwardsPoint> {
         let mut result_point = PodEdwardsPoint::zeroed();
         let result = unsafe {
-            solana_program::syscalls::sol_curve_group_op(
+            solana_define_syscall::definitions::sol_curve_group_op(
                 CURVE25519_EDWARDS,
                 ADD,
                 &left_point.0 as *const u8,
@@ -181,7 +185,7 @@ mod target_arch {
     ) -> Option<PodEdwardsPoint> {
         let mut result_point = PodEdwardsPoint::zeroed();
         let result = unsafe {
-            solana_program::syscalls::sol_curve_group_op(
+            solana_define_syscall::definitions::sol_curve_group_op(
                 CURVE25519_EDWARDS,
                 SUB,
                 &left_point.0 as *const u8,
@@ -203,7 +207,7 @@ mod target_arch {
     ) -> Option<PodEdwardsPoint> {
         let mut result_point = PodEdwardsPoint::zeroed();
         let result = unsafe {
-            solana_program::syscalls::sol_curve_group_op(
+            solana_define_syscall::definitions::sol_curve_group_op(
                 CURVE25519_EDWARDS,
                 MUL,
                 &scalar.0 as *const u8,
@@ -225,7 +229,7 @@ mod target_arch {
     ) -> Option<PodEdwardsPoint> {
         let mut result_point = PodEdwardsPoint::zeroed();
         let result = unsafe {
-            solana_program::syscalls::sol_curve_multiscalar_mul(
+            solana_define_syscall::definitions::sol_curve_multiscalar_mul(
                 CURVE25519_EDWARDS,
                 scalars.as_ptr() as *const u8,
                 points.as_ptr() as *const u8,

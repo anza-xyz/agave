@@ -11,15 +11,14 @@ use {
         account_info::{AccountInfo, StorageLocation},
         accounts::{AccountAddressFilter, Accounts},
         accounts_db::{
-            test_utils::create_test_accounts, AccountFromStorage, AccountShrinkThreshold,
-            AccountsDb, VerifyAccountsHashAndLamportsConfig, ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS,
+            test_utils::create_test_accounts, AccountFromStorage, AccountsDb,
+            VerifyAccountsHashAndLamportsConfig, ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS,
         },
-        accounts_index::{AccountSecondaryIndexes, ScanConfig},
+        accounts_index::ScanConfig,
         ancestors::Ancestors,
     },
     solana_sdk::{
         account::{Account, AccountSharedData, ReadableAccount},
-        genesis_config::ClusterType,
         hash::Hash,
         pubkey::Pubkey,
         rent_collector::RentCollector,
@@ -37,9 +36,6 @@ use {
 fn new_accounts_db(account_paths: Vec<PathBuf>) -> AccountsDb {
     AccountsDb::new_with_config(
         account_paths,
-        &ClusterType::Development,
-        AccountSecondaryIndexes::default(),
-        AccountShrinkThreshold::default(),
         Some(ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS),
         None,
         Arc::default(),

@@ -7,14 +7,6 @@ pub mod instruction;
 pub mod state;
 
 pub mod program {
-    crate::declare_id!("AddressLookupTab1e1111111111111111111111111");
+    pub use solana_sdk_ids::address_lookup_table::{check_id, id, ID};
 }
-
-/// The definition of address lookup table accounts.
-///
-/// As used by the `crate::message::v0` message format.
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct AddressLookupTableAccount {
-    pub key: crate::pubkey::Pubkey,
-    pub addresses: Vec<crate::pubkey::Pubkey>,
-}
+pub use crate::message::AddressLookupTableAccount;
