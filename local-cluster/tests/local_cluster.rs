@@ -2671,7 +2671,7 @@ fn test_oc_bad_signatures() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
 
     let total_stake = 100 * DEFAULT_NODE_STAKE;
-    let leader_stake = (total_stake as f64 * VOTE_THRESHOLD_SIZE) as u64;
+    let leader_stake = (total_stake as f64 * VOTE_THRESHOLD_SIZE) as u64 + 1;
     let our_node_stake = total_stake - leader_stake;
     let node_stakes = vec![leader_stake, our_node_stake];
     let mut validator_config = ValidatorConfig {
@@ -2711,7 +2711,6 @@ fn test_oc_bad_signatures() {
 
     // 3) Start up a spy to listen for and push votes to leader TPU
     let client = cluster.build_tpu_quic_client().unwrap();
-    let cluster_funding_keypair = cluster.funding_keypair.insecure_clone();
     let voter_thread_sleep_ms: usize = 100;
     let num_votes_simulated = Arc::new(AtomicUsize::new(0));
     let gossip_voter = cluster_tests::start_gossip_voter(
@@ -2757,7 +2756,7 @@ fn test_oc_bad_signatures() {
                 );
                 LocalCluster::send_transaction_with_retries(
                     &client,
-                    &[&cluster_funding_keypair],
+                    &[&node_keypair, &bad_authorized_signer_keypair],
                     &mut vote_tx,
                     5,
                     0,
