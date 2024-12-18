@@ -14,10 +14,21 @@ edition = { workspace = true }
 [dev-dependencies]
 assert_matches = { workspace = true }
 bincode = { workspace = true }
+criterion = { workspace = true }
+solana-account = { workspace = true }
 solana-address-lookup-table-program = { workspace = true }
 solana-feature-set = { workspace = true }
+solana-instruction = { workspace = true }
+solana-program-runtime = { workspace = true }
 solana-program-test = { workspace = true }
+solana-pubkey = { workspace = true }
 solana-sdk = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-system-program = { workspace = true }
+
+[[bench]]
+name = "address_lookup_table"
+harness = false
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

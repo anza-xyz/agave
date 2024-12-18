@@ -6061,10 +6061,17 @@ version = "2.2.0"
 dependencies = [
  "assert_matches",
  "bincode",
+ "criterion",
+ "solana-account",
  "solana-address-lookup-table-program",
  "solana-feature-set",
+ "solana-instruction",
+ "solana-program-runtime",
  "solana-program-test",
+ "solana-pubkey",
  "solana-sdk",
+ "solana-sdk-ids",
+ "solana-system-program",
 ]
 
 [[package]]
