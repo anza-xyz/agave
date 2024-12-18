@@ -169,7 +169,9 @@ impl<const SANITIZED: bool, D: TransactionData> TransactionView<SANITIZED, D> {
 // Implementation that relies on sanitization checks having been run.
 impl<D: TransactionData> TransactionView<true, D> {
     /// Return an iterator over the instructions paired with their program ids.
-    pub fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> {
+    pub fn program_instructions_iter(
+        &self,
+    ) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> + Clone {
         self.instructions_iter().map(|ix| {
             let program_id_index = usize::from(ix.program_id_index);
             let program_id = &self.static_account_keys()[program_id_index];
