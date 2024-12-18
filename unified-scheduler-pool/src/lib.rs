@@ -22,6 +22,7 @@ use {
     },
     solana_poh::poh_recorder::{RecordTransactionsSummary, TransactionRecorder},
     solana_runtime::{
+        bank::PreCommitCallbackFailed,
         installed_scheduler_pool::{
             initialized_result_with_timings, InstalledScheduler, InstalledSchedulerBox,
             InstalledSchedulerPool, InstalledSchedulerPoolArc, ResultWithTimings, ScheduleResult,
@@ -474,7 +475,10 @@ impl TaskHandler for DefaultTaskHandler {
                     .as_ref()
                     .unwrap()
                     .record_transactions(bank.slot(), vec![transaction.to_versioned_transaction()]);
-                result.ok().map(|()| starting_transaction_index)
+                match result {
+                    Ok(()) => Ok(starting_transaction_index),
+                    Err(_) => Err(PreCommitCallbackFailed),
+                }
             }),
         };
 

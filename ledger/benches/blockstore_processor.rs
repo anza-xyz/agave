@@ -12,7 +12,7 @@ use {
         genesis_utils::{create_genesis_config, GenesisConfigInfo},
     },
     solana_runtime::{
-        bank::Bank,
+        bank::{Bank, PreCommitCallbackResult},
         bank_forks::BankForks,
         prioritization_fee_cache::PrioritizationFeeCache,
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
@@ -162,7 +162,7 @@ fn bench_execute_batch(
                 &mut timing,
                 None,
                 &prioritization_fee_cache,
-                None::<fn() -> Option<Option<usize>>>,
+                None::<fn() -> PreCommitCallbackResult<Option<usize>>>,
             );
         }
     });
