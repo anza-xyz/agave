@@ -8,9 +8,7 @@ use {
     crate::banking_stage::{
         consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
         read_write_account_set::ReadWriteAccountSet,
-        scheduler_messages::{
-            ConsumeWork, FinishedConsumeWork, MaxAge, TransactionBatchId, TransactionId,
-        },
+        scheduler_messages::{ConsumeWork, MaxAge, TransactionBatchId, TransactionId},
         transaction_scheduler::{
             transaction_priority_id::TransactionPriorityId, transaction_state::TransactionState,
             transaction_state_container::StateContainer,
@@ -63,7 +61,7 @@ pub(crate) struct PrioGraphScheduler<Tx> {
     in_flight_tracker: InFlightTracker,
     account_locks: ThreadAwareAccountLocks,
     consume_work_senders: Vec<Sender<ConsumeWork<Tx>>>,
-    finished_consume_work_receiver: Receiver<FinishedConsumeWork<Tx>>,
+    finished_consume_work_receiver: Receiver<ConsumeWork<Tx>>,
     prio_graph: SchedulerPrioGraph,
     config: PrioGraphSchedulerConfig,
 }
@@ -71,7 +69,7 @@ pub(crate) struct PrioGraphScheduler<Tx> {
 impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
     pub(crate) fn new(
         consume_work_senders: Vec<Sender<ConsumeWork<Tx>>>,
-        finished_consume_work_receiver: Receiver<FinishedConsumeWork<Tx>>,
+        finished_consume_work_receiver: Receiver<ConsumeWork<Tx>>,
         config: PrioGraphSchedulerConfig,
     ) -> Self {
         let num_threads = consume_work_senders.len();
@@ -344,14 +342,11 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
         container: &mut impl StateContainer<Tx>,
     ) -> Result<(usize, usize), SchedulerError> {
         match self.finished_consume_work_receiver.try_recv() {
-            Ok(FinishedConsumeWork {
-                work:
-                    ConsumeWork {
-                        batch_id,
-                        ids,
-                        transactions,
-                        max_ages,
-                    },
+            Ok(ConsumeWork {
+                batch_id,
+                ids,
+                transactions,
+                max_ages,
                 retryable_indexes,
             }) => {
                 let num_transactions = ids.len();
@@ -436,11 +431,13 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
             .track_batch(ids.len(), total_cus, thread_index);
 
         let num_scheduled = ids.len();
+        let retryable_indexes = Vec::with_capacity(transactions.len());
         let work = ConsumeWork {
             batch_id,
             ids,
             transactions,
             max_ages,
+            retryable_indexes,
         };
         self.consume_work_senders[thread_index]
             .send(work)
@@ -653,7 +650,7 @@ mod tests {
     ) -> (
         PrioGraphScheduler<RuntimeTransaction<SanitizedTransaction>>,
         Vec<Receiver<ConsumeWork<RuntimeTransaction<SanitizedTransaction>>>>,
-        Sender<FinishedConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
+        Sender<ConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
     ) {
         let (consume_work_senders, consume_work_receivers) =
             (0..num_threads).map(|_| unbounded()).unzip();
@@ -891,10 +888,7 @@ mod tests {
 
         // Complete batch on thread 0. Remaining txs can be scheduled onto thread 1
         finished_work_sender
-            .send(FinishedConsumeWork {
-                work: thread_0_work.into_iter().next().unwrap(),
-                retryable_indexes: vec![],
-            })
+            .send(thread_0_work.into_iter().next().unwrap())
             .unwrap();
         scheduler.receive_completed(&mut container).unwrap();
         let scheduling_summary = scheduler

@@ -439,7 +439,7 @@ mod tests {
             banking_stage::{
                 consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
                 packet_deserializer::PacketDeserializer,
-                scheduler_messages::{ConsumeWork, FinishedConsumeWork, TransactionBatchId},
+                scheduler_messages::{ConsumeWork, TransactionBatchId},
                 tests::create_slow_genesis_config,
                 transaction_scheduler::{
                     prio_graph_scheduler::PrioGraphSchedulerConfig,
@@ -492,8 +492,7 @@ mod tests {
 
         consume_work_receivers:
             Vec<Receiver<ConsumeWork<RuntimeTransaction<SanitizedTransaction>>>>,
-        finished_consume_work_sender:
-            Sender<FinishedConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
+        finished_consume_work_sender: Sender<ConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
     }
 
     #[allow(clippy::type_complexity)]
@@ -631,13 +630,11 @@ mod tests {
         } = &test_frame;
 
         finished_consume_work_sender
-            .send(FinishedConsumeWork {
-                work: ConsumeWork {
-                    batch_id: TransactionBatchId::new(0),
-                    ids: vec![],
-                    transactions: vec![],
-                    max_ages: vec![],
-                },
+            .send(ConsumeWork {
+                batch_id: TransactionBatchId::new(0),
+                ids: vec![],
+                transactions: vec![],
+                max_ages: vec![],
                 retryable_indexes: vec![],
             })
             .unwrap();
@@ -937,7 +934,7 @@ mod tests {
             .unwrap();
 
         test_receive_then_schedule(&mut scheduler_controller);
-        let consume_work = consume_work_receivers[0].try_recv().unwrap();
+        let mut consume_work = consume_work_receivers[0].try_recv().unwrap();
         assert_eq!(consume_work.ids.len(), 2);
         assert_eq!(consume_work.transactions.len(), 2);
         let message_hashes = consume_work
@@ -948,12 +945,8 @@ mod tests {
         assert_eq!(message_hashes, vec![&tx2_hash, &tx1_hash]);
 
         // Complete the batch - marking the second transaction as retryable
-        finished_consume_work_sender
-            .send(FinishedConsumeWork {
-                work: consume_work,
-                retryable_indexes: vec![1],
-            })
-            .unwrap();
+        consume_work.retryable_indexes.push(1);
+        finished_consume_work_sender.send(consume_work).unwrap();
 
         // Transaction should be rescheduled
         test_receive_then_schedule(&mut scheduler_controller);
