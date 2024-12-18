@@ -10,8 +10,10 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+boxcar = { workspace = true }
 bs58 = { workspace = true, features = ["alloc"] }
 bv = { workspace = true, features = ["serde"] }
+dashmap = { workspace = true }
 log = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["rc"] }
 serde_derive = { workspace = true }
