@@ -6389,29 +6389,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-builtins-default-costs"
-version = "2.2.0"
-dependencies = [
- "ahash 0.8.11",
- "lazy_static",
- "log",
- "rand 0.8.5",
- "solana-address-lookup-table-program",
- "solana-bpf-loader-program",
- "solana-compute-budget-program",
- "solana-config-program",
- "solana-feature-set",
- "solana-frozen-abi",
- "solana-loader-v4-program",
- "solana-pubkey",
- "solana-sdk-ids",
- "solana-stake-program",
- "solana-system-program",
- "solana-vote-program",
- "static_assertions",
-]
-
-[[package]]
 name = "solana-cargo-build-sbf"
 version = "2.2.0"
 dependencies = [

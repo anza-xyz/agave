@@ -14,7 +14,6 @@ update_solana_dependencies() {
     solana-banks-server
     solana-bloom
     solana-bucket-map
-    solana-builtins-default-costs
     solana-clap-utils
     solana-clap-v3-utils
     solana-cli-config
@@ -151,7 +150,6 @@ patch_crates_io_solana_no_header() {
   crates_map+=("solana-banks-server banks-server")
   crates_map+=("solana-bloom bloom")
   crates_map+=("solana-bucket-map bucket_map")
-  crates_map+=("solana-builtins-default-costs builtins-default-costs")
   crates_map+=("solana-clap-utils clap-utils")
   crates_map+=("solana-clap-v3-utils clap-v3-utils")
   crates_map+=("solana-cli-config cli-config")
