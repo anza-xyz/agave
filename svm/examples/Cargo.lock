@@ -7567,6 +7567,7 @@ name = "solana-udp-client"
 version = "2.2.0"
 dependencies = [
  "async-trait",
+ "itertools 0.12.1",
  "solana-connection-cache",
  "solana-keypair",
  "solana-net-utils",
