@@ -4994,6 +4994,7 @@ dependencies = [
  "solana-bpf-loader-program",
  "solana-compute-budget-program",
  "solana-config-program",
+ "solana-feature-set",
  "solana-loader-v4-program",
  "solana-sdk",
  "solana-stake-program",
