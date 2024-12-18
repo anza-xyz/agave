@@ -3073,7 +3073,7 @@ mod tests {
                     if transactions == vec![tx.to_versioned_transaction()]
             );
         } else {
-            assert_matches!(result, Err(TransactionError::CommitFailed));
+            assert_matches!(result, Err(TransactionError::CommitCancelled));
             assert_eq!(bank.transaction_count(), 0);
             assert_matches!(receiver.try_recv(), Err(_));
             assert_matches!(signal_receiver.try_recv(), Err(_));

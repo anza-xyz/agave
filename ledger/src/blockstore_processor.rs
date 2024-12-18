@@ -201,7 +201,7 @@ pub fn execute_batch(
             pre_commit_callback,
         )
     else {
-        return Err(TransactionError::CommitFailed);
+        return Err(TransactionError::CommitCancelled);
     };
 
     bank_utils::find_and_send_votes(
@@ -5120,7 +5120,7 @@ pub mod tests {
             assert_matches!(result, Ok(()));
             assert_eq!(bank.transaction_count(), 1);
         } else {
-            assert_matches!(result, Err(TransactionError::CommitFailed));
+            assert_matches!(result, Err(TransactionError::CommitCancelled));
             assert_eq!(bank.transaction_count(), 0);
         }
         if poh_with_index {
