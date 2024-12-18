@@ -61,6 +61,7 @@ use {
     solana_transaction_status::token_balances::TransactionTokenBalancesSet,
     solana_vote::vote_account::VoteAccountsHashMap,
     std::{
+        borrow::Cow,
         collections::{HashMap, HashSet},
         num::Saturating,
         ops::{Index, Range},
@@ -162,7 +163,7 @@ pub fn execute_batch(
         transaction_indexes,
     } = batch;
     let record_token_balances = transaction_status_sender.is_some();
-    let mut transaction_indexes = transaction_indexes.to_vec();
+    let mut transaction_indexes = Cow::from(transaction_indexes);
 
     let mut mint_decimals: HashMap<Pubkey, u8> = HashMap::new();
 
@@ -179,7 +180,7 @@ pub fn execute_batch(
                 .inspect(|&maybe_index| {
                     if let Some(index) = maybe_index {
                         assert!(transaction_indexes.is_empty());
-                        transaction_indexes.push(index);
+                        transaction_indexes.to_mut().push(index);
                     }
                 })
                 .is_some()
@@ -251,7 +252,7 @@ pub fn execute_batch(
             commit_results,
             balances,
             token_balances,
-            transaction_indexes,
+            transaction_indexes.into_owned(),
         );
     }
 
