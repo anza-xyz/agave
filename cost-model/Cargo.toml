@@ -15,7 +15,7 @@ lazy_static = { workspace = true }
 log = { workspace = true }
 solana-bincode = { workspace = true }
 solana-borsh = { workspace = true }
-solana-builtins-default-costs = { workspace = true }
+solana-builtins = { workspace = true }
 solana-clock = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-compute-budget-instruction = { workspace = true }

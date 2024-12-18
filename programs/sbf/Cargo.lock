@@ -5231,26 +5231,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-builtins-default-costs"
-version = "2.2.0"
-dependencies = [
- "ahash 0.8.11",
- "lazy_static",
- "log",
- "solana-address-lookup-table-program",
- "solana-bpf-loader-program",
- "solana-compute-budget-program",
- "solana-config-program",
- "solana-feature-set",
- "solana-loader-v4-program",
- "solana-pubkey",
- "solana-sdk-ids",
- "solana-stake-program",
- "solana-system-program",
- "solana-vote-program",
-]
-
-[[package]]
 name = "solana-clap-utils"
 version = "2.2.0"
 dependencies = [
@@ -5420,7 +5400,7 @@ name = "solana-compute-budget-instruction"
 version = "2.2.0"
 dependencies = [
  "log",
- "solana-builtins-default-costs",
+ "solana-builtins",
  "solana-compute-budget",
  "solana-pubkey",
  "solana-sdk",
@@ -5522,7 +5502,7 @@ dependencies = [
  "slab",
  "solana-accounts-db",
  "solana-bloom",
- "solana-builtins-default-costs",
+ "solana-builtins",
  "solana-client",
  "solana-compute-budget",
  "solana-compute-budget-instruction",
@@ -5583,7 +5563,7 @@ dependencies = [
  "log",
  "solana-bincode",
  "solana-borsh",
- "solana-builtins-default-costs",
+ "solana-builtins",
  "solana-clock",
  "solana-compute-budget",
  "solana-compute-budget-instruction",

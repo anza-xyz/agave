@@ -1,6 +1,6 @@
 // static account keys has max
 use {
-    crate::builtin_programs_filter::FILTER_SIZE, solana_builtins_default_costs::MAYBE_BUILTIN_KEY,
+    crate::builtin_programs_filter::FILTER_SIZE, solana_builtins::cost_modeling::MAYBE_BUILTIN_KEY,
     solana_sdk::pubkey::Pubkey,
 };
 

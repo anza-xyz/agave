@@ -9,7 +9,7 @@ use {
     crate::{block_cost_limits::*, transaction_cost::*},
     solana_bincode::limited_deserialize,
     solana_borsh::v1::try_from_slice_unchecked,
-    solana_builtins_default_costs::get_builtin_instruction_cost,
+    solana_builtins::cost_modeling::get_builtin_instruction_cost,
     solana_compute_budget::compute_budget_limits::{
         DEFAULT_HEAP_COST, DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_COMPUTE_UNIT_LIMIT,
     },
