@@ -360,6 +360,10 @@ impl TransactionBalancesSet {
 }
 pub type TransactionBalances = Vec<Vec<u64>>;
 
+#[derive(Clone, Copy, Debug)]
+pub struct PreCommitCallbackFailed;
+pub type PreCommitCallbackResult<T> = std::result::Result<T, PreCommitCallbackFailed>;
+
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub enum TransactionLogCollectorFilter {
     All,
@@ -4527,12 +4531,11 @@ impl Bank {
             recording_config,
             timings,
             log_messages_bytes_limit,
-            None::<fn() -> bool>,
+            None::<fn() -> PreCommitCallbackResult<()>>,
         )
         .unwrap()
     }
 
-    #[must_use]
     pub fn load_execute_and_commit_transactions_with_pre_commit_callback(
         &self,
         batch: &TransactionBatch<impl TransactionWithMeta>,
@@ -4541,8 +4544,8 @@ impl Bank {
         recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
-        pre_commit_callback: Option<impl FnOnce() -> bool>,
-    ) -> Option<(Vec<TransactionCommitResult>, TransactionBalancesSet)> {
+        pre_commit_callback: Option<impl FnOnce() -> PreCommitCallbackResult<()>>,
+    ) -> PreCommitCallbackResult<(Vec<TransactionCommitResult>, TransactionBalancesSet)> {
         let pre_balances = if collect_balances {
             self.collect_balances(batch)
         } else {
@@ -4571,8 +4574,8 @@ impl Bank {
         if let Some(pre_commit_callback) = pre_commit_callback {
             if let Some(e) = processing_results.first() {
                 assert_eq!(processing_results.len(), 1);
-                if e.is_ok() && !pre_commit_callback() {
-                    return None;
+                if e.is_ok() && pre_commit_callback().is_err() {
+                    return Err(PreCommitCallbackFailed);
                 }
             }
         }
@@ -4588,7 +4591,7 @@ impl Bank {
         } else {
             vec![]
         };
-        Some((
+        Ok((
             commit_results,
             TransactionBalancesSet::new(pre_balances, post_balances),
         ))
