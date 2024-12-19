@@ -52,7 +52,7 @@ use {
             calculate_stake_weighted_timestamp, MaxAllowableDrift,
             MAX_ALLOWABLE_DRIFT_PERCENTAGE_FAST, MAX_ALLOWABLE_DRIFT_PERCENTAGE_SLOW_V2,
         },
-        stakes::{InvalidCacheEntryReason, Stakes, StakesCache, StakesEnum},
+        stakes::{Stakes, StakesCache, StakesEnum},
         status_cache::{SlotDelta, StatusCache},
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
         verify_precompiles::verify_precompiles,
@@ -176,7 +176,6 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
     solana_timings::{ExecuteTimingType, ExecuteTimings},
     solana_vote::vote_account::{VoteAccount, VoteAccountsHashMap},
-    solana_vote_program::vote_state::VoteState,
     std::{
         collections::{HashMap, HashSet},
         convert::TryFrom,
@@ -946,22 +945,6 @@ pub struct Bank {
 
     /// Accounts stats for computing the bank hash
     bank_hash_stats: AtomicBankHashStats,
-}
-
-struct VoteWithStakeDelegations {
-    vote_state: Arc<VoteState>,
-    vote_account: AccountSharedData,
-    delegations: Vec<(Pubkey, StakeAccount<Delegation>)>,
-}
-
-type VoteWithStakeDelegationsMap = DashMap<Pubkey, VoteWithStakeDelegations>;
-
-type InvalidCacheKeyMap = DashMap<Pubkey, InvalidCacheEntryReason>;
-
-struct LoadVoteAndStakeAccountsResult {
-    vote_with_stake_delegations_map: VoteWithStakeDelegationsMap,
-    invalid_vote_keys: InvalidCacheKeyMap,
-    vote_accounts_cache_miss_count: usize,
 }
 
 #[derive(Debug)]

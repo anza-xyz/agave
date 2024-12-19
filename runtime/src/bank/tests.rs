@@ -15,6 +15,7 @@ use {
         },
         snapshot_bank_utils, snapshot_utils,
         stake_history::StakeHistory,
+        stakes::InvalidCacheEntryReason,
         status_cache::MAX_CACHE_ENTRIES,
     },
     agave_transaction_view::static_account_keys_frame::MAX_STATIC_ACCOUNTS_PER_PACKET,
@@ -1911,7 +1912,7 @@ impl Bank {
         &self,
         thread_pool: &ThreadPool,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
-    ) -> LoadVoteAndStakeAccountsResult {
+    ) -> StakeDelegationsMap {
         let stakes = self.stakes_cache.stakes();
         let stake_delegations = self.filter_stake_delegations(&stakes);
         // Obtain all unique voter pubkeys from stake delegations.
@@ -1964,25 +1965,20 @@ impl Bank {
                 invalid_vote_keys.insert(vote_pubkey, InvalidCacheEntryReason::WrongOwner);
                 return None;
             }
-            let vote_with_stake_delegations = VoteWithStakeDelegations {
-                vote_state: Arc::new(vote_account.vote_state().clone()),
-                vote_account: AccountSharedData::from(vote_account),
-                delegations: Vec::default(),
-            };
-            Some((vote_pubkey, vote_with_stake_delegations))
+            let stake_delegations = Vec::default();
+            Some((vote_pubkey, stake_delegations))
         };
-        let vote_with_stake_delegations_map: DashMap<Pubkey, VoteWithStakeDelegations> =
-            thread_pool.install(|| {
-                voter_pubkeys
-                    .into_par_iter()
-                    .filter_map(make_vote_delegations_entry)
-                    .collect()
-            });
+        let stake_delegations_map: DashMap<Pubkey, StakeDelegations> = thread_pool.install(|| {
+            voter_pubkeys
+                .into_par_iter()
+                .filter_map(make_vote_delegations_entry)
+                .collect()
+        });
         // Join stake accounts with vote-accounts.
         let push_stake_delegation = |(stake_pubkey, stake_account): (&Pubkey, &StakeAccount<_>)| {
             let delegation = stake_account.delegation();
             let Some(mut vote_delegations) =
-                vote_with_stake_delegations_map.get_mut(&delegation.voter_pubkey)
+                stake_delegations_map.get_mut(&delegation.voter_pubkey)
             else {
                 return;
             };
@@ -1993,25 +1989,24 @@ impl Bank {
                 reward_calc_tracer(&event);
             }
             let stake_delegation = (*stake_pubkey, stake_account.clone());
-            vote_delegations.delegations.push(stake_delegation);
+            vote_delegations.push(stake_delegation);
         };
         thread_pool.install(|| {
             stake_delegations
                 .into_par_iter()
                 .for_each(push_stake_delegation);
         });
-        LoadVoteAndStakeAccountsResult {
-            vote_with_stake_delegations_map,
-            invalid_vote_keys,
-            vote_accounts_cache_miss_count: vote_accounts_cache_miss_count.into_inner(),
-        }
+        stake_delegations_map
     }
 }
+
+type StakeDelegations = Vec<(Pubkey, StakeAccount<Delegation>)>;
+type StakeDelegationsMap = DashMap<Pubkey, StakeDelegations>;
 
 #[cfg(test)]
 fn check_bank_update_vote_stake_rewards<F>(load_vote_and_stake_accounts: F)
 where
-    F: Fn(&Bank) -> LoadVoteAndStakeAccountsResult,
+    F: Fn(&Bank) -> StakeDelegationsMap,
 {
     solana_logger::setup();
 
@@ -9329,7 +9324,7 @@ fn test_epoch_schedule_from_genesis_config() {
 
 fn check_stake_vote_account_validity<F>(check_owner_change: bool, load_vote_and_stake_accounts: F)
 where
-    F: Fn(&Bank) -> LoadVoteAndStakeAccountsResult,
+    F: Fn(&Bank) -> StakeDelegationsMap,
 {
     let validator_vote_keypairs0 = ValidatorVoteKeypairs::new_rand();
     let validator_vote_keypairs1 = ValidatorVoteKeypairs::new_rand();
@@ -9353,8 +9348,7 @@ where
         None,
         None,
     ));
-    let vote_and_stake_accounts =
-        load_vote_and_stake_accounts(&bank).vote_with_stake_delegations_map;
+    let vote_and_stake_accounts = load_vote_and_stake_accounts(&bank);
     assert_eq!(vote_and_stake_accounts.len(), 2);
 
     let mut vote_account = bank
@@ -9393,8 +9387,7 @@ where
     );
 
     // Accounts must be valid stake and vote accounts
-    let vote_and_stake_accounts =
-        load_vote_and_stake_accounts(&bank).vote_with_stake_delegations_map;
+    let vote_and_stake_accounts = load_vote_and_stake_accounts(&bank);
     assert_eq!(
         vote_and_stake_accounts.len(),
         usize::from(!check_owner_change)
