@@ -3,7 +3,7 @@ use {
     chrono::{DateTime, Local},
     crossbeam_channel::{unbounded, Receiver, SendError, Sender, TryRecvError},
     rolling_file::{RollingCondition, RollingConditionBasic, RollingFileAppender},
-    solana_perf::packet::PacketBatch,
+    solana_perf::packet::{BankingPacketBatch, BankingPacketReceiver},
     solana_sdk::{hash::Hash, slot_history::Slot},
     std::{
         fs::{create_dir_all, remove_dir_all},
@@ -19,9 +19,7 @@ use {
     thiserror::Error,
 };
 
-pub type BankingPacketBatch = Arc<Vec<PacketBatch>>;
 pub type BankingPacketSender = TracedSender;
-pub type BankingPacketReceiver = Receiver<BankingPacketBatch>;
 pub type TracerThreadResult = Result<(), TraceError>;
 pub type TracerThread = Option<JoinHandle<TracerThreadResult>>;
 pub type DirByteLimit = u64;

@@ -435,18 +435,15 @@ impl<C: LikeClusterInfo, R: ReceiveAndBuffer> SchedulerController<C, R> {
 mod tests {
     use {
         super::*,
-        crate::{
-            banking_stage::{
-                consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
-                packet_deserializer::PacketDeserializer,
-                scheduler_messages::{ConsumeWork, FinishedConsumeWork, TransactionBatchId},
-                tests::create_slow_genesis_config,
-                transaction_scheduler::{
-                    prio_graph_scheduler::PrioGraphSchedulerConfig,
-                    receive_and_buffer::SanitizedTransactionReceiveAndBuffer,
-                },
+        crate::banking_stage::{
+            consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
+            packet_deserializer::PacketDeserializer,
+            scheduler_messages::{ConsumeWork, FinishedConsumeWork, TransactionBatchId},
+            tests::create_slow_genesis_config,
+            transaction_scheduler::{
+                prio_graph_scheduler::PrioGraphSchedulerConfig,
+                receive_and_buffer::SanitizedTransactionReceiveAndBuffer,
             },
-            banking_trace::BankingPacketBatch,
         },
         crossbeam_channel::{unbounded, Receiver, Sender},
         itertools::Itertools,
@@ -455,7 +452,7 @@ mod tests {
             blockstore::Blockstore, genesis_utils::GenesisConfigInfo,
             get_tmp_ledger_path_auto_delete, leader_schedule_cache::LeaderScheduleCache,
         },
-        solana_perf::packet::{to_packet_batches, PacketBatch, NUM_PACKETS},
+        solana_perf::packet::{to_packet_batches, BankingPacketBatch, PacketBatch, NUM_PACKETS},
         solana_poh::poh_recorder::{PohRecorder, Record, WorkingBankEntry},
         solana_runtime::bank::Bank,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
