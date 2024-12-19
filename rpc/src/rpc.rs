@@ -1065,13 +1065,21 @@ impl JsonRpcRequestProcessor {
             } else {
                 (HashSet::new(), AccountAddressFilter::Exclude)
             };
-            let accounts = bank
-                .get_largest_accounts(
-                    NUM_LARGEST_ACCOUNTS,
-                    &addresses,
-                    address_filter,
-                    sort_results,
-                )
+            let accounts = self
+                .runtime
+                .spawn_blocking({
+                    let bank = Arc::clone(&bank);
+                    move || {
+                        bank.get_largest_accounts(
+                            NUM_LARGEST_ACCOUNTS,
+                            &addresses,
+                            address_filter,
+                            sort_results,
+                        )
+                    }
+                })
+                .await
+                .expect("Failed to spawn blocking task")
                 .map_err(|e| RpcCustomError::ScanError {
                     message: e.to_string(),
                 })?
