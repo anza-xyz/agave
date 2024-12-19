@@ -530,7 +530,7 @@ mod tests {
         data.accounts = av;
 
         let storage = Arc::new(data);
-        let pubkey = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
         let acc = AccountSharedData::new(1, 48, AccountSharedData::default().owner());
         let mark_alive = false;
         append_single_account_with_default_hash(&storage, &pubkey, &acc, mark_alive, None);
@@ -583,8 +583,8 @@ mod tests {
         let tf = crate::append_vec::test_utils::get_append_vec_path(
             "test_accountsdb_scan_account_storage_no_bank",
         );
-        let pubkey1 = solana_sdk::pubkey::new_rand();
-        let pubkey2 = solana_sdk::pubkey::new_rand();
+        let pubkey1 = solana_pubkey::new_rand();
+        let pubkey2 = solana_pubkey::new_rand();
         let mark_alive = false;
         let storage = sample_storage_with_entries(&tf, slot_expected, &pubkey1, mark_alive);
         let lamports = storage
@@ -631,7 +631,7 @@ mod tests {
                 accounts_file_provider,
             );
             let storage = Arc::new(data);
-            let pubkey = solana_sdk::pubkey::new_rand();
+            let pubkey = solana_pubkey::new_rand();
             let acc = AccountSharedData::new(1, 48, AccountSharedData::default().owner());
             let mark_alive = false;
             append_single_account_with_default_hash(&storage, &pubkey, &acc, mark_alive, None);

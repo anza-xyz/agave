@@ -37,17 +37,20 @@ serde = { workspace = true, features = ["rc"] }
 serde_derive = { workspace = true }
 smallvec = { workspace = true, features = ["const_generics"] }
 solana-bucket-map = { workspace = true }
+solana-clock = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
 solana-frozen-abi-macro = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
+solana-hash = { workspace = true }
 solana-inline-spl = { workspace = true }
 solana-lattice-hash = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-nohash-hasher = { workspace = true }
+solana-pubkey = { workspace = true }
 solana-rayon-threadlimit = { workspace = true }
 solana-sdk = { workspace = true }
 solana-stake-program = { workspace = true, optional = true }
@@ -87,6 +90,7 @@ dev-context-only-utils = [
     "dep:qualifier_attr",
     "dep:solana-stake-program",
     "dep:solana-vote-program",
+    "solana-pubkey/rand",
 ]
 frozen-abi = [
     "dep:solana-frozen-abi",

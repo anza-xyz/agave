@@ -5,7 +5,7 @@ use {
     },
     indexmap::set::IndexSet,
     memmap2::Mmap,
-    solana_sdk::pubkey::Pubkey,
+    solana_pubkey::Pubkey,
 };
 
 /// The offset to an owner entry in the owners block.

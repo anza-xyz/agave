@@ -4,8 +4,8 @@
 
 mod iterators;
 use {
-    bv::BitVec, iterators::RollingBitFieldOnesIter, solana_nohash_hasher::IntSet,
-    solana_sdk::clock::Slot,
+    bv::BitVec, iterators::RollingBitFieldOnesIter, solana_clock::Slot,
+    solana_nohash_hasher::IntSet,
 };
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]

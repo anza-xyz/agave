@@ -264,7 +264,7 @@ pub mod tests {
 
     #[test]
     fn test_pubkey_range_update_single() {
-        let address = solana_sdk::pubkey::new_rand();
+        let address = solana_pubkey::new_rand();
         let mut address_range = AccountAddressRange::default();
 
         address_range.update(&address);
@@ -285,7 +285,7 @@ pub mod tests {
 
         // Generate random addresses and track expected min and max indices
         for i in 0..NUM_PUBKEYS {
-            let address = solana_sdk::pubkey::new_rand();
+            let address = solana_pubkey::new_rand();
             addresses.push(address);
 
             // Update expected min and max indices
