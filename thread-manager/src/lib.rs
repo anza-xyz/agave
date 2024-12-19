@@ -1,7 +1,7 @@
 use {
     anyhow::Ok,
     serde::{Deserialize, Serialize},
-    std::collections::HashMap,
+    std::{collections::HashMap, ops::Deref, sync::Arc},
 };
 
 pub mod native_thread_runtime;
@@ -18,7 +18,7 @@ pub use {
 pub type ConstString = Box<str>;
 
 #[derive(Default, Debug)]
-pub struct ThreadManager {
+pub struct ThreadManagerInner {
     pub tokio_runtimes: HashMap<ConstString, TokioRuntime>,
     pub tokio_runtime_mapping: HashMap<ConstString, ConstString>,
 
@@ -28,44 +28,9 @@ pub struct ThreadManager {
     pub rayon_runtimes: HashMap<ConstString, RayonRuntime>,
     pub rayon_runtime_mapping: HashMap<ConstString, ConstString>,
 }
-
-#[derive(Default, Clone, Debug, Serialize, Deserialize)]
-#[serde(default)]
-pub struct RuntimeManagerConfig {
-    pub native_configs: HashMap<String, NativeConfig>,
-    pub native_runtime_mapping: HashMap<String, String>,
-
-    pub rayon_configs: HashMap<String, RayonConfig>,
-    pub rayon_runtime_mapping: HashMap<String, String>,
-
-    pub tokio_configs: HashMap<String, TokioConfig>,
-    pub tokio_runtime_mapping: HashMap<String, String>,
-
-    pub default_core_allocation: CoreAllocation,
-}
-
-impl ThreadManager {
-    pub fn get_native(&self, name: &str) -> Option<&NativeThreadRuntime> {
-        let name = self.native_runtime_mapping.get(name)?;
-        self.native_thread_runtimes.get(name)
-    }
-    pub fn get_rayon(&self, name: &str) -> Option<&RayonRuntime> {
-        let name = self.rayon_runtime_mapping.get(name)?;
-        self.rayon_runtimes.get(name)
-    }
-    pub fn get_tokio(&self, name: &str) -> Option<&TokioRuntime> {
-        let name = self.tokio_runtime_mapping.get(name)?;
-        self.tokio_runtimes.get(name)
-    }
-    pub fn set_process_affinity(config: &RuntimeManagerConfig) -> anyhow::Result<Vec<usize>> {
-        let chosen_cores_mask = config.default_core_allocation.as_core_mask_vector();
-
-        crate::policy::set_thread_affinity(&chosen_cores_mask);
-        Ok(chosen_cores_mask)
-    }
-
+impl ThreadManagerInner {
     /// Populates mappings with copies of config names, overrides as appropriate
-    fn populate_mappings(&mut self, config: &RuntimeManagerConfig) {
+    fn populate_mappings(&mut self, config: &ThreadManagerConfig) {
         //TODO: this should probably be cleaned up with a macro at some point...
 
         for name in config.native_configs.keys() {
@@ -95,10 +60,93 @@ impl ThreadManager {
                 .insert(k.clone().into_boxed_str(), v.clone().into_boxed_str());
         }
     }
-    pub fn new(config: RuntimeManagerConfig) -> anyhow::Result<Self> {
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct ThreadManager {
+    inner: Arc<ThreadManagerInner>,
+}
+impl Deref for ThreadManager {
+    type Target = ThreadManagerInner;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ThreadManagerConfig {
+    pub native_configs: HashMap<String, NativeConfig>,
+    pub native_runtime_mapping: HashMap<String, String>,
+
+    pub rayon_configs: HashMap<String, RayonConfig>,
+    pub rayon_runtime_mapping: HashMap<String, String>,
+
+    pub tokio_configs: HashMap<String, TokioConfig>,
+    pub tokio_runtime_mapping: HashMap<String, String>,
+
+    pub default_core_allocation: CoreAllocation,
+}
+
+impl Default for ThreadManagerConfig {
+    fn default() -> Self {
+        Self {
+            native_configs: HashMap::from([("default".to_owned(), NativeConfig::default())]),
+            native_runtime_mapping: HashMap::new(),
+            rayon_configs: HashMap::from([("default".to_owned(), RayonConfig::default())]),
+            rayon_runtime_mapping: HashMap::new(),
+            tokio_configs: HashMap::from([("default".to_owned(), TokioConfig::default())]),
+            tokio_runtime_mapping: HashMap::new(),
+            default_core_allocation: CoreAllocation::OsDefault,
+        }
+    }
+}
+
+impl ThreadManager {
+    /// Will lookup a runtime by given name. If not found, will try to lookup by name "default". If all fails, returns None.
+    fn lookup<'a, T>(
+        &'a self,
+        name: &str,
+        mapping: &HashMap<ConstString, ConstString>,
+        runtimes: &'a HashMap<ConstString, T>,
+    ) -> Option<&'a T> {
+        match mapping.get(name) {
+            Some(n) => runtimes.get(n),
+            None => match mapping.get("default") {
+                Some(n) => runtimes.get(n),
+                None => None,
+            },
+        }
+    }
+
+    pub fn get_native(&self, name: &str) -> Option<&NativeThreadRuntime> {
+        self.lookup(
+            name,
+            &self.native_runtime_mapping,
+            &self.native_thread_runtimes,
+        )
+    }
+
+    pub fn get_rayon(&self, name: &str) -> Option<&RayonRuntime> {
+        self.lookup(name, &self.rayon_runtime_mapping, &self.rayon_runtimes)
+    }
+
+    pub fn get_tokio(&self, name: &str) -> Option<&TokioRuntime> {
+        self.lookup(name, &self.tokio_runtime_mapping, &self.tokio_runtimes)
+    }
+
+    pub fn set_process_affinity(config: &ThreadManagerConfig) -> anyhow::Result<Vec<usize>> {
+        let chosen_cores_mask = config.default_core_allocation.as_core_mask_vector();
+
+        crate::policy::set_thread_affinity(&chosen_cores_mask);
+        Ok(chosen_cores_mask)
+    }
+
+    pub fn new(config: ThreadManagerConfig) -> anyhow::Result<Self> {
         let mut core_allocations = HashMap::<ConstString, Vec<usize>>::new();
         Self::set_process_affinity(&config)?;
-        let mut manager = Self::default();
+        let mut manager = ThreadManagerInner::default();
         manager.populate_mappings(&config);
         for (name, cfg) in config.native_configs.iter() {
             let nrt = NativeThreadRuntime::new(name.clone(), cfg.clone());
@@ -124,14 +172,16 @@ impl ThreadManager {
                 .tokio_runtimes
                 .insert(name.clone().into_boxed_str(), tokiort);
         }
-        Ok(manager)
+        Ok(Self {
+            inner: Arc::new(manager),
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use {
-        crate::{CoreAllocation, NativeConfig, RayonConfig, RuntimeManagerConfig, ThreadManager},
+        crate::{CoreAllocation, NativeConfig, RayonConfig, ThreadManager, ThreadManagerConfig},
         std::{collections::HashMap, io::Read},
     };
 
@@ -151,7 +201,7 @@ mod tests {
                 .unwrap()
                 .read_to_string(&mut buf)
                 .unwrap();
-            let cfg: RuntimeManagerConfig = toml::from_str(&buf).unwrap();
+            let cfg: ThreadManagerConfig = toml::from_str(&buf).unwrap();
             println!("{:?}", cfg);
         }
     }
@@ -166,7 +216,7 @@ mod tests {
 
     #[test]
     fn process_affinity() {
-        let conf = RuntimeManagerConfig {
+        let conf = ThreadManagerConfig {
             native_configs: HashMap::from([(
                 "pool1".to_owned(),
                 NativeConfig {
@@ -207,7 +257,7 @@ mod tests {
 
     #[test]
     fn rayon_affinity() {
-        let conf = RuntimeManagerConfig {
+        let conf = ThreadManagerConfig {
             rayon_configs: HashMap::from([(
                 "test".to_owned(),
                 RayonConfig {

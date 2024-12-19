@@ -4,9 +4,12 @@ use {
     log::error,
     serde::{Deserialize, Serialize},
     solana_metrics::datapoint_info,
-    std::sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc, Mutex,
+    std::{
+        ops::Deref,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc, Mutex,
+        },
     },
 };
 
@@ -23,7 +26,7 @@ impl Default for NativeConfig {
     fn default() -> Self {
         Self {
             core_allocation: CoreAllocation::OsDefault,
-            max_threads: 10,
+            max_threads: 16,
             priority: 0,
             stack_size_bytes: 2 * 1024 * 1024,
         }
@@ -31,11 +34,24 @@ impl Default for NativeConfig {
 }
 
 #[derive(Debug)]
-pub struct NativeThreadRuntime {
+pub struct NativeThreadRuntimeInner {
     pub id_count: AtomicUsize,
     pub running_count: Arc<AtomicUsize>,
     pub config: NativeConfig,
     pub name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct NativeThreadRuntime {
+    inner: Arc<NativeThreadRuntimeInner>,
+}
+
+impl Deref for NativeThreadRuntime {
+    type Target = NativeThreadRuntimeInner;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
 }
 
 pub struct JoinHandle<T> {
@@ -82,13 +98,27 @@ impl<T> Drop for JoinHandle<T> {
 impl NativeThreadRuntime {
     pub fn new(name: String, cfg: NativeConfig) -> Self {
         Self {
-            id_count: AtomicUsize::new(0),
-            running_count: Arc::new(AtomicUsize::new(0)),
-            config: cfg,
-            name,
+            inner: Arc::new(NativeThreadRuntimeInner {
+                id_count: AtomicUsize::new(0),
+                running_count: Arc::new(AtomicUsize::new(0)),
+                config: cfg,
+                name,
+            }),
         }
     }
+
     pub fn spawn<F, T>(&self, f: F) -> anyhow::Result<JoinHandle<T>>
+    where
+        F: FnOnce() -> T,
+        F: Send + 'static,
+        T: Send + 'static,
+    {
+        let n = self.id_count.fetch_add(1, Ordering::Relaxed);
+        let name = format!("{}-{}", &self.name, n);
+        self.spawn_named(name, f)
+    }
+
+    pub fn spawn_named<F, T>(&self, name: String, f: F) -> anyhow::Result<JoinHandle<T>>
     where
         F: FnOnce() -> T,
         F: Send + 'static,
@@ -102,9 +132,8 @@ impl NativeThreadRuntime {
         let core_alloc = self.config.core_allocation.clone();
         let priority = self.config.priority;
         let chosen_cores_mask = Mutex::new(self.config.core_allocation.as_core_mask_vector());
-        let n = self.id_count.fetch_add(1, Ordering::Relaxed);
         let jh = std::thread::Builder::new()
-            .name(format!("{}-{}", &self.name, n))
+            .name(name)
             .stack_size(self.config.stack_size_bytes)
             .spawn(move || {
                 apply_policy(&core_alloc, priority, &chosen_cores_mask);
