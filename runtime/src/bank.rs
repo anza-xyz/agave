@@ -4545,8 +4545,7 @@ impl Bank {
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
         // None is meaningfully used to skip the block producing unified scheduler special case.
-        // This avoids wasted cycles due to `if` evaluations in the special case and makes it well
-        // assert!()-ed.
+        // This makes the special case assert!()-ed.
         pre_commit_callback: Option<impl FnOnce() -> PreCommitCallbackResult<()>>,
     ) -> PreCommitCallbackResult<(Vec<TransactionCommitResult>, TransactionBalancesSet)> {
         let pre_balances = if collect_balances {
@@ -4575,12 +4574,20 @@ impl Bank {
         );
 
         if let Some(pre_commit_callback) = pre_commit_callback {
-            if let Some(e) = processing_results.first() {
-                assert_eq!(processing_results.len(), 1);
-                if e.is_ok() && pre_commit_callback().is_err() {
-                    return Err(PreCommitCallbackFailed);
-                }
-            }
+            // We're entering into the block-producing unified scheduler special case...
+            // `processing_results` should always contain exactly only 1 result in that case.
+            assert_eq!(processing_results.len(), 1);
+
+            // Make `pre_commit_callback()` unconditionally take precedence over
+            // `processing_results[0].was_processed()`, potentially shadowing processing errors.
+            // That's desired because pre commit failure signalling is actually used to propagate
+            // poh recording failures, which is time-sensitive by nature to winds down the unified
+            // scheduler's active scheduling session as soon as possible upon the blockage by poh
+            // recorder.
+            // Also, bail out here rather than overwriting `processing_results[0]`. Reconciling
+            // various state is rather error-prone at this point. For example, processed_counts
+            // would need to be correctly updated...
+            pre_commit_callback()?
         }
 
         let commit_results = self.commit_transactions(
