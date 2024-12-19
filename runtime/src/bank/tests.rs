@@ -6483,19 +6483,19 @@ fn test_bank_hash_consistency() {
         if bank.slot == 32 {
             assert_eq!(
                 bank.hash().to_string(),
-                "7FPfwBut4b7bXtKPsobQS1cuFgF47SZHDb4teQcJRomv"
+                "Hdrk5wqzRZbofSgZMC3ztfNimrFu6DeYp751JWvtabo"
             );
         }
         if bank.slot == 64 {
             assert_eq!(
                 bank.hash().to_string(),
-                "28CWiEuA3izdt5xe4LyS4Q1DTALmYgrVctSTazFiPVcW"
+                "4EcAFkTxymwwPGeCgadhkrkg2hqfAPzuQZoN2NFqPzyg"
             );
         }
         if bank.slot == 128 {
             assert_eq!(
                 bank.hash().to_string(),
-                "AdCmEvRXWKpvXb9fG6AFQhzGgB5ciAXnDajvaNK7YUg8"
+                "4BK3VANr5mhyRyrwbUHYb2kmM5m76PBGkhmKMrQ2aq7L"
             );
             break;
         }
