@@ -13,7 +13,7 @@ use {
         input_validators::normalize_to_url_if_moniker,
     },
     solana_core::consensus::tower_storage::FileTowerStorage,
-    solana_faucet::faucet::run_local_faucet_with_port,
+    solana_faucet::faucet::run_local_faucet_with_socket,
     solana_rpc::{
         rpc::{JsonRpcConfig, RpcBigtableConfig},
         rpc_pubsub_service::PubSubConfig,
@@ -155,7 +155,6 @@ fn main() {
     let rpc_port = value_t_or_exit!(matches, "rpc_port", u16);
     let enable_vote_subscription = matches.is_present("rpc_pubsub_enable_vote_subscription");
     let enable_block_subscription = matches.is_present("rpc_pubsub_enable_block_subscription");
-    let faucet_port = value_t_or_exit!(matches, "faucet_port", u16);
     let ticks_per_slot = value_t!(matches, "ticks_per_slot", u64).ok();
     let slots_per_epoch = value_t!(matches, "slots_per_epoch", Slot).ok();
     let gossip_host = matches.value_of("gossip_host").map(|gossip_host| {
@@ -178,8 +177,6 @@ fn main() {
         })
     });
     let compute_unit_limit = value_t!(matches, "compute_unit_limit", u64).ok();
-
-    let faucet_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), faucet_port);
 
     let parse_address = |address: &str, input_type: &str| {
         address
@@ -339,14 +336,17 @@ fn main() {
         .ok()
         .map(sol_to_lamports);
 
+    // CLI arg validator ensures "rpc_faucet_addr" parses into a SocketAddr, and defaults to localhost:9900 if not provided.
+    let faucet_addr = value_t_or_exit!(matches, "rpc_faucet_addr", SocketAddr);
+
     let (sender, receiver) = unbounded();
-    run_local_faucet_with_port(
+    run_local_faucet_with_socket(
         faucet_keypair,
         sender,
         Some(faucet_time_slice_secs),
         faucet_per_time_cap,
         faucet_per_request_cap,
-        faucet_addr.port(),
+        faucet_addr,
     );
     let _ = receiver.recv().expect("run faucet").unwrap_or_else(|err| {
         println!("Error: failed to start faucet: {err}");
