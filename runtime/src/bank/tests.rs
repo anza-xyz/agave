@@ -2098,11 +2098,11 @@ fn do_test_bank_update_rewards_determinism() -> u64 {
     bank.store_account_and_update_capitalization(&vote_id, &vote_account);
 
     // put a child bank in epoch 1, which calls update_rewards()...
-    let bank1 = Bank::new_from_parent(
+    let bank1 = Arc::new(Bank::new_from_parent(
         bank.clone(),
         &Pubkey::default(),
         bank.get_slots_in_epoch(bank.epoch()) + 1,
-    );
+    ));
     // verify that there's inflation
     assert_ne!(bank1.capitalization(), bank.capitalization());
 
@@ -2117,6 +2117,11 @@ fn do_test_bank_update_rewards_determinism() -> u64 {
         .iter()
         .find(|(_address, reward)| reward.reward_type == RewardType::Voting)
         .unwrap();
+
+    // put another child bank, since partitioned staking rewards are delivered
+    // after the epoch-boundary slot
+    let bank2 = Bank::new_from_parent(bank1.clone(), &Pubkey::default(), bank1.slot() + 1);
+    let rewards = bank2.rewards.read().unwrap();
     rewards
         .iter()
         .find(|(_address, reward)| reward.reward_type == RewardType::Staking)
