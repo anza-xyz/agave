@@ -1,9 +1,5 @@
 [workspace]
-members = [
-    "json-rpc/client",
-    "json-rpc/server",
-    "paytube",
-]
+members = ["json-rpc/client", "json-rpc/server", "paytube"]
 
 resolver = "2"
 
