@@ -145,9 +145,6 @@ pub(super) struct StakeRewardCalculationPartitioned {
 }
 
 pub(super) struct CalculateRewardsAndDistributeVoteRewardsResult {
-    /// total rewards to be distributed in the epoch (including both vote
-    /// rewards and stake rewards)
-    pub(super) total_rewards: u64,
     /// distributed vote rewards
     pub(super) distributed_rewards: u64,
     /// total rewards and points calculated for the current epoch, where points

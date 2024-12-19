@@ -122,7 +122,6 @@ mod tests {
             active: true,
         };
         bank1.create_epoch_rewards_sysvar(
-            expected_epoch_rewards.total_rewards,
             expected_epoch_rewards.distributed_rewards,
             expected_epoch_rewards.distribution_starting_block_height,
             num_partitions,

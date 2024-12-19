@@ -25,7 +25,6 @@ impl Bank {
     /// last_blockhash.
     pub(in crate::bank) fn create_epoch_rewards_sysvar(
         &self,
-        total_rewards: u64,
         distributed_rewards: u64,
         distribution_starting_block_height: u64,
         num_partitions: u64,
@@ -152,13 +151,7 @@ mod tests {
             sysvar::epoch_rewards::EpochRewards::default()
         );
 
-        bank.create_epoch_rewards_sysvar(
-            total_rewards,
-            10,
-            42,
-            num_partitions,
-            point_value.clone(),
-        );
+        bank.create_epoch_rewards_sysvar(10, 42, num_partitions, point_value.clone());
         let account = bank.get_account(&sysvar::epoch_rewards::id()).unwrap();
         let expected_balance = bank.get_minimum_balance_for_rent_exemption(account.data().len());
         // Expected balance is the sysvar rent-exempt balance
@@ -172,13 +165,7 @@ mod tests {
         let bank = Bank::new_from_parent(Arc::new(bank), &Pubkey::default(), parent_slot + 1);
         // Also note that running `create_epoch_rewards_sysvar()` against a bank
         // with an existing EpochRewards sysvar clobbers the previous values
-        bank.create_epoch_rewards_sysvar(
-            total_rewards,
-            10,
-            42,
-            num_partitions,
-            point_value.clone(),
-        );
+        bank.create_epoch_rewards_sysvar(10, 42, num_partitions, point_value.clone());
 
         let expected_epoch_rewards = sysvar::epoch_rewards::EpochRewards {
             distribution_starting_block_height: 42,

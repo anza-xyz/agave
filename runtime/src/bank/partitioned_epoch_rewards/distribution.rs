@@ -355,7 +355,6 @@ mod tests {
         let num_partitions = 2; // num_partitions is arbitrary and unimportant for this test
         let total_points = (total_rewards * 42) as u128; // total_points is arbitrary for the purposes of this test
         bank.create_epoch_rewards_sysvar(
-            total_rewards,
             0,
             42,
             num_partitions,
