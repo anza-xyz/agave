@@ -1,6 +1,6 @@
 use {
     ahash::AHashMap,
-    solana_sdk::pubkey::Pubkey,
+    solana_pubkey::Pubkey,
     std::{
         collections::hash_map::Entry,
         fmt::{Debug, Display},

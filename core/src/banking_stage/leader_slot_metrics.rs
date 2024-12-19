@@ -1090,8 +1090,8 @@ impl LeaderSlotMetricsTracker {
 mod tests {
     use {
         super::*,
+        solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, genesis_utils::create_genesis_config},
-        solana_sdk::pubkey::Pubkey,
         std::{mem, sync::Arc},
     };
 

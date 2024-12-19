@@ -87,9 +87,9 @@ impl SnapshotTestConfig {
         // bank stakes which results in mismatch when banks are loaded from
         // snapshots.
         let mut genesis_config_info = create_genesis_config_with_leader(
-            10_000,                          // mint_lamports
-            &solana_sdk::pubkey::new_rand(), // validator_pubkey
-            1,                               // validator_stake_lamports
+            10_000,                     // mint_lamports
+            &solana_pubkey::new_rand(), // validator_pubkey
+            1,                          // validator_stake_lamports
         );
         genesis_config_info.genesis_config.cluster_type = cluster_type;
         let bank0 = Bank::new_with_paths_for_tests(
@@ -483,11 +483,11 @@ fn test_bank_forks_incremental_snapshot(
             let bank_scheduler = bank_forks.write().unwrap().insert(bank);
             let bank = bank_scheduler.clone_without_scheduler();
 
-            let key = solana_sdk::pubkey::new_rand();
+            let key = solana_pubkey::new_rand();
             let tx = system_transaction::transfer(mint_keypair, &key, 1, bank.last_blockhash());
             assert_eq!(bank.process_transaction(&tx), Ok(()));
 
-            let key = solana_sdk::pubkey::new_rand();
+            let key = solana_pubkey::new_rand();
             let tx = system_transaction::transfer(mint_keypair, &key, 0, bank.last_blockhash());
             assert_eq!(bank.process_transaction(&tx), Ok(()));
 
@@ -760,11 +760,11 @@ fn test_snapshots_with_background_services(
                 .insert(bank)
                 .clone_without_scheduler();
 
-            let key = solana_sdk::pubkey::new_rand();
+            let key = solana_pubkey::new_rand();
             let tx = system_transaction::transfer(mint_keypair, &key, 1, bank.last_blockhash());
             assert_eq!(bank.process_transaction(&tx), Ok(()));
 
-            let key = solana_sdk::pubkey::new_rand();
+            let key = solana_pubkey::new_rand();
             let tx = system_transaction::transfer(mint_keypair, &key, 0, bank.last_blockhash());
             assert_eq!(bank.process_transaction(&tx), Ok(()));
 

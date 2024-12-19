@@ -81,7 +81,7 @@ fn setup(num_packets: usize, contentious_transaction: bool) -> BenchSetup {
             let mut transaction =
                 system_transaction::transfer(&keypair, &Keypair::new().pubkey(), min_balance, hash);
             if !contentious_transaction {
-                transaction.message.account_keys[0] = solana_sdk::pubkey::Pubkey::new_unique();
+                transaction.message.account_keys[0] = solana_pubkey::Pubkey::new_unique();
             }
             let mut packet = Packet::from_data(None, transaction).unwrap();
             packet.meta_mut().set_from_staked_node(true);

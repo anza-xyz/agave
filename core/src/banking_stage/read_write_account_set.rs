@@ -1,6 +1,4 @@
-use {
-    ahash::AHashSet, solana_sdk::pubkey::Pubkey, solana_svm_transaction::svm_message::SVMMessage,
-};
+use {ahash::AHashSet, solana_pubkey::Pubkey, solana_svm_transaction::svm_message::SVMMessage};
 
 /// Wrapper struct to accumulate locks for a batch of transactions.
 #[derive(Debug, Default)]

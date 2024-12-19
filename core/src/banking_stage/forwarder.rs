@@ -437,7 +437,7 @@ mod tests {
         // Create `PacketBatch` with 1 unprocessed packet
         let tx = system_transaction::transfer(
             &Keypair::new(),
-            &solana_sdk::pubkey::new_rand(),
+            &solana_pubkey::new_rand(),
             rent_min_balance,
             blockhash,
         );
@@ -504,7 +504,7 @@ mod tests {
         } = setup();
 
         let keypair = Keypair::new();
-        let pubkey = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
 
         // forwarded packets will not be forwarded again
         let forwarded_packet = {

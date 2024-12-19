@@ -10,7 +10,7 @@ use {
         contact_info::{ContactInfo, Error},
     },
     solana_poh::poh_recorder::PohRecorder,
-    solana_sdk::pubkey::Pubkey,
+    solana_pubkey::Pubkey,
     std::{
         net::SocketAddr,
         sync::{
