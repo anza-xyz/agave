@@ -1383,7 +1383,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     break 'nonaborted_main_loop;
                                 };
                                 state_machine.deschedule_task(&executed_task.task);
-                                if should_pause && !session_ending {
+                                if should_pause {
+                                    assert!(!session_ending);
                                     let task = banking_stage_context.as_ref().unwrap().adapter.recreate_task(
                                         executed_task.into_inner(),
                                     );
@@ -1442,7 +1443,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     break 'nonaborted_main_loop;
                                 };
                                 state_machine.deschedule_task(&executed_task.task);
-                                if should_pause && !session_ending {
+                                if should_pause {
+                                    assert!(!session_ending);
                                     let task = banking_stage_context.as_ref().unwrap().adapter.recreate_task(
                                         executed_task.into_inner(),
                                     );
