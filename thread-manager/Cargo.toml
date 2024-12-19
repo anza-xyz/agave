@@ -1,0 +1,31 @@
+[package]
+name = "agave-thread-manager"
+description = "Thread pool manager for agave"
+
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+publish = false
+
+[dependencies]
+anyhow = { workspace = true }
+log = { workspace = true }
+num_cpus = { workspace = true }
+rayon = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+solana-metrics = { workspace = true }
+thread-priority = "1.2.0"
+tokio = { workspace = true, features = ["time", "rt-multi-thread"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+affinity = "0.1.2"
+
+[dev-dependencies]
+axum = "0.7.9"
+env_logger = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
