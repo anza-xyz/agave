@@ -125,7 +125,10 @@ use {
         timing::timestamp,
     },
     solana_send_transaction_service::send_transaction_service,
-    solana_streamer::{socket::SocketAddrSpace, streamer::StakedNodes},
+    solana_streamer::{quic::QuicServerParams, socket::SocketAddrSpace, streamer::StakedNodes},
+    solana_tpu_client::tpu_client::{
+        DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_USE_QUIC, DEFAULT_VOTE_USE_QUIC,
+    },
     solana_turbine::{self, broadcast_stage::BroadcastStageType},
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_vote_program::vote_state,
@@ -486,8 +489,33 @@ pub struct ValidatorTpuConfig {
     pub tpu_connection_pool_size: usize,
     /// Controls if to enable UDP for TPU tansactions.
     pub tpu_enable_udp: bool,
-    /// Controls the new maximum connections per IpAddr per minute
-    pub tpu_max_connections_per_ipaddr_per_minute: u64,
+    /// QUIC server config for regular TPU
+    pub tpu_quic_server_config: QuicServerParams,
+    /// QUIC server config for TPU forward
+    pub tpu_fwd_quic_server_config: QuicServerParams,
+    /// QUIC server config for Vote
+    pub vote_quic_server_config: QuicServerParams,
+}
+
+pub fn build_validator_tpu_config_for_test(tpu_enable_udp: bool) -> ValidatorTpuConfig {
+    let mut tpu_quic_server_config = QuicServerParams::default();
+    tpu_quic_server_config.max_connections_per_peer = 32; // max connections per IpAddr per minute
+
+    let mut tpu_fwd_quic_server_config = QuicServerParams::default();
+    tpu_fwd_quic_server_config.max_connections_per_peer = 32; // max connections per IpAddr per minute
+
+    let mut vote_quic_server_config = QuicServerParams::default();
+    vote_quic_server_config.max_connections_per_peer = 32; // max connections per IpAddr per minute
+
+    ValidatorTpuConfig {
+        use_quic: DEFAULT_TPU_USE_QUIC,
+        vote_use_quic: DEFAULT_VOTE_USE_QUIC,
+        tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
+        tpu_enable_udp,
+        tpu_quic_server_config,
+        tpu_fwd_quic_server_config,
+        vote_quic_server_config,
+    }
 }
 
 pub struct Validator {
@@ -550,7 +578,9 @@ impl Validator {
             vote_use_quic,
             tpu_connection_pool_size,
             tpu_enable_udp,
-            tpu_max_connections_per_ipaddr_per_minute,
+            tpu_quic_server_config,
+            tpu_fwd_quic_server_config,
+            vote_quic_server_config,
         } = tpu_config;
 
         let start_time = Instant::now();
@@ -1533,7 +1563,9 @@ impl Validator {
             banking_tracer,
             tracer_thread,
             tpu_enable_udp,
-            tpu_max_connections_per_ipaddr_per_minute,
+            tpu_quic_server_config,
+            tpu_fwd_quic_server_config,
+            vote_quic_server_config,
             &prioritization_fee_cache,
             config.block_production_method.clone(),
             config.enable_block_production_forwarding,
@@ -2756,10 +2788,7 @@ mod tests {
             get_tmp_ledger_path_auto_delete,
         },
         solana_sdk::{genesis_config::create_genesis_config, poh_config::PohConfig},
-        solana_tpu_client::tpu_client::{
-            DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_ENABLE_UDP, DEFAULT_TPU_USE_QUIC,
-            DEFAULT_VOTE_USE_QUIC,
-        },
+        solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
         std::{fs::remove_dir_all, thread, time::Duration},
     };
 
@@ -2797,13 +2826,7 @@ mod tests {
             None, // rpc_to_plugin_manager_receiver
             start_progress.clone(),
             SocketAddrSpace::Unspecified,
-            ValidatorTpuConfig {
-                use_quic: DEFAULT_TPU_USE_QUIC,
-                vote_use_quic: DEFAULT_VOTE_USE_QUIC,
-                tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
-                tpu_enable_udp: DEFAULT_TPU_ENABLE_UDP,
-                tpu_max_connections_per_ipaddr_per_minute: 32, // max connections per IpAddr per minute for test
-            },
+            build_validator_tpu_config_for_test(DEFAULT_TPU_ENABLE_UDP),
             Arc::new(RwLock::new(None)),
         )
         .expect("assume successful validator start");
@@ -3019,13 +3042,7 @@ mod tests {
                     None, // rpc_to_plugin_manager_receiver
                     Arc::new(RwLock::new(ValidatorStartProgress::default())),
                     SocketAddrSpace::Unspecified,
-                    ValidatorTpuConfig {
-                        use_quic: DEFAULT_TPU_USE_QUIC,
-                        vote_use_quic: DEFAULT_VOTE_USE_QUIC,
-                        tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
-                        tpu_enable_udp: DEFAULT_TPU_ENABLE_UDP,
-                        tpu_max_connections_per_ipaddr_per_minute: 32, // max connections per IpAddr per minute for test
-                    },
+                    build_validator_tpu_config_for_test(DEFAULT_TPU_ENABLE_UDP),
                     Arc::new(RwLock::new(None)),
                 )
                 .expect("assume successful validator start")
