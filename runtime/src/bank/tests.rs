@@ -14,6 +14,7 @@ use {
             genesis_sysvar_and_builtin_program_lamports, GenesisConfigInfo, ValidatorVoteKeypairs,
         },
         snapshot_bank_utils, snapshot_utils,
+        stake_history::StakeHistory,
         status_cache::MAX_CACHE_ENTRIES,
     },
     agave_transaction_view::static_account_keys_frame::MAX_STATIC_ACCOUNTS_PER_PACKET,
@@ -21,7 +22,7 @@ use {
     crossbeam_channel::{bounded, unbounded},
     itertools::Itertools,
     rand::Rng,
-    rayon::ThreadPoolBuilder,
+    rayon::{ThreadPool, ThreadPoolBuilder},
     serde::{Deserialize, Serialize},
     solana_accounts_db::{
         accounts::AccountAddressFilter,
@@ -410,6 +411,11 @@ fn bank0_sysvar_delta() -> u64 {
 fn bank1_sysvar_delta() -> u64 {
     const SLOT_HASHES_SYSVAR_MIN_BALANCE: u64 = 143_487_360;
     SLOT_HASHES_SYSVAR_MIN_BALANCE
+}
+
+fn bank2_sysvar_delta() -> u64 {
+    const EPOCH_REWARDS_SYSVAR_MIN_BALANCE: u64 = 1_454_640;
+    EPOCH_REWARDS_SYSVAR_MIN_BALANCE
 }
 
 #[test]
@@ -1899,6 +1905,109 @@ fn test_bank_update_vote_stake_rewards() {
     });
 }
 
+impl Bank {
+    #[cfg(test)]
+    fn _load_vote_and_stake_accounts(
+        &self,
+        thread_pool: &ThreadPool,
+        reward_calc_tracer: Option<impl RewardCalcTracer>,
+    ) -> LoadVoteAndStakeAccountsResult {
+        let stakes = self.stakes_cache.stakes();
+        let stake_delegations = self.filter_stake_delegations(&stakes);
+        // Obtain all unique voter pubkeys from stake delegations.
+        fn merge(mut acc: HashSet<Pubkey>, other: HashSet<Pubkey>) -> HashSet<Pubkey> {
+            if acc.len() < other.len() {
+                return merge(other, acc);
+            }
+            acc.extend(other);
+            acc
+        }
+        let voter_pubkeys = thread_pool.install(|| {
+            stake_delegations
+                .par_iter()
+                .fold(
+                    HashSet::default,
+                    |mut voter_pubkeys, (_stake_pubkey, stake_account)| {
+                        voter_pubkeys.insert(stake_account.delegation().voter_pubkey);
+                        voter_pubkeys
+                    },
+                )
+                .reduce(HashSet::default, merge)
+        });
+        // Obtain vote-accounts for unique voter pubkeys.
+        let cached_vote_accounts = stakes.vote_accounts();
+        let solana_vote_program: Pubkey = solana_vote_program::id();
+        let vote_accounts_cache_miss_count = AtomicUsize::default();
+        let get_vote_account = |vote_pubkey: &Pubkey| -> Option<VoteAccount> {
+            if let Some(vote_account) = cached_vote_accounts.get(vote_pubkey) {
+                return Some(vote_account.clone());
+            }
+            // If accounts-db contains a valid vote account, then it should
+            // already have been cached in cached_vote_accounts; so the code
+            // below is only for sanity check, and can be removed once
+            // vote_accounts_cache_miss_count is shown to be always zero.
+            let account = self.get_account_with_fixed_root(vote_pubkey)?;
+            if account.owner() == &solana_vote_program
+                && VoteState::deserialize(account.data()).is_ok()
+            {
+                vote_accounts_cache_miss_count.fetch_add(1, Relaxed);
+            }
+            VoteAccount::try_from(account).ok()
+        };
+        let invalid_vote_keys = DashMap::<Pubkey, InvalidCacheEntryReason>::new();
+        let make_vote_delegations_entry = |vote_pubkey| {
+            let Some(vote_account) = get_vote_account(&vote_pubkey) else {
+                invalid_vote_keys.insert(vote_pubkey, InvalidCacheEntryReason::Missing);
+                return None;
+            };
+            if vote_account.owner() != &solana_vote_program {
+                invalid_vote_keys.insert(vote_pubkey, InvalidCacheEntryReason::WrongOwner);
+                return None;
+            }
+            let vote_with_stake_delegations = VoteWithStakeDelegations {
+                vote_state: Arc::new(vote_account.vote_state().clone()),
+                vote_account: AccountSharedData::from(vote_account),
+                delegations: Vec::default(),
+            };
+            Some((vote_pubkey, vote_with_stake_delegations))
+        };
+        let vote_with_stake_delegations_map: DashMap<Pubkey, VoteWithStakeDelegations> =
+            thread_pool.install(|| {
+                voter_pubkeys
+                    .into_par_iter()
+                    .filter_map(make_vote_delegations_entry)
+                    .collect()
+            });
+        // Join stake accounts with vote-accounts.
+        let push_stake_delegation = |(stake_pubkey, stake_account): (&Pubkey, &StakeAccount<_>)| {
+            let delegation = stake_account.delegation();
+            let Some(mut vote_delegations) =
+                vote_with_stake_delegations_map.get_mut(&delegation.voter_pubkey)
+            else {
+                return;
+            };
+            if let Some(reward_calc_tracer) = reward_calc_tracer.as_ref() {
+                let delegation =
+                    InflationPointCalculationEvent::Delegation(*delegation, solana_vote_program);
+                let event = RewardCalculationEvent::Staking(stake_pubkey, &delegation);
+                reward_calc_tracer(&event);
+            }
+            let stake_delegation = (*stake_pubkey, stake_account.clone());
+            vote_delegations.delegations.push(stake_delegation);
+        };
+        thread_pool.install(|| {
+            stake_delegations
+                .into_par_iter()
+                .for_each(push_stake_delegation);
+        });
+        LoadVoteAndStakeAccountsResult {
+            vote_with_stake_delegations_map,
+            invalid_vote_keys,
+            vote_accounts_cache_miss_count: vote_accounts_cache_miss_count.into_inner(),
+        }
+    }
+}
+
 #[cfg(test)]
 fn check_bank_update_vote_stake_rewards<F>(load_vote_and_stake_accounts: F)
 where
@@ -1975,26 +2084,54 @@ where
 
     load_vote_and_stake_accounts(&bank0);
 
-    // put a child bank in epoch 1, which calls update_rewards()...
-    let bank1 = Bank::new_from_parent(
+    // put a child bank in epoch 1
+    let bank1 = Arc::new(Bank::new_from_parent(
         bank0.clone(),
         &Pubkey::default(),
         bank0.get_slots_in_epoch(bank0.epoch()) + 1,
-    );
+    ));
+
     // verify that there's inflation
     assert_ne!(bank1.capitalization(), bank0.capitalization());
 
-    // verify the inflation is represented in validator_points
-    let paid_rewards = bank1.capitalization() - bank0.capitalization() - bank1_sysvar_delta();
+    // check voting rewards show up in rewards vector
+    assert_eq!(
+        *bank1.rewards.read().unwrap(),
+        vec![(
+            vote_id,
+            RewardInfo {
+                reward_type: RewardType::Voting,
+                lamports: 0,
+                post_balance: bank1.get_balance(&vote_id),
+                commission: Some(0),
+            }
+        ),]
+    );
+    bank1.freeze();
 
-    // this assumes that no new builtins or precompiles were activated in bank1
+    // advance past partitioned epoch staking rewards delivery
+    let bank2 = Arc::new(Bank::new_from_parent(
+        bank1.clone(),
+        &Pubkey::default(),
+        bank1.slot() + 1,
+    ));
+    // verify that there's inflation
+    assert_ne!(bank2.capitalization(), bank0.capitalization());
+
+    // verify the inflation is represented in validator_points
+    let paid_rewards = bank2.capitalization()
+        - bank0.capitalization()
+        - bank1_sysvar_delta()
+        - bank2_sysvar_delta();
+
+    // this assumes that no new builtins or precompiles were activated in bank1 or bank2
     let PrevEpochInflationRewards {
         validator_rewards, ..
-    } = bank1.calculate_previous_epoch_inflation_rewards(bank0.capitalization(), bank0.epoch());
+    } = bank2.calculate_previous_epoch_inflation_rewards(bank0.capitalization(), bank0.epoch());
 
     // verify the stake and vote accounts are the right size
     assert!(
-        ((bank1.get_balance(&stake_id) - stake_account.lamports() + bank1.get_balance(&vote_id)
+        ((bank2.get_balance(&stake_id) - stake_account.lamports() + bank2.get_balance(&vote_id)
             - vote_account.lamports()) as f64
             - validator_rewards as f64)
             .abs()
@@ -2004,34 +2141,24 @@ where
     // verify the rewards are the right size
     assert!((validator_rewards as f64 - paid_rewards as f64).abs() < 1.0); // rounding, truncating
 
-    // verify validator rewards show up in bank1.rewards vector
+    // verify validator rewards show up in rewards vectors
     assert_eq!(
-        *bank1.rewards.read().unwrap(),
-        vec![
-            (
-                vote_id,
-                RewardInfo {
-                    reward_type: RewardType::Voting,
-                    lamports: 0,
-                    post_balance: bank1.get_balance(&vote_id),
-                    commission: Some(0),
-                }
-            ),
-            (
-                stake_id,
-                RewardInfo {
-                    reward_type: RewardType::Staking,
-                    lamports: validator_rewards as i64,
-                    post_balance: bank1.get_balance(&stake_id),
-                    commission: Some(0),
-                }
-            )
-        ]
+        *bank2.rewards.read().unwrap(),
+        vec![(
+            stake_id,
+            RewardInfo {
+                reward_type: RewardType::Staking,
+                lamports: validator_rewards as i64,
+                post_balance: bank2.get_balance(&stake_id),
+                commission: Some(0),
+            }
+        )]
     );
-    bank1.freeze();
+    bank2.freeze();
     add_root_and_flush_write_cache(&bank0);
     add_root_and_flush_write_cache(&bank1);
-    assert!(bank1.calculate_and_verify_capitalization(true));
+    add_root_and_flush_write_cache(&bank2);
+    assert!(bank2.calculate_and_verify_capitalization(true));
 }
 
 fn do_test_bank_update_rewards_determinism() -> u64 {
