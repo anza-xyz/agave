@@ -2081,10 +2081,8 @@ impl ReplayStage {
             return false;
         };
 
-        assert!(parent.is_vote_only_frozen());
-
-        if !parent.is_frozen() {
-            info!("wait for parent {} to be frozen", parent.slot());
+        if (!parent.is_vote_only_frozen()) {
+            info!("wait for parent {} to be vote only frozen", parent.slot());
             return false;
         }
 
