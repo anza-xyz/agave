@@ -67,6 +67,7 @@ assert_matches = { workspace = true }
 criterion = { workspace = true }
 libsecp256k1 = { workspace = true }
 memoffset = { workspace = true }
+ndarray = { workspace = true }
 rand_chacha = { workspace = true }
 serde_bytes = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
@@ -101,6 +102,10 @@ harness = false
 
 [[bench]]
 name = "bench_hashing"
+harness = false
+
+[[bench]]
+name = "read_only_accounts_cache"
 harness = false
 
 [[bench]]
