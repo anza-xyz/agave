@@ -1735,7 +1735,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             .map(|_| Vec::with_capacity(expected_items_per_bin))
             .collect::<Vec<_>>();
         let mut count = 0;
-        let mut dirty_pubkeys = items
+        let dirty_pubkeys = items
             .filter_map(|(pubkey, account_info)| {
                 let pubkey_bin = self.bin_calculator.bin_from_pubkey(&pubkey);
                 // this value is equivalent to what update() below would have created if we inserted a new item
@@ -1775,6 +1775,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             } else {
                 // not using disk buckets, so just write to in-mem
                 // this is no longer the default case
+                let mut duplicates_from_in_memory = vec![];
                 items
                     .into_iter()
                     .for_each(|(pubkey, (slot, account_info))| {
@@ -1789,11 +1790,17 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                         {
                             InsertNewEntryResults::DidNotExist => {}
                             InsertNewEntryResults::ExistedNewEntryZeroLamports => {}
-                            InsertNewEntryResults::ExistedNewEntryNonZeroLamports => {
-                                dirty_pubkeys.push(pubkey);
+                            InsertNewEntryResults::ExistedNewEntryNonZeroLamports(other_slot) => {
+                                if let Some(other_slot) = other_slot {
+                                    duplicates_from_in_memory.push((other_slot, pubkey));
+                                }
+                                duplicates_from_in_memory.push((slot, pubkey));
                             }
                         }
                     });
+
+                r_account_maps
+                    .startup_update_duplicates_from_in_memory_only(duplicates_from_in_memory);
             }
             insert_time.stop();
             insertion_time.fetch_add(insert_time.as_us(), Ordering::Relaxed);
@@ -1818,7 +1825,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             .into_par_iter()
             .map(|pubkey_bin| {
                 let r_account_maps = &self.account_maps[pubkey_bin];
-                r_account_maps.populate_and_retrieve_duplicate_keys_from_startup()
+                if self.storage.storage.is_disk_index_enabled() {
+                    r_account_maps.populate_and_retrieve_duplicate_keys_from_startup()
+                } else {
+                    r_account_maps.startup_take_duplicates_from_in_memory_only()
+                }
             })
             .for_each(f);
     }
