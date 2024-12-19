@@ -1,6 +1,6 @@
 use {
-    solana_builtins_default_costs::{
-        get_builtin_migration_feature_index, BuiltinMigrationFeatureIndex, MAYBE_BUILTIN_KEY,
+    solana_builtins::cost_modeling::{
+        get_builtin_migration_feature_index, is_builtin_program, MAYBE_BUILTIN_KEY,
     },
     solana_sdk::{packet::PACKET_DATA_SIZE, pubkey::Pubkey},
 };
@@ -48,14 +48,16 @@ impl BuiltinProgramsFilter {
             return ProgramKind::NotBuiltin;
         }
 
-        match get_builtin_migration_feature_index(program_id) {
-            BuiltinMigrationFeatureIndex::NotBuiltin => ProgramKind::NotBuiltin,
-            BuiltinMigrationFeatureIndex::BuiltinNoMigrationFeature => ProgramKind::Builtin,
-            BuiltinMigrationFeatureIndex::BuiltinWithMigrationFeature(
-                core_bpf_migration_feature_index,
-            ) => ProgramKind::MigratingBuiltin {
-                core_bpf_migration_feature_index,
-            },
+        if is_builtin_program(program_id) {
+            if let Some(index) = get_builtin_migration_feature_index(program_id) {
+                ProgramKind::MigratingBuiltin {
+                    core_bpf_migration_feature_index: index,
+                }
+            } else {
+                ProgramKind::Builtin
+            }
+        } else {
+            ProgramKind::NotBuiltin
         }
     }
 }
@@ -63,7 +65,8 @@ impl BuiltinProgramsFilter {
 #[cfg(test)]
 mod test {
     use {
-        super::*, solana_builtins_default_costs::get_migration_feature_position,
+        super::*,
+        solana_builtins::cost_modeling::get_builtin_migration_feature_index_from_feature_id,
         solana_sdk::feature_set,
     };
 
@@ -127,9 +130,9 @@ mod test {
             assert_eq!(
                 test_store.get_program_kind(index, &migrating_builtin_pubkey),
                 ProgramKind::MigratingBuiltin {
-                    core_bpf_migration_feature_index: get_migration_feature_position(
-                        &migration_feature_id
-                    ),
+                    core_bpf_migration_feature_index:
+                        get_builtin_migration_feature_index_from_feature_id(&migration_feature_id)
+                            .unwrap(),
                 }
             );
         }
