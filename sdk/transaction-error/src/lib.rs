@@ -137,6 +137,9 @@ pub enum TransactionError {
 
     /// Program cache hit max limit.
     ProgramCacheHitMaxLimit,
+
+    /// Commit cancelled internally.
+    CommitCancelled,
 }
 
 impl std::error::Error for TransactionError {}
@@ -220,6 +223,8 @@ impl fmt::Display for TransactionError {
              => f.write_str("Sum of account balances before and after transaction do not match"),
             Self::ProgramCacheHitMaxLimit
              => f.write_str("Program cache hit max limit"),
+            Self::CommitCancelled
+             => f.write_str("CommitCancelled"),
         }
     }
 }
