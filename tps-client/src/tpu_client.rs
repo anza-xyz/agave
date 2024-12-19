@@ -1,21 +1,19 @@
 use {
     crate::{TpsClient, TpsClientError, TpsClientResult},
+    solana_account::Account,
+    solana_commitment_config::CommitmentConfig,
     solana_connection_cache::connection_cache::{
         ConnectionManager, ConnectionPool, NewConnectionConfig,
     },
+    solana_epoch_info::EpochInfo,
+    solana_hash::Hash,
+    solana_message::Message,
+    solana_pubkey::Pubkey,
     solana_rpc_client_api::config::RpcBlockConfig,
-    solana_sdk::{
-        account::Account,
-        commitment_config::CommitmentConfig,
-        epoch_info::EpochInfo,
-        hash::Hash,
-        message::Message,
-        pubkey::Pubkey,
-        signature::Signature,
-        slot_history::Slot,
-        transaction::{Result, Transaction},
-    },
+    solana_signature::Signature,
     solana_tpu_client::tpu_client::TpuClient,
+    solana_transaction::Transaction,
+    solana_transaction_error::TransactionResult as Result,
     solana_transaction_status::UiConfirmedBlock,
 };
 
@@ -155,7 +153,7 @@ where
     fn get_slot_with_commitment(
         &self,
         commitment_config: CommitmentConfig,
-    ) -> TpsClientResult<Slot> {
+    ) -> TpsClientResult<u64> {
         self.rpc_client()
             .get_slot_with_commitment(commitment_config)
             .map_err(|err| err.into())
@@ -163,10 +161,10 @@ where
 
     fn get_blocks_with_commitment(
         &self,
-        start_slot: Slot,
-        end_slot: Option<Slot>,
+        start_slot: u64,
+        end_slot: Option<u64>,
         commitment_config: CommitmentConfig,
-    ) -> TpsClientResult<Vec<Slot>> {
+    ) -> TpsClientResult<Vec<u64>> {
         self.rpc_client()
             .get_blocks_with_commitment(start_slot, end_slot, commitment_config)
             .map_err(|err| err.into())
@@ -174,7 +172,7 @@ where
 
     fn get_block_with_config(
         &self,
-        slot: Slot,
+        slot: u64,
         rpc_block_config: RpcBlockConfig,
     ) -> TpsClientResult<UiConfirmedBlock> {
         self.rpc_client()
