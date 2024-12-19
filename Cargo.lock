@@ -239,9 +239,19 @@ dependencies = [
  "agave-transaction-view",
  "bincode",
  "criterion",
- "solana-sdk",
+ "solana-hash",
+ "solana-instruction",
+ "solana-keypair",
+ "solana-message",
+ "solana-packet",
+ "solana-pubkey",
  "solana-sdk-ids",
+ "solana-short-vec",
+ "solana-signature",
+ "solana-signer",
  "solana-svm-transaction",
+ "solana-system-interface",
+ "solana-transaction",
 ]
 
 [[package]]
