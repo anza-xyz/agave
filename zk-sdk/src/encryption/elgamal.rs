@@ -158,6 +158,7 @@ impl ElGamalKeypair {
     /// Generates the public and secret keys for ElGamal encryption.
     ///
     /// This function is randomized. It internally samples a scalar element using `OsRng`.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = newRand))]
     pub fn new_rand() -> Self {
         ElGamal::keygen()
     }
@@ -615,6 +616,7 @@ impl ConstantTimeEq for ElGamalSecretKey {
 }
 
 /// Ciphertext for the ElGamal encryption scheme.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ElGamalCiphertext {
     pub commitment: PedersenCommitment,
@@ -750,6 +752,7 @@ define_mul_variants!(
 );
 
 /// Decryption handle for Pedersen commitment.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DecryptHandle(RistrettoPoint);
 impl DecryptHandle {
