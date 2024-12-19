@@ -1,20 +1,17 @@
 use {
     log::debug,
+    solana_account::Account,
+    solana_clock::DEFAULT_MS_PER_SLOT,
+    solana_commitment_config::CommitmentConfig,
+    solana_epoch_info::EpochInfo,
+    solana_hash::Hash,
+    solana_message::Message,
+    solana_pubkey::Pubkey,
     solana_rpc_client_api::{client_error::Error as ClientError, config::RpcBlockConfig},
-    solana_sdk::{
-        account::Account,
-        clock::DEFAULT_MS_PER_SLOT,
-        commitment_config::CommitmentConfig,
-        epoch_info::EpochInfo,
-        hash::Hash,
-        message::Message,
-        pubkey::Pubkey,
-        signature::Signature,
-        slot_history::Slot,
-        transaction::{Result, Transaction},
-        transport::TransportError,
-    },
+    solana_signature::Signature,
     solana_tpu_client::tpu_client::TpuSenderError,
+    solana_transaction::Transaction,
+    solana_transaction_error::{TransactionResult as Result, TransportError},
     solana_transaction_status::UiConfirmedBlock,
     std::{
         thread::sleep,
@@ -126,21 +123,19 @@ pub trait TpsClient {
 
     fn get_multiple_accounts(&self, pubkeys: &[Pubkey]) -> TpsClientResult<Vec<Option<Account>>>;
 
-    fn get_slot_with_commitment(
-        &self,
-        commitment_config: CommitmentConfig,
-    ) -> TpsClientResult<Slot>;
+    fn get_slot_with_commitment(&self, commitment_config: CommitmentConfig)
+        -> TpsClientResult<u64>;
 
     fn get_blocks_with_commitment(
         &self,
-        start_slot: Slot,
-        end_slot: Option<Slot>,
+        start_slot: u64,
+        end_slot: Option<u64>,
         commitment_config: CommitmentConfig,
-    ) -> TpsClientResult<Vec<Slot>>;
+    ) -> TpsClientResult<Vec<u64>>;
 
     fn get_block_with_config(
         &self,
-        slot: Slot,
+        slot: u64,
         rpc_block_config: RpcBlockConfig,
     ) -> TpsClientResult<UiConfirmedBlock>;
 }
