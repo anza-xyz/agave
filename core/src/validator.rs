@@ -152,6 +152,12 @@ use {
     tokio::runtime::Runtime as TokioRuntime,
 };
 
+// The current number of hashes per second on Solana MNB, Testnet, and Devnet
+// If the hash rate on these clusters changes, we might consider updating this
+// constant. However, the PoH speed check compares hashes / second so this
+// constant does not have to be updated
+const POH_SPEED_CHECK_NUM_HASHES: u64 = 10_000_000;
+
 const MAX_COMPLETED_DATA_SETS_IN_CHANNEL: usize = 100_000;
 const WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT: u64 = 80;
 // Right now since we reuse the wait for supermajority code, the
@@ -623,6 +629,13 @@ impl Validator {
 
         let start_time = Instant::now();
 
+        // Run the speed check as early as possible to
+        let my_poh_hashes_per_second = if config.no_poh_speed_test {
+            None
+        } else {
+            Some(measure_poh_speed(POH_SPEED_CHECK_NUM_HASHES))
+        };
+
         let thread_manager = ThreadManager::new(&config.thread_manager_config)?;
         // Initialize the global rayon pool first to ensure the value in config
         // is honored. Otherwise, some code accessing the global pool could
@@ -835,8 +848,11 @@ impl Validator {
         )
         .map_err(ValidatorError::Other)?;
 
-        if !config.no_poh_speed_test {
-            check_poh_speed(&bank_forks.read().unwrap().root_bank(), None)?;
+        if let Some(my_hashes_per_second) = my_poh_hashes_per_second {
+            check_poh_speed(
+                &bank_forks.read().unwrap().root_bank(),
+                my_hashes_per_second,
+            )?;
         }
 
         let (root_slot, hard_forks) = {
@@ -1835,19 +1851,25 @@ fn active_vote_account_exists_in_bank(bank: &Bank, vote_account: &Pubkey) -> boo
     false
 }
 
-fn check_poh_speed(bank: &Bank, maybe_hash_samples: Option<u64>) -> Result<(), ValidatorError> {
+// Compute the PoH speed (hashes / second) by measuring the time required to
+// compute `num_hashes` hashes
+fn measure_poh_speed(num_hashes: u64) -> u64 {
+    let hash_time = compute_hash_time(num_hashes);
+    (num_hashes as f64 / hash_time.as_secs_f64()) as u64
+}
+
+// Compare a computed PoH speed against the target value derived from a Bank
+// and error if the computed PoH speed is less than the target speed
+//
+// Measurement and comparison are split so that the measurement can occur early
+// in validator startup before other services start competing for CPU time
+fn check_poh_speed(bank: &Bank, my_hashes_per_second: u64) -> Result<(), ValidatorError> {
     let Some(hashes_per_tick) = bank.hashes_per_tick() else {
         warn!("Unable to read hashes per tick from Bank, skipping PoH speed check");
         return Ok(());
     };
-
     let ticks_per_slot = bank.ticks_per_slot();
     let hashes_per_slot = hashes_per_tick * ticks_per_slot;
-    let hash_samples = maybe_hash_samples.unwrap_or(hashes_per_slot);
-
-    let hash_time = compute_hash_time(hash_samples);
-    let my_hashes_per_second = (hash_samples as f64 / hash_time.as_secs_f64()) as u64;
-
     let target_slot_duration = Duration::from_nanos(bank.ns_per_slot as u64);
     let target_hashes_per_second =
         (hashes_per_slot as f64 / target_slot_duration.as_secs_f64()) as u64;
@@ -3285,7 +3307,7 @@ mod tests {
             ..GenesisConfig::default()
         };
         let bank = Bank::new_for_tests(&genesis_config);
-        assert!(check_poh_speed(&bank, Some(10_000)).is_err());
+        assert!(check_poh_speed(&bank, measure_poh_speed(10_000)).is_err());
     }
 
     #[test]
@@ -3301,6 +3323,6 @@ mod tests {
             ..GenesisConfig::default()
         };
         let bank = Bank::new_for_tests(&genesis_config);
-        check_poh_speed(&bank, Some(10_000)).unwrap();
+        check_poh_speed(&bank, measure_poh_speed(10_000)).unwrap();
     }
 }
