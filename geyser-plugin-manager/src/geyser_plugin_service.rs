@@ -91,7 +91,7 @@ impl GeyserPluginService {
         let account_data_notifications_enabled =
             plugin_manager.account_data_notifications_enabled() || geyser_plugin_always_enabled;
         let account_data_snapshot_notifications_enabled =
-            plugin_manager.account_data_notifications_enabled();
+            plugin_manager.account_data_snapshot_notifications_enabled();
         let transaction_notifications_enabled =
             plugin_manager.transaction_notifications_enabled() || geyser_plugin_always_enabled;
         let entry_notifications_enabled =
