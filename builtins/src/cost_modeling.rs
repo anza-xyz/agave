@@ -9,7 +9,7 @@ use {
     solana_sdk_ids::{ed25519_program, secp256k1_program},
 };
 
-/// CONTRIBUTOR: If you change any builtin Core BPF migration confiurations
+/// CONTRIBUTOR: If you change any builtin Core BPF migration configurations
 /// in this crate's `BUILTINS` list, you must update this constant to reflect
 /// the number of builtin programs that have Core BPF migration configurations.
 pub const NUM_COST_MODELED_BUILTINS_WITH_MIGRATIONS: usize = 3;
