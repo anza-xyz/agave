@@ -259,14 +259,17 @@ impl<'a> AsRef<[u8]> for SignedData<'a> {
 pub struct ShredId(Slot, /*shred index:*/ u32, ShredType);
 
 impl ShredId {
+    #[inline]
     pub(crate) fn new(slot: Slot, index: u32, shred_type: ShredType) -> ShredId {
         ShredId(slot, index, shred_type)
     }
 
+    #[inline]
     pub fn slot(&self) -> Slot {
         self.0
     }
 
+    #[inline]
     pub(crate) fn unpack(&self) -> (Slot, /*shred index:*/ u32, ShredType) {
         (self.0, self.1, self.2)
     }
