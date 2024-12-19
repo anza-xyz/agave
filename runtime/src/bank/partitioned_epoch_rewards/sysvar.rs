@@ -3,7 +3,7 @@ use {
     log::info,
     solana_sdk::{
         account::{create_account_shared_data_with_fields as create_account, from_account},
-        feature_set, sysvar,
+        sysvar,
     },
     solana_stake_program::points::PointValue,
 };
@@ -31,15 +31,7 @@ impl Bank {
         num_partitions: u64,
         point_value: PointValue,
     ) {
-        let total_rewards = if self
-            .feature_set
-            .is_active(&feature_set::partitioned_epoch_rewards_superfeature::id())
-        {
-            point_value.rewards
-        } else {
-            total_rewards
-        };
-        assert!(total_rewards >= distributed_rewards);
+        assert!(point_value.rewards >= distributed_rewards);
 
         let parent_blockhash = self.last_blockhash();
 
@@ -48,7 +40,7 @@ impl Bank {
             num_partitions,
             parent_blockhash,
             total_points: point_value.points,
-            total_rewards,
+            total_rewards: point_value.rewards,
             distributed_rewards,
             active: true,
         };
@@ -86,17 +78,7 @@ impl Bank {
     /// Update EpochRewards sysvar with distributed rewards
     pub(in crate::bank::partitioned_epoch_rewards) fn set_epoch_rewards_sysvar_to_inactive(&self) {
         let mut epoch_rewards = self.get_epoch_rewards_sysvar();
-        if self
-            .feature_set
-            .is_active(&feature_set::partitioned_epoch_rewards_superfeature::id())
-        {
-            assert!(epoch_rewards.total_rewards >= epoch_rewards.distributed_rewards);
-        } else {
-            assert_eq!(
-                epoch_rewards.distributed_rewards,
-                epoch_rewards.total_rewards
-            );
-        }
+        assert!(epoch_rewards.total_rewards >= epoch_rewards.distributed_rewards);
         epoch_rewards.active = false;
 
         self.update_sysvar_account(&sysvar::epoch_rewards::id(), |account| {
@@ -143,8 +125,7 @@ mod tests {
         let (mut genesis_config, _mint_keypair) =
             create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         genesis_config.epoch_schedule = EpochSchedule::custom(432000, 432000, false);
-        let mut bank = Bank::new_for_tests(&genesis_config);
-        bank.activate_feature(&solana_feature_set::partitioned_epoch_rewards_superfeature::id());
+        let bank = Bank::new_for_tests(&genesis_config);
 
         let total_rewards = 1_000_000_000;
         let num_partitions = 2; // num_partitions is arbitrary and unimportant for this test

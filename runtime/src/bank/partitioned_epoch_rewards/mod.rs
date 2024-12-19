@@ -10,7 +10,6 @@ use {
     solana_accounts_db::{
         partitioned_rewards::PartitionedEpochRewardsConfig, stake_rewards::StakeReward,
     },
-    solana_feature_set as feature_set,
     solana_sdk::{
         account::AccountSharedData,
         account_utils::StateMut,

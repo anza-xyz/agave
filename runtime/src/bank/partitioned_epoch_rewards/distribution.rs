@@ -348,8 +348,7 @@ mod tests {
         let (mut genesis_config, _mint_keypair) =
             create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         genesis_config.epoch_schedule = EpochSchedule::custom(432000, 432000, false);
-        let mut bank = Bank::new_for_tests(&genesis_config);
-        bank.activate_feature(&solana_feature_set::partitioned_epoch_rewards_superfeature::id());
+        let bank = Bank::new_for_tests(&genesis_config);
 
         // Set up epoch_rewards sysvar with rewards with 1e9 lamports to distribute.
         let total_rewards = 1_000_000_000;
