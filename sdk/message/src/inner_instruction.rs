@@ -1,10 +1,11 @@
-use {
-    crate::instruction::CompiledInstruction,
-    serde::{Deserialize, Serialize},
-};
+use crate::compiled_instruction::CompiledInstruction;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde_derive::Deserialize, serde_derive::Serialize),
+    serde(rename_all = "camelCase")
+)]
 pub struct InnerInstruction {
     pub instruction: CompiledInstruction,
     /// Invocation stack height of this instruction. Instruction stack height
