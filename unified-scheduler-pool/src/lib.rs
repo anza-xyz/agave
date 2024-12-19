@@ -763,10 +763,12 @@ impl ExecutedTask {
 // Note that the above properties can be upheld only when this is used inside MPSC or SPSC channels
 // (i.e. the consumer side needs to be single threaded). For the multiple consumer cases,
 // ChainedChannel can be used instead.
+#[derive(Debug)]
 enum SubchanneledPayload<P1, P2> {
     Payload(P1),
     OpenSubchannel(P2),
     CloseSubchannel,
+    Unblock,
     Disconnect,
     Reset,
 }
@@ -1424,7 +1426,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                         session_pausing = true;
                                         session_resetting = true;
                                     }
-                                    Ok(NewTaskPayload::OpenSubchannel(_context_and_result_with_timings)) =>
+                                    Ok(NewTaskPayload::OpenSubchannel(_) | NewTaskPayload::Unblock) =>
                                         unreachable!(),
                                     Ok(NewTaskPayload::Disconnect) | Err(RecvError) => {
                                         // Mostly likely is that this scheduler is dropped for pruned blocks of
@@ -1492,6 +1494,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     session_ending = false;
                                 } else {
                                     session_pausing = false;
+                                    // Prevent processing transactions and thus touching poh until
+                                    // unblocked, which signals successful poh `set_bank()`-ing.
+                                    assert_matches!(
+                                        new_task_receiver.recv().unwrap(),
+                                        NewTaskPayload::Unblock
+                                    );
                                 }
 
                                 runnable_task_sender
@@ -1780,6 +1788,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             .expect("no new session after aborted");
     }
 
+    fn unblock_session(&self) {
+        self.new_task_sender
+            .send(NewTaskPayload::Unblock)
+            .expect("no new session after aborted");
+    }
+
     fn disconnect_new_task_sender(&mut self) {
         self.new_task_sender = Arc::new(crossbeam_channel::unbounded().0);
     }
@@ -1934,6 +1948,10 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
             self.inner.task_creator.usage_queue_loader().load(pubkey)
         });
         self.inner.thread_manager.send_task(task)
+    }
+
+    fn unblock_scheduling(&self) {
+        self.inner.thread_manager.unblock_session();
     }
 
     fn recover_error_after_abort(&mut self) -> TransactionError {
@@ -3382,6 +3400,10 @@ mod tests {
             }));
 
             Ok(())
+        }
+
+        fn unblock_scheduling(&self) {
+            unimplemented!();
         }
 
         fn recover_error_after_abort(&mut self) -> TransactionError {
