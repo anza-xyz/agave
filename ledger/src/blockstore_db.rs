@@ -796,6 +796,10 @@ pub trait ColumnName {
 
 pub trait TypedColumn: Column {
     type Type: Serialize + DeserializeOwned;
+
+    fn bincode_deserialize(bytes: &[u8]) -> bincode::Result<Self::Type> {
+        bincode::deserialize(bytes)
+    }
 }
 
 impl TypedColumn for columns::AddressSignatures {
@@ -1210,6 +1214,18 @@ impl ColumnName for columns::Index {
 }
 impl TypedColumn for columns::Index {
     type Type = blockstore_meta::Index;
+
+    fn bincode_deserialize(bytes: &[u8]) -> bincode::Result<Self::Type> {
+        // For backward compatibility, try first to read LegacyIndex and
+        // convert from. If that fails retry reading Index.
+        // It can be showed serialized bytes obtained from an Index will always
+        // fail to deserialize into a LegacyIndex because there are not enough
+        // trailing bytes in the payload.
+        bincode::deserialize::<blockstore_meta::LegacyIndex>(bytes)
+            .as_ref()
+            .map(blockstore_meta::Index::from)
+            .or_else(|_| bincode::deserialize::<blockstore_meta::Index>(bytes))
+    }
 }
 
 impl SlotColumn for columns::DeadSlots {}
@@ -1647,7 +1663,7 @@ where
             let result = self
                 .backend
                 .multi_get_cf(self.handle(), &keys)
-                .map(|out| Ok(out?.as_deref().map(deserialize).transpose()?))
+                .map(|out| Ok(out?.as_deref().map(C::bincode_deserialize).transpose()?))
                 .collect::<Vec<Result<Option<_>>>>();
             if let Some(op_start_instant) = is_perf_enabled {
                 // use multi-get instead
@@ -1675,7 +1691,7 @@ where
             &self.read_perf_status,
         );
         if let Some(pinnable_slice) = self.backend.get_pinned_cf(self.handle(), key)? {
-            let value = deserialize(pinnable_slice.as_ref())?;
+            let value = C::bincode_deserialize(pinnable_slice.as_ref())?;
             result = Ok(Some(value))
         }
 
