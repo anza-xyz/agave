@@ -564,6 +564,7 @@ pub fn spawn_server(
     )
 }
 
+#[derive(Clone)]
 pub struct QuicServerParams {
     pub max_connections_per_peer: usize,
     pub max_staked_connections: usize,
@@ -632,8 +633,11 @@ pub fn spawn_server_multi(
 #[cfg(test)]
 mod test {
     use {
-        super::*, crate::nonblocking::quic::test::*, crossbeam_channel::unbounded,
-        solana_net_utils::bind_to_localhost, std::net::SocketAddr,
+        super::*,
+        crate::nonblocking::{quic::test::*, testing_utilities::check_multiple_streams},
+        crossbeam_channel::unbounded,
+        solana_net_utils::bind_to_localhost,
+        std::net::SocketAddr,
     };
 
     fn setup_quic_server() -> (
@@ -723,7 +727,7 @@ mod test {
         .unwrap();
 
         let runtime = rt("solQuicTestRt".to_string());
-        runtime.block_on(check_multiple_streams(receiver, server_address));
+        runtime.block_on(check_multiple_streams(receiver, server_address, None));
         exit.store(true, Ordering::Relaxed);
         t.join().unwrap();
     }
