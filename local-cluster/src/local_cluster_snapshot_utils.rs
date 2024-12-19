@@ -73,7 +73,7 @@ impl LocalCluster {
     ) -> NextSnapshotResult {
         // Get slot after which this was generated
         let client = self
-            .get_validator_client(self.entry_point_info.pubkey())
+            .build_validator_tpu_quic_client(self.entry_point_info.pubkey())
             .unwrap();
         let last_slot = client
             .rpc_client()

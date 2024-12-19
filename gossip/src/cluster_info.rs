@@ -308,6 +308,7 @@ impl ClusterInfo {
     }
 
     pub fn save_contact_info(&self) {
+        let _st = ScopedTimer::from(&self.stats.save_contact_info_time);
         let nodes = {
             let entrypoint_gossip_addrs = self
                 .entrypoints

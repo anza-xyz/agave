@@ -85,10 +85,10 @@ pub struct ClusterNodesCache<T> {
 
 impl Node {
     #[inline]
-    fn pubkey(&self) -> Pubkey {
+    fn pubkey(&self) -> &Pubkey {
         match &self.node {
-            NodeId::Pubkey(pubkey) => *pubkey,
-            NodeId::ContactInfo(node) => *node.pubkey(),
+            NodeId::Pubkey(pubkey) => pubkey,
+            NodeId::ContactInfo(node) => node.pubkey(),
         }
     }
 
@@ -195,7 +195,7 @@ impl ClusterNodes<RetransmitStage> {
             })
         };
         let (index, peers) =
-            get_retransmit_peers(fanout, |(node, _)| node.pubkey() == self.pubkey, nodes);
+            get_retransmit_peers(fanout, |(node, _)| node.pubkey() == &self.pubkey, nodes);
         let peers = peers
             .filter_map(|(_, addr)| addr)
             .filter(|addr| socket_addr_space.check(addr))
@@ -234,10 +234,10 @@ impl ClusterNodes<RetransmitStage> {
         let nodes: Vec<_> = weighted_shuffle
             .shuffle(&mut rng)
             .map(|index| &self.nodes[index])
-            .take_while(|node| node.pubkey() != self.pubkey)
+            .take_while(|node| node.pubkey() != &self.pubkey)
             .collect();
         let parent = get_retransmit_parent(fanout, nodes.len(), &nodes);
-        Ok(parent.map(Node::pubkey))
+        Ok(parent.map(Node::pubkey).copied())
     }
 }
 
@@ -251,7 +251,7 @@ pub fn new_cluster_nodes<T: 'static>(
     let index: HashMap<_, _> = nodes
         .iter()
         .enumerate()
-        .map(|(ix, node)| (node.pubkey(), ix))
+        .map(|(ix, node)| (*node.pubkey(), ix))
         .collect();
     let broadcast = TypeId::of::<T>() == TypeId::of::<BroadcastStage>();
     let stakes: Vec<u64> = nodes.iter().map(|node| node.stake).collect();
@@ -307,7 +307,7 @@ fn get_nodes(
                 stake,
             }),
     )
-    .sorted_by_key(|node| Reverse((node.stake, node.pubkey())))
+    .sorted_by_key(|node| Reverse((node.stake, *node.pubkey())))
     // Since sorted_by_key is stable, in case of duplicates, this
     // will keep nodes with contact-info.
     .dedup_by(|a, b| a.pubkey() == b.pubkey())
@@ -330,7 +330,7 @@ fn get_nodes(
             // pubkey for deterministic shuffle, but strip the contact-info so
             // that no more packets are sent to this node.
             (node.stake > 0u64).then(|| Node {
-                node: NodeId::from(node.pubkey()),
+                node: NodeId::from(*node.pubkey()),
                 stake: node.stake,
             })
         }

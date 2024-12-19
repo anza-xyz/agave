@@ -457,6 +457,14 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
         true
     }
 
+    /// Check if the plugin is interested in account data from snapshot
+    /// Default is true -- if the plugin is not interested in
+    /// account data snapshot, please return false because startup would be
+    /// improved significantly.
+    fn account_data_snapshot_notifications_enabled(&self) -> bool {
+        true
+    }
+
     /// Check if the plugin is interested in transaction data
     /// Default is false -- if the plugin is interested in
     /// transaction data, please return true.
