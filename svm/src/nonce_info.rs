@@ -1,10 +1,10 @@
 use {
-    solana_sdk::{
-        account::AccountSharedData,
-        account_utils::StateMut,
-        nonce::state::{DurableNonce, State as NonceState, Versions as NonceVersions},
-        pubkey::Pubkey,
+    solana_account::{state_traits::StateMut, AccountSharedData},
+    solana_nonce::{
+        state::{DurableNonce, State as NonceState},
+        versions::Versions as NonceVersions,
     },
+    solana_pubkey::Pubkey,
     thiserror::Error,
 };
 
@@ -62,13 +62,12 @@ impl NonceInfo {
 mod tests {
     use {
         super::*,
-        solana_sdk::{
-            hash::Hash,
-            nonce::state::{
-                Data as NonceData, DurableNonce, State as NonceState, Versions as NonceVersions,
-            },
-            system_program,
+        solana_hash::Hash,
+        solana_nonce::{
+            state::{Data as NonceData, DurableNonce, State as NonceState},
+            versions::Versions as NonceVersions,
         },
+        solana_sdk_ids::system_program,
     };
 
     fn create_nonce_account(state: NonceState) -> AccountSharedData {

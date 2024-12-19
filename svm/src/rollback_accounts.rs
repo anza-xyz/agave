@@ -1,10 +1,7 @@
 use {
     crate::nonce_info::NonceInfo,
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount, WritableAccount},
-        clock::Epoch,
-        pubkey::Pubkey,
-    },
+    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_pubkey::Pubkey,
 };
 
 /// Captured account state used to rollback account state for nonce and fee
@@ -38,7 +35,7 @@ impl RollbackAccounts {
         fee_payer_address: Pubkey,
         mut fee_payer_account: AccountSharedData,
         fee_payer_rent_debit: u64,
-        fee_payer_loaded_rent_epoch: Epoch,
+        fee_payer_loaded_rent_epoch: u64,
     ) -> Self {
         // When the fee payer account is rolled back due to transaction failure,
         // rent should not be charged so credit the previously debited rent
@@ -107,14 +104,13 @@ impl RollbackAccounts {
 mod tests {
     use {
         super::*,
-        solana_sdk::{
-            account::{ReadableAccount, WritableAccount},
-            hash::Hash,
-            nonce::state::{
-                Data as NonceData, DurableNonce, State as NonceState, Versions as NonceVersions,
-            },
-            system_program,
+        solana_account::{ReadableAccount, WritableAccount},
+        solana_hash::Hash,
+        solana_nonce::{
+            state::{Data as NonceData, DurableNonce, State as NonceState},
+            versions::Versions as NonceVersions,
         },
+        solana_sdk_ids::system_program,
     };
 
     #[test]

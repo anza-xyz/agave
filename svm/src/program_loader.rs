@@ -1,21 +1,17 @@
 use {
     crate::transaction_processing_callback::TransactionProcessingCallback,
+    solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount},
+    solana_instruction::error::InstructionError,
+    solana_program::bpf_loader_upgradeable::{self, UpgradeableLoaderState},
     solana_program_runtime::loaded_programs::{
         LoadProgramMetrics, ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
         ProgramRuntimeEnvironment, ProgramRuntimeEnvironments, DELAY_VISIBILITY_SLOT_OFFSET,
     },
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        account_utils::StateMut,
-        bpf_loader, bpf_loader_deprecated,
-        bpf_loader_upgradeable::{self, UpgradeableLoaderState},
-        clock::Slot,
-        instruction::InstructionError,
-        loader_v4::{self, LoaderV4State, LoaderV4Status},
-        pubkey::Pubkey,
-        transaction::{self, TransactionError},
-    },
+    solana_pubkey::Pubkey,
+    solana_sdk::loader_v4::{self, LoaderV4State, LoaderV4Status},
+    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated},
     solana_timings::ExecuteTimings,
+    solana_transaction_error::{TransactionError, TransactionResult},
     solana_type_overrides::sync::Arc,
 };
 
@@ -24,8 +20,8 @@ pub(crate) enum ProgramAccountLoadResult {
     InvalidAccountData(ProgramCacheEntryOwner),
     ProgramOfLoaderV1(AccountSharedData),
     ProgramOfLoaderV2(AccountSharedData),
-    ProgramOfLoaderV3(AccountSharedData, AccountSharedData, Slot),
-    ProgramOfLoaderV4(AccountSharedData, Slot),
+    ProgramOfLoaderV3(AccountSharedData, AccountSharedData, u64),
+    ProgramOfLoaderV4(AccountSharedData, u64),
 }
 
 pub(crate) fn load_program_from_bytes(
@@ -33,7 +29,7 @@ pub(crate) fn load_program_from_bytes(
     programdata: &[u8],
     loader_key: &Pubkey,
     account_size: usize,
-    deployment_slot: Slot,
+    deployment_slot: u64,
     program_runtime_environment: ProgramRuntimeEnvironment,
     reloading: bool,
 ) -> std::result::Result<ProgramCacheEntry, Box<dyn std::error::Error>> {
@@ -123,7 +119,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     environments: &ProgramRuntimeEnvironments,
     pubkey: &Pubkey,
-    slot: Slot,
+    slot: u64,
     execute_timings: &mut ExecuteTimings,
     reload: bool,
 ) -> Option<Arc<ProgramCacheEntry>> {
@@ -219,7 +215,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
 pub(crate) fn get_program_modification_slot<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     pubkey: &Pubkey,
-) -> transaction::Result<Slot> {
+) -> TransactionResult<u64> {
     let program = callbacks
         .get_account_shared_data(pubkey)
         .ok_or(TransactionError::ProgramAccountNotFound)?;
@@ -254,11 +250,12 @@ mod tests {
     use {
         super::*,
         crate::transaction_processor::TransactionBatchProcessor,
+        solana_account::WritableAccount,
         solana_program_runtime::{
             loaded_programs::{BlockRelation, ForkGraph, ProgramRuntimeEnvironments},
             solana_sbpf::program::BuiltinProgram,
         },
-        solana_sdk::{account::WritableAccount, bpf_loader, bpf_loader_upgradeable},
+        solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable},
         std::{
             cell::RefCell,
             collections::HashMap,
@@ -271,7 +268,7 @@ mod tests {
     struct TestForkGraph {}
 
     impl ForkGraph for TestForkGraph {
-        fn relationship(&self, _a: Slot, _b: Slot) -> BlockRelation {
+        fn relationship(&self, _a: u64, _b: u64) -> BlockRelation {
             BlockRelation::Unknown
         }
     }

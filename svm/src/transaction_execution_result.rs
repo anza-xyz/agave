@@ -7,7 +7,9 @@ pub use solana_sdk::inner_instruction::{InnerInstruction, InnerInstructionsList}
 use {
     crate::account_loader::LoadedTransaction,
     solana_program_runtime::loaded_programs::ProgramCacheEntry,
-    solana_sdk::{pubkey::Pubkey, transaction, transaction_context::TransactionReturnData},
+    solana_pubkey::Pubkey,
+    solana_transaction_context::TransactionReturnData,
+    solana_transaction_error::TransactionResult,
     std::{collections::HashMap, sync::Arc},
 };
 
@@ -32,7 +34,7 @@ impl ExecutedTransaction {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TransactionExecutionDetails {
-    pub status: transaction::Result<()>,
+    pub status: TransactionResult<()>,
     pub log_messages: Option<Vec<String>>,
     pub inner_instructions: Option<InnerInstructionsList>,
     pub return_data: Option<TransactionReturnData>,
