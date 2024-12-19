@@ -170,6 +170,8 @@ pub trait InstalledScheduler: Send + Sync + Debug + 'static {
         index: usize,
     ) -> ScheduleResult;
 
+    fn unblock_scheduling(&self);
+
     /// Return the error which caused the scheduler to abort.
     ///
     /// Note that this must not be called until it's observed that `schedule_execution()` has
@@ -504,6 +506,16 @@ impl BankWithScheduler {
         }
 
         Ok(())
+    }
+
+    pub fn unblock_block_production(&self) {
+        self.inner
+            .with_active_scheduler(|scheduler| {
+                assert_matches!(scheduler.context().mode(), SchedulingMode::BlockProduction);
+                scheduler.unblock_scheduling();
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
