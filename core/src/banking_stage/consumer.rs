@@ -18,15 +18,11 @@ use {
         BankStart, PohRecorderError, RecordTransactionsSummary, RecordTransactionsTimings,
         TransactionRecorder,
     },
-    solana_runtime::{
-        bank::{Bank, LoadAndExecuteTransactionsOutput},
-        transaction_batch::TransactionBatch,
-    },
+    solana_runtime::{bank::Bank, transaction_batch::TransactionBatch},
     solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
     solana_sdk::{
         clock::{Slot, FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, MAX_PROCESSING_AGE},
         fee::FeeBudgetLimits,
-        hash::Hash,
         message::SanitizedMessage,
         saturating_add_assign,
         timing::timestamp,
@@ -35,12 +31,11 @@ use {
     solana_svm::{
         account_loader::{validate_fee_payer, TransactionCheckResult},
         transaction_error_metrics::TransactionErrorMetrics,
-        transaction_processing_result::TransactionProcessingResultExtensions,
-        transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
     solana_svm_transaction::svm_message::SVMMessage,
     solana_timings::ExecuteTimings,
     std::{
+        num,
         sync::{atomic::Ordering, Arc},
         time::Instant,
     },
@@ -624,50 +619,43 @@ impl Consumer {
             })
             .collect();
 
-        let (load_and_execute_transactions_output, load_execute_us) = measure_us!(bank
-            .load_and_execute_transactions(
-                batch,
-                MAX_PROCESSING_AGE,
-                &mut execute_and_commit_timings.execute_timings,
-                &mut error_counters,
-                TransactionProcessingConfig {
-                    account_overrides: None,
-                    check_program_modification_slot: bank.check_program_modification_slot(),
-                    compute_budget: bank.compute_budget(),
-                    log_messages_bytes_limit: self.log_messages_bytes_limit,
-                    limit_to_load_programs: true,
-                    recording_config: ExecutionRecordingConfig::new_single_setting(
-                        transaction_status_sender_enabled
-                    ),
-                    transaction_account_lock_limit: Some(bank.get_transaction_account_lock_limit()),
-                }
-            ));
-        execute_and_commit_timings.load_execute_us = load_execute_us;
+        /*         let (load_and_execute_transactions_output, load_execute_us) = measure_us!(bank
+                    .load_and_execute_transactions(
+                        batch,
+                        MAX_PROCESSING_AGE,
+                        &mut execute_and_commit_timings.execute_timings,
+                        &mut error_counters,
+                        TransactionProcessingConfig {
+                            account_overrides: None,
+                            check_program_modification_slot: bank.check_program_modification_slot(),
+                            compute_budget: bank.compute_budget(),
+                            log_messages_bytes_limit: self.log_messages_bytes_limit,
+                            limit_to_load_programs: true,
+                            recording_config: ExecutionRecordingConfig::new_single_setting(
+                                transaction_status_sender_enabled
+                            ),
+                            transaction_account_lock_limit: Some(bank.get_transaction_account_lock_limit()),
+                        }
+                    ));
+                execute_and_commit_timings.load_execute_us = load_execute_us;
 
-        let LoadAndExecuteTransactionsOutput {
-            processing_results,
-            processed_counts,
-        } = load_and_execute_transactions_output;
-
+                let LoadAndExecuteTransactionsOutput {
+                    processing_results,
+                    processed_counts,
+                } = load_and_execute_transactions_output;
+        */
+        let num_transactions = batch.sanitized_transactions().len();
         let transaction_counts = LeaderProcessedTransactionCounts {
-            processed_count: processed_counts.processed_transactions_count,
-            processed_with_successful_result_count: processed_counts
-                .processed_with_successful_result_count,
-            attempted_processing_count: processing_results.len() as u64,
+            processed_count: num_transactions as u64,
+            processed_with_successful_result_count: num_transactions as u64,
+            attempted_processing_count: num_transactions as u64,
         };
 
-        let (processed_transactions, processing_results_to_transactions_us) =
-            measure_us!(processing_results
-                .iter()
-                .zip(batch.sanitized_transactions())
-                .filter_map(|(processing_result, tx)| {
-                    if processing_result.was_processed() {
-                        Some(tx.to_versioned_transaction())
-                    } else {
-                        None
-                    }
-                })
-                .collect_vec());
+        let (processed_transactions, processing_results_to_transactions_us) = measure_us!(batch
+            .sanitized_transactions()
+            .iter()
+            .map(|tx| { tx.to_versioned_transaction() })
+            .collect_vec());
 
         let (freeze_lock, freeze_lock_us) = measure_us!(bank.freeze_lock());
         execute_and_commit_timings.freeze_lock_us = freeze_lock_us;
@@ -688,10 +676,10 @@ impl Consumer {
         };
 
         if let Err(recorder_err) = record_transactions_result {
-            retryable_transaction_indexes.extend(processing_results.iter().enumerate().filter_map(
-                |(index, processing_result)| processing_result.was_processed().then_some(index),
-            ));
-
+            /*             retryable_transaction_indexes.extend(processing_results.iter().enumerate().filter_map(
+                            |(index, processing_result)| processing_result.was_processed().then_some(index),
+                        ));
+            */
             return ExecuteAndCommitTransactionsOutput {
                 transaction_counts,
                 retryable_transaction_indexes,
@@ -703,43 +691,50 @@ impl Consumer {
             };
         }
 
-        let (commit_time_us, commit_transaction_statuses) =
-            if processed_counts.processed_transactions_count != 0 {
-                self.committer.commit_transactions(
-                    batch,
-                    processing_results,
-                    starting_transaction_index,
-                    bank,
-                    &mut pre_balance_info,
-                    &mut execute_and_commit_timings,
-                    &processed_counts,
-                )
-            } else {
-                (
-                    0,
-                    vec![CommitTransactionDetails::NotCommitted; processing_results.len()],
-                )
+        /*        let (commit_time_us, commit_transaction_statuses) =
+                    if processed_counts.processed_transactions_count != 0 {
+                        self.committer.commit_transactions(
+                            batch,
+                            processing_results,
+                            starting_transaction_index,
+                            bank,
+                            &mut pre_balance_info,
+                            &mut execute_and_commit_timings,
+                            &processed_counts,
+                        )
+                    } else {
+                        (
+                            0,
+                            vec![CommitTransactionDetails::NotCommitted; processing_results.len()],
+                        )
+                    };
+        */
+        let commit_transaction_statuses = vec![
+            CommitTransactionDetails::Committed {
+                compute_units: 0,
+                loaded_accounts_data_size: 0
             };
-
+            num_transactions
+        ];
         drop(freeze_lock);
-
-        let vote_only_freeze_lock = bank.vote_only_freeze_lock();
-        // Add vote_only execution here.
-        if *vote_only_freeze_lock == Hash::default() {
-            let _ = bank.load_execute_and_commit_for_vote_only_execution(
-                batch,
-                MAX_PROCESSING_AGE,
-                &mut execute_and_commit_timings.execute_vote_only_timings,
-            );
-        }
-        drop(vote_only_freeze_lock);
-
+        /*
+                let vote_only_freeze_lock = bank.vote_only_freeze_lock();
+                // Add vote_only execution here.
+                if *vote_only_freeze_lock == Hash::default() {
+                    let _ = bank.load_execute_and_commit_for_vote_only_execution(
+                        batch,
+                        MAX_PROCESSING_AGE,
+                        &mut execute_and_commit_timings.execute_vote_only_timings,
+                    );
+                }
+                drop(vote_only_freeze_lock);
+        */
         debug!(
             "bank: {} process_and_record_locked: {}us record: {}us commit: {}us txs_len: {}",
             bank.slot(),
-            load_execute_us,
+            0,
             record_us,
-            commit_time_us,
+            0,
             batch.sanitized_transactions().len(),
         );
 
@@ -748,11 +743,11 @@ impl Consumer {
             execute_and_commit_timings.execute_timings,
         );
 
-        debug_assert_eq!(
-            transaction_counts.attempted_processing_count,
-            commit_transaction_statuses.len() as u64,
-        );
-
+        /*        debug_assert_eq!(
+                    transaction_counts.attempted_processing_count,
+                    commit_transaction_statuses.len() as u64,
+                );
+        */
         ExecuteAndCommitTransactionsOutput {
             transaction_counts,
             retryable_transaction_indexes,

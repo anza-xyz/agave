@@ -2975,24 +2975,25 @@ impl ReplayStage {
                 )
             });
 
-            if bank.collector_id() != my_pubkey {
-                let mut replay_blockstore_time = Measure::start("replay_blockstore_into_bank");
-                let blockstore_result = Self::replay_blockstore_into_bank(
-                    &bank,
-                    blockstore,
-                    replay_tx_thread_pool,
-                    &bank_progress.replay_stats,
-                    &bank_progress.replay_progress,
-                    entry_notification_sender,
-                    &replay_vote_sender.clone(),
-                    &verify_recyclers.clone(),
-                    log_messages_bytes_limit,
-                    prioritization_fee_cache,
-                );
-                replay_blockstore_time.stop();
-                replay_result.replay_result = Some(blockstore_result);
-                replay_timing.replay_blockstore_us += replay_blockstore_time.as_us();
+            if bank.collector_id() == my_pubkey {
+                warn!("Processing my own bank {}", bank_slot);
             }
+            let mut replay_blockstore_time = Measure::start("replay_blockstore_into_bank");
+            let blockstore_result = Self::replay_blockstore_into_bank(
+                &bank,
+                blockstore,
+                replay_tx_thread_pool,
+                &bank_progress.replay_stats,
+                &bank_progress.replay_progress,
+                entry_notification_sender,
+                &replay_vote_sender.clone(),
+                &verify_recyclers.clone(),
+                log_messages_bytes_limit,
+                prioritization_fee_cache,
+            );
+            replay_blockstore_time.stop();
+            replay_result.replay_result = Some(blockstore_result);
+            replay_timing.replay_blockstore_us += replay_blockstore_time.as_us();
         }
         replay_result
     }

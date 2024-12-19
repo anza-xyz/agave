@@ -216,37 +216,38 @@ impl FinalReplayStage {
 
                     let bank= bank_forks.read().unwrap().get_with_scheduler(bank_slot);
                     if let Some(bank) = bank {
-                        if bank.collector_id() != my_pubkey {
-                            // The bank may be created before parent is frozen, so we need to copy current data from parent.
-                            bank.update_data_from_parent();
-                            let mut replay_blockstore_time =
-                                Measure::start("replay_blockstore_into_bank");
-                            let r_replay_progress = replay_stats.get(&bank_slot).unwrap();
-                            let mut w_replay_stats = r_replay_progress.stats.write().unwrap();
-                            let mut w_replay_progress = r_replay_progress.progress.write().unwrap();
-                            if let Err(error) = blockstore_processor::confirm_slot(
-                                blockstore,
-                                &bank,
-                                replay_tx_thread_pool,
-                                &mut w_replay_stats,
-                                &mut w_replay_progress,
-                                false,
-                                transaction_status_sender,
-                                entry_notification_sender,
-                                None,
-                                verify_recyclers,
-                                false,
-                                log_messages_bytes_limit,
-                                prioritization_fee_cache,
-                                false,
-                            ) {
-                                warn!("All errors should have been handled during replay stage {bank_slot}: {error:?}");
-                                replay_result.replay_error = Some(error);
-                            }
-                            replay_blockstore_time.stop();
-                            longest_replay_time_us
-                                .fetch_max(replay_blockstore_time.as_us(), Ordering::Relaxed);
+                        if bank.collector_id() == my_pubkey {
+                            warn!("Replaying block {bank_slot} created by myself");
                         }
+                        // The bank may be created before parent is frozen, so we need to copy current data from parent.
+                        bank.update_data_from_parent();
+                        let mut replay_blockstore_time =
+                            Measure::start("replay_blockstore_into_bank");
+                        let r_replay_progress = replay_stats.get(&bank_slot).unwrap();
+                        let mut w_replay_stats = r_replay_progress.stats.write().unwrap();
+                        let mut w_replay_progress = r_replay_progress.progress.write().unwrap();
+                        if let Err(error) = blockstore_processor::confirm_slot(
+                            blockstore,
+                            &bank,
+                            replay_tx_thread_pool,
+                            &mut w_replay_stats,
+                            &mut w_replay_progress,
+                            false,
+                            transaction_status_sender,
+                            entry_notification_sender,
+                            None,
+                            verify_recyclers,
+                            false,
+                            log_messages_bytes_limit,
+                            prioritization_fee_cache,
+                            false,
+                        ) {
+                            warn!("All errors should have been handled during replay stage {bank_slot}: {error:?}");
+                            replay_result.replay_error = Some(error);
+                        }
+                        replay_blockstore_time.stop();
+                        longest_replay_time_us
+                            .fetch_max(replay_blockstore_time.as_us(), Ordering::Relaxed);
                     } else {
                         replay_result.replay_error = Some(BlockstoreProcessorError::FinalReplayOnBankTooOld(bank_slot));
                     }
