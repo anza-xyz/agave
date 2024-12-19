@@ -84,7 +84,7 @@ fn main() -> Result<()> {
         num_sockets = max(num_sockets, n.to_string().parse().expect("integer"));
     }
 
-    let num_producers: u64 = matches.value_of_t("num_producers").unwrap_or(4);
+    let num_producers: u64 = matches.value_of_t("num-producers").unwrap_or(4);
 
     let port = 0;
     let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);

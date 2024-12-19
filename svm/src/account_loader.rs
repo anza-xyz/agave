@@ -704,7 +704,7 @@ mod tests {
             ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
             ProgramCacheForTxBatch,
         },
-        solana_rbpf::program::BuiltinProgram,
+        solana_sbpf::program::BuiltinProgram,
         solana_sdk::{
             account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
             bpf_loader,

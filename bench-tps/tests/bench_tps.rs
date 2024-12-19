@@ -78,9 +78,13 @@ fn test_bench_tps_local_cluster(config: Config) {
 
     cluster.transfer(&cluster.funding_keypair, &faucet_pubkey, 100_000_000);
 
-    let client = Arc::new(cluster.build_tpu_quic_client().unwrap_or_else(|err| {
-        panic!("Could not create TpuClient with Quic Cache {err:?}");
-    }));
+    let client = Arc::new(
+        cluster
+            .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
+            .unwrap_or_else(|err| {
+                panic!("Could not create TpuClient with Quic Cache {err:?}");
+            }),
+    );
 
     let lamports_per_account = 100;
 

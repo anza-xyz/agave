@@ -860,12 +860,24 @@ pub mod deprecate_legacy_vote_ixs {
     solana_pubkey::declare_id!("depVvnQ2UysGrhwdiwU42tCadZL8GcBb1i2GYhMopQv");
 }
 
-pub mod disable_sbpf_v1_execution {
+pub mod disable_sbpf_v0_execution {
     solana_pubkey::declare_id!("TestFeature11111111111111111111111111111111");
 }
 
-pub mod reenable_sbpf_v1_execution {
+pub mod reenable_sbpf_v0_execution {
     solana_pubkey::declare_id!("TestFeature21111111111111111111111111111111");
+}
+
+pub mod enable_sbpf_v1_deployment_and_execution {
+    solana_pubkey::declare_id!("JE86WkYvTrzW8HgNmrHY7dFYpCmSptUpKupbo2AdQ9cG");
+}
+
+pub mod enable_sbpf_v2_deployment_and_execution {
+    solana_pubkey::declare_id!("F6UVKh1ujTEFK3en2SyAL3cdVnqko1FVEXWhmdLRu6WP");
+}
+
+pub mod enable_sbpf_v3_deployment_and_execution {
+    solana_pubkey::declare_id!("C8XZNs1bfzaiT3YDeXZJ7G5swQWQv7tVzDnCxtHvnSpw");
 }
 
 pub mod remove_accounts_executable_flag_checks {
@@ -1114,8 +1126,11 @@ lazy_static! {
         (enable_turbine_extended_fanout_experiments::id(), "enable turbine extended fanout experiments #"),
         (deprecate_legacy_vote_ixs::id(), "Deprecate legacy vote instructions"),
         (partitioned_epoch_rewards_superfeature::id(), "replaces enable_partitioned_epoch_reward to enable partitioned rewards at epoch boundary SIMD-0118"),
-        (disable_sbpf_v1_execution::id(), "Disables execution of SBPFv1 programs"),
-        (reenable_sbpf_v1_execution::id(), "Re-enables execution of SBPFv1 programs"),
+        (disable_sbpf_v0_execution::id(), "Disables execution of SBPFv1 programs SIMD-0161"),
+        (reenable_sbpf_v0_execution::id(), "Re-enables execution of SBPFv1 programs"),
+        (enable_sbpf_v1_deployment_and_execution::id(), "Enables deployment and execution of SBPFv1 programs SIMD-0161"),
+        (enable_sbpf_v2_deployment_and_execution::id(), "Enables deployment and execution of SBPFv2 programs SIMD-0161"),
+        (enable_sbpf_v3_deployment_and_execution::id(), "Enables deployment and execution of SBPFv3 programs SIMD-0161"),
         (remove_accounts_executable_flag_checks::id(), "Remove checks of accounts is_executable flag SIMD-0162"),
         (lift_cpi_caller_restriction::id(), "Lift the restriction in CPI that the caller must have the callee as an instruction account #2202"),
         (disable_account_loader_special_case::id(), "Disable account loader special case #3513"),

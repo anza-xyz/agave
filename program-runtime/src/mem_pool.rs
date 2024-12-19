@@ -3,7 +3,7 @@ use {
         compute_budget::{MAX_CALL_DEPTH, MAX_INSTRUCTION_STACK_DEPTH, STACK_FRAME_SIZE},
         compute_budget_limits::{MAX_HEAP_FRAME_BYTES, MIN_HEAP_FRAME_BYTES},
     },
-    solana_rbpf::{aligned_memory::AlignedMemory, ebpf::HOST_ALIGN},
+    solana_sbpf::{aligned_memory::AlignedMemory, ebpf::HOST_ALIGN},
     std::array,
 };
 

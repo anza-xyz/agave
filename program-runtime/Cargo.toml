@@ -41,6 +41,7 @@ solana-metrics = { workspace = true }
 solana-precompiles = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
+solana-sbpf = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-slot-hashes = { workspace = true }
 solana-stable-layout = { workspace = true }
@@ -49,7 +50,6 @@ solana-sysvar-id = { workspace = true }
 solana-timings = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-type-overrides = { workspace = true }
-solana_rbpf = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
@@ -76,7 +76,7 @@ frozen-abi = [
 ]
 shuttle-test = [
     "solana-type-overrides/shuttle-test",
-    "solana_rbpf/shuttle-test",
+    "solana-sbpf/shuttle-test",
 ]
 
 [lints]

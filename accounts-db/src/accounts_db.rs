@@ -7536,15 +7536,6 @@ impl AccountsDb {
         }
     }
 
-    /// Wrapper function to calculate accounts delta hash for `slot` (only used for testing and benchmarking.)
-    ///
-    /// As part of calculating the accounts delta hash, get a list of accounts modified this slot
-    /// (aka dirty pubkeys) and add them to `self.uncleaned_pubkeys` for future cleaning.
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn calculate_accounts_delta_hash(&self, slot: Slot) -> AccountsDeltaHash {
-        self.calculate_accounts_delta_hash_internal(slot, None, HashMap::default())
-    }
-
     /// Calculate accounts delta hash for `slot`
     ///
     /// As part of calculating the accounts delta hash, get a list of accounts modified this slot
@@ -9299,6 +9290,21 @@ impl AccountStorageEntry {
 // These functions/fields are only usable from a dev context (i.e. tests and benches)
 #[cfg(feature = "dev-context-only-utils")]
 impl AccountsDb {
+    /// useful to adapt tests written prior to introduction of the write cache
+    /// to use the write cache
+    pub fn add_root_and_flush_write_cache(&self, slot: Slot) {
+        self.add_root(slot);
+        self.flush_root_write_cache(slot);
+    }
+
+    /// Wrapper function to calculate accounts delta hash for `slot` (only used for testing and benchmarking.)
+    ///
+    /// As part of calculating the accounts delta hash, get a list of accounts modified this slot
+    /// (aka dirty pubkeys) and add them to `self.uncleaned_pubkeys` for future cleaning.
+    pub fn calculate_accounts_delta_hash(&self, slot: Slot) -> AccountsDeltaHash {
+        self.calculate_accounts_delta_hash_internal(slot, None, HashMap::default())
+    }
+
     pub fn load_without_fixed_root(
         &self,
         ancestors: &Ancestors,
@@ -9434,13 +9440,6 @@ impl AccountsDb {
                     .map(|slot_cache| slot_cache.len())
                     .unwrap_or_default(),
             )
-    }
-
-    /// useful to adapt tests written prior to introduction of the write cache
-    /// to use the write cache
-    pub fn add_root_and_flush_write_cache(&self, slot: Slot) {
-        self.add_root(slot);
-        self.flush_root_write_cache(slot);
     }
 
     /// useful to adapt tests written prior to introduction of the write cache

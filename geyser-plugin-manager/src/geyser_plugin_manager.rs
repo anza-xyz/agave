@@ -85,6 +85,16 @@ impl GeyserPluginManager {
         false
     }
 
+    /// Check if there is any plugin interested in account data from snapshot
+    pub fn account_data_snapshot_notifications_enabled(&self) -> bool {
+        for plugin in &self.plugins {
+            if plugin.account_data_snapshot_notifications_enabled() {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Check if there is any plugin interested in transaction data
     pub fn transaction_notifications_enabled(&self) -> bool {
         for plugin in &self.plugins {

@@ -1,8 +1,6 @@
 use {
-    solana_poh::poh_recorder::RecordTransactionsTimings,
-    solana_sdk::{clock::Slot, saturating_add_assign},
-    solana_timings::ExecuteTimings,
-    std::time::Instant,
+    solana_poh::poh_recorder::RecordTransactionsTimings, solana_sdk::clock::Slot,
+    solana_timings::ExecuteTimings, std::time::Instant,
 };
 
 #[derive(Default, Debug)]
@@ -19,12 +17,12 @@ pub struct LeaderExecuteAndCommitTimings {
 
 impl LeaderExecuteAndCommitTimings {
     pub fn accumulate(&mut self, other: &LeaderExecuteAndCommitTimings) {
-        saturating_add_assign!(self.collect_balances_us, other.collect_balances_us);
-        saturating_add_assign!(self.load_execute_us, other.load_execute_us);
-        saturating_add_assign!(self.freeze_lock_us, other.freeze_lock_us);
-        saturating_add_assign!(self.record_us, other.record_us);
-        saturating_add_assign!(self.commit_us, other.commit_us);
-        saturating_add_assign!(self.find_and_send_votes_us, other.find_and_send_votes_us);
+        self.collect_balances_us += other.collect_balances_us;
+        self.load_execute_us += other.load_execute_us;
+        self.freeze_lock_us += other.freeze_lock_us;
+        self.record_us += other.record_us;
+        self.commit_us += other.commit_us;
+        self.find_and_send_votes_us += other.find_and_send_votes_us;
         self.record_transactions_timings
             .accumulate(&other.record_transactions_timings);
         self.execute_timings.accumulate(&other.execute_timings);

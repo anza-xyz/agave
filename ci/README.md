@@ -122,7 +122,7 @@ Creating a "queue=cuda" agent follows the same process but additionally:
 1. Run `az vm deallocate --resource-group ci --name XYZ`
 1. Run `az vm generalize --resource-group ci --name XYZ`
 1. Run `az image create --resource-group ci --source XYZ --name boilerplate`
-1. Goto the `ci` resource group in the Azure portal and remove all resources
+1. Go to the `ci` resource group in the Azure portal and remove all resources
    with the XYZ name in them
 
 ## Buildkite AWS CloudFormation Setup

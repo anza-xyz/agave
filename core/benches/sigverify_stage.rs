@@ -175,18 +175,20 @@ fn bench_sigverify_stage(bencher: &mut Bencher, use_same_tx: bool) {
             packet_s.send(batch).unwrap();
         }
         let mut received = 0;
-        trace!("sent: {}", sent_len);
+        let expected = if use_same_tx { 1 } else { sent_len };
+        trace!("sent: {}, expected: {}", sent_len, expected);
         loop {
             if let Ok(verifieds) = verified_r.recv_timeout(Duration::from_millis(10)) {
                 received += verifieds.iter().map(|batch| batch.len()).sum::<usize>();
                 test::black_box(verifieds);
-                if received >= sent_len {
+                if received >= expected {
                     break;
                 }
             }
         }
         trace!("received: {}", received);
     });
+    // This will wait for all packets to make it through sigverify.
     stage.join().unwrap();
 }
 

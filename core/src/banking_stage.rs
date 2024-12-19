@@ -51,6 +51,7 @@ use {
         time::{Duration, Instant},
     },
     transaction_scheduler::{
+        prio_graph_scheduler::PrioGraphSchedulerConfig,
         receive_and_buffer::SanitizedTransactionReceiveAndBuffer,
         transaction_state_container::TransactionStateContainer,
     },
@@ -618,7 +619,11 @@ impl BankingStage {
                 bank_forks.clone(),
                 forwarder.is_some(),
             );
-            let scheduler = PrioGraphScheduler::new(work_senders, finished_work_receiver);
+            let scheduler = PrioGraphScheduler::new(
+                work_senders,
+                finished_work_receiver,
+                PrioGraphSchedulerConfig::default(),
+            );
             let scheduler_controller = SchedulerController::new(
                 decision_maker.clone(),
                 receive_and_buffer,

@@ -21,7 +21,7 @@ use {
     solana_measure::measure::Measure,
     solana_precompiles::Precompile,
     solana_pubkey::Pubkey,
-    solana_rbpf::{
+    solana_sbpf::{
         ebpf::MM_HEAP_START,
         error::{EbpfError, ProgramResult},
         memory_region::MemoryMapping,
@@ -49,7 +49,7 @@ pub type BuiltinFunctionWithContext = BuiltinFunction<InvokeContext<'static>>;
 #[macro_export]
 macro_rules! declare_process_instruction {
     ($process_instruction:ident, $cu_to_consume:expr, |$invoke_context:ident| $inner:tt) => {
-        $crate::solana_rbpf::declare_builtin_function!(
+        $crate::solana_sbpf::declare_builtin_function!(
             $process_instruction,
             fn rust(
                 invoke_context: &mut $crate::invoke_context::InvokeContext,
@@ -58,7 +58,7 @@ macro_rules! declare_process_instruction {
                 _arg2: u64,
                 _arg3: u64,
                 _arg4: u64,
-                _memory_mapping: &mut $crate::solana_rbpf::memory_region::MemoryMapping,
+                _memory_mapping: &mut $crate::solana_sbpf::memory_region::MemoryMapping,
             ) -> std::result::Result<u64, Box<dyn std::error::Error>> {
                 fn process_instruction_inner(
                     $invoke_context: &mut $crate::invoke_context::InvokeContext,
@@ -536,7 +536,7 @@ impl<'a> InvokeContext<'a> {
             .ok_or(InstructionError::UnsupportedProgramId)?;
         let function = match &entry.program {
             ProgramCacheEntryType::Builtin(program) => program
-                .get_function_registry()
+                .get_function_registry(SBPFVersion::V0)
                 .lookup_by_key(ENTRYPOINT_KEY)
                 .map(|(_name, function)| function),
             _ => None,
@@ -555,13 +555,13 @@ impl<'a> InvokeContext<'a> {
         // For now, only built-ins are invoked from here, so the VM and its Config are irrelevant.
         let mock_config = Config::default();
         let empty_memory_mapping =
-            MemoryMapping::new(Vec::new(), &mock_config, &SBPFVersion::V1).unwrap();
+            MemoryMapping::new(Vec::new(), &mock_config, SBPFVersion::V0).unwrap();
         let mut vm = EbpfVm::new(
             self.program_cache_for_tx_batch
                 .environments
                 .program_runtime_v2
                 .clone(),
-            &SBPFVersion::V1,
+            SBPFVersion::V0,
             // Removes lifetime tracking
             unsafe { std::mem::transmute::<&mut InvokeContext, &mut InvokeContext>(self) },
             empty_memory_mapping,

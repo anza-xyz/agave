@@ -26,7 +26,6 @@ use {
     },
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_program_runtime::invoke_context::InvokeContext,
-    solana_rbpf::{elf::Executable, verifier::RequisiteVerifier},
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::{
@@ -34,6 +33,7 @@ use {
         filter::{Memcmp, RpcFilterType},
         request::MAX_MULTIPLE_ACCOUNTS,
     },
+    solana_sbpf::{elf::Executable, verifier::RequisiteVerifier},
     solana_sdk::{
         account::Account,
         feature_set::{FeatureSet, FEATURE_NAMES},

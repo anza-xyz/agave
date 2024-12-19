@@ -328,12 +328,12 @@ fn retransmit_shred(
 ) -> Result<(/*root_distance:*/ usize, /*num_nodes:*/ usize), Error> {
     let mut compute_turbine_peers = Measure::start("turbine_start");
     let data_plane_fanout = cluster_nodes::get_data_plane_fanout(key.slot(), root_bank);
-    let (root_distance, addrs) =
-        cluster_nodes.get_retransmit_addrs(slot_leader, key, data_plane_fanout)?;
-    let addrs: Vec<_> = addrs
-        .into_iter()
-        .filter(|addr| socket_addr_space.check(addr))
-        .collect();
+    let (root_distance, addrs) = cluster_nodes.get_retransmit_addrs(
+        slot_leader,
+        key,
+        data_plane_fanout,
+        socket_addr_space,
+    )?;
     compute_turbine_peers.stop();
     stats
         .compute_turbine_peers_total

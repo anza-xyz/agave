@@ -12,8 +12,8 @@ use {
             BlockRelation, ForkGraph, LoadProgramMetrics, ProgramCacheEntry,
             ProgramRuntimeEnvironments,
         },
-        solana_rbpf::{
-            program::{BuiltinFunction, BuiltinProgram, FunctionRegistry},
+        solana_sbpf::{
+            program::{BuiltinFunction, BuiltinProgram, FunctionRegistry, SBPFVersion},
             vm::Config,
         },
     },
@@ -154,10 +154,7 @@ pub fn create_custom_environment<'a>() -> BuiltinProgram<InvokeContext<'a>> {
         reject_broken_elfs: true,
         noop_instruction_rate: 256,
         sanitize_user_provided_values: true,
-        external_internal_function_hash_collision: false,
-        reject_callx_r10: false,
-        enable_sbpf_v1: true,
-        enable_sbpf_v2: false,
+        enabled_sbpf_versions: SBPFVersion::V0..=SBPFVersion::V3,
         optimize_rodata: false,
         aligned_memory_mapping: true,
     };
