@@ -206,6 +206,7 @@ members = [
     "svm-transaction",
     "test-validator",
     "thin-client",
+    "thread-manager",
     "timings",
     "tls-utils",
     "tokens",
@@ -454,6 +455,7 @@ solana-bucket-map = { path = "bucket_map", version = "=2.2.0" }
 solana-builtins = { path = "builtins", version = "=2.2.0" }
 solana-builtins-default-costs = { path = "builtins-default-costs", version = "=2.2.0" }
 agave-cargo-registry = { path = "cargo-registry", version = "=2.2.0" }
+agave-thread-manager = { path = "thread-manager", version = "=2.2.0" }
 solana-clap-utils = { path = "clap-utils", version = "=2.2.0" }
 solana-clap-v3-utils = { path = "clap-v3-utils", version = "=2.2.0" }
 solana-cli = { path = "cli", version = "=2.2.0" }
