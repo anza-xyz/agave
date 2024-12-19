@@ -39,6 +39,7 @@ full = [
     "dep:solana-cluster-type",
     "dep:solana-ed25519-program",
     "dep:solana-compute-budget-interface",
+    "dep:solana-genesis-config",
     "dep:solana-hard-forks",
     "dep:solana-keypair",
     "dep:solana-offchain-message",
@@ -46,6 +47,7 @@ full = [
     "dep:solana-precompiles",
     "dep:solana-presigner",
     "dep:solana-quic-definitions",
+    "dep:solana-rent-collector",
     "dep:solana-secp256k1-program",
     "dep:solana-seed-derivable",
     "dep:solana-seed-phrase",
@@ -76,11 +78,13 @@ frozen-abi = [
     "solana-fee-structure/frozen-abi",
     "solana-account/frozen-abi",
     "solana-cluster-type/frozen-abi",
+    "solana-genesis-config/frozen-abi",
     "solana-hard-forks/frozen-abi",
     "solana-inflation/frozen-abi",
     "solana-poh-config/frozen-abi",
     "solana-program/frozen-abi",
     "solana-reward-info/frozen-abi",
+    "solana-rent-collector/frozen-abi",
     "solana-short-vec/frozen-abi",
     "solana-signature/frozen-abi",
     "solana-transaction/frozen-abi",
@@ -143,6 +147,9 @@ solana-frozen-abi = { workspace = true, optional = true, features = [
 solana-frozen-abi-macro = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
+solana-genesis-config = { workspace = true, features = [
+    "serde",
+], optional = true }
 solana-hard-forks = { workspace = true, features = [
     "serde",
 ], optional = true }
@@ -165,6 +172,9 @@ solana-pubkey = { workspace = true, default-features = false, features = [
     "std",
 ] }
 solana-quic-definitions = { workspace = true, optional = true }
+solana-rent-collector = { workspace = true, features = [
+    "serde",
+], optional = true }
 solana-rent-debits = { workspace = true }
 solana-reserved-account-keys = { workspace = true }
 solana-reward-info = { workspace = true, features = ["serde"] }

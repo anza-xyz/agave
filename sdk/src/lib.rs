@@ -66,9 +66,11 @@ pub mod entrypoint;
 pub mod entrypoint_deprecated;
 pub mod example_mocks;
 pub mod feature;
-pub mod genesis_config;
 #[cfg(feature = "full")]
-#[deprecated(since = "2.2.0", note = "Use `solana-hard-forks` crate instead")]
+#[deprecated(since = "2.2.0", note = "Use `solana_genesis_config` crate instead")]
+pub use solana_genesis_config as genesis_config;
+#[cfg(feature = "full")]
+#[deprecated(since = "2.2.0", note = "Use `solana_hard_forks` crate instead")]
 pub use solana_hard_forks as hard_forks;
 pub mod hash;
 pub mod inner_instruction;
@@ -78,7 +80,9 @@ pub mod net;
 pub mod precompiles;
 pub mod program_utils;
 pub mod pubkey;
-pub mod rent_collector;
+#[cfg(feature = "full")]
+#[deprecated(since = "2.2.0", note = "Use `solana-rent-collector` crate instead")]
+pub use solana_rent_collector as rent_collector;
 #[deprecated(since = "2.2.0", note = "Use `solana-reward-info` crate instead")]
 pub mod reward_info {
     pub use solana_reward_info::RewardInfo;
@@ -246,10 +250,8 @@ macro_rules! saturating_add_assign {
 
 pub extern crate bs58;
 extern crate log as logger;
-#[cfg_attr(not(target_os = "solana"), macro_use)]
 extern crate serde_derive;
 
-#[cfg_attr(feature = "frozen-abi", macro_use)]
 #[cfg(feature = "frozen-abi")]
 extern crate solana_frozen_abi_macro;
 
