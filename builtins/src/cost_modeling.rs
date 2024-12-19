@@ -9,10 +9,15 @@ use {
     solana_sdk_ids::{ed25519_program, secp256k1_program},
 };
 
+#[cfg(not(feature = "mock-builtin-migrations"))]
 /// CONTRIBUTOR: If you change any builtin Core BPF migration configurations
 /// in this crate's `BUILTINS` list, you must update this constant to reflect
 /// the number of builtin programs that have Core BPF migration configurations.
 pub const NUM_COST_MODELED_BUILTINS_WITH_MIGRATIONS: usize = 3;
+#[cfg(feature = "mock-builtin-migrations")]
+/// CONTRIBUTOR: Under the `mock-builtin-migrations` feature, this value is
+/// `BUILTINS.len()`. If a new builtin is added, this should be updated.
+pub const NUM_COST_MODELED_BUILTINS_WITH_MIGRATIONS: usize = 11;
 
 /// Configuration for cost modeling of a builtin program.
 #[derive(Debug)]
@@ -172,7 +177,6 @@ pub fn get_builtin_migration_feature_index_from_feature_id(feature_id: &Pubkey) 
 mod test {
     use super::*;
 
-    #[cfg(not(feature = "dev-context-only-utils"))]
     #[test]
     fn test_cost_modeled_builtins_with_migrations_compiles() {
         // This test is a compile-time check to ensure that the number of

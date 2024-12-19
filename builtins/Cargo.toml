@@ -10,7 +10,8 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [features]
-dev-context-only-utils = []
+dummy-for-ci-check = ["mock-builtin-migrations"]
+mock-builtin-migrations = []
 
 [dependencies]
 ahash = { workspace = true }

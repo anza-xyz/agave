@@ -32,11 +32,11 @@ macro_rules! testable_prototype {
         $prototype {
             name: stringify!($name),
             core_bpf_migration_config: {
-                #[cfg(not(feature = "dev-context-only-utils"))]
+                #[cfg(not(feature = "mock-builtin-migrations"))]
                 {
                     $core_bpf_migration_config
                 }
-                #[cfg(feature = "dev-context-only-utils")]
+                #[cfg(feature = "mock-builtin-migrations")]
                 {
                     Some( test_only::$name::CONFIG )
                 }
@@ -223,7 +223,7 @@ mod buffer_accounts {
 // into the builtins list for both the feature ID and the source program ID.
 // These arbitrary IDs can then be used to configure feature-activation runtime
 // tests.
-#[cfg(any(test, feature = "dev-context-only-utils"))]
+#[cfg(any(test, feature = "mock-builtin-migrations"))]
 pub mod test_only {
     use crate::core_bpf_migration::{CoreBpfMigrationConfig, CoreBpfMigrationTargetType};
     pub mod system_program {
@@ -398,12 +398,11 @@ pub mod test_only {
     }
 }
 
-#[cfg(all(feature = "dev-context-only-utils", test))]
+#[cfg(all(feature = "mock-builtin-migrations", test))]
 mod tests {
     // Since a macro is used to initialize the test IDs from the `test_only`
     // module, best to ensure the lists have the expected values within a test
     // context.
-    #[cfg(feature = "dev-context-only-utils")]
     #[test]
     fn test_testable_prototypes() {
         assert_eq!(
