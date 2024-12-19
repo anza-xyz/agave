@@ -499,13 +499,13 @@ pub struct ValidatorTpuConfig {
 
 pub fn build_validator_tpu_config_for_test(tpu_enable_udp: bool) -> ValidatorTpuConfig {
     let mut tpu_quic_server_config = QuicServerParams::default();
-    tpu_quic_server_config.max_connections_per_peer = 32; // max connections per IpAddr per minute
+    tpu_quic_server_config.max_connections_per_ipaddr_per_min = 32;
 
     let mut tpu_fwd_quic_server_config = QuicServerParams::default();
-    tpu_fwd_quic_server_config.max_connections_per_peer = 32; // max connections per IpAddr per minute
+    tpu_fwd_quic_server_config.max_connections_per_ipaddr_per_min = 32;
 
     let mut vote_quic_server_config = QuicServerParams::default();
-    vote_quic_server_config.max_connections_per_peer = 32; // max connections per IpAddr per minute
+    vote_quic_server_config.max_connections_per_ipaddr_per_min = 32;
 
     ValidatorTpuConfig {
         use_quic: DEFAULT_TPU_USE_QUIC,
