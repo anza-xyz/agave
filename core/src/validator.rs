@@ -497,15 +497,19 @@ pub struct ValidatorTpuConfig {
     pub vote_quic_server_config: QuicServerParams,
 }
 
+/// A convenient function to build a ValidatorTpuConfig for testing with good
+/// default.
 pub fn build_validator_tpu_config_for_test(tpu_enable_udp: bool) -> ValidatorTpuConfig {
     let mut tpu_quic_server_config = QuicServerParams::default();
     tpu_quic_server_config.max_connections_per_ipaddr_per_min = 32;
 
     let mut tpu_fwd_quic_server_config = QuicServerParams::default();
     tpu_fwd_quic_server_config.max_connections_per_ipaddr_per_min = 32;
+    tpu_fwd_quic_server_config.max_unstaked_connections = 0;
 
     let mut vote_quic_server_config = QuicServerParams::default();
     vote_quic_server_config.max_connections_per_ipaddr_per_min = 32;
+    vote_quic_server_config.max_unstaked_connections = 0;
 
     ValidatorTpuConfig {
         use_quic: DEFAULT_TPU_USE_QUIC,
