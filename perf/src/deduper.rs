@@ -2,7 +2,7 @@
 
 use {
     crate::packet::PacketBatch,
-    ahash::RandomState,
+    ahash::{AHasher, RandomState},
     rand::Rng,
     std::{
         hash::{BuildHasher, Hash, Hasher},
@@ -16,7 +16,7 @@ use {
 pub struct Deduper<const K: usize, T: ?Sized> {
     num_bits: u64,
     bits: Vec<AtomicU64>,
-    state: [RandomState; K],
+    hashers: [AHasher; K],
     clock: Instant,
     popcount: AtomicU64, // Number of one bits in self.bits.
     _phantom: PhantomData<T>,
@@ -28,7 +28,7 @@ impl<const K: usize, T: ?Sized + Hash> Deduper<K, T> {
         let size = usize::try_from(size).unwrap();
         Self {
             num_bits,
-            state: std::array::from_fn(|_| new_random_state(rng)),
+            hashers: std::array::from_fn(|_| new_hasher(rng)),
             clock: Instant::now(),
             bits: repeat_with(AtomicU64::default).take(size).collect(),
             popcount: AtomicU64::default(),
@@ -54,7 +54,7 @@ impl<const K: usize, T: ?Sized + Hash> Deduper<K, T> {
         assert!(0.0 < false_positive_rate && false_positive_rate < 1.0);
         let saturated = self.false_positive_rate() >= false_positive_rate;
         if saturated || self.clock.elapsed() >= reset_cycle {
-            self.state = std::array::from_fn(|_| new_random_state(rng));
+            self.hashers = std::array::from_fn(|_| new_hasher(rng));
             self.clock = Instant::now();
             self.bits.fill_with(AtomicU64::default);
             self.popcount = AtomicU64::default();
@@ -67,8 +67,7 @@ impl<const K: usize, T: ?Sized + Hash> Deduper<K, T> {
     #[allow(clippy::arithmetic_side_effects)]
     pub fn dedup(&self, data: &T) -> bool {
         let mut out = true;
-        let hashers = self.state.iter().map(RandomState::build_hasher);
-        for mut hasher in hashers {
+        for mut hasher in self.hashers.iter().map(AHasher::clone) {
             data.hash(&mut hasher);
             let hash: u64 = hasher.finish() % self.num_bits;
             let index = (hash >> 6) as usize;
@@ -83,8 +82,8 @@ impl<const K: usize, T: ?Sized + Hash> Deduper<K, T> {
     }
 }
 
-fn new_random_state<R: Rng>(rng: &mut R) -> RandomState {
-    RandomState::with_seeds(rng.gen(), rng.gen(), rng.gen(), rng.gen())
+fn new_hasher<R: Rng>(rng: &mut R) -> AHasher {
+    RandomState::with_seeds(rng.gen(), rng.gen(), rng.gen(), rng.gen()).build_hasher()
 }
 
 pub fn dedup_packets_and_count_discards<const K: usize>(
