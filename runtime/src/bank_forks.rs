@@ -196,7 +196,9 @@ impl BankForks {
     pub fn active_vote_only_bank_slots(&self) -> Vec<Slot> {
         self.banks
             .iter()
-            .filter(|(_, v)| !v.is_vote_only_frozen())
+            .filter(|(_, v)| {
+                !v.is_vote_only_frozen() && v.parent().map_or(true, |b| b.is_vote_only_frozen())
+            })
             .map(|(k, _v)| *k)
             .collect()
     }
