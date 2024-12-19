@@ -2490,7 +2490,28 @@ impl Blockstore {
     }
 
     pub fn get_index(&self, slot: Slot) -> Result<Option<Index>> {
-        self.index_cf.get(slot)
+        // Migration strategy for new column format:
+        // 1. Release 1: Add ability to read new format as fallback, keep writing old format
+        // 2. Release 2: Switch to writing new format, keep reading old format as fallback
+        // 3. Release 3: Remove old format support once stable
+        // This allows safe downgrade to Release 1 since it can read both formats
+        // https://github.com/anza-xyz/agave/issues/3570
+        self.index_cf.get_with(slot, |slice| {
+            // Version compatibility note: Index and IndexV2 use different serialization
+            // strategies in their ShredIndex field that make their formats naturally distinguishable.
+            //
+            // For example, serializing two `u64`s:
+            // - ShredIndexV2 serializes as a collection of bytes, with a length prefix of 16.
+            // - ShredIndex serializes as a collection of u64s, with a length prefix of 2.
+            let index: bincode::Result<Index> = bincode::deserialize(slice);
+            match index {
+                Ok(index) => Ok(index),
+                Err(_) => {
+                    let index: IndexV2 = bincode::deserialize(slice)?;
+                    Ok(index.into())
+                }
+            }
+        })
     }
 
     /// Manually update the meta for a slot.
@@ -4755,8 +4776,7 @@ impl Blockstore {
         let mut total_start = Measure::start("Total elapsed");
         let res = index_working_set.entry(slot).or_insert_with(|| {
             let newly_inserted_meta = self
-                .index_cf
-                .get(slot)
+                .get_index(slot)
                 .unwrap()
                 .unwrap_or_else(|| Index::new(slot));
             IndexMetaWorkingSetEntry {
