@@ -178,14 +178,12 @@ pub fn execute_batch(
     let is_block_producing_unified_scheduler = pre_commit_callback.is_some();
     let pre_commit_callback = pre_commit_callback.map(|wrapped_callback| {
         || {
-            wrapped_callback()
-                .inspect(|&maybe_index| {
-                    if let Some(index) = maybe_index {
-                        assert!(transaction_indexes.is_empty());
-                        transaction_indexes.to_mut().push(index);
-                    }
-                })
-                .map(|_| ())
+            wrapped_callback().map(|maybe_index| {
+                assert!(transaction_indexes.is_empty());
+                transaction_indexes.to_mut().extend(maybe_index);
+                // Strip the index away by implicitly returning (), now that we're done with it
+                // here (= `solana-ledger`), to make `solana-runtime` not bothered with it.
+            })
         }
     });
 
@@ -5095,10 +5093,9 @@ pub mod tests {
         );
         batch.set_needs_unlock(false);
         let poh_with_index = matches!(poh_result, Ok(Some(_)));
-        let transaction_indexes = if poh_with_index { vec![] } else { vec![3] };
         let batch = TransactionBatchWithIndexes {
             batch,
-            transaction_indexes,
+            transaction_indexes: vec![],
         };
         let prioritization_fee_cache = PrioritizationFeeCache::default();
         let mut timing = ExecuteTimings::default();
@@ -5133,7 +5130,7 @@ pub mod tests {
             assert_matches!(
                 receiver.try_recv(),
                 Ok(TransactionStatusMessage::Batch(TransactionStatusBatch{transaction_indexes, ..}))
-                    if transaction_indexes == vec![3_usize]
+                    if transaction_indexes.is_empty()
             );
         } else {
             assert_matches!(receiver.try_recv(), Err(_));
