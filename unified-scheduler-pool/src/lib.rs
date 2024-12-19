@@ -458,7 +458,7 @@ impl TaskHandler for DefaultTaskHandler {
                 if handler_context.transaction_status_sender.is_some() {
                     // Adjust the empty new vec with the exact needed capacity, which will be
                     // filled inside `execute_batch()` below. Otherwise, excess cap would be
-                    // reserved on `.push(transaction_index)` in it.
+                    // reserved on `.extend()` in it.
                     vec.reserve_exact(1);
                 }
                 vec
