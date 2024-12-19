@@ -7,9 +7,11 @@ use {
         parse_token::parse_token_v2, parse_vote::parse_vote,
     },
     inflector::Inflector,
-    solana_sdk::{
-        address_lookup_table, clock::UnixTimestamp, instruction::InstructionError, pubkey::Pubkey,
-        stake, system_program, sysvar, vote,
+    solana_clock::UnixTimestamp,
+    solana_instruction::error::InstructionError,
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::{
+        address_lookup_table, bpf_loader_upgradeable, config, stake, system_program, sysvar, vote,
     },
     spl_token_2022::extension::interest_bearing_mint::InterestBearingConfig,
     std::collections::HashMap,
@@ -17,13 +19,13 @@ use {
 };
 
 lazy_static! {
-    static ref ADDRESS_LOOKUP_PROGRAM_ID: Pubkey = address_lookup_table::program::id();
-    static ref BPF_UPGRADEABLE_LOADER_PROGRAM_ID: Pubkey = solana_sdk::bpf_loader_upgradeable::id();
-    static ref CONFIG_PROGRAM_ID: Pubkey = solana_config_program::id();
-    static ref STAKE_PROGRAM_ID: Pubkey = stake::program::id();
+    static ref ADDRESS_LOOKUP_PROGRAM_ID: Pubkey = address_lookup_table::id();
+    static ref BPF_UPGRADEABLE_LOADER_PROGRAM_ID: Pubkey = bpf_loader_upgradeable::id();
+    static ref CONFIG_PROGRAM_ID: Pubkey = config::id();
+    static ref STAKE_PROGRAM_ID: Pubkey = stake::id();
     static ref SYSTEM_PROGRAM_ID: Pubkey = system_program::id();
     static ref SYSVAR_PROGRAM_ID: Pubkey = sysvar::id();
-    static ref VOTE_PROGRAM_ID: Pubkey = vote::program::id();
+    static ref VOTE_PROGRAM_ID: Pubkey = vote::id();
     pub static ref PARSABLE_PROGRAM_IDS: HashMap<Pubkey, ParsableAccount> = {
         let mut m = HashMap::new();
         m.insert(
@@ -160,22 +162,20 @@ pub fn parse_account_data_v2(
 mod test {
     use {
         super::*,
-        solana_sdk::{
-            nonce::{
-                state::{Data, Versions},
-                State,
-            },
-            vote::{
-                program::id as vote_program_id,
-                state::{VoteState, VoteStateVersions},
-            },
+        solana_nonce::{
+            state::{Data, State},
+            versions::Versions,
+        },
+        solana_sdk::vote::{
+            program::id as vote_program_id,
+            state::{VoteState, VoteStateVersions},
         },
     };
 
     #[test]
     fn test_parse_account_data() {
-        let account_pubkey = solana_sdk::pubkey::new_rand();
-        let other_program = solana_sdk::pubkey::new_rand();
+        let account_pubkey = solana_pubkey::new_rand();
+        let other_program = solana_pubkey::new_rand();
         let data = vec![0; 4];
         assert!(parse_account_data_v2(&account_pubkey, &other_program, &data, None).is_err());
 

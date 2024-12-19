@@ -8,7 +8,8 @@ pub use solana_account_decoder_client_types::token::{
 };
 use {
     crate::parse_token::convert_account_state,
-    solana_sdk::{clock::UnixTimestamp, program_pack::Pack},
+    solana_clock::UnixTimestamp,
+    solana_program_pack::Pack,
     spl_token_2022::{
         extension::{self, BaseState, BaseStateWithExtensions, ExtensionType, StateWithExtensions},
         solana_program::pubkey::Pubkey,
