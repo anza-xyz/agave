@@ -135,7 +135,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Debug for InMemAccoun
 pub enum InsertNewEntryResults {
     DidNotExist,
     ExistedNewEntryZeroLamports,
-    ExistedNewEntryNonZeroLamports,
+    ExistedNewEntryNonZeroLamports(Option<Slot>),
 }
 
 #[derive(Default, Debug)]
@@ -145,6 +145,11 @@ struct StartupInfoDuplicates<T: IndexValue> {
     duplicates: Vec<(Slot, Pubkey, T)>,
     /// pubkeys that were already added to disk and later found to be duplicates,
     duplicates_put_on_disk: HashSet<(Slot, Pubkey)>,
+
+    /// (slot, pubkey) pairs that are found to be duplicates when we are
+    /// starting from in-memory only index. This field is used only when disk
+    /// index is disabled.
+    duplicates_from_in_memory_only: Vec<(Slot, Pubkey)>,
 }
 
 #[derive(Default, Debug)]
@@ -727,6 +732,14 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             .fetch_add(m.end_as_us(), Ordering::Relaxed);
     }
 
+    pub fn startup_update_duplicates_from_in_memory_only(&self, items: Vec<(Slot, Pubkey)>) {
+        assert!(self.storage.get_startup());
+        assert!(self.bucket.is_none());
+
+        let mut duplicates = self.startup_info.duplicates.lock().unwrap();
+        duplicates.duplicates_from_in_memory_only.extend(items);
+    }
+
     pub fn insert_new_entry_if_missing_with_lock(
         &self,
         pubkey: Pubkey,
@@ -737,17 +750,44 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         let entry = map.entry(pubkey);
         m.stop();
         let new_entry_zero_lamports = new_entry.is_zero_lamport();
+        let mut other_slot = None;
         let (found_in_mem, already_existed) = match entry {
             Entry::Occupied(occupied) => {
                 // in cache, so merge into cache
                 let (slot, account_info) = new_entry.into();
-                InMemAccountsIndex::<T, U>::lock_and_update_slot_list(
+
+                let slot_list = occupied.get().slot_list.read().unwrap();
+
+                // If there is only one entry in the slot list, it means that
+                // the previous entry inserted was a duplicate, which should be
+                // added to the duplicates list too. Note that we only need to do
+                // this for slot_list.len() == 1. For slot_list.len() > 1, the
+                // items, previously inserted into the slot_list, have already
+                // been added. We don't need to add them again.
+                if slot_list.len() == 1 {
+                    other_slot = Some(slot_list[0].0);
+                }
+                drop(slot_list);
+
+                let updated_slot_list_len = InMemAccountsIndex::<T, U>::lock_and_update_slot_list(
                     occupied.get(),
                     (slot, account_info),
                     None, // should be None because we don't expect a different slot # during index generation
                     &mut Vec::default(),
                     UpsertReclaim::IgnoreReclaims,
                 );
+
+                // In case of a race condition, multiple threads try to insert
+                // to the same pubkey with different slots. We only need to
+                // record `other_slot` once. If the slot list length after
+                // update is not 2, it means that someone else has already
+                // recorded `other_slot` before us. Therefore, We don't need to
+                // record it again.
+                if updated_slot_list_len != 2 {
+                    // clear `other_slot` if we don't win the race.
+                    other_slot = None;
+                }
+
                 (
                     true, /* found in mem */
                     true, /* already existed */
@@ -796,7 +836,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         } else if new_entry_zero_lamports {
             InsertNewEntryResults::ExistedNewEntryZeroLamports
         } else {
-            InsertNewEntryResults::ExistedNewEntryNonZeroLamports
+            InsertNewEntryResults::ExistedNewEntryNonZeroLamports(other_slot)
         }
     }
 
@@ -1145,6 +1185,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 (slot, key)
             }))
             .collect()
+    }
+
+    pub fn startup_take_duplicates_from_in_memory_only(&self) -> Vec<(Slot, Pubkey)> {
+        let mut duplicates = self.startup_info.duplicates.lock().unwrap();
+        std::mem::take(&mut duplicates.duplicates_from_in_memory_only)
     }
 
     /// synchronize the in-mem index with the disk index
