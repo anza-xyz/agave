@@ -1,10 +1,10 @@
 //! RuntimeTransaction is `runtime` facing representation of transaction, while
-//! solana_sdk::SanitizedTransaction is client facing representation.
+//! solana_transaction::sanitized::SanitizedTransaction is client facing representation.
 //!
 //! It has two states:
 //! 1. Statically Loaded: after receiving `packet` from sigverify and deserializing
-//!    it into `solana_sdk::VersionedTransaction`, then sanitizing into
-//!    `solana_sdk::SanitizedVersionedTransaction`, which can be wrapped into
+//!    it into `solana_transaction::versioned::VersionedTransaction`, then sanitizing into
+//!    `solana_transaction::versioned::sanitized::SanitizedVersionedTransaction`, which can be wrapped into
 //!    `RuntimeTransaction` with static transaction metadata extracted.
 //! 2. Dynamically Loaded: after successfully loaded account addresses from onchain
 //!    ALT, RuntimeTransaction<SanitizedMessage> transits into Dynamically Loaded state,
@@ -13,12 +13,10 @@ use {
     crate::transaction_meta::{DynamicMeta, StaticMeta, TransactionMeta},
     core::ops::Deref,
     solana_compute_budget_instruction::compute_budget_instruction_details::*,
-    solana_sdk::{
-        hash::Hash,
-        message::{AccountKeys, TransactionSignatureDetails},
-        pubkey::Pubkey,
-        signature::Signature,
-    },
+    solana_hash::Hash,
+    solana_message::{AccountKeys, TransactionSignatureDetails},
+    solana_pubkey::Pubkey,
+    solana_signature::Signature,
     solana_svm_transaction::{
         instruction::SVMInstruction, message_address_table_lookup::SVMMessageAddressTableLookup,
         svm_message::SVMMessage, svm_transaction::SVMTransaction,
