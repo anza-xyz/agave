@@ -59,7 +59,7 @@ use {
         verify_precompiles::verify_precompiles,
     },
     accounts_lt_hash::{CacheValue as AccountsLtHashCacheValue, Stats as AccountsLtHashStats},
-    ahash::{AHashMap, AHashSet},
+    ahash::AHashSet,
     byteorder::{ByteOrder, LittleEndian},
     dashmap::{DashMap, DashSet},
     log::*,
@@ -940,7 +940,7 @@ pub struct Bank {
     ///
     /// Note: The initial state must be strictly from an ancestor,
     /// and not an intermediate state within this slot.
-    cache_for_accounts_lt_hash: RwLock<AHashMap<Pubkey, AccountsLtHashCacheValue>>,
+    cache_for_accounts_lt_hash: DashMap<Pubkey, AccountsLtHashCacheValue, ahash::RandomState>,
 
     /// Stats related to the accounts lt hash
     stats_for_accounts_lt_hash: AccountsLtHashStats,
@@ -1164,7 +1164,7 @@ impl Bank {
             #[cfg(feature = "dev-context-only-utils")]
             hash_overrides: Arc::new(Mutex::new(HashOverrides::default())),
             accounts_lt_hash: Mutex::new(AccountsLtHash(LtHash::identity())),
-            cache_for_accounts_lt_hash: RwLock::new(AHashMap::new()),
+            cache_for_accounts_lt_hash: DashMap::default(),
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::default(),
@@ -1420,7 +1420,7 @@ impl Bank {
             #[cfg(feature = "dev-context-only-utils")]
             hash_overrides: parent.hash_overrides.clone(),
             accounts_lt_hash: Mutex::new(parent.accounts_lt_hash.lock().unwrap().clone()),
-            cache_for_accounts_lt_hash: RwLock::new(AHashMap::new()),
+            cache_for_accounts_lt_hash: DashMap::default(),
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::default(),
@@ -1493,11 +1493,8 @@ impl Bank {
                     let accounts_modified_this_slot =
                         new.rc.accounts.accounts_db.get_pubkeys_for_slot(slot);
                     let num_accounts_modified_this_slot = accounts_modified_this_slot.len();
-                    let cache_for_accounts_lt_hash =
-                        new.cache_for_accounts_lt_hash.get_mut().unwrap();
-                    cache_for_accounts_lt_hash.reserve(num_accounts_modified_this_slot);
                     for pubkey in accounts_modified_this_slot {
-                        cache_for_accounts_lt_hash
+                        new.cache_for_accounts_lt_hash
                             .entry(pubkey)
                             .or_insert(AccountsLtHashCacheValue::BankNew);
                     }
@@ -1833,7 +1830,7 @@ impl Bank {
             #[cfg(feature = "dev-context-only-utils")]
             hash_overrides: Arc::new(Mutex::new(HashOverrides::default())),
             accounts_lt_hash: Mutex::new(AccountsLtHash(LtHash([0xBAD1; LtHash::NUM_ELEMENTS]))),
-            cache_for_accounts_lt_hash: RwLock::new(AHashMap::new()),
+            cache_for_accounts_lt_hash: DashMap::default(),
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::new(&fields.bank_hash_stats),
