@@ -1,5 +1,4 @@
 mod calculation;
-mod compare;
 mod distribution;
 mod epoch_rewards_hasher;
 mod sysvar;
@@ -12,10 +11,9 @@ use {
     },
     solana_sdk::{
         account::AccountSharedData,
-        account_utils::StateMut,
         pubkey::Pubkey,
         reward_info::RewardInfo,
-        stake::state::{Delegation, Stake, StakeStateV2},
+        stake::state::{Delegation, Stake},
     },
     solana_stake_program::points::PointValue,
     solana_vote::vote_account::VoteAccounts,
@@ -36,20 +34,6 @@ pub(crate) struct PartitionedStakeReward {
     /// fields are available on calculation, but RewardInfo::post_balance must
     /// be updated based on current account state before recording.
     pub stake_reward_info: RewardInfo,
-}
-
-impl PartitionedStakeReward {
-    fn maybe_from(stake_reward: &StakeReward) -> Option<Self> {
-        if let Ok(StakeStateV2::Stake(_meta, stake, _flags)) = stake_reward.stake_account.state() {
-            Some(Self {
-                stake_pubkey: stake_reward.stake_pubkey,
-                stake,
-                stake_reward_info: stake_reward.stake_reward_info,
-            })
-        } else {
-            None
-        }
-    }
 }
 
 type PartitionedStakeRewards = Vec<PartitionedStakeReward>;
@@ -266,12 +250,13 @@ mod tests {
         },
         solana_sdk::{
             account::Account,
+            account_utils::StateMut,
             epoch_schedule::EpochSchedule,
             native_token::LAMPORTS_PER_SOL,
             reward_type::RewardType,
             signature::Signer,
             signer::keypair::Keypair,
-            stake::instruction::StakeError,
+            stake::{instruction::StakeError, state::StakeStateV2},
             system_transaction,
             transaction::Transaction,
             vote::state::{VoteStateVersions, MAX_LOCKOUT_HISTORY},
@@ -283,6 +268,20 @@ mod tests {
     };
 
     impl PartitionedStakeReward {
+        fn maybe_from(stake_reward: &StakeReward) -> Option<Self> {
+            if let Ok(StakeStateV2::Stake(_meta, stake, _flags)) =
+                stake_reward.stake_account.state()
+            {
+                Some(Self {
+                    stake_pubkey: stake_reward.stake_pubkey,
+                    stake,
+                    stake_reward_info: stake_reward.stake_reward_info,
+                })
+            } else {
+                None
+            }
+        }
+
         pub fn new_random() -> Self {
             Self::maybe_from(&StakeReward::new_random()).unwrap()
         }
