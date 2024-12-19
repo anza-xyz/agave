@@ -4544,7 +4544,7 @@ impl Bank {
         recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
-        // None is meaninglyfully used to skip the block producing unified schduler special case.
+        // None is meaningfully used to skip the block producing unified scheduler special case.
         // This avoids wasted cycles due to `if` evaluations in the special case and makes it well
         // assert!()-ed.
         pre_commit_callback: Option<impl FnOnce() -> PreCommitCallbackResult<()>>,
