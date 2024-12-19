@@ -3,9 +3,12 @@ use {
     anyhow::Ok,
     serde::{Deserialize, Serialize},
     solana_metrics::datapoint_info,
-    std::sync::{
-        atomic::{AtomicI64, Ordering},
-        Mutex,
+    std::{
+        ops::Deref,
+        sync::{
+            atomic::{AtomicI64, Ordering},
+            Arc, Mutex,
+        },
     },
 };
 
@@ -22,7 +25,7 @@ impl Default for RayonConfig {
     fn default() -> Self {
         Self {
             core_allocation: CoreAllocation::OsDefault,
-            worker_threads: 4,
+            worker_threads: 16,
             priority: 0,
             stack_size_bytes: 2 * 1024 * 1024,
         }
@@ -30,9 +33,29 @@ impl Default for RayonConfig {
 }
 
 #[derive(Debug)]
-pub struct RayonRuntime {
+pub struct RayonRuntimeInner {
     pub rayon_pool: rayon::ThreadPool,
     pub config: RayonConfig,
+}
+impl Deref for RayonRuntimeInner {
+    type Target = rayon::ThreadPool;
+
+    fn deref(&self) -> &Self::Target {
+        &self.rayon_pool
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RayonRuntime {
+    inner: Arc<RayonRuntimeInner>,
+}
+
+impl Deref for RayonRuntime {
+    type Target = RayonRuntimeInner;
+
+    fn deref(&self) -> &Self::Target {
+        self.inner.deref()
+    }
 }
 
 impl RayonRuntime {
@@ -50,6 +73,8 @@ impl RayonRuntime {
                 apply_policy(&policy, priority, &chosen_cores_mask);
             })
             .build()?;
-        Ok(Self { rayon_pool, config })
+        Ok(Self {
+            inner: Arc::new(RayonRuntimeInner { rayon_pool, config }),
+        })
     }
 }

@@ -54,7 +54,7 @@ fn main() -> anyhow::Result<()> {
         conf_file.push(exp);
         let mut buf = String::new();
         std::fs::File::open(conf_file)?.read_to_string(&mut buf)?;
-        let cfg: RuntimeManagerConfig = toml::from_str(&buf)?;
+        let cfg: ThreadManagerConfig = toml::from_str(&buf)?;
 
         let manager = ThreadManager::new(cfg).unwrap();
         let tokio1 = manager

@@ -40,14 +40,14 @@ async fn axum_main(port: u16) {
         }
     }
 }
-fn make_config_shared(cc: usize) -> RuntimeManagerConfig {
+fn make_config_shared(cc: usize) -> ThreadManagerConfig {
     let tokio_cfg_1 = TokioConfig {
         core_allocation: CoreAllocation::DedicatedCoreSet { min: 0, max: cc },
         worker_threads: cc,
         ..Default::default()
     };
     let tokio_cfg_2 = tokio_cfg_1.clone();
-    RuntimeManagerConfig {
+    ThreadManagerConfig {
         tokio_configs: HashMap::from([
             ("axum1".into(), tokio_cfg_1),
             ("axum2".into(), tokio_cfg_2),
@@ -55,7 +55,7 @@ fn make_config_shared(cc: usize) -> RuntimeManagerConfig {
         ..Default::default()
     }
 }
-fn make_config_dedicated(core_count: usize) -> RuntimeManagerConfig {
+fn make_config_dedicated(core_count: usize) -> ThreadManagerConfig {
     let tokio_cfg_1 = TokioConfig {
         core_allocation: CoreAllocation::DedicatedCoreSet {
             min: 0,
@@ -72,7 +72,7 @@ fn make_config_dedicated(core_count: usize) -> RuntimeManagerConfig {
         worker_threads: core_count / 2,
         ..Default::default()
     };
-    RuntimeManagerConfig {
+    ThreadManagerConfig {
         tokio_configs: HashMap::from([
             ("axum1".into(), tokio_cfg_1),
             ("axum2".into(), tokio_cfg_2),

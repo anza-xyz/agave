@@ -3,6 +3,7 @@ use {
     serde::{Deserialize, Serialize},
     solana_metrics::datapoint_info,
     std::{
+        ops::Deref,
         sync::{
             atomic::{AtomicI64, AtomicUsize, Ordering},
             Arc, Mutex,
@@ -29,7 +30,7 @@ impl Default for TokioConfig {
     fn default() -> Self {
         Self {
             core_allocation: CoreAllocation::OsDefault,
-            worker_threads: 1,
+            worker_threads: 8,
             max_blocking_threads: 1,
             priority: 0,
             stack_size_bytes: 2 * 1024 * 1024,
@@ -43,6 +44,14 @@ pub struct TokioRuntime {
     pub tokio: tokio::runtime::Runtime,
     pub config: TokioConfig,
     pub counters: Arc<ThreadCounters>,
+}
+
+impl Deref for TokioRuntime {
+    type Target = tokio::runtime::Runtime;
+
+    fn deref(&self) -> &Self::Target {
+        &self.tokio
+    }
 }
 
 impl TokioRuntime {
@@ -114,6 +123,15 @@ impl TokioRuntime {
             config: cfg.clone(),
             counters,
         })
+    }
+
+    /// Makes test runtime with 2 threads, only for unittests
+    pub fn new_for_tests() -> Self {
+        let cfg = TokioConfig {
+            worker_threads: 2,
+            ..Default::default()
+        };
+        TokioRuntime::new("solNetTest".to_owned(), cfg.clone()).unwrap()
     }
 }
 
