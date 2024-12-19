@@ -156,8 +156,8 @@ pub fn execute_batch(
     timings: &mut ExecuteTimings,
     log_messages_bytes_limit: Option<usize>,
     prioritization_fee_cache: &PrioritizationFeeCache,
-    // None is meaninglyfully used to detect this is called from the block producing unified
-    // schduler. If so, supress too verbose logging for the code path.
+    // None is meaningfully used to detect this is called from the block producing unified
+    // scheduler. If so, suppress too verbose logging for the code path.
     pre_commit_callback: Option<impl FnOnce() -> PreCommitCallbackResult<Option<usize>>>,
 ) -> Result<()> {
     let TransactionBatchWithIndexes {
