@@ -1038,7 +1038,59 @@ pub struct CliKeyedEpochRewards {
 }
 
 impl QuietDisplay for CliKeyedEpochRewards {}
-impl VerboseDisplay for CliKeyedEpochRewards {}
+impl VerboseDisplay for CliKeyedEpochRewards {
+    fn write_str(&self, w: &mut dyn std::fmt::Write) -> std::fmt::Result {
+        if self.rewards.is_empty() {
+            writeln!(w, "No rewards found in epoch")?;
+            return Ok(());
+        }
+
+        if let Some(metadata) = &self.epoch_metadata {
+            writeln!(w, "Epoch: {}", metadata.epoch)?;
+        }
+        writeln!(w, "Epoch Rewards:")?;
+        writeln!(
+            w,
+            "  {:<44}  {:<11}  {:<23}  {:<18}  {:<18}  {:>14}  {:>7}  {:>10}",
+            "Address",
+            "Reward Slot",
+            "Time",
+            "Amount",
+            "New Balance",
+            "Percent Change",
+            "APR",
+            "Commission"
+        )?;
+        for keyed_reward in &self.rewards {
+            match &keyed_reward.reward {
+                Some(reward) => {
+                    writeln!(
+                        w,
+                        "  {:<44}  {:<11}  {:<23}  ◎{:<17.9}  ◎{:<17.9}  {:>13.9}%  {:>7}  {:>10}",
+                        keyed_reward.address,
+                        reward.effective_slot,
+                        Utc.timestamp_opt(reward.block_time, 0).unwrap(),
+                        lamports_to_sol(reward.amount),
+                        lamports_to_sol(reward.post_balance),
+                        reward.percent_change,
+                        reward
+                            .apr
+                            .map(|apr| format!("{apr:.2}%"))
+                            .unwrap_or_default(),
+                        reward
+                            .commission
+                            .map(|commission| format!("{commission}%"))
+                            .unwrap_or_else(|| "-".to_string()),
+                    )?;
+                }
+                None => {
+                    writeln!(w, "  {:<44}  No rewards in epoch", keyed_reward.address,)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
 
 impl fmt::Display for CliKeyedEpochRewards {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -1053,7 +1105,7 @@ impl fmt::Display for CliKeyedEpochRewards {
         writeln!(f, "Epoch Rewards:")?;
         writeln!(
             f,
-            "  {:<44}  {:<18}  {:<18}  {:>14}  {:>14}  {:>10}",
+            "  {:<44}  {:<18}  {:<18}  {:>14}  {:>7}  {:>10}",
             "Address", "Amount", "New Balance", "Percent Change", "APR", "Commission"
         )?;
         for keyed_reward in &self.rewards {
@@ -1061,7 +1113,7 @@ impl fmt::Display for CliKeyedEpochRewards {
                 Some(reward) => {
                     writeln!(
                         f,
-                        "  {:<44}  ◎{:<17.9}  ◎{:<17.9}  {:>13.9}%  {:>14}  {:>10}",
+                        "  {:<44}  ◎{:<17.9}  ◎{:<17.9}  {:>13.9}%  {:>7}  {:>10}",
                         keyed_reward.address,
                         lamports_to_sol(reward.amount),
                         lamports_to_sol(reward.post_balance),
