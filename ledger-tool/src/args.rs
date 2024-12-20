@@ -135,6 +135,10 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .long("accounts-db-verify-experimental-accumulator-hash")
             .help("Verifies the experimental accumulator hash")
             .hidden(hidden_unless_forced()),
+        Arg::with_name("accounts_db_snapshots_use_experimental_accumulator_hash")
+            .long("accounts-db-snapshots-use-experimental-accumulator-hash")
+            .help("Snapshots use the experimental accumulator hash")
+            .hidden(hidden_unless_forced()),
         Arg::with_name("accounts_db_hash_threads")
             .long("accounts-db-hash-threads")
             .value_name("NUM_THREADS")
@@ -398,6 +402,8 @@ pub fn get_accounts_db_config(
             .is_present("accounts_db_experimental_accumulator_hash"),
         verify_experimental_accumulator_hash: arg_matches
             .is_present("accounts_db_verify_experimental_accumulator_hash"),
+        snapshots_use_experimental_accumulator_hash: arg_matches
+            .is_present("accounts_db_snapshots_use_experimental_accumulator_hash"),
         num_hash_threads,
         ..AccountsDbConfig::default()
     }
