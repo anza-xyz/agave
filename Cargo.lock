@@ -6456,6 +6456,7 @@ dependencies = [
  "solana-loader-v4-program",
  "solana-logger",
  "solana-program-runtime",
+ "solana-pubkey",
  "solana-pubsub-client",
  "solana-quic-client",
  "solana-remote-wallet",
