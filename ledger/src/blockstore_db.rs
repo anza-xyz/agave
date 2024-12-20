@@ -1,8 +1,7 @@
 pub use rocksdb::Direction as IteratorDirection;
 use {
     crate::{
-        blockstore_meta,
-        blockstore_meta::MerkleRootMeta,
+        blockstore_meta::{self, MerkleRootMeta},
         blockstore_metrics::{
             maybe_enable_rocksdb_perf, report_rocksdb_read_perf, report_rocksdb_write_perf,
             BlockstoreRocksDbColumnFamilyMetrics, PerfSamplingStatus, PERF_METRIC_OP_NAME_GET,
@@ -1668,14 +1667,31 @@ where
         self.get_raw(&key)
     }
 
+    /// Get the value associated with a key, applying a function to the raw bytes.
+    ///
+    /// Like [`get`](Self::get), but delegates deserialization to a provided function.
+    pub fn get_with<F>(&self, key: C::Index, f: F) -> Result<Option<C::Type>>
+    where
+        F: FnOnce(&[u8]) -> Result<C::Type>,
+    {
+        self.get_raw_with(&C::key(key), f)
+    }
+
     pub fn get_raw(&self, key: &[u8]) -> Result<Option<C::Type>> {
+        self.get_raw_with(key, |slice| Ok(deserialize(slice)?))
+    }
+
+    pub fn get_raw_with<F>(&self, key: &[u8], f: F) -> Result<Option<C::Type>>
+    where
+        F: FnOnce(&[u8]) -> Result<C::Type>,
+    {
         let mut result = Ok(None);
         let is_perf_enabled = maybe_enable_rocksdb_perf(
             self.column_options.rocks_perf_sample_interval,
             &self.read_perf_status,
         );
         if let Some(pinnable_slice) = self.backend.get_pinned_cf(self.handle(), key)? {
-            let value = deserialize(pinnable_slice.as_ref())?;
+            let value = f(pinnable_slice.as_ref())?;
             result = Ok(Some(value))
         }
 
