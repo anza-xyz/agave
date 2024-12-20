@@ -68,64 +68,64 @@ impl PurgeStats {
                 metric_name,
                 (
                     "safety_checks_elapsed",
-                    self.safety_checks_elapsed.swap(0, Ordering::Relaxed) as i64,
+                    self.safety_checks_elapsed.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
                     "remove_cache_elapsed",
-                    self.remove_cache_elapsed.swap(0, Ordering::Relaxed) as i64,
+                    self.remove_cache_elapsed.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
                     "remove_storage_entries_elapsed",
                     self.remove_storage_entries_elapsed
-                        .swap(0, Ordering::Relaxed) as i64,
+                        .swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
                     "drop_storage_entries_elapsed",
-                    self.drop_storage_entries_elapsed.swap(0, Ordering::Relaxed) as i64,
+                    self.drop_storage_entries_elapsed.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
                     "num_cached_slots_removed",
-                    self.num_cached_slots_removed.swap(0, Ordering::Relaxed) as i64,
+                    self.num_cached_slots_removed.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
                     "num_stored_slots_removed",
-                    self.num_stored_slots_removed.swap(0, Ordering::Relaxed) as i64,
+                    self.num_stored_slots_removed.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
                     "total_removed_storage_entries",
                     self.total_removed_storage_entries
-                        .swap(0, Ordering::Relaxed) as i64,
+                        .swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
                     "total_removed_cached_bytes",
-                    self.total_removed_cached_bytes.swap(0, Ordering::Relaxed) as i64,
+                    self.total_removed_cached_bytes.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
                     "total_removed_stored_bytes",
-                    self.total_removed_stored_bytes.swap(0, Ordering::Relaxed) as i64,
+                    self.total_removed_stored_bytes.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
                     "scan_storages_elapsed",
-                    self.scan_storages_elapsed.swap(0, Ordering::Relaxed) as i64,
+                    self.scan_storages_elapsed.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
                     "purge_accounts_index_elapsed",
-                    self.purge_accounts_index_elapsed.swap(0, Ordering::Relaxed) as i64,
+                    self.purge_accounts_index_elapsed.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
                     "handle_reclaims_elapsed",
-                    self.handle_reclaims_elapsed.swap(0, Ordering::Relaxed) as i64,
+                    self.handle_reclaims_elapsed.swap(0, Ordering::Relaxed),
                     i64
                 ),
             );
@@ -211,44 +211,40 @@ impl LatestAccountsIndexRootsStats {
     pub fn report(&self) {
         datapoint_info!(
             "accounts_index_roots_len",
-            (
-                "roots_len",
-                self.roots_len.load(Ordering::Relaxed) as i64,
-                i64
-            ),
+            ("roots_len", self.roots_len.load(Ordering::Relaxed), i64),
             (
                 "uncleaned_roots_len",
-                self.uncleaned_roots_len.load(Ordering::Relaxed) as i64,
+                self.uncleaned_roots_len.load(Ordering::Relaxed),
                 i64
             ),
             (
                 "roots_range_width",
-                self.roots_range.load(Ordering::Relaxed) as i64,
+                self.roots_range.load(Ordering::Relaxed),
                 i64
             ),
             (
                 "unrooted_cleaned_count",
-                self.unrooted_cleaned_count.swap(0, Ordering::Relaxed) as i64,
+                self.unrooted_cleaned_count.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
                 "rooted_cleaned_count",
-                self.rooted_cleaned_count.swap(0, Ordering::Relaxed) as i64,
+                self.rooted_cleaned_count.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
                 "clean_unref_from_storage_us",
-                self.clean_unref_from_storage_us.swap(0, Ordering::Relaxed) as i64,
+                self.clean_unref_from_storage_us.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
                 "clean_dead_slot_us",
-                self.clean_dead_slot_us.swap(0, Ordering::Relaxed) as i64,
+                self.clean_dead_slot_us.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
                 "append_vecs_open",
-                APPEND_VEC_MMAPPED_FILES_OPEN.load(Ordering::Relaxed) as i64,
+                APPEND_VEC_MMAPPED_FILES_OPEN.load(Ordering::Relaxed),
                 i64
             ),
             (
@@ -388,7 +384,7 @@ impl ShrinkStats {
                 ),
                 (
                     "num_slots_shrunk",
-                    self.num_slots_shrunk.swap(0, Ordering::Relaxed) as i64,
+                    self.num_slots_shrunk.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -403,7 +399,7 @@ impl ShrinkStats {
                 ),
                 (
                     "storage_read_elapsed",
-                    self.storage_read_elapsed.swap(0, Ordering::Relaxed) as i64,
+                    self.storage_read_elapsed.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -413,78 +409,78 @@ impl ShrinkStats {
                 ),
                 (
                     "index_read_elapsed",
-                    self.index_read_elapsed.swap(0, Ordering::Relaxed) as i64,
+                    self.index_read_elapsed.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
                     "create_and_insert_store_elapsed",
                     self.create_and_insert_store_elapsed
-                        .swap(0, Ordering::Relaxed) as i64,
+                        .swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
                     "store_accounts_elapsed",
-                    self.store_accounts_elapsed.swap(0, Ordering::Relaxed) as i64,
+                    self.store_accounts_elapsed.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
                     "update_index_elapsed",
-                    self.update_index_elapsed.swap(0, Ordering::Relaxed) as i64,
+                    self.update_index_elapsed.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
                     "handle_reclaims_elapsed",
-                    self.handle_reclaims_elapsed.swap(0, Ordering::Relaxed) as i64,
+                    self.handle_reclaims_elapsed.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
                     "remove_old_stores_shrink_us",
-                    self.remove_old_stores_shrink_us.swap(0, Ordering::Relaxed) as i64,
+                    self.remove_old_stores_shrink_us.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
                     "rewrite_elapsed",
-                    self.rewrite_elapsed.swap(0, Ordering::Relaxed) as i64,
+                    self.rewrite_elapsed.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
                     "drop_storage_entries_elapsed",
-                    self.drop_storage_entries_elapsed.swap(0, Ordering::Relaxed) as i64,
+                    self.drop_storage_entries_elapsed.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
                     "accounts_removed",
-                    self.accounts_removed.swap(0, Ordering::Relaxed) as i64,
+                    self.accounts_removed.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
                     "bytes_removed",
-                    self.bytes_removed.swap(0, Ordering::Relaxed) as i64,
+                    self.bytes_removed.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
                     "bytes_written",
-                    self.bytes_written.swap(0, Ordering::Relaxed) as i64,
+                    self.bytes_written.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
                     "skipped_shrink",
-                    self.skipped_shrink.swap(0, Ordering::Relaxed) as i64,
+                    self.skipped_shrink.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
                     "alive_accounts",
-                    self.alive_accounts.swap(0, Ordering::Relaxed) as i64,
+                    self.alive_accounts.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
                     "dead_accounts",
-                    self.dead_accounts.swap(0, Ordering::Relaxed) as i64,
+                    self.dead_accounts.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
                     "accounts_loaded",
-                    self.accounts_loaded.swap(0, Ordering::Relaxed) as i64,
+                    self.accounts_loaded.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -544,7 +540,7 @@ impl ShrinkAncientStats {
                 "num_slots_shrunk",
                 self.shrink_stats
                     .num_slots_shrunk
-                    .swap(0, Ordering::Relaxed) as i64,
+                    .swap(0, Ordering::Relaxed),
                 i64
             ),
             (
@@ -565,7 +561,7 @@ impl ShrinkAncientStats {
                 "storage_read_elapsed",
                 self.shrink_stats
                     .storage_read_elapsed
-                    .swap(0, Ordering::Relaxed) as i64,
+                    .swap(0, Ordering::Relaxed),
                 i64
             ),
             (
@@ -579,112 +575,108 @@ impl ShrinkAncientStats {
                 "index_read_elapsed",
                 self.shrink_stats
                     .index_read_elapsed
-                    .swap(0, Ordering::Relaxed) as i64,
+                    .swap(0, Ordering::Relaxed),
                 i64
             ),
             (
                 "create_and_insert_store_elapsed",
                 self.shrink_stats
                     .create_and_insert_store_elapsed
-                    .swap(0, Ordering::Relaxed) as i64,
+                    .swap(0, Ordering::Relaxed),
                 i64
             ),
             (
                 "store_accounts_elapsed",
                 self.shrink_stats
                     .store_accounts_elapsed
-                    .swap(0, Ordering::Relaxed) as i64,
+                    .swap(0, Ordering::Relaxed),
                 i64
             ),
             (
                 "update_index_elapsed",
                 self.shrink_stats
                     .update_index_elapsed
-                    .swap(0, Ordering::Relaxed) as i64,
+                    .swap(0, Ordering::Relaxed),
                 i64
             ),
             (
                 "handle_reclaims_elapsed",
                 self.shrink_stats
                     .handle_reclaims_elapsed
-                    .swap(0, Ordering::Relaxed) as i64,
+                    .swap(0, Ordering::Relaxed),
                 i64
             ),
             (
                 "remove_old_stores_shrink_us",
                 self.shrink_stats
                     .remove_old_stores_shrink_us
-                    .swap(0, Ordering::Relaxed) as i64,
+                    .swap(0, Ordering::Relaxed),
                 i64
             ),
             (
                 "rewrite_elapsed",
-                self.shrink_stats.rewrite_elapsed.swap(0, Ordering::Relaxed) as i64,
+                self.shrink_stats.rewrite_elapsed.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
                 "unpackable_slots_count",
                 self.shrink_stats
                     .unpackable_slots_count
-                    .swap(0, Ordering::Relaxed) as i64,
+                    .swap(0, Ordering::Relaxed),
                 i64
             ),
             (
                 "newest_alive_packed_count",
                 self.shrink_stats
                     .newest_alive_packed_count
-                    .swap(0, Ordering::Relaxed) as i64,
+                    .swap(0, Ordering::Relaxed),
                 i64
             ),
             (
                 "drop_storage_entries_elapsed",
                 self.shrink_stats
                     .drop_storage_entries_elapsed
-                    .swap(0, Ordering::Relaxed) as i64,
+                    .swap(0, Ordering::Relaxed),
                 i64
             ),
             (
                 "accounts_removed",
                 self.shrink_stats
                     .accounts_removed
-                    .swap(0, Ordering::Relaxed) as i64,
+                    .swap(0, Ordering::Relaxed),
                 i64
             ),
             (
                 "bytes_removed",
-                self.shrink_stats.bytes_removed.swap(0, Ordering::Relaxed) as i64,
+                self.shrink_stats.bytes_removed.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
                 "bytes_written",
-                self.shrink_stats.bytes_written.swap(0, Ordering::Relaxed) as i64,
+                self.shrink_stats.bytes_written.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
                 "alive_accounts",
-                self.shrink_stats.alive_accounts.swap(0, Ordering::Relaxed) as i64,
+                self.shrink_stats.alive_accounts.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
                 "dead_accounts",
-                self.shrink_stats.dead_accounts.swap(0, Ordering::Relaxed) as i64,
+                self.shrink_stats.dead_accounts.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
                 "accounts_loaded",
-                self.shrink_stats.accounts_loaded.swap(0, Ordering::Relaxed) as i64,
+                self.shrink_stats.accounts_loaded.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
                 "ancient_append_vecs_shrunk",
-                self.ancient_append_vecs_shrunk.swap(0, Ordering::Relaxed) as i64,
+                self.ancient_append_vecs_shrunk.swap(0, Ordering::Relaxed),
                 i64
             ),
-            (
-                "random",
-                self.random_shrink.swap(0, Ordering::Relaxed) as i64,
-                i64
-            ),
+            ("random", self.random_shrink.swap(0, Ordering::Relaxed), i64),
             (
                 "slots_eligible_to_shrink",
                 self.slots_eligible_to_shrink.swap(0, Ordering::Relaxed),
@@ -702,37 +694,33 @@ impl ShrinkAncientStats {
             ),
             (
                 "slots_considered",
-                self.slots_considered.swap(0, Ordering::Relaxed) as i64,
+                self.slots_considered.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
                 "ancient_scanned",
-                self.ancient_scanned.swap(0, Ordering::Relaxed) as i64,
+                self.ancient_scanned.swap(0, Ordering::Relaxed),
                 i64
             ),
-            (
-                "total_us",
-                self.total_us.swap(0, Ordering::Relaxed) as i64,
-                i64
-            ),
+            ("total_us", self.total_us.swap(0, Ordering::Relaxed), i64),
             (
                 "bytes_ancient_created",
-                self.bytes_ancient_created.swap(0, Ordering::Relaxed) as i64,
+                self.bytes_ancient_created.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
                 "bytes_from_must_shrink",
-                self.bytes_from_must_shrink.swap(0, Ordering::Relaxed) as i64,
+                self.bytes_from_must_shrink.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
                 "bytes_from_smallest_storages",
-                self.bytes_from_smallest_storages.swap(0, Ordering::Relaxed) as i64,
+                self.bytes_from_smallest_storages.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
                 "bytes_from_newest_storages",
-                self.bytes_from_newest_storages.swap(0, Ordering::Relaxed) as i64,
+                self.bytes_from_newest_storages.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
