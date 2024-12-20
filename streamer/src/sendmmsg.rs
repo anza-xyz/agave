@@ -68,6 +68,7 @@ fn mmsghdr_for_packet(
 ) {
     const SIZE_OF_SOCKADDR_IN: usize = mem::size_of::<sockaddr_in>();
     const SIZE_OF_SOCKADDR_IN6: usize = mem::size_of::<sockaddr_in6>();
+    const SIZE_OF_SOCKADDR_STORAGE: usize = mem::size_of::<sockaddr_storage>();
 
     iov.write(iovec {
         iov_base: packet.as_ptr() as *mut libc::c_void,
@@ -76,19 +77,33 @@ fn mmsghdr_for_packet(
 
     let msg_namelen = match dest {
         SocketAddr::V4(socket_addr_v4) => {
+            let ptr = addr.as_mut_ptr() as *mut _;
             unsafe {
                 ptr::write(
-                    addr.as_mut_ptr() as *mut _,
+                    ptr,
                     *nix::sys::socket::SockaddrIn::from(*socket_addr_v4).as_ref(),
+                );
+                // Zero the remaining bytes after sockaddr_in
+                ptr::write_bytes(
+                    (ptr as *mut u8).add(SIZE_OF_SOCKADDR_IN),
+                    0,
+                    SIZE_OF_SOCKADDR_STORAGE - SIZE_OF_SOCKADDR_IN,
                 );
             }
             SIZE_OF_SOCKADDR_IN as socklen_t
         }
         SocketAddr::V6(socket_addr_v6) => {
+            let ptr = addr.as_mut_ptr() as *mut _;
             unsafe {
                 ptr::write(
-                    addr.as_mut_ptr() as *mut _,
+                    ptr,
                     *nix::sys::socket::SockaddrIn6::from(*socket_addr_v6).as_ref(),
+                );
+                // Zero the remaining bytes after sockaddr_in6
+                ptr::write_bytes(
+                    (ptr as *mut u8).add(SIZE_OF_SOCKADDR_IN6),
+                    0,
+                    SIZE_OF_SOCKADDR_STORAGE - SIZE_OF_SOCKADDR_IN6,
                 );
             }
             SIZE_OF_SOCKADDR_IN6 as socklen_t
@@ -166,22 +181,28 @@ where
     S: Borrow<SocketAddr>,
     T: AsRef<[u8]>,
 {
-    let size = packets.len();
-    let mut iovs = vec![MaybeUninit::uninit(); size];
-    let mut addrs = vec![MaybeUninit::zeroed(); size];
-    let mut hdrs = vec![MaybeUninit::uninit(); size];
+    const MAX_IOV: usize = libc::UIO_MAXIOV as usize;
+
+    if packets.len() > MAX_IOV {
+        return Err(SendPktsError::IoError(
+            io::Error::new(io::ErrorKind::InvalidInput, "batch size exceeds UIO_MAXIOV"),
+            packets.len(),
+        ));
+    }
+
+    let mut iovs = [MaybeUninit::uninit(); MAX_IOV];
+    let mut addrs = [MaybeUninit::uninit(); MAX_IOV];
+    let mut hdrs = [MaybeUninit::uninit(); MAX_IOV];
+
+    // izip! will iterate packets.len() times, leaving hdrs, iovs, and addrs initialized only up to packets.len()
     for ((pkt, dest), hdr, iov, addr) in izip!(packets, &mut hdrs, &mut iovs, &mut addrs) {
         mmsghdr_for_packet(pkt.as_ref(), dest.borrow(), iov, addr, hdr);
     }
-    // mmsghdr_for_packet() performs initialization so we can safely transmute
-    // the Vecs to their initialized counterparts
-    let _iovs = unsafe { mem::transmute::<Vec<MaybeUninit<iovec>>, Vec<iovec>>(iovs) };
-    let _addrs = unsafe {
-        mem::transmute::<Vec<MaybeUninit<sockaddr_storage>>, Vec<sockaddr_storage>>(addrs)
-    };
-    let mut hdrs = unsafe { mem::transmute::<Vec<MaybeUninit<mmsghdr>>, Vec<mmsghdr>>(hdrs) };
+    // SAFETY: hdrs is initialized by mmsghdr_for_packet in packets.len()
+    let hdrs =
+        unsafe { std::slice::from_raw_parts_mut(hdrs.as_mut_ptr() as *mut mmsghdr, packets.len()) };
 
-    sendmmsg_retry(sock, &mut hdrs)
+    sendmmsg_retry(sock, hdrs)
 }
 
 pub fn multi_target_send<S, T>(
