@@ -8,6 +8,7 @@ use {
         hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         utils::create_accounts_run_and_snapshot_dirs,
     },
+    solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
     solana_cli_output::CliAccount,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_core::{
@@ -30,6 +31,7 @@ use {
         create_new_tmp_ledger,
     },
     solana_net_utils::PortRange,
+    solana_program_test::InvokeContext,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
     solana_rpc_client::{nonblocking, rpc_client::RpcClient},
     solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS,
@@ -39,6 +41,7 @@ use {
         runtime_config::RuntimeConfig,
         snapshot_config::SnapshotConfig,
     },
+    solana_sbpf::{elf::Executable, verifier::RequisiteVerifier},
     solana_sdk::{
         account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
         bpf_loader_upgradeable::UpgradeableLoaderState,
@@ -790,12 +793,28 @@ impl TestValidator {
         let validator_stake_lamports = sol_to_lamports(1_000_000.);
         let mint_lamports = sol_to_lamports(500_000_000.);
 
+        let program_runtime_environment = create_program_runtime_environment_v1(
+            // TODO: Apply the configured feature set rather than the default
+            &FeatureSet::default(),
+            &ComputeBudget::default(),
+            true,
+            false,
+        )?;
+        let program_runtime_environment = Arc::new(program_runtime_environment);
+
         let mut accounts = config.accounts.clone();
         for (address, account) in solana_program_test::programs::spl_programs(&config.rent) {
             accounts.entry(address).or_insert(account);
         }
         for upgradeable_program in &config.upgradeable_programs {
             let data = solana_program_test::read_file(&upgradeable_program.program_path);
+            let executable =
+                Executable::<InvokeContext>::from_elf(&data, program_runtime_environment.clone())
+                    .map_err(|err| format!("ELF error: {err}"))?;
+            executable
+                .verify::<RequisiteVerifier>()
+                .map_err(|err| format!("ELF error: {err}"))?;
+
             let (programdata_address, _) = Pubkey::find_program_address(
                 &[upgradeable_program.program_id.as_ref()],
                 &upgradeable_program.loader,
