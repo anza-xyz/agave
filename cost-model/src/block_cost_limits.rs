@@ -38,6 +38,7 @@ pub const MAX_BLOCK_UNITS: u64 =
 
 #[cfg(test)]
 static_assertions::const_assert_eq!(MAX_BLOCK_UNITS, 48_000_000);
+pub const MAX_BLOCK_UNITS_SIMD_0207: u64 = 50_000_000;
 
 /// Number of compute units that a writable account in a block is allowed. The
 /// limit is to prevent too many transactions write to same account, therefore
@@ -57,3 +58,16 @@ static_assertions::const_assert_eq!(MAX_VOTE_UNITS, 36_000_000);
 /// The maximum allowed size, in bytes, that accounts data can grow, per block.
 /// This can also be thought of as the maximum size of new allocations per block.
 pub const MAX_BLOCK_ACCOUNTS_DATA_SIZE_DELTA: u64 = 100_000_000;
+
+/// Return the block limits that will be used upon activation of SIMD-0207.
+/// Returns as
+/// (account_limit, block_limit, vote_limit)
+// ^ Above order is used to be consistent with the order of
+//   `CostTracker::set_limits`.
+pub const fn simd_0207_block_limits() -> (u64, u64, u64) {
+    (
+        MAX_WRITABLE_ACCOUNT_UNITS,
+        MAX_BLOCK_UNITS_SIMD_0207,
+        MAX_VOTE_UNITS,
+    )
+}
