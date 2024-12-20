@@ -509,13 +509,10 @@ impl BankWithScheduler {
     }
 
     pub fn unblock_block_production(&self) {
-        self.inner
-            .with_active_scheduler(|scheduler| {
-                assert_matches!(scheduler.context().mode(), SchedulingMode::BlockProduction);
-                scheduler.unblock_scheduling();
-                Ok(())
-            })
-            .unwrap();
+        if let SchedulerStatus::Active(scheduler) = &*self.inner.scheduler.read().unwrap() {
+            assert_matches!(scheduler.context().mode(), SchedulingMode::BlockProduction);
+            scheduler.unblock_scheduling();
+        }
     }
 
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
