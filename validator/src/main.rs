@@ -1980,7 +1980,7 @@ pub fn main() {
 
     let tpu_max_connections_per_ipaddr_per_minute: u64 =
         value_t_or_exit!(matches, "tpu_max_connections_per_ipaddr_per_minute", u64);
-    let max_streams_per_ms = value_t_or_exit!(matches, "max_streams_per_ms", u64);
+    let max_streams_per_ms = value_t_or_exit!(matches, "tpu_max_streams_per_ms", u64);
 
     let node_config = NodeConfig {
         gossip_addr,

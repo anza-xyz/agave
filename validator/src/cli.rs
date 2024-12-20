@@ -953,14 +953,14 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .help("Controls the max concurrent connections for TPU-forward from unstaked nodes."),
         )
         .arg(
-            Arg::with_name("max_streams_per_ms")
-                .long("max-streams-per-ms")
+            Arg::with_name("tpu_max_streams_per_ms")
+                .long("tpu-max-streams-per-ms")
                 .takes_value(true)
-                .default_value(&default_args.max_streams_per_ms)
+                .default_value(&default_args.tpu_max_streams_per_ms)
                 .validator(is_parsable::<usize>)
                 .hidden(hidden_unless_forced())
-                .help("Controls the max number of streams per steamer service."),
-        )        
+                .help("Controls the max number of streams for a TPU service."),
+        )
         .arg(
             Arg::with_name("num_quic_endpoints")
                 .long("num-quic-endpoints")
@@ -2384,7 +2384,7 @@ pub struct DefaultArgs {
     pub max_tpu_unstaked_connections: String,
     pub max_fwd_staked_connections: String,
     pub max_fwd_unstaked_connections: String,
-    pub max_streams_per_ms: String,
+    pub tpu_max_streams_per_ms: String,
 
     pub num_quic_endpoints: String,
     pub vote_use_quic: String,
@@ -2488,7 +2488,7 @@ impl DefaultArgs {
                 .saturating_add(DEFAULT_MAX_UNSTAKED_CONNECTIONS)
                 .to_string(),
             max_fwd_unstaked_connections: 0.to_string(),
-            max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS.to_string(),
+            tpu_max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS.to_string(),
             num_quic_endpoints: DEFAULT_QUIC_ENDPOINTS.to_string(),
             rpc_max_request_body_size: MAX_REQUEST_BODY_SIZE.to_string(),
             exit_min_idle_time: "10".to_string(),
