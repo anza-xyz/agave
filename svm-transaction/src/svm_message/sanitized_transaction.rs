@@ -29,7 +29,7 @@ impl SVMMessage for SanitizedTransaction {
         SVMMessage::instructions_iter(SanitizedTransaction::message(self))
     }
 
-    fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> {
+    fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> + Clone {
         SVMMessage::program_instructions_iter(SanitizedTransaction::message(self))
     }
 

@@ -3857,6 +3857,7 @@ fn test_program_fees() {
         FeeStructure::new(0.000005, 0.0, vec![(200, 0.0000005), (1400000, 0.000005)]);
     bank.set_fee_structure(&fee_structure);
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+    let feature_set = bank.feature_set.clone();
     let mut bank_client = BankClient::new_shared(bank);
     let authority_keypair = Keypair::new();
 
@@ -3880,9 +3881,10 @@ fn test_program_fees() {
     )
     .unwrap();
     let fee_budget_limits = FeeBudgetLimits::from(
-        process_compute_budget_instructions(SVMMessage::program_instructions_iter(
-            &sanitized_message,
-        ))
+        process_compute_budget_instructions(
+            SVMMessage::program_instructions_iter(&sanitized_message),
+            &feature_set,
+        )
         .unwrap_or_default(),
     );
     let expected_normal_fee = solana_fee::calculate_fee(
@@ -3912,9 +3914,10 @@ fn test_program_fees() {
     )
     .unwrap();
     let fee_budget_limits = FeeBudgetLimits::from(
-        process_compute_budget_instructions(SVMMessage::program_instructions_iter(
-            &sanitized_message,
-        ))
+        process_compute_budget_instructions(
+            SVMMessage::program_instructions_iter(&sanitized_message),
+            &feature_set,
+        )
         .unwrap_or_default(),
     );
     let expected_prioritized_fee = solana_fee::calculate_fee(
