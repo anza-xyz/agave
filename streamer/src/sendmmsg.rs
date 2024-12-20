@@ -69,6 +69,8 @@ fn mmsghdr_for_packet(
     const SIZE_OF_SOCKADDR_IN: usize = mem::size_of::<sockaddr_in>();
     const SIZE_OF_SOCKADDR_IN6: usize = mem::size_of::<sockaddr_in6>();
     const SIZE_OF_SOCKADDR_STORAGE: usize = mem::size_of::<sockaddr_storage>();
+    const SOCKADDR_IN_PADDING: usize = SIZE_OF_SOCKADDR_STORAGE - SIZE_OF_SOCKADDR_IN;
+    const SOCKADDR_IN6_PADDING: usize = SIZE_OF_SOCKADDR_STORAGE - SIZE_OF_SOCKADDR_IN6;
 
     iov.write(iovec {
         iov_base: packet.as_ptr() as *mut libc::c_void,
@@ -77,7 +79,7 @@ fn mmsghdr_for_packet(
 
     let msg_namelen = match dest {
         SocketAddr::V4(socket_addr_v4) => {
-            let ptr = addr.as_mut_ptr() as *mut _;
+            let ptr: *mut sockaddr_in = addr.as_mut_ptr() as *mut _;
             unsafe {
                 ptr::write(
                     ptr,
@@ -87,13 +89,13 @@ fn mmsghdr_for_packet(
                 ptr::write_bytes(
                     (ptr as *mut u8).add(SIZE_OF_SOCKADDR_IN),
                     0,
-                    SIZE_OF_SOCKADDR_STORAGE - SIZE_OF_SOCKADDR_IN,
+                    SOCKADDR_IN_PADDING,
                 );
             }
             SIZE_OF_SOCKADDR_IN as socklen_t
         }
         SocketAddr::V6(socket_addr_v6) => {
-            let ptr = addr.as_mut_ptr() as *mut _;
+            let ptr: *mut sockaddr_in6 = addr.as_mut_ptr() as *mut _;
             unsafe {
                 ptr::write(
                     ptr,
@@ -103,7 +105,7 @@ fn mmsghdr_for_packet(
                 ptr::write_bytes(
                     (ptr as *mut u8).add(SIZE_OF_SOCKADDR_IN6),
                     0,
-                    SIZE_OF_SOCKADDR_STORAGE - SIZE_OF_SOCKADDR_IN6,
+                    SOCKADDR_IN6_PADDING,
                 );
             }
             SIZE_OF_SOCKADDR_IN6 as socklen_t
