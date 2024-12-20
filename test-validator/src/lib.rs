@@ -7,6 +7,7 @@ use {
     agave_snapshots::{
         paths::BANK_SNAPSHOTS_DIR, snapshot_config::SnapshotConfig, SnapshotInterval,
     },
+    agave_syscalls::create_program_runtime_environment_v1,
     base64::{prelude::BASE64_STANDARD, Engine},
     crossbeam_channel::Receiver,
     log::*,
@@ -48,6 +49,7 @@ use {
     solana_net_utils::{
         find_available_ports_in_range, multihomed_sockets::BindIpAddrs, PortRange, SocketAddrSpace,
     },
+    solana_program_test::InvokeContext,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
@@ -59,6 +61,7 @@ use {
         bank_forks::BankForks, genesis_utils::create_genesis_config_with_leader_ex,
         runtime_config::RuntimeConfig,
     },
+    solana_sbpf::{elf::Executable, verifier::RequisiteVerifier},
     solana_sdk_ids::address_lookup_table,
     solana_signer::Signer,
     solana_streamer::quic::DEFAULT_QUIC_ENDPOINTS,
@@ -946,6 +949,14 @@ impl TestValidator {
             }
         }
 
+        let program_runtime_environment = create_program_runtime_environment_v1(
+            &feature_set.runtime_features(),
+            &ComputeBudget::default(),
+            true,
+            false,
+        )?;
+        let program_runtime_environment = Arc::new(program_runtime_environment);
+
         let mut accounts = config.accounts.clone();
         for (address, account) in solana_program_binaries::spl_programs(&config.rent) {
             accounts.entry(address).or_insert(account);
@@ -959,6 +970,13 @@ impl TestValidator {
         }
         for upgradeable_program in &config.upgradeable_programs {
             let data = solana_program_test::read_file(&upgradeable_program.program_path);
+            let executable =
+                Executable::<InvokeContext>::from_elf(&data, program_runtime_environment.clone())
+                    .map_err(|err| format!("ELF error: {err}"))?;
+            executable
+                .verify::<RequisiteVerifier>()
+                .map_err(|err| format!("ELF error: {err}"))?;
+
             let (programdata_address, _) = Pubkey::find_program_address(
                 &[upgradeable_program.program_id.as_ref()],
                 &upgradeable_program.loader,
