@@ -1480,6 +1480,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         .send(result_with_timings)
                         .expect("always outlived receiver");
 
+                    let mut new_result_with_timings = initialized_result_with_timings();
                     loop {
                         if session_resetting {
                             while let Some(task) = state_machine.schedule_next_unblocked_task() {
@@ -1494,7 +1495,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 Ok(NewTaskPayload::OpenSubchannel(context_and_result_with_timings)),
                                 _,
                             ) => {
-                                let (new_context, new_result_with_timings) =
+                                let new_context;
+                                (new_context, new_result_with_timings) =
                                     *context_and_result_with_timings;
                                 // We just received subsequent (= not initial) session and about to
                                 // enter into the preceding `while(!is_finished) {...}` loop again.
@@ -1506,20 +1508,16 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     session_ending = false;
                                 } else {
                                     session_pausing = false;
-                                    // Prevent processing transactions and thus touching poh until
-                                    // unblocked, which signals successful poh `set_bank()`-ing.
-                                    assert_matches!(
-                                        new_task_receiver.recv().unwrap(),
-                                        NewTaskPayload::Unblock
-                                    );
                                 }
 
                                 runnable_task_sender
                                     .send_chained_channel(&new_context, handler_count)
                                     .unwrap();
                                 context = new_context;
-                                result_with_timings = new_result_with_timings;
-                                break;
+                                if context.mode() == BlockVerification {
+                                    result_with_timings = new_result_with_timings;
+                                    break;
+                                }
                             }
                             (Ok(NewTaskPayload::CloseSubchannel), BlockProduction) => {
                                 info!("ignoring duplicate CloseSubchannel...");
@@ -1529,6 +1527,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             }
                             (Ok(NewTaskPayload::Payload(task)), BlockProduction) => {
                                 assert!(state_machine.do_schedule_task(task, true).is_none());
+                            }
+                            (Ok(NewTaskPayload::Unblock), BlockProduction) => {
+                                result_with_timings = new_result_with_timings;
+                                break;
                             }
                             (Ok(NewTaskPayload::Disconnect), BlockProduction) | (Err(_), _) => {
                                 // This unusual condition must be triggered by ThreadManager::drop().
