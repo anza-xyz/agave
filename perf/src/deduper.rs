@@ -5,7 +5,7 @@ use {
     ahash::RandomState,
     rand::Rng,
     std::{
-        hash::{BuildHasher, Hash, Hasher},
+        hash::Hash,
         iter::repeat_with,
         marker::PhantomData,
         sync::atomic::{AtomicU64, Ordering},
@@ -67,10 +67,8 @@ impl<const K: usize, T: ?Sized + Hash> Deduper<K, T> {
     #[allow(clippy::arithmetic_side_effects)]
     pub fn dedup(&self, data: &T) -> bool {
         let mut out = true;
-        let hashers = self.state.iter().map(RandomState::build_hasher);
-        for mut hasher in hashers {
-            data.hash(&mut hasher);
-            let hash: u64 = hasher.finish() % self.num_bits;
+        for random_state in &self.state {
+            let hash: u64 = random_state.hash_one(data) % self.num_bits;
             let index = (hash >> 6) as usize;
             let mask: u64 = 1u64 << (hash & 63);
             let old = self.bits[index].fetch_or(mask, Ordering::Relaxed);
