@@ -20,7 +20,7 @@ pub use {
     quic_client_certificate::QuicClientCertificate,
 };
 
-pub(crate) fn create_client_config(client_certificate: Arc<QuicClientCertificate>) -> ClientConfig {
+pub(crate) fn create_client_config(client_certificate: QuicClientCertificate) -> ClientConfig {
     // adapted from QuicLazyInitializedEndpoint::create_endpoint
     let mut crypto = rustls::ClientConfig::builder()
         .dangerous()

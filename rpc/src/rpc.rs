@@ -120,6 +120,7 @@ use {
     solana_runtime::commitment::CommitmentSlots,
     solana_send_transaction_service::{
         send_transaction_service::SendTransactionService, tpu_info::NullTpuInfo,
+        transaction_client::ConnectionCacheClient,
     },
     solana_streamer::socket::SocketAddrSpace,
 };
@@ -378,16 +379,21 @@ impl JsonRpcRequestProcessor {
             .tpu(connection_cache.protocol())
             .unwrap();
         let (sender, receiver) = unbounded();
-        SendTransactionService::new::<NullTpuInfo>(
+
+        let client = ConnectionCacheClient::<NullTpuInfo>::new(
+            connection_cache.clone(),
             tpu_address,
-            &bank_forks,
             None,
+<<<<<<< HEAD
             receiver,
             &connection_cache,
             1000,
+=======
+            None,
+>>>>>>> 5c0f173b88 (use tpu-client-next in send_transaction_service (#3515))
             1,
-            exit.clone(),
         );
+        SendTransactionService::new(&bank_forks, receiver, client, 1000, exit.clone());
 
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
         let startup_verification_complete = Arc::clone(bank.get_startup_verification_complete());
@@ -4385,7 +4391,9 @@ pub mod tests {
             },
             vote::state::VoteState,
         },
-        solana_send_transaction_service::tpu_info::NullTpuInfo,
+        solana_send_transaction_service::{
+            tpu_info::NullTpuInfo, transaction_client::ConnectionCacheClient,
+        },
         solana_transaction_status::{
             EncodedConfirmedBlock, EncodedTransaction, EncodedTransactionWithStatusMeta,
             TransactionDetails,
@@ -6491,16 +6499,20 @@ pub mod tests {
             Arc::new(AtomicU64::default()),
             Arc::new(PrioritizationFeeCache::default()),
         );
-        SendTransactionService::new::<NullTpuInfo>(
+        let client = ConnectionCacheClient::<NullTpuInfo>::new(
+            connection_cache.clone(),
             tpu_address,
-            &bank_forks,
             None,
+<<<<<<< HEAD
             receiver,
             &connection_cache,
             1000,
+=======
+            None,
+>>>>>>> 5c0f173b88 (use tpu-client-next in send_transaction_service (#3515))
             1,
-            exit,
         );
+        SendTransactionService::new(&bank_forks, receiver, client, 1000, exit.clone());
 
         let mut bad_transaction = system_transaction::transfer(
             &mint_keypair,
@@ -6765,16 +6777,21 @@ pub mod tests {
             Arc::new(AtomicU64::default()),
             Arc::new(PrioritizationFeeCache::default()),
         );
-        SendTransactionService::new::<NullTpuInfo>(
+        let client = ConnectionCacheClient::<NullTpuInfo>::new(
+            connection_cache.clone(),
             tpu_address,
-            &bank_forks,
             None,
+<<<<<<< HEAD
             receiver,
             &connection_cache,
             1000,
+=======
+            None,
+>>>>>>> 5c0f173b88 (use tpu-client-next in send_transaction_service (#3515))
             1,
-            exit,
         );
+        SendTransactionService::new(&bank_forks, receiver, client, 1000, exit.clone());
+
         assert_eq!(
             request_processor.get_block_commitment(0),
             RpcBlockCommitment {
