@@ -2106,9 +2106,10 @@ pub fn main() {
     };
 
     // Vote shares TPU forward's characteristics, except that we accept 1 connection
-    // per peer.
+    // per peer and no unstaked connections are accepted.
     let mut vote_quic_server_config = tpu_fwd_quic_server_config.clone();
     vote_quic_server_config.max_connections_per_peer = 1;
+    vote_quic_server_config.max_unstaked_connections = 0;
 
     let validator = match Validator::new(
         node,
