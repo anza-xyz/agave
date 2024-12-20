@@ -9804,6 +9804,7 @@ version = "2.2.0"
 dependencies = [
  "assert_matches",
  "bincode",
+ "bs58",
  "bytes",
  "crossbeam-channel",
  "futures 0.3.31",

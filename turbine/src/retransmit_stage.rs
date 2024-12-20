@@ -165,10 +165,22 @@ impl<const K: usize> ShredDeduper<K> {
             .maybe_reset(rng, false_positive_rate, reset_cycle);
     }
 
+    // Returns true if the shred is duplicate and should be discarded.
+    #[must_use]
     fn dedup(&self, key: ShredId, shred: &[u8], max_duplicate_count: usize) -> bool {
+        // Shreds in the retransmit stage:
+        //   * don't have repair nonce (repaired shreds are not retransmitted).
+        //   * are already resigned by this node as the retransmitter.
+        //   * have their leader's signature verified.
+        // Therefore in order to dedup shreds, it suffices to compare:
+        //    (signature, slot, shred-index, shred-type)
+        // Because ShredCommonHeader already includes all of the above tuple,
+        // the rest of the payload can be skipped.
         // In order to detect duplicate blocks across cluster, we retransmit
         // max_duplicate_count different shreds for each ShredId.
-        self.deduper.dedup(shred)
+        shred::layout::get_common_header_bytes(shred)
+            .map(|header| self.deduper.dedup(header))
+            .unwrap_or(true)
             || (0..max_duplicate_count).all(|i| self.shred_id_filter.dedup(&(key, i)))
     }
 }
@@ -630,14 +642,27 @@ mod tests {
         rand::SeedableRng,
         rand_chacha::ChaChaRng,
         solana_ledger::shred::{Shred, ShredFlags},
+        solana_sdk::signature::Keypair,
     };
+
+    fn get_keypair() -> Keypair {
+        const KEYPAIR: &str = "Fcc2HUvRC7Dv4GgehTziAremzRvwDw5miYu8Ahuu1rsGjA\
+            5eCn55pXiSkEPcuqviV41rJxrFpZDmHmQkZWfoYYS";
+        bs58::decode(KEYPAIR)
+            .into_vec()
+            .as_deref()
+            .map(Keypair::from_bytes)
+            .unwrap()
+            .unwrap()
+    }
 
     #[test]
     fn test_already_received() {
         let slot = 1;
         let index = 5;
         let version = 0x40;
-        let shred = Shred::new_from_data(
+        let keypair = get_keypair();
+        let mut shred = Shred::new_from_data(
             slot,
             index,
             0,
@@ -647,14 +672,14 @@ mod tests {
             version,
             0,
         );
+        shred.sign(&keypair);
         let mut rng = ChaChaRng::from_seed([0xa5; 32]);
         let shred_deduper = ShredDeduper::<2>::new(&mut rng, /*num_bits:*/ 640_007);
         // unique shred for (1, 5) should pass
         assert!(!shred_deduper.dedup(shred.id(), shred.payload(), MAX_DUPLICATE_COUNT));
         // duplicate shred for (1, 5) blocked
         assert!(shred_deduper.dedup(shred.id(), shred.payload(), MAX_DUPLICATE_COUNT));
-
-        let shred = Shred::new_from_data(
+        let mut shred = Shred::new_from_data(
             slot,
             index,
             2,
@@ -664,12 +689,13 @@ mod tests {
             version,
             0,
         );
+        shred.sign(&keypair);
         // first duplicate shred for (1, 5) passed
         assert!(!shred_deduper.dedup(shred.id(), shred.payload(), MAX_DUPLICATE_COUNT));
         // then blocked
         assert!(shred_deduper.dedup(shred.id(), shred.payload(), MAX_DUPLICATE_COUNT));
 
-        let shred = Shred::new_from_data(
+        let mut shred = Shred::new_from_data(
             slot,
             index,
             8,
@@ -679,6 +705,7 @@ mod tests {
             version,
             0,
         );
+        shred.sign(&keypair);
         // 2nd duplicate shred for (1, 5) blocked
         assert!(shred_deduper.dedup(shred.id(), shred.payload(), MAX_DUPLICATE_COUNT));
         assert!(shred_deduper.dedup(shred.id(), shred.payload(), MAX_DUPLICATE_COUNT));
