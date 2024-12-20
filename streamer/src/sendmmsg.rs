@@ -177,6 +177,7 @@ fn sendmmsg_retry(sock: &UdpSocket, hdrs: &mut [mmsghdr]) -> Result<(), SendPkts
     }
 }
 
+#[cfg(target_os = "linux")]
 const MAX_IOV: usize = libc::UIO_MAXIOV as usize;
 
 #[cfg(target_os = "linux")]
