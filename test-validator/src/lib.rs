@@ -949,6 +949,10 @@ impl TestValidator {
             }
         }
 
+        let mut feature_set = FeatureSet::all_enabled();
+        for feature in &config.deactivate_feature_set {
+            feature_set.deactivate(feature);
+        }
         let program_runtime_environment = create_program_runtime_environment_v1(
             &feature_set.runtime_features(),
             &ComputeBudget::default(),
