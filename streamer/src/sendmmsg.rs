@@ -177,20 +177,15 @@ fn sendmmsg_retry(sock: &UdpSocket, hdrs: &mut [mmsghdr]) -> Result<(), SendPkts
     }
 }
 
+const MAX_IOV: usize = libc::UIO_MAXIOV as usize;
+
 #[cfg(target_os = "linux")]
-pub fn batch_send<S, T>(sock: &UdpSocket, packets: &[(T, S)]) -> Result<(), SendPktsError>
+pub fn batch_send_max_iov<S, T>(sock: &UdpSocket, packets: &[(T, S)]) -> Result<(), SendPktsError>
 where
     S: Borrow<SocketAddr>,
     T: AsRef<[u8]>,
 {
-    const MAX_IOV: usize = libc::UIO_MAXIOV as usize;
-
-    if packets.len() > MAX_IOV {
-        return Err(SendPktsError::IoError(
-            io::Error::new(io::ErrorKind::InvalidInput, "batch size exceeds UIO_MAXIOV"),
-            packets.len(),
-        ));
-    }
+    assert!(packets.len() <= MAX_IOV);
 
     let mut iovs = [MaybeUninit::uninit(); MAX_IOV];
     let mut addrs = [MaybeUninit::uninit(); MAX_IOV];
@@ -205,6 +200,18 @@ where
         unsafe { std::slice::from_raw_parts_mut(hdrs.as_mut_ptr() as *mut mmsghdr, packets.len()) };
 
     sendmmsg_retry(sock, hdrs)
+}
+
+#[cfg(target_os = "linux")]
+pub fn batch_send<S, T>(sock: &UdpSocket, packets: &[(T, S)]) -> Result<(), SendPktsError>
+where
+    S: Borrow<SocketAddr>,
+    T: AsRef<[u8]>,
+{
+    for chunk in packets.chunks(MAX_IOV) {
+        batch_send_max_iov(sock, chunk)?;
+    }
+    Ok(())
 }
 
 pub fn multi_target_send<S, T>(
