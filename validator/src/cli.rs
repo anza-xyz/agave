@@ -953,6 +953,15 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .help("Controls the max concurrent connections for TPU-forward from unstaked nodes."),
         )
         .arg(
+            Arg::with_name("max_streams_per_ms")
+                .long("max-streams-per-ms")
+                .takes_value(true)
+                .default_value(&default_args.max_streams_per_ms)
+                .validator(is_parsable::<usize>)
+                .hidden(hidden_unless_forced())
+                .help("Controls the max number of streams per steamer service."),
+        )        
+        .arg(
             Arg::with_name("num_quic_endpoints")
                 .long("num-quic-endpoints")
                 .takes_value(true)
