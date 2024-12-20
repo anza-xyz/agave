@@ -1049,9 +1049,6 @@ impl fmt::Display for CliKeyedEpochRewards {
 
         if let Some(metadata) = &self.epoch_metadata {
             writeln!(f, "Epoch: {}", metadata.epoch)?;
-            writeln!(f, "Reward Slot: {}", metadata.effective_slot)?;
-            let timestamp = metadata.block_time;
-            writeln!(f, "Block Time: {}", unix_timestamp_to_string(timestamp))?;
         }
         writeln!(f, "Epoch Rewards:")?;
         writeln!(
