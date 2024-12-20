@@ -619,8 +619,9 @@ pub mod delay_visibility_of_program_deployment {
 }
 
 pub mod apply_cost_tracker_during_replay {
-    solana_sdk::declare_id!("2ry7ygxiYURULZCrypHhveanvP5tzZ4toRwVp89oCNSj");
+    solana_sdk::declare_id!("B7H2caeia4ZFcpE3QcgMqbiWiBtWrdBRBSJ1DY6Ktxbq");
 }
+
 pub mod bpf_account_data_direct_mapping {
     solana_sdk::declare_id!("EenyoWx9UMXYKpR8mW5Jmfmy2fRjzUtM7NduYMY8bx33");
 }
