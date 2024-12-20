@@ -1907,7 +1907,6 @@ fn test_bank_update_vote_stake_rewards() {
 }
 
 impl Bank {
-    #[cfg(test)]
     fn _load_vote_and_stake_accounts(
         &self,
         thread_pool: &ThreadPool,
