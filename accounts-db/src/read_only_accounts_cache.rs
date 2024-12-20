@@ -1,5 +1,7 @@
 //! ReadOnlyAccountsCache used to store accounts, such as executable accounts,
 //! which can be large, loaded many times, and rarely change.
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     dashmap::{mapref::entry::Entry, DashMap},
     index_list::{Index, IndexList},
@@ -22,6 +24,7 @@ use {
     },
 };
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 const CACHE_ENTRY_SIZE: usize =
     std::mem::size_of::<ReadOnlyAccountCacheEntry>() + 2 * std::mem::size_of::<ReadOnlyCacheKey>();
 
@@ -65,6 +68,7 @@ struct AtomicReadOnlyCacheStats {
     evictor_wakeup_count_productive: AtomicU64,
 }
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 #[derive(Debug)]
 pub(crate) struct ReadOnlyAccountsCache {
     cache: Arc<DashMap<ReadOnlyCacheKey, ReadOnlyAccountCacheEntry>>,
@@ -93,6 +97,7 @@ pub(crate) struct ReadOnlyAccountsCache {
 }
 
 impl ReadOnlyAccountsCache {
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn new(
         max_data_size_lo: usize,
         max_data_size_hi: usize,
@@ -137,6 +142,7 @@ impl ReadOnlyAccountsCache {
         }
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn load(&self, pubkey: Pubkey, slot: Slot) -> Option<AccountSharedData> {
         let (account, load_us) = measure_us!({
             let mut found = None;
@@ -175,6 +181,7 @@ impl ReadOnlyAccountsCache {
         CACHE_ENTRY_SIZE + account.data().len()
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn store(&self, pubkey: Pubkey, slot: Slot, account: AccountSharedData) {
         let measure_store = Measure::start("");
         self.highest_slot_stored.fetch_max(slot, Ordering::Release);
@@ -218,6 +225,7 @@ impl ReadOnlyAccountsCache {
         self.remove(pubkey)
     }
 
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn remove(&self, pubkey: Pubkey) -> Option<AccountSharedData> {
         Self::do_remove(&pubkey, &self.cache, &self.queue, &self.data_size)
     }
