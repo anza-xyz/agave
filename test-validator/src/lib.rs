@@ -793,9 +793,12 @@ impl TestValidator {
         let validator_stake_lamports = sol_to_lamports(1_000_000.);
         let mint_lamports = sol_to_lamports(500_000_000.);
 
+        let mut feature_set = FeatureSet::all_enabled();
+        for feature in &config.deactivate_feature_set {
+            feature_set.deactivate(feature);
+        }
         let program_runtime_environment = create_program_runtime_environment_v1(
-            // TODO: Apply the configured feature set rather than the default
-            &FeatureSet::default(),
+            &feature_set,
             &ComputeBudget::default(),
             true,
             false,
