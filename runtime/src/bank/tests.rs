@@ -10194,8 +10194,11 @@ fn calculate_test_fee(
     fee_structure: &FeeStructure,
 ) -> u64 {
     let fee_budget_limits = FeeBudgetLimits::from(
-        process_compute_budget_instructions(message.program_instructions_iter())
-            .unwrap_or_default(),
+        process_compute_budget_instructions(
+            message.program_instructions_iter(),
+            &FeatureSet::default(),
+        )
+        .unwrap_or_default(),
     );
     solana_fee::calculate_fee(
         message,

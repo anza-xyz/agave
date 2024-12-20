@@ -33,7 +33,7 @@ impl SanitizedVersionedMessage {
     /// id.
     pub fn program_instructions_iter(
         &self,
-    ) -> impl Iterator<Item = (&Pubkey, &CompiledInstruction)> {
+    ) -> impl Iterator<Item = (&Pubkey, &CompiledInstruction)> + Clone {
         self.message.instructions().iter().map(move |ix| {
             (
                 self.message
