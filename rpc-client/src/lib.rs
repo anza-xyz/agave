@@ -4,8 +4,9 @@ pub mod http_sender;
 pub mod mock_sender;
 pub mod nonblocking;
 pub mod rpc_client;
-pub mod rpc_sender;
 pub mod spinner;
+#[deprecated(since = "2.2.0", note = "Use `solana-rpc-sender` crate instead.")]
+pub use solana_rpc_sender as rpc_sender;
 
 pub mod mock_sender_for_cli {
     /// Magic `SIGNATURE` value used by `solana-cli` unit tests.

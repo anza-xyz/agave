@@ -17,7 +17,6 @@ use {
             GetConfirmedSignaturesForAddress2Config, RpcClientConfig, SerializableMessage,
             SerializableTransaction,
         },
-        rpc_sender::*,
     },
     base64::{prelude::BASE64_STANDARD, Engine},
     bincode::serialize,
@@ -42,6 +41,7 @@ use {
         request::{RpcError, RpcRequest, RpcResponseErrorData, TokenAccountsFilter},
         response::*,
     },
+    solana_rpc_sender::*,
     solana_signature::Signature,
     solana_transaction_error::TransactionResult,
     solana_transaction_status_client_types::{

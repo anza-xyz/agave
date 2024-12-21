@@ -23,7 +23,7 @@ pub struct RpcTransportStats {
 /// `RpcSender` implements the underlying transport of requests to, and
 /// responses from, a Solana node, and is used primarily by [`RpcClient`].
 ///
-/// [`RpcClient`]: crate::rpc_client::RpcClient
+/// [`RpcClient`]: https://docs.rs/solana-rpc-client/latest/solana_rpc_client/rpc_client/struct.RpcClient.html
 #[async_trait]
 pub trait RpcSender {
     async fn send(
