@@ -17,7 +17,7 @@ use {
     solana_runtime::bank_forks::BankForks,
     solana_sdk::{pubkey::Pubkey, signature::Keypair},
     solana_tls_utils::{
-        new_dummy_x509_certificate, SkipClientVerification, SkipServerVerification,
+        new_dummy_x509_certificate, tls_client_config_builder, tls_server_config_builder,
     },
     std::{
         cmp::Reverse,
@@ -300,9 +300,7 @@ fn new_server_config(
     cert: CertificateDer<'static>,
     key: PrivateKeyDer<'static>,
 ) -> Result<ServerConfig, rustls::Error> {
-    let mut config = rustls::ServerConfig::builder()
-        .with_client_cert_verifier(SkipClientVerification::new())
-        .with_single_cert(vec![cert], key)?;
+    let mut config = tls_server_config_builder().with_single_cert(vec![cert], key)?;
     config.alpn_protocols = vec![ALPN_REPAIR_PROTOCOL_ID.to_vec()];
     config.key_log = Arc::new(KeyLogFile::new());
     let Ok(config) = QuicServerConfig::try_from(config) else {
@@ -321,10 +319,7 @@ fn new_client_config(
     cert: CertificateDer<'static>,
     key: PrivateKeyDer<'static>,
 ) -> Result<ClientConfig, rustls::Error> {
-    let mut config = rustls::ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(SkipServerVerification::new())
-        .with_client_auth_cert(vec![cert], key)?;
+    let mut config = tls_client_config_builder().with_client_auth_cert(vec![cert], key)?;
     config.enable_early_data = true;
     config.alpn_protocols = vec![ALPN_REPAIR_PROTOCOL_ID.to_vec()];
     let mut config = ClientConfig::new(Arc::new(QuicClientConfig::try_from(config).unwrap()));

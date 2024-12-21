@@ -1,4 +1,5 @@
 use {
+    crate::crypto_provider,
     rustls::{
         pki_types::{CertificateDer, UnixTime},
         server::danger::ClientCertVerified,
@@ -14,7 +15,7 @@ pub struct SkipClientVerification(Arc<rustls::crypto::CryptoProvider>);
 
 impl SkipClientVerification {
     pub fn new() -> Arc<Self> {
-        Arc::new(Self(Arc::new(rustls::crypto::ring::default_provider())))
+        Arc::new(Self(Arc::new(crypto_provider())))
     }
 }
 impl rustls::server::danger::ClientCertVerifier for SkipClientVerification {

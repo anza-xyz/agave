@@ -222,7 +222,9 @@ fn test_local_cluster_signature_subscribe() {
         .unwrap();
     let non_bootstrap_info = cluster.get_contact_info(&non_bootstrap_id).unwrap();
 
-    let tx_client = cluster.build_tpu_quic_client().unwrap();
+    let tx_client = cluster
+        .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
+        .unwrap();
 
     let (blockhash, _) = tx_client
         .rpc_client()
@@ -431,7 +433,9 @@ fn test_mainnet_beta_cluster_type() {
     .unwrap();
     assert_eq!(cluster_nodes.len(), 1);
 
-    let client = cluster.build_tpu_quic_client().unwrap();
+    let client = cluster
+        .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
+        .unwrap();
 
     // Programs that are available at epoch 0
     for program_id in [
@@ -1002,7 +1006,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
     let timer = Instant::now();
     loop {
         let validator_current_slot = cluster
-            .get_validator_client(&validator_identity.pubkey())
+            .build_validator_tpu_quic_client(&validator_identity.pubkey())
             .unwrap()
             .rpc_client()
             .get_slot_with_commitment(CommitmentConfig::finalized())
@@ -1377,7 +1381,9 @@ fn test_snapshots_blockstore_floor() {
         .into_iter()
         .find(|x| x != cluster.entry_point_info.pubkey())
         .unwrap();
-    let validator_client = cluster.get_validator_client(&validator_id).unwrap();
+    let validator_client = cluster
+        .build_validator_tpu_quic_client(&validator_id)
+        .unwrap();
     let mut current_slot = 0;
 
     // Let this validator run a while with repair
@@ -1611,7 +1617,7 @@ fn test_no_voting() {
     };
     let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
     let client = cluster
-        .get_validator_client(cluster.entry_point_info.pubkey())
+        .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
         .unwrap();
     loop {
         let last_slot = client
@@ -1676,13 +1682,16 @@ fn test_optimistic_confirmation_violation_detection() {
     // so that the vote on `S-1` is definitely in gossip and optimistic confirmation is
     // detected on slot `S-1` for sure, then stop the heavier of the two
     // validators
-    let client = cluster.get_validator_client(&node_to_restart).unwrap();
+    let client = cluster
+        .build_validator_tpu_quic_client(&node_to_restart)
+        .unwrap();
     let mut prev_voted_slot = 0;
     loop {
         let last_voted_slot = client
             .rpc_client()
             .get_slot_with_commitment(CommitmentConfig::processed())
             .unwrap();
+        info!("last voted slot: {}", last_voted_slot);
         if last_voted_slot > 50 {
             if prev_voted_slot == 0 {
                 prev_voted_slot = last_voted_slot;
@@ -1693,7 +1702,10 @@ fn test_optimistic_confirmation_violation_detection() {
         sleep(Duration::from_millis(100));
     }
 
+    info!("exiting node");
+    drop(client);
     let exited_validator_info = cluster.exit_node(&node_to_restart);
+    info!("exiting node success");
 
     // Mark fork as dead on the heavier validator, this should make the fork effectively
     // dead, even though it was optimistically confirmed. The smaller validator should
@@ -1731,8 +1743,11 @@ fn test_optimistic_confirmation_violation_detection() {
         // Wait for a root > prev_voted_slot to be set. Because the root is on a
         // different fork than `prev_voted_slot`, then optimistic confirmation is
         // violated
-        let client = cluster.get_validator_client(&node_to_restart).unwrap();
+        let client = cluster
+            .build_validator_tpu_quic_client(&node_to_restart)
+            .unwrap();
         loop {
+            info!("Client connecting to: {}", client.rpc_client().url());
             let last_root = client
                 .rpc_client()
                 .get_slot_with_commitment(CommitmentConfig::finalized())
@@ -1798,7 +1813,9 @@ fn test_validator_saves_tower() {
     };
     let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
 
-    let validator_client = cluster.get_validator_client(&validator_id).unwrap();
+    let validator_client = cluster
+        .build_validator_tpu_quic_client(&validator_id)
+        .unwrap();
 
     let ledger_path = cluster
         .validators
@@ -1833,7 +1850,9 @@ fn test_validator_saves_tower() {
 
     // Restart the validator and wait for a new root
     cluster.restart_node(&validator_id, validator_info, SocketAddrSpace::Unspecified);
-    let validator_client = cluster.get_validator_client(&validator_id).unwrap();
+    let validator_client = cluster
+        .build_validator_tpu_quic_client(&validator_id)
+        .unwrap();
 
     // Wait for the first new root
     let last_replayed_root = loop {
@@ -1862,7 +1881,9 @@ fn test_validator_saves_tower() {
         .unwrap();
 
     cluster.restart_node(&validator_id, validator_info, SocketAddrSpace::Unspecified);
-    let validator_client = cluster.get_validator_client(&validator_id).unwrap();
+    let validator_client = cluster
+        .build_validator_tpu_quic_client(&validator_id)
+        .unwrap();
 
     // Wait for a new root, demonstrating the validator was able to make progress from the older `tower1`
     let new_root = loop {
@@ -1895,7 +1916,9 @@ fn test_validator_saves_tower() {
     validator_info.config.require_tower = false;
 
     cluster.restart_node(&validator_id, validator_info, SocketAddrSpace::Unspecified);
-    let validator_client = cluster.get_validator_client(&validator_id).unwrap();
+    let validator_client = cluster
+        .build_validator_tpu_quic_client(&validator_id)
+        .unwrap();
 
     // Wait for another new root
     let new_root = loop {
@@ -2553,11 +2576,11 @@ fn run_test_load_program_accounts_partition(scan_commitment: CommitmentConfig) {
 
     let on_partition_start = |cluster: &mut LocalCluster, _: &mut ()| {
         let update_client = cluster
-            .get_validator_client(cluster.entry_point_info.pubkey())
+            .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
             .unwrap();
         update_client_sender.send(update_client).unwrap();
         let scan_client = cluster
-            .get_validator_client(cluster.entry_point_info.pubkey())
+            .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
             .unwrap();
         scan_client_sender.send(scan_client).unwrap();
     };
@@ -2710,7 +2733,9 @@ fn test_oc_bad_signatures() {
     );
 
     // 3) Start up a spy to listen for and push votes to leader TPU
-    let client = cluster.build_tpu_quic_client().unwrap();
+    let client = cluster
+        .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
+        .unwrap();
     let cluster_funding_keypair = cluster.funding_keypair.insecure_clone();
     let voter_thread_sleep_ms: usize = 100;
     let num_votes_simulated = Arc::new(AtomicUsize::new(0));
@@ -3080,10 +3105,12 @@ fn run_test_load_program_accounts(scan_commitment: CommitmentConfig) {
         .find(|x| x != cluster.entry_point_info.pubkey())
         .unwrap();
     let client = cluster
-        .get_validator_client(cluster.entry_point_info.pubkey())
+        .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
         .unwrap();
     update_client_sender.send(client).unwrap();
-    let scan_client = cluster.get_validator_client(&other_validator_id).unwrap();
+    let scan_client = cluster
+        .build_validator_tpu_quic_client(&other_validator_id)
+        .unwrap();
     scan_client_sender.send(scan_client).unwrap();
 
     // Wait for some roots to pass

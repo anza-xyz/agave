@@ -1,12 +1,10 @@
 use {
-    solana_sdk::{
-        account::ReadableAccount,
-        native_loader,
-        transaction::Result,
-        transaction_context::{IndexOfAccount, TransactionContext},
-    },
+    solana_account::ReadableAccount,
+    solana_sdk_ids::native_loader,
     solana_svm_rent_collector::{rent_state::RentState, svm_rent_collector::SVMRentCollector},
     solana_svm_transaction::svm_message::SVMMessage,
+    solana_transaction_context::{IndexOfAccount, TransactionContext},
+    solana_transaction_error::TransactionResult as Result,
 };
 
 #[derive(PartialEq, Debug)]
@@ -73,18 +71,19 @@ impl TransactionAccountStateInfo {
 mod test {
     use {
         super::*,
-        solana_sdk::{
-            account::AccountSharedData,
-            hash::Hash,
-            instruction::CompiledInstruction,
-            message::{LegacyMessage, Message, MessageHeader, SanitizedMessage},
-            rent::Rent,
-            rent_collector::RentCollector,
-            reserved_account_keys::ReservedAccountKeys,
-            signature::{Keypair, Signer},
-            transaction::TransactionError,
-            transaction_context::TransactionContext,
+        solana_account::AccountSharedData,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
+        solana_message::{
+            compiled_instruction::CompiledInstruction, LegacyMessage, Message, MessageHeader,
+            SanitizedMessage,
         },
+        solana_rent::Rent,
+        solana_reserved_account_keys::ReservedAccountKeys,
+        solana_sdk::rent_collector::RentCollector,
+        solana_signer::Signer,
+        solana_transaction_context::TransactionContext,
+        solana_transaction_error::TransactionError,
     };
 
     #[test]
