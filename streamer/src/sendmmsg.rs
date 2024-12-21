@@ -15,7 +15,6 @@ use {
     std::{
         borrow::Borrow,
         io,
-        iter::repeat,
         net::{SocketAddr, UdpSocket},
     },
     thiserror::Error,
@@ -34,11 +33,17 @@ impl From<SendPktsError> for TransportError {
     }
 }
 
+// The type and lifetime constraints are overspecified to match 'linux' code.
 #[cfg(not(target_os = "linux"))]
-pub fn batch_send<S, T>(sock: &UdpSocket, packets: &[(T, S)]) -> Result<(), SendPktsError>
+pub fn batch_send<'a, I, S, T: 'a + ?Sized>(
+    sock: &UdpSocket,
+    packets: I,
+) -> Result<(), SendPktsError>
 where
+    I: IntoIterator<Item = (&'a T, S)>,
+    <I as IntoIterator>::IntoIter: ExactSizeIterator,
     S: Borrow<SocketAddr>,
-    T: AsRef<[u8]>,
+    &'a T: AsRef<[u8]>,
 {
     let mut num_failed = 0;
     let mut erropt = None;
@@ -160,12 +165,20 @@ fn sendmmsg_retry(sock: &UdpSocket, hdrs: &mut [mmsghdr]) -> Result<(), SendPkts
     }
 }
 
+// Need &'a to ensure that raw packet pointers obtained
+// in mmsghdr_for_packet stay valid.
 #[cfg(target_os = "linux")]
-pub fn batch_send<S, T>(sock: &UdpSocket, packets: &[(T, S)]) -> Result<(), SendPktsError>
+pub fn batch_send<'a, I, S, T: 'a + ?Sized>(
+    sock: &UdpSocket,
+    packets: I,
+) -> Result<(), SendPktsError>
 where
+    I: IntoIterator<Item = (&'a T, S)>,
+    <I as IntoIterator>::IntoIter: ExactSizeIterator,
     S: Borrow<SocketAddr>,
-    T: AsRef<[u8]>,
+    &'a T: AsRef<[u8]>,
 {
+    let packets = packets.into_iter();
     let size = packets.len();
     let mut iovs = vec![MaybeUninit::uninit(); size];
     let mut addrs = vec![MaybeUninit::zeroed(); size];
@@ -193,9 +206,10 @@ where
     S: Borrow<SocketAddr>,
     T: AsRef<[u8]>,
 {
+    let num_dests = dests.len();
     let dests = dests.iter().map(Borrow::borrow);
-    let pkts: Vec<_> = repeat(&packet).zip(dests).collect();
-    batch_send(sock, &pkts)
+    let pkts = itertools::repeat_n(&packet, num_dests).zip(dests);
+    batch_send(sock, pkts)
 }
 
 #[cfg(test)]
@@ -224,7 +238,7 @@ mod tests {
         let packets: Vec<_> = (0..32).map(|_| vec![0u8; PACKET_DATA_SIZE]).collect();
         let packet_refs: Vec<_> = packets.iter().map(|p| (&p[..], &addr)).collect();
 
-        let sent = batch_send(&sender, &packet_refs[..]).ok();
+        let sent = batch_send(&sender, packet_refs).ok();
         assert_eq!(sent, Some(()));
 
         let mut packets = vec![Packet::default(); 32];
@@ -255,7 +269,7 @@ mod tests {
             })
             .collect();
 
-        let sent = batch_send(&sender, &packet_refs[..]).ok();
+        let sent = batch_send(&sender, packet_refs).ok();
         assert_eq!(sent, Some(()));
 
         let mut packets = vec![Packet::default(); 32];
@@ -323,7 +337,7 @@ mod tests {
         let dest_refs: Vec<_> = vec![&ip4, &ip6, &ip4];
 
         let sender = bind_to_unspecified().expect("bind");
-        let res = batch_send(&sender, &packet_refs[..]);
+        let res = batch_send(&sender, packet_refs);
         assert_matches!(res, Err(SendPktsError::IoError(_, /*num_failed*/ 1)));
         let res = multi_target_send(&sender, &packets[0], &dest_refs);
         assert_matches!(res, Err(SendPktsError::IoError(_, /*num_failed*/ 1)));
@@ -344,7 +358,7 @@ mod tests {
             (&packets[3][..], &ipv4broadcast),
             (&packets[4][..], &ipv4local),
         ];
-        match batch_send(&sender, &packet_refs[..]) {
+        match batch_send(&sender, packet_refs) {
             Ok(()) => panic!(),
             Err(SendPktsError::IoError(ioerror, num_failed)) => {
                 assert_matches!(ioerror.kind(), ErrorKind::PermissionDenied);
@@ -360,7 +374,7 @@ mod tests {
             (&packets[3][..], &ipv4local),
             (&packets[4][..], &ipv4broadcast),
         ];
-        match batch_send(&sender, &packet_refs[..]) {
+        match batch_send(&sender, packet_refs) {
             Ok(()) => panic!(),
             Err(SendPktsError::IoError(ioerror, num_failed)) => {
                 assert_matches!(ioerror.kind(), ErrorKind::PermissionDenied);
@@ -376,7 +390,7 @@ mod tests {
             (&packets[3][..], &ipv4broadcast),
             (&packets[4][..], &ipv4local),
         ];
-        match batch_send(&sender, &packet_refs[..]) {
+        match batch_send(&sender, packet_refs) {
             Ok(()) => panic!(),
             Err(SendPktsError::IoError(ioerror, num_failed)) => {
                 assert_matches!(ioerror.kind(), ErrorKind::PermissionDenied);
