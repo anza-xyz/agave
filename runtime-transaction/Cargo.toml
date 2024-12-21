@@ -14,10 +14,14 @@ agave-transaction-view = { workspace = true }
 log = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-compute-budget-instruction = { workspace = true }
+solana-hash = { workspace = true }
+solana-message = { workspace = true }
 solana-pubkey = { workspace = true }
-solana-sdk = { workspace = true }
 solana-sdk-ids = { workspace = true }
+solana-signature = { workspace = true }
 solana-svm-transaction = { workspace = true }
+solana-transaction = { workspace = true }
+solana-transaction-error = { workspace = true }
 thiserror = { workspace = true }
 
 [lib]
@@ -29,7 +33,15 @@ bincode = { workspace = true }
 criterion = { workspace = true }
 rand = { workspace = true }
 solana-compute-budget-instruction = { workspace = true, features = ["dev-context-only-utils"] }
+solana-compute-budget-interface = { workspace = true }
+solana-feature-set = { workspace = true }
+solana-instruction = { workspace = true }
+solana-keypair = { workspace = true }
 solana-program = { workspace = true }
+solana-reserved-account-keys = { workspace = true }
+solana-signer = { workspace = true }
+solana-system-interface = { workspace = true, features = ["bincode"] }
+solana-system-transaction = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
