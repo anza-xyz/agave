@@ -2,16 +2,13 @@
 //! node stakes
 use {
     crate::{stake_account, stake_history::StakeHistory},
-    dashmap::DashMap,
     im::HashMap as ImHashMap,
     log::error,
     num_derive::ToPrimitive,
-    num_traits::ToPrimitive,
     rayon::{prelude::*, ThreadPool},
-    solana_accounts_db::stake_rewards::StakeReward,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount},
-        clock::{Epoch, Slot},
+        clock::Epoch,
         pubkey::Pubkey,
         stake::state::{Delegation, StakeActivationStatus},
         vote::state::VoteStateVersions,
@@ -149,43 +146,6 @@ impl StakesCache {
     ) {
         let mut stakes = self.0.write().unwrap();
         stakes.activate_epoch(next_epoch, thread_pool, new_rate_activation_epoch)
-    }
-
-    pub(crate) fn update_stake_accounts(
-        &self,
-        thread_pool: &ThreadPool,
-        stake_rewards: &[StakeReward],
-        new_rate_activation_epoch: Option<Epoch>,
-    ) {
-        self.0.write().unwrap().update_stake_accounts(
-            thread_pool,
-            stake_rewards,
-            new_rate_activation_epoch,
-        )
-    }
-
-    pub(crate) fn handle_invalid_keys(
-        &self,
-        invalid_vote_keys: DashMap<Pubkey, InvalidCacheEntryReason>,
-        current_slot: Slot,
-    ) {
-        if invalid_vote_keys.is_empty() {
-            return;
-        }
-
-        // Prune invalid stake delegations and vote accounts that were
-        // not properly evicted in normal operation.
-        let mut stakes = self.0.write().unwrap();
-
-        for (vote_pubkey, reason) in invalid_vote_keys {
-            stakes.remove_vote_account(&vote_pubkey);
-            datapoint_warn!(
-                "bank-stake_delegation_accounts-invalid-account",
-                ("slot", current_slot as i64, i64),
-                ("vote-address", format!("{vote_pubkey:?}"), String),
-                ("reason", reason.to_i64().unwrap_or_default(), i64),
-            );
-        }
     }
 }
 
@@ -462,39 +422,6 @@ impl Stakes<StakeAccount> {
                 }
             }
         }
-    }
-
-    fn update_stake_accounts(
-        &mut self,
-        thread_pool: &ThreadPool,
-        stake_rewards: &[StakeReward],
-        new_rate_activation_epoch: Option<Epoch>,
-    ) {
-        let stake_delegations: Vec<_> = thread_pool.install(|| {
-            stake_rewards
-                .into_par_iter()
-                .filter_map(|stake_reward| {
-                    let stake_account = StakeAccount::try_from(stake_reward.stake_account.clone());
-                    Some((stake_reward.stake_pubkey, stake_account.ok()?))
-                })
-                .collect()
-        });
-        self.stake_delegations = std::mem::take(&mut self.stake_delegations)
-            .into_iter()
-            .chain(stake_delegations)
-            .collect::<HashMap<Pubkey, StakeAccount>>()
-            .into_iter()
-            .filter(|(_, account)| account.lamports() != 0u64)
-            .collect();
-        let stake_delegations: Vec<_> = self.stake_delegations.values().collect();
-        self.vote_accounts = refresh_vote_accounts(
-            thread_pool,
-            self.epoch,
-            &self.vote_accounts,
-            &stake_delegations,
-            &self.stake_history,
-            new_rate_activation_epoch,
-        );
     }
 
     pub(crate) fn stake_delegations(&self) -> &ImHashMap<Pubkey, StakeAccount> {

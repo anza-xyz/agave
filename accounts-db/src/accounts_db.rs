@@ -66,7 +66,9 @@ use {
         cache_hash_data::{CacheHashData, DeletionPolicy as CacheHashDeletionPolicy},
         contains::Contains,
         epoch_accounts_hash::EpochAccountsHashManager,
-        partitioned_rewards::{PartitionedEpochRewardsConfig, TestPartitionedEpochRewards},
+        partitioned_rewards::{
+            PartitionedEpochRewardsConfig, DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
+        },
         read_only_accounts_cache::ReadOnlyAccountsCache,
         sorted_storages::SortedStorages,
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
@@ -506,7 +508,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     skip_initial_hash_calc: false,
     exhaustively_verify_refcounts: false,
     create_ancient_storage: CreateAncientStorage::Pack,
-    test_partitioned_epoch_rewards: TestPartitionedEpochRewards::CompareResults,
+    partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
     test_skip_rewrites_but_include_in_bank_hash: false,
     storage_access: StorageAccess::Mmap,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormalWithVerify,
@@ -532,7 +534,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     skip_initial_hash_calc: false,
     exhaustively_verify_refcounts: false,
     create_ancient_storage: CreateAncientStorage::Pack,
-    test_partitioned_epoch_rewards: TestPartitionedEpochRewards::None,
+    partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
     test_skip_rewrites_but_include_in_bank_hash: false,
     storage_access: StorageAccess::Mmap,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormalWithVerify,
@@ -661,7 +663,7 @@ pub struct AccountsDbConfig {
     pub exhaustively_verify_refcounts: bool,
     /// how to create ancient storages
     pub create_ancient_storage: CreateAncientStorage,
-    pub test_partitioned_epoch_rewards: TestPartitionedEpochRewards,
+    pub partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig,
     pub storage_access: StorageAccess,
     pub scan_filter_for_shrinking: ScanFilter,
     pub enable_experimental_accumulator_hash: bool,
@@ -1964,10 +1966,6 @@ impl AccountsDb {
             accounts_hash_cache_path
         });
 
-        let test_partitioned_epoch_rewards = accounts_db_config.test_partitioned_epoch_rewards;
-        let partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig =
-            PartitionedEpochRewardsConfig::new(test_partitioned_epoch_rewards);
-
         let read_cache_size = accounts_db_config.read_cache_limit_bytes.unwrap_or((
             Self::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_LO,
             Self::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI,
@@ -2030,7 +2028,7 @@ impl AccountsDb {
                 Self::READ_ONLY_CACHE_MS_TO_SKIP_LRU_UPDATE,
             ),
             write_cache_limit_bytes: accounts_db_config.write_cache_limit_bytes,
-            partitioned_epoch_rewards_config,
+            partitioned_epoch_rewards_config: accounts_db_config.partitioned_epoch_rewards_config,
             exhaustively_verify_refcounts: accounts_db_config.exhaustively_verify_refcounts,
             test_skip_rewrites_but_include_in_bank_hash: accounts_db_config
                 .test_skip_rewrites_but_include_in_bank_hash,

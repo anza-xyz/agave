@@ -23,7 +23,6 @@ use {
             AccountIndex, AccountSecondaryIndexes, AccountSecondaryIndexesIncludeExclude,
             AccountsIndexConfig, IndexLimitMb, ScanFilter,
         },
-        partitioned_rewards::TestPartitionedEpochRewards,
         utils::{
             create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories,
             create_and_canonicalize_directory,
@@ -1229,15 +1228,6 @@ pub fn main() {
         accounts_index_config.bins = Some(bins);
     }
 
-    let test_partitioned_epoch_rewards =
-        if matches.is_present("partitioned_epoch_rewards_compare_calculation") {
-            TestPartitionedEpochRewards::CompareResults
-        } else if matches.is_present("partitioned_epoch_rewards_force_enable_single_slot") {
-            TestPartitionedEpochRewards::ForcePartitionedEpochRewardsInOneBlock
-        } else {
-            TestPartitionedEpochRewards::None
-        };
-
     accounts_index_config.index_limit_mb = if matches.is_present("disable_accounts_disk_index") {
         IndexLimitMb::InMemOnly
     } else {
@@ -1362,7 +1352,6 @@ pub fn main() {
         .ok(),
         exhaustively_verify_refcounts: matches.is_present("accounts_db_verify_refcounts"),
         create_ancient_storage,
-        test_partitioned_epoch_rewards,
         test_skip_rewrites_but_include_in_bank_hash: matches
             .is_present("accounts_db_test_skip_rewrites"),
         storage_access,
