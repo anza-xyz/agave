@@ -6024,6 +6024,7 @@ dependencies = [
 name = "solana-banking-bench"
 version = "2.2.0"
 dependencies = [
+ "assert_matches",
  "clap 3.2.23",
  "crossbeam-channel",
  "log",
@@ -7907,6 +7908,7 @@ dependencies = [
  "bincode",
  "bv",
  "caps",
+ "crossbeam-channel",
  "curve25519-dalek 4.1.3",
  "dlopen2",
  "fnv",

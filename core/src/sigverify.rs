@@ -9,10 +9,15 @@ pub use solana_perf::sigverify::{
 };
 use {
     crate::{
-        banking_trace::{BankingPacketBatch, BankingPacketSender},
+        banking_trace::BankingPacketSender,
         sigverify_stage::{SigVerifier, SigVerifyServiceError},
     },
-    solana_perf::{cuda_runtime::PinnedVec, packet::PacketBatch, recycler::Recycler, sigverify},
+    solana_perf::{
+        cuda_runtime::PinnedVec,
+        packet::{BankingPacketBatch, PacketBatch},
+        recycler::Recycler,
+        sigverify,
+    },
 };
 
 pub struct TransactionSigVerifier {
