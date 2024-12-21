@@ -141,11 +141,7 @@ fn test_stake_create_and_split_single_signature() {
         genesis_config,
         mint_keypair: staker_keypair,
         ..
-    } = create_genesis_config_with_leader(
-        100_000_000_000,
-        &solana_sdk::pubkey::new_rand(),
-        1_000_000,
-    );
+    } = create_genesis_config_with_leader(100_000_000_000, &solana_pubkey::new_rand(), 1_000_000);
 
     let staker_pubkey = staker_keypair.pubkey();
 
@@ -217,11 +213,7 @@ fn test_stake_create_and_split_to_existing_system_account() {
         genesis_config,
         mint_keypair: staker_keypair,
         ..
-    } = create_genesis_config_with_leader(
-        100_000_000_000,
-        &solana_sdk::pubkey::new_rand(),
-        1_000_000,
-    );
+    } = create_genesis_config_with_leader(100_000_000_000, &solana_pubkey::new_rand(), 1_000_000);
 
     let staker_pubkey = staker_keypair.pubkey();
 
@@ -307,7 +299,7 @@ fn test_stake_account_lifetime() {
         ..
     } = create_genesis_config_with_leader(
         100_000_000_000,
-        &solana_sdk::pubkey::new_rand(),
+        &solana_pubkey::new_rand(),
         2_000_000_000,
     );
     genesis_config.epoch_schedule = EpochSchedule::new(MINIMUM_SLOTS_PER_EPOCH);
@@ -391,7 +383,7 @@ fn test_stake_account_lifetime() {
         &[stake_instruction::withdraw(
             &stake_pubkey,
             &stake_pubkey,
-            &solana_sdk::pubkey::new_rand(),
+            &solana_pubkey::new_rand(),
             1,
             None,
         )],
@@ -516,7 +508,7 @@ fn test_stake_account_lifetime() {
         &[stake_instruction::withdraw(
             &split_stake_pubkey,
             &stake_pubkey,
-            &solana_sdk::pubkey::new_rand(),
+            &solana_pubkey::new_rand(),
             split_starting_delegation + 1,
             None,
         )],
@@ -540,7 +532,7 @@ fn test_stake_account_lifetime() {
         &[stake_instruction::withdraw(
             &split_stake_pubkey,
             &stake_pubkey,
-            &solana_sdk::pubkey::new_rand(),
+            &solana_pubkey::new_rand(),
             split_balance,
             None,
         )],
@@ -557,7 +549,7 @@ fn test_stake_account_lifetime() {
         &[stake_instruction::withdraw(
             &split_stake_pubkey,
             &stake_pubkey,
-            &solana_sdk::pubkey::new_rand(),
+            &solana_pubkey::new_rand(),
             split_unstaked,
             None,
         )],
@@ -582,7 +574,7 @@ fn test_stake_account_lifetime() {
         &[stake_instruction::withdraw(
             &split_stake_pubkey,
             &stake_pubkey,
-            &solana_sdk::pubkey::new_rand(),
+            &solana_pubkey::new_rand(),
             split_remaining_balance,
             None,
         )],
@@ -608,11 +600,7 @@ fn test_create_stake_account_from_seed() {
         genesis_config,
         mint_keypair,
         ..
-    } = create_genesis_config_with_leader(
-        100_000_000_000,
-        &solana_sdk::pubkey::new_rand(),
-        1_000_000,
-    );
+    } = create_genesis_config_with_leader(100_000_000_000, &solana_pubkey::new_rand(), 1_000_000);
     let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let mint_pubkey = mint_keypair.pubkey();
     let bank_client = BankClient::new_shared(bank.clone());

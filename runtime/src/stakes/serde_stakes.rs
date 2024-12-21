@@ -312,16 +312,16 @@ mod tests {
             ..Stakes::default()
         });
         for _ in 0..rng.gen_range(5usize..10) {
-            let vote_pubkey = solana_sdk::pubkey::new_rand();
+            let vote_pubkey = solana_pubkey::new_rand();
             let vote_account = vote_state::create_account(
                 &vote_pubkey,
-                &solana_sdk::pubkey::new_rand(), // node_pubkey
-                rng.gen_range(0..101),           // commission
-                rng.gen_range(0..1_000_000),     // lamports
+                &solana_pubkey::new_rand(),  // node_pubkey
+                rng.gen_range(0..101),       // commission
+                rng.gen_range(0..1_000_000), // lamports
             );
             stakes_cache.check_and_store(&vote_pubkey, &vote_account, None);
             for _ in 0..rng.gen_range(10usize..20) {
-                let stake_pubkey = solana_sdk::pubkey::new_rand();
+                let stake_pubkey = solana_pubkey::new_rand();
                 let rent = Rent::with_slots_per_epoch(rng.gen());
                 let stake_account = stake_state::create_account(
                     &stake_pubkey, // authorized
