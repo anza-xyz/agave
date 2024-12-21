@@ -15,7 +15,7 @@ use {
         transport::TransportError,
     },
     solana_tpu_client::tpu_client::TpuSenderError,
-    solana_transaction_status::UiConfirmedBlock,
+    solana_transaction_status::{TransactionStatus, UiConfirmedBlock},
     std::{
         thread::sleep,
         time::{Duration, Instant},
@@ -74,6 +74,11 @@ pub trait TpsClient {
     }
 
     fn get_signature_status(&self, signature: &Signature) -> TpsClientResult<Option<Result<()>>>;
+
+    fn get_signature_statuses(
+        &self,
+        signatures: &[Signature],
+    ) -> TpsClientResult<Vec<Option<TransactionStatus>>>;
 
     /// Get transaction count
     fn get_transaction_count(&self) -> TpsClientResult<u64>;
