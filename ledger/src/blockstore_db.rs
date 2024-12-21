@@ -1,8 +1,7 @@
 pub use rocksdb::Direction as IteratorDirection;
 use {
     crate::{
-        blockstore_meta,
-        blockstore_meta::MerkleRootMeta,
+        blockstore_meta::{self, MerkleRootMeta},
         blockstore_metrics::{
             maybe_enable_rocksdb_perf, report_rocksdb_read_perf, report_rocksdb_write_perf,
             BlockstoreRocksDbColumnFamilyMetrics, PerfSamplingStatus, PERF_METRIC_OP_NAME_GET,
@@ -796,6 +795,10 @@ pub trait ColumnName {
 
 pub trait TypedColumn: Column {
     type Type: Serialize + DeserializeOwned;
+
+    fn deserialize(data: &[u8]) -> bincode::Result<Self::Type> {
+        bincode::deserialize(data)
+    }
 }
 
 impl TypedColumn for columns::AddressSignatures {
@@ -1210,6 +1213,30 @@ impl ColumnName for columns::Index {
 }
 impl TypedColumn for columns::Index {
     type Type = blockstore_meta::Index;
+
+    fn deserialize(data: &[u8]) -> bincode::Result<Self::Type> {
+        // Migration strategy for new column format:
+        // 1. Release 1: Add ability to read new format as fallback, keep writing old format
+        // 2. Release 2: Switch to writing new format, keep reading old format as fallback
+        // 3. Release 3: Remove old format support once stable
+        // This allows safe downgrade to Release 1 since it can read both formats
+        // https://github.com/anza-xyz/agave/issues/3570
+
+        // Version compatibility note: Index and IndexV2 use different serialization
+        // strategies in their ShredIndex field that make their formats naturally distinguishable.
+        //
+        // For example, serializing two `u64`s:
+        // - ShredIndexV2 serializes as a collection of bytes, with a length prefix of 16.
+        // - ShredIndex serializes as a collection of u64s, with a length prefix of 2.
+        let index: bincode::Result<blockstore_meta::Index> = bincode::deserialize(data);
+        match index {
+            Ok(index) => Ok(index),
+            Err(_) => {
+                let index: blockstore_meta::IndexV2 = bincode::deserialize(data)?;
+                Ok(index.into())
+            }
+        }
+    }
 }
 
 impl SlotColumn for columns::DeadSlots {}
@@ -1647,7 +1674,7 @@ where
             let result = self
                 .backend
                 .multi_get_cf(self.handle(), &keys)
-                .map(|out| Ok(out?.as_deref().map(deserialize).transpose()?))
+                .map(|out| Ok(out?.as_deref().map(C::deserialize).transpose()?))
                 .collect::<Vec<Result<Option<_>>>>();
             if let Some(op_start_instant) = is_perf_enabled {
                 // use multi-get instead
@@ -1675,7 +1702,7 @@ where
             &self.read_perf_status,
         );
         if let Some(pinnable_slice) = self.backend.get_pinned_cf(self.handle(), key)? {
-            let value = deserialize(pinnable_slice.as_ref())?;
+            let value = C::deserialize(pinnable_slice.as_ref())?;
             result = Ok(Some(value))
         }
 
