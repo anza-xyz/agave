@@ -6760,6 +6760,7 @@ dependencies = [
  "solana-inflation",
  "solana-instruction",
  "solana-keypair",
+ "solana-message",
  "solana-native-token",
  "solana-nonce-account",
  "solana-offchain-message",

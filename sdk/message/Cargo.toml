@@ -62,6 +62,7 @@ frozen-abi = [
     "solana-hash/frozen-abi",
     "solana-pubkey/frozen-abi",
 ]
+inner-instruction = []
 serde = [
     "dep:serde",
     "dep:serde_derive",
