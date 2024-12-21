@@ -13,11 +13,11 @@ edition = { workspace = true }
 bincode = { workspace = true }
 byteorder = { workspace = true }
 libsecp256k1 = { workspace = true }
-log = { workspace = true }
 scopeguard = { workspace = true }
 solana-bn254 = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-curve25519 = { workspace = true }
+solana-define-syscall = { workspace = true }
 solana-feature-set = { workspace = true }
 solana-log-collector = { workspace = true }
 solana-measure = { workspace = true }
@@ -32,7 +32,6 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-memoffset = { workspace = true }
 rand = { workspace = true }
 solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
 test-case = { workspace = true }

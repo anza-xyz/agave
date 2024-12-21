@@ -18,6 +18,7 @@ use {
         ALT_BN128_PAIRING_ELEMENT_LEN, ALT_BN128_PAIRING_OUTPUT_LEN,
     },
     solana_compute_budget::compute_budget::ComputeBudget,
+    solana_define_syscall::codes,
     solana_feature_set::{
         self as feature_set, abort_on_invalid_curve, blake3_syscall_enabled,
         bpf_account_data_direct_mapping, curve25519_syscall_enabled,
@@ -328,44 +329,64 @@ pub fn create_program_runtime_environment_v1<'a>(
     let mut result = BuiltinProgram::new_loader_with_dense_registration(config);
 
     // Abort
-    result.register_function("abort", 1, SyscallAbort::vm)?;
+    result.register_function("abort", codes::ABORT, SyscallAbort::vm)?;
 
     // Panic
-    result.register_function("sol_panic_", 2, SyscallPanic::vm)?;
+    result.register_function("sol_panic_", codes::SOL_PANIC, SyscallPanic::vm)?;
 
     // Logging
-    result.register_function("sol_log_", 7, SyscallLog::vm)?;
-    result.register_function("sol_log_64_", 8, SyscallLogU64::vm)?;
-    result.register_function("sol_log_pubkey", 9, SyscallLogPubkey::vm)?;
-    result.register_function("sol_log_compute_units_", 10, SyscallLogBpfComputeUnits::vm)?;
+    result.register_function("sol_log_", codes::SOL_LOG_, SyscallLog::vm)?;
+    result.register_function("sol_log_64_", codes::SOL_LOG_64_, SyscallLogU64::vm)?;
+    result.register_function(
+        "sol_log_pubkey",
+        codes::SOL_LOG_PUBKEY,
+        SyscallLogPubkey::vm,
+    )?;
+    result.register_function(
+        "sol_log_compute_units_",
+        codes::SOL_LOG_COMPUTE_UNITS_,
+        SyscallLogBpfComputeUnits::vm,
+    )?;
 
     // Program defined addresses (PDA)
     result.register_function(
         "sol_create_program_address",
-        32,
+        codes::SOL_CREATE_PROGRAM_ADDRESS,
         SyscallCreateProgramAddress::vm,
     )?;
     result.register_function(
         "sol_try_find_program_address",
-        33,
+        codes::SOL_TRY_FIND_PROGRAM_ADDRESS,
         SyscallTryFindProgramAddress::vm,
     )?;
 
     // Sha256
-    result.register_function("sol_sha256", 17, SyscallHash::vm::<Sha256Hasher>)?;
+    result.register_function(
+        "sol_sha256",
+        codes::SOL_SHA256,
+        SyscallHash::vm::<Sha256Hasher>,
+    )?;
 
     // Keccak256
-    result.register_function("sol_keccak256", 18, SyscallHash::vm::<Keccak256Hasher>)?;
+    result.register_function(
+        "sol_keccak256",
+        codes::SOL_KECCAK256,
+        SyscallHash::vm::<Keccak256Hasher>,
+    )?;
 
     // Secp256k1 Recover
-    result.register_function("sol_secp256k1_recover", 19, SyscallSecp256k1Recover::vm)?;
+    result.register_function(
+        "sol_secp256k1_recover",
+        codes::SOL_SECP256K1_RECOVER,
+        SyscallSecp256k1Recover::vm,
+    )?;
 
     // Blake3
     register_feature_gated_function!(
         result,
         blake3_syscall_enabled,
         "sol_blake3",
-        20,
+        codes::SOL_BLAKE3,
         SyscallHash::vm::<Blake3Hasher>,
     )?;
 
@@ -374,45 +395,53 @@ pub fn create_program_runtime_environment_v1<'a>(
         result,
         curve25519_syscall_enabled,
         "sol_curve_validate_point",
-        24,
+        codes::SOL_CURVE_VALIDATE_POINT,
         SyscallCurvePointValidation::vm,
     )?;
     register_feature_gated_function!(
         result,
         curve25519_syscall_enabled,
         "sol_curve_group_op",
-        25,
+        codes::SOL_CURVE_GROUP_OP,
         SyscallCurveGroupOps::vm,
     )?;
     register_feature_gated_function!(
         result,
         curve25519_syscall_enabled,
         "sol_curve_multiscalar_mul",
-        26,
+        codes::SOL_CURVE_MULTISCALAR_MUL,
         SyscallCurveMultiscalarMultiplication::vm,
     )?;
 
     // Sysvars
-    result.register_function("sol_get_clock_sysvar", 36, SyscallGetClockSysvar::vm)?;
+    result.register_function(
+        "sol_get_clock_sysvar",
+        codes::SOL_GET_CLOCK_SYSVAR,
+        SyscallGetClockSysvar::vm,
+    )?;
     result.register_function(
         "sol_get_epoch_schedule_sysvar",
-        37,
+        codes::SOL_GET_EPOCH_SCHEDULE_SYSVAR,
         SyscallGetEpochScheduleSysvar::vm,
     )?;
     register_feature_gated_function!(
         result,
         !disable_fees_sysvar,
         "sol_get_fees_sysvar",
-        40,
+        codes::SOL_GET_FEES_SYSVAR,
         SyscallGetFeesSysvar::vm,
     )?;
-    result.register_function("sol_get_rent_sysvar", 41, SyscallGetRentSysvar::vm)?;
+    result.register_function(
+        "sol_get_rent_sysvar",
+        codes::SOL_GET_RENT_SYSVAR,
+        SyscallGetRentSysvar::vm,
+    )?;
 
     register_feature_gated_function!(
         result,
         last_restart_slot_syscall_enabled,
         "sol_get_last_restart_slot",
-        38,
+        codes::SOL_GET_LAST_RESTART_SLOT,
         SyscallGetLastRestartSlotSysvar::vm,
     )?;
 
@@ -420,40 +449,60 @@ pub fn create_program_runtime_environment_v1<'a>(
         result,
         epoch_rewards_syscall_enabled,
         "sol_get_epoch_rewards_sysvar",
-        39,
+        codes::SOL_GET_EPOCH_REWARDS_SYSVAR,
         SyscallGetEpochRewardsSysvar::vm,
     )?;
 
     // Memory ops
-    result.register_function("sol_memcpy_", 3, SyscallMemcpy::vm)?;
-    result.register_function("sol_memmove_", 4, SyscallMemmove::vm)?;
-    result.register_function("sol_memset_", 5, SyscallMemset::vm)?;
-    result.register_function("sol_memcmp_", 6, SyscallMemcmp::vm)?;
+    result.register_function("sol_memcpy_", codes::SOL_MEMCPY_, SyscallMemcpy::vm)?;
+    result.register_function("sol_memmove_", codes::SOL_MEMMOVE_, SyscallMemmove::vm)?;
+    result.register_function("sol_memset_", codes::SOL_MEMSET_, SyscallMemset::vm)?;
+    result.register_function("sol_memcmp_", codes::SOL_MEMCMP_, SyscallMemcmp::vm)?;
 
     // Processed sibling instructions
     result.register_function(
         "sol_get_processed_sibling_instruction",
-        22,
+        codes::SOL_GET_PROCESSED_SIBLING_INSTRUCTION,
         SyscallGetProcessedSiblingInstruction::vm,
     )?;
 
     // Stack height
-    result.register_function("sol_get_stack_height", 23, SyscallGetStackHeight::vm)?;
+    result.register_function(
+        "sol_get_stack_height",
+        codes::SOL_GET_STACK_HEIGHT,
+        SyscallGetStackHeight::vm,
+    )?;
 
     // Return data
-    result.register_function("sol_set_return_data", 14, SyscallSetReturnData::vm)?;
-    result.register_function("sol_get_return_data", 15, SyscallGetReturnData::vm)?;
+    result.register_function(
+        "sol_set_return_data",
+        codes::SOL_SET_RETURN_DATA,
+        SyscallSetReturnData::vm,
+    )?;
+    result.register_function(
+        "sol_get_return_data",
+        codes::SOL_GET_RETURN_DATA,
+        SyscallGetReturnData::vm,
+    )?;
 
     // Cross-program invocation
-    result.register_function("sol_invoke_signed_c", 12, SyscallInvokeSignedC::vm)?;
-    result.register_function("sol_invoke_signed_rust", 13, SyscallInvokeSignedRust::vm)?;
+    result.register_function(
+        "sol_invoke_signed_c",
+        codes::SOL_INVOKE_SIGNED_C,
+        SyscallInvokeSignedC::vm,
+    )?;
+    result.register_function(
+        "sol_invoke_signed_rust",
+        codes::SOL_INVOKE_SIGNED_RUST,
+        SyscallInvokeSignedRust::vm,
+    )?;
 
     // Memory allocator
     register_feature_gated_function!(
         result,
         !disable_deploy_of_alloc_free_syscall,
         "sol_alloc_free_",
-        11,
+        codes::SOL_ALLOC_FREE_,
         SyscallAllocFree::vm,
     )?;
 
@@ -462,7 +511,7 @@ pub fn create_program_runtime_environment_v1<'a>(
         result,
         enable_alt_bn128_syscall,
         "sol_alt_bn128_group_op",
-        28,
+        codes::SOL_ALT_BN128_GROUP_OP,
         SyscallAltBn128::vm,
     )?;
 
@@ -471,7 +520,7 @@ pub fn create_program_runtime_environment_v1<'a>(
         result,
         enable_big_mod_exp_syscall,
         "sol_big_mod_exp",
-        30,
+        codes::SOL_BIG_MOD_EXP,
         SyscallBigModExp::vm,
     )?;
 
@@ -480,7 +529,7 @@ pub fn create_program_runtime_environment_v1<'a>(
         result,
         enable_poseidon_syscall,
         "sol_poseidon",
-        21,
+        codes::SOL_POSEIDON,
         SyscallPoseidon::vm,
     )?;
 
@@ -489,7 +538,7 @@ pub fn create_program_runtime_environment_v1<'a>(
         result,
         remaining_compute_units_syscall_enabled,
         "sol_remaining_compute_units",
-        31,
+        codes::SOL_REMAINING_COMPUTE_UNITS,
         SyscallRemainingComputeUnits::vm
     )?;
 
@@ -498,7 +547,7 @@ pub fn create_program_runtime_environment_v1<'a>(
         result,
         enable_alt_bn128_compression_syscall,
         "sol_alt_bn128_compression",
-        29,
+        codes::SOL_ALT_BN128_COMPRESSION,
         SyscallAltBn128Compression::vm,
     )?;
 
@@ -507,7 +556,7 @@ pub fn create_program_runtime_environment_v1<'a>(
         result,
         get_sysvar_syscall_enabled,
         "sol_get_sysvar",
-        34,
+        codes::SOL_GET_SYSVAR,
         SyscallGetSysvar::vm,
     )?;
 
@@ -516,12 +565,12 @@ pub fn create_program_runtime_environment_v1<'a>(
         result,
         enable_get_epoch_stake_syscall,
         "sol_get_epoch_stake",
-        35,
+        codes::SOL_GET_EPOCH_STAKE,
         SyscallGetEpochStake::vm,
     )?;
 
     // Log data
-    result.register_function("sol_log_data", 16, SyscallLogData::vm)?;
+    result.register_function("sol_log_data", codes::SOL_LOG_DATA, SyscallLogData::vm)?;
 
     Ok(result)
 }
