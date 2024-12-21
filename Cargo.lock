@@ -9954,6 +9954,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-vortexor"
+version = "2.2.0"
+dependencies = [
+ "assert_matches",
+ "async-channel",
+ "bytes",
+ "clap 2.33.3",
+ "crossbeam-channel",
+ "dashmap",
+ "futures 0.3.31",
+ "futures-util",
+ "governor",
+ "histogram",
+ "indexmap 2.7.0",
+ "itertools 0.12.1",
+ "libc",
+ "log",
+ "nix",
+ "pem",
+ "percentage",
+ "quinn",
+ "quinn-proto",
+ "rand 0.8.5",
+ "rustls 0.23.20",
+ "smallvec",
+ "socket2 0.5.8",
+ "solana-clap-utils",
+ "solana-logger",
+ "solana-measure",
+ "solana-metrics",
+ "solana-net-utils",
+ "solana-perf",
+ "solana-sdk",
+ "solana-streamer",
+ "solana-transaction-metrics-tracker",
+ "solana-version",
+ "thiserror 2.0.6",
+ "tokio",
+ "x509-parser",
+]
+
+[[package]]
 name = "solana-vote"
 version = "2.2.0"
 dependencies = [
