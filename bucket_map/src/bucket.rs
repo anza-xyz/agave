@@ -523,8 +523,8 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
     ) -> Result<(), BucketMapError> {
         let num_slots = data_len as u64;
         let best_fit_bucket = MultipleSlots::data_bucket_from_num_slots(data_len as u64);
-        // num_slots > 1 becuase we can store num_slots = 0 or num_slots = 1 in the index entry
-        let requires_data_bucket = num_slots > 1 || ref_count != 1;
+        // single_slot with ref_count = 1, 2 entry don't need data bucket
+        let requires_data_bucket = num_slots > 1 || ref_count > 2;
         if requires_data_bucket && self.data.get(best_fit_bucket as usize).is_none() {
             // fail early if the data bucket we need doesn't exist - we don't want the index entry partially allocated
             return Err(BucketMapError::DataNoSpace((best_fit_bucket, 0)));
@@ -554,16 +554,21 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
                 let loc = multiple_slots.data_loc(&self.data[bucket_ix]);
                 self.data[bucket_ix].free(loc);
             }
+
             elem.set_slot_count_enum_value(
                 &mut self.index,
                 if let Some(single_element) = data.next() {
-                    OccupiedEnum::OneSlotInIndex(single_element)
+                    if ref_count == 1 {
+                        OccupiedEnum::OneSlotInIndex(single_element)
+                    } else {
+                        OccupiedEnum::OneSlotRef2(single_element)
+                    }
                 } else {
                     self.stats
                         .index
                         .index_uses_uncommon_slot_list_len_or_refcount
                         .store(true, Ordering::Relaxed);
-                    OccupiedEnum::ZeroSlots
+                    panic!("Uncommon slot list ref count!");
                 },
             );
             return Ok(());
@@ -1218,48 +1223,6 @@ mod tests {
         assert_eq!(entry.key(&index), &other.0);
         let entry = IndexEntryPlaceInBucket::new(ix + 1);
         assert_eq!(entry.key(&index), &raw[0].0);
-    }
-
-    #[should_panic(expected = "called `Option::unwrap()` on a `None` value")]
-    #[test]
-    fn test_batch_insert_non_duplicates_reusing_file_existing_zero() {
-        let data_buckets = Vec::default();
-        let v = 12u64;
-        let random = 1;
-        // cannot use pubkey [0,0,...] because that matches a zeroed out default file contents.
-        let len = 1;
-        let mut raw = (0..len + 1)
-            .map(|l| (Pubkey::from([(l + 1) as u8; 32]), v + (l as u64)))
-            .collect::<Vec<_>>();
-
-        let other = raw.pop().unwrap();
-        let mut hashed = Bucket::index_entries(&raw, random);
-
-        let mut index = create_test_index(None);
-        let cap = index.capacity();
-        let ix = hashed[0].0 % cap;
-
-        // occupy the index data entry with a different pubkey
-        // This causes it to be skipped.
-        let entry = IndexEntryPlaceInBucket::new(ix);
-        entry.init(&mut index, &(other.0));
-        entry.set_slot_count_enum_value(&mut index, OccupiedEnum::ZeroSlots);
-        let entry = IndexEntryPlaceInBucket::new(ix + 1);
-        // sets pubkey value and enum value of ZeroSlots. Leaving it at zero is illegal at startup, so we'll assert when we find this duplicate.
-        entry.init(&mut index, &(raw[0].0));
-        entry.set_slot_count_enum_value(&mut index, OccupiedEnum::ZeroSlots);
-
-        // since the same key is already in use with a different value, it is a duplicate.
-        // But, it is a zero length entry. This is not supported at startup. Startup would have never generated a zero length occupied entry.
-        // So, it is ok for this to assert.
-        let mut duplicates = Vec::default();
-        Bucket::<u64>::batch_insert_non_duplicates_reusing_file(
-            &mut index,
-            &data_buckets,
-            &raw,
-            &mut hashed,
-            &mut duplicates,
-        );
     }
 
     #[test]
