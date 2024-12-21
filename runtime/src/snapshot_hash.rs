@@ -1,6 +1,9 @@
 //! Helper types and functions for handling and dealing with snapshot hashes.
 use {
-    solana_accounts_db::{accounts_hash::AccountsHashKind, epoch_accounts_hash::EpochAccountsHash},
+    solana_accounts_db::{
+        accounts_hash::MerkleOrLatticeAccountsHash, epoch_accounts_hash::EpochAccountsHash,
+    },
+    solana_lattice_hash::lt_hash::Checksum as AccountsLtHashChecksum,
     solana_sdk::{
         clock::Slot,
         hash::{Hash, Hasher},
@@ -32,22 +35,32 @@ pub struct IncrementalSnapshotHash(pub (Slot, SnapshotHash));
 pub struct SnapshotHash(pub Hash);
 
 impl SnapshotHash {
-    /// Make a snapshot hash from an accounts hash and epoch accounts hash
+    /// Make a snapshot hash from accounts hashes
     #[must_use]
     pub fn new(
-        accounts_hash: &AccountsHashKind,
+        merkle_or_lattice_accounts_hash: &MerkleOrLatticeAccountsHash,
         epoch_accounts_hash: Option<&EpochAccountsHash>,
+        accounts_lt_hash_checksum: Option<AccountsLtHashChecksum>,
     ) -> Self {
+        let accounts_hash = match merkle_or_lattice_accounts_hash {
+            MerkleOrLatticeAccountsHash::Merkle(accounts_hash_kind) => {
+                *accounts_hash_kind.as_hash()
+            }
+            MerkleOrLatticeAccountsHash::Lattice => Hash::new_from_array(
+                accounts_lt_hash_checksum
+                    .expect("lattice kind must have lt hash checksum")
+                    .0,
+            ),
+        };
         let snapshot_hash = match epoch_accounts_hash {
-            None => *accounts_hash.as_hash(),
+            None => accounts_hash,
             Some(epoch_accounts_hash) => {
                 let mut hasher = Hasher::default();
-                hasher.hash(accounts_hash.as_hash().as_ref());
+                hasher.hash(accounts_hash.as_ref());
                 hasher.hash(epoch_accounts_hash.as_ref().as_ref());
                 hasher.result()
             }
         };
-
         Self(snapshot_hash)
     }
 }

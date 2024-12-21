@@ -29,6 +29,19 @@ impl Bank {
                 .is_active(&feature_set::accounts_lt_hash::id())
     }
 
+    /// Returns if snapshots use the accounts lt hash
+    pub fn is_snapshots_lt_hash_enabled(&self) -> bool {
+        self.is_accounts_lt_hash_enabled()
+            && (self
+                .rc
+                .accounts
+                .accounts_db
+                .snapshots_use_experimental_accumulator_hash()
+                || self
+                    .feature_set
+                    .is_active(&feature_set::snapshots_lt_hash::id()))
+    }
+
     /// Updates the accounts lt hash
     ///
     /// When freezing a bank, we compute and update the accounts lt hash.
@@ -1146,6 +1159,95 @@ mod tests {
         let (_accounts_tempdir, accounts_dir) = snapshot_utils::create_tmp_accounts_dir_for_tests();
         let accounts_db_config = AccountsDbConfig {
             enable_experimental_accumulator_hash: match verify_cli {
+                Cli::Off => false,
+                Cli::On => true,
+            },
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        };
+        let (roundtrip_bank, _) = snapshot_bank_utils::bank_from_snapshot_archives(
+            &[accounts_dir],
+            &bank_snapshots_dir,
+            &snapshot,
+            None,
+            &genesis_config,
+            &RuntimeConfig::default(),
+            None,
+            None,
+            None,
+            false,
+            false,
+            false,
+            false,
+            Some(accounts_db_config),
+            None,
+            Arc::default(),
+        )
+        .unwrap();
+
+        // Wait for the startup verification to complete.  If we don't panic, then we're good!
+        roundtrip_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
+        assert_eq!(roundtrip_bank, *bank);
+    }
+
+    /// Ensure that the snapshot hash is correct when snapshots_lt_hash is enabled
+    #[test_matrix(
+        [Features::None, Features::All],
+        [Cli::Off, Cli::On],
+        [Cli::Off, Cli::On]
+    )]
+    fn test_snapshots_lt_hash(features: Features, cli: Cli, verify_cli: Cli) {
+        let (genesis_config, mint_keypair) = genesis_config_with(features);
+        let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        bank.rc
+            .accounts
+            .accounts_db
+            .set_is_experimental_accumulator_hash_enabled(features == Features::None);
+        // ensure the accounts lt hash is enabled, otherwise the snapshot lt hash is disabled
+        assert!(bank.is_accounts_lt_hash_enabled());
+
+        bank.rc
+            .accounts
+            .accounts_db
+            .set_snapshots_use_experimental_accumulator_hash(match cli {
+                Cli::Off => false,
+                Cli::On => true,
+            });
+
+        let amount = cmp::max(
+            bank.get_minimum_balance_for_rent_exemption(0),
+            LAMPORTS_PER_SOL,
+        );
+
+        // create some banks with some modified accounts so that there are stored accounts
+        // (note: the number of banks is arbitrary)
+        for _ in 0..3 {
+            let slot = bank.slot() + 1;
+            bank =
+                new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot);
+            bank.register_unique_recent_blockhash_for_test();
+            bank.transfer(amount, &mint_keypair, &pubkey::new_rand())
+                .unwrap();
+            bank.fill_bank_with_ticks_for_tests();
+            bank.squash();
+            bank.force_flush_accounts_cache();
+        }
+
+        let snapshot_config = SnapshotConfig::default();
+        let bank_snapshots_dir = TempDir::new().unwrap();
+        let snapshot_archives_dir = TempDir::new().unwrap();
+        let snapshot = snapshot_bank_utils::bank_to_full_snapshot_archive(
+            &bank_snapshots_dir,
+            &bank,
+            Some(snapshot_config.snapshot_version),
+            &snapshot_archives_dir,
+            &snapshot_archives_dir,
+            snapshot_config.archive_format,
+        )
+        .unwrap();
+        let (_accounts_tempdir, accounts_dir) = snapshot_utils::create_tmp_accounts_dir_for_tests();
+        let accounts_db_config = AccountsDbConfig {
+            enable_experimental_accumulator_hash: features == Features::None,
+            snapshots_use_experimental_accumulator_hash: match verify_cli {
                 Cli::Off => false,
                 Cli::On => true,
             },
