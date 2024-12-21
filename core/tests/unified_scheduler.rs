@@ -96,7 +96,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
 
     let tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
         &mint_keypair,
-        &solana_sdk::pubkey::new_rand(),
+        &solana_pubkey::new_rand(),
         2,
         genesis_config.hash(),
     ));
