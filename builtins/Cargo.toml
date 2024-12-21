@@ -10,9 +10,11 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [features]
-dev-context-only-utils = []
+mock-builtin-migrations = []
 
 [dependencies]
+ahash = { workspace = true }
+lazy_static = { workspace = true }
 solana-address-lookup-table-program = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
 solana-compute-budget-program = { workspace = true }
