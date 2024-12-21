@@ -15,6 +15,13 @@
 
 { # this ensures the entire script is downloaded #
 
+# Variables for backup and cache locations
+SOLANA_CONFIG_DIR="$HOME/.config/solana"
+SOLANA_KEYPAIR="$SOLANA_CONFIG_DIR/id.json"
+BACKUP_DIR="$HOME/solana-backup"
+BACKUP_KEYPAIR="$BACKUP_DIR/id.json"
+SOLANA_CACHE="$HOME/.cache/solana"
+
 if [ -z "$SOLANA_DOWNLOAD_ROOT" ]; then
     SOLANA_DOWNLOAD_ROOT="https://github.com/anza-xyz/agave/releases/download/"
 fi
@@ -41,6 +48,47 @@ OPTIONS:
 EOF
 }
 
+# Function to back up existing keypair if present
+backup_keypair() {
+    mkdir -p "$BACKUP_DIR"
+    if mv "$SOLANA_KEYPAIR" "$BACKUP_KEYPAIR"; then
+        echo "Backed up existing keypair to $BACKUP_KEYPAIR."
+        return 0
+    else
+        echo "Warning: Failed to back up keypair. Proceeding with installation."
+        echo "The existing keypair will be overwritten during the installation."
+        return 1
+    fi
+}
+
+# Function to restore the keypair after installation
+restore_keypair() {
+    if [ -f "$BACKUP_KEYPAIR" ]; then
+        mv "$BACKUP_KEYPAIR" "$SOLANA_KEYPAIR"
+        echo "Restored keypair to $SOLANA_CONFIG_DIR."
+    fi
+}
+
+# Function to clear Solana cache to avoid build issues
+clear_cache() {
+    if [ -d "$SOLANA_CACHE" ]; then
+        rm -rf "$SOLANA_CACHE"
+        echo "Cleared Solana cache at $SOLANA_CACHE."
+    fi
+}
+
+
+# Check for existing keypair and attempt backup
+check_and_backup_keypair() {
+    if [ -f "$SOLANA_KEYPAIR" ]; then
+        echo "Existing keypair found at $SOLANA_KEYPAIR."
+        echo "Attempting to back it up..."
+        backup_keypair || echo "Proceeding with installation despite backup failure."
+    else
+        echo "No existing keypair found. Proceeding with installation."
+    fi
+}
+
 main() {
     downloader --check
     need_cmd uname
@@ -50,6 +98,10 @@ main() {
     need_cmd rm
     need_cmd sed
     need_cmd grep
+
+
+    check_and_backup_keypair
+    clear_cache
 
     for arg in "$@"; do
       case "$arg" in
