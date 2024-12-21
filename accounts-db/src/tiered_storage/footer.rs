@@ -315,7 +315,7 @@ mod tests {
             append_vec::test_utils::get_append_vec_path, tiered_storage::file::TieredWritableFile,
         },
         memoffset::offset_of,
-        solana_sdk::hash::Hash,
+        solana_hash::Hash,
     };
 
     #[test]

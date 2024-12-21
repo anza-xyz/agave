@@ -452,10 +452,10 @@ fn test_get_keys_to_unref_ancient() {
     let owner = Pubkey::default();
     let data = Vec::new();
 
-    let pubkey = solana_sdk::pubkey::new_rand();
-    let pubkey2 = solana_sdk::pubkey::new_rand();
-    let pubkey3 = solana_sdk::pubkey::new_rand();
-    let pubkey4 = solana_sdk::pubkey::new_rand();
+    let pubkey = solana_pubkey::new_rand();
+    let pubkey2 = solana_pubkey::new_rand();
+    let pubkey3 = solana_pubkey::new_rand();
+    let pubkey4 = solana_pubkey::new_rand();
 
     let meta = StoredMeta {
         write_version_obsolete: 5,
@@ -1021,7 +1021,7 @@ define_accounts_db_test!(test_accountsdb_count_stores, |db| {
     db.add_root_and_flush_write_cache(0);
     db.check_storage(0, 2, 2);
 
-    let pubkey = solana_sdk::pubkey::new_rand();
+    let pubkey = solana_pubkey::new_rand();
     let account = AccountSharedData::new(1, DEFAULT_FILE_SIZE as usize / 3, &pubkey);
     db.store_for_tests(1, &[(&pubkey, &account)]);
     db.store_for_tests(1, &[(&pubkeys[0], &account)]);
@@ -1181,7 +1181,7 @@ fn test_account_grow_many() {
     };
     let mut keys = vec![];
     for i in 0..9 {
-        let key = solana_sdk::pubkey::new_rand();
+        let key = solana_pubkey::new_rand();
         let account = AccountSharedData::new(i + 1, size as usize / 4, &key);
         accounts.store_for_tests(0, &[(&key, &account)]);
         keys.push(key);
@@ -1217,7 +1217,7 @@ fn test_account_grow() {
         let accounts = AccountsDb::new_single_for_tests();
 
         let status = [AccountStorageStatus::Available, AccountStorageStatus::Full];
-        let pubkey1 = solana_sdk::pubkey::new_rand();
+        let pubkey1 = solana_pubkey::new_rand();
         let account1 = AccountSharedData::new(1, DEFAULT_FILE_SIZE as usize / 2, &pubkey1);
         accounts.store_for_tests(0, &[(&pubkey1, &account1)]);
         if pass == 0 {
@@ -1228,7 +1228,7 @@ fn test_account_grow() {
             continue;
         }
 
-        let pubkey2 = solana_sdk::pubkey::new_rand();
+        let pubkey2 = solana_pubkey::new_rand();
         let account2 = AccountSharedData::new(1, DEFAULT_FILE_SIZE as usize / 2, &pubkey2);
         accounts.store_for_tests(0, &[(&pubkey2, &account2)]);
 
@@ -1295,7 +1295,7 @@ fn test_lazy_gc_slot() {
     //A slot is purged when a non root bank is cleaned up.  If a slot is behind root but it is
     //not root, it means we are retaining dead banks.
     let accounts = AccountsDb::new_single_for_tests();
-    let pubkey = solana_sdk::pubkey::new_rand();
+    let pubkey = solana_pubkey::new_rand();
     let account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
     //store an account
     accounts.store_for_tests(0, &[(&pubkey, &account)]);
@@ -1343,8 +1343,8 @@ fn test_clean_zero_lamport_and_dead_slot() {
     solana_logger::setup();
 
     let accounts = AccountsDb::new_single_for_tests();
-    let pubkey1 = solana_sdk::pubkey::new_rand();
-    let pubkey2 = solana_sdk::pubkey::new_rand();
+    let pubkey1 = solana_pubkey::new_rand();
+    let pubkey2 = solana_pubkey::new_rand();
     let account = AccountSharedData::new(1, 1, AccountSharedData::default().owner());
     let zero_lamport_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
 
@@ -1644,8 +1644,8 @@ fn test_clean_multiple_zero_lamport_decrements_index_ref_count() {
     solana_logger::setup();
 
     let accounts = AccountsDb::new_single_for_tests();
-    let pubkey1 = solana_sdk::pubkey::new_rand();
-    let pubkey2 = solana_sdk::pubkey::new_rand();
+    let pubkey1 = solana_pubkey::new_rand();
+    let pubkey2 = solana_pubkey::new_rand();
     let zero_lamport_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
 
     // Store 2 accounts in slot 0, then update account 1 in two more slots
@@ -1691,7 +1691,7 @@ fn test_clean_zero_lamport_and_old_roots() {
     solana_logger::setup();
 
     let accounts = AccountsDb::new_single_for_tests();
-    let pubkey = solana_sdk::pubkey::new_rand();
+    let pubkey = solana_pubkey::new_rand();
     let account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
     let zero_lamport_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
 
@@ -1732,7 +1732,7 @@ fn test_clean_old_with_normal_account() {
     solana_logger::setup();
 
     let accounts = AccountsDb::new_single_for_tests();
-    let pubkey = solana_sdk::pubkey::new_rand();
+    let pubkey = solana_pubkey::new_rand();
     let account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
     //store an account
     accounts.store_for_tests(0, &[(&pubkey, &account)]);
@@ -1760,8 +1760,8 @@ fn test_clean_old_with_zero_lamport_account() {
     solana_logger::setup();
 
     let accounts = AccountsDb::new_single_for_tests();
-    let pubkey1 = solana_sdk::pubkey::new_rand();
-    let pubkey2 = solana_sdk::pubkey::new_rand();
+    let pubkey1 = solana_pubkey::new_rand();
+    let pubkey2 = solana_pubkey::new_rand();
     let normal_account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
     let zero_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
     //store an account
@@ -1797,8 +1797,8 @@ fn test_clean_old_with_both_normal_and_zero_lamport_accounts() {
         account_indexes: spl_token_mint_index_enabled(),
         ..AccountsDb::new_single_for_tests()
     };
-    let pubkey1 = solana_sdk::pubkey::new_rand();
-    let pubkey2 = solana_sdk::pubkey::new_rand();
+    let pubkey1 = solana_pubkey::new_rand();
+    let pubkey2 = solana_pubkey::new_rand();
 
     // Set up account to be added to secondary index
     let mint_key = Pubkey::new_unique();
@@ -1932,7 +1932,7 @@ fn test_clean_max_slot_zero_lamport_account() {
     solana_logger::setup();
 
     let accounts = AccountsDb::new_single_for_tests();
-    let pubkey = solana_sdk::pubkey::new_rand();
+    let pubkey = solana_pubkey::new_rand();
     let account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
     let zero_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
 
@@ -1981,7 +1981,7 @@ fn test_uncleaned_roots_with_account() {
     solana_logger::setup();
 
     let accounts = AccountsDb::new_single_for_tests();
-    let pubkey = solana_sdk::pubkey::new_rand();
+    let pubkey = solana_pubkey::new_rand();
     let account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
     //store an account
     accounts.store_for_tests(0, &[(&pubkey, &account)]);
@@ -2027,10 +2027,10 @@ fn test_accounts_db_purge_keep_live() {
     let owner = *AccountSharedData::default().owner();
 
     let account = AccountSharedData::new(some_lamport, no_data, &owner);
-    let pubkey = solana_sdk::pubkey::new_rand();
+    let pubkey = solana_pubkey::new_rand();
 
     let account2 = AccountSharedData::new(some_lamport, no_data, &owner);
-    let pubkey2 = solana_sdk::pubkey::new_rand();
+    let pubkey2 = solana_pubkey::new_rand();
 
     let zero_lamport_account = AccountSharedData::new(zero_lamport, no_data, &owner);
 
@@ -2109,7 +2109,7 @@ fn test_accounts_db_purge1() {
     let owner = *AccountSharedData::default().owner();
 
     let account = AccountSharedData::new(some_lamport, no_data, &owner);
-    let pubkey = solana_sdk::pubkey::new_rand();
+    let pubkey = solana_pubkey::new_rand();
 
     let zero_lamport_account = AccountSharedData::new(zero_lamport, no_data, &owner);
 
@@ -2176,7 +2176,7 @@ fn test_store_account_stress() {
             std::thread::Builder::new()
                 .name("account-writers".to_string())
                 .spawn(move || {
-                    let pubkey = solana_sdk::pubkey::new_rand();
+                    let pubkey = solana_pubkey::new_rand();
                     let mut account = AccountSharedData::new(1, 0, &pubkey);
                     let mut i = 0;
                     loop {
@@ -2208,12 +2208,12 @@ fn test_accountsdb_scan_accounts() {
     solana_logger::setup();
     let db = AccountsDb::new_single_for_tests();
     let key = Pubkey::default();
-    let key0 = solana_sdk::pubkey::new_rand();
+    let key0 = solana_pubkey::new_rand();
     let account0 = AccountSharedData::new(1, 0, &key);
 
     db.store_for_tests(0, &[(&key0, &account0)]);
 
-    let key1 = solana_sdk::pubkey::new_rand();
+    let key1 = solana_pubkey::new_rand();
     let account1 = AccountSharedData::new(2, 0, &key);
     db.store_for_tests(1, &[(&key1, &account1)]);
 
@@ -2248,12 +2248,12 @@ fn test_cleanup_key_not_removed() {
     let db = AccountsDb::new_single_for_tests();
 
     let key = Pubkey::default();
-    let key0 = solana_sdk::pubkey::new_rand();
+    let key0 = solana_pubkey::new_rand();
     let account0 = AccountSharedData::new(1, 0, &key);
 
     db.store_for_tests(0, &[(&key0, &account0)]);
 
-    let key1 = solana_sdk::pubkey::new_rand();
+    let key1 = solana_pubkey::new_rand();
     let account1 = AccountSharedData::new(2, 0, &key);
     db.store_for_tests(1, &[(&key1, &account1)]);
 
@@ -2415,7 +2415,7 @@ fn test_verify_accounts_hash() {
     solana_logger::setup();
     let db = AccountsDb::new_single_for_tests();
 
-    let key = solana_sdk::pubkey::new_rand();
+    let key = solana_pubkey::new_rand();
     let some_data_len = 0;
     let some_slot: Slot = 0;
     let account = AccountSharedData::new(1, some_data_len, &key);
@@ -2465,7 +2465,7 @@ fn test_verify_bank_capitalization() {
         solana_logger::setup();
         let db = AccountsDb::new_single_for_tests();
 
-        let key = solana_sdk::pubkey::new_rand();
+        let key = solana_pubkey::new_rand();
         let some_data_len = 0;
         let some_slot: Slot = 0;
         let account = AccountSharedData::new(1, some_data_len, &key);
@@ -2490,7 +2490,7 @@ fn test_verify_bank_capitalization() {
             continue;
         }
 
-        let native_account_pubkey = solana_sdk::pubkey::new_rand();
+        let native_account_pubkey = solana_pubkey::new_rand();
         db.store_for_tests(
             some_slot,
             &[(
@@ -2583,10 +2583,10 @@ fn test_storage_finder() {
         file_size: 16 * 1024,
         ..AccountsDb::new_single_for_tests()
     };
-    let key = solana_sdk::pubkey::new_rand();
+    let key = solana_pubkey::new_rand();
     let lamports = 100;
     let data_len = 8190;
-    let account = AccountSharedData::new(lamports, data_len, &solana_sdk::pubkey::new_rand());
+    let account = AccountSharedData::new(lamports, data_len, &solana_pubkey::new_rand());
     // pre-populate with a smaller empty store
     db.create_and_insert_store(1, 8192, "test_storage_finder");
     db.store_for_tests(1, &[(&key, &account)]);
@@ -2694,7 +2694,7 @@ define_accounts_db_test!(
     test_storage_remove_account_double_remove,
     panic = "double remove of account in slot: 0/store: 0!!",
     |accounts| {
-        let pubkey = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
         let account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
         accounts.store_for_tests(0, &[(&pubkey, &account)]);
         accounts.add_root_and_flush_write_cache(0);
@@ -2857,7 +2857,7 @@ fn test_shrink_candidate_slots() {
 
     let pubkey_count = 30000;
     let pubkeys: Vec<_> = (0..pubkey_count)
-        .map(|_| solana_sdk::pubkey::new_rand())
+        .map(|_| solana_pubkey::new_rand())
         .collect();
 
     let some_lamport = 223;
@@ -3350,7 +3350,7 @@ fn test_store_overhead() {
     solana_logger::setup();
     let accounts = AccountsDb::new_single_for_tests();
     let account = AccountSharedData::default();
-    let pubkey = solana_sdk::pubkey::new_rand();
+    let pubkey = solana_pubkey::new_rand();
     accounts.store_for_tests(0, &[(&pubkey, &account)]);
     accounts.add_root_and_flush_write_cache(0);
     let store = accounts.storage.get_slot_storage_entry(0).unwrap();
@@ -3366,10 +3366,10 @@ fn test_store_clean_after_shrink() {
     let epoch_schedule = EpochSchedule::default();
 
     let account = AccountSharedData::new(1, 16 * 4096, &Pubkey::default());
-    let pubkey1 = solana_sdk::pubkey::new_rand();
+    let pubkey1 = solana_pubkey::new_rand();
     accounts.store_cached((0, &[(&pubkey1, &account)][..]), None);
 
-    let pubkey2 = solana_sdk::pubkey::new_rand();
+    let pubkey2 = solana_pubkey::new_rand();
     accounts.store_cached((0, &[(&pubkey2, &account)][..]), None);
 
     let zero_account = AccountSharedData::new(0, 1, &Pubkey::default());
@@ -3551,9 +3551,9 @@ fn test_flush_accounts_cache() {
     let unrooted_slot = 4;
     let root5 = 5;
     let root6 = 6;
-    let unrooted_key = solana_sdk::pubkey::new_rand();
-    let key5 = solana_sdk::pubkey::new_rand();
-    let key6 = solana_sdk::pubkey::new_rand();
+    let unrooted_key = solana_pubkey::new_rand();
+    let key5 = solana_pubkey::new_rand();
+    let key6 = solana_pubkey::new_rand();
     db.store_cached((unrooted_slot, &[(&unrooted_key, &account0)][..]), None);
     db.store_cached((root5, &[(&key5, &account0)][..]), None);
     db.store_cached((root6, &[(&key6, &account0)][..]), None);
@@ -5484,7 +5484,7 @@ fn test_is_candidate_for_shrink() {
 
 define_accounts_db_test!(test_calculate_storage_count_and_alive_bytes, |accounts| {
     accounts.accounts_index.set_startup(Startup::Startup);
-    let shared_key = solana_sdk::pubkey::new_rand();
+    let shared_key = solana_pubkey::new_rand();
     let account = AccountSharedData::new(1, 1, AccountSharedData::default().owner());
     let slot0 = 0;
 
@@ -5529,8 +5529,8 @@ define_accounts_db_test!(
     test_calculate_storage_count_and_alive_bytes_2_accounts,
     |accounts| {
         let keys = [
-            solana_sdk::pubkey::Pubkey::from([0; 32]),
-            solana_sdk::pubkey::Pubkey::from([255; 32]),
+            solana_pubkey::Pubkey::from([0; 32]),
+            solana_pubkey::Pubkey::from([255; 32]),
         ];
         accounts.accounts_index.set_startup(Startup::Startup);
 
@@ -5576,7 +5576,7 @@ define_accounts_db_test!(
 
 define_accounts_db_test!(test_set_storage_count_and_alive_bytes, |accounts| {
     // make sure we have storage 0
-    let shared_key = solana_sdk::pubkey::new_rand();
+    let shared_key = solana_pubkey::new_rand();
     let account = AccountSharedData::new(1, 1, AccountSharedData::default().owner());
     let slot0 = 0;
     accounts.store_for_tests(slot0, &[(&shared_key, &account)]);
@@ -5618,9 +5618,9 @@ define_accounts_db_test!(test_set_storage_count_and_alive_bytes, |accounts| {
 
 define_accounts_db_test!(test_purge_alive_unrooted_slots_after_clean, |accounts| {
     // Key shared between rooted and nonrooted slot
-    let shared_key = solana_sdk::pubkey::new_rand();
+    let shared_key = solana_pubkey::new_rand();
     // Key to keep the storage entry for the unrooted slot alive
-    let unrooted_key = solana_sdk::pubkey::new_rand();
+    let unrooted_key = solana_pubkey::new_rand();
     let slot0 = 0;
     let slot1 = 1;
 
@@ -5677,8 +5677,8 @@ fn assert_no_storages_at_slot(db: &AccountsDb, slot: Slot) {
 define_accounts_db_test!(
     test_clean_accounts_with_latest_full_snapshot_slot,
     |accounts_db| {
-        let pubkey = solana_sdk::pubkey::new_rand();
-        let owner = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
+        let owner = solana_pubkey::new_rand();
         let space = 0;
 
         let slot1: Slot = 1;
@@ -5743,7 +5743,7 @@ fn test_filter_zero_lamport_clean_for_incremental_snapshots() {
 
     let do_test = |test_params: TestParameters| {
         let account_info = AccountInfo::new(StorageLocation::AppendVec(42, 128), 0);
-        let pubkey = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
         let mut key_set = HashSet::default();
         key_set.insert(pubkey);
         let store_count = 0;
@@ -6554,7 +6554,7 @@ fn test_hash_storage_info() {
         let mut hasher = DefaultHasher::new();
         let slot: Slot = 0;
         let tf = crate::append_vec::test_utils::get_append_vec_path("test_hash_storage_info");
-        let pubkey1 = solana_sdk::pubkey::new_rand();
+        let pubkey1 = solana_pubkey::new_rand();
         let mark_alive = false;
         let storage = sample_storage_with_entries(&tf, slot, &pubkey1, mark_alive);
 
@@ -6570,7 +6570,7 @@ fn test_hash_storage_info() {
                                  // can't assert hash here - it is a function of mod date
         assert!(load);
         let mut hasher = DefaultHasher::new();
-        append_sample_data_to_storage(&storage, &solana_sdk::pubkey::new_rand(), false, None);
+        append_sample_data_to_storage(&storage, &solana_pubkey::new_rand(), false, None);
         let load = AccountsDb::hash_storage_info(&mut hasher, &storage, slot);
         let hash3 = hasher.finish();
         assert_ne!(hash2, hash3); // moddate and written size changed
@@ -6863,7 +6863,7 @@ fn test_shrink_collect_simple() {
     let max_appended_accounts = 2;
     let max_num_accounts = *account_counts.iter().max().unwrap();
     let pubkeys = (0..(max_num_accounts + max_appended_accounts))
-        .map(|_| solana_sdk::pubkey::new_rand())
+        .map(|_| solana_pubkey::new_rand())
         .collect::<Vec<_>>();
     // write accounts, maybe remove from index
     // check shrink_collect results
@@ -7631,7 +7631,7 @@ pub(crate) fn create_storages_and_update_index_with_customized_account_size_per_
         .unwrap_or(999);
     for (i, account_data_size) in account_data_sizes.iter().enumerate().take(num_slots) {
         let id = starting_id + (i as AccountsFileId);
-        let pubkey1 = solana_sdk::pubkey::new_rand();
+        let pubkey1 = solana_pubkey::new_rand();
         let storage = sample_storage_with_entries_id_fill_percentage(
             tf,
             starting_slot + (i as Slot),
@@ -7678,7 +7678,7 @@ pub(crate) fn create_storages_and_update_index(
         .unwrap_or(999);
     for i in 0..num_slots {
         let id = starting_id + (i as AccountsFileId);
-        let pubkey1 = solana_sdk::pubkey::new_rand();
+        let pubkey1 = solana_pubkey::new_rand();
         let storage = sample_storage_with_entries_id(
             tf,
             starting_slot + (i as Slot),
@@ -7835,7 +7835,7 @@ fn test_should_move_to_ancient_accounts_file() {
     let tf = crate::append_vec::test_utils::get_append_vec_path(
         "test_should_move_to_ancient_append_vec",
     );
-    let pubkey1 = solana_sdk::pubkey::new_rand();
+    let pubkey1 = solana_pubkey::new_rand();
     let storage = sample_storage_with_entries(&tf, slot5, &pubkey1, false);
     let mut current_ancient = CurrentAncientAccountsFile::default();
 
