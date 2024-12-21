@@ -881,9 +881,12 @@ impl Validator {
 
         let (replay_vote_sender, replay_vote_receiver) = unbounded();
 
-        // block min prioritization fee cache should be readable by RPC, and writable by validator
-        // (by both replay stage and banking stage)
-        let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::default());
+        // priorization fee cache is `Some` if RPC is enabled, otherwise it's `None`
+        let prioritization_fee_cache = if config.rpc_addrs.is_some() {
+            Some(Arc::new(PrioritizationFeeCache::default()))
+        } else {
+            None
+        };
 
         match &config.block_verification_method {
             BlockVerificationMethod::BlockstoreProcessor => {
@@ -1107,7 +1110,7 @@ impl Validator {
                 connection_cache.clone(),
                 max_complete_transaction_status_slot,
                 max_complete_rewards_slot,
-                prioritization_fee_cache.clone(),
+                prioritization_fee_cache.clone().unwrap(),
             )
             .map_err(ValidatorError::Other)?;
 
@@ -1458,7 +1461,7 @@ impl Validator {
             accounts_background_request_sender.clone(),
             config.runtime_config.log_messages_bytes_limit,
             json_rpc_service.is_some().then_some(&connection_cache), // for the cache warmer only used for STS for RPC service
-            &prioritization_fee_cache,
+            prioritization_fee_cache.clone(),
             banking_tracer.clone(),
             turbine_quic_endpoint_sender.clone(),
             turbine_quic_endpoint_receiver,
@@ -1534,7 +1537,7 @@ impl Validator {
             tracer_thread,
             tpu_enable_udp,
             tpu_max_connections_per_ipaddr_per_minute,
-            &prioritization_fee_cache,
+            prioritization_fee_cache,
             config.block_production_method.clone(),
             config.enable_block_production_forwarding,
             config.generator_config.clone(),

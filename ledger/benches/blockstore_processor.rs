@@ -14,7 +14,6 @@ use {
     solana_runtime::{
         bank::Bank,
         bank_forks::BankForks,
-        prioritization_fee_cache::PrioritizationFeeCache,
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
@@ -78,7 +77,6 @@ fn create_transactions(bank: &Bank, num: usize) -> Vec<RuntimeTransaction<Saniti
 struct BenchFrame {
     bank: Arc<Bank>,
     _bank_forks: Arc<RwLock<BankForks>>,
-    prioritization_fee_cache: PrioritizationFeeCache,
 }
 
 fn setup(apply_cost_tracker_during_replay: bool) -> BenchFrame {
@@ -105,11 +103,9 @@ fn setup(apply_cost_tracker_during_replay: bool) -> BenchFrame {
         .unwrap()
         .set_limits(u64::MAX, u64::MAX, u64::MAX);
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-    let prioritization_fee_cache = PrioritizationFeeCache::default();
     BenchFrame {
         bank,
         _bank_forks: bank_forks,
-        prioritization_fee_cache,
     }
 }
 
@@ -127,11 +123,7 @@ fn bench_execute_batch(
     );
     let batches_per_iteration = TRANSACTIONS_PER_ITERATION / batch_size;
 
-    let BenchFrame {
-        bank,
-        _bank_forks,
-        prioritization_fee_cache,
-    } = setup(apply_cost_tracker_during_replay);
+    let BenchFrame { bank, _bank_forks } = setup(apply_cost_tracker_during_replay);
     let transactions = create_transactions(&bank, 2_usize.pow(20));
     let batches: Vec<_> = transactions
         .chunks(batch_size)
@@ -154,15 +146,7 @@ fn bench_execute_batch(
     bencher.iter(|| {
         for _ in 0..batches_per_iteration {
             let batch = batches_iter.next().unwrap();
-            let _ = execute_batch(
-                batch,
-                &bank,
-                None,
-                None,
-                &mut timing,
-                None,
-                &prioritization_fee_cache,
-            );
+            let _ = execute_batch(batch, &bank, None, None, &mut timing, None, &None);
         }
     });
     // drop batches here so dropping is not included in the benchmark

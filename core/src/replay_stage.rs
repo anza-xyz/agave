@@ -267,7 +267,7 @@ pub struct ReplayStageConfig {
     pub vote_tracker: Arc<VoteTracker>,
     pub cluster_slots: Arc<ClusterSlots>,
     pub log_messages_bytes_limit: Option<usize>,
-    pub prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+    pub prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
     pub banking_tracer: Arc<BankingTracer>,
 }
 
@@ -2244,7 +2244,7 @@ impl ReplayStage {
         replay_vote_sender: &ReplayVoteSender,
         verify_recyclers: &VerifyRecyclers,
         log_messages_bytes_limit: Option<usize>,
-        prioritization_fee_cache: &PrioritizationFeeCache,
+        prioritization_fee_cache: &Option<Arc<PrioritizationFeeCache>>,
     ) -> result::Result<usize, BlockstoreProcessorError> {
         let mut w_replay_stats = replay_stats.write().unwrap();
         let mut w_replay_progress = replay_progress.write().unwrap();
@@ -2850,7 +2850,7 @@ impl ReplayStage {
         replay_timing: &mut ReplayLoopTiming,
         log_messages_bytes_limit: Option<usize>,
         active_bank_slots: &[Slot],
-        prioritization_fee_cache: &PrioritizationFeeCache,
+        prioritization_fee_cache: &Option<Arc<PrioritizationFeeCache>>,
     ) -> Vec<ReplaySlotFromBlockstore> {
         // Make mutable shared structures thread safe.
         let progress = RwLock::new(progress);
@@ -2965,7 +2965,7 @@ impl ReplayStage {
         replay_timing: &mut ReplayLoopTiming,
         log_messages_bytes_limit: Option<usize>,
         bank_slot: Slot,
-        prioritization_fee_cache: &PrioritizationFeeCache,
+        prioritization_fee_cache: &Option<Arc<PrioritizationFeeCache>>,
     ) -> ReplaySlotFromBlockstore {
         let mut replay_result = ReplaySlotFromBlockstore {
             is_slot_dead: false,
@@ -3362,7 +3362,7 @@ impl ReplayStage {
         log_messages_bytes_limit: Option<usize>,
         replay_mode: &ForkReplayMode,
         replay_tx_thread_pool: &ThreadPool,
-        prioritization_fee_cache: &PrioritizationFeeCache,
+        prioritization_fee_cache: &Option<Arc<PrioritizationFeeCache>>,
         purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
     ) -> bool /* completed a bank */ {
         let active_bank_slots = bank_forks.read().unwrap().active_bank_slots();
@@ -5000,7 +5000,7 @@ pub(crate) mod tests {
                 &replay_vote_sender,
                 &VerifyRecyclers::default(),
                 None,
-                &PrioritizationFeeCache::new(0u64),
+                &None,
             );
             let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
             let max_complete_rewards_slot = Arc::new(AtomicU64::default());

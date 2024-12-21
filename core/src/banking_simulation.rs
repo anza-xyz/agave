@@ -31,7 +31,6 @@ use {
         bank::{Bank, HashOverrides},
         bank_forks::BankForks,
         installed_scheduler_pool::BankWithScheduler,
-        prioritization_fee_cache::PrioritizationFeeCache,
     },
     solana_sdk::{
         clock::{Slot, DEFAULT_MS_PER_SLOT, HOLD_TRANSACTIONS_SLOT_OFFSET},
@@ -800,7 +799,6 @@ impl BankingSimulator {
         let cluster_info = Arc::new(DummyClusterInfo {
             id: simulated_leader.into(),
         });
-        let prioritization_fee_cache = &Arc::new(PrioritizationFeeCache::new(0u64));
         let banking_stage = BankingStage::new_num_threads(
             block_production_method.clone(),
             &cluster_info,
@@ -814,7 +812,7 @@ impl BankingSimulator {
             None,
             connection_cache,
             bank_forks.clone(),
-            prioritization_fee_cache,
+            None,
             false,
         );
 

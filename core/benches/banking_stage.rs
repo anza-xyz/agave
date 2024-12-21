@@ -39,9 +39,7 @@ use {
         test_tx::test_tx,
     },
     solana_poh::poh_recorder::{create_test_recorder, WorkingBankEntry},
-    solana_runtime::{
-        bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
-    },
+    solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_sdk::{
         genesis_config::GenesisConfig,
         hash::Hash,
@@ -109,7 +107,7 @@ fn bench_consume_buffered(bencher: &mut Bencher) {
         ThreadType::Transactions,
     );
     let (s, _r) = unbounded();
-    let committer = Committer::new(None, s, Arc::new(PrioritizationFeeCache::new(0u64)));
+    let committer = Committer::new(None, s, None);
     let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
     // This tests the performance of buffering packets.
     // If the packet buffers are copied, performance will be poor.
@@ -307,7 +305,7 @@ fn bench_banking(bencher: &mut Bencher, tx_type: TransactionType) {
         None,
         Arc::new(ConnectionCache::new("connection_cache_test")),
         bank_forks,
-        &Arc::new(PrioritizationFeeCache::new(0u64)),
+        None,
         false,
     );
 

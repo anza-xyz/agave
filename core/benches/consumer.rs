@@ -83,7 +83,7 @@ fn create_transactions(bank: &Bank, num: usize) -> Vec<RuntimeTransaction<Saniti
 
 fn create_consumer(poh_recorder: &RwLock<PohRecorder>) -> Consumer {
     let (replay_vote_sender, _replay_vote_receiver) = unbounded();
-    let committer = Committer::new(None, replay_vote_sender, Arc::default());
+    let committer = Committer::new(None, replay_vote_sender, None);
     let transaction_recorder = poh_recorder.read().unwrap().new_recorder();
     Consumer::new(committer, transaction_recorder, QosService::new(0), None)
 }

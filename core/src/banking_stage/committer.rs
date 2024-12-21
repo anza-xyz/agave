@@ -46,14 +46,14 @@ pub(super) struct PreBalanceInfo {
 pub struct Committer {
     transaction_status_sender: Option<TransactionStatusSender>,
     replay_vote_sender: ReplayVoteSender,
-    prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+    prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
 }
 
 impl Committer {
     pub fn new(
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: ReplayVoteSender,
-        prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+        prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
     ) -> Self {
         Self {
             transaction_status_sender,
@@ -119,8 +119,10 @@ impl Committer {
                 pre_balance_info,
                 starting_transaction_index,
             );
-            self.prioritization_fee_cache
-                .update(bank, processed_transactions.into_iter());
+
+            if let Some(prioritization_fee_cache) = self.prioritization_fee_cache.as_ref() {
+                prioritization_fee_cache.update(bank, processed_transactions.into_iter());
+            }
         });
         execute_and_commit_timings.find_and_send_votes_us = find_and_send_votes_us;
         (commit_time_us, commit_transaction_statuses)
