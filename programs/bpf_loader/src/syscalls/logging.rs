@@ -120,7 +120,7 @@ declare_builtin_function!(
 
         consume_compute_meter(invoke_context, budget.syscall_base_cost)?;
 
-        let untranslated_fields = translate_slice::<&[u8]>(
+        let untranslated_fields = translate_slice_of_slices::<u8>(
             memory_mapping,
             addr,
             len,
@@ -137,18 +137,13 @@ declare_builtin_function!(
             invoke_context,
             untranslated_fields
                 .iter()
-                .fold(0, |total, e| total.saturating_add(e.len() as u64)),
+                .fold(0, |total, e| total.saturating_add(e.len())),
         )?;
 
         let mut fields = Vec::with_capacity(untranslated_fields.len());
 
         for untranslated_field in untranslated_fields {
-            fields.push(translate_slice::<u8>(
-                memory_mapping,
-                untranslated_field.as_ptr() as *const _ as u64,
-                untranslated_field.len() as u64,
-                invoke_context.get_check_aligned(),
-            )?);
+            fields.push(untranslated_field.translate(memory_mapping, invoke_context.get_check_aligned())?);
         }
 
         let log_collector = invoke_context.get_log_collector();
