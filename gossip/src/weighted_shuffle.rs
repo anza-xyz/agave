@@ -1,7 +1,7 @@
 //! The `weighted_shuffle` module provides an iterator over shuffled weights.
 
 use {
-    num_traits::CheckedAdd,
+    num_traits::{CheckedAdd, ConstZero},
     rand::{
         distributions::uniform::{SampleUniform, UniformSampler},
         Rng,
@@ -12,7 +12,10 @@ use {
 // Each internal tree node has FANOUT many child nodes with indices:
 //     (index << BIT_SHIFT) + 1 ..= (index << BIT_SHIFT) + FANOUT
 // Conversely, for each node, the parent node is obtained by:
-//     (index - 1) >> BIT_SHIFT
+//     parent: (index - 1) >> BIT_SHIFT
+// and the subtree weight is stored at
+//     offset: (index - 1) & BIT_MASK
+// of its parent node.
 const BIT_SHIFT: usize = 4;
 const FANOUT: usize = 1 << BIT_SHIFT;
 const BIT_MASK: usize = FANOUT - 1;
@@ -26,37 +29,46 @@ const BIT_MASK: usize = FANOUT - 1;
 ///     non-zero weighted indices.
 #[derive(Clone)]
 pub struct WeightedShuffle<T> {
+    // Number of "internal" nodes of the tree.
+    num_nodes: usize,
     // Underlying array implementing the tree.
+    // Nodes without children are never accessed and don't need to be
+    // allocated, so tree.len() < num_nodes.
     // tree[i][j] is the sum of all weights in the j'th sub-tree of node i.
-    tree: Vec<[T; FANOUT - 1]>,
+    tree: Vec<[T; FANOUT]>,
     // Current sum of all weights, excluding already sampled ones.
     weight: T,
     // Indices of zero weighted entries.
     zeros: Vec<usize>,
 }
 
+impl<T: ConstZero> WeightedShuffle<T> {
+    const ZERO: T = <T as ConstZero>::ZERO;
+}
+
 impl<T> WeightedShuffle<T>
 where
-    T: Copy + Default + PartialOrd + AddAssign + CheckedAdd,
+    T: Copy + ConstZero + PartialOrd + AddAssign + CheckedAdd,
 {
     /// If weights are negative or overflow the total sum
     /// they are treated as zero.
     pub fn new(name: &'static str, weights: &[T]) -> Self {
-        let zero = <T as Default>::default();
-        let mut tree = vec![[zero; FANOUT - 1]; get_tree_size(weights.len())];
-        let mut sum = zero;
+        let (num_nodes, size) = get_num_nodes_and_tree_size(weights.len());
+        debug_assert!(size <= num_nodes);
+        let mut tree = vec![[Self::ZERO; FANOUT]; size];
+        let mut sum = Self::ZERO;
         let mut zeros = Vec::default();
-        let mut num_negative = 0;
-        let mut num_overflow = 0;
+        let mut num_negative: usize = 0;
+        let mut num_overflow: usize = 0;
         for (k, &weight) in weights.iter().enumerate() {
             #[allow(clippy::neg_cmp_op_on_partial_ord)]
             // weight < zero does not work for NaNs.
-            if !(weight >= zero) {
+            if !(weight >= Self::ZERO) {
                 zeros.push(k);
                 num_negative += 1;
                 continue;
             }
-            if weight == zero {
+            if weight == Self::ZERO {
                 zeros.push(k);
                 continue;
             }
@@ -70,13 +82,11 @@ where
             };
             // Traverse the tree from the leaf node upwards to the root,
             // updating the sub-tree sums along the way.
-            let mut index = tree.len() + k; // leaf node
+            let mut index = num_nodes + k; // leaf node
             while index != 0 {
-                let offset = index & BIT_MASK;
+                let offset = (index - 1) & BIT_MASK;
                 index = (index - 1) >> BIT_SHIFT; // parent node
-                if offset > 0 {
-                    tree[index][offset - 1] += weight;
-                }
+                tree[index][offset] += weight;
             }
         }
         if num_negative > 0 {
@@ -86,6 +96,7 @@ where
             datapoint_error!("weighted-shuffle-overflow", (name, num_overflow, i64));
         }
         Self {
+            num_nodes,
             tree,
             weight: sum,
             zeros,
@@ -95,7 +106,7 @@ where
 
 impl<T> WeightedShuffle<T>
 where
-    T: Copy + Default + PartialOrd + AddAssign + SubAssign + Sub<Output = T>,
+    T: Copy + ConstZero + PartialOrd + AddAssign + SubAssign + Sub<Output = T>,
 {
     // Removes given weight at index k.
     fn remove(&mut self, k: usize, weight: T) {
@@ -103,73 +114,49 @@ where
         self.weight -= weight;
         // Traverse the tree from the leaf node upwards to the root,
         // updating the sub-tree sums along the way.
-        let mut index = self.tree.len() + k; // leaf node
+        let mut index = self.num_nodes + k; // leaf node
         while index != 0 {
-            let offset = index & BIT_MASK;
+            let offset = (index - 1) & BIT_MASK;
             index = (index - 1) >> BIT_SHIFT; // parent node
-            if offset > 0 {
-                debug_assert!(self.tree[index][offset - 1] >= weight);
-                self.tree[index][offset - 1] -= weight;
-            }
+            debug_assert!(self.tree[index][offset] >= weight);
+            self.tree[index][offset] -= weight;
         }
     }
 
     // Returns smallest index such that sum of weights[..=k] > val,
     // along with its respective weight.
     fn search(&self, mut val: T) -> (/*index:*/ usize, /*weight:*/ T) {
-        let zero = <T as Default>::default();
-        debug_assert!(val >= zero);
+        debug_assert!(val >= Self::ZERO);
         debug_assert!(val < self.weight);
         // Traverse the tree downwards from the root while maintaining the
         // weight of the subtree which contains the target leaf node.
         let mut index = 0; // root
         let mut weight = self.weight;
-        'outer: while index < self.tree.len() {
-            for (j, &node) in self.tree[index].iter().enumerate() {
+        while let Some(tree) = self.tree.get(index) {
+            for (j, &node) in tree.iter().enumerate() {
                 if val < node {
-                    // Traverse to the j+1 subtree of self.tree[index].
+                    // Traverse to the j'th subtree of self.tree[index].
                     weight = node;
                     index = (index << BIT_SHIFT) + j + 1;
-                    continue 'outer;
+                    break;
                 } else {
                     debug_assert!(weight >= node);
                     weight -= node;
                     val -= node;
                 }
             }
-            // Traverse to the right-most subtree of self.tree[index].
-            index = (index << BIT_SHIFT) + FANOUT;
         }
-        (index - self.tree.len(), weight)
+        (index - self.num_nodes, weight)
     }
 
     pub fn remove_index(&mut self, k: usize) {
-        // Traverse the tree from the leaf node upwards to the root, while
-        // maintaining the sum of weights of subtrees *not* containing the leaf
-        // node.
-        let mut index = self.tree.len() + k; // leaf node
-        let mut weight = <T as Default>::default(); // zero
-        while index != 0 {
-            let offset = index & BIT_MASK;
-            index = (index - 1) >> BIT_SHIFT; // parent node
-            if offset > 0 {
-                if self.tree[index][offset - 1] != weight {
-                    self.remove(k, self.tree[index][offset - 1] - weight);
-                } else {
-                    self.remove_zero(k);
-                }
-                return;
-            }
-            // The leaf node is in the right-most subtree of self.tree[index].
-            for &node in &self.tree[index] {
-                weight += node;
-            }
-        }
-        // The leaf node is the right-most node of the whole tree.
-        if self.weight != weight {
-            self.remove(k, self.weight - weight);
-        } else {
+        let index = self.num_nodes + k; // leaf node
+        let offset = (index - 1) & BIT_MASK;
+        let index = (index - 1) >> BIT_SHIFT; // parent node
+        if self.tree[index][offset] == Self::ZERO {
             self.remove_zero(k);
+        } else {
+            self.remove(k, self.tree[index][offset]);
         }
     }
 
@@ -182,13 +169,12 @@ where
 
 impl<T> WeightedShuffle<T>
 where
-    T: Copy + Default + PartialOrd + AddAssign + SampleUniform + SubAssign + Sub<Output = T>,
+    T: Copy + ConstZero + PartialOrd + AddAssign + SampleUniform + SubAssign + Sub<Output = T>,
 {
     // Equivalent to weighted_shuffle.shuffle(&mut rng).next()
     pub fn first<R: Rng>(&self, rng: &mut R) -> Option<usize> {
-        let zero = <T as Default>::default();
-        if self.weight > zero {
-            let sample = <T as SampleUniform>::Sampler::sample_single(zero, self.weight, rng);
+        if self.weight > Self::ZERO {
+            let sample = <T as SampleUniform>::Sampler::sample_single(Self::ZERO, self.weight, rng);
             let (index, _weight) = WeightedShuffle::search(self, sample);
             return Some(index);
         }
@@ -202,13 +188,13 @@ where
 
 impl<'a, T: 'a> WeightedShuffle<T>
 where
-    T: Copy + Default + PartialOrd + AddAssign + SampleUniform + SubAssign + Sub<Output = T>,
+    T: Copy + ConstZero + PartialOrd + AddAssign + SampleUniform + SubAssign + Sub<Output = T>,
 {
     pub fn shuffle<R: Rng>(mut self, rng: &'a mut R) -> impl Iterator<Item = usize> + 'a {
         std::iter::from_fn(move || {
-            let zero = <T as Default>::default();
-            if self.weight > zero {
-                let sample = <T as SampleUniform>::Sampler::sample_single(zero, self.weight, rng);
+            if self.weight > Self::ZERO {
+                let sample =
+                    <T as SampleUniform>::Sampler::sample_single(Self::ZERO, self.weight, rng);
                 let (index, weight) = WeightedShuffle::search(&self, sample);
                 self.remove(index, weight);
                 return Some(index);
@@ -223,16 +209,18 @@ where
     }
 }
 
-// Maps number of items to the "internal" size of the tree
+// Maps number of items to the number of "internal" nodes of the tree
 // which "implicitly" holds those items on the leaves.
-fn get_tree_size(count: usize) -> usize {
-    let mut size = if count == 1 { 1 } else { 0 };
-    let mut nodes = 1;
-    while nodes < count {
+// Nodes without children are never accessed and don't need to be
+// allocated, so the tree size is the second smaller number.
+fn get_num_nodes_and_tree_size(count: usize) -> (/*num_nodes:*/ usize, /*tree_size:*/ usize) {
+    let mut size: usize = 0;
+    let mut nodes: usize = 1;
+    while nodes * FANOUT < count {
         size += nodes;
         nodes *= FANOUT;
     }
-    size
+    (size + nodes, size + (count + FANOUT - 1) / FANOUT)
 }
 
 #[cfg(test)]
@@ -278,19 +266,25 @@ mod tests {
     }
 
     #[test]
-    fn test_get_tree_size() {
-        assert_eq!(get_tree_size(0), 0);
+    fn test_get_num_nodes_and_tree_size() {
+        assert_eq!(get_num_nodes_and_tree_size(0), (1, 0));
         for count in 1..=16 {
-            assert_eq!(get_tree_size(count), 1);
+            assert_eq!(get_num_nodes_and_tree_size(count), (1, 1));
         }
+        let num_nodes = 1 + 16;
         for count in 17..=256 {
-            assert_eq!(get_tree_size(count), 1 + 16);
+            let tree_size = 1 + (count + 15) / 16;
+            assert_eq!(get_num_nodes_and_tree_size(count), (num_nodes, tree_size));
         }
+        let num_nodes = 1 + 16 + 16 * 16;
         for count in 257..=4096 {
-            assert_eq!(get_tree_size(count), 1 + 16 + 16 * 16);
+            let tree_size = 1 + 16 + (count + 15) / 16;
+            assert_eq!(get_num_nodes_and_tree_size(count), (num_nodes, tree_size));
         }
+        let num_nodes = 1 + 16 + 16 * 16 + 16 * 16 * 16;
         for count in 4097..=65536 {
-            assert_eq!(get_tree_size(count), 1 + 16 + 16 * 16 + 16 * 16 * 16);
+            let tree_size = 1 + 16 + 16 * 16 + (count + 15) / 16;
+            assert_eq!(get_num_nodes_and_tree_size(count), (num_nodes, tree_size));
         }
     }
 

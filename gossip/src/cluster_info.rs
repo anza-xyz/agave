@@ -87,7 +87,7 @@ use {
         collections::{HashMap, HashSet, VecDeque},
         fmt::Debug,
         fs::{self, File},
-        io::BufReader,
+        io::{BufReader, BufWriter, Write},
         iter::repeat,
         net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket},
         num::NonZeroUsize,
@@ -308,6 +308,7 @@ impl ClusterInfo {
     }
 
     pub fn save_contact_info(&self) {
+        let _st = ScopedTimer::from(&self.stats.save_contact_info_time);
         let nodes = {
             let entrypoint_gossip_addrs = self
                 .entrypoints
@@ -349,14 +350,18 @@ impl ClusterInfo {
         let tmp_filename = &filename.with_extension("tmp");
 
         match File::create(tmp_filename) {
-            Ok(mut file) => {
-                if let Err(err) = bincode::serialize_into(&mut file, &nodes) {
+            Ok(file) => {
+                let mut writer = BufWriter::new(file);
+                if let Err(err) = bincode::serialize_into(&mut writer, &nodes) {
                     warn!(
                         "Failed to serialize contact info info {}: {}",
                         tmp_filename.display(),
                         err
                     );
                     return;
+                }
+                if let Err(err) = writer.flush() {
+                    warn!("Failed to save contact info: {err}");
                 }
             }
             Err(err) => {

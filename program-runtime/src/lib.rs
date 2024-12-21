@@ -5,7 +5,7 @@
 #[macro_use]
 extern crate solana_metrics;
 
-pub use solana_rbpf;
+pub use solana_sbpf;
 pub mod invoke_context;
 pub mod loaded_programs;
 pub mod mem_pool;

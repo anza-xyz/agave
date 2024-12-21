@@ -61,7 +61,7 @@ use {
         collections::HashMap,
         io::{Error, ErrorKind, Result},
         iter,
-        net::{IpAddr, Ipv4Addr},
+        net::{IpAddr, Ipv4Addr, SocketAddr},
         path::{Path, PathBuf},
         sync::{Arc, RwLock},
         time::Instant,
@@ -493,7 +493,9 @@ impl LocalCluster {
         mut voting_keypair: Option<Arc<Keypair>>,
         socket_addr_space: SocketAddrSpace,
     ) -> Pubkey {
-        let client = self.build_tpu_quic_client().expect("tpu_client");
+        let client = self
+            .build_validator_tpu_quic_client(self.entry_point_info.pubkey())
+            .expect("tpu_client");
 
         // Must have enough tokens to fund vote account and set delegate
         let should_create_vote_pubkey = voting_keypair.is_none();
@@ -592,7 +594,9 @@ impl LocalCluster {
     }
 
     pub fn transfer(&self, source_keypair: &Keypair, dest_pubkey: &Pubkey, lamports: u64) -> u64 {
-        let client = self.build_tpu_quic_client().expect("new tpu quic client");
+        let client = self
+            .build_validator_tpu_quic_client(self.entry_point_info.pubkey())
+            .expect("new tpu quic client");
         Self::transfer_with_client(&client, source_keypair, dest_pubkey, lamports)
     }
 
@@ -941,12 +945,12 @@ impl LocalCluster {
         }
     }
 
-    fn build_tpu_client<F>(&self, rpc_client_builder: F) -> Result<QuicTpuClient>
-    where
-        F: FnOnce(String) -> Arc<RpcClient>,
-    {
-        let rpc_pubsub_url = format!("ws://{}/", self.entry_point_info.rpc_pubsub().unwrap());
-        let rpc_url = format!("http://{}", self.entry_point_info.rpc().unwrap());
+    fn build_tpu_client(
+        &self,
+        rpc_client: Arc<RpcClient>,
+        rpc_pubsub_addr: SocketAddr,
+    ) -> Result<QuicTpuClient> {
+        let rpc_pubsub_url = format!("ws://{}/", rpc_pubsub_addr);
 
         let cache = match &*self.connection_cache {
             ConnectionCache::Quic(cache) => cache,
@@ -959,7 +963,7 @@ impl LocalCluster {
         };
 
         let tpu_client = TpuClient::new_with_connection_cache(
-            rpc_client_builder(rpc_url),
+            rpc_client,
             rpc_pubsub_url.as_str(),
             TpuClientConfig::default(),
             cache.clone(),
@@ -975,24 +979,22 @@ impl Cluster for LocalCluster {
         self.validators.keys().cloned().collect()
     }
 
-    fn get_validator_client(&self, pubkey: &Pubkey) -> Option<QuicTpuClient> {
-        self.validators.get(pubkey).map(|_| {
-            self.build_tpu_quic_client()
-                .expect("should build tpu quic client")
-        })
+    fn build_validator_tpu_quic_client(&self, pubkey: &Pubkey) -> Result<QuicTpuClient> {
+        let contact_info = self.get_contact_info(pubkey).unwrap();
+        let rpc_url: String = format!("http://{}", contact_info.rpc().unwrap());
+        let rpc_client = Arc::new(RpcClient::new(rpc_url));
+        self.build_tpu_client(rpc_client, contact_info.rpc_pubsub().unwrap())
     }
 
-    fn build_tpu_quic_client(&self) -> Result<QuicTpuClient> {
-        self.build_tpu_client(|rpc_url| Arc::new(RpcClient::new(rpc_url)))
-    }
-
-    fn build_tpu_quic_client_with_commitment(
+    fn build_validator_tpu_quic_client_with_commitment(
         &self,
+        pubkey: &Pubkey,
         commitment_config: CommitmentConfig,
     ) -> Result<QuicTpuClient> {
-        self.build_tpu_client(|rpc_url| {
-            Arc::new(RpcClient::new_with_commitment(rpc_url, commitment_config))
-        })
+        let contact_info = self.get_contact_info(pubkey).unwrap();
+        let rpc_url = format!("http://{}", contact_info.rpc().unwrap());
+        let rpc_client = Arc::new(RpcClient::new_with_commitment(rpc_url, commitment_config));
+        self.build_tpu_client(rpc_client, contact_info.rpc_pubsub().unwrap())
     }
 
     fn exit_node(&mut self, pubkey: &Pubkey) -> ClusterValidatorInfo {

@@ -2,6 +2,11 @@
 inherits = "release"
 debug = true
 split-debuginfo = "packed"
+lto = false # Preserve the 'thin local LTO' for this build.
+
+[profile.release]
+split-debuginfo = "unpacked"
+lto = "thin"
 
 [workspace]
 members = [
@@ -19,6 +24,7 @@ members = [
     "banks-server",
     "bench-streamer",
     "bench-tps",
+    "bench-vote",
     "bloom",
     "bucket_map",
     "builtins",
@@ -174,6 +180,7 @@ members = [
     "sdk/serialize-utils",
     "sdk/sha256-hasher",
     "sdk/short-vec",
+    "sdk/shred-version",
     "sdk/signature",
     "sdk/signer",
     "sdk/slot-hashes",
@@ -186,6 +193,7 @@ members = [
     "sdk/transaction",
     "sdk/transaction-context",
     "sdk/transaction-error",
+    "sdk/validator-exit",
     "send-transaction-service",
     "stake-accounts",
     "storage-bigtable",
@@ -287,14 +295,14 @@ cfg_eval = "0.1.2"
 chrono = { version = "0.4.39", default-features = false }
 chrono-humanize = "0.2.3"
 clap = "2.33.1"
-console = "0.15.8"
+console = "0.15.10"
 console_error_panic_hook = "0.1.7"
 console_log = "0.2.2"
 const_format = "0.2.34"
 core_affinity = "0.5.10"
 criterion = "0.5.1"
 criterion-stats = "0.3.0"
-crossbeam-channel = "0.5.13"
+crossbeam-channel = "0.5.14"
 csv = "1.3.1"
 ctrlc = "3.4.5"
 curve25519-dalek = { version = "4.1.3", features = ["digest", "rand_core"] }
@@ -331,7 +339,7 @@ histogram = "0.6.9"
 hmac = "0.12.1"
 http = "0.2.12"
 humantime = "2.0.1"
-hyper = "0.14.31"
+hyper = "0.14.32"
 hyper-proxy = "0.9.1"
 im = "15.1.0"
 index_list = "0.2.15"
@@ -351,7 +359,7 @@ jsonrpc-ipc-server = "18.0.0"
 jsonrpc-pubsub = "18.0.0"
 lazy-lru = "0.1.3"
 lazy_static = "1.5.0"
-libc = "0.2.168"
+libc = "0.2.169"
 libloading = "0.7.4"
 libsecp256k1 = { version = "0.6.0", default-features = false, features = [
     "std",
@@ -383,7 +391,7 @@ predicates = "2.1"
 pretty-hex = "0.3.0"
 prio-graph = "0.3.0"
 proc-macro2 = "1.0.92"
-proptest = "1.5"
+proptest = "1.6"
 prost = "0.11.9"
 prost-build = "0.11.9"
 prost-types = "0.11.9"
@@ -404,7 +412,7 @@ reqwest = { version = "0.11.27", default-features = false }
 reqwest-middleware = "0.2.5"
 rolling-file = "0.2.0"
 rpassword = "7.3"
-rustls = { version = "0.23.20", default-features = false }
+rustls = { version = "0.23.20", features = ["std"], default-features = false }
 scopeguard = "1.2.0"
 semver = "1.0.24"
 seqlock = "0.2.0"
@@ -569,6 +577,7 @@ solana-rpc-client-api = { path = "rpc-client-api", version = "=2.2.0" }
 solana-rpc-client-nonce-utils = { path = "rpc-client-nonce-utils", version = "=2.2.0" }
 solana-runtime = { path = "runtime", version = "=2.2.0" }
 solana-runtime-transaction = { path = "runtime-transaction", version = "=2.2.0" }
+solana-sbpf = "=0.9.0"
 solana-sdk = { path = "sdk", version = "=2.2.0" }
 solana-sdk-ids = { path = "sdk/sdk-ids", version = "=2.2.0" }
 solana-sdk-macro = { path = "sdk/macro", version = "=2.2.0" }
@@ -576,6 +585,7 @@ solana-secp256k1-program = { path = "sdk/secp256k1-program", version = "=2.2.0" 
 solana-secp256k1-recover = { path = "curves/secp256k1-recover", version = "=2.2.0", default-features = false }
 solana-send-transaction-service = { path = "send-transaction-service", version = "=2.2.0" }
 solana-short-vec = { path = "sdk/short-vec", version = "=2.2.0" }
+solana-shred-version = { path = "sdk/shred-version", version = "=2.2.0" }
 solana-stable-layout = { path = "sdk/stable-layout", version = "=2.2.0" }
 solana-stake-program = { path = "programs/stake", version = "=2.2.0" }
 solana-storage-bigtable = { path = "storage-bigtable", version = "=2.2.0" }
@@ -603,6 +613,7 @@ solana-transaction-metrics-tracker = { path = "transaction-metrics-tracker", ver
 solana-turbine = { path = "turbine", version = "=2.2.0" }
 solana-type-overrides = { path = "type-overrides", version = "=2.2.0" }
 solana-udp-client = { path = "udp-client", version = "=2.2.0" }
+solana-validator-exit = { path = "sdk/validator-exit", version = "=2.2.0" }
 solana-version = { path = "version", version = "=2.2.0" }
 solana-vote = { path = "vote", version = "=2.2.0" }
 solana-vote-program = { path = "programs/vote", version = "=2.2.0" }
@@ -612,7 +623,6 @@ solana-zk-keygen = { path = "zk-keygen", version = "=2.2.0" }
 solana-zk-sdk = { path = "zk-sdk", version = "=2.2.0" }
 solana-zk-token-proof-program = { path = "programs/zk-token-proof", version = "=2.2.0" }
 solana-zk-token-sdk = { path = "zk-token-sdk", version = "=2.2.0" }
-solana_rbpf = "=0.8.5"
 spl-associated-token-account = "=6.0.0"
 spl-instruction-padding = "0.3"
 spl-memo = "=6.0.0"
@@ -631,12 +641,12 @@ symlink = "0.1.0"
 syn = "2.0"
 sys-info = "0.9.1"
 sysctl = "0.4.6"
-systemstat = "0.2.3"
+systemstat = "0.2.4"
 tar = "0.4.43"
 tarpc = "0.29.0"
 tempfile = "3.14.0"
 test-case = "3.3.1"
-thiserror = "2.0.6"
+thiserror = "2.0.8"
 tiny-bip39 = "0.8.2"
 # Update solana-tokio patch below when updating this version
 tokio = "1.29.1"

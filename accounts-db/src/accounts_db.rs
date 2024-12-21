@@ -788,53 +788,49 @@ impl GenerateIndexTimings {
             ("total_us", self.index_time, i64),
             ("scan_stores_us", self.scan_time, i64),
             ("insertion_time_us", self.insertion_time_us, i64),
-            ("min_bin_size_in_mem", self.min_bin_size_in_mem as i64, i64),
-            ("max_bin_size_in_mem", self.max_bin_size_in_mem as i64, i64),
+            ("min_bin_size_in_mem", self.min_bin_size_in_mem, i64),
+            ("max_bin_size_in_mem", self.max_bin_size_in_mem, i64),
             (
                 "storage_size_storages_us",
-                self.storage_size_storages_us as i64,
+                self.storage_size_storages_us,
                 i64
             ),
-            ("index_flush_us", self.index_flush_us as i64, i64),
+            ("index_flush_us", self.index_flush_us, i64),
             (
                 "total_rent_paying",
-                self.rent_paying.load(Ordering::Relaxed) as i64,
+                self.rent_paying.load(Ordering::Relaxed),
                 i64
             ),
             (
                 "amount_to_top_off_rent",
-                self.amount_to_top_off_rent.load(Ordering::Relaxed) as i64,
+                self.amount_to_top_off_rent.load(Ordering::Relaxed),
                 i64
             ),
             (
                 "total_items_including_duplicates",
-                self.total_including_duplicates as i64,
+                self.total_including_duplicates,
                 i64
             ),
-            ("total_items_in_mem", self.total_items_in_mem as i64, i64),
+            ("total_items_in_mem", self.total_items_in_mem, i64),
             (
                 "accounts_data_len_dedup_time_us",
-                self.accounts_data_len_dedup_time_us as i64,
+                self.accounts_data_len_dedup_time_us,
                 i64
             ),
             (
                 "total_duplicate_slot_keys",
-                self.total_duplicate_slot_keys as i64,
+                self.total_duplicate_slot_keys,
                 i64
             ),
             (
                 "total_num_unique_duplicate_keys",
-                self.total_num_unique_duplicate_keys as i64,
+                self.total_num_unique_duplicate_keys,
                 i64
             ),
-            (
-                "num_duplicate_accounts",
-                self.num_duplicate_accounts as i64,
-                i64
-            ),
+            ("num_duplicate_accounts", self.num_duplicate_accounts, i64),
             (
                 "populate_duplicate_keys_us",
-                self.populate_duplicate_keys_us as i64,
+                self.populate_duplicate_keys_us,
                 i64
             ),
             ("total_slots", self.total_slots, i64),
@@ -851,14 +847,10 @@ impl GenerateIndexTimings {
             ),
             (
                 "num_zero_lamport_single_refs",
-                self.num_zero_lamport_single_refs as i64,
+                self.num_zero_lamport_single_refs,
                 i64
             ),
-            (
-                "visit_zero_lamports_us",
-                self.visit_zero_lamports_us as i64,
-                i64
-            ),
+            ("visit_zero_lamports_us", self.visit_zero_lamports_us, i64),
             (
                 "all_accounts_are_zero_lamports_slots",
                 self.all_accounts_are_zero_lamports_slots,
@@ -3109,12 +3101,12 @@ impl AccountsDb {
                 key_timings.dirty_store_processing_us,
                 i64
             ),
-            ("accounts_scan", accounts_scan.as_us() as i64, i64),
-            ("clean_old_rooted", clean_old_rooted.as_us() as i64, i64),
-            ("store_counts", store_counts_time.as_us() as i64, i64),
-            ("purge_filter", purge_filter.as_us() as i64, i64),
-            ("calc_deps", calc_deps_time.as_us() as i64, i64),
-            ("reclaims", reclaims_time.as_us() as i64, i64),
+            ("accounts_scan", accounts_scan.as_us(), i64),
+            ("clean_old_rooted", clean_old_rooted.as_us(), i64),
+            ("store_counts", store_counts_time.as_us(), i64),
+            ("purge_filter", purge_filter.as_us(), i64),
+            ("calc_deps", calc_deps_time.as_us(), i64),
+            ("reclaims", reclaims_time.as_us(), i64),
             ("delta_insert_us", key_timings.delta_insert_us, i64),
             ("delta_key_count", key_timings.delta_key_count, i64),
             ("dirty_pubkeys_count", key_timings.dirty_pubkeys_count, i64),
@@ -6240,11 +6232,7 @@ impl AccountsDb {
                 unflushable_unrooted_slot_count,
                 i64
             ),
-            (
-                "flush_roots_elapsed",
-                flush_roots_elapsed.as_us() as i64,
-                i64
-            ),
+            ("flush_roots_elapsed", flush_roots_elapsed.as_us(), i64),
             ("account_bytes_saved", account_bytes_saved, i64),
             ("num_accounts_saved", num_accounts_saved, i64),
             (
@@ -7534,15 +7522,6 @@ impl AccountsDb {
                 })
                 .collect(),
         }
-    }
-
-    /// Wrapper function to calculate accounts delta hash for `slot` (only used for testing and benchmarking.)
-    ///
-    /// As part of calculating the accounts delta hash, get a list of accounts modified this slot
-    /// (aka dirty pubkeys) and add them to `self.uncleaned_pubkeys` for future cleaning.
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn calculate_accounts_delta_hash(&self, slot: Slot) -> AccountsDeltaHash {
-        self.calculate_accounts_delta_hash_internal(slot, None, HashMap::default())
     }
 
     /// Calculate accounts delta hash for `slot`
@@ -9299,6 +9278,21 @@ impl AccountStorageEntry {
 // These functions/fields are only usable from a dev context (i.e. tests and benches)
 #[cfg(feature = "dev-context-only-utils")]
 impl AccountsDb {
+    /// useful to adapt tests written prior to introduction of the write cache
+    /// to use the write cache
+    pub fn add_root_and_flush_write_cache(&self, slot: Slot) {
+        self.add_root(slot);
+        self.flush_root_write_cache(slot);
+    }
+
+    /// Wrapper function to calculate accounts delta hash for `slot` (only used for testing and benchmarking.)
+    ///
+    /// As part of calculating the accounts delta hash, get a list of accounts modified this slot
+    /// (aka dirty pubkeys) and add them to `self.uncleaned_pubkeys` for future cleaning.
+    pub fn calculate_accounts_delta_hash(&self, slot: Slot) -> AccountsDeltaHash {
+        self.calculate_accounts_delta_hash_internal(slot, None, HashMap::default())
+    }
+
     pub fn load_without_fixed_root(
         &self,
         ancestors: &Ancestors,
@@ -9434,13 +9428,6 @@ impl AccountsDb {
                     .map(|slot_cache| slot_cache.len())
                     .unwrap_or_default(),
             )
-    }
-
-    /// useful to adapt tests written prior to introduction of the write cache
-    /// to use the write cache
-    pub fn add_root_and_flush_write_cache(&self, slot: Slot) {
-        self.add_root(slot);
-        self.flush_root_write_cache(slot);
     }
 
     /// useful to adapt tests written prior to introduction of the write cache

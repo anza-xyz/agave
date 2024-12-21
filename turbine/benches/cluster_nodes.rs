@@ -7,6 +7,7 @@ use {
     solana_gossip::contact_info::ContactInfo,
     solana_ledger::shred::{Shred, ShredFlags},
     solana_sdk::{clock::Slot, genesis_config::ClusterType, pubkey::Pubkey},
+    solana_streamer::socket::SocketAddrSpace,
     solana_turbine::{
         cluster_nodes::{make_test_cluster, new_cluster_nodes, ClusterNodes},
         retransmit_stage::RetransmitStage,
@@ -45,8 +46,12 @@ fn get_retransmit_peers_deterministic(
             0,
             0,
         );
-        let _retransmit_peers =
-            cluster_nodes.get_retransmit_peers(slot_leader, &shred.id(), /*fanout:*/ 200);
+        let _retransmit_peers = cluster_nodes.get_retransmit_addrs(
+            slot_leader,
+            &shred.id(),
+            200, // fanout
+            &SocketAddrSpace::Unspecified,
+        );
     }
 }
 

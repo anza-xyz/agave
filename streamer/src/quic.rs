@@ -19,7 +19,7 @@ use {
     solana_quic_definitions::{
         NotifyKeyUpdate, QUIC_MAX_TIMEOUT, QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS,
     },
-    solana_tls_utils::{new_dummy_x509_certificate, SkipClientVerification},
+    solana_tls_utils::{new_dummy_x509_certificate, tls_server_config_builder},
     std::{
         net::UdpSocket,
         sync::{
@@ -58,9 +58,8 @@ pub(crate) fn configure_server(
     }];
     let cert_chain_pem = pem::encode_many(&cert_chain_pem_parts);
 
-    let mut server_tls_config = rustls::ServerConfig::builder()
-        .with_client_cert_verifier(SkipClientVerification::new())
-        .with_single_cert(vec![cert], priv_key)?;
+    let mut server_tls_config =
+        tls_server_config_builder().with_single_cert(vec![cert], priv_key)?;
     server_tls_config.alpn_protocols = vec![ALPN_TPU_PROTOCOL_ID.to_vec()];
     server_tls_config.key_log = Arc::new(KeyLogFile::new());
     let quic_server_config = QuicServerConfig::try_from(server_tls_config)?;

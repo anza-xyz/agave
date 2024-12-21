@@ -1,7 +1,8 @@
 use {
+    crate::crypto_provider,
     rustls::{
         client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
-        crypto::{ring, verify_tls12_signature, verify_tls13_signature, CryptoProvider},
+        crypto::{verify_tls12_signature, verify_tls13_signature, CryptoProvider},
         pki_types::{CertificateDer, ServerName, UnixTime},
         DigitallySignedStruct, Error, SignatureScheme,
     },
@@ -19,7 +20,7 @@ pub struct SkipServerVerification(Arc<CryptoProvider>);
 
 impl SkipServerVerification {
     pub fn new() -> Arc<Self> {
-        Arc::new(Self(Arc::new(ring::default_provider())))
+        Arc::new(Self(Arc::new(crypto_provider())))
     }
 }
 

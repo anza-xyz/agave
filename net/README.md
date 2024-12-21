@@ -175,7 +175,7 @@ You will want to have a script like this pretty much immediately to avoid making
 ./gce.sh create -n4 -c2 --custom-machine-type "--machine-type n1-standard-16" --client-machine-type "--machine-type n1-standard-4"
 # Patch metrics config from env into config file
 ./init-metrics.sh -e
-# Enable metrics and stat the network (this will also build software)
+# Enable metrics and start the network (this will also build software)
 RUST_LOG=info ./net.sh start  -c bench-tps=2="--tx_count 25000"
 ```
 
