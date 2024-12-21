@@ -56,20 +56,36 @@ MacOS or WSL users may build from source.
 
 ## Networking
 Internet service should be at least 1GBbit/s symmetric, commercial. 10GBit/s preferred (especially for mainnet-beta).
+A dedicated public IP address is preferred.
 
-### Port Forwarding
-The following ports need to be open to the internet for both inbound and outbound
-
+### Firewall
 It is not recommended to run a validator behind a NAT. Operators who choose to
 do so should be comfortable configuring their networking equipment and debugging
 any traversal issues on their own.
 
+The following traffic needs to be allowed. Furthermore, there should not be any traffic filtering from your validator to internet.
+
 #### Required
-- 8000-10000 TCP/UDP - P2P protocols (gossip, turbine, repair, etc). This can
-be limited to any free 13 port range with `--dynamic-port-range`
+
+| Source | Destination         | Protocol    | Port(s)    | Comment                                                                                                                  |
+|--------|---------------------|-------------|------------|--------------------------------------------------------------------------------------------------------------------------|
+| any    | your validator's IP | TCP and UDP | 8000-10000 | P2P protocols (gossip, turbine, repair, etc). This can be limited to any free 13 port range with  `--dynamic-port-range` |
+
+#### Recommended
+When you manage your validator via SSH it is recommended to limit the allowed SSH traffic to your validator management IP.
+
+| Source          | Destination                    | Protocol | Port(s) | Comment                                                                     |
+|-----------------|--------------------------------|----------|---------|-----------------------------------------------------------------------------|
+| your IP address | your validator's management IP | TCP      | 22      | SSH management traffic. Port can be different depending on your SSH config. |
+
+***Please note that your source IP address should be a static public IP address. Please check with your service provider if you're not sure if your public IP address is static.***
 
 #### Optional
 For security purposes, it is not suggested that the following ports be open to
 the internet on staked, mainnet-beta validators.
-- 8899 TCP - JSONRPC over HTTP. Change with `--rpc-port RPC_PORT``
-- 8900 TCP - JSONRPC over Websockets. Derived. Uses `RPC_PORT + 1`
+
+| Source   | Destination         | Protocol | Port(s) | Comment                                                |
+|----------|---------------------|----------|---------|--------------------------------------------------------|
+| RPC user | your validator's IP | TCP      | 8899    | JSONRPC over HTTP. Change with `--rpc-port RPC_PORT`   |
+| RPC user | your validator's IP | TCP      | 8900    | JSONRPC over Websockets. Derived. Uses  `RPC_PORT + 1` |
+
