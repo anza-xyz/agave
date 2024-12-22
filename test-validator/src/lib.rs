@@ -13,9 +13,7 @@ use {
     solana_core::{
         admin_rpc_post_init::AdminRpcRequestMetadataPostInit,
         consensus::tower_storage::TowerStorage,
-        validator::{
-            build_validator_tpu_config_for_test, Validator, ValidatorConfig, ValidatorStartProgress,
-        },
+        validator::{Validator, ValidatorConfig, ValidatorStartProgress, ValidatorTpuConfig},
     },
     solana_feature_set::FEATURE_NAMES,
     solana_geyser_plugin_manager::{
@@ -1045,7 +1043,7 @@ impl TestValidator {
             rpc_to_plugin_manager_receiver,
             config.start_progress.clone(),
             socket_addr_space,
-            build_validator_tpu_config_for_test(config.tpu_enable_udp),
+            ValidatorTpuConfig::new_for_tests(config.tpu_enable_udp),
             config.admin_rpc_service_post_init.clone(),
         )?);
 

@@ -497,31 +497,33 @@ pub struct ValidatorTpuConfig {
     pub vote_quic_server_config: QuicServerParams,
 }
 
-/// A convenient function to build a ValidatorTpuConfig for testing with good
-/// default.
-pub fn build_validator_tpu_config_for_test(tpu_enable_udp: bool) -> ValidatorTpuConfig {
-    let tpu_quic_server_config = QuicServerParams {
-        max_connections_per_ipaddr_per_min: 32,
-        ..Default::default()
-    };
+impl ValidatorTpuConfig {
+    /// A convenient function to build a ValidatorTpuConfig for testing with good
+    /// default.
+    pub fn new_for_tests(tpu_enable_udp: bool) -> Self {
+        let tpu_quic_server_config = QuicServerParams {
+            max_connections_per_ipaddr_per_min: 32,
+            ..Default::default()
+        };
 
-    let tpu_fwd_quic_server_config = QuicServerParams {
-        max_connections_per_ipaddr_per_min: 32,
-        max_unstaked_connections: 0,
-        ..Default::default()
-    };
+        let tpu_fwd_quic_server_config = QuicServerParams {
+            max_connections_per_ipaddr_per_min: 32,
+            max_unstaked_connections: 0,
+            ..Default::default()
+        };
 
-    // vote and tpu_fwd share the same characteristics -- disallow non-staked connections:
-    let vote_quic_server_config = tpu_fwd_quic_server_config.clone();
+        // vote and tpu_fwd share the same characteristics -- disallow non-staked connections:
+        let vote_quic_server_config = tpu_fwd_quic_server_config.clone();
 
-    ValidatorTpuConfig {
-        use_quic: DEFAULT_TPU_USE_QUIC,
-        vote_use_quic: DEFAULT_VOTE_USE_QUIC,
-        tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
-        tpu_enable_udp,
-        tpu_quic_server_config,
-        tpu_fwd_quic_server_config,
-        vote_quic_server_config,
+        ValidatorTpuConfig {
+            use_quic: DEFAULT_TPU_USE_QUIC,
+            vote_use_quic: DEFAULT_VOTE_USE_QUIC,
+            tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
+            tpu_enable_udp,
+            tpu_quic_server_config,
+            tpu_fwd_quic_server_config,
+            vote_quic_server_config,
+        }
     }
 }
 
@@ -2833,7 +2835,7 @@ mod tests {
             None, // rpc_to_plugin_manager_receiver
             start_progress.clone(),
             SocketAddrSpace::Unspecified,
-            build_validator_tpu_config_for_test(DEFAULT_TPU_ENABLE_UDP),
+            ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
             Arc::new(RwLock::new(None)),
         )
         .expect("assume successful validator start");
@@ -3049,7 +3051,7 @@ mod tests {
                     None, // rpc_to_plugin_manager_receiver
                     Arc::new(RwLock::new(ValidatorStartProgress::default())),
                     SocketAddrSpace::Unspecified,
-                    build_validator_tpu_config_for_test(DEFAULT_TPU_ENABLE_UDP),
+                    ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
                     Arc::new(RwLock::new(None)),
                 )
                 .expect("assume successful validator start")

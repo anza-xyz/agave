@@ -1970,13 +1970,14 @@ pub fn main() {
 
     let tpu_max_connections_per_peer =
         value_t_or_exit!(matches, "tpu_max_connections_per_peer", u64);
-    let max_tpu_staked_connections = value_t_or_exit!(matches, "max_tpu_staked_connections", u64);
-    let max_tpu_unstaked_connections =
-        value_t_or_exit!(matches, "max_tpu_unstaked_connections", u64);
+    let tpu_max_staked_connections = value_t_or_exit!(matches, "tpu_max_staked_connections", u64);
+    let tpu_max_unstaked_connections =
+        value_t_or_exit!(matches, "tpu_max_unstaked_connections", u64);
 
-    let max_fwd_staked_connections = value_t_or_exit!(matches, "max_fwd_staked_connections", u64);
-    let max_fwd_unstaked_connections =
-        value_t_or_exit!(matches, "max_fwd_unstaked_connections", u64);
+    let tpu_max_fwd_staked_connections =
+        value_t_or_exit!(matches, "tpu_max_fwd_staked_connections", u64);
+    let tpu_max_fwd_unstaked_connections =
+        value_t_or_exit!(matches, "tpu_max_fwd_unstaked_connections", u64);
 
     let tpu_max_connections_per_ipaddr_per_minute: u64 =
         value_t_or_exit!(matches, "tpu_max_connections_per_ipaddr_per_minute", u64);
@@ -2087,8 +2088,8 @@ pub fn main() {
 
     let tpu_quic_server_config = QuicServerParams {
         max_connections_per_peer: tpu_max_connections_per_peer.try_into().unwrap(),
-        max_staked_connections: max_tpu_staked_connections.try_into().unwrap(),
-        max_unstaked_connections: max_tpu_unstaked_connections.try_into().unwrap(),
+        max_staked_connections: tpu_max_staked_connections.try_into().unwrap(),
+        max_unstaked_connections: tpu_max_unstaked_connections.try_into().unwrap(),
         max_streams_per_ms,
         max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
         coalesce: tpu_coalesce,
@@ -2097,8 +2098,8 @@ pub fn main() {
 
     let tpu_fwd_quic_server_config = QuicServerParams {
         max_connections_per_peer: tpu_max_connections_per_peer.try_into().unwrap(),
-        max_staked_connections: max_fwd_staked_connections.try_into().unwrap(),
-        max_unstaked_connections: max_fwd_unstaked_connections.try_into().unwrap(),
+        max_staked_connections: tpu_max_fwd_staked_connections.try_into().unwrap(),
+        max_unstaked_connections: tpu_max_fwd_unstaked_connections.try_into().unwrap(),
         max_streams_per_ms,
         max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
         coalesce: tpu_coalesce,

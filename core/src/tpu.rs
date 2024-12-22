@@ -111,7 +111,7 @@ impl Tpu {
         tpu_enable_udp: bool,
         tpu_quic_server_config: QuicServerParams,
         tpu_fwd_quic_server_config: QuicServerParams,
-        voe_quic_server_config: QuicServerParams,
+        vote_quic_server_config: QuicServerParams,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
         block_production_method: BlockProductionMethod,
         enable_block_production_forwarding: bool,
@@ -174,7 +174,7 @@ impl Tpu {
             vote_packet_sender.clone(),
             exit.clone(),
             staked_nodes.clone(),
-            voe_quic_server_config,
+            vote_quic_server_config,
         )
         .unwrap();
 

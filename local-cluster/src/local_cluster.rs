@@ -11,9 +11,7 @@ use {
     solana_client::connection_cache::ConnectionCache,
     solana_core::{
         consensus::tower_storage::FileTowerStorage,
-        validator::{
-            build_validator_tpu_config_for_test, Validator, ValidatorConfig, ValidatorStartProgress,
-        },
+        validator::{Validator, ValidatorConfig, ValidatorStartProgress, ValidatorTpuConfig},
     },
     solana_gossip::{
         cluster_info::Node,
@@ -345,7 +343,7 @@ impl LocalCluster {
             socket_addr_space,
             // We are turning tpu_enable_udp to true in order to prevent concurrent local cluster tests
             // to use the same QUIC ports due to SO_REUSEPORT.
-            build_validator_tpu_config_for_test(true),
+            ValidatorTpuConfig::new_for_tests(true),
             Arc::new(RwLock::new(None)),
         )
         .expect("assume successful validator start");
@@ -549,7 +547,7 @@ impl LocalCluster {
             None, // rpc_to_plugin_manager_receiver
             Arc::new(RwLock::new(ValidatorStartProgress::default())),
             socket_addr_space,
-            build_validator_tpu_config_for_test(DEFAULT_TPU_ENABLE_UDP),
+            ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
             Arc::new(RwLock::new(None)),
         )
         .expect("assume successful validator start");
@@ -1079,7 +1077,7 @@ impl Cluster for LocalCluster {
             None, // rpc_to_plugin_manager_receiver
             Arc::new(RwLock::new(ValidatorStartProgress::default())),
             socket_addr_space,
-            build_validator_tpu_config_for_test(DEFAULT_TPU_ENABLE_UDP),
+            ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
             Arc::new(RwLock::new(None)),
         )
         .expect("assume successful validator start");

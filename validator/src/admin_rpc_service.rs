@@ -871,7 +871,7 @@ mod tests {
         },
         solana_core::{
             consensus::tower_storage::NullTowerStorage,
-            validator::{build_validator_tpu_config_for_test, Validator, ValidatorConfig},
+            validator::{Validator, ValidatorConfig, ValidatorTpuConfig},
         },
         solana_gossip::cluster_info::{ClusterInfo, Node},
         solana_inline_spl::token,
@@ -1395,7 +1395,7 @@ mod tests {
                 None, // rpc_to_plugin_manager_receiver
                 start_progress.clone(),
                 SocketAddrSpace::Unspecified,
-                build_validator_tpu_config_for_test(DEFAULT_TPU_ENABLE_UDP),
+                ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
                 post_init,
             )
             .expect("assume successful validator start");
