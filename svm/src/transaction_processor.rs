@@ -429,6 +429,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     ) -> transaction::Result<ValidatedTransactionDetails> {
         let compute_budget_limits = process_compute_budget_instructions(
             message.program_instructions_iter(),
+            &account_loader.feature_set,
         )
         .map_err(|err| {
             error_counters.invalid_compute_budget += 1;
@@ -1980,8 +1981,16 @@ mod tests {
             Some(&Pubkey::new_unique()),
             &Hash::new_unique(),
         ));
+<<<<<<< HEAD
         let compute_budget_limits =
             process_compute_budget_instructions(message.program_instructions_iter()).unwrap();
+=======
+        let compute_budget_limits = process_compute_budget_instructions(
+            SVMMessage::program_instructions_iter(&message),
+            &FeatureSet::default(),
+        )
+        .unwrap();
+>>>>>>> 3e9af14f3a (Fix reserve minimal compute units for builtins  (#3799))
         let fee_payer_address = message.fee_payer();
         let current_epoch = 42;
         let rent_collector = RentCollector {
@@ -2061,8 +2070,16 @@ mod tests {
             Some(&Pubkey::new_unique()),
             &Hash::new_unique(),
         ));
+<<<<<<< HEAD
         let compute_budget_limits =
             process_compute_budget_instructions(message.program_instructions_iter()).unwrap();
+=======
+        let compute_budget_limits = process_compute_budget_instructions(
+            SVMMessage::program_instructions_iter(&message),
+            &FeatureSet::default(),
+        )
+        .unwrap();
+>>>>>>> 3e9af14f3a (Fix reserve minimal compute units for builtins  (#3799))
         let fee_payer_address = message.fee_payer();
         let mut rent_collector = RentCollector::default();
         rent_collector.rent.lamports_per_byte_year = 1_000_000;
@@ -2304,8 +2321,16 @@ mod tests {
             Some(&Pubkey::new_unique()),
             &Hash::new_unique(),
         ));
+<<<<<<< HEAD
         let compute_budget_limits =
             process_compute_budget_instructions(message.program_instructions_iter()).unwrap();
+=======
+        let compute_budget_limits = process_compute_budget_instructions(
+            SVMMessage::program_instructions_iter(&message),
+            &FeatureSet::default(),
+        )
+        .unwrap();
+>>>>>>> 3e9af14f3a (Fix reserve minimal compute units for builtins  (#3799))
         let fee_payer_address = message.fee_payer();
         let min_balance = Rent::default().minimum_balance(nonce::State::size());
         let transaction_fee = lamports_per_signature;
