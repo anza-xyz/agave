@@ -96,7 +96,7 @@ use {
         create_program_runtime_environment_v1, create_program_runtime_environment_v2,
     },
     solana_compute_budget::compute_budget::ComputeBudget,
-    solana_cost_model::cost_tracker::CostTracker,
+    solana_cost_model::{block_cost_limits::simd_0207_block_limits, cost_tracker::CostTracker},
     solana_feature_set::{
         self as feature_set, remove_rounding_in_fee_calculation, reward_full_priority_fee,
         FeatureSet,
@@ -5066,6 +5066,22 @@ impl Bank {
             debug_do_not_add_builtins,
         );
 
+        // Cost-Tracker is not serialized in snapshot or any configs.
+        // We must apply previously activated features related to limits here
+        // so that the initial bank state is consistent with the feature set.
+        // Cost-tracker limits are propagated through children banks.
+        if self
+            .feature_set
+            .is_active(&feature_set::raise_block_limits_to_50m::id())
+        {
+            let (account_cost_limit, block_cost_limit, vote_cost_limit) = simd_0207_block_limits();
+            self.write_cost_tracker().unwrap().set_limits(
+                account_cost_limit,
+                block_cost_limit,
+                vote_cost_limit,
+            );
+        }
+
         if !debug_do_not_add_builtins {
             for builtin in BUILTINS
                 .iter()
@@ -6638,6 +6654,15 @@ impl Bank {
 
         if new_feature_activations.contains(&feature_set::update_hashes_per_tick6::id()) {
             self.apply_updated_hashes_per_tick(UPDATED_HASHES_PER_TICK6);
+        }
+
+        if new_feature_activations.contains(&feature_set::raise_block_limits_to_50m::id()) {
+            let (account_cost_limit, block_cost_limit, vote_cost_limit) = simd_0207_block_limits();
+            self.write_cost_tracker().unwrap().set_limits(
+                account_cost_limit,
+                block_cost_limit,
+                vote_cost_limit,
+            );
         }
     }
 

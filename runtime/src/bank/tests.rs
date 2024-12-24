@@ -38,6 +38,7 @@ use {
         compute_budget_limits::{self, MAX_COMPUTE_UNIT_LIMIT},
         prioritization_fee::{PrioritizationFeeDetails, PrioritizationFeeType},
     },
+    solana_cost_model::block_cost_limits::{MAX_BLOCK_UNITS, MAX_BLOCK_UNITS_SIMD_0207},
     solana_feature_set::{self as feature_set, FeatureSet},
     solana_inline_spl::token,
     solana_logger,
@@ -7996,6 +7997,73 @@ fn test_reserved_account_keys() {
         bank.get_reserved_account_keys().len(),
         30,
         "after activating the new feature, bank should have new active reserved keys"
+    );
+}
+
+#[test]
+fn test_block_limits() {
+    let (bank0, _bank_forks) = create_simple_test_arc_bank(100_000);
+    let mut bank = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
+    assert!(!bank
+        .feature_set
+        .is_active(&feature_set::raise_block_limits_to_50m::id()));
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_block_limit(),
+        MAX_BLOCK_UNITS,
+        "before activating the feature, bank should have old/default limit"
+    );
+
+    // Activate `raise_block_limits_to_50m` feature
+    bank.store_account(
+        &feature_set::raise_block_limits_to_50m::id(),
+        &feature::create_account(&Feature::default(), 42),
+    );
+    // apply_feature_activations for `FinishInit` will not cause the block limit to be updated
+    bank.apply_feature_activations(ApplyFeatureActivationsCaller::FinishInit, true);
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_block_limit(),
+        MAX_BLOCK_UNITS,
+        "before activating the feature, bank should have old/default limit"
+    );
+
+    // apply_feature_activations for `NewFromParent` will cause feature to be activated
+    bank.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, true);
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_block_limit(),
+        MAX_BLOCK_UNITS_SIMD_0207,
+        "after activating the feature, bank should have new limit"
+    );
+
+    // Make sure the limits propagate to the child-bank.
+    let bank = Bank::new_from_parent(Arc::new(bank), &Pubkey::default(), 2);
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_block_limit(),
+        MAX_BLOCK_UNITS_SIMD_0207,
+        "child bank should have new limit"
+    );
+
+    // Test starting from a genesis config with and without feature account
+    let (mut genesis_config, _keypair) = create_genesis_config(100_000);
+    // Without feature account in genesis, old limits are used.
+    let bank = Bank::new_for_tests(&genesis_config);
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_block_limit(),
+        MAX_BLOCK_UNITS,
+        "before activating the feature, bank should have old/default limit"
+    );
+
+    activate_feature(
+        &mut genesis_config,
+        feature_set::raise_block_limits_to_50m::id(),
+    );
+    let bank = Bank::new_for_tests(&genesis_config);
+    assert!(bank
+        .feature_set
+        .is_active(&feature_set::raise_block_limits_to_50m::id()));
+    assert_eq!(
+        bank.read_cost_tracker().unwrap().get_block_limit(),
+        MAX_BLOCK_UNITS_SIMD_0207,
+        "bank created from genesis config should have new limit"
     );
 }
 
