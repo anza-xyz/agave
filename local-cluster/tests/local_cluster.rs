@@ -3128,21 +3128,23 @@ fn run_test_load_program_accounts(scan_commitment: CommitmentConfig) {
 
 #[test]
 #[serial]
-fn test_no_optimistic_confirmation_violation_with_tower() {
+fn test_no_lockout_violation_with_tower() {
     do_test_lockout_violation_with_or_without_tower(true);
 }
 
 #[test]
 #[serial]
-fn test_optimistic_confirmation_violation_without_tower() {
+fn test_lockout_violation_without_tower() {
     do_test_lockout_violation_with_or_without_tower(false);
 }
 
 // A bit convoluted test case; but this roughly follows this test theoretical scenario:
 // Validator A, B, C have 31, 36, 33 % of stake respectively. Leader schedule is split, first half
 // of the test B is always leader, second half C is.
+// We don't give validator A any slots because it's going to be deleting its ledger,
+// so it may create versions of slots it's already created on a different fork
 //
-// Step 1: Kill C, only A, B and D should be running
+// Step 1: Kill C, only A, B should be running
 //
 //  S0 -> S1 -> S2 -> S3 (A & B vote, optimistically confirmed)
 //
@@ -3188,7 +3190,6 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
     let truncated_slots: Slot = 100; // just enough to purge all following slots after the S2 and S3
 
     // Each pubkeys are prefixed with A, B, C
-
     let validator_keys = [
         "28bN3xyvrP4E8LwEgtLjhnkb7cY4amQb6DrYAbAYjgRV4GAGgkVM2K7wnxnAS7WDneuavza7x21MiafLu1HkwQt4",
         "2saHBBoTkLMmttmPQP8KfBkcCw45S5cwtV3wTdGCscRC8uxdgvHxpHiWXKx4LvJjNJtnNcbSv5NdheokFFqnNDt8",
@@ -3205,33 +3206,23 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
     let (validator_a_pubkey, validator_b_pubkey, validator_c_pubkey) =
         (validators[0], validators[1], validators[2]);
 
-    // Disable voting on all validators other than validator B to ensure neither of the below two
-    // scenarios occur:
-    // 1. If the cluster immediately forks on restart while we're killing validators A and C,
-    // with Validator B on one side, and `A` and `C` on a heavier fork, it's possible that the lockouts
-    // on `A` and `C`'s latest votes do not extend past validator B's latest vote. Then validator B
-    // will be stuck unable to vote, but also unable generate a switching proof to the heavier fork.
-    //
-    // 2. Validator A doesn't vote past `next_slot_on_a` before we can kill it. This is essential
-    // because if validator A votes past `next_slot_on_a`, and then we copy over validator B's ledger
-    // below only for slots <= `next_slot_on_a`, validator A will not know how its last vote chains
-    // to the other forks, and may violate switching proofs on restart.
+    // Disable voting on all validators other than validator B
     let mut default_config = ValidatorConfig::default_for_test();
     // Ensure B can make leader blocks up till the fork slot, and give the remaining slots to C. This is
     // also important so `C` doesn't run into NoPropagatedConfirmation errors on making its first forked
-    // slot, since `A` will be making a simulated vote that's not actually present in gossip.
+    // slot.
     //
     // Don't give validator A any slots because it's going to be deleting its ledger, so it may create
     // versions of slots it's already created, but on a different fork.
     let validator_to_slots = vec![
-        // Ensure validator b is leader for slots <= `next_slot_on_a`
         (
             validator_b_pubkey,
             validator_b_last_leader_slot as usize + 1,
         ),
         (validator_c_pubkey, DEFAULT_SLOTS_PER_EPOCH as usize),
     ];
-    // Trick C into not producing any blocks, in case its leader slots come up before it gets killed
+    // Trick C into not producing any blocks during this time, in case its leader slots come up before we can
+    // kill the validator. We don't want any forks during the time validator B is producing its initial blocks.
     let c_validator_to_slots = vec![(validator_b_pubkey, DEFAULT_SLOTS_PER_EPOCH as usize)];
 
     let c_leader_schedule = create_custom_leader_schedule(c_validator_to_slots.into_iter());
@@ -3291,7 +3282,7 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
     // `base_slot` and `next_slot_on_a`
     loop {
         if let Some((last_vote, _)) = last_vote_in_tower(&val_a_ledger_path, &validator_a_pubkey) {
-            // The vote needs to have a parent so that we validator C can create a fork
+            // The vote needs to have a parent so that validator C can create a fork
             if last_vote >= 1 {
                 break;
             }
@@ -3301,6 +3292,7 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
     }
 
     // kill A and B
+    info!("Exiting validators A and B");
     let _validator_b_info = cluster.exit_node(&validator_b_pubkey);
     let validator_a_info = cluster.exit_node(&validator_a_pubkey);
 
@@ -3379,7 +3371,7 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
         let elapsed = now.elapsed();
         assert!(
             elapsed <= Duration::from_secs(30),
-            "C failed to create a fork past {} in {} second,s
+            "C failed to create a fork past {} in {} seconds
             last_vote {},
             votes_on_c_fork: {:?}",
             base_slot,
