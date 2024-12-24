@@ -6867,15 +6867,19 @@ checksum = "468aa43b7edb1f9b7b7b686d5c3aeb6630dc1708e86e31343499dd5c4d775183"
 name = "solana-send-transaction-service"
 version = "2.1.8"
 dependencies = [
+ "async-trait",
  "crossbeam-channel",
  "log",
  "solana-client",
  "solana-connection-cache",
  "solana-measure",
  "solana-metrics",
+ "solana-quic-client",
  "solana-runtime",
  "solana-sdk",
- "solana-tpu-client",
+ "solana-tpu-client-next",
+ "tokio",
+ "tokio-util 0.7.1",
 ]
 
 [[package]]
@@ -7188,6 +7192,44 @@ dependencies = [
 ]
 
 [[package]]
+<<<<<<< HEAD
+=======
+name = "solana-tpu-client-next"
+version = "2.2.0"
+dependencies = [
+ "async-trait",
+ "log",
+ "lru",
+ "quinn",
+ "rustls 0.23.19",
+ "solana-connection-cache",
+ "solana-logger",
+ "solana-measure",
+ "solana-rpc-client",
+ "solana-sdk",
+ "solana-streamer",
+ "solana-tpu-client",
+ "thiserror 2.0.3",
+ "tokio",
+ "tokio-util 0.7.1",
+]
+
+[[package]]
+name = "solana-transaction-context"
+version = "2.2.0"
+dependencies = [
+ "bincode",
+ "serde",
+ "serde_derive",
+ "solana-account",
+ "solana-instruction",
+ "solana-pubkey",
+ "solana-rent",
+ "solana-signature",
+]
+
+[[package]]
+>>>>>>> 5c0f173b88 (use tpu-client-next in send_transaction_service (#3515))
 name = "solana-transaction-error"
 version = "2.1.8"
 dependencies = [
