@@ -174,7 +174,7 @@ impl SanitizedMessage {
     /// id.
     pub fn program_instructions_iter(
         &self,
-    ) -> impl Iterator<Item = (&Pubkey, &CompiledInstruction)> {
+    ) -> impl Iterator<Item = (&Pubkey, &CompiledInstruction)> + Clone {
         self.instructions().iter().map(move |ix| {
             (
                 self.account_keys()

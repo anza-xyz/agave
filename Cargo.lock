@@ -6125,12 +6125,14 @@ dependencies = [
  "solana-bpf-loader-program",
  "solana-compute-budget-program",
  "solana-config-program",
+ "solana-feature-set",
  "solana-frozen-abi",
  "solana-loader-v4-program",
  "solana-sdk",
  "solana-stake-program",
  "solana-system-program",
  "solana-vote-program",
+ "static_assertions",
 ]
 
 [[package]]
@@ -6540,6 +6542,7 @@ dependencies = [
  "rand 0.8.5",
  "solana-builtins-default-costs",
  "solana-compute-budget",
+ "solana-compute-budget-program",
  "solana-cost-model",
  "solana-feature-set",
  "solana-frozen-abi",
