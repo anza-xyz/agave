@@ -54,3 +54,8 @@ lazy_static! {
         temp_table
     };
 }
+
+#[inline]
+pub fn is_builtin_program(program_id: &Pubkey) -> bool {
+    BUILTIN_INSTRUCTION_COSTS.contains_key(program_id)
+}

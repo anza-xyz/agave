@@ -51,10 +51,10 @@ impl<T> StaticMeta for RuntimeTransaction<T> {
     fn signature_details(&self) -> &TransactionSignatureDetails {
         &self.meta.signature_details
     }
-    fn compute_budget_limits(&self, _feature_set: &FeatureSet) -> Result<ComputeBudgetLimits> {
+    fn compute_budget_limits(&self, feature_set: &FeatureSet) -> Result<ComputeBudgetLimits> {
         self.meta
             .compute_budget_instruction_details
-            .sanitize_and_convert_to_compute_budget_limits()
+            .sanitize_and_convert_to_compute_budget_limits(feature_set)
     }
 }
 
@@ -167,7 +167,7 @@ impl<T: SVMMessage> SVMMessage for RuntimeTransaction<T> {
         self.transaction.instructions_iter()
     }
 
-    fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> {
+    fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> + Clone {
         self.transaction.program_instructions_iter()
     }
 

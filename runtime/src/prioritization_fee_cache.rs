@@ -207,6 +207,7 @@ impl PrioritizationFeeCache {
 
                 let compute_budget_limits = process_compute_budget_instructions(
                     SVMMessage::program_instructions_iter(sanitized_transaction),
+                    &bank.feature_set,
                 );
 
                 let message = sanitized_transaction.message();
