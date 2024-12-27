@@ -1998,16 +1998,24 @@ fn get_db_options(access_type: &AccessType) -> Options {
     options.create_if_missing(true);
     options.create_missing_column_families(true);
 
-    // Per the docs, a good value for this is the number of cores on the machine
-    options.increase_parallelism(num_cpus::get() as i32);
-
+    // rocksdb builds two threadpools: low and high priority. The low priority
+    // pool is used for compactions whereas the high priority pool is used for
+    // memtable flushes. Separate pools are created so that compactions are
+    // unable to stall memtable flushes (which could stall memtable writes).
+    //
+    // We could call options.set_max_background_jobs(n) to automatically size
+    // the pools to 3n/4 low priority and n/4 high priority threads. Instead,
+    // set the sizes directly to sizes we want
+    let num_low_priority_threads = num_cpus::get();
+    let num_high_priority_threads = (num_cpus::get() / 4).max(1);
     let mut env = rocksdb::Env::new().unwrap();
-    // While a compaction is ongoing, all the background threads
-    // could be used by the compaction. This can stall writes which
-    // need to flush the memtable. Add some high-priority background threads
-    // which can service these writes.
-    env.set_high_priority_background_threads(4);
+    env.set_low_priority_background_threads(num_low_priority_threads as i32);
+    env.set_high_priority_background_threads(num_high_priority_threads as i32);
     options.set_env(&env);
+    // The value set in max_background_jobs can grow but not shrink threadpool
+    // sizes. So, set this value to 2 (the default value and 1 low / 1 high) to
+    // avoid rocksdb from messing with the sizes we previously configured.
+    options.set_max_background_jobs(2);
 
     // Set max total wal size to 4G.
     options.set_max_total_wal_size(4 * 1024 * 1024 * 1024);
