@@ -24,7 +24,7 @@ pub mod root_bank_cache;
 pub mod serde_snapshot;
 pub mod snapshot_archive_info;
 pub mod snapshot_bank_utils;
-pub mod snapshot_config;
+pub mod snapshot_mode;
 pub mod snapshot_hash;
 pub mod snapshot_minimizer;
 pub mod snapshot_package;

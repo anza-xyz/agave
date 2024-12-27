@@ -14,7 +14,7 @@ use {
     solana_measure::measure_us,
     solana_runtime::{
         serde_snapshot::BankIncrementalSnapshotPersistence,
-        snapshot_config::SnapshotConfig,
+        snapshot_mode::SnapshotMode,
         snapshot_package::{
             self, AccountsHashAlgorithm, AccountsPackage, AccountsPackageKind, SnapshotKind,
             SnapshotPackage,
@@ -43,7 +43,7 @@ impl AccountsHashVerifier {
         accounts_package_receiver: Receiver<AccountsPackage>,
         pending_snapshot_packages: Arc<Mutex<PendingSnapshotPackages>>,
         exit: Arc<AtomicBool>,
-        snapshot_config: SnapshotConfig,
+        snapshot_mode: SnapshotMode,
     ) -> Self {
         // If there are no accounts packages to process, limit how often we re-check
         const LOOP_LIMITER: Duration = Duration::from_millis(DEFAULT_MS_PER_SLOT);
@@ -74,7 +74,7 @@ impl AccountsHashVerifier {
                     let (result, handling_time_us) = measure_us!(Self::process_accounts_package(
                         accounts_package,
                         &pending_snapshot_packages,
-                        &snapshot_config,
+                        &snapshot_mode,
                     ));
                     if let Err(err) = result {
                         error!(
@@ -214,19 +214,19 @@ impl AccountsHashVerifier {
     fn process_accounts_package(
         accounts_package: AccountsPackage,
         pending_snapshot_packages: &Mutex<PendingSnapshotPackages>,
-        snapshot_config: &SnapshotConfig,
+        snapshot_mode: &SnapshotMode,
     ) -> IoResult<()> {
         let (merkle_or_lattice_accounts_hash, bank_incremental_snapshot_persistence) =
-            Self::calculate_and_verify_accounts_hash(&accounts_package, snapshot_config)?;
+            Self::calculate_and_verify_accounts_hash(&accounts_package, snapshot_mode)?;
 
         Self::save_epoch_accounts_hash(&accounts_package, &merkle_or_lattice_accounts_hash);
 
-        Self::purge_old_accounts_hashes(&accounts_package, snapshot_config);
+        Self::purge_old_accounts_hashes(&accounts_package, snapshot_mode);
 
         Self::submit_for_packaging(
             accounts_package,
             pending_snapshot_packages,
-            snapshot_config,
+            snapshot_mode,
             merkle_or_lattice_accounts_hash,
             bank_incremental_snapshot_persistence,
         );
@@ -237,7 +237,7 @@ impl AccountsHashVerifier {
     /// returns calculated accounts hash
     fn calculate_and_verify_accounts_hash(
         accounts_package: &AccountsPackage,
-        snapshot_config: &SnapshotConfig,
+        snapshot_mode: &SnapshotMode,
     ) -> IoResult<(
         MerkleOrLatticeAccountsHash,
         Option<BankIncrementalSnapshotPersistence>,
@@ -284,6 +284,7 @@ impl AccountsHashVerifier {
                     let Some((base_accounts_hash, base_capitalization)) =
                         accounts_db.get_accounts_hash(base_slot)
                     else {
+                        let snapshot_load_config = &snapshot_mode.get_snapshot_load_config();
                         panic!(
                             "incremental snapshot requires accounts hash and capitalization from \
                              the full snapshot it is based on\n\
@@ -295,9 +296,11 @@ impl AccountsHashVerifier {
                             accounts_db.get_accounts_hashes(),
                             accounts_db.get_incremental_accounts_hashes(),
                             snapshot_utils::get_full_snapshot_archives(
-                                &snapshot_config.full_snapshot_archives_dir,
+                                &snapshot_load_config.full_snapshot_config.archives_dir,
                             ),
-                            snapshot_utils::get_bank_snapshots(&snapshot_config.bank_snapshots_dir),
+                            snapshot_utils::get_bank_snapshots(
+                                &snapshot_load_config.bank_snapshots_dir
+                            ),
                         );
                     };
                     let (incremental_accounts_hash, incremental_capitalization) =
@@ -455,12 +458,9 @@ impl AccountsHashVerifier {
         }
     }
 
-    fn purge_old_accounts_hashes(
-        accounts_package: &AccountsPackage,
-        snapshot_config: &SnapshotConfig,
-    ) {
+    fn purge_old_accounts_hashes(accounts_package: &AccountsPackage, snapshot_mode: &SnapshotMode) {
         let should_purge = match (
-            snapshot_config.should_generate_snapshots(),
+            snapshot_mode.should_generate_snapshots(),
             accounts_package.package_kind,
         ) {
             (false, _) => {
@@ -489,11 +489,11 @@ impl AccountsHashVerifier {
     fn submit_for_packaging(
         accounts_package: AccountsPackage,
         pending_snapshot_packages: &Mutex<PendingSnapshotPackages>,
-        snapshot_config: &SnapshotConfig,
+        snapshot_mode: &SnapshotMode,
         merkle_or_lattice_accounts_hash: MerkleOrLatticeAccountsHash,
         bank_incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>,
     ) {
-        if !snapshot_config.should_generate_snapshots()
+        if !snapshot_mode.should_generate_snapshots()
             || !matches!(
                 accounts_package.package_kind,
                 AccountsPackageKind::Snapshot(_)

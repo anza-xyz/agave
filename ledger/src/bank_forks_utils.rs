@@ -18,8 +18,8 @@ use {
             FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfoGetter,
         },
         snapshot_bank_utils,
-        snapshot_config::SnapshotConfig,
         snapshot_hash::{FullSnapshotHash, IncrementalSnapshotHash, StartingSnapshotHashes},
+        snapshot_mode::SnapshotMode,
         snapshot_utils,
     },
     solana_sdk::genesis_config::GenesisConfig,
@@ -80,7 +80,7 @@ pub fn load(
     genesis_config: &GenesisConfig,
     blockstore: &Blockstore,
     account_paths: Vec<PathBuf>,
-    snapshot_config: Option<&SnapshotConfig>,
+    snapshot_mode: Option<&SnapshotMode>,
     process_options: ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
@@ -92,7 +92,7 @@ pub fn load(
         genesis_config,
         blockstore,
         account_paths,
-        snapshot_config,
+        snapshot_mode,
         &process_options,
         cache_block_meta_sender,
         entry_notification_sender,
@@ -119,7 +119,7 @@ pub fn load_bank_forks(
     genesis_config: &GenesisConfig,
     blockstore: &Blockstore,
     account_paths: Vec<PathBuf>,
-    snapshot_config: Option<&SnapshotConfig>,
+    snapshot_mode: Option<&SnapshotMode>,
     process_options: &ProcessOptions,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
@@ -127,31 +127,37 @@ pub fn load_bank_forks(
     exit: Arc<AtomicBool>,
 ) -> LoadResult {
     fn get_snapshots_to_load(
-        snapshot_config: Option<&SnapshotConfig>,
+        snapshot_mode: Option<&SnapshotMode>,
     ) -> Option<(
         FullSnapshotArchiveInfo,
         Option<IncrementalSnapshotArchiveInfo>,
     )> {
-        let Some(snapshot_config) = snapshot_config else {
+        let Some(snapshot_mode) = snapshot_mode else {
             info!("Snapshots disabled; will load from genesis");
             return None;
         };
+        let snapshot_load_config = snapshot_mode.get_snapshot_load_config();
+        let full_snapshot_archive_dir = snapshot_load_config
+            .full_snapshot_config
+            .archives_dir
+            .clone();
 
         let Some(full_snapshot_archive_info) =
-            snapshot_utils::get_highest_full_snapshot_archive_info(
-                &snapshot_config.full_snapshot_archives_dir,
-            )
+            snapshot_utils::get_highest_full_snapshot_archive_info(&full_snapshot_archive_dir)
         else {
             warn!(
                 "No snapshot package found in directory: {}; will load from genesis",
-                snapshot_config.full_snapshot_archives_dir.display()
+                full_snapshot_archive_dir.display()
             );
             return None;
         };
 
         let incremental_snapshot_archive_info =
             snapshot_utils::get_highest_incremental_snapshot_archive_info(
-                &snapshot_config.incremental_snapshot_archives_dir,
+                &snapshot_load_config
+                    .incremental_snapshot_config
+                    .unwrap()
+                    .archives_dir,
                 full_snapshot_archive_info.slot(),
             );
 
@@ -163,22 +169,23 @@ pub fn load_bank_forks(
 
     let (bank_forks, starting_snapshot_hashes) =
         if let Some((full_snapshot_archive_info, incremental_snapshot_archive_info)) =
-            get_snapshots_to_load(snapshot_config)
+            get_snapshots_to_load(snapshot_mode)
         {
             // SAFETY: Having snapshots to load ensures a snapshot config
-            let snapshot_config = snapshot_config.unwrap();
+            let snapshot_mode = snapshot_mode.unwrap();
+            let snapshot_load_config = snapshot_mode.get_snapshot_load_config();
             info!(
                 "Initializing bank snapshots dir: {}",
-                snapshot_config.bank_snapshots_dir.display()
+                snapshot_load_config.bank_snapshots_dir.display()
             );
-            std::fs::create_dir_all(&snapshot_config.bank_snapshots_dir)
+            std::fs::create_dir_all(&snapshot_load_config.bank_snapshots_dir)
                 .expect("create bank snapshots dir");
             let (bank_forks, starting_snapshot_hashes) = bank_forks_from_snapshot(
                 full_snapshot_archive_info,
                 incremental_snapshot_archive_info,
                 genesis_config,
                 account_paths,
-                snapshot_config,
+                snapshot_mode,
                 process_options,
                 accounts_update_notifier,
                 exit,
@@ -227,7 +234,7 @@ fn bank_forks_from_snapshot(
     incremental_snapshot_archive_info: Option<IncrementalSnapshotArchiveInfo>,
     genesis_config: &GenesisConfig,
     account_paths: Vec<PathBuf>,
-    snapshot_config: &SnapshotConfig,
+    snapshot_mode: &SnapshotMode,
     process_options: &ProcessOptions,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
@@ -249,7 +256,7 @@ fn bank_forks_from_snapshot(
         UseSnapshotArchivesAtStartup::Always => None,
         UseSnapshotArchivesAtStartup::Never => {
             let Some(bank_snapshot) =
-                snapshot_utils::get_highest_loadable_bank_snapshot(snapshot_config)
+                snapshot_utils::get_highest_loadable_bank_snapshot(snapshot_mode)
             else {
                 return Err(BankForksUtilsError::NoBankSnapshotDirectory {
                     flag: use_snapshot_archives_at_startup::cli::LONG_ARG.to_string(),
@@ -272,7 +279,7 @@ fn bank_forks_from_snapshot(
             Some(bank_snapshot)
         }
         UseSnapshotArchivesAtStartup::WhenNewest => {
-            snapshot_utils::get_highest_loadable_bank_snapshot(snapshot_config)
+            snapshot_utils::get_highest_loadable_bank_snapshot(snapshot_mode)
                 .filter(|bank_snapshot| bank_snapshot.slot >= latest_snapshot_archive_slot)
         }
     };
@@ -297,15 +304,17 @@ fn bank_forks_from_snapshot(
         })?;
         bank
     } else {
+        let snapshot_load_config = snapshot_mode.get_snapshot_load_config();
+
         // Given that we are going to boot from an archive, the append vecs held in the snapshot dirs for fast-boot should
         // be released.  They will be released by the account_background_service anyway.  But in the case of the account_paths
         // using memory-mounted file system, they are not released early enough to give space for the new append-vecs from
         // the archives, causing the out-of-memory problem.  So, purge the snapshot dirs upfront before loading from the archive.
-        snapshot_utils::purge_all_bank_snapshots(&snapshot_config.bank_snapshots_dir);
+        snapshot_utils::purge_all_bank_snapshots(&snapshot_load_config.bank_snapshots_dir);
 
         let (bank, _) = snapshot_bank_utils::bank_from_snapshot_archives(
             &account_paths,
-            &snapshot_config.bank_snapshots_dir,
+            &snapshot_load_config.bank_snapshots_dir,
             &full_snapshot_archive_info,
             incremental_snapshot_archive_info.as_ref(),
             genesis_config,
@@ -337,7 +346,7 @@ fn bank_forks_from_snapshot(
     // from snapshots, this is a good time to do that update.
     // Note, this must only be set if we should generate snapshots, so that we correctly
     // handle (i.e. purge) zero lamport accounts.
-    if snapshot_config.should_generate_snapshots() {
+    if snapshot_mode.should_generate_snapshots() {
         bank.rc
             .accounts
             .accounts_db

@@ -61,7 +61,7 @@ use {
         installed_scheduler_pool::BankWithScheduler,
         non_circulating_supply::{calculate_non_circulating_supply, NonCirculatingSupply},
         prioritization_fee_cache::PrioritizationFeeCache,
-        snapshot_config::SnapshotConfig,
+        snapshot_mode::SnapshotMode,
         snapshot_utils,
         verify_precompiles::verify_precompiles,
     },
@@ -236,7 +236,7 @@ pub struct JsonRpcRequestProcessor {
     block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
     blockstore: Arc<Blockstore>,
     config: JsonRpcConfig,
-    snapshot_config: Option<SnapshotConfig>,
+    snapshot_mode: Option<SnapshotMode>,
     #[allow(dead_code)]
     validator_exit: Arc<RwLock<Exit>>,
     health: Arc<RpcHealth>,
@@ -387,7 +387,7 @@ impl JsonRpcRequestProcessor {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: JsonRpcConfig,
-        snapshot_config: Option<SnapshotConfig>,
+        snapshot_mode: Option<SnapshotMode>,
         bank_forks: Arc<RwLock<BankForks>>,
         block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
         blockstore: Arc<Blockstore>,
@@ -409,7 +409,7 @@ impl JsonRpcRequestProcessor {
         (
             Self {
                 config,
-                snapshot_config,
+                snapshot_mode,
                 bank_forks,
                 block_commitment_cache,
                 blockstore,
@@ -483,7 +483,7 @@ impl JsonRpcRequestProcessor {
         } = config;
         Self {
             config,
-            snapshot_config: None,
+            snapshot_mode: None,
             bank_forks,
             block_commitment_cache: Arc::new(RwLock::new(BlockCommitmentCache::new(
                 HashMap::new(),
@@ -2856,16 +2856,23 @@ pub mod rpc_minimal {
         fn get_highest_snapshot_slot(&self, meta: Self::Metadata) -> Result<RpcSnapshotSlotInfo> {
             debug!("get_highest_snapshot_slot rpc request received");
 
-            if meta.snapshot_config.is_none() {
+            if meta.snapshot_mode.is_none() {
                 return Err(RpcCustomError::NoSnapshot.into());
             }
 
             let (full_snapshot_archives_dir, incremental_snapshot_archives_dir) = meta
-                .snapshot_config
-                .map(|snapshot_config| {
+                .snapshot_mode
+                .map(|snapshot_mode| {
                     (
-                        snapshot_config.full_snapshot_archives_dir,
-                        snapshot_config.incremental_snapshot_archives_dir,
+                        snapshot_mode
+                            .get_snapshot_load_config()
+                            .full_snapshot_config
+                            .archives_dir,
+                        snapshot_mode
+                            .get_snapshot_load_config()
+                            .incremental_snapshot_config
+                            .unwrap()
+                            .archives_dir,
                     )
                 })
                 .unwrap();

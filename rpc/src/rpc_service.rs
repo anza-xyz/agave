@@ -29,7 +29,7 @@ use {
     solana_runtime::{
         bank_forks::BankForks, commitment::BlockCommitmentCache,
         prioritization_fee_cache::PrioritizationFeeCache,
-        snapshot_archive_info::SnapshotArchiveInfoGetter, snapshot_config::SnapshotConfig,
+        snapshot_archive_info::SnapshotArchiveInfoGetter, snapshot_mode::SnapshotMode,
         snapshot_utils,
     },
     solana_sdk::{
@@ -67,7 +67,7 @@ struct RpcRequestMiddleware {
     ledger_path: PathBuf,
     full_snapshot_archive_path_regex: Regex,
     incremental_snapshot_archive_path_regex: Regex,
-    snapshot_config: Option<SnapshotConfig>,
+    snapshot_mode: Option<SnapshotMode>,
     bank_forks: Arc<RwLock<BankForks>>,
     health: Arc<RpcHealth>,
 }
@@ -75,7 +75,7 @@ struct RpcRequestMiddleware {
 impl RpcRequestMiddleware {
     pub fn new(
         ledger_path: PathBuf,
-        snapshot_config: Option<SnapshotConfig>,
+        snapshot_mode: Option<SnapshotMode>,
         bank_forks: Arc<RwLock<BankForks>>,
         health: Arc<RpcHealth>,
     ) -> Self {
@@ -89,7 +89,7 @@ impl RpcRequestMiddleware {
                 snapshot_utils::INCREMENTAL_SNAPSHOT_ARCHIVE_FILENAME_REGEX,
             )
             .unwrap(),
-            snapshot_config,
+            snapshot_mode,
             bank_forks,
             health,
         }
@@ -126,7 +126,7 @@ impl RpcRequestMiddleware {
             return true;
         }
 
-        if self.snapshot_config.is_none() {
+        if self.snapshot_mode.is_none() {
             return false;
         }
 
@@ -164,16 +164,21 @@ impl RpcRequestMiddleware {
             .is_match(Path::new("").join(&stem).to_str().unwrap())
         {
             &self
-                .snapshot_config
+                .snapshot_mode
                 .as_ref()
                 .unwrap()
-                .full_snapshot_archives_dir
+                .get_snapshot_load_config()
+                .full_snapshot_config
+                .archives_dir
         } else {
             &self
-                .snapshot_config
+                .snapshot_mode
                 .as_ref()
                 .unwrap()
-                .incremental_snapshot_archives_dir
+                .get_snapshot_load_config()
+                .incremental_snapshot_config
+                .unwrap()
+                .archives_dir
         };
         let local_path = root.join(&stem);
         if local_path.exists() {
@@ -243,14 +248,17 @@ impl RequestMiddleware for RpcRequestMiddleware {
     fn on_request(&self, request: hyper::Request<hyper::Body>) -> RequestMiddlewareAction {
         trace!("request uri: {}", request.uri());
 
-        if let Some(ref snapshot_config) = self.snapshot_config {
+        if let Some(ref snapshot_mode) = self.snapshot_mode {
             if request.uri().path() == FULL_SNAPSHOT_REQUEST_PATH
                 || request.uri().path() == INCREMENTAL_SNAPSHOT_REQUEST_PATH
             {
                 // Convenience redirect to the latest snapshot
                 let full_snapshot_archive_info =
                     snapshot_utils::get_highest_full_snapshot_archive_info(
-                        &snapshot_config.full_snapshot_archives_dir,
+                        &snapshot_mode
+                            .get_snapshot_load_config()
+                            .full_snapshot_config
+                            .archives_dir,
                     );
                 let snapshot_archive_info =
                     if let Some(full_snapshot_archive_info) = full_snapshot_archive_info {
@@ -258,7 +266,11 @@ impl RequestMiddleware for RpcRequestMiddleware {
                             Some(full_snapshot_archive_info.snapshot_archive_info().clone())
                         } else {
                             snapshot_utils::get_highest_incremental_snapshot_archive_info(
-                                &snapshot_config.incremental_snapshot_archives_dir,
+                                &snapshot_mode
+                                    .get_snapshot_load_config()
+                                    .incremental_snapshot_config
+                                    .unwrap()
+                                    .archives_dir,
                                 full_snapshot_archive_info.slot(),
                             )
                             .map(|incremental_snapshot_archive_info| {
@@ -335,7 +347,7 @@ impl JsonRpcService {
     pub fn new(
         rpc_addr: SocketAddr,
         config: JsonRpcConfig,
-        snapshot_config: Option<SnapshotConfig>,
+        snapshot_mode: Option<SnapshotMode>,
         bank_forks: Arc<RwLock<BankForks>>,
         block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
         blockstore: Arc<Blockstore>,
@@ -446,7 +458,7 @@ impl JsonRpcService {
             .unwrap_or(MAX_REQUEST_BODY_SIZE);
         let (request_processor, receiver) = JsonRpcRequestProcessor::new(
             config,
-            snapshot_config.clone(),
+            snapshot_mode.clone(),
             bank_forks.clone(),
             block_commitment_cache,
             blockstore,
@@ -500,7 +512,7 @@ impl JsonRpcService {
 
                 let request_middleware = RpcRequestMiddleware::new(
                     ledger_path,
-                    snapshot_config,
+                    snapshot_mode,
                     bank_forks.clone(),
                     health.clone(),
                 );
@@ -759,9 +771,9 @@ mod tests {
             bank_forks.clone(),
             health.clone(),
         );
-        let rrm_with_snapshot_config = RpcRequestMiddleware::new(
+        let rrm_with_snapshot_mode = RpcRequestMiddleware::new(
             ledger_path.path().to_path_buf(),
-            Some(SnapshotConfig::default()),
+            Some(SnapshotMode::default()),
             bank_forks,
             health,
         );
@@ -782,42 +794,42 @@ mod tests {
             "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
         ));
 
-        assert!(rrm_with_snapshot_config.is_file_get_path(
+        assert!(rrm_with_snapshot_mode.is_file_get_path(
             "/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
         ));
-        assert!(rrm_with_snapshot_config.is_file_get_path(
+        assert!(rrm_with_snapshot_mode.is_file_get_path(
             "/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
-        assert!(rrm_with_snapshot_config
+        assert!(rrm_with_snapshot_mode
             .is_file_get_path("/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.gz"));
-        assert!(rrm_with_snapshot_config
+        assert!(rrm_with_snapshot_mode
             .is_file_get_path("/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"));
 
-        assert!(rrm_with_snapshot_config.is_file_get_path(
+        assert!(rrm_with_snapshot_mode.is_file_get_path(
             "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
         ));
-        assert!(rrm_with_snapshot_config.is_file_get_path(
+        assert!(rrm_with_snapshot_mode.is_file_get_path(
             "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
-        assert!(rrm_with_snapshot_config.is_file_get_path(
+        assert!(rrm_with_snapshot_mode.is_file_get_path(
             "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.gz"
         ));
-        assert!(rrm_with_snapshot_config.is_file_get_path(
+        assert!(rrm_with_snapshot_mode.is_file_get_path(
             "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"
         ));
 
-        assert!(!rrm_with_snapshot_config.is_file_get_path(
+        assert!(!rrm_with_snapshot_mode.is_file_get_path(
             "/snapshot-notaslotnumber-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
         ));
-        assert!(!rrm_with_snapshot_config.is_file_get_path(
+        assert!(!rrm_with_snapshot_mode.is_file_get_path(
             "/incremental-snapshot-notaslotnumber-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
         ));
-        assert!(!rrm_with_snapshot_config.is_file_get_path(
+        assert!(!rrm_with_snapshot_mode.is_file_get_path(
             "/incremental-snapshot-100-notaslotnumber-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
         ));
 
-        assert!(!rrm_with_snapshot_config.is_file_get_path("../../../test/snapshot-123-xxx.tar"));
-        assert!(!rrm_with_snapshot_config
+        assert!(!rrm_with_snapshot_mode.is_file_get_path("../../../test/snapshot-123-xxx.tar"));
+        assert!(!rrm_with_snapshot_mode
             .is_file_get_path("../../../test/incremental-snapshot-123-456-xxx.tar"));
 
         assert!(!rrm.is_file_get_path("/"));
@@ -834,19 +846,19 @@ mod tests {
         assert!(!rrm.is_file_get_path("..//"));
         assert!(!rrm.is_file_get_path("🎣"));
 
-        assert!(!rrm_with_snapshot_config
+        assert!(!rrm_with_snapshot_mode
             .is_file_get_path("//snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"));
-        assert!(!rrm_with_snapshot_config
+        assert!(!rrm_with_snapshot_mode
             .is_file_get_path("/./snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"));
-        assert!(!rrm_with_snapshot_config
+        assert!(!rrm_with_snapshot_mode
             .is_file_get_path("/../snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"));
-        assert!(!rrm_with_snapshot_config.is_file_get_path(
+        assert!(!rrm_with_snapshot_mode.is_file_get_path(
             "//incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"
         ));
-        assert!(!rrm_with_snapshot_config.is_file_get_path(
+        assert!(!rrm_with_snapshot_mode.is_file_get_path(
             "/./incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"
         ));
-        assert!(!rrm_with_snapshot_config.is_file_get_path(
+        assert!(!rrm_with_snapshot_mode.is_file_get_path(
             "/../incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"
         ));
     }

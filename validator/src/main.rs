@@ -1,6 +1,12 @@
 #![allow(clippy::arithmetic_side_effects)]
+use std::num::NonZero;
+
 #[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
 use jemallocator::Jemalloc;
+use solana_runtime::snapshot_mode::{
+    SnapshotGenerateConfig, SnapshotLoadAndGenerateModeConfig, SnapshotLoadConfig,
+    SnapshotLoadOnlyModeConfig, SnapshotStorageConfig,
+};
 use {
     agave_validator::{
         admin_rpc_service,
@@ -35,7 +41,7 @@ use {
         system_monitor_service::SystemMonitorService,
         tpu::DEFAULT_TPU_COALESCE,
         validator::{
-            is_snapshot_config_valid, BlockProductionMethod, BlockVerificationMethod,
+            is_snapshot_mode_valid, BlockProductionMethod, BlockVerificationMethod,
             TransactionStructure, Validator, ValidatorConfig, ValidatorError,
             ValidatorStartProgress, ValidatorTpuConfig,
         },
@@ -63,7 +69,7 @@ use {
     solana_runtime::{
         runtime_config::RuntimeConfig,
         snapshot_bank_utils::DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
-        snapshot_config::{SnapshotConfig, SnapshotUsage},
+        snapshot_mode::SnapshotMode,
         snapshot_utils::{self, ArchiveFormat, SnapshotVersion},
     },
     solana_sdk::{
@@ -1786,24 +1792,41 @@ pub fn main() {
         }
     };
 
-    validator_config.snapshot_config = SnapshotConfig {
-        usage: if full_snapshot_archive_interval_slots == DISABLED_SNAPSHOT_ARCHIVE_INTERVAL {
-            SnapshotUsage::LoadOnly
-        } else {
-            SnapshotUsage::LoadAndGenerate
+    let snapshot_load_config = SnapshotLoadConfig {
+        full_snapshot_config: SnapshotStorageConfig {
+            archives_dir: full_snapshot_archives_dir.clone(),
+            archives_to_retain: maximum_full_snapshot_archives_to_retain,
         },
-        full_snapshot_archive_interval_slots,
-        incremental_snapshot_archive_interval_slots,
+        incremental_snapshot_config: Some(SnapshotStorageConfig {
+            archives_dir: incremental_snapshot_archives_dir.clone(),
+            archives_to_retain: maximum_incremental_snapshot_archives_to_retain,
+        }),
         bank_snapshots_dir,
-        full_snapshot_archives_dir: full_snapshot_archives_dir.clone(),
-        incremental_snapshot_archives_dir: incremental_snapshot_archives_dir.clone(),
         archive_format,
         snapshot_version,
-        maximum_full_snapshot_archives_to_retain,
-        maximum_incremental_snapshot_archives_to_retain,
-        accounts_hash_debug_verify: validator_config.accounts_db_test_hash_calculation,
-        packager_thread_niceness_adj: snapshot_packager_niceness_adj,
+        ..SnapshotLoadConfig::default_load_and_genarate()
     };
+
+    validator_config.snapshot_mode =
+        if full_snapshot_archive_interval_slots == DISABLED_SNAPSHOT_ARCHIVE_INTERVAL {
+            SnapshotMode::LoadOnly(SnapshotLoadOnlyModeConfig {
+                load_config: snapshot_load_config,
+            })
+        } else {
+            SnapshotMode::LoadAndGenerate(SnapshotLoadAndGenerateModeConfig {
+                load_config: snapshot_load_config,
+                generate_config: SnapshotGenerateConfig {
+                    full_snapshot_archive_interval_slots: NonZero::new(
+                        full_snapshot_archive_interval_slots as usize,
+                    )
+                    .unwrap(),
+                    incremental_snapshot_archive_interval_slots: NonZero::new(
+                        incremental_snapshot_archive_interval_slots as usize,
+                    ),
+                    packager_thread_niceness_adj: snapshot_packager_niceness_adj,
+                },
+            })
+        };
 
     // The accounts hash interval shall match the snapshot interval
     validator_config.accounts_hash_interval_slots = std::cmp::min(
@@ -1837,8 +1860,8 @@ pub fn main() {
         );
     }
 
-    if !is_snapshot_config_valid(
-        &validator_config.snapshot_config,
+    if !is_snapshot_mode_valid(
+        &validator_config.snapshot_mode,
         validator_config.accounts_hash_interval_slots,
     ) {
         eprintln!(

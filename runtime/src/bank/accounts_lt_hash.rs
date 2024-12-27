@@ -409,7 +409,7 @@ mod tests {
             genesis_utils,
             runtime_config::RuntimeConfig,
             snapshot_bank_utils,
-            snapshot_config::SnapshotConfig,
+            snapshot_mode::SnapshotMode,
             snapshot_utils,
         },
         solana_accounts_db::accounts_db::{
@@ -969,16 +969,16 @@ mod tests {
         }
 
         // verification happens at startup, so mimic the behavior by loading from a snapshot
-        let snapshot_config = SnapshotConfig::default();
+        let snapshot_mode = SnapshotMode::default();
         let bank_snapshots_dir = TempDir::new().unwrap();
         let snapshot_archives_dir = TempDir::new().unwrap();
         let snapshot = snapshot_bank_utils::bank_to_full_snapshot_archive(
             &bank_snapshots_dir,
             &bank,
-            Some(snapshot_config.snapshot_version),
+            Some(snapshot_mode.get_snapshot_load_config().snapshot_version),
             &snapshot_archives_dir,
             &snapshot_archives_dir,
-            snapshot_config.archive_format,
+            snapshot_mode.get_snapshot_load_config().archive_format,
         )
         .unwrap();
         let (_accounts_tempdir, accounts_dir) = snapshot_utils::create_tmp_accounts_dir_for_tests();
@@ -1144,16 +1144,16 @@ mod tests {
 
         // Verification using storages happens at startup.
         // Mimic the behavior by taking, then loading from, a snapshot.
-        let snapshot_config = SnapshotConfig::default();
+        let snapshot_mode = SnapshotMode::default();
         let bank_snapshots_dir = TempDir::new().unwrap();
         let snapshot_archives_dir = TempDir::new().unwrap();
         let snapshot = snapshot_bank_utils::bank_to_full_snapshot_archive(
             &bank_snapshots_dir,
             &bank,
-            Some(snapshot_config.snapshot_version),
+            Some(snapshot_mode.get_snapshot_load_config().snapshot_version),
             &snapshot_archives_dir,
             &snapshot_archives_dir,
-            snapshot_config.archive_format,
+            snapshot_mode.get_snapshot_load_config().archive_format,
         )
         .unwrap();
         let (_accounts_tempdir, accounts_dir) = snapshot_utils::create_tmp_accounts_dir_for_tests();

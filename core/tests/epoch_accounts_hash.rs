@@ -24,7 +24,10 @@ use {
         runtime_config::RuntimeConfig,
         snapshot_archive_info::SnapshotArchiveInfoGetter,
         snapshot_bank_utils,
-        snapshot_config::SnapshotConfig,
+        snapshot_mode::{
+            SnapshotGenerateConfig, SnapshotLoadAndGenerateModeConfig, SnapshotLoadConfig,
+            SnapshotMode, SnapshotStorageConfig,
+        },
         snapshot_utils,
     },
     solana_sdk::{
@@ -40,6 +43,7 @@ use {
     solana_streamer::socket::SocketAddrSpace,
     std::{
         mem::ManuallyDrop,
+        num::NonZero,
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc, Mutex, RwLock,
@@ -58,7 +62,7 @@ struct TestEnvironment {
     bank_forks: Arc<RwLock<BankForks>>,
     background_services: BackgroundServices,
     genesis_config_info: GenesisConfigInfo,
-    snapshot_config: SnapshotConfig,
+    snapshot_mode: SnapshotMode,
     _bank_snapshots_dir: TempDir,
     _full_snapshot_archives_dir: TempDir,
     _incremental_snapshot_archives_dir: TempDir,
@@ -73,7 +77,7 @@ impl TestEnvironment {
 
     #[must_use]
     fn new() -> TestEnvironment {
-        Self::_new(SnapshotConfig::new_load_only())
+        Self::_new(SnapshotMode::new_load_only())
     }
 
     #[must_use]
@@ -81,16 +85,25 @@ impl TestEnvironment {
         full_snapshot_archive_interval_slots: Slot,
         incremental_snapshot_archive_interval_slots: Slot,
     ) -> TestEnvironment {
-        let snapshot_config = SnapshotConfig {
-            full_snapshot_archive_interval_slots,
-            incremental_snapshot_archive_interval_slots,
-            ..SnapshotConfig::default()
-        };
-        Self::_new(snapshot_config)
+        let snapshot_mode = SnapshotMode::LoadAndGenerate(SnapshotLoadAndGenerateModeConfig {
+            load_config: SnapshotLoadConfig::default_load_and_genarate(),
+            generate_config: SnapshotGenerateConfig {
+                full_snapshot_archive_interval_slots: NonZero::new(
+                    full_snapshot_archive_interval_slots as usize,
+                )
+                .unwrap(),
+                incremental_snapshot_archive_interval_slots: NonZero::new(
+                    incremental_snapshot_archive_interval_slots as usize,
+                ),
+                ..SnapshotGenerateConfig::default_generate_config()
+            },
+        });
+
+        Self::_new(snapshot_mode)
     }
 
     #[must_use]
-    fn _new(snapshot_config: SnapshotConfig) -> TestEnvironment {
+    fn _new(snapshot_mode: SnapshotMode) -> TestEnvironment {
         const MINT_LAMPORTS: u64 = 100_000 * LAMPORTS_PER_SOL;
         const STAKE_LAMPORTS: u64 = 100 * LAMPORTS_PER_SOL;
         let bank_snapshots_dir = TempDir::new().unwrap();
@@ -110,21 +123,31 @@ impl TestEnvironment {
             .accounts
             .remove(&feature_set::accounts_lt_hash::id())
             .unwrap();
-        let snapshot_config = SnapshotConfig {
-            full_snapshot_archives_dir: full_snapshot_archives_dir.path().to_path_buf(),
-            incremental_snapshot_archives_dir: incremental_snapshot_archives_dir
-                .path()
-                .to_path_buf(),
+
+        let snapshot_mode = snapshot_mode.replacing(SnapshotLoadConfig {
+            full_snapshot_config: SnapshotStorageConfig {
+                archives_dir: full_snapshot_archives_dir.path().to_path_buf(),
+                ..snapshot_mode
+                    .get_snapshot_load_config()
+                    .full_snapshot_config
+            },
+            incremental_snapshot_config: Some(SnapshotStorageConfig {
+                archives_dir: incremental_snapshot_archives_dir.path().to_path_buf(),
+                ..snapshot_mode
+                    .get_snapshot_load_config()
+                    .incremental_snapshot_config
+                    .unwrap()
+            }),
             bank_snapshots_dir: bank_snapshots_dir.path().to_path_buf(),
-            ..snapshot_config
-        };
+            ..snapshot_mode.get_snapshot_load_config()
+        });
 
         let bank_forks =
             BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config_info.genesis_config));
         bank_forks
             .write()
             .unwrap()
-            .set_snapshot_config(Some(snapshot_config.clone()));
+            .set_snapshot_mode(Some(snapshot_mode.clone()));
         bank_forks
             .write()
             .unwrap()
@@ -143,7 +166,7 @@ impl TestEnvironment {
         let background_services = BackgroundServices::new(
             Arc::clone(&exit),
             Arc::clone(&cluster_info),
-            &snapshot_config,
+            &snapshot_mode,
             pruned_banks_receiver,
             Arc::clone(&bank_forks),
         );
@@ -158,7 +181,7 @@ impl TestEnvironment {
             _bank_snapshots_dir: bank_snapshots_dir,
             _full_snapshot_archives_dir: full_snapshot_archives_dir,
             _incremental_snapshot_archives_dir: incremental_snapshot_archives_dir,
-            snapshot_config,
+            snapshot_mode,
             background_services,
         }
     }
@@ -180,7 +203,7 @@ impl BackgroundServices {
     fn new(
         exit: Arc<AtomicBool>,
         cluster_info: Arc<ClusterInfo>,
-        snapshot_config: &SnapshotConfig,
+        snapshot_mode: &SnapshotMode,
         pruned_banks_receiver: DroppedSlotsReceiver,
         bank_forks: Arc<RwLock<BankForks>>,
     ) -> Self {
@@ -192,7 +215,7 @@ impl BackgroundServices {
             None,
             exit.clone(),
             cluster_info.clone(),
-            snapshot_config.clone(),
+            snapshot_mode.clone(),
             false,
         );
 
@@ -202,14 +225,14 @@ impl BackgroundServices {
             accounts_package_receiver,
             pending_snapshot_packages,
             exit.clone(),
-            snapshot_config.clone(),
+            snapshot_mode.clone(),
         );
 
         let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
         let accounts_background_request_sender =
             AbsRequestSender::new(snapshot_request_sender.clone());
         let snapshot_request_handler = SnapshotRequestHandler {
-            snapshot_config: snapshot_config.clone(),
+            snapshot_mode: snapshot_mode.clone(),
             snapshot_request_sender,
             snapshot_request_receiver,
             accounts_package_sender,
@@ -438,11 +461,14 @@ fn test_snapshots_have_expected_epoch_accounts_hash() {
         // - Deserialize the bank from the snapshot archive
         // - Ensure the EAHs match
         if bank.slot() % FULL_SNAPSHOT_INTERVAL == 0 {
-            let snapshot_config = &test_environment.snapshot_config;
+            let snapshot_mode = &test_environment.snapshot_mode;
             let full_snapshot_archive_info = loop {
                 if let Some(full_snapshot_archive_info) =
                     snapshot_utils::get_highest_full_snapshot_archive_info(
-                        &snapshot_config.full_snapshot_archives_dir,
+                        &snapshot_mode
+                            .get_snapshot_load_config()
+                            .full_snapshot_config
+                            .archives_dir,
                     )
                 {
                     if full_snapshot_archive_info.slot() == bank.slot() {
@@ -455,7 +481,7 @@ fn test_snapshots_have_expected_epoch_accounts_hash() {
             let (_tmp_dir, accounts_dir) = create_tmp_accounts_dir_for_tests();
             let deserialized_bank = snapshot_bank_utils::bank_from_snapshot_archives(
                 &[accounts_dir],
-                &snapshot_config.bank_snapshots_dir,
+                &snapshot_mode.get_snapshot_load_config().bank_snapshots_dir,
                 &full_snapshot_archive_info,
                 None,
                 &test_environment.genesis_config_info.genesis_config,
@@ -501,7 +527,7 @@ fn test_background_services_request_handling_for_epoch_accounts_hash() {
     let test_environment =
         TestEnvironment::new_with_snapshots(FULL_SNAPSHOT_INTERVAL, FULL_SNAPSHOT_INTERVAL);
     let bank_forks = test_environment.bank_forks.clone();
-    let snapshot_config = &test_environment.snapshot_config;
+    let snapshot_mode = &test_environment.snapshot_mode;
 
     let slots_per_epoch = test_environment
         .genesis_config_info
@@ -563,7 +589,10 @@ fn test_background_services_request_handling_for_epoch_accounts_hash() {
             // wait until FSS is made
             info!("Taking full snapshot...");
             while snapshot_utils::get_highest_full_snapshot_archive_slot(
-                &snapshot_config.full_snapshot_archives_dir,
+                &snapshot_mode
+                    .get_snapshot_load_config()
+                    .full_snapshot_config
+                    .archives_dir,
             ) != Some(bank.slot())
             {
                 trace!("waiting for full snapshot...");
