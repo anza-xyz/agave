@@ -26,7 +26,10 @@ use {
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     solana_measure::measure_time,
-    solana_rpc::transaction_status_service::TransactionStatusService,
+    solana_rpc::{
+        cache_block_meta_service::CacheBlockMetaService,
+        transaction_status_service::TransactionStatusService,
+    },
     solana_runtime::{
         accounts_background_service::{
             AbsRequestHandlers, AbsRequestSender, AccountsBackgroundService,
@@ -286,41 +289,57 @@ pub fn load_and_process_ledger(
 
     let enable_rpc_transaction_history = arg_matches.is_present("enable_rpc_transaction_history");
 
-    let (transaction_status_sender, transaction_status_service) =
-        if geyser_plugin_active || enable_rpc_transaction_history {
-            // Need Primary (R/W) access to insert transaction and rewards data;
-            // obtain Primary access if we do not already have it
-            let write_blockstore =
-                if enable_rpc_transaction_history && !blockstore.is_primary_access() {
-                    Arc::new(open_blockstore(
-                        blockstore.ledger_path(),
-                        arg_matches,
-                        AccessType::PrimaryForMaintenance,
-                    ))
-                } else {
-                    blockstore.clone()
-                };
-
-            let (transaction_status_sender, transaction_status_receiver) = unbounded();
-            let transaction_status_service = TransactionStatusService::new(
-                transaction_status_receiver,
-                Arc::default(),
-                enable_rpc_transaction_history,
-                transaction_notifier,
-                write_blockstore.clone(),
-                arg_matches.is_present("enable_extended_tx_metadata_storage"),
-                exit.clone(),
-            );
-
-            (
-                Some(TransactionStatusSender {
-                    sender: transaction_status_sender,
-                }),
-                Some(transaction_status_service),
-            )
+    let (
+        transaction_status_sender,
+        transaction_status_service,
+        cache_block_meta_sender,
+        cache_block_meta_service,
+    ) = if geyser_plugin_active || enable_rpc_transaction_history {
+        // Need Primary (R/W) access to insert transaction and rewards data;
+        // obtain Primary access if we do not already have it
+        let write_blockstore = if enable_rpc_transaction_history && !blockstore.is_primary_access()
+        {
+            Arc::new(open_blockstore(
+                blockstore.ledger_path(),
+                arg_matches,
+                AccessType::PrimaryForMaintenance,
+            ))
         } else {
-            (transaction_status_sender, None)
+            blockstore.clone()
         };
+
+        let (transaction_status_sender, transaction_status_receiver) = unbounded();
+        let transaction_status_service = TransactionStatusService::new(
+            transaction_status_receiver,
+            Arc::default(),
+            enable_rpc_transaction_history,
+            transaction_notifier,
+            write_blockstore.clone(),
+            arg_matches.is_present("enable_extended_tx_metadata_storage"),
+            exit.clone(),
+        );
+
+        let (cache_block_meta_sender, cache_block_meta_receiver) = unbounded();
+        // Nothing else will be interacting with max_complete_rewards_slot
+        let max_complete_rewards_slot = Arc::default();
+        let cache_block_meta_service = CacheBlockMetaService::new(
+            cache_block_meta_receiver,
+            write_blockstore,
+            max_complete_rewards_slot,
+            exit.clone(),
+        );
+
+        (
+            Some(TransactionStatusSender {
+                sender: transaction_status_sender,
+            }),
+            Some(transaction_status_service),
+            Some(cache_block_meta_sender),
+            Some(cache_block_meta_service),
+        )
+    } else {
+        (transaction_status_sender, None, None, None)
+    };
 
     let (bank_forks, leader_schedule_cache, starting_snapshot_hashes, ..) =
         bank_forks_utils::load_bank_forks(
@@ -329,7 +348,7 @@ pub fn load_and_process_ledger(
             account_paths,
             snapshot_config.as_ref(),
             &process_options,
-            None,
+            cache_block_meta_sender.as_ref(),
             None, // Maybe support this later, though
             accounts_update_notifier,
             exit.clone(),
@@ -412,7 +431,7 @@ pub fn load_and_process_ledger(
         &leader_schedule_cache,
         &process_options,
         transaction_status_sender.as_ref(),
-        None, // cache_block_meta_sender
+        cache_block_meta_sender.as_ref(),
         None, // entry_notification_sender
         &accounts_background_request_sender,
     )
@@ -426,6 +445,9 @@ pub fn load_and_process_ledger(
     exit.store(true, Ordering::Relaxed);
     accounts_hash_verifier.join().unwrap();
     if let Some(service) = transaction_status_service {
+        service.join().unwrap();
+    }
+    if let Some(service) = cache_block_meta_service {
         service.join().unwrap();
     }
 
