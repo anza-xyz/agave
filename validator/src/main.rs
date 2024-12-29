@@ -907,6 +907,8 @@ pub fn main() {
         rayon_global_threads,
         replay_forks_threads,
         replay_transactions_threads,
+        rocksdb_compaction_threads,
+        rocksdb_flush_threads,
         tvu_receive_threads,
         tvu_sigverify_threads,
     } = cli::thread_args::parse_num_threads_args(&matches);
@@ -1055,6 +1057,8 @@ pub fn main() {
         enforce_ulimit_nofile: true,
         // The validator needs primary (read/write)
         access_type: AccessType::Primary,
+        num_rocksdb_compaction_threads: rocksdb_compaction_threads,
+        num_rocksdb_flush_threads: rocksdb_flush_threads,
     };
 
     let accounts_hash_cache_path = matches

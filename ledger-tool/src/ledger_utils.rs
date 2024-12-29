@@ -471,6 +471,7 @@ pub fn open_blockstore(
             recovery_mode: wal_recovery_mode.clone(),
             enforce_ulimit_nofile,
             column_options: LedgerColumnOptions::default(),
+            ..BlockstoreOptions::default()
         },
     ) {
         Ok(blockstore) => blockstore,

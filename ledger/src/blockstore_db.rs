@@ -37,6 +37,7 @@ use {
         fs,
         marker::PhantomData,
         mem,
+        num::NonZeroUsize,
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
@@ -415,13 +416,13 @@ pub(crate) struct Rocks {
 
 impl Rocks {
     pub(crate) fn open(path: PathBuf, options: BlockstoreOptions) -> Result<Rocks> {
-        let access_type = options.access_type.clone();
+        // let access_type = options.access_type.clone();
         let recovery_mode = options.recovery_mode.clone();
 
         fs::create_dir_all(&path)?;
 
         // Use default database options
-        let mut db_options = get_db_options(&access_type);
+        let mut db_options = get_db_options(&options);
         if let Some(recovery_mode) = recovery_mode {
             db_options.set_wal_recovery_mode(recovery_mode.into());
         }
@@ -430,7 +431,7 @@ impl Rocks {
         let column_options = Arc::from(options.column_options);
 
         // Open the database
-        let db = match access_type {
+        let db = match options.access_type {
             AccessType::Primary | AccessType::PrimaryForMaintenance => {
                 DB::open_cf_descriptors(&db_options, &path, cf_descriptors)?
             }
@@ -452,7 +453,7 @@ impl Rocks {
         let rocks = Rocks {
             db,
             path,
-            access_type,
+            access_type: options.access_type,
             oldest_slot,
             column_options,
             write_batch_perf_status: PerfSamplingStatus::default(),
@@ -1991,7 +1992,7 @@ fn process_cf_options_advanced<C: 'static + Column + ColumnName>(
     }
 }
 
-fn get_db_options(access_type: &AccessType) -> Options {
+fn get_db_options(blockstore_options: &BlockstoreOptions) -> Options {
     let mut options = Options::default();
 
     // Create missing items to support a clean start
@@ -2002,15 +2003,13 @@ fn get_db_options(access_type: &AccessType) -> Options {
     // pool is used for compactions whereas the high priority pool is used for
     // memtable flushes. Separate pools are created so that compactions are
     // unable to stall memtable flushes (which could stall memtable writes).
-    //
-    // We could call options.set_max_background_jobs(n) to automatically size
-    // the pools to 3n/4 low priority and n/4 high priority threads. Instead,
-    // set the sizes directly to sizes we want
-    let num_low_priority_threads = num_cpus::get();
-    let num_high_priority_threads = (num_cpus::get() / 4).max(1);
     let mut env = rocksdb::Env::new().unwrap();
-    env.set_low_priority_background_threads(num_low_priority_threads as i32);
-    env.set_high_priority_background_threads(num_high_priority_threads as i32);
+    env.set_low_priority_background_threads(
+        blockstore_options.num_rocksdb_compaction_threads.get() as i32,
+    );
+    env.set_high_priority_background_threads(
+        blockstore_options.num_rocksdb_flush_threads.get() as i32
+    );
     options.set_env(&env);
     // The value set in max_background_jobs can grow but not shrink threadpool
     // sizes. So, set this value to 2 (the default value and 1 low / 1 high) to
@@ -2020,7 +2019,7 @@ fn get_db_options(access_type: &AccessType) -> Options {
     // Set max total wal size to 4G.
     options.set_max_total_wal_size(4 * 1024 * 1024 * 1024);
 
-    if should_disable_auto_compactions(access_type) {
+    if should_disable_auto_compactions(&blockstore_options.access_type) {
         options.set_disable_auto_compactions(true);
     }
 
@@ -2030,6 +2029,18 @@ fn get_db_options(access_type: &AccessType) -> Options {
     options.set_max_open_files(-1);
 
     options
+}
+
+/// The default number of threads to use for rocksdb compaction in the rocksdb
+/// low priority threadpool
+pub fn default_num_compaction_threads() -> NonZeroUsize {
+    NonZeroUsize::new(num_cpus::get()).expect("thread count is non-zero")
+}
+
+/// The default number of threads to use for rocksdb memtable flushes in the
+/// rocksdb high priority threadpool
+pub fn default_num_flush_threads() -> NonZeroUsize {
+    NonZeroUsize::new((num_cpus::get() / 4).max(1)).expect("thread count is non-zero")
 }
 
 // Returns whether automatic compactions should be disabled for the entire
