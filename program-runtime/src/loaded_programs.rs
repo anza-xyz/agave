@@ -5,7 +5,7 @@ use {
     solana_clock::{Epoch, Slot},
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
-    solana_rbpf::{
+    solana_sbpf::{
         elf::Executable,
         program::{BuiltinProgram, FunctionRegistry},
         verifier::RequisiteVerifier,
@@ -1370,7 +1370,7 @@ mod tests {
         percentage::Percentage,
         solana_clock::Slot,
         solana_pubkey::Pubkey,
-        solana_rbpf::{elf::Executable, program::BuiltinProgram},
+        solana_sbpf::{elf::Executable, program::BuiltinProgram},
         std::{
             fs::File,
             io::Read,

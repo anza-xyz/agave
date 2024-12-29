@@ -39,20 +39,21 @@ impl AccountsDb {
     /// in the reverse order of the slots so that an account is only streamed once. At a slot, if the accounts is updated
     /// multiple times only the last write (with highest write_version) is notified.
     pub fn notify_account_restore_from_snapshot(&self) {
-        if self.accounts_update_notifier.is_none() {
+        let Some(accounts_update_notifier) = &self.accounts_update_notifier else {
             return;
-        }
+        };
 
-        let mut slots = self.storage.all_slots();
-        let mut notified_accounts: HashSet<Pubkey> = HashSet::default();
         let mut notify_stats = GeyserPluginNotifyAtSnapshotRestoreStats::default();
+        if accounts_update_notifier.snapshot_notifications_enabled() {
+            let mut slots = self.storage.all_slots();
+            let mut notified_accounts: HashSet<Pubkey> = HashSet::default();
 
-        slots.sort_by(|a, b| b.cmp(a));
-        for slot in slots {
-            self.notify_accounts_in_slot(slot, &mut notified_accounts, &mut notify_stats);
+            slots.sort_by(|a, b| b.cmp(a));
+            for slot in slots {
+                self.notify_accounts_in_slot(slot, &mut notified_accounts, &mut notify_stats);
+            }
         }
 
-        let accounts_update_notifier = self.accounts_update_notifier.as_ref().unwrap();
         accounts_update_notifier.notify_end_of_restore_from_snapshot();
         notify_stats.report();
     }
@@ -196,6 +197,10 @@ pub mod tests {
     }
 
     impl AccountsUpdateNotifierInterface for GeyserTestPlugin {
+        fn snapshot_notifications_enabled(&self) -> bool {
+            true
+        }
+
         /// Notified when an account is updated at runtime, due to transaction activities
         fn notify_account_update(
             &self,

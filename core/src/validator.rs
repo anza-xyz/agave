@@ -2509,7 +2509,7 @@ pub enum ValidatorError {
     )]
     PohTooSlow { mine: u64, target: u64 },
 
-    #[error("shred version mistmatch: actual {actual}, expected {expected}")]
+    #[error("shred version mismatch: actual {actual}, expected {expected}")]
     ShredVersionMismatch { actual: u16, expected: u16 },
 
     #[error(transparent)]

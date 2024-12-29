@@ -2021,6 +2021,16 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         w_roots_tracker.uncleaned_roots.extend(roots);
     }
 
+    /// Removes `root` from `uncleaned_roots` and returns whether it was previously present
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn remove_uncleaned_root(&self, root: Slot) -> bool {
+        self.roots_tracker
+            .write()
+            .unwrap()
+            .uncleaned_roots
+            .remove(&root)
+    }
+
     pub fn max_root_inclusive(&self) -> Slot {
         self.roots_tracker
             .read()

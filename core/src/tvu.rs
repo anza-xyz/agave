@@ -332,21 +332,16 @@ impl Tvu {
             cluster_info.clone(),
             poh_recorder.clone(),
             tower_storage,
-            vote_connection_cache,
+            vote_connection_cache.clone(),
         );
 
-        let warm_quic_cache_service = connection_cache.and_then(|connection_cache| {
-            if connection_cache.use_quic() {
-                Some(WarmQuicCacheService::new(
-                    connection_cache.clone(),
-                    cluster_info.clone(),
-                    poh_recorder.clone(),
-                    exit.clone(),
-                ))
-            } else {
-                None
-            }
-        });
+        let warm_quic_cache_service = create_cache_warmer_if_needed(
+            connection_cache,
+            vote_connection_cache,
+            cluster_info,
+            poh_recorder,
+            &exit,
+        );
 
         let cost_update_service = CostUpdateService::new(blockstore.clone(), cost_update_receiver);
 
@@ -415,6 +410,27 @@ impl Tvu {
         self.duplicate_shred_listener.join()?;
         Ok(())
     }
+}
+
+fn create_cache_warmer_if_needed(
+    connection_cache: Option<&Arc<ConnectionCache>>,
+    vote_connection_cache: Arc<ConnectionCache>,
+    cluster_info: &Arc<ClusterInfo>,
+    poh_recorder: &Arc<RwLock<PohRecorder>>,
+    exit: &Arc<AtomicBool>,
+) -> Option<WarmQuicCacheService> {
+    let tpu_connection_cache = connection_cache.filter(|cache| cache.use_quic()).cloned();
+    let vote_connection_cache = Some(vote_connection_cache).filter(|cache| cache.use_quic());
+
+    (tpu_connection_cache.is_some() || vote_connection_cache.is_some()).then(|| {
+        WarmQuicCacheService::new(
+            tpu_connection_cache,
+            vote_connection_cache,
+            cluster_info.clone(),
+            poh_recorder.clone(),
+            exit.clone(),
+        )
+    })
 }
 
 #[cfg(test)]

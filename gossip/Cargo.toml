@@ -25,8 +25,10 @@ rand = { workspace = true }
 rand_chacha = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
+serde-big-array = { workspace = true }
 serde_bytes = { workspace = true }
 serde_derive = { workspace = true }
+siphasher = { workspace = true }
 solana-bloom = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-client = { workspace = true }
@@ -93,6 +95,9 @@ name = "crds_gossip_pull"
 
 [[bench]]
 name = "crds_shards"
+
+[[bench]]
+name = "weighted_shuffle"
 
 [[bin]]
 name = "solana-gossip"

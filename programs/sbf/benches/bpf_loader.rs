@@ -8,7 +8,7 @@
 )]
 
 use {
-    solana_feature_set::bpf_account_data_direct_mapping, solana_rbpf::memory_region::MemoryState,
+    solana_feature_set::bpf_account_data_direct_mapping, solana_sbpf::memory_region::MemoryState,
     solana_sdk::signer::keypair::Keypair, std::slice,
 };
 
@@ -24,15 +24,15 @@ use {
     solana_feature_set::FeatureSet,
     solana_measure::measure::Measure,
     solana_program_runtime::invoke_context::InvokeContext,
-    solana_rbpf::{
-        ebpf::MM_INPUT_START, elf::Executable, memory_region::MemoryRegion,
-        verifier::RequisiteVerifier, vm::ContextObject,
-    },
     solana_runtime::{
         bank::Bank,
         bank_client::BankClient,
         genesis_utils::{create_genesis_config, GenesisConfigInfo},
         loader_utils::{load_program_from_file, load_upgradeable_program_and_advance_slot},
+    },
+    solana_sbpf::{
+        ebpf::MM_INPUT_START, elf::Executable, memory_region::MemoryRegion,
+        verifier::RequisiteVerifier, vm::ContextObject,
     },
     solana_sdk::{
         account::AccountSharedData,

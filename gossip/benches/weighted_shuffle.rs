@@ -32,6 +32,24 @@ fn bench_weighted_shuffle_shuffle(bencher: &mut Bencher) {
     bencher.iter(|| {
         rng.fill(&mut seed[..]);
         let mut rng = ChaChaRng::from_seed(seed);
+        weighted_shuffle
+            .clone()
+            .shuffle(&mut rng)
+            .for_each(|index| {
+                std::hint::black_box(index);
+            });
+    });
+}
+
+#[bench]
+fn bench_weighted_shuffle_collect(bencher: &mut Bencher) {
+    let mut seed = [0u8; 32];
+    let mut rng = rand::thread_rng();
+    let weights = make_weights(&mut rng);
+    let weighted_shuffle = WeightedShuffle::new("", &weights);
+    bencher.iter(|| {
+        rng.fill(&mut seed[..]);
+        let mut rng = ChaChaRng::from_seed(seed);
         let shuffle = weighted_shuffle.clone().shuffle(&mut rng);
         std::hint::black_box(shuffle.collect::<Vec<_>>());
     });

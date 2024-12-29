@@ -1,15 +1,13 @@
 use {
+    solana_account::WritableAccount,
+    solana_instructions_sysvar as instructions,
     solana_measure::measure_us,
+    solana_precompiles::get_precompile,
     solana_program_runtime::invoke_context::InvokeContext,
-    solana_sdk::{
-        account::WritableAccount,
-        precompiles::get_precompile,
-        sysvar::instructions,
-        transaction::TransactionError,
-        transaction_context::{IndexOfAccount, InstructionAccount},
-    },
     solana_svm_transaction::svm_message::SVMMessage,
     solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
+    solana_transaction_context::{IndexOfAccount, InstructionAccount},
+    solana_transaction_error::TransactionError,
 };
 
 #[derive(Debug, Default, Clone, serde_derive::Deserialize, serde_derive::Serialize)]
@@ -138,30 +136,27 @@ mod tests {
             nid::Nid,
         },
         rand0_7::thread_rng,
+        solana_account::{AccountSharedData, ReadableAccount},
         solana_compute_budget::compute_budget::ComputeBudget,
         solana_ed25519_program::new_ed25519_instruction,
         solana_feature_set::FeatureSet,
+        solana_hash::Hash,
+        solana_instruction::{error::InstructionError, AccountMeta, Instruction},
+        solana_message::{AccountKeys, Message, SanitizedMessage},
         solana_program_runtime::{
             declare_process_instruction,
             invoke_context::EnvironmentConfig,
             loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
             sysvar_cache::SysvarCache,
         },
-        solana_sdk::{
-            account::{AccountSharedData, ReadableAccount},
-            ed25519_program,
-            hash::Hash,
-            instruction::{AccountMeta, Instruction, InstructionError},
-            message::{AccountKeys, Message, SanitizedMessage},
-            native_loader::{self, create_loadable_account_for_test},
-            pubkey::Pubkey,
-            rent::Rent,
-            reserved_account_keys::ReservedAccountKeys,
-            secp256k1_instruction::new_secp256k1_instruction,
-            secp256k1_program, system_program,
-            transaction_context::TransactionContext,
-        },
+        solana_pubkey::Pubkey,
+        solana_rent::Rent,
+        solana_reserved_account_keys::ReservedAccountKeys,
+        solana_sdk::native_loader::create_loadable_account_for_test,
+        solana_sdk_ids::{ed25519_program, native_loader, secp256k1_program, system_program},
+        solana_secp256k1_program::new_secp256k1_instruction,
         solana_secp256r1_program::new_secp256r1_instruction,
+        solana_transaction_context::TransactionContext,
         std::sync::Arc,
     };
 
@@ -448,11 +443,11 @@ mod tests {
         let mock_program_id = Pubkey::from([2u8; 32]);
         let accounts = vec![
             (
-                solana_sdk::pubkey::new_rand(),
+                solana_pubkey::new_rand(),
                 AccountSharedData::new(100, 1, &mock_program_id),
             ),
             (
-                solana_sdk::pubkey::new_rand(),
+                solana_pubkey::new_rand(),
                 AccountSharedData::new(0, 1, &mock_program_id),
             ),
             (

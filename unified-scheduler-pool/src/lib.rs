@@ -21,7 +21,6 @@ use {
         execute_batch, TransactionBatchWithIndexes, TransactionStatusSender,
     },
     solana_runtime::{
-        bank::Bank,
         installed_scheduler_pool::{
             initialized_result_with_timings, InstalledScheduler, InstalledSchedulerBox,
             InstalledSchedulerPool, InstalledSchedulerPoolArc, ResultWithTimings, ScheduleResult,
@@ -309,7 +308,10 @@ where
 
     // This fn needs to return immediately due to being part of the blocking
     // `::wait_for_termination()` call.
-    fn return_scheduler(&self, scheduler: S::Inner, should_trash: bool) {
+    fn return_scheduler(&self, scheduler: S::Inner) {
+        // Refer to the comment in is_aborted() as to the exact definition of the concept of
+        // _trashed_ and the interaction among different parts of unified scheduler.
+        let should_trash = scheduler.is_trashed();
         if should_trash {
             // Delay drop()-ing this trashed returned scheduler inner by stashing it in
             // self.trashed_scheduler_inners, which is periodically drained by the `solScCleaner`
@@ -411,9 +413,8 @@ pub trait TaskHandler: Send + Sync + Debug + Sized + 'static {
     fn handle(
         result: &mut Result<()>,
         timings: &mut ExecuteTimings,
-        bank: &Arc<Bank>,
-        transaction: &RuntimeTransaction<SanitizedTransaction>,
-        index: usize,
+        scheduling_context: &SchedulingContext,
+        task: &Task,
         handler_context: &HandlerContext,
     );
 }
@@ -425,13 +426,16 @@ impl TaskHandler for DefaultTaskHandler {
     fn handle(
         result: &mut Result<()>,
         timings: &mut ExecuteTimings,
-        bank: &Arc<Bank>,
-        transaction: &RuntimeTransaction<SanitizedTransaction>,
-        index: usize,
+        scheduling_context: &SchedulingContext,
+        task: &Task,
         handler_context: &HandlerContext,
     ) {
         // scheduler must properly prevent conflicting tx executions. thus, task handler isn't
         // responsible for locking.
+        let bank = scheduling_context.bank();
+        let transaction = task.transaction();
+        let index = task.task_index();
+
         let batch = bank.prepare_unlocked_batch_from_single_tx(transaction);
         let batch_with_indexes = TransactionBatchWithIndexes {
             batch,
@@ -550,7 +554,7 @@ mod chained_channel {
 
         pub(super) fn send_chained_channel(
             &mut self,
-            context: C,
+            context: &C,
             count: usize,
         ) -> std::result::Result<(), SendError<ChainedChannel<P, C>>> {
             let (chained_sender, chained_receiver) = crossbeam_channel::unbounded();
@@ -712,14 +716,6 @@ where
     S: SpawnableScheduler<TH>,
     TH: TaskHandler,
 {
-    fn id(&self) -> SchedulerId {
-        self.thread_manager.scheduler_id
-    }
-
-    fn is_trashed(&self) -> bool {
-        self.is_aborted() || self.is_overgrown()
-    }
-
     fn is_aborted(&self) -> bool {
         // Schedulers can be regarded as being _trashed_ (thereby will be cleaned up later), if
         // threads are joined. Remember that unified scheduler _doesn't normally join threads_ even
@@ -732,11 +728,12 @@ where
         // Note that this detection is done internally every time scheduler operations are run
         // (send_task() and end_session(); or schedule_execution() and wait_for_termination() in
         // terms of InstalledScheduler). So, it's ensured that the detection is done at least once
-        // for any scheudler which is taken out of the pool.
+        // for any scheduler which is taken out of the pool.
         //
         // Thus, any transaction errors are always handled without loss of information and
         // the aborted scheduler itself will always be handled as _trashed_ before returning the
-        // scheduler to the pool, considering is_trashed() is checked immediately before that.
+        // scheduler to the pool, considering is_aborted() is checked via is_trashed() immediately
+        // before that.
         self.thread_manager.are_threads_joined()
     }
 
@@ -770,7 +767,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
     fn new(pool: Arc<SchedulerPool<S, TH>>) -> Self {
         let (new_task_sender, new_task_receiver) = crossbeam_channel::unbounded();
         let (session_result_sender, session_result_receiver) = crossbeam_channel::unbounded();
-        let handler_count = pool.handler_count;
 
         Self {
             scheduler_id: pool.new_scheduler_id(),
@@ -781,12 +777,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             session_result_receiver,
             session_result_with_timings: None,
             scheduler_thread: None,
-            handler_threads: Vec::with_capacity(handler_count),
+            handler_threads: vec![],
         }
     }
 
     fn execute_task_with_handler(
-        bank: &Arc<Bank>,
+        scheduling_context: &SchedulingContext,
         executed_task: &mut Box<ExecutedTask>,
         handler_context: &HandlerContext,
     ) {
@@ -794,9 +790,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         TH::handle(
             &mut executed_task.result_with_timings.0,
             &mut executed_task.result_with_timings.1,
-            bank,
-            executed_task.task.transaction(),
-            executed_task.task.task_index(),
+            scheduling_context,
+            &executed_task.task,
             handler_context,
         );
     }
@@ -1032,7 +1027,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             recv(finished_blocked_task_receiver) -> executed_task => {
                                 let Some(executed_task) = Self::accumulate_result_with_timings(
                                     &mut result_with_timings,
-                                    executed_task.expect("alive handler")
+                                    executed_task.expect("alive handler"),
                                 ) else {
                                     break 'nonaborted_main_loop;
                                 };
@@ -1072,7 +1067,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             recv(finished_idle_task_receiver) -> executed_task => {
                                 let Some(executed_task) = Self::accumulate_result_with_timings(
                                     &mut result_with_timings,
-                                    executed_task.expect("alive handler")
+                                    executed_task.expect("alive handler"),
                                 ) else {
                                     break 'nonaborted_main_loop;
                                 };
@@ -1092,26 +1087,28 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     state_machine.reinitialize();
                     session_ending = false;
 
-                    // Prepare for the new session.
-                    match new_task_receiver.recv() {
-                        Ok(NewTaskPayload::OpenSubchannel(context_and_result_with_timings)) => {
-                            let (new_context, new_result_with_timings) =
-                                *context_and_result_with_timings;
-                            // We just received subsequent (= not initial) session and about to
-                            // enter into the preceding `while(!is_finished) {...}` loop again.
-                            // Before that, propagate new SchedulingContext to handler threads
-                            runnable_task_sender
-                                .send_chained_channel(new_context, handler_count)
-                                .unwrap();
-                            result_with_timings = new_result_with_timings;
+                    {
+                        // Prepare for the new session.
+                        match new_task_receiver.recv() {
+                            Ok(NewTaskPayload::OpenSubchannel(context_and_result_with_timings)) => {
+                                let (new_context, new_result_with_timings) =
+                                    *context_and_result_with_timings;
+                                // We just received subsequent (= not initial) session and about to
+                                // enter into the preceding `while(!is_finished) {...}` loop again.
+                                // Before that, propagate new SchedulingContext to handler threads
+                                runnable_task_sender
+                                    .send_chained_channel(&new_context, handler_count)
+                                    .unwrap();
+                                result_with_timings = new_result_with_timings;
+                            }
+                            Err(_) => {
+                                // This unusual condition must be triggered by ThreadManager::drop().
+                                // Initialize result_with_timings with a harmless value...
+                                result_with_timings = initialized_result_with_timings();
+                                break 'nonaborted_main_loop;
+                            }
+                            Ok(_) => unreachable!(),
                         }
-                        Err(_) => {
-                            // This unusual condition must be triggered by ThreadManager::drop().
-                            // Initialize result_with_timings with a harmless value...
-                            result_with_timings = initialized_result_with_timings();
-                            break 'nonaborted_main_loop;
-                        }
-                        Ok(_) => unreachable!(),
                     }
                 }
 
@@ -1152,53 +1149,55 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             // 2. Subsequent contexts are propagated explicitly inside `.after_select()` as part of
             //    `select_biased!`, which are sent from `.send_chained_channel()` in the scheduler
             //    thread for all-but-initial sessions.
-            move || loop {
-                let (task, sender) = select_biased! {
-                    recv(runnable_task_receiver.for_select()) -> message => {
-                        let Ok(message) = message else {
-                            break;
-                        };
-                        if let Some(task) = runnable_task_receiver.after_select(message) {
-                            (task, &finished_blocked_task_sender)
-                        } else {
-                            continue;
+            move || {
+                loop {
+                    let (task, sender) = select_biased! {
+                        recv(runnable_task_receiver.for_select()) -> message => {
+                            let Ok(message) = message else {
+                                break;
+                            };
+                            if let Some(task) = runnable_task_receiver.after_select(message) {
+                                (task, &finished_blocked_task_sender)
+                            } else {
+                                continue;
+                            }
+                        },
+                        recv(runnable_task_receiver.aux_for_select()) -> task => {
+                            if let Ok(task) = task {
+                                (task, &finished_idle_task_sender)
+                            } else {
+                                runnable_task_receiver.never_receive_from_aux();
+                                continue;
+                            }
+                        },
+                    };
+                    defer! {
+                        if !thread::panicking() {
+                            return;
                         }
-                    },
-                    recv(runnable_task_receiver.aux_for_select()) -> task => {
-                        if let Ok(task) = task {
-                            (task, &finished_idle_task_sender)
-                        } else {
-                            runnable_task_receiver.never_receive_from_aux();
-                            continue;
-                        }
-                    },
-                };
-                defer! {
-                    if !thread::panicking() {
-                        return;
-                    }
 
-                    // The scheduler thread can't detect panics in handler threads with
-                    // disconnected channel errors, unless all of them has died. So, send an
-                    // explicit Err promptly.
-                    let current_thread = thread::current();
-                    error!("handler thread is panicking: {:?}", current_thread);
-                    if sender.send(Err(HandlerPanicked)).is_ok() {
-                        info!("notified a panic from {:?}", current_thread);
-                    } else {
-                        // It seems that the scheduler thread has been aborted already...
-                        warn!("failed to notify a panic from {:?}", current_thread);
+                        // The scheduler thread can't detect panics in handler threads with
+                        // disconnected channel errors, unless all of them has died. So, send an
+                        // explicit Err promptly.
+                        let current_thread = thread::current();
+                        error!("handler thread is panicking: {:?}", current_thread);
+                        if sender.send(Err(HandlerPanicked)).is_ok() {
+                            info!("notified a panic from {:?}", current_thread);
+                        } else {
+                            // It seems that the scheduler thread has been aborted already...
+                            warn!("failed to notify a panic from {:?}", current_thread);
+                        }
                     }
-                }
-                let mut task = ExecutedTask::new_boxed(task);
-                Self::execute_task_with_handler(
-                    runnable_task_receiver.context().bank(),
-                    &mut task,
-                    &pool.handler_context,
-                );
-                if sender.send(Ok(task)).is_err() {
-                    warn!("handler_thread: scheduler thread aborted...");
-                    break;
+                    let mut task = ExecutedTask::new_boxed(task);
+                    Self::execute_task_with_handler(
+                        runnable_task_receiver.context(),
+                        &mut task,
+                        &pool.handler_context,
+                    );
+                    if sender.send(Ok(task)).is_err() {
+                        warn!("handler_thread: scheduler thread aborted...");
+                        break;
+                    }
                 }
             }
         };
@@ -1341,8 +1340,13 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
     }
 }
 
+pub trait SchedulerInner {
+    fn id(&self) -> SchedulerId;
+    fn is_trashed(&self) -> bool;
+}
+
 pub trait SpawnableScheduler<TH: TaskHandler>: InstalledScheduler {
-    type Inner: Debug + Send + Sync;
+    type Inner: SchedulerInner + Debug + Send + Sync;
 
     fn into_inner(self) -> (ResultWithTimings, Self::Inner);
 
@@ -1439,22 +1443,27 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
     }
 }
 
+impl<S, TH> SchedulerInner for PooledSchedulerInner<S, TH>
+where
+    S: SpawnableScheduler<TH>,
+    TH: TaskHandler,
+{
+    fn id(&self) -> SchedulerId {
+        self.thread_manager.scheduler_id
+    }
+
+    fn is_trashed(&self) -> bool {
+        self.is_aborted() || self.is_overgrown()
+    }
+}
+
 impl<S, TH> UninstalledScheduler for PooledSchedulerInner<S, TH>
 where
-    S: SpawnableScheduler<TH, Inner = PooledSchedulerInner<S, TH>>,
+    S: SpawnableScheduler<TH, Inner = Self>,
     TH: TaskHandler,
 {
     fn return_to_pool(self: Box<Self>) {
-        // Refer to the comment in is_trashed() as to the exact definition of the concept of
-        // _trashed_ and the interaction among different parts of unified scheduler.
-        let should_trash = self.is_trashed();
-        if should_trash {
-            info!("trashing scheduler (id: {})...", self.id());
-        }
-        self.thread_manager
-            .pool
-            .clone()
-            .return_scheduler(*self, should_trash);
+        self.thread_manager.pool.clone().return_scheduler(*self);
     }
 }
 
@@ -1752,9 +1761,8 @@ mod tests {
             fn handle(
                 _result: &mut Result<()>,
                 timings: &mut ExecuteTimings,
-                _bank: &Arc<Bank>,
-                _transaction: &RuntimeTransaction<SanitizedTransaction>,
-                _index: usize,
+                _bank: &SchedulingContext,
+                _task: &Task,
                 _handler_context: &HandlerContext,
             ) {
                 timings.metrics[ExecuteTimingType::CheckUs] += 123;
@@ -1935,9 +1943,8 @@ mod tests {
         fn handle(
             result: &mut Result<()>,
             _timings: &mut ExecuteTimings,
-            _bank: &Arc<Bank>,
-            _transaction: &RuntimeTransaction<SanitizedTransaction>,
-            _index: usize,
+            _bank: &SchedulingContext,
+            _task: &Task,
             _handler_context: &HandlerContext,
         ) {
             *result = Err(TransactionError::AccountNotFound);
@@ -2046,9 +2053,8 @@ mod tests {
             fn handle(
                 _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
-                _bank: &Arc<Bank>,
-                _transaction: &RuntimeTransaction<SanitizedTransaction>,
-                _index: usize,
+                _bank: &SchedulingContext,
+                _task: &Task,
                 _handler_context: &HandlerContext,
             ) {
                 *TASK_COUNT.lock().unwrap() += 1;
@@ -2117,10 +2123,10 @@ mod tests {
 
         let (result_with_timings, scheduler1) = scheduler1.into_inner();
         assert_matches!(result_with_timings, (Ok(()), _));
-        pool.return_scheduler(scheduler1, false);
+        pool.return_scheduler(scheduler1);
         let (result_with_timings, scheduler2) = scheduler2.into_inner();
         assert_matches!(result_with_timings, (Ok(()), _));
-        pool.return_scheduler(scheduler2, false);
+        pool.return_scheduler(scheduler2);
 
         let scheduler3 = pool.do_take_scheduler(context.clone());
         assert_eq!(scheduler_id2, scheduler3.id());
@@ -2163,7 +2169,7 @@ mod tests {
 
         let scheduler = pool.do_take_scheduler(old_context.clone());
         let scheduler_id = scheduler.id();
-        pool.return_scheduler(scheduler.into_inner().1, false);
+        pool.return_scheduler(scheduler.into_inner().1);
 
         let scheduler = pool.take_scheduler(new_context.clone());
         assert_eq!(scheduler_id, scheduler.id());
@@ -2383,11 +2389,11 @@ mod tests {
             fn handle(
                 _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
-                _bank: &Arc<Bank>,
-                _transaction: &RuntimeTransaction<SanitizedTransaction>,
-                index: usize,
+                _bank: &SchedulingContext,
+                task: &Task,
                 _handler_context: &HandlerContext,
             ) {
+                let index = task.task_index();
                 if index == 0 {
                     sleepless_testing::at(PanickingHanlderCheckPoint::BeforeNotifiedPanic);
                 } else if index == 1 {
@@ -2463,11 +2469,11 @@ mod tests {
             fn handle(
                 result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
-                _bank: &Arc<Bank>,
-                _transaction: &RuntimeTransaction<SanitizedTransaction>,
-                index: usize,
+                _bank: &SchedulingContext,
+                task: &Task,
                 _handler_context: &HandlerContext,
             ) {
+                let index = task.task_index();
                 *TASK_COUNT.lock().unwrap() += 1;
                 if index == 1 {
                     *result = Err(TransactionError::AccountNotFound);
@@ -2532,24 +2538,17 @@ mod tests {
             fn handle(
                 result: &mut Result<()>,
                 timings: &mut ExecuteTimings,
-                bank: &Arc<Bank>,
-                transaction: &RuntimeTransaction<SanitizedTransaction>,
-                index: usize,
+                bank: &SchedulingContext,
+                task: &Task,
                 handler_context: &HandlerContext,
             ) {
+                let index = task.task_index();
                 match index {
                     STALLED_TRANSACTION_INDEX => *LOCK_TO_STALL.lock().unwrap(),
                     BLOCKED_TRANSACTION_INDEX => {}
                     _ => unreachable!(),
                 };
-                DefaultTaskHandler::handle(
-                    result,
-                    timings,
-                    bank,
-                    transaction,
-                    index,
-                    handler_context,
-                );
+                DefaultTaskHandler::handle(result, timings, bank, task, handler_context);
             }
         }
 
@@ -2617,13 +2616,12 @@ mod tests {
             fn handle(
                 _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
-                bank: &Arc<Bank>,
-                _transaction: &RuntimeTransaction<SanitizedTransaction>,
-                index: usize,
+                context: &SchedulingContext,
+                task: &Task,
                 _handler_context: &HandlerContext,
             ) {
                 // The task index must always be matched to the slot.
-                assert_eq!(index as Slot, bank.slot());
+                assert_eq!(task.task_index() as Slot, context.bank().slot());
             }
         }
 
@@ -2716,7 +2714,6 @@ mod tests {
             transaction: RuntimeTransaction<SanitizedTransaction>,
             index: usize,
         ) -> ScheduleResult {
-            let transaction_and_index = (transaction, index);
             let context = self.context().clone();
             let pool = self.3.clone();
 
@@ -2728,12 +2725,15 @@ mod tests {
                 let mut result = Ok(());
                 let mut timings = ExecuteTimings::default();
 
+                let task = SchedulingStateMachine::create_task(transaction, index, &mut |_| {
+                    UsageQueue::default()
+                });
+
                 <DefaultTaskHandler as TaskHandler>::handle(
                     &mut result,
                     &mut timings,
-                    context.bank(),
-                    &transaction_and_index.0,
-                    transaction_and_index.1,
+                    &context,
+                    &task,
                     &pool.handler_context,
                 );
                 (result, timings)
@@ -2768,11 +2768,21 @@ mod tests {
         }
     }
 
+    impl<const TRIGGER_RACE_CONDITION: bool> SchedulerInner for AsyncScheduler<TRIGGER_RACE_CONDITION> {
+        fn id(&self) -> SchedulerId {
+            42
+        }
+
+        fn is_trashed(&self) -> bool {
+            false
+        }
+    }
+
     impl<const TRIGGER_RACE_CONDITION: bool> UninstalledScheduler
         for AsyncScheduler<TRIGGER_RACE_CONDITION>
     {
         fn return_to_pool(self: Box<Self>) {
-            self.3.clone().return_scheduler(*self, false)
+            self.3.clone().return_scheduler(*self)
         }
     }
 
@@ -2923,6 +2933,7 @@ mod tests {
         let result = &mut Ok(());
         let timings = &mut ExecuteTimings::default();
         let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
+        let scheduling_context = &SchedulingContext::new(bank.clone());
         let handler_context = &HandlerContext {
             log_messages_bytes_limit: None,
             transaction_status_sender: None,
@@ -2930,7 +2941,8 @@ mod tests {
             prioritization_fee_cache,
         };
 
-        DefaultTaskHandler::handle(result, timings, bank, &tx, 0, handler_context);
+        let task = SchedulingStateMachine::create_task(tx, 0, &mut |_| UsageQueue::default());
+        DefaultTaskHandler::handle(result, timings, scheduling_context, &task, handler_context);
         assert_matches!(result, Err(TransactionError::AccountLoadedTwice));
     }
 }

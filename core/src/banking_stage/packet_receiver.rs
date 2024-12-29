@@ -6,7 +6,7 @@ use {
         unprocessed_transaction_storage::UnprocessedTransactionStorage,
         BankingStageStats,
     },
-    crate::{banking_trace::BankingPacketReceiver, tracer_packet_stats::TracerPacketStats},
+    crate::banking_trace::BankingPacketReceiver,
     crossbeam_channel::RecvTimeoutError,
     solana_measure::{measure::Measure, measure_us},
     solana_sdk::{saturating_add_assign, timing::timestamp},
@@ -31,7 +31,6 @@ impl PacketReceiver {
         &mut self,
         unprocessed_transaction_storage: &mut UnprocessedTransactionStorage,
         banking_stage_stats: &mut BankingStageStats,
-        tracer_packet_stats: &mut TracerPacketStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) -> Result<(), RecvTimeoutError> {
         let (result, recv_time_us) = measure_us!({
@@ -53,7 +52,6 @@ impl PacketReceiver {
                         receive_packet_results,
                         unprocessed_transaction_storage,
                         banking_stage_stats,
-                        tracer_packet_stats,
                         slot_metrics_tracker,
                     );
                     recv_and_buffer_measure.stop();
@@ -93,21 +91,16 @@ impl PacketReceiver {
         &self,
         ReceivePacketResults {
             deserialized_packets,
-            new_tracer_stats_option,
             packet_stats,
         }: ReceivePacketResults,
         unprocessed_transaction_storage: &mut UnprocessedTransactionStorage,
         banking_stage_stats: &mut BankingStageStats,
-        tracer_packet_stats: &mut TracerPacketStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) {
         let packet_count = deserialized_packets.len();
         debug!("@{:?} txs: {} id: {}", timestamp(), packet_count, self.id);
 
         slot_metrics_tracker.increment_received_packet_counts(packet_stats);
-        if let Some(new_sigverify_stats) = &new_tracer_stats_option {
-            tracer_packet_stats.aggregate_sigverify_tracer_packet_stats(new_sigverify_stats);
-        }
 
         let mut dropped_packets_count = 0;
         let mut newly_buffered_packets_count = 0;
@@ -120,7 +113,6 @@ impl PacketReceiver {
             &mut newly_buffered_forwarded_packets_count,
             banking_stage_stats,
             slot_metrics_tracker,
-            tracer_packet_stats,
         );
 
         banking_stage_stats
@@ -145,7 +137,6 @@ impl PacketReceiver {
         newly_buffered_forwarded_packets_count: &mut usize,
         banking_stage_stats: &mut BankingStageStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
-        tracer_packet_stats: &mut TracerPacketStats,
     ) {
         if !deserialized_packets.is_empty() {
             let _ = banking_stage_stats
@@ -167,9 +158,6 @@ impl PacketReceiver {
             saturating_add_assign!(
                 *dropped_packets_count,
                 insert_packet_batches_summary.total_dropped_packets()
-            );
-            tracer_packet_stats.increment_total_exceeded_banking_stage_buffer(
-                insert_packet_batches_summary.dropped_tracer_packets(),
             );
         }
     }

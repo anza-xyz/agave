@@ -59,7 +59,7 @@ use {
         verify_precompiles::verify_precompiles,
     },
     accounts_lt_hash::{CacheValue as AccountsLtHashCacheValue, Stats as AccountsLtHashStats},
-    ahash::{AHashMap, AHashSet},
+    ahash::AHashSet,
     byteorder::{ByteOrder, LittleEndian},
     dashmap::{DashMap, DashSet},
     log::*,
@@ -97,7 +97,7 @@ use {
     solana_builtins::{prototype::BuiltinPrototype, BUILTINS, STATELESS_BUILTINS},
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
-    solana_cost_model::cost_tracker::CostTracker,
+    solana_cost_model::{block_cost_limits::simd_0207_block_limits, cost_tracker::CostTracker},
     solana_feature_set::{
         self as feature_set, remove_rounding_in_fee_calculation, reward_full_priority_fee,
         FeatureSet,
@@ -940,7 +940,7 @@ pub struct Bank {
     ///
     /// Note: The initial state must be strictly from an ancestor,
     /// and not an intermediate state within this slot.
-    cache_for_accounts_lt_hash: RwLock<AHashMap<Pubkey, AccountsLtHashCacheValue>>,
+    cache_for_accounts_lt_hash: DashMap<Pubkey, AccountsLtHashCacheValue, ahash::RandomState>,
 
     /// Stats related to the accounts lt hash
     stats_for_accounts_lt_hash: AccountsLtHashStats,
@@ -1164,7 +1164,7 @@ impl Bank {
             #[cfg(feature = "dev-context-only-utils")]
             hash_overrides: Arc::new(Mutex::new(HashOverrides::default())),
             accounts_lt_hash: Mutex::new(AccountsLtHash(LtHash::identity())),
-            cache_for_accounts_lt_hash: RwLock::new(AHashMap::new()),
+            cache_for_accounts_lt_hash: DashMap::default(),
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::default(),
@@ -1420,7 +1420,7 @@ impl Bank {
             #[cfg(feature = "dev-context-only-utils")]
             hash_overrides: parent.hash_overrides.clone(),
             accounts_lt_hash: Mutex::new(parent.accounts_lt_hash.lock().unwrap().clone()),
-            cache_for_accounts_lt_hash: RwLock::new(AHashMap::new()),
+            cache_for_accounts_lt_hash: DashMap::default(),
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::default(),
@@ -1493,11 +1493,8 @@ impl Bank {
                     let accounts_modified_this_slot =
                         new.rc.accounts.accounts_db.get_pubkeys_for_slot(slot);
                     let num_accounts_modified_this_slot = accounts_modified_this_slot.len();
-                    let cache_for_accounts_lt_hash =
-                        new.cache_for_accounts_lt_hash.get_mut().unwrap();
-                    cache_for_accounts_lt_hash.reserve(num_accounts_modified_this_slot);
                     for pubkey in accounts_modified_this_slot {
-                        cache_for_accounts_lt_hash
+                        new.cache_for_accounts_lt_hash
                             .entry(pubkey)
                             .or_insert(AccountsLtHashCacheValue::BankNew);
                     }
@@ -1833,7 +1830,7 @@ impl Bank {
             #[cfg(feature = "dev-context-only-utils")]
             hash_overrides: Arc::new(Mutex::new(HashOverrides::default())),
             accounts_lt_hash: Mutex::new(AccountsLtHash(LtHash([0xBAD1; LtHash::NUM_ELEMENTS]))),
-            cache_for_accounts_lt_hash: RwLock::new(AHashMap::new()),
+            cache_for_accounts_lt_hash: DashMap::default(),
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::new(&fields.bank_hash_stats),
@@ -3954,7 +3951,7 @@ impl Bank {
                     processed_counts.processed_with_successful_result_count += 1;
                 }
                 Err(err) => {
-                    if *err_count == 0 {
+                    if err_count.0 == 0 {
                         debug!("tx error: {:?} {:?}", err, tx);
                     }
                     *err_count += 1;
@@ -5300,6 +5297,22 @@ impl Bank {
             ApplyFeatureActivationsCaller::FinishInit,
             debug_do_not_add_builtins,
         );
+
+        // Cost-Tracker is not serialized in snapshot or any configs.
+        // We must apply previously activated features related to limits here
+        // so that the initial bank state is consistent with the feature set.
+        // Cost-tracker limits are propagated through children banks.
+        if self
+            .feature_set
+            .is_active(&feature_set::raise_block_limits_to_50m::id())
+        {
+            let (account_cost_limit, block_cost_limit, vote_cost_limit) = simd_0207_block_limits();
+            self.write_cost_tracker().unwrap().set_limits(
+                account_cost_limit,
+                block_cost_limit,
+                vote_cost_limit,
+            );
+        }
 
         if !debug_do_not_add_builtins {
             for builtin in BUILTINS
@@ -6916,6 +6929,15 @@ impl Bank {
                     self.accounts_lt_hash.get_mut().unwrap().0.checksum(),
                 );
             }
+        }
+
+        if new_feature_activations.contains(&feature_set::raise_block_limits_to_50m::id()) {
+            let (account_cost_limit, block_cost_limit, vote_cost_limit) = simd_0207_block_limits();
+            self.write_cost_tracker().unwrap().set_limits(
+                account_cost_limit,
+                block_cost_limit,
+                vote_cost_limit,
+            );
         }
     }
 

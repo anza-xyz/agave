@@ -23,7 +23,7 @@ use {
     },
     std::{
         hash::DefaultHasher,
-        iter::FromIterator,
+        iter::{self, FromIterator},
         str::FromStr,
         sync::{atomic::AtomicBool, RwLock},
         thread::{self, Builder, JoinHandle},
@@ -8145,4 +8145,116 @@ define_accounts_db_test!(test_calculate_incremental_accounts_hash, |accounts_db|
 fn compute_merkle_root(hashes: impl IntoIterator<Item = Hash>) -> Hash {
     let hashes = hashes.into_iter().collect();
     AccountsHasher::compute_merkle_root_recurse(hashes, MERKLE_FANOUT)
+}
+
+/// Test that `clean` reclaims old accounts when cleaning old storages
+///
+/// When `clean` constructs candidates from old storages, pubkeys in these storages may have other
+/// newer versions of the accounts in other newer storages *not* explicitly marked to be visited by
+/// `clean`.  In this case, `clean` should still reclaim the old versions of these accounts.
+#[test]
+fn test_clean_old_storages_with_reclaims_rooted() {
+    let accounts_db = AccountsDb::new_single_for_tests();
+    let pubkey = Pubkey::new_unique();
+    let old_slot = 11;
+    let new_slot = 22;
+    let slots = [old_slot, new_slot];
+    for &slot in &slots {
+        let account = AccountSharedData::new(slot, 0, &Pubkey::new_unique());
+        // store `pubkey` into multiple slots, and also store another unique pubkey
+        // to prevent the whole storage from being marked as dead by `clean`.
+        accounts_db.store_for_tests(
+            slot,
+            &[(&pubkey, &account), (&Pubkey::new_unique(), &account)],
+        );
+        accounts_db.add_root_and_flush_write_cache(slot);
+        // ensure this slot is *not* in the dirty_stores or uncleaned_pubkeys, because we want to
+        // test cleaning *old* storages, i.e. when they aren't explicitly marked for cleaning
+        assert!(!accounts_db.dirty_stores.contains_key(&slot));
+        assert!(!accounts_db.uncleaned_pubkeys.contains_key(&slot));
+    }
+
+    // add `old_slot` to the dirty stores list to mimic it being picked up as old
+    let old_storage = accounts_db
+        .storage
+        .get_slot_storage_entry_shrinking_in_progress_ok(old_slot)
+        .unwrap();
+    accounts_db.dirty_stores.insert(old_slot, old_storage);
+
+    // ensure the slot list for `pubkey` has both the old and new slots
+    let slot_list = accounts_db
+        .accounts_index
+        .get_bin(&pubkey)
+        .slot_list_mut(&pubkey, |slot_list| slot_list.clone())
+        .unwrap();
+    assert_eq!(slot_list.len(), slots.len());
+    assert!(slot_list.iter().map(|(slot, _)| slot).eq(slots.iter()));
+
+    // `clean` should now reclaim the account in `old_slot`, even though `new_slot` is not
+    // explicitly being cleaned
+    accounts_db.clean_accounts_for_tests();
+
+    // ensure we've reclaimed the account in `old_slot`
+    let slot_list = accounts_db
+        .accounts_index
+        .get_bin(&pubkey)
+        .slot_list_mut(&pubkey, |slot_list| slot_list.clone())
+        .unwrap();
+    assert_eq!(slot_list.len(), 1);
+    assert!(slot_list
+        .iter()
+        .map(|(slot, _)| slot)
+        .eq(iter::once(&new_slot)));
+}
+
+/// Test that `clean` respects rooted vs unrooted slots w.r.t. reclaims
+///
+/// When an account is in multiple slots, and the latest is unrooted, `clean` should *not* reclaim
+/// all the rooted versions.
+#[test]
+fn test_clean_old_storages_with_reclaims_unrooted() {
+    let accounts_db = AccountsDb::new_single_for_tests();
+    let pubkey = Pubkey::new_unique();
+    let old_slot = 11;
+    let new_slot = 22;
+    let slots = [old_slot, new_slot];
+    for &slot in &slots {
+        let account = AccountSharedData::new(slot, 0, &Pubkey::new_unique());
+        // store `pubkey` into multiple slots, and also store another unique pubkey
+        // to prevent the whole storage from being marked as dead by `clean`.
+        accounts_db.store_for_tests(
+            slot,
+            &[(&pubkey, &account), (&Pubkey::new_unique(), &account)],
+        );
+        accounts_db.calculate_accounts_delta_hash(slot);
+        // ensure this slot is in uncleaned_pubkeys (but not dirty_stores) so it'll be cleaned
+        assert!(!accounts_db.dirty_stores.contains_key(&slot));
+        assert!(accounts_db.uncleaned_pubkeys.contains_key(&slot));
+    }
+
+    // only `old_slot` should be rooted, not `new_slot`
+    accounts_db.add_root_and_flush_write_cache(old_slot);
+    assert!(accounts_db.accounts_index.is_alive_root(old_slot));
+    assert!(!accounts_db.accounts_index.is_alive_root(new_slot));
+
+    // ensure the slot list for `pubkey` has both the old and new slots
+    let slot_list = accounts_db
+        .accounts_index
+        .get_bin(&pubkey)
+        .slot_list_mut(&pubkey, |slot_list| slot_list.clone())
+        .unwrap();
+    assert_eq!(slot_list.len(), slots.len());
+    assert!(slot_list.iter().map(|(slot, _)| slot).eq(slots.iter()));
+
+    // `clean` should *not* reclaim the account in `old_slot` because `new_slot` is not a root
+    accounts_db.clean_accounts_for_tests();
+
+    // ensure we have NOT reclaimed the account in `old_slot`
+    let slot_list = accounts_db
+        .accounts_index
+        .get_bin(&pubkey)
+        .slot_list_mut(&pubkey, |slot_list| slot_list.clone())
+        .unwrap();
+    assert_eq!(slot_list.len(), slots.len());
+    assert!(slot_list.iter().map(|(slot, _)| slot).eq(slots.iter()));
 }

@@ -14,7 +14,6 @@ base64 = { workspace = true }
 bincode = { workspace = true }
 enum-iterator = { workspace = true }
 itertools = { workspace = true }
-libc = { workspace = true }
 log = { workspace = true }
 num-derive = { workspace = true }
 num-traits = { workspace = true }
@@ -42,6 +41,7 @@ solana-metrics = { workspace = true }
 solana-precompiles = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
+solana-sbpf = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-slot-hashes = { workspace = true }
 solana-stable-layout = { workspace = true }
@@ -50,13 +50,11 @@ solana-sysvar-id = { workspace = true }
 solana-timings = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-type-overrides = { workspace = true }
-solana_rbpf = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
 solana-instruction = { workspace = true, features = ["bincode"] }
-solana-logger = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-transaction-context = { workspace = true, features = [
     "dev-context-only-utils",
@@ -78,7 +76,7 @@ frozen-abi = [
 ]
 shuttle-test = [
     "solana-type-overrides/shuttle-test",
-    "solana_rbpf/shuttle-test",
+    "solana-sbpf/shuttle-test",
 ]
 
 [lints]
