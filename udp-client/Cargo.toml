@@ -11,6 +11,7 @@ edition = { workspace = true }
 
 [dependencies]
 async-trait = { workspace = true }
+itertools = { workspace = true }
 solana-connection-cache = { workspace = true }
 solana-keypair = { workspace = true }
 solana-net-utils = { workspace = true }
