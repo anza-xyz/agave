@@ -1107,7 +1107,7 @@ mod tests {
                 .lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS);
             for result in results.iter() {
                 if result.is_ok() {
-                    counter_clone.clone().fetch_add(1, Ordering::SeqCst);
+                    counter_clone.clone().fetch_add(1, Ordering::Release);
                 }
             }
             accounts_clone.unlock_accounts(txs.iter().zip(&results));
@@ -1122,9 +1122,9 @@ mod tests {
                 .clone()
                 .lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS);
             if results[0].is_ok() {
-                let counter_value = counter_clone.clone().load(Ordering::SeqCst);
+                let counter_value = counter_clone.clone().load(Ordering::Acquire);
                 thread::sleep(time::Duration::from_millis(50));
-                assert_eq!(counter_value, counter_clone.clone().load(Ordering::SeqCst));
+                assert_eq!(counter_value, counter_clone.clone().load(Ordering::Acquire));
             }
             accounts_arc.unlock_accounts(txs.iter().zip(&results));
             thread::sleep(time::Duration::from_millis(50));
