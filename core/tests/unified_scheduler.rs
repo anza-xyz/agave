@@ -18,7 +18,6 @@ use {
     solana_runtime::{
         accounts_background_service::AbsRequestSender, bank::Bank, bank_forks::BankForks,
         genesis_utils::GenesisConfigInfo, installed_scheduler_pool::SchedulingContext,
-        prioritization_fee_cache::PrioritizationFeeCache,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk::{hash::Hash, pubkey::Pubkey, system_transaction, transaction::Result},
@@ -68,14 +67,8 @@ fn test_scheduler_waited_by_drop_bank_service() {
     // Setup bankforks with unified scheduler enabled
     let genesis_bank = Bank::new_for_tests(&genesis_config);
     let bank_forks = BankForks::new_rw_arc(genesis_bank);
-    let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-    let pool_raw = SchedulerPool::<PooledScheduler<StallingHandler>, _>::new(
-        None,
-        None,
-        None,
-        None,
-        ignored_prioritization_fee_cache,
-    );
+    let pool_raw =
+        SchedulerPool::<PooledScheduler<StallingHandler>, _>::new(None, None, None, None, None);
     let pool = pool_raw.clone();
     bank_forks.write().unwrap().install_scheduler_pool(pool);
     let genesis = 0;

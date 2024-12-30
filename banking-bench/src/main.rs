@@ -23,9 +23,7 @@ use {
     solana_measure::measure::Measure,
     solana_perf::packet::{to_packet_batches, PacketBatch},
     solana_poh::poh_recorder::{create_test_recorder, PohRecorder, WorkingBankEntry},
-    solana_runtime::{
-        bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
-    },
+    solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_sdk::{
         compute_budget::ComputeBudgetInstruction,
         hash::Hash,
@@ -481,7 +479,7 @@ fn main() {
         None,
         Arc::new(connection_cache),
         bank_forks.clone(),
-        &Arc::new(PrioritizationFeeCache::new(0u64)),
+        None,
         false,
     );
 

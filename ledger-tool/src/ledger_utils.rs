@@ -36,7 +36,6 @@ use {
             PrunedBanksRequestHandler, SnapshotRequestHandler,
         },
         bank_forks::BankForks,
-        prioritization_fee_cache::PrioritizationFeeCache,
         snapshot_config::SnapshotConfig,
         snapshot_hash::StartingSnapshotHashes,
         snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
@@ -376,7 +375,6 @@ pub fn load_and_process_ledger(
         }
         BlockVerificationMethod::UnifiedScheduler => {
             let no_replay_vote_sender = None;
-            let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
             bank_forks
                 .write()
                 .unwrap()
@@ -385,7 +383,7 @@ pub fn load_and_process_ledger(
                     process_options.runtime_config.log_messages_bytes_limit,
                     transaction_status_sender.clone(),
                     no_replay_vote_sender,
-                    ignored_prioritization_fee_cache,
+                    None,
                 ));
         }
     }

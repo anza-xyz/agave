@@ -149,7 +149,7 @@ pub fn execute_batch(
     replay_vote_sender: Option<&ReplayVoteSender>,
     timings: &mut ExecuteTimings,
     log_messages_bytes_limit: Option<usize>,
-    prioritization_fee_cache: &PrioritizationFeeCache,
+    prioritization_fee_cache: &Option<Arc<PrioritizationFeeCache>>,
 ) -> Result<()> {
     let TransactionBatchWithIndexes {
         batch,
@@ -228,7 +228,9 @@ pub fn execute_batch(
         );
     }
 
-    prioritization_fee_cache.update(bank, committed_transactions.into_iter());
+    if let Some(prioritization_fee_cache) = prioritization_fee_cache {
+        prioritization_fee_cache.update(bank, committed_transactions.into_iter());
+    }
 
     first_err.map(|(result, _)| result).unwrap_or(Ok(()))
 }
@@ -300,7 +302,7 @@ fn execute_batches_internal(
     transaction_status_sender: Option<&TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     log_messages_bytes_limit: Option<usize>,
-    prioritization_fee_cache: &PrioritizationFeeCache,
+    prioritization_fee_cache: &Option<Arc<PrioritizationFeeCache>>,
 ) -> Result<ExecuteBatchesInternalMetrics> {
     assert!(!batches.is_empty());
     let execution_timings_per_thread: Mutex<HashMap<usize, ThreadExecuteTimings>> =
@@ -379,7 +381,7 @@ fn process_batches(
     replay_vote_sender: Option<&ReplayVoteSender>,
     batch_execution_timing: &mut BatchExecutionTiming,
     log_messages_bytes_limit: Option<usize>,
-    prioritization_fee_cache: &PrioritizationFeeCache,
+    prioritization_fee_cache: &Option<Arc<PrioritizationFeeCache>>,
 ) -> Result<()> {
     if bank.has_installed_scheduler() {
         debug!(
@@ -482,7 +484,7 @@ fn rebatch_and_execute_batches(
     replay_vote_sender: Option<&ReplayVoteSender>,
     timing: &mut BatchExecutionTiming,
     log_messages_bytes_limit: Option<usize>,
-    prioritization_fee_cache: &PrioritizationFeeCache,
+    prioritization_fee_cache: &Option<Arc<PrioritizationFeeCache>>,
 ) -> Result<()> {
     if locked_entries.len() == 0 {
         return Ok(());
@@ -624,7 +626,6 @@ pub fn process_entries_for_tests(
     })
     .collect();
 
-    let ignored_prioritization_fee_cache = PrioritizationFeeCache::new(0u64);
     let result = process_entries(
         bank,
         &replay_tx_thread_pool,
@@ -633,7 +634,7 @@ pub fn process_entries_for_tests(
         replay_vote_sender,
         &mut batch_timing,
         None,
-        &ignored_prioritization_fee_cache,
+        &None,
     );
 
     debug!("process_entries: {:?}", batch_timing);
@@ -648,7 +649,7 @@ fn process_entries(
     replay_vote_sender: Option<&ReplayVoteSender>,
     batch_timing: &mut BatchExecutionTiming,
     log_messages_bytes_limit: Option<usize>,
-    prioritization_fee_cache: &PrioritizationFeeCache,
+    prioritization_fee_cache: &Option<Arc<PrioritizationFeeCache>>,
 ) -> Result<()> {
     // accumulator for entries that can be processed in parallel
     let mut batches = vec![];
@@ -1163,8 +1164,6 @@ fn confirm_full_slot(
 ) -> result::Result<(), BlockstoreProcessorError> {
     let mut confirmation_timing = ConfirmationTiming::default();
     let skip_verification = !opts.run_verification;
-    let ignored_prioritization_fee_cache = PrioritizationFeeCache::new(0u64);
-
     confirm_slot(
         blockstore,
         bank,
@@ -1178,7 +1177,7 @@ fn confirm_full_slot(
         recyclers,
         opts.allow_dead_slots,
         opts.runtime_config.log_messages_bytes_limit,
-        &ignored_prioritization_fee_cache,
+        &None,
     )?;
 
     timing.accumulate(&confirmation_timing.batch_execute.totals);
@@ -1513,7 +1512,7 @@ pub fn confirm_slot(
     recyclers: &VerifyRecyclers,
     allow_dead_slots: bool,
     log_messages_bytes_limit: Option<usize>,
-    prioritization_fee_cache: &PrioritizationFeeCache,
+    prioritization_fee_cache: &Option<Arc<PrioritizationFeeCache>>,
 ) -> result::Result<(), BlockstoreProcessorError> {
     let slot = bank.slot();
 
@@ -1560,7 +1559,7 @@ fn confirm_slot_entries(
     replay_vote_sender: Option<&ReplayVoteSender>,
     recyclers: &VerifyRecyclers,
     log_messages_bytes_limit: Option<usize>,
-    prioritization_fee_cache: &PrioritizationFeeCache,
+    prioritization_fee_cache: &Option<Arc<PrioritizationFeeCache>>,
 ) -> result::Result<(), BlockstoreProcessorError> {
     let ConfirmationTiming {
         confirmation_elapsed,
@@ -4813,7 +4812,7 @@ pub mod tests {
             None,
             &VerifyRecyclers::default(),
             None,
-            &PrioritizationFeeCache::new(0u64),
+            &None,
         )
     }
 
@@ -4906,7 +4905,7 @@ pub mod tests {
             None,
             &VerifyRecyclers::default(),
             None,
-            &PrioritizationFeeCache::new(0u64),
+            &None,
         )
         .unwrap();
         assert_eq!(progress.num_txs, 2);
@@ -4951,7 +4950,7 @@ pub mod tests {
             None,
             &VerifyRecyclers::default(),
             None,
-            &PrioritizationFeeCache::new(0u64),
+            &None,
         )
         .unwrap();
         assert_eq!(progress.num_txs, 5);
@@ -5054,7 +5053,6 @@ pub mod tests {
 
         let replay_tx_thread_pool = create_thread_pool(1);
         let mut batch_execution_timing = BatchExecutionTiming::default();
-        let ignored_prioritization_fee_cache = PrioritizationFeeCache::new(0u64);
         let result = process_batches(
             &bank,
             &replay_tx_thread_pool,
@@ -5063,7 +5061,7 @@ pub mod tests {
             None,
             &mut batch_execution_timing,
             None,
-            &ignored_prioritization_fee_cache,
+            &None,
         );
         if should_succeed {
             assert_matches!(result, Ok(()));

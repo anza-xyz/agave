@@ -360,7 +360,7 @@ impl BankingStage {
         log_messages_bytes_limit: Option<usize>,
         connection_cache: Arc<ConnectionCache>,
         bank_forks: Arc<RwLock<BankForks>>,
-        prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
+        prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         enable_forwarding: bool,
     ) -> Self {
         Self::new_num_threads(
@@ -395,7 +395,7 @@ impl BankingStage {
         log_messages_bytes_limit: Option<usize>,
         connection_cache: Arc<ConnectionCache>,
         bank_forks: Arc<RwLock<BankForks>>,
-        prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
+        prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         enable_forwarding: bool,
     ) -> Self {
         match block_production_method {
@@ -430,7 +430,7 @@ impl BankingStage {
         log_messages_bytes_limit: Option<usize>,
         connection_cache: Arc<ConnectionCache>,
         bank_forks: Arc<RwLock<BankForks>>,
-        prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
+        prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
     ) -> Self {
         assert!(num_threads >= MIN_TOTAL_THREADS);
         // Single thread to generate entries from many banks.
@@ -449,7 +449,7 @@ impl BankingStage {
         let committer = Committer::new(
             transaction_status_sender.clone(),
             replay_vote_sender.clone(),
-            prioritization_fee_cache.clone(),
+            prioritization_fee_cache,
         );
         let transaction_recorder = poh_recorder.read().unwrap().new_recorder();
 
@@ -516,7 +516,7 @@ impl BankingStage {
         log_messages_bytes_limit: Option<usize>,
         connection_cache: Arc<ConnectionCache>,
         bank_forks: Arc<RwLock<BankForks>>,
-        prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
+        prioritization_fee_cache: Option<Arc<PrioritizationFeeCache>>,
         enable_forwarding: bool,
     ) -> Self {
         assert!(num_threads >= MIN_TOTAL_THREADS);
@@ -534,7 +534,7 @@ impl BankingStage {
         let committer = Committer::new(
             transaction_status_sender.clone(),
             replay_vote_sender.clone(),
-            prioritization_fee_cache.clone(),
+            prioritization_fee_cache,
         );
         let transaction_recorder = poh_recorder.read().unwrap().new_recorder();
 
@@ -900,7 +900,7 @@ mod tests {
                 None,
                 Arc::new(ConnectionCache::new("connection_cache_test")),
                 bank_forks,
-                &Arc::new(PrioritizationFeeCache::new(0u64)),
+                None,
                 false,
             );
             drop(non_vote_sender);
@@ -960,7 +960,7 @@ mod tests {
                 None,
                 Arc::new(ConnectionCache::new("connection_cache_test")),
                 bank_forks,
-                &Arc::new(PrioritizationFeeCache::new(0u64)),
+                None,
                 false,
             );
             trace!("sending bank");
@@ -1044,7 +1044,7 @@ mod tests {
                 None,
                 Arc::new(ConnectionCache::new("connection_cache_test")),
                 bank_forks.clone(), // keep a local-copy of bank-forks so worker threads do not lose weak access to bank-forks
-                &Arc::new(PrioritizationFeeCache::new(0u64)),
+                None,
                 false,
             );
 
@@ -1214,7 +1214,7 @@ mod tests {
                     None,
                     Arc::new(ConnectionCache::new("connection_cache_test")),
                     bank_forks,
-                    &Arc::new(PrioritizationFeeCache::new(0u64)),
+                    None,
                 );
 
                 // wait for banking_stage to eat the packets
@@ -1409,7 +1409,7 @@ mod tests {
                 None,
                 Arc::new(ConnectionCache::new("connection_cache_test")),
                 bank_forks,
-                &Arc::new(PrioritizationFeeCache::new(0u64)),
+                None,
                 false,
             );
 
