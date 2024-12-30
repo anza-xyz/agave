@@ -416,7 +416,6 @@ pub(crate) struct Rocks {
 
 impl Rocks {
     pub(crate) fn open(path: PathBuf, options: BlockstoreOptions) -> Result<Rocks> {
-        // let access_type = options.access_type.clone();
         let recovery_mode = options.recovery_mode.clone();
 
         fs::create_dir_all(&path)?;
