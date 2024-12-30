@@ -1053,7 +1053,7 @@ impl VerboseDisplay for CliKeyedEpochRewards {
         writeln!(w, "Epoch Rewards:")?;
         writeln!(
             w,
-            "  {:<44}  {:<11}  {:<23}  {:<18}  {:<18}  {:>14}  {:>7}  {:>10}",
+            "  {:<44}  {:<11}  {:<23}  {:<18}  {:<20}  {:>14}  {:>7}  {:>10}",
             "Address",
             "Reward Slot",
             "Time",
@@ -1068,7 +1068,7 @@ impl VerboseDisplay for CliKeyedEpochRewards {
                 Some(reward) => {
                     writeln!(
                         w,
-                        "  {:<44}  {:<11}  {:<23}  ◎{:<17.9}  ◎{:<17.9}  {:>13.9}%  {:>7}  {:>10}",
+                        "  {:<44}  {:<11}  {:<23}  ◎{:<17.9}  ◎{:<19.9}  {:>13.9}%  {:>7}  {:>10}",
                         keyed_reward.address,
                         reward.effective_slot,
                         Utc.timestamp_opt(reward.block_time, 0).unwrap(),
