@@ -2544,6 +2544,7 @@ pub fn get_epoch_boundary_timestamps(
 
 pub fn make_cli_reward(
     reward: &RpcInflationReward,
+    block_time: UnixTimestamp,
     epoch_start_time: UnixTimestamp,
     epoch_end_time: UnixTimestamp,
 ) -> Option<CliEpochReward> {
@@ -2564,7 +2565,7 @@ pub fn make_cli_reward(
             percent_change: rate_change * 100.0,
             apr: Some(apr * 100.0),
             commission: reward.commission,
-            block_time: epoch_end_time,
+            block_time,
         })
     } else {
         None
@@ -2593,7 +2594,9 @@ pub(crate) fn fetch_epoch_rewards(
             if let Some(reward) = reward {
                 let (epoch_start_time, epoch_end_time) =
                     get_epoch_boundary_timestamps(rpc_client, reward, &epoch_schedule)?;
-                if let Some(cli_reward) = make_cli_reward(reward, epoch_start_time, epoch_end_time)
+                let block_time = rpc_client.get_block_time(reward.effective_slot)?;
+                if let Some(cli_reward) =
+                    make_cli_reward(reward, block_time, epoch_start_time, epoch_end_time)
                 {
                     all_epoch_rewards.push(cli_reward);
                 }
