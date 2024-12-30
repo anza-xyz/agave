@@ -139,11 +139,10 @@ fn process_rewards(
                 reward: cli_reward,
             });
         }
-        let block_time = rpc_client.get_block_time(first_reward.effective_slot)?;
         Some(CliEpochRewardsMetadata {
             epoch: first_reward.epoch,
-            effective_slot: first_reward.effective_slot,
-            block_time,
+            effective_slot: 0, // Deprecated
+            block_time: 0,     // Deprecated
         })
     } else {
         None
