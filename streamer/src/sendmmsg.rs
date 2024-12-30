@@ -196,11 +196,25 @@ where
     for ((pkt, dest), hdr, iov, addr) in izip!(packets, &mut hdrs, &mut iovs, &mut addrs) {
         mmsghdr_for_packet(pkt.as_ref(), dest.borrow(), iov, addr, hdr);
     }
-    // SAFETY: hdrs is initialized by mmsghdr_for_packet in packets.len()
-    let hdrs =
+
+    // SAFETY: The first `packets.len()` elements of `hdrs`, `iovs`, and `addrs` are
+    // guaranteed to be initialized by `mmsghdr_for_packet` before this loop.
+    let hdrs_slice =
         unsafe { std::slice::from_raw_parts_mut(hdrs.as_mut_ptr() as *mut mmsghdr, packets.len()) };
 
-    sendmmsg_retry(sock, hdrs)
+    let result = sendmmsg_retry(sock, hdrs_slice);
+
+    // SAFETY: The first `packets.len()` elements of `hdrs`, `iovs`, and `addrs` are
+    // guaranteed to be initialized by `mmsghdr_for_packet` before this loop.
+    for (hdr, iov, addr) in izip!(&mut hdrs, &mut iovs, &mut addrs).take(packets.len()) {
+        unsafe {
+            hdr.assume_init_drop();
+            iov.assume_init_drop();
+            addr.assume_init_drop();
+        }
+    }
+
+    result
 }
 
 #[cfg(target_os = "linux")]
