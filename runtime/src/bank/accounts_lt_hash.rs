@@ -93,7 +93,7 @@ impl Bank {
             // And since `strictly_ancestors` is empty, loading the previous version of the account
             // from accounts db will return `None` (aka Dead), which is the correct behavior.
             assert!(strictly_ancestors.is_empty());
-            self.cache_for_accounts_lt_hash.write().unwrap().clear();
+            self.cache_for_accounts_lt_hash.clear();
         }
 
         // Get all the accounts stored in this slot.
@@ -133,7 +133,6 @@ impl Bank {
             // And a single page is likely the smallest size a disk read will actually read.
             // This can be tuned larger, but likely not smaller.
             const CHUNK_SIZE: usize = 128;
-            let cache_for_accounts_lt_hash = self.cache_for_accounts_lt_hash.read().unwrap();
             accounts_curr
                 .par_iter()
                 .fold_chunks(
@@ -142,9 +141,13 @@ impl Bank {
                     |mut accum, (pubkey, curr_account)| {
                         // load the initial state of the account
                         let (initial_state_of_account, measure_load) = meas_dur!({
-                            match cache_for_accounts_lt_hash.get(pubkey) {
+                            let cache_value = self
+                                .cache_for_accounts_lt_hash
+                                .get(pubkey)
+                                .map(|entry| entry.value().clone());
+                            match cache_value {
                                 Some(CacheValue::InspectAccount(initial_state_of_account)) => {
-                                    initial_state_of_account.clone()
+                                    initial_state_of_account
                                 }
                                 Some(CacheValue::BankNew) | None => {
                                     accum.1.num_cache_misses += 1;
@@ -313,17 +316,11 @@ impl Bank {
 
         // Only insert the account the *first* time we see it.
         // We want to capture the value of the account *before* any modifications during this slot.
-        let (is_in_cache, lookup_time) = meas_dur!({
-            self.cache_for_accounts_lt_hash
-                .read()
-                .unwrap()
-                .contains_key(address)
-        });
+        let (is_in_cache, lookup_time) =
+            meas_dur!(self.cache_for_accounts_lt_hash.contains_key(address));
         if !is_in_cache {
             let (_, insert_time) = meas_dur!({
                 self.cache_for_accounts_lt_hash
-                    .write()
-                    .unwrap()
                     .entry(*address)
                     .or_insert_with(|| {
                         let initial_state_of_account = match account_state {
@@ -680,7 +677,7 @@ mod tests {
         assert!(bank.is_accounts_lt_hash_enabled());
 
         // the cache should start off empty
-        assert_eq!(bank.cache_for_accounts_lt_hash.read().unwrap().len(), 0);
+        assert_eq!(bank.cache_for_accounts_lt_hash.len(), 0);
 
         // ensure non-writable accounts are *not* added to the cache
         bank.inspect_account_for_accounts_lt_hash(
@@ -693,30 +690,25 @@ mod tests {
             &AccountState::Alive(&AccountSharedData::default()),
             false,
         );
-        assert_eq!(bank.cache_for_accounts_lt_hash.read().unwrap().len(), 0);
+        assert_eq!(bank.cache_for_accounts_lt_hash.len(), 0);
 
         // ensure *new* accounts are added to the cache
         let address = Pubkey::new_unique();
         bank.inspect_account_for_accounts_lt_hash(&address, &AccountState::Dead, true);
-        assert_eq!(bank.cache_for_accounts_lt_hash.read().unwrap().len(), 1);
-        assert!(bank
-            .cache_for_accounts_lt_hash
-            .read()
-            .unwrap()
-            .contains_key(&address));
+        assert_eq!(bank.cache_for_accounts_lt_hash.len(), 1);
+        assert!(bank.cache_for_accounts_lt_hash.contains_key(&address));
 
         // ensure *existing* accounts are added to the cache
         let address = Pubkey::new_unique();
         let initial_lamports = 123;
         let mut account = AccountSharedData::new(initial_lamports, 0, &Pubkey::default());
         bank.inspect_account_for_accounts_lt_hash(&address, &AccountState::Alive(&account), true);
-        assert_eq!(bank.cache_for_accounts_lt_hash.read().unwrap().len(), 2);
+        assert_eq!(bank.cache_for_accounts_lt_hash.len(), 2);
         if let CacheValue::InspectAccount(InitialStateOfAccount::Alive(cached_account)) = bank
             .cache_for_accounts_lt_hash
-            .read()
-            .unwrap()
             .get(&address)
             .unwrap()
+            .value()
         {
             assert_eq!(*cached_account, account);
         } else {
@@ -727,13 +719,12 @@ mod tests {
         let updated_lamports = account.lamports() + 1;
         account.set_lamports(updated_lamports);
         bank.inspect_account_for_accounts_lt_hash(&address, &AccountState::Alive(&account), true);
-        assert_eq!(bank.cache_for_accounts_lt_hash.read().unwrap().len(), 2);
+        assert_eq!(bank.cache_for_accounts_lt_hash.len(), 2);
         if let CacheValue::InspectAccount(InitialStateOfAccount::Alive(cached_account)) = bank
             .cache_for_accounts_lt_hash
-            .read()
-            .unwrap()
             .get(&address)
             .unwrap()
+            .value()
         {
             assert_eq!(cached_account.lamports(), initial_lamports);
         } else {
@@ -744,13 +735,12 @@ mod tests {
         {
             let address = Pubkey::new_unique();
             bank.inspect_account_for_accounts_lt_hash(&address, &AccountState::Dead, true);
-            assert_eq!(bank.cache_for_accounts_lt_hash.read().unwrap().len(), 3);
+            assert_eq!(bank.cache_for_accounts_lt_hash.len(), 3);
             match bank
                 .cache_for_accounts_lt_hash
-                .read()
-                .unwrap()
                 .get(&address)
                 .unwrap()
+                .value()
             {
                 CacheValue::InspectAccount(InitialStateOfAccount::Dead) => {
                     // this is expected, nothing to do here
@@ -763,13 +753,12 @@ mod tests {
                 &AccountState::Alive(&AccountSharedData::default()),
                 true,
             );
-            assert_eq!(bank.cache_for_accounts_lt_hash.read().unwrap().len(), 3);
+            assert_eq!(bank.cache_for_accounts_lt_hash.len(), 3);
             match bank
                 .cache_for_accounts_lt_hash
-                .read()
-                .unwrap()
                 .get(&address)
                 .unwrap()
+                .value()
             {
                 CacheValue::InspectAccount(InitialStateOfAccount::Dead) => {
                     // this is expected, nothing to do here
@@ -1049,10 +1038,8 @@ mod tests {
         ];
         let mut actual_cache: Vec<_> = bank
             .cache_for_accounts_lt_hash
-            .read()
-            .unwrap()
             .iter()
-            .map(|(k, v)| (*k, v.clone()))
+            .map(|entry| (*entry.key(), entry.value().clone()))
             .collect();
         actual_cache.sort_unstable_by(|a, b| a.0.cmp(&b.0));
         assert_eq!(expected_cache, actual_cache.as_slice());

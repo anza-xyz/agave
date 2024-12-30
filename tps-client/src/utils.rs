@@ -1,8 +1,10 @@
 use {
     log::{error, info},
     solana_client::connection_cache::ConnectionCache as ClientConnectionCache,
+    solana_keypair::Keypair,
+    solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_sdk::{pubkey::Pubkey, signature::Signer, signer::keypair::Keypair},
+    solana_signer::Signer,
     solana_streamer::streamer::StakedNodes,
     std::{
         collections::HashMap,
