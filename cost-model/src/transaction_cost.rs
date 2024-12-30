@@ -135,6 +135,16 @@ impl<Tx: StaticMeta> TransactionCost<'_, Tx> {
                 .num_ed25519_instruction_signatures(),
         }
     }
+
+    pub fn num_secp256r1_instruction_signatures(&self) -> u64 {
+        match self {
+            Self::SimpleVote { .. } => 0,
+            Self::Transaction(usage_cost) => usage_cost
+                .transaction
+                .signature_details()
+                .num_secp256r1_instruction_signatures(),
+        }
+    }
 }
 
 // costs are stored in number of 'compute unit's

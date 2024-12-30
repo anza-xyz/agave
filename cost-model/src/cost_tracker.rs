@@ -76,6 +76,7 @@ pub struct CostTracker {
     /// the tracker, but are still waiting for an update with actual usage or
     /// removal if the transaction does not end up getting committed.
     in_flight_transaction_count: usize,
+    secp256r1_instruction_signature_count: u64,
 }
 
 impl Default for CostTracker {
@@ -102,6 +103,7 @@ impl Default for CostTracker {
             secp256k1_instruction_signature_count: 0,
             ed25519_instruction_signature_count: 0,
             in_flight_transaction_count: 0,
+            secp256r1_instruction_signature_count: 0,
         }
     }
 }
@@ -261,6 +263,11 @@ impl CostTracker {
                 self.in_flight_transaction_count,
                 i64
             ),
+            (
+                "secp256r1_instruction_signature_count",
+                self.secp256r1_instruction_signature_count,
+                i64
+            )
         );
     }
 
@@ -339,6 +346,10 @@ impl CostTracker {
             self.ed25519_instruction_signature_count,
             tx_cost.num_ed25519_instruction_signatures()
         );
+        saturating_add_assign!(
+            self.secp256r1_instruction_signature_count,
+            tx_cost.num_secp256r1_instruction_signatures()
+        );
         self.add_transaction_execution_cost(tx_cost, tx_cost.sum())
     }
 
@@ -358,6 +369,9 @@ impl CostTracker {
         self.ed25519_instruction_signature_count = self
             .ed25519_instruction_signature_count
             .saturating_sub(tx_cost.num_ed25519_instruction_signatures());
+        self.secp256r1_instruction_signature_count = self
+            .secp256r1_instruction_signature_count
+            .saturating_sub(tx_cost.num_secp256r1_instruction_signatures());
     }
 
     /// Apply additional actual execution units to cost_tracker
