@@ -296,77 +296,21 @@ macro_rules! custom_panic_space_efficient {
         #[cfg(all(not(feature = "custom-panic"), target_os = "solana"))]
         #[no_mangle]
         fn custom_panic(info: &core::panic::PanicInfo<'_>) {
-            #[inline(never)]
-            unsafe fn write_num(mut num: u32, dst: *mut u8) -> usize {
-                let mut buf: [u8; 10] = [0; 10];
-                let init_ptr = buf.as_mut_ptr().add(11);
-                let mut write_ptr = init_ptr;
-                while num > 0 {
-                    write_ptr = write_ptr.sub(1);
-                    // SAFETY: The pointer will always be within *buf and *buf+10
-                    *write_ptr = (num % 10) as u8 + 48;
-                    num /= 10;
+            if let Some(Some(mm)) = info.message().map(|mes| mes.as_str()) {
+                let mes = mm.as_bytes();
+                unsafe {
+                    solana_program::syscalls::sol_log_(mes.as_ptr(), mes.len() as u64);
                 }
-                *dst = 58;
-                let dst = dst.add(1);
-                let len = init_ptr.offset_from(write_ptr) as usize;
-                // SAFETY: The copy length will never be greater than 10.
-                std::ptr::copy_nonoverlapping(write_ptr, dst, len);
-                len + 1
             }
 
             if let Some(loc) = info.location() {
-                const MAX_LEN: usize = 200;
-                let filename = loc.file().as_bytes();
-                // MAX_LEN for filename + 3 (ellipsis string) + 11 (line number + separator)
-                // + 11 (column number + separator) + 13 (panic string) + 15 extra bytes
-                let mut msg_line: [u8; MAX_LEN + 53] = [32; MAX_LEN + 53];
-
-                let panic_str = "Panicked at: ".as_bytes(); // 13 bytes
-                let dst = msg_line.as_mut_ptr();
                 unsafe {
-                    let src = panic_str.as_ptr();
-                    // SAFETY: Destination is larger than the panic string.
-                    std::ptr::copy_nonoverlapping(src, dst, panic_str.len());
-
-                    let mut dst = dst.add(panic_str.len());
-                    let mut src = filename.as_ptr();
-                    let mut copy_len = filename.len();
-                    if copy_len > MAX_LEN {
-                        let truncated_str = "...".as_bytes(); // 3 bytes
-                                                              // SAFETY: Destination is larger than the truncated string
-                        std::ptr::copy_nonoverlapping(
-                            truncated_str.as_ptr(),
-                            dst,
-                            truncated_str.len(),
-                        );
-                        dst = dst.add(truncated_str.len());
-                        src = src.add(copy_len - MAX_LEN);
-                        copy_len = MAX_LEN;
-                    }
-
-                    // SAFETY: The destination is always larger than the filename string.
-                    std::ptr::copy_nonoverlapping(src, dst, copy_len);
-
-                    let dst = dst.add(copy_len);
-                    // SAFETY: `write_num` never writes more than 11 bytes
-                    let written_bytes = write_num(loc.line(), dst);
-                    let dst = dst.add(written_bytes);
-                    // SAFETY: `write_num` never writes more than 11 bytes
-                    let written_bytes = write_num(loc.column(), dst);
-
-                    let line_len = dst.add(written_bytes).offset_from(msg_line.as_ptr()) as usize;
-                    // SAFETY: The line length is properly offseted from number of
-                    // written bytes
-                    solana_program::syscalls::sol_log_(msg_line.as_ptr(), line_len as u64);
-                }
-            }
-
-            if let Some(Some(mm)) = info.message().map(|mes| mes.as_str()) {
-                let mes = mm.as_bytes();
-                // SAFETY: We assumed the panic message is well formed.
-                unsafe {
-                    solana_program::syscalls::sol_log_(mes.as_ptr(), mes.len() as u64);
+                    solana_program::syscalls::sol_panic_(
+                        loc.file().as_ptr(),
+                        loc.file().len() as u64,
+                        loc.line() as u64,
+                        loc.column() as u64,
+                    );
                 }
             }
         }
