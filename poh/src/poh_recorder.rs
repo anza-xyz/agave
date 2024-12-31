@@ -1199,6 +1199,7 @@ mod tests {
             blockstore::Blockstore, blockstore_meta::SlotMeta, get_tmp_ledger_path_auto_delete,
         },
         solana_perf::test_tx::test_tx,
+        solana_poh::mpsc,
         solana_sdk::{clock::DEFAULT_TICKS_PER_SLOT, hash::hash},
     };
 
@@ -2333,5 +2334,81 @@ mod tests {
             PohRecorder::compute_leader_slot_tick_heights(Some((6, 7)), 4),
             (Some(29), 32, 4)
         );
+    }
+    #[test]
+    fn test_mpsc_ring_buffer_multi_producer() {
+        const COUNT: u32 = 100;
+        const THREADS: u32 = 4;
+        let (tx, rx): (mpsc::Producer<u64>, mpsc::Consumer<u64>) = mpsc::with_capacity(COUNT);
+
+        std::thread::scope(|scope| {
+            for _ in 0..THREADS {
+                scope.spawn(|| {
+                    for _ in 0..COUNT / 10 {
+                        assert!(tx.try_push(1).is_ok());
+                    }
+                });
+            }
+        });
+        assert!(rx.pop().is_some());
+    }
+
+    #[test]
+    fn test_mpsc_ring_buffer() {
+        const COUNT: usize = 50;
+        const THREADS: usize = 4;
+
+        let t = std::sync::atomic::AtomicUsize::new(THREADS);
+        let (tx, rx): (mpsc::Producer<usize>, mpsc::Consumer<usize>) =
+            mpsc::with_capacity(COUNT as u32);
+        let v = (0..COUNT)
+            .map(|_| std::sync::atomic::AtomicUsize::new(0))
+            .collect::<Vec<_>>();
+
+        std::thread::scope(|scope| {
+            scope.spawn(|| loop {
+                match t.load(Ordering::SeqCst) {
+                    0 => break,
+
+                    _ => {
+                        if let Some(n) = rx.pop() {
+                            v[n].fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+                }
+            });
+
+            for _ in 0..THREADS {
+                scope.spawn(|| {
+                    #[allow(clippy::needless_range_loop)]
+                    for i in 0..COUNT {
+                        if tx.try_push(i).is_ok() {
+                            v[i].fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+
+                    t.fetch_sub(1, Ordering::SeqCst);
+                });
+            }
+        });
+
+        for c in v {
+            assert_ne!(c.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    #[test]
+    fn test_mpsc_ring_buffer_clone_producer() {
+        struct Record {
+            m: u32,
+        }
+        let (tx, rx) = mpsc::with_capacity::<Record>(4);
+        let r = Record { m: 10 };
+        let r1 = Record { m: 100 };
+        let tx1 = tx.clone();
+        assert!(tx.try_push(r).is_ok());
+        assert!(tx1.try_push(r1).is_ok());
+        assert_eq!(rx.pop().unwrap().m, 10);
+        assert_eq!(rx.pop().unwrap().m, 100);
     }
 }
