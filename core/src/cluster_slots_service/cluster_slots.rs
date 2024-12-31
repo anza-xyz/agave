@@ -1,8 +1,6 @@
 use {
     itertools::Itertools,
-    solana_gossip::{
-        cluster_info::ClusterInfo, contact_info::ContactInfo, crds::Cursor, epoch_slots::EpochSlots,
-    },
+    solana_gossip::{cluster_info::ClusterInfo, crds::Cursor, epoch_slots::EpochSlots},
     solana_runtime::{bank::Bank, epoch_stakes::NodeIdToVoteAccounts},
     solana_sdk::{
         clock::{Slot, DEFAULT_SLOTS_PER_EPOCH},
@@ -167,52 +165,6 @@ impl ClusterSlots {
             *self.epoch.write().unwrap() = Some(root_epoch);
         }
     }
-
-    pub(crate) fn compute_weights(&self, slot: Slot, repair_peers: &[ContactInfo]) -> Vec<u64> {
-        if repair_peers.is_empty() {
-            return Vec::default();
-        }
-        let stakes = {
-            let validator_stakes = self.validator_stakes.read().unwrap();
-            repair_peers
-                .iter()
-                .map(|peer| {
-                    validator_stakes
-                        .get(peer.pubkey())
-                        .map(|node| node.total_stake)
-                        .unwrap_or(0)
-                        + 1
-                })
-                .collect()
-        };
-        let Some(slot_peers) = self.lookup(slot) else {
-            return stakes;
-        };
-        let slot_peers = slot_peers.read().unwrap();
-        repair_peers
-            .iter()
-            .map(|peer| slot_peers.get(peer.pubkey()).cloned().unwrap_or(0))
-            .zip(stakes)
-            .map(|(a, b)| (a / 2 + b / 2).max(1u64))
-            .collect()
-    }
-
-    pub(crate) fn compute_weights_exclude_nonfrozen(
-        &self,
-        slot: Slot,
-        repair_peers: &[ContactInfo],
-    ) -> Vec<(u64, usize)> {
-        self.lookup(slot)
-            .map(|slot_peers| {
-                let slot_peers = slot_peers.read().unwrap();
-                repair_peers
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, ci)| Some((slot_peers.get(ci.pubkey())? + 1, i)))
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
 }
 
 #[cfg(test)]
@@ -265,99 +217,6 @@ mod tests {
                 .unwrap()
                 .get(&Pubkey::default()),
             Some(&0)
-        );
-    }
-
-    #[test]
-    fn test_compute_weights() {
-        let cs = ClusterSlots::default();
-        let ci = ContactInfo::default();
-        assert_eq!(cs.compute_weights(0, &[ci]), vec![1]);
-    }
-
-    #[test]
-    fn test_best_peer_2() {
-        let cs = ClusterSlots::default();
-        let mut map = HashMap::new();
-        let k1 = solana_sdk::pubkey::new_rand();
-        let k2 = solana_sdk::pubkey::new_rand();
-        map.insert(k1, u64::MAX / 2);
-        map.insert(k2, 0);
-        cs.cluster_slots
-            .write()
-            .unwrap()
-            .insert(0, Arc::new(RwLock::new(map)));
-        let c1 = ContactInfo::new(k1, /*wallclock:*/ 0, /*shred_version:*/ 0);
-        let c2 = ContactInfo::new(k2, /*wallclock:*/ 0, /*shred_version:*/ 0);
-        assert_eq!(cs.compute_weights(0, &[c1, c2]), vec![u64::MAX / 4, 1]);
-    }
-
-    #[test]
-    fn test_best_peer_3() {
-        let cs = ClusterSlots::default();
-        let mut map = HashMap::new();
-        let k1 = solana_sdk::pubkey::new_rand();
-        let k2 = solana_sdk::pubkey::new_rand();
-        map.insert(k2, 0);
-        cs.cluster_slots
-            .write()
-            .unwrap()
-            .insert(0, Arc::new(RwLock::new(map)));
-        //make sure default weights are used as well
-        let validator_stakes: HashMap<_, _> = vec![(
-            k1,
-            NodeVoteAccounts {
-                total_stake: u64::MAX / 2,
-                vote_accounts: vec![Pubkey::default()],
-            },
-        )]
-        .into_iter()
-        .collect();
-        *cs.validator_stakes.write().unwrap() = Arc::new(validator_stakes);
-        let c1 = ContactInfo::new(k1, /*wallclock:*/ 0, /*shred_version:*/ 0);
-        let c2 = ContactInfo::new(k2, /*wallclock:*/ 0, /*shred_version:*/ 0);
-        assert_eq!(cs.compute_weights(0, &[c1, c2]), vec![u64::MAX / 4 + 1, 1]);
-    }
-
-    #[test]
-    fn test_best_completed_slot_peer() {
-        let cs = ClusterSlots::default();
-        let contact_infos: Vec<_> = std::iter::repeat_with(|| {
-            ContactInfo::new(
-                solana_sdk::pubkey::new_rand(),
-                0, // wallclock
-                0, // shred_version
-            )
-        })
-        .take(2)
-        .collect();
-        let slot = 9;
-
-        // None of these validators have completed slot 9, so should
-        // return nothing
-        assert!(cs
-            .compute_weights_exclude_nonfrozen(slot, &contact_infos)
-            .is_empty());
-
-        // Give second validator max stake
-        let validator_stakes: HashMap<_, _> = vec![(
-            *contact_infos[1].pubkey(),
-            NodeVoteAccounts {
-                total_stake: u64::MAX / 2,
-                vote_accounts: vec![Pubkey::default()],
-            },
-        )]
-        .into_iter()
-        .collect();
-        *cs.validator_stakes.write().unwrap() = Arc::new(validator_stakes);
-
-        // Mark the first validator as completed slot 9, should pick that validator,
-        // even though it only has default stake, while the other validator has
-        // max stake
-        cs.insert_node_id(slot, *contact_infos[0].pubkey());
-        assert_eq!(
-            cs.compute_weights_exclude_nonfrozen(slot, &contact_infos),
-            vec![(1, 0)]
         );
     }
 

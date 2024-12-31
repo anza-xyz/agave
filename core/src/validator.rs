@@ -1553,7 +1553,6 @@ impl Validator {
             notifies: key_notifies,
             repair_socket: Arc::new(node.sockets.repair),
             outstanding_repair_requests,
-            cluster_slots,
         });
 
         Ok(Self {
