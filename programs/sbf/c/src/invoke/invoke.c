@@ -344,6 +344,20 @@ extern uint64_t entrypoint(const uint8_t *input) {
       sol_assert(SUCCESS ==
                  sol_invoke(&instruction, accounts, SOL_ARRAY_SIZE(accounts)));
     }
+
+    sol_log("Empty accounts slice");
+    {
+	SolAccountMeta arguments[] = {
+	    {accounts[INVOKED_ARGUMENT_INDEX].key, false, false},
+	    {accounts[ARGUMENT_INDEX].key, false, false}};
+	uint8_t data[] = {};
+	const SolInstruction instruction = {accounts[INVOKED_PROGRAM_INDEX].key,
+					    arguments, SOL_ARRAY_SIZE(arguments),
+					    data, SOL_ARRAY_SIZE(data)};
+
+	sol_assert(SUCCESS == sol_invoke(&instruction, 0, 0));
+    }
+
     break;
   }
   case TEST_PRIVILEGE_ESCALATION_SIGNER: {
@@ -402,7 +416,8 @@ extern uint64_t entrypoint(const uint8_t *input) {
     sol_log("Empty accounts slice");
 
     SolAccountMeta arguments[] = {
-        {accounts[INVOKED_ARGUMENT_INDEX].key, false, false}};
+        {accounts[INVOKED_ARGUMENT_INDEX].key, false, false},
+        {accounts[ARGUMENT_INDEX].key, true, false}};
     uint8_t data[] = {};
     const SolInstruction instruction = {accounts[INVOKED_PROGRAM_INDEX].key,
                                         arguments, SOL_ARRAY_SIZE(arguments),
