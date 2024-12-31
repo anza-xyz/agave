@@ -282,17 +282,10 @@ impl SlotMeta {
             .map(|ix| self.consumed > ix + 1)
             .unwrap_or_default()
         {
-            datapoint_error!(
-                "blockstore_error",
-                (
-                    "error",
-                    format!(
-                        "Observed a slot meta with consumed: {} > meta.last_index + 1: {:?}",
-                        self.consumed,
-                        self.last_index.map(|ix| ix + 1),
-                    ),
-                    String
-                )
+            warn!(
+                "Observed a slot meta with consumed: {} > meta.last_index + 1: {:?}",
+                self.consumed,
+                self.last_index.map(|ix| ix + 1)
             );
         }
 
