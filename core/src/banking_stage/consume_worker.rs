@@ -2,7 +2,7 @@ use {
     super::{
         consumer::{Consumer, ExecuteAndCommitTransactionsOutput, ProcessTransactionBatchOutput},
         leader_slot_timing_metrics::LeaderExecuteAndCommitTimings,
-        scheduler_messages::{ConsumeWork, FinishedConsumeWork},
+        scheduler_messages::ConsumeWork,
     },
     crossbeam_channel::{Receiver, RecvError, SendError, Sender},
     solana_measure::measure_us,
@@ -26,13 +26,13 @@ pub enum ConsumeWorkerError<Tx> {
     #[error("Failed to receive work from scheduler: {0}")]
     Recv(#[from] RecvError),
     #[error("Failed to send finalized consume work to scheduler: {0}")]
-    Send(#[from] SendError<FinishedConsumeWork<Tx>>),
+    Send(#[from] SendError<ConsumeWork<Tx>>),
 }
 
 pub(crate) struct ConsumeWorker<Tx> {
     consume_receiver: Receiver<ConsumeWork<Tx>>,
     consumer: Consumer,
-    consumed_sender: Sender<FinishedConsumeWork<Tx>>,
+    consumed_sender: Sender<ConsumeWork<Tx>>,
 
     leader_bank_notifier: Arc<LeaderBankNotifier>,
     metrics: Arc<ConsumeWorkerMetrics>,
@@ -43,7 +43,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
         id: u32,
         consume_receiver: Receiver<ConsumeWork<Tx>>,
         consumer: Consumer,
-        consumed_sender: Sender<FinishedConsumeWork<Tx>>,
+        consumed_sender: Sender<ConsumeWork<Tx>>,
         leader_bank_notifier: Arc<LeaderBankNotifier>,
     ) -> Self {
         Self {
@@ -107,7 +107,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
     fn consume(
         &self,
         bank: &Arc<Bank>,
-        work: ConsumeWork<Tx>,
+        mut work: ConsumeWork<Tx>,
     ) -> Result<(), ConsumeWorkerError<Tx>> {
         let output = self.consumer.process_and_record_aged_transactions(
             bank,
@@ -115,15 +115,18 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
             &work.max_ages,
         );
 
+        // Copy retryable indexes back to return message
+        work.retryable_indexes.extend(
+            output
+                .execute_and_commit_transactions_output
+                .retryable_transaction_indexes
+                .iter()
+                .cloned(),
+        );
+
         self.metrics.update_for_consume(&output);
         self.metrics.has_data.store(true, Ordering::Relaxed);
-
-        self.consumed_sender.send(FinishedConsumeWork {
-            work,
-            retryable_indexes: output
-                .execute_and_commit_transactions_output
-                .retryable_transaction_indexes,
-        })?;
+        self.consumed_sender.send(work)?;
         Ok(())
     }
 
@@ -143,9 +146,11 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
     }
 
     /// Send transactions back to scheduler as retryable.
-    fn retry(&self, work: ConsumeWork<Tx>) -> Result<(), ConsumeWorkerError<Tx>> {
-        let retryable_indexes: Vec<_> = (0..work.transactions.len()).collect();
-        let num_retryable = retryable_indexes.len();
+    fn retry(&self, mut work: ConsumeWork<Tx>) -> Result<(), ConsumeWorkerError<Tx>> {
+        // Set all as retryable
+        work.retryable_indexes.extend(0..work.transactions.len());
+
+        let num_retryable = work.retryable_indexes.len();
         self.metrics
             .count_metrics
             .retryable_transaction_count
@@ -155,10 +160,7 @@ impl<Tx: TransactionWithMeta> ConsumeWorker<Tx> {
             .retryable_expired_bank_count
             .fetch_add(num_retryable, Ordering::Relaxed);
         self.metrics.has_data.store(true, Ordering::Relaxed);
-        self.consumed_sender.send(FinishedConsumeWork {
-            work,
-            retryable_indexes,
-        })?;
+        self.consumed_sender.send(work)?;
         Ok(())
     }
 }
@@ -809,7 +811,7 @@ mod tests {
         _replay_vote_receiver: ReplayVoteReceiver,
 
         consume_sender: Sender<ConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
-        consumed_receiver: Receiver<FinishedConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
+        consumed_receiver: Receiver<ConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
     }
 
     fn setup_test_frame() -> (
@@ -915,12 +917,13 @@ mod tests {
             ids: vec![id],
             transactions,
             max_ages: vec![max_age],
+            retryable_indexes: Vec::with_capacity(1),
         };
         consume_sender.send(work).unwrap();
         let consumed = consumed_receiver.recv().unwrap();
-        assert_eq!(consumed.work.batch_id, bid);
-        assert_eq!(consumed.work.ids, vec![id]);
-        assert_eq!(consumed.work.max_ages, vec![max_age]);
+        assert_eq!(consumed.batch_id, bid);
+        assert_eq!(consumed.ids, vec![id]);
+        assert_eq!(consumed.max_ages, vec![max_age]);
         assert_eq!(consumed.retryable_indexes, vec![0]);
 
         drop(test_frame);
@@ -964,12 +967,13 @@ mod tests {
             ids: vec![id],
             transactions,
             max_ages: vec![max_age],
+            retryable_indexes: Vec::with_capacity(1),
         };
         consume_sender.send(work).unwrap();
         let consumed = consumed_receiver.recv().unwrap();
-        assert_eq!(consumed.work.batch_id, bid);
-        assert_eq!(consumed.work.ids, vec![id]);
-        assert_eq!(consumed.work.max_ages, vec![max_age]);
+        assert_eq!(consumed.batch_id, bid);
+        assert_eq!(consumed.ids, vec![id]);
+        assert_eq!(consumed.max_ages, vec![max_age]);
         assert_eq!(consumed.retryable_indexes, Vec::<usize>::new());
 
         drop(test_frame);
@@ -1015,13 +1019,14 @@ mod tests {
                 ids: vec![id1, id2],
                 transactions: txs,
                 max_ages: vec![max_age, max_age],
+                retryable_indexes: Vec::with_capacity(2),
             })
             .unwrap();
 
         let consumed = consumed_receiver.recv().unwrap();
-        assert_eq!(consumed.work.batch_id, bid);
-        assert_eq!(consumed.work.ids, vec![id1, id2]);
-        assert_eq!(consumed.work.max_ages, vec![max_age, max_age]);
+        assert_eq!(consumed.batch_id, bid);
+        assert_eq!(consumed.ids, vec![id1, id2]);
+        assert_eq!(consumed.max_ages, vec![max_age, max_age]);
         assert_eq!(consumed.retryable_indexes, vec![1]); // id2 is retryable since lock conflict
 
         drop(test_frame);
@@ -1076,6 +1081,7 @@ mod tests {
                 ids: vec![id1],
                 transactions: txs1,
                 max_ages: vec![max_age],
+                retryable_indexes: Vec::with_capacity(1),
             })
             .unwrap();
 
@@ -1085,18 +1091,19 @@ mod tests {
                 ids: vec![id2],
                 transactions: txs2,
                 max_ages: vec![max_age],
+                retryable_indexes: Vec::with_capacity(1),
             })
             .unwrap();
         let consumed = consumed_receiver.recv().unwrap();
-        assert_eq!(consumed.work.batch_id, bid1);
-        assert_eq!(consumed.work.ids, vec![id1]);
-        assert_eq!(consumed.work.max_ages, vec![max_age]);
+        assert_eq!(consumed.batch_id, bid1);
+        assert_eq!(consumed.ids, vec![id1]);
+        assert_eq!(consumed.max_ages, vec![max_age]);
         assert_eq!(consumed.retryable_indexes, Vec::<usize>::new());
 
         let consumed = consumed_receiver.recv().unwrap();
-        assert_eq!(consumed.work.batch_id, bid2);
-        assert_eq!(consumed.work.ids, vec![id2]);
-        assert_eq!(consumed.work.max_ages, vec![max_age]);
+        assert_eq!(consumed.batch_id, bid2);
+        assert_eq!(consumed.ids, vec![id2]);
+        assert_eq!(consumed.max_ages, vec![max_age]);
         assert_eq!(consumed.retryable_indexes, Vec::<usize>::new());
 
         drop(test_frame);
@@ -1223,6 +1230,7 @@ mod tests {
                         alt_invalidation_slot: bank.slot() + 1,
                     },
                 ],
+                retryable_indexes: Vec::with_capacity(6),
             })
             .unwrap();
 

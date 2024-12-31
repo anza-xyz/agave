@@ -41,11 +41,9 @@ pub struct ConsumeWork<Tx> {
     pub ids: Vec<TransactionId>,
     pub transactions: Vec<Tx>,
     pub max_ages: Vec<MaxAge>,
-}
 
-/// Message: [Worker -> Scheduler]
-/// Processed transactions.
-pub struct FinishedConsumeWork<Tx> {
-    pub work: ConsumeWork<Tx>,
+    // Only set by consume worker after processing.
+    // This is pre-allocated by the scheduler, and is dropped
+    // by the scheduler upon completion.
     pub retryable_indexes: Vec<usize>,
 }
