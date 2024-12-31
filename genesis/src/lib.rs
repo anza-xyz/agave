@@ -14,3 +14,14 @@ pub struct Base64Account {
     pub data: String,
     pub executable: bool,
 }
+
+/// A validator account where the data is encoded as a Base64 string.
+/// Includes the vote account and stake account.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Base64ValidatorAccount {
+    pub balance_lamports: u64,
+    pub stake_lamports: u64,
+    pub identity_account: String,
+    pub vote_account: String,
+    pub stake_account: String,
+}
