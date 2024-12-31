@@ -11,7 +11,7 @@ set -e
 cd "$(dirname "$0")"/..
 source ci/_
 
-_ ci/buildkite-solana-private.sh pipeline.yml
+_ ci/docker-run-default-image.sh ci/buildkite-solana-private.sh pipeline.yml
 echo +++ pipeline
 cat pipeline.yml
 
