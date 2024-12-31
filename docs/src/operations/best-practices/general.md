@@ -21,6 +21,28 @@ The Solana validator community holds regular educational workshops. You can
 watch past workshops through the
 [Solana validator educational workshops playlist](https://www.youtube.com/watch?v=86zySQ5vGW8&list=PLilwLeBwGuK6jKrmn7KOkxRxS9tvbRa5p).
 
+## Community Validator calls
+
+The Solana validator community holds regular calls. 
+There is the 'Solana Foundation Validator Discussion' which is hosted by the Solana Foundation and the 'Community Led Validator Call'
+which is hosted by the community itself. 
+
+### Solana Foundation Validator Discussion
+
+This is a monthly call that is hosted by the Solana Foundation. 
+- Schedule: every second Thursday of the month 18:00 CET
+- Agenda: See [validator-announcements channel in Discord](https://discord.com/channels/428295358100013066/586252910506016798). 
+- This call **is recorded** and past calls can be watched back on the [Community Validator Discussions playlist](https://www.youtube.com/playlist?list=PLilwLeBwGuK78yjGBZwYhTf7rao0t13Zw)
+
+### Community Led Validator Call
+
+This is also a monthly call which is hosted by the Solana validator community itself.  
+- Schedule: every fourth Thursday of the month 18:00 CET
+- Agenda: See [HackMD site](https://hackmd.io/1DFauFMWTZG37-U7CXhxMg?view#Solana-Community-Validator-Call-Agendas). 
+- This call is **not recorded**
+
+***Please note that the scheduling of these calls can be changed last minute due to any circumstances. For the most up-to-date information go to the [validator-announcements channel in Discord](https://discord.com/channels/428295358100013066/586252910506016798).***
+
 ## Help with the validator command line
 
 From within the Solana CLI, you can execute the `agave-validator` command with
@@ -88,14 +110,14 @@ If you are not comfortable building from source, or you need to quickly install
 a new version to test something out, you could instead try using the
 `agave-install` command.
 
-Assuming you want to install Agave version `1.14.17`, you would execute the
+Assuming you want to install Agave version `2.0.15`, you would execute the
 following:
 
 ```
-agave-install init 1.14.17
+agave-install init 2.0.15
 ```
 
-This command downloads the executable for `1.14.17` and installs it into a
+This command downloads the executable for `2.0.15` and installs it into a
 `.local` directory. You can also look at `agave-install --help` for more
 options.
 
