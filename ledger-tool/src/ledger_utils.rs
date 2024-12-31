@@ -17,9 +17,7 @@ use {
     solana_ledger::{
         bank_forks_utils::{self, BankForksUtilsError},
         blockstore::{Blockstore, BlockstoreError},
-        blockstore_options::{
-            AccessType, BlockstoreOptions, BlockstoreRecoveryMode, LedgerColumnOptions,
-        },
+        blockstore_options::{AccessType, BlockstoreOptions, BlockstoreRecoveryMode},
         blockstore_processor::{
             self, BlockstoreProcessorError, ProcessOptions, TransactionStatusSender,
         },
