@@ -5,20 +5,28 @@ use crate::{encryption::auth_encryption::AeCiphertext, errors::AuthenticatedEncr
 use {
     crate::{
         encryption::AE_CIPHERTEXT_LEN,
-        pod::{impl_from_bytes, impl_from_str},
+        pod::{impl_from_bytes, impl_from_str, impl_wasm_bindings},
     },
     base64::{prelude::BASE64_STANDARD, Engine},
     bytemuck::{Pod, Zeroable},
     std::fmt,
+};
+#[cfg(target_arch = "wasm32")]
+use {
+    js_sys::{Array, Uint8Array},
+    wasm_bindgen::prelude::*,
 };
 
 /// Maximum length of a base64 encoded authenticated encryption ciphertext
 const AE_CIPHERTEXT_MAX_BASE64_LEN: usize = 48;
 
 /// The `AeCiphertext` type as a `Pod`.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct PodAeCiphertext(pub(crate) [u8; AE_CIPHERTEXT_LEN]);
+
+impl_wasm_bindings!(POD_TYPE = PodAeCiphertext, DECODED_TYPE = AeCiphertext);
 
 // `PodAeCiphertext` is a wrapper type for a byte array, which is both `Pod` and `Zeroable`. However,
 // the marker traits `bytemuck::Pod` and `bytemuck::Zeroable` can only be derived for power-of-two
