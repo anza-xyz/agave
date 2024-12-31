@@ -2010,9 +2010,14 @@ fn get_db_options(blockstore_options: &BlockstoreOptions) -> Options {
         blockstore_options.num_rocksdb_flush_threads.get() as i32
     );
     options.set_env(&env);
-    // The value set in max_background_jobs can grow but not shrink threadpool
-    // sizes. So, set this value to 2 (the default value and 1 low / 1 high) to
-    // avoid rocksdb from messing with the sizes we previously configured.
+    // rocksdb will try to scale threadpool sizes automatically based on the
+    // value set for max_background_jobs. The automatic scaling can increase,
+    // but not decrease the number of threads in each pool. But, we already
+    // set desired threadpool sizes with set_low_priority_background_threads()
+    // and set_high_priority_background_threads(). So, set max_background_jobs
+    // to a small number (2) so that rocksdb will leave the previously
+    // configured threadpool sizes as-is. The value (2) would result in one
+    // low priority and one high priority thread which is the minimum for each.
     options.set_max_background_jobs(2);
 
     // Set max total wal size to 4G.
