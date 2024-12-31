@@ -1,9 +1,6 @@
 use {
     super::{
         in_flight_tracker::InFlightTracker,
-        prio_graph_scheduler::{
-            Batches, PrioGraphScheduler, TransactionSchedulingError, TransactionSchedulingInfo,
-        },
         scheduler::{PreLockFilterAction, Scheduler, SchedulingSummary},
         scheduler_error::SchedulerError,
         thread_aware_account_locks::{ThreadAwareAccountLocks, ThreadId, ThreadSet, TryLockError},
@@ -15,7 +12,12 @@ use {
         consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
         read_write_account_set::ReadWriteAccountSet,
         scheduler_messages::{ConsumeWork, FinishedConsumeWork, TransactionBatchId},
-        transaction_scheduler::thread_aware_account_locks::MAX_THREADS,
+        transaction_scheduler::{
+            scheduler_common::{
+                select_thread, Batches, TransactionSchedulingError, TransactionSchedulingInfo,
+            },
+            thread_aware_account_locks::MAX_THREADS,
+        },
     },
     crossbeam_channel::{Receiver, Sender, TryRecvError},
     itertools::izip,
@@ -138,7 +140,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
                 &mut self.account_locks,
                 schedulable_threads,
                 |thread_set| {
-                    PrioGraphScheduler::<Tx>::select_thread(
+                    select_thread(
                         thread_set,
                         &batches.total_cus,
                         self.in_flight_tracker.cus_in_flight_per_thread(),

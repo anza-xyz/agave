@@ -1,7 +1,8 @@
 use {
     super::{
         in_flight_tracker::InFlightTracker,
-        scheduler::{PreLockFilterAction, Scheduler},
+        scheduler::{PreLockFilterAction, Scheduler, SchedulingSummary},
+        scheduler_common::{TransactionSchedulingError, TransactionSchedulingInfo},
         scheduler_error::SchedulerError,
         thread_aware_account_locks::{ThreadAwareAccountLocks, ThreadId, ThreadSet, TryLockError},
         transaction_state::SanitizedTransactionTTL,
@@ -9,12 +10,12 @@ use {
     crate::banking_stage::{
         consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
         read_write_account_set::ReadWriteAccountSet,
-        scheduler_messages::{
-            ConsumeWork, FinishedConsumeWork, MaxAge, TransactionBatchId, TransactionId,
-        },
+        scheduler_messages::{ConsumeWork, FinishedConsumeWork, TransactionBatchId},
         transaction_scheduler::{
-            scheduler::SchedulingSummary, transaction_priority_id::TransactionPriorityId,
-            transaction_state::TransactionState, transaction_state_container::StateContainer,
+            scheduler_common::{select_thread, Batches},
+            transaction_priority_id::TransactionPriorityId,
+            transaction_state::TransactionState,
+            transaction_state_container::StateContainer,
         },
     },
     crossbeam_channel::{Receiver, Sender, TryRecvError},
@@ -222,7 +223,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
                     &mut self.account_locks,
                     num_threads,
                     |thread_set| {
-                        Self::select_thread(
+                        select_thread(
                             thread_set,
                             &batches.total_cus,
                             self.in_flight_tracker.cus_in_flight_per_thread(),
@@ -453,36 +454,6 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
         Ok(num_scheduled)
     }
 
-    /// Given the schedulable `thread_set`, select the thread with the least amount
-    /// of work queued up.
-    /// Currently, "work" is just defined as the number of transactions.
-    ///
-    /// If the `chain_thread` is available, this thread will be selected, regardless of
-    /// load-balancing.
-    ///
-    /// Panics if the `thread_set` is empty. This should never happen, see comment
-    /// on `ThreadAwareAccountLocks::try_lock_accounts`.
-    pub(crate) fn select_thread(
-        thread_set: ThreadSet,
-        batch_cus_per_thread: &[u64],
-        in_flight_cus_per_thread: &[u64],
-        batches_per_thread: &[Vec<Tx>],
-        in_flight_per_thread: &[usize],
-    ) -> ThreadId {
-        thread_set
-            .contained_threads_iter()
-            .map(|thread_id| {
-                (
-                    thread_id,
-                    batch_cus_per_thread[thread_id] + in_flight_cus_per_thread[thread_id],
-                    batches_per_thread[thread_id].len() + in_flight_per_thread[thread_id],
-                )
-            })
-            .min_by(|a, b| a.1.cmp(&b.1).then_with(|| a.2.cmp(&b.2)))
-            .map(|(thread_id, _, _)| thread_id)
-            .unwrap()
-    }
-
     /// Gets accessed accounts (resources) for use in `PrioGraph`.
     fn get_transaction_account_access(
         transaction: &SanitizedTransactionTTL<impl SVMMessage>,
@@ -500,66 +471,6 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
                 }
             })
     }
-}
-
-pub(crate) struct Batches<Tx> {
-    pub ids: Vec<Vec<TransactionId>>,
-    pub transactions: Vec<Vec<Tx>>,
-    pub max_ages: Vec<Vec<MaxAge>>,
-    pub total_cus: Vec<u64>,
-}
-
-impl<Tx> Batches<Tx> {
-    pub(crate) fn new(num_threads: usize, target_num_transactions_per_batch: usize) -> Self {
-        Self {
-            ids: vec![Vec::with_capacity(target_num_transactions_per_batch); num_threads],
-
-            transactions: (0..num_threads)
-                .map(|_| Vec::with_capacity(target_num_transactions_per_batch))
-                .collect(),
-            max_ages: vec![Vec::with_capacity(target_num_transactions_per_batch); num_threads],
-            total_cus: vec![0; num_threads],
-        }
-    }
-
-    pub(crate) fn take_batch(
-        &mut self,
-        thread_id: ThreadId,
-        target_num_transactions_per_batch: usize,
-    ) -> (Vec<TransactionId>, Vec<Tx>, Vec<MaxAge>, u64) {
-        (
-            core::mem::replace(
-                &mut self.ids[thread_id],
-                Vec::with_capacity(target_num_transactions_per_batch),
-            ),
-            core::mem::replace(
-                &mut self.transactions[thread_id],
-                Vec::with_capacity(target_num_transactions_per_batch),
-            ),
-            core::mem::replace(
-                &mut self.max_ages[thread_id],
-                Vec::with_capacity(target_num_transactions_per_batch),
-            ),
-            core::mem::replace(&mut self.total_cus[thread_id], 0),
-        )
-    }
-}
-
-/// A transaction has been scheduled to a thread.
-pub(crate) struct TransactionSchedulingInfo<Tx> {
-    pub thread_id: ThreadId,
-    pub transaction: Tx,
-    pub max_age: MaxAge,
-    pub cost: u64,
-}
-
-/// Error type for reasons a transaction could not be scheduled.
-pub(crate) enum TransactionSchedulingError {
-    /// Transaction cannot be scheduled due to conflicts, or
-    /// higher priority conflicting transactions are unschedulable.
-    UnschedulableConflicts,
-    /// Thread is not allowed to be scheduled on at this time.
-    UnschedulableThread,
 }
 
 fn try_schedule_transaction<Tx: TransactionWithMeta>(
@@ -624,7 +535,10 @@ fn try_schedule_transaction<Tx: TransactionWithMeta>(
 mod tests {
     use {
         super::*,
-        crate::banking_stage::transaction_scheduler::transaction_state_container::TransactionStateContainer,
+        crate::banking_stage::{
+            scheduler_messages::{MaxAge, TransactionId},
+            transaction_scheduler::transaction_state_container::TransactionStateContainer,
+        },
         crossbeam_channel::{unbounded, Receiver},
         itertools::Itertools,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
