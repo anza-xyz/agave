@@ -6238,6 +6238,7 @@ dependencies = [
  "assert_matches",
  "bincode",
  "byteorder",
+ "criterion",
  "libsecp256k1",
  "log",
  "memoffset 0.9.1",
