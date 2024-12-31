@@ -1,0 +1,13 @@
+[native_configs]
+
+[rayon_configs]
+
+[tokio_configs.axum1]
+worker_threads = 4
+max_blocking_threads = 1
+core_allocation.DedicatedCoreSet = { min = 0, max = 4 }
+
+[tokio_configs.axum2]
+worker_threads = 4
+max_blocking_threads = 1
+core_allocation.DedicatedCoreSet = { min = 4, max = 8 }
