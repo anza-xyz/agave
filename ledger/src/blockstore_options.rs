@@ -40,12 +40,9 @@ impl Default for BlockstoreOptions {
 impl BlockstoreOptions {
     pub fn default_for_tests() -> Self {
         Self {
-            access_type: AccessType::Primary,
-            recovery_mode: None,
+            // No need to enforce the limit in tests
             enforce_ulimit_nofile: false,
-            column_options: LedgerColumnOptions::default(),
-            num_rocksdb_compaction_threads: default_num_compaction_threads(),
-            num_rocksdb_flush_threads: default_num_flush_threads(),
+            ..BlockstoreOptions::default()
         }
     }
 }
