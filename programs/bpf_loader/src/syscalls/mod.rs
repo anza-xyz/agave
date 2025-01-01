@@ -23,11 +23,11 @@ use {
         bpf_account_data_direct_mapping, curve25519_syscall_enabled,
         disable_deploy_of_alloc_free_syscall, disable_fees_sysvar, disable_sbpf_v0_execution,
         enable_alt_bn128_compression_syscall, enable_alt_bn128_syscall, enable_big_mod_exp_syscall,
-        enable_get_epoch_stake_syscall, enable_partitioned_epoch_reward, enable_poseidon_syscall,
+        enable_get_epoch_stake_syscall, enable_poseidon_syscall,
         enable_sbpf_v1_deployment_and_execution, enable_sbpf_v2_deployment_and_execution,
         enable_sbpf_v3_deployment_and_execution, get_sysvar_syscall_enabled,
-        last_restart_slot_sysvar, partitioned_epoch_rewards_superfeature,
-        reenable_sbpf_v0_execution, remaining_compute_units_syscall_enabled, FeatureSet,
+        last_restart_slot_sysvar, reenable_sbpf_v0_execution,
+        remaining_compute_units_syscall_enabled, FeatureSet,
     },
     solana_log_collector::{ic_logger_msg, ic_msg},
     solana_poseidon as poseidon,
@@ -277,9 +277,6 @@ pub fn create_program_runtime_environment_v1<'a>(
     let blake3_syscall_enabled = feature_set.is_active(&blake3_syscall_enabled::id());
     let curve25519_syscall_enabled = feature_set.is_active(&curve25519_syscall_enabled::id());
     let disable_fees_sysvar = feature_set.is_active(&disable_fees_sysvar::id());
-    let epoch_rewards_syscall_enabled = feature_set
-        .is_active(&enable_partitioned_epoch_reward::id())
-        || feature_set.is_active(&partitioned_epoch_rewards_superfeature::id());
     let disable_deploy_of_alloc_free_syscall = reject_deployment_of_broken_elfs
         && feature_set.is_active(&disable_deploy_of_alloc_free_syscall::id());
     let last_restart_slot_syscall_enabled = feature_set.is_active(&last_restart_slot_sysvar::id());
@@ -416,9 +413,7 @@ pub fn create_program_runtime_environment_v1<'a>(
         SyscallGetLastRestartSlotSysvar::vm,
     )?;
 
-    register_feature_gated_function!(
-        result,
-        epoch_rewards_syscall_enabled,
+    result.register_function(
         "sol_get_epoch_rewards_sysvar",
         39,
         SyscallGetEpochRewardsSysvar::vm,

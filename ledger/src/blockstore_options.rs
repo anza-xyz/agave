@@ -1,4 +1,8 @@
-use rocksdb::{DBCompressionType as RocksCompressionType, DBRecoveryMode};
+use {
+    crate::blockstore_db::{default_num_compaction_threads, default_num_flush_threads},
+    rocksdb::{DBCompressionType as RocksCompressionType, DBRecoveryMode},
+    std::num::NonZeroUsize,
+};
 
 /// The subdirectory under ledger directory where the Blockstore lives
 pub const BLOCKSTORE_DIRECTORY_ROCKS_LEVEL: &str = "rocksdb";
@@ -13,6 +17,8 @@ pub struct BlockstoreOptions {
     // desired open file descriptor limit cannot be configured. Default: true.
     pub enforce_ulimit_nofile: bool,
     pub column_options: LedgerColumnOptions,
+    pub num_rocksdb_compaction_threads: NonZeroUsize,
+    pub num_rocksdb_flush_threads: NonZeroUsize,
 }
 
 impl Default for BlockstoreOptions {
@@ -25,6 +31,8 @@ impl Default for BlockstoreOptions {
             recovery_mode: None,
             enforce_ulimit_nofile: true,
             column_options: LedgerColumnOptions::default(),
+            num_rocksdb_compaction_threads: default_num_compaction_threads(),
+            num_rocksdb_flush_threads: default_num_flush_threads(),
         }
     }
 }
@@ -32,10 +40,9 @@ impl Default for BlockstoreOptions {
 impl BlockstoreOptions {
     pub fn default_for_tests() -> Self {
         Self {
-            access_type: AccessType::Primary,
-            recovery_mode: None,
+            // No need to enforce the limit in tests
             enforce_ulimit_nofile: false,
-            column_options: LedgerColumnOptions::default(),
+            ..BlockstoreOptions::default()
         }
     }
 }

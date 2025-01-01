@@ -1,4 +1,5 @@
-FROM debian:bookworm
+ARG BASE_IMAGE=
+FROM ${BASE_IMAGE}
 
 # RPC JSON
 EXPOSE 8899/tcp

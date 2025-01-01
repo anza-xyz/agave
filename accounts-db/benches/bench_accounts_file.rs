@@ -1,8 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
     criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput},
-    rand::{distributions::WeightedIndex, prelude::*},
-    rand_chacha::ChaChaRng,
     solana_accounts_db::{
         accounts_file::StorageAccess,
         append_vec::{self, AppendVec, SCAN_BUFFER_SIZE_WITHOUT_DATA},
@@ -15,12 +13,13 @@ use {
         account::{AccountSharedData, ReadableAccount},
         clock::Slot,
         pubkey::Pubkey,
-        rent::Rent,
         rent_collector::RENT_EXEMPT_RENT_EPOCH,
         system_instruction::MAX_PERMITTED_DATA_LENGTH,
     },
-    std::{iter, mem::ManuallyDrop},
+    std::mem::ManuallyDrop,
 };
+
+mod utils;
 
 const ACCOUNTS_COUNTS: [usize; 4] = [
     1,      // the smallest count; will bench overhead
@@ -116,40 +115,20 @@ fn bench_scan_pubkeys(c: &mut Criterion) {
         MAX_PERMITTED_DATA_LENGTH as usize,
     ];
     let weights = [3, 75, 20, 1, 1];
-    let distribution = WeightedIndex::new(weights).unwrap();
-
-    let rent = Rent::default();
-    let rent_minimum_balances: Vec<_> = data_sizes
-        .iter()
-        .map(|data_size| rent.minimum_balance(*data_size))
-        .collect();
 
     for accounts_count in ACCOUNTS_COUNTS {
         group.throughput(Throughput::Elements(accounts_count as u64));
-        let mut rng = ChaChaRng::seed_from_u64(accounts_count as u64);
 
-        let pubkeys: Vec<_> = iter::repeat_with(Pubkey::new_unique)
+        let storable_accounts: Vec<_> = utils::accounts(255, &data_sizes, &weights)
             .take(accounts_count)
             .collect();
-        let accounts: Vec<_> = iter::repeat_with(|| {
-            let index = distribution.sample(&mut rng);
-            AccountSharedData::new_rent_epoch(
-                rent_minimum_balances[index],
-                data_sizes[index],
-                &Pubkey::default(),
-                RENT_EXEMPT_RENT_EPOCH,
-            )
-        })
-        .take(pubkeys.len())
-        .collect();
-        let storable_accounts: Vec<_> = iter::zip(&pubkeys, &accounts).collect();
 
         // create an append vec file
         let append_vec_path = temp_dir.path().join(format!("append_vec_{accounts_count}"));
         _ = std::fs::remove_file(&append_vec_path);
-        let file_size = accounts
+        let file_size = storable_accounts
             .iter()
-            .map(|account| append_vec::aligned_stored_size(account.data().len()))
+            .map(|(_, account)| append_vec::aligned_stored_size(account.data().len()))
             .sum();
         let append_vec = AppendVec::new(append_vec_path, true, file_size);
         let stored_accounts_info = append_vec

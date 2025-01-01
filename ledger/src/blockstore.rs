@@ -12,7 +12,7 @@ use {
         blockstore_meta::*,
         blockstore_metrics::BlockstoreRpcApiMetrics,
         blockstore_options::{
-            AccessType, BlockstoreOptions, LedgerColumnOptions, BLOCKSTORE_DIRECTORY_ROCKS_LEVEL,
+            BlockstoreOptions, LedgerColumnOptions, BLOCKSTORE_DIRECTORY_ROCKS_LEVEL,
         },
         blockstore_processor::BlockstoreProcessorError,
         leader_schedule_cache::LeaderScheduleCache,
@@ -90,7 +90,9 @@ pub mod blockstore_purge;
 use static_assertions::const_assert_eq;
 pub use {
     crate::{
-        blockstore_db::BlockstoreError,
+        blockstore_db::{
+            default_num_compaction_threads, default_num_flush_threads, BlockstoreError,
+        },
         blockstore_meta::{OptimisticSlotMetaVersioned, SlotMeta},
         blockstore_metrics::BlockstoreInsertionMetrics,
     },
@@ -4961,10 +4963,9 @@ pub fn create_new_ledger(
     let blockstore = Blockstore::open_with_options(
         ledger_path,
         BlockstoreOptions {
-            access_type: AccessType::Primary,
-            recovery_mode: None,
             enforce_ulimit_nofile: false,
             column_options: column_options.clone(),
+            ..BlockstoreOptions::default()
         },
     )?;
     let ticks_per_slot = genesis_config.ticks_per_slot;

@@ -41,7 +41,7 @@ use {
         blockstore::Blockstore,
         blockstore_processor::{
             self, BlockstoreProcessorError, ConfirmationProgress, ExecuteBatchesInternalMetrics,
-            ReplaySlotStats, RewardsRecorderSender, TransactionStatusSender,
+            ReplaySlotStats, TransactionStatusSender,
         },
         entry_notifier_service::EntryNotifierSender,
         leader_schedule_cache::LeaderScheduleCache,
@@ -276,7 +276,6 @@ pub struct ReplaySenders {
     pub slot_status_notifier: Option<SlotStatusNotifier>,
     pub accounts_background_request_sender: AbsRequestSender,
     pub transaction_status_sender: Option<TransactionStatusSender>,
-    pub rewards_recorder_sender: Option<RewardsRecorderSender>,
     pub cache_block_meta_sender: Option<CacheBlockMetaSender>,
     pub entry_notification_sender: Option<EntryNotifierSender>,
     pub bank_notification_sender: Option<BankNotificationSenderConfig>,
@@ -568,7 +567,6 @@ impl ReplayStage {
             slot_status_notifier,
             accounts_background_request_sender,
             transaction_status_sender,
-            rewards_recorder_sender,
             cache_block_meta_sender,
             entry_notification_sender,
             bank_notification_sender,
@@ -733,7 +731,6 @@ impl ReplayStage {
                     &mut heaviest_subtree_fork_choice,
                     &replay_vote_sender,
                     &bank_notification_sender,
-                    &rewards_recorder_sender,
                     &rpc_subscriptions,
                     &slot_status_notifier,
                     &mut duplicate_slots_tracker,
@@ -3040,7 +3037,6 @@ impl ReplayStage {
         cache_block_meta_sender: Option<&CacheBlockMetaSender>,
         heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
         bank_notification_sender: &Option<BankNotificationSenderConfig>,
-        rewards_recorder_sender: &Option<RewardsRecorderSender>,
         rpc_subscriptions: &Arc<RpcSubscriptions>,
         slot_status_notifier: &Option<SlotStatusNotifier>,
         duplicate_slots_tracker: &mut DuplicateSlotsTracker,
@@ -3286,10 +3282,6 @@ impl ReplayStage {
                     }
                 }
 
-                rewards_recorder_sender
-                    .as_ref()
-                    .inspect(|sender| sender.send_rewards(bank));
-
                 if let Some(ref block_metadata_notifier) = block_metadata_notifier {
                     let parent_blockhash = bank
                         .parent()
@@ -3345,7 +3337,6 @@ impl ReplayStage {
         heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
         replay_vote_sender: &ReplayVoteSender,
         bank_notification_sender: &Option<BankNotificationSenderConfig>,
-        rewards_recorder_sender: &Option<RewardsRecorderSender>,
         rpc_subscriptions: &Arc<RpcSubscriptions>,
         slot_status_notifier: &Option<SlotStatusNotifier>,
         duplicate_slots_tracker: &mut DuplicateSlotsTracker,
@@ -3428,7 +3419,6 @@ impl ReplayStage {
             cache_block_meta_sender,
             heaviest_subtree_fork_choice,
             bank_notification_sender,
-            rewards_recorder_sender,
             rpc_subscriptions,
             slot_status_notifier,
             duplicate_slots_tracker,
@@ -9057,7 +9047,6 @@ pub(crate) mod tests {
             &bank_forks,
             &leader_schedule_cache,
             &ProcessOptions::default(),
-            None,
             None,
             None,
             None,

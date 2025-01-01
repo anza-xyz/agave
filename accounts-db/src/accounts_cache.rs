@@ -104,11 +104,11 @@ impl SlotCacheInner {
     }
 
     pub fn mark_slot_frozen(&self) {
-        self.is_frozen.store(true, Ordering::SeqCst);
+        self.is_frozen.store(true, Ordering::Release);
     }
 
     pub fn is_frozen(&self) -> bool {
-        self.is_frozen.load(Ordering::SeqCst)
+        self.is_frozen.load(Ordering::Acquire)
     }
 
     pub fn total_bytes(&self) -> u64 {

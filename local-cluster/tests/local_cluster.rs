@@ -2265,7 +2265,6 @@ fn create_snapshot_to_hard_fork(
         None,
         None,
         None,
-        None,
         Arc::default(),
     )
     .unwrap();

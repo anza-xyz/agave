@@ -104,6 +104,10 @@ name = "bench_hashing"
 harness = false
 
 [[bench]]
+name = "read_only_accounts_cache"
+harness = false
+
+[[bench]]
 name = "bench_serde"
 harness = false
 

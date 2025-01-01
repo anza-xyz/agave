@@ -638,6 +638,11 @@ pub mod layout {
         packet.buffer_mut().get_mut(..size)
     }
 
+    #[inline]
+    pub fn get_common_header_bytes(shred: &[u8]) -> Option<&[u8]> {
+        shred.get(..SIZE_OF_COMMON_SHRED_HEADER)
+    }
+
     pub(crate) fn get_signature(shred: &[u8]) -> Option<Signature> {
         shred
             .get(..SIZE_OF_SIGNATURE)

@@ -10,25 +10,25 @@ if [[ -z "${rust_stable}" || -z "${rust_nightly}" ]]; then
   exit 1
 fi
 
-export BASE_IMAGE=ubuntu:22.04
-export RUST_VERSION="${rust_stable}"
-export RUST_NIGHTLY_VERSION="${rust_nightly}"
-export GOLANG_VERSION=1.21.3
-export NODE_MAJOR=18
-export SCCACHE_VERSION=v0.8.1
-export GRCOV_VERSION=v0.8.18
+export CI_DOCKER_ARG_BASE_IMAGE=ubuntu:22.04
+export CI_DOCKER_ARG_RUST_VERSION="${rust_stable}"
+export CI_DOCKER_ARG_RUST_NIGHTLY_VERSION="${rust_nightly}"
+export CI_DOCKER_ARG_GOLANG_VERSION=1.21.3
+export CI_DOCKER_ARG_NODE_MAJOR=18
+export CI_DOCKER_ARG_SCCACHE_VERSION=v0.8.1
+export CI_DOCKER_ARG_GRCOV_VERSION=v0.8.18
 
 hash_vars=(
-  "${BASE_IMAGE}"
-  "${RUST_VERSION}"
-  "${RUST_NIGHTLY_VERSION}"
-  "${GOLANG_VERSION}"
-  "${NODE_MAJOR}"
-  "${SCCACHE_VERSION}"
-  "${GRCOV_VERSION}"
+  "${CI_DOCKER_ARG_BASE_IMAGE}"
+  "${CI_DOCKER_ARG_RUST_VERSION}"
+  "${CI_DOCKER_ARG_RUST_NIGHTLY_VERSION}"
+  "${CI_DOCKER_ARG_GOLANG_VERSION}"
+  "${CI_DOCKER_ARG_NODE_MAJOR}"
+  "${CI_DOCKER_ARG_SCCACHE_VERSION}"
+  "${CI_DOCKER_ARG_GRCOV_VERSION}"
 )
 hash_input=$(IFS="_"; echo "${hash_vars[*]}")
 ci_docker_hash=$(echo -n "${hash_input}" | sha256sum | head -c 8)
 
-SANITIZED_BASE_IMAGE="${BASE_IMAGE//:/-}"
-export CI_DOCKER_IMAGE="anzaxyz/ci:${SANITIZED_BASE_IMAGE}_rust-${RUST_VERSION}_${RUST_NIGHTLY_VERSION}_${ci_docker_hash}"
+CI_DOCKER_SANITIZED_BASE_IMAGE="${CI_DOCKER_ARG_BASE_IMAGE//:/-}"
+export CI_DOCKER_IMAGE="anzaxyz/ci:${CI_DOCKER_SANITIZED_BASE_IMAGE}_rust-${CI_DOCKER_ARG_RUST_VERSION}_${CI_DOCKER_ARG_RUST_NIGHTLY_VERSION}_${ci_docker_hash}"
