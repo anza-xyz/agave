@@ -279,6 +279,44 @@ macro_rules! custom_panic_default {
     };
 }
 
+/// This is a more space efficient implementation of custom panic.
+/// It is about 1kb in size and depends on the unstable feature `panic_info_message`,
+/// which is going to be stabilized in Rust 1.84.
+///
+/// It works just like the default custom panic, except that dynamic generated error
+/// messages are not shown. For instance, trying to access an index out of bounds of a vector
+/// would give us `index Y is out of bounds for length X`. As the length is only know at runtime
+/// time, this message is elided.
+///
+/// All messages known at compile time are correctly displayed, e.g. `called unwrap in a None`,
+/// file names, line and column numbers.
+#[macro_export]
+macro_rules! custom_panic_space_efficient {
+    () => {
+        #[cfg(all(not(feature = "custom-panic"), target_os = "solana"))]
+        #[no_mangle]
+        fn custom_panic(info: &core::panic::PanicInfo<'_>) {
+            if let Some(Some(mm)) = info.message().map(|mes| mes.as_str()) {
+                let mes = mm.as_bytes();
+                unsafe {
+                    solana_program::syscalls::sol_log_(mes.as_ptr(), mes.len() as u64);
+                }
+            }
+
+            if let Some(loc) = info.location() {
+                unsafe {
+                    solana_program::syscalls::sol_panic_(
+                        loc.file().as_ptr(),
+                        loc.file().len() as u64,
+                        loc.line() as u64,
+                        loc.column() as u64,
+                    );
+                }
+            }
+        }
+    };
+}
+
 /// The bump allocator used as the default rust heap when running programs.
 pub struct BumpAllocator {
     pub start: usize,
