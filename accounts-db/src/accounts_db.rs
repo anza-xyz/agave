@@ -8795,22 +8795,19 @@ impl AccountsDb {
                                     .unwrap()
                                     .0
                                     .mix_in(&other.duplicates_lt_hash.as_ref().unwrap().0);
-                                self
                             }
                             (true, false) => {
                                 // nothing to do; `other` doesn't have a duplicates lt hash
-                                self
                             }
                             (false, true) => {
                                 // `self` doesn't have a duplicates lt hash, so pilfer from `other`
                                 self.duplicates_lt_hash = other.duplicates_lt_hash;
-                                self
                             }
                             (false, false) => {
                                 // nothing to do; no duplicates lt hash at all
-                                self
                             }
                         }
+                        self
                     }
                 }
 
