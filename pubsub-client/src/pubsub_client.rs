@@ -125,6 +125,11 @@ use {
     url::Url,
 };
 
+/// The interval between pings measured in seconds
+pub const DEFAULT_PING_DURATION_SECONDS: u64 = 10;
+/// The maximum number of consecutive failed pings before considering the connection stale
+pub const DEFAULT_MAX_FAILED_PINGS: usize = 3;
+
 /// A subscription.
 ///
 /// The subscription is unsubscribed on drop, and note that unsubscription (and
@@ -211,24 +216,35 @@ where
     fn read_message(
         writable_socket: &Arc<RwLock<WebSocket<MaybeTlsStream<TcpStream>>>>,
     ) -> Result<Option<T>, PubsubClientError> {
-        let message = writable_socket.write().unwrap().read()?;
-        if message.is_ping() {
-            return Ok(None);
-        }
-        let message_text = &message.into_text()?;
-        if let Ok(json_msg) = serde_json::from_str::<Map<String, Value>>(message_text) {
-            if let Some(Object(params)) = json_msg.get("params") {
-                if let Some(result) = params.get("result") {
-                    if let Ok(x) = serde_json::from_value::<T>(result.clone()) {
-                        return Ok(Some(x));
+        match writable_socket.write().unwrap().read() {
+            Ok(message) => {
+                if message.is_ping() || message.is_pong() {
+                    return Ok(None);
+                }
+    
+                let message_text = &message.into_text()?;
+                if let Ok(json_msg) = serde_json::from_str::<Map<String, Value>>(message_text) {
+                    if let Some(Object(params)) = json_msg.get("params") {
+                        if let Some(result) = params.get("result") {
+                            if let Ok(x) = serde_json::from_value::<T>(result.clone()) {
+                                return Ok(Some(x));
+                            }
+                        }
                     }
                 }
+    
+                Err(PubsubClientError::UnexpectedMessageError(format!(
+                    "msg={message_text}"
+                )))
             }
+            Err(tungstenite::Error::Io(ref err)) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                // Read timed out
+                Err(PubsubClientError::WsError(tungstenite::Error::Io(
+                    std::io::Error::from(std::io::ErrorKind::WouldBlock),
+                )))
+            }
+            Err(err) => Err(PubsubClientError::WsError(err)),
         }
-
-        Err(PubsubClientError::UnexpectedMessageError(format!(
-            "msg={message_text}"
-        )))
     }
 
     /// Shutdown the internel message receiver and wait for its thread to exit.
@@ -795,15 +811,59 @@ impl PubsubClient {
         T: DeserializeOwned,
         F: Fn(T) + Send + 'static,
     {
+        let ping_interval: Duration = Duration::from_secs(DEFAULT_PING_DURATION_SECONDS);
+        let max_failed_pings: usize = DEFAULT_MAX_FAILED_PINGS;
+        let mut last_ping_time: std::time::Instant = std::time::Instant::now();
+        let unmatched_pings: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
+
         loop {
             if exit.load(Ordering::Relaxed) {
                 break;
             }
 
+            // Send ping if the interval has passed
+            if last_ping_time.elapsed() >= ping_interval {
+                if let Err(err) = socket.write().unwrap().write_message(Message::Ping(vec![])) {
+                    info!("Error sending ping: {:?}", err);
+                    break;
+                }
+
+                last_ping_time = std::time::Instant::now();
+                let pings = unmatched_pings.fetch_add(1, Ordering::Relaxed) + 1;
+
+                // Check if max_failed_pings has been exceeded
+                if pings > max_failed_pings {
+                    info!(
+                        "No pong received after {} pings. Closing connection...",
+                        max_failed_pings
+                    );
+
+                    let _ = socket.write().unwrap().close(None);
+                    break;
+                }
+            }
+            
+            // Read timeout to prevent indefinite blocking on `read_message`
+            socket
+                .write()
+                .unwrap()
+                .get_mut()
+                .get_mut()
+                .set_read_timeout(Some(Duration::from_secs(0.5)))
+                .unwrap();
+
             match PubsubClientSubscription::read_message(socket) {
-                Ok(Some(message)) => handler(message),
+                Ok(Some(message)) => {
+                    unmatched_pings.store(0, Ordering::Relaxed);
+                    handler(message)
+                }
                 Ok(None) => {
                     // Nothing useful, means we received a ping message
+                    unmatched_pings.store(0, Ordering::Relaxed);
+                }
+                Err(ref err) if err.is_timeout() => {
+                    // Read timed out - continue the loop
+                    continue;
                 }
                 Err(err) => {
                     info!("receive error: {:?}", err);
