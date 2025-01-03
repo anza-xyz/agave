@@ -465,7 +465,7 @@ impl TaskHandler for DefaultTaskHandler {
                 vec
             }
         };
-        let batch_with_indexes = TransactionBatchWithIndexes {
+        let mut batch_with_indexes = TransactionBatchWithIndexes {
             batch,
             transaction_indexes,
         };
@@ -490,7 +490,7 @@ impl TaskHandler for DefaultTaskHandler {
         };
 
         *result = execute_batch(
-            &batch_with_indexes,
+            &mut batch_with_indexes,
             bank,
             handler_context.transaction_status_sender.as_ref(),
             handler_context.replay_vote_sender.as_ref(),

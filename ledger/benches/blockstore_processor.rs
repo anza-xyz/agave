@@ -133,7 +133,7 @@ fn bench_execute_batch(
         prioritization_fee_cache,
     } = setup(apply_cost_tracker_during_replay);
     let transactions = create_transactions(&bank, 2_usize.pow(20));
-    let batches: Vec<_> = transactions
+    let mut batches: Vec<_> = transactions
         .chunks(batch_size)
         .map(|txs| {
             let mut batch = TransactionBatch::new(
@@ -148,7 +148,7 @@ fn bench_execute_batch(
             }
         })
         .collect();
-    let mut batches_iter = batches.iter();
+    let mut batches_iter = batches.iter_mut();
 
     let mut timing = ExecuteTimings::default();
     bencher.iter(|| {

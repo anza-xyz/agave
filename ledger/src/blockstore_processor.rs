@@ -61,7 +61,6 @@ use {
     solana_transaction_status::token_balances::TransactionTokenBalancesSet,
     solana_vote::vote_account::VoteAccountsHashMap,
     std::{
-        borrow::Cow,
         collections::{HashMap, HashSet},
         num::Saturating,
         ops::{Index, Range},
@@ -149,7 +148,7 @@ fn create_thread_pool(num_threads: usize) -> ThreadPool {
 }
 
 pub fn execute_batch(
-    batch: &TransactionBatchWithIndexes<impl TransactionWithMeta>,
+    batch: &mut TransactionBatchWithIndexes<impl TransactionWithMeta>,
     bank: &Arc<Bank>,
     transaction_status_sender: Option<&TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
@@ -165,7 +164,6 @@ pub fn execute_batch(
         transaction_indexes,
     } = batch;
     let record_token_balances = transaction_status_sender.is_some();
-    let mut transaction_indexes = Cow::from(transaction_indexes);
 
     let mut mint_decimals: HashMap<Pubkey, u8> = HashMap::new();
 
@@ -180,7 +178,7 @@ pub fn execute_batch(
         || {
             wrapped_callback().map(|maybe_index| {
                 assert!(transaction_indexes.is_empty());
-                transaction_indexes.to_mut().extend(maybe_index);
+                transaction_indexes.extend(maybe_index);
                 // Strip the index away by implicitly returning (), now that we're done with it
                 // here (= `solana-ledger`), to make `solana-runtime` not bothered with it.
             })
@@ -252,7 +250,7 @@ pub fn execute_batch(
             commit_results,
             balances,
             token_balances,
-            transaction_indexes.into_owned(),
+            transaction_indexes.to_vec(),
         );
     }
 
@@ -324,7 +322,7 @@ impl ExecuteBatchesInternalMetrics {
 fn execute_batches_internal(
     bank: &Arc<Bank>,
     replay_tx_thread_pool: &ThreadPool,
-    batches: &[TransactionBatchWithIndexes<RuntimeTransaction<SanitizedTransaction>>],
+    batches: &mut [TransactionBatchWithIndexes<RuntimeTransaction<SanitizedTransaction>>],
     transaction_status_sender: Option<&TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     log_messages_bytes_limit: Option<usize>,
@@ -554,7 +552,7 @@ fn rebatch_and_execute_batches(
     let target_batch_count = get_thread_count() as u64;
 
     let mut tx_batches = vec![];
-    let rebatched_txs = if total_cost > target_batch_count.saturating_mul(minimal_tx_cost) {
+    if total_cost > target_batch_count.saturating_mul(minimal_tx_cost) {
         let target_batch_cost = total_cost / target_batch_count;
         let mut batch_cost: u64 = 0;
         let mut slice_start = 0;
@@ -574,7 +572,6 @@ fn rebatch_and_execute_batches(
                 batch_cost = 0;
             }
         });
-        &tx_batches[..]
     } else {
         let mut slice_start = 0;
         for num_transactions in original_entry_lengths {
@@ -592,14 +589,12 @@ fn rebatch_and_execute_batches(
             slice_start = next_index;
             tx_batches.push(tx_batch);
         }
-
-        &tx_batches[..]
     };
 
     let execute_batches_internal_metrics = execute_batches_internal(
         bank,
         replay_tx_thread_pool,
-        rebatched_txs,
+        &mut tx_batches,
         transaction_status_sender,
         replay_vote_sender,
         log_messages_bytes_limit,
@@ -5093,7 +5088,7 @@ pub mod tests {
         );
         batch.set_needs_unlock(false);
         let poh_with_index = matches!(poh_result, Ok(Some(_)));
-        let batch = TransactionBatchWithIndexes {
+        let mut batch = TransactionBatchWithIndexes {
             batch,
             transaction_indexes: vec![],
         };
@@ -5103,7 +5098,7 @@ pub mod tests {
 
         assert_eq!(bank.transaction_count(), 0);
         let result = execute_batch(
-            &batch,
+            &mut batch,
             &bank,
             Some(&TransactionStatusSender { sender }),
             None,
