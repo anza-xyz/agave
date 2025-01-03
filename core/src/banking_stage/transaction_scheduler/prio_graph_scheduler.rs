@@ -195,7 +195,9 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
         let mut num_scheduled: usize = 0;
         let mut num_sent: usize = 0;
         let mut num_unschedulable: usize = 0;
-        while num_scheduled < self.config.max_transactions_per_scheduling_pass {
+        while num_scheduled < self.config.max_transactions_per_scheduling_pass
+            && !schedulable_threads.is_empty()
+        {
             // If nothing is in the main-queue of the `PrioGraph` then there's nothing left to schedule.
             if self.prio_graph.is_empty() {
                 break;
@@ -215,7 +217,7 @@ impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
                     &pre_lock_filter,
                     &mut blocking_locks,
                     &mut self.account_locks,
-                    num_threads,
+                    schedulable_threads,
                     |thread_set| {
                         Self::select_thread(
                             thread_set,
@@ -576,7 +578,7 @@ fn try_schedule_transaction<Tx: TransactionWithMeta>(
     pre_lock_filter: impl Fn(&Tx) -> bool,
     blocking_locks: &mut ReadWriteAccountSet,
     account_locks: &mut ThreadAwareAccountLocks,
-    num_threads: usize,
+    schedulable_threads: ThreadSet,
     thread_selector: impl Fn(ThreadSet) -> ThreadId,
 ) -> Result<TransactionSchedulingInfo<Tx>, TransactionSchedulingError> {
     let transaction = &transaction_state.transaction_ttl().transaction;
@@ -604,7 +606,7 @@ fn try_schedule_transaction<Tx: TransactionWithMeta>(
     let Some(thread_id) = account_locks.try_lock_accounts(
         write_account_locks,
         read_account_locks,
-        ThreadSet::any(num_threads),
+        schedulable_threads,
         thread_selector,
     ) else {
         blocking_locks.take_locks(transaction);
@@ -927,5 +929,26 @@ mod tests {
         assert_eq!(scheduling_summary.num_scheduled, 2);
         assert_eq!(scheduling_summary.num_unschedulable, 0);
         assert_eq!(collect_work(&work_receivers[0]).1, vec![vec![2], vec![0]]);
+    }
+
+    #[test]
+    fn test_schedulable_threads() {
+        let (mut scheduler, _work_receivers, _finished_work_sender) = create_test_frame(2);
+        scheduler.config.max_scheduled_cus = 2; // only allow 1 tx per thread
+        let pubkey = Pubkey::new_unique();
+        let keypair = Keypair::new();
+        let mut container = create_container([
+            (&Keypair::new(), &[pubkey], 1, 1),
+            (&keypair, &[pubkey], 1, 2),
+            (&Keypair::new(), &[Pubkey::new_unique()], 1, 3),
+        ]);
+
+        let scheduling_summary = scheduler
+            .schedule(&mut container, test_pre_graph_filter, test_pre_lock_filter)
+            .unwrap();
+        assert_eq!(scheduling_summary.num_scheduled, 2);
+
+        // remaining transaction not marked as unschedulable due to early exit
+        assert_eq!(scheduling_summary.num_unschedulable, 0);
     }
 }
