@@ -28,9 +28,11 @@ pub fn calculate_fee_details(
     if zero_fees_for_test {
         return FeeDetails::default();
     }
-    let signature_fee = message
-        .num_total_signatures()
-        .saturating_mul(lamports_per_signature);
+    let signature_fee = (message
+        .num_transaction_signatures()
+        .saturating_add(message.num_ed25519_signatures())
+        .saturating_add(message.num_secp256k1_signatures()))
+    .saturating_mul(lamports_per_signature);
 
     FeeDetails::new(
         signature_fee,
