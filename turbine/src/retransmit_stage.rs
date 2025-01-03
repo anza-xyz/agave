@@ -133,7 +133,7 @@ impl RetransmitStats {
     }
 }
 
-struct ShredDeduper<const K: usize> {
+struct ShredDeduper<const K: usize = 2> {
     deduper: Deduper<K, /*shred:*/ [u8]>,
     shred_id_filter: Deduper<K, (ShredId, /*0..MAX_DUPLICATE_COUNT:*/ usize)>,
 }
@@ -189,7 +189,7 @@ fn retransmit(
     quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
     stats: &mut RetransmitStats,
     cluster_nodes_cache: &ClusterNodesCache<RetransmitStage>,
-    shred_deduper: &mut ShredDeduper<2>,
+    shred_deduper: &mut ShredDeduper,
     max_slots: &MaxSlots,
     rpc_subscriptions: Option<&RpcSubscriptions>,
     slot_status_notifier: Option<&SlotStatusNotifier>,
@@ -302,7 +302,7 @@ fn retransmit(
 fn retransmit_shred(
     shred: Vec<u8>,
     root_bank: &Bank,
-    shred_deduper: &ShredDeduper<2>,
+    shred_deduper: &ShredDeduper,
     cache: &HashMap<Slot, (/*leader:*/ Pubkey, Arc<ClusterNodes<RetransmitStage>>)>,
     socket_addr_space: &SocketAddrSpace,
     socket: &UdpSocket,
@@ -391,7 +391,7 @@ pub fn retransmitter(
         CLUSTER_NODES_CACHE_TTL,
     );
     let mut rng = rand::thread_rng();
-    let mut shred_deduper = ShredDeduper::<2>::new(&mut rng, DEDUPER_NUM_BITS);
+    let mut shred_deduper = ShredDeduper::new(&mut rng, DEDUPER_NUM_BITS);
     let mut stats = RetransmitStats::new(Instant::now());
     #[allow(clippy::manual_clamp)]
     let num_threads = get_thread_count().min(8).max(sockets.len());
