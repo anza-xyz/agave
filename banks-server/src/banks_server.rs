@@ -459,7 +459,7 @@ pub async fn start_tcp_server(
                 &bank_forks,
                 None,
                 receiver,
-                connection_cache.clone(),
+                &connection_cache,
                 5_000,
                 0,
                 exit.clone(),
