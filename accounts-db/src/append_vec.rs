@@ -417,15 +417,22 @@ impl AppendVec {
         match &self.backing {
             AppendVecFileBacking::Mmap(mmap_only) => {
                 // Check to see if the mmap is actually dirty before flushing.
-                if mmap_only.is_dirty.load(Ordering::Acquire) {
+                let should_flush = mmap_only.is_dirty.compare_exchange(
+                    true,
+                    false,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                ) == Ok(true);
+                if should_flush {
                     mmap_only.mmap.flush()?;
-                    mmap_only.is_dirty.store(false, Ordering::Release);
                     APPEND_VEC_MMAPPED_FILES_DIRTY.fetch_sub(1, Ordering::Relaxed);
                 }
                 Ok(())
             }
-            // File also means read only, so nothing to flush.
-            AppendVecFileBacking::File(_file) => Ok(()),
+            AppendVecFileBacking::File(_file) => {
+                // File also means read only, so nothing to flush.
+                Ok(())
+            }
         }
     }
 
