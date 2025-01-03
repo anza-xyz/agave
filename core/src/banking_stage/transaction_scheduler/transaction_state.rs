@@ -62,7 +62,7 @@ impl<Tx> TransactionState<Tx> {
     ) -> Self {
         let should_forward = packet
             .as_ref()
-            .map(|packet| initialize_should_forward(packet.original_packet().meta()))
+            .map(|packet| should_forward_from_meta(packet.original_packet().meta()))
             .unwrap_or_default();
         Self::Unprocessed {
             transaction_ttl,
@@ -209,7 +209,7 @@ impl<Tx> TransactionState<Tx> {
     }
 }
 
-fn initialize_should_forward(meta: &packet::Meta) -> bool {
+fn should_forward_from_meta(meta: &packet::Meta) -> bool {
     !meta.forwarded() && meta.is_from_staked_node()
 }
 
@@ -377,19 +377,19 @@ mod tests {
     #[test]
     fn test_initialize_should_forward() {
         let meta = packet::Meta::default();
-        assert!(!initialize_should_forward(&meta));
+        assert!(!should_forward_from_meta(&meta));
 
         let mut meta = packet::Meta::default();
         meta.flags.set(PacketFlags::FORWARDED, true);
-        assert!(!initialize_should_forward(&meta));
+        assert!(!should_forward_from_meta(&meta));
 
         let mut meta = packet::Meta::default();
         meta.set_from_staked_node(true);
-        assert!(initialize_should_forward(&meta));
+        assert!(should_forward_from_meta(&meta));
 
         let mut meta = packet::Meta::default();
         meta.flags.set(PacketFlags::FORWARDED, true);
         meta.set_from_staked_node(true);
-        assert!(!initialize_should_forward(&meta));
+        assert!(!should_forward_from_meta(&meta));
     }
 }
