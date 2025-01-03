@@ -126,7 +126,8 @@ use {
     solana_ledger::get_tmp_ledger_path,
     solana_runtime::commitment::CommitmentSlots,
     solana_send_transaction_service::{
-        send_transaction_service::SendTransactionService, tpu_info::NullTpuInfo,
+        send_transaction_service::{self, SendTransactionService},
+        tpu_info::NullTpuInfo,
         transaction_client::ConnectionCacheClient,
     },
     solana_streamer::socket::SocketAddrSpace,
@@ -467,11 +468,14 @@ impl JsonRpcRequestProcessor {
             None,
             1,
         );
-        SendTransactionService::new(
+        SendTransactionService::new_with_client(
             &bank_forks,
             transaction_receiver,
             client,
-            1000,
+            send_transaction_service::Config {
+                retry_rate_ms: 1_000,
+                ..send_transaction_service::Config::default()
+            },
             exit.clone(),
         );
 
@@ -6708,7 +6712,16 @@ pub mod tests {
             None,
             1,
         );
-        SendTransactionService::new(&bank_forks, receiver, client, 1000, exit.clone());
+        SendTransactionService::new_with_client(
+            &bank_forks,
+            receiver,
+            client,
+            send_transaction_service::Config {
+                retry_rate_ms: 1_000,
+                ..send_transaction_service::Config::default()
+            },
+            exit.clone(),
+        );
 
         let mut bad_transaction = system_transaction::transfer(
             &mint_keypair,
@@ -6988,7 +7001,16 @@ pub mod tests {
             None,
             1,
         );
-        SendTransactionService::new(&bank_forks, receiver, client, 1000, exit.clone());
+        SendTransactionService::new_with_client(
+            &bank_forks,
+            receiver,
+            client,
+            send_transaction_service::Config {
+                retry_rate_ms: 1_000,
+                ..send_transaction_service::Config::default()
+            },
+            exit.clone(),
+        );
 
         assert_eq!(
             request_processor.get_block_commitment(0),

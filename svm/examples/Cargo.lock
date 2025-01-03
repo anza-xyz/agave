@@ -7432,31 +7432,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-tpu-client-next"
-version = "2.2.0"
-dependencies = [
- "async-trait",
- "log",
- "lru",
- "quinn",
- "rustls 0.23.20",
- "solana-clock",
- "solana-connection-cache",
- "solana-keypair",
- "solana-logger",
- "solana-measure",
- "solana-quic-definitions",
- "solana-rpc-client",
- "solana-streamer",
- "solana-time-utils",
- "solana-tls-utils",
- "solana-tpu-client",
- "thiserror 2.0.9",
- "tokio",
- "tokio-util 0.7.12",
-]
-
-[[package]]
 name = "solana-transaction"
 version = "2.2.0"
 dependencies = [
@@ -7480,6 +7455,27 @@ dependencies = [
  "solana-system-interface",
  "solana-transaction-error",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "solana-tpu-client-next"
+version = "2.2.0"
+dependencies = [
+ "async-trait",
+ "log",
+ "lru",
+ "quinn",
+ "rustls 0.23.19",
+ "solana-connection-cache",
+ "solana-logger",
+ "solana-measure",
+ "solana-rpc-client",
+ "solana-sdk",
+ "solana-streamer",
+ "solana-tpu-client",
+ "thiserror 2.0.3",
+ "tokio",
+ "tokio-util 0.7.12",
 ]
 
 [[package]]
