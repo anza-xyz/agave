@@ -679,7 +679,9 @@ impl Consumer {
             starting_transaction_index,
         } = record_transactions_summary;
         execute_and_commit_timings.record_transactions_timings = RecordTransactionsTimings {
-            processing_results_to_transactions_us,
+            processing_results_to_transactions_us: Saturating(
+                processing_results_to_transactions_us,
+            ),
             ..record_transactions_timings
         };
 

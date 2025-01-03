@@ -6268,12 +6268,17 @@ dependencies = [
  "core_affinity",
  "crossbeam-channel",
  "log",
+ "solana-clock",
  "solana-entry",
+ "solana-hash",
  "solana-ledger",
  "solana-measure",
  "solana-metrics",
+ "solana-poh-config",
+ "solana-pubkey",
  "solana-runtime",
- "solana-sdk",
+ "solana-time-utils",
+ "solana-transaction",
  "thiserror 2.0.9",
 ]
 
