@@ -63,11 +63,12 @@ name = "solana_svm"
 [dev-dependencies]
 assert_matches = { workspace = true }
 bincode = { workspace = true }
-ed25519-dalek = { workspace = true }
+ed25519-dalek = { workspace = true, features = ["rand_core"] }
 lazy_static = { workspace = true }
 libsecp256k1 = { workspace = true }
 openssl = { workspace = true }
 prost = { workspace = true }
+rand = { workspace = true }
 rand0-7 = { workspace = true }
 shuttle = { workspace = true }
 solana-clock = { workspace = true }
