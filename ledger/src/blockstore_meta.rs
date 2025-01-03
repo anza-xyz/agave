@@ -1,14 +1,19 @@
 use {
-    crate::shred::{Shred, ShredType},
+    crate::{
+        blockstore::MAX_DATA_SHREDS_PER_SLOT,
+        shred::{Shred, ShredType},
+    },
     bitflags::bitflags,
     serde::{Deserialize, Deserializer, Serialize, Serializer},
     solana_sdk::{
         clock::{Slot, UnixTimestamp},
         hash::Hash,
     },
+    static_assertions::const_assert,
     std::{
         collections::BTreeSet,
-        ops::{Range, RangeBounds},
+        mem::MaybeUninit,
+        ops::{Bound, Range, RangeBounds},
     },
 };
 
@@ -110,6 +115,33 @@ pub struct Index {
     pub slot: Slot,
     data: ShredIndex,
     coding: ShredIndex,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct IndexV2 {
+    pub slot: Slot,
+    data: ShredIndexV2,
+    coding: ShredIndexV2,
+}
+
+impl From<IndexV2> for Index {
+    fn from(index: IndexV2) -> Self {
+        Index {
+            slot: index.slot,
+            data: index.data.into(),
+            coding: index.coding.into(),
+        }
+    }
+}
+
+impl From<Index> for IndexV2 {
+    fn from(index: Index) -> Self {
+        IndexV2 {
+            slot: index.slot,
+            data: index.data.into(),
+            coding: index.coding.into(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -250,6 +282,10 @@ impl Index {
     }
 }
 
+/// Superseded by [`ShredIndexV2`].
+///
+/// TODO: Remove this once new [`ShredIndexV2`] is fully rolled out
+/// and no longer relies on it for fallback.
 impl ShredIndex {
     pub fn num_shreds(&self) -> usize {
         self.index.len()
@@ -268,6 +304,362 @@ impl ShredIndex {
 
     pub(crate) fn insert(&mut self, index: u64) {
         self.index.insert(index);
+    }
+
+    #[cfg(test)]
+    fn remove(&mut self, index: u64) {
+        self.index.remove(&index);
+    }
+}
+
+/// Number of `u64`s required to accommodate each shred in a slot ([`MAX_DATA_SHREDS_PER_SLOT`]).
+///
+/// **THIS VALUE MUST NEVER DECREASE ONCE ROLLED OUT.**
+///
+/// As it relates to deserializing from the blockstore, using a statically sized structure
+/// can trivially accommodate increases in space, but decreases are problematic. For example,
+///
+/// Increase case:
+/// - Assume `MAX_DATA_SHREDS_PER_SLOT` was bumped from `32_768` to `65_536`.
+/// - Assume data being deserialized was written when `MAX_DATA_SHREDS_PER_SLOT` was `32_768`.
+/// - ✅ No issue, as `ShredIndexV2Inner` has extra space that can be zeroed to accommodate.
+///
+/// Decrease case:
+/// - Assume `MAX_DATA_SHREDS_PER_SLOT` was reduced from  `65_536` to `32_768`.
+/// - Assume data being deserialized was written when `MAX_DATA_SHREDS_PER_SLOT` was `65_536`.
+/// - ❌ `ShredIndexV2Inner` only has space to accommodate `32_768` shreds.
+///
+/// As such, we:
+/// - Decouple the definition of `NUM_U64_PER_SHRED_INDEX_V2` from `MAX_DATA_SHREDS_PER_SLOT`.
+///   (i.e., make it not an explicit function of)
+/// - Impose a compile time check to ensure that `NUM_U64_PER_SHRED_INDEX_V2 >= (MAX_DATA_SHREDS_PER_SLOT + 63) / 64`.
+/// - Impose a convention that `NUM_U64_PER_SHRED_INDEX_V2` must never decrease.
+const NUM_U64_PER_SHRED_INDEX_V2: usize = 512;
+const_assert!(NUM_U64_PER_SHRED_INDEX_V2 >= (MAX_DATA_SHREDS_PER_SLOT + 63) / 64);
+type ShredIndexV2Inner = [u64; NUM_U64_PER_SHRED_INDEX_V2];
+
+/// A bit array of shred indices, where each u64 represents 64 shred indices.
+///
+/// The current implementation of [`ShredIndex`] utilizes a [`BTreeSet`] to store
+/// shred indices. While [`BTreeSet`] remains efficient as operations are amortized
+/// over time, the overhead of the B-tree structure becomes significant when frequently
+/// serialized and deserialized. In particular:
+/// - **Tree Traversal**: Serialization requires walking the non-contiguous tree structure.
+/// - **Reconstruction**: Deserialization involves rebuilding the tree in bulk,
+///   including dynamic memory allocations and re-balancing nodes.
+///
+/// In contrast, our bit array implementation provides:
+/// - **Contiguous Memory**: All bits are stored in a contiguous array of u64 words,
+///   allowing direct indexing and efficient memory access patterns.
+/// - **Direct Range Access**: Can load only the specific words that overlap with a
+///   requested range, avoiding unnecessary traversal.
+/// - **Simplified Serialization**: The contiguous memory layout allows for efficient
+///   serialization/deserialization without tree reconstruction.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShredIndexV2 {
+    index: ShredIndexV2Inner,
+    num_shreds: usize,
+}
+
+impl Default for ShredIndexV2 {
+    fn default() -> Self {
+        Self {
+            index: [0; NUM_U64_PER_SHRED_INDEX_V2],
+            num_shreds: 0,
+        }
+    }
+}
+
+impl Serialize for ShredIndexV2 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeTuple;
+
+        let mut tuple = serializer.serialize_tuple(2)?;
+        // Purpose:
+        // - Serialize `self.index` (a `[u64; NUM_U64_PER_SHRED_INDEX_V2]` array) into a fixed-size buffer as little-endian bytes.
+        //
+        // SAFETY: This is safe because:
+        // 1. Memory Layout:
+        // - The buffer is sized to `std::mem::size_of::<[u64; NUM_U64_PER_SHRED_INDEX_V2]>()`, matching the source data size.
+        // - Each `u64` is serialized into 8 bytes, ensuring no padding or overflow.
+        //
+        // 2. Pointer Safety:
+        // - `dst` is derived from `buffer.as_mut_ptr()` and points to valid, uninitialized memory.
+        // - The offsets `dst.add(i * 8)` are always within bounds because:
+        //   - `i` ranges from `0` to `NUM_U64_PER_SHRED_INDEX_V2 - 1`.
+        //   - The total size of the buffer is sufficient to accommodate all writes.
+        //
+        // 3. Alignment:
+        // - `dst` is `u8`-aligned from `buffer.as_mut_ptr()`.
+        // - Writing 8 bytes per iteration (`[u8; 8]` from `to_le_bytes()`) respects alignment requirements.
+        //
+        // 4. Initialization:
+        // - Each 8-byte chunk is written exactly once using `std::ptr::write`, fully initializing the buffer.
+        // - After the loop, the buffer is guaranteed to be completely initialized, making `assume_init()` safe.
+        //
+        // Notes:
+        // - Serialization uses little-endian order for portability.
+        let buffer = unsafe {
+            let mut buffer =
+                MaybeUninit::<[u8; std::mem::size_of::<ShredIndexV2Inner>()]>::uninit();
+            let dst = buffer.as_mut_ptr() as *mut u8;
+            for (i, &word) in self.index.iter().enumerate() {
+                // Explicitly convert to LE bytes
+                std::ptr::write(dst.add(i * 8) as *mut [u8; 8], word.to_le_bytes());
+            }
+            buffer.assume_init()
+        };
+        tuple.serialize_element(serde_bytes::Bytes::new(&buffer))?;
+        tuple.serialize_element(&self.num_shreds)?;
+        tuple.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for ShredIndexV2 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let (bytes, num_shreds) = <(&[u8], usize)>::deserialize(deserializer)?;
+        let total_size = std::mem::size_of::<ShredIndexV2Inner>();
+        // Accept input smaller than our current fixed array size to maintain compatibility with older
+        // versions that had fewer shreds per slot. This is safe because smaller sets are stored in
+        // our fixed array with any remaining space automatically zeroed. This approach ensures we can
+        // read data from any previous version while enforcing a maximum size limit.
+        if bytes.len() > total_size {
+            return Err(serde::de::Error::custom("input too large"));
+        }
+        if bytes.is_empty() {
+            return Err(serde::de::Error::custom("input is empty"));
+        }
+
+        let mut buffer = MaybeUninit::<ShredIndexV2Inner>::uninit();
+        let remaining_bytes = total_size - bytes.len();
+
+        // SAFETY: This operation is safe because:
+        //
+        // 1. Memory Layout:
+        // - The buffer size matches `std::mem::size_of::<ShredIndexV2Inner>()`.
+        // - `bytes.len()` is checked to ensure it does not exceed `total_size`.
+        //
+        // 2. Pointer Safety:
+        // - `buffer` is a fresh `MaybeUninit`, ensuring no aliasing or invalid memory access.
+        // - `ptr.add(i)` is always within bounds as `i` comes from `bytes.chunks_exact(8).enumerate()`.
+        //
+        // 3. Alignment:
+        // - `buffer.as_mut_ptr()` is aligned for `u64`, matching the type of `ShredIndexV2Inner`.
+        // - Writing `u64` values respects alignment requirements.
+        //
+        // 4. Initialization:
+        // - Each `u64` in the buffer is initialized from 8-byte chunks of `bytes` using `u64::from_le_bytes`.
+        // - Remaining bytes are zeroed with `std::ptr::write_bytes`.
+        // - After the loop, the buffer is fully initialized, making `assume_init()` safe.
+        //
+        // 5. Compatibility:
+        // - Allows smaller inputs (`bytes.len() < total_size`) by zero-filling unused space to maintain backward compatibility.
+        unsafe {
+            let ptr = buffer.as_mut_ptr() as *mut u64;
+            // Write input bytes, converting to LE.
+            for (i, byte) in bytes.chunks_exact(8).enumerate() {
+                std::ptr::write(
+                    ptr.add(i),
+                    // SAFETY: chunks_exact(8) guarantees 8 bytes.
+                    u64::from_le_bytes(byte.try_into().unwrap_unchecked()),
+                );
+            }
+
+            // Zero remaining bytes
+            std::ptr::write_bytes(
+                (buffer.as_mut_ptr() as *mut u8).add(bytes.len()),
+                0,
+                remaining_bytes,
+            );
+
+            Ok(Self {
+                index: buffer.assume_init(),
+                num_shreds,
+            })
+        }
+    }
+}
+
+impl ShredIndexV2 {
+    pub fn num_shreds(&self) -> usize {
+        self.num_shreds
+    }
+
+    fn index_and_mask(index: u64) -> (usize, u64) {
+        // index / 64
+        let word_idx = (index >> 6) as usize;
+        // index % 64
+        let bit_idx = index & 63;
+        let mask = 1 << bit_idx;
+        (word_idx, mask)
+    }
+
+    #[cfg(test)]
+    fn remove(&mut self, index: u64) {
+        assert!(
+            index < MAX_DATA_SHREDS_PER_SLOT as u64,
+            "index out of bounds. {index} >= {MAX_DATA_SHREDS_PER_SLOT}"
+        );
+
+        let (word_idx, mask) = Self::index_and_mask(index);
+
+        if self.index[word_idx] & mask != 0 {
+            self.index[word_idx] ^= mask;
+            self.num_shreds -= 1;
+        }
+    }
+
+    #[allow(unused)]
+    pub(crate) fn contains(&self, idx: u64) -> bool {
+        if idx >= MAX_DATA_SHREDS_PER_SLOT as u64 {
+            return false;
+        }
+        let (word_idx, mask) = Self::index_and_mask(idx);
+        (self.index[word_idx] & mask) != 0
+    }
+
+    pub(crate) fn insert(&mut self, idx: u64) {
+        if idx >= MAX_DATA_SHREDS_PER_SLOT as u64 {
+            return;
+        }
+        let (word_idx, mask) = Self::index_and_mask(idx);
+        if self.index[word_idx] & mask == 0 {
+            self.index[word_idx] |= mask;
+            self.num_shreds += 1;
+        }
+    }
+
+    /// Provides an iterator over the set shred indices within a specified range.
+    ///
+    /// # Algorithm
+    /// 1. Divide the specified range into 64-bit words.
+    /// 2. For each word:
+    ///    - Calculate the base index (position of the word * 64).
+    ///    - Process all set bits in the word.
+    ///    - For words overlapping the range boundaries:
+    ///      - Determine the relevant bit range using boundaries.
+    ///      - Mask out bits outside the range.
+    ///    - Use bit manipulation to iterate over set bits efficiently.
+    ///
+    /// ## Explanation
+    /// > Note we're showing 32 bits per word in examples for brevity, but each word is 64 bits.
+    ///
+    /// Given range `[75..205]`:
+    ///
+    /// Word layout (each word is 64 bits), where each X represents a bit candidate:
+    /// ```text
+    /// Word 1 (0–63):    [................................] ← Not included (outside range)
+    /// Word 2 (64–127):  [..........XXXXXXXXXXXXXXXXXXXXXX] ← Partial word (start)
+    /// Word 3 (128–191): [XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX] ← Full word (entirely in range)
+    /// Word 4 (192–255): [XXXXXXXXXXXXXXXXXXX.............] ← Partial word (end)
+    /// ```
+    ///
+    /// Partial Word 2 (contains start boundary 75):
+    /// - Base index = 64
+    /// - Lower boundary = 75 - 64 = 11
+    /// - Lower mask = `11111111111111110000000000000000`
+    ///
+    /// Partial Word 4 (contains end boundary 205):
+    /// - Base index = 192
+    /// - Upper boundary = 205 - 192 = 13
+    /// - Upper mask = `00000000000000000000000000001111`
+    ///
+    /// Final mask = `word & lower_mask & upper_mask`
+    ///
+    /// Bit iteration:
+    /// 1. Apply masks to restrict the bits to the range.
+    /// 2. While bits remain in the masked word:
+    ///    a. Find the lowest set bit (`trailing_zeros`).
+    ///    b. Add the bit's position to the base index.
+    ///    c. Clear the lowest set bit (`n & (n - 1)`).
+    /// ```
+    pub(crate) fn range<R>(&self, bounds: R) -> impl Iterator<Item = u64> + '_
+    where
+        R: RangeBounds<u64>,
+    {
+        let start = match bounds.start_bound() {
+            Bound::Included(&n) => n,
+            Bound::Excluded(&n) => n + 1,
+            Bound::Unbounded => 0,
+        };
+        let end = match bounds.end_bound() {
+            Bound::Included(&n) => n + 1,
+            Bound::Excluded(&n) => n,
+            Bound::Unbounded => MAX_DATA_SHREDS_PER_SLOT as u64,
+        };
+
+        let end_word: usize = ((end + 63) / 64).min(NUM_U64_PER_SHRED_INDEX_V2 as u64) as usize;
+        let start_word = ((start / 64) as usize).min(end_word);
+
+        self.index[start_word..end_word]
+            .iter()
+            .enumerate()
+            .flat_map(move |(word_offset, &word)| {
+                let base_idx = (start_word + word_offset) as u64 * 64;
+
+                let lower_bound = if base_idx < start {
+                    start - base_idx
+                } else {
+                    0
+                };
+                let upper_bound = if base_idx + 64 > end {
+                    end - base_idx
+                } else {
+                    64
+                };
+
+                let lower_mask = !0u64 << lower_bound;
+                let upper_mask = !0u64 >> (64 - upper_bound);
+                let mask = word & lower_mask & upper_mask;
+
+                std::iter::from_fn({
+                    let mut remaining = mask;
+                    move || {
+                        if remaining == 0 {
+                            None
+                        } else {
+                            let bit_idx = remaining.trailing_zeros() as u64;
+                            // Clear the lowest set bit
+                            remaining &= remaining - 1;
+                            Some(base_idx + bit_idx)
+                        }
+                    }
+                })
+            })
+    }
+
+    fn iter(&self) -> impl Iterator<Item = u64> + '_ {
+        self.range(0..MAX_DATA_SHREDS_PER_SLOT as u64)
+    }
+}
+
+impl FromIterator<u64> for ShredIndexV2 {
+    fn from_iter<T: IntoIterator<Item = u64>>(iter: T) -> Self {
+        let mut index = ShredIndexV2::default();
+        for idx in iter {
+            index.insert(idx);
+        }
+        index
+    }
+}
+
+impl From<ShredIndex> for ShredIndexV2 {
+    fn from(value: ShredIndex) -> Self {
+        value.index.into_iter().collect()
+    }
+}
+
+impl From<ShredIndexV2> for ShredIndex {
+    fn from(value: ShredIndexV2) -> Self {
+        ShredIndex {
+            index: value.iter().collect(),
+        }
     }
 }
 
@@ -637,7 +1029,7 @@ mod test {
             .collect::<Vec<_>>()
             .choose_multiple(&mut rng, erasure_config.num_data)
         {
-            index.data_mut().index.remove(&idx);
+            index.data_mut().remove(idx);
 
             assert_eq!(e_meta.status(&index), CanRecover);
         }
@@ -650,10 +1042,164 @@ mod test {
             .collect::<Vec<_>>()
             .choose_multiple(&mut rng, erasure_config.num_coding)
         {
-            index.coding_mut().index.remove(&idx);
+            index.coding_mut().remove(idx);
 
             assert_eq!(e_meta.status(&index), DataFull);
         }
+    }
+
+    #[test]
+    fn shred_index_v2_serde() {
+        let index: ShredIndexV2 = (0..MAX_DATA_SHREDS_PER_SLOT as u64).skip(3).collect();
+        let serialized = bincode::serialize(&index).unwrap();
+        let deserialized = bincode::deserialize::<ShredIndexV2>(&serialized).unwrap();
+        assert_eq!(index, deserialized);
+    }
+
+    #[test]
+    fn shred_index_collision() {
+        let mut index = ShredIndex::default();
+        // Create a `ShredIndex` that is exactly the expected size of `ShredIndexV2`
+        for i in 0..MAX_DATA_SHREDS_PER_SLOT as u64 {
+            index.insert(i);
+        }
+        let serialized = bincode::serialize(&index).unwrap();
+        // Attempt to deserialize as `ShredIndexV2`
+        let deserialized = bincode::deserialize::<ShredIndexV2>(&serialized);
+        assert!(deserialized.is_err());
+    }
+
+    #[test]
+    fn shred_index_v2_collision() {
+        let index = ShredIndexV2::default();
+        let serialized = bincode::serialize(&index).unwrap();
+        let deserialized = bincode::deserialize::<ShredIndex>(&serialized);
+        assert!(deserialized.is_err());
+
+        let index: ShredIndexV2 = (0..MAX_DATA_SHREDS_PER_SLOT as u64).skip(3).collect();
+        let serialized = bincode::serialize(&index).unwrap();
+        let deserialized = bincode::deserialize::<ShredIndex>(&serialized);
+        assert!(deserialized.is_err());
+    }
+
+    #[test]
+    fn shred_index_legacy_compat() {
+        use rand::Rng;
+        let mut legacy = ShredIndex::default();
+        let mut v2 = ShredIndexV2::default();
+
+        for i in (0..MAX_DATA_SHREDS_PER_SLOT as u64).skip(3) {
+            v2.insert(i);
+            legacy.insert(i);
+        }
+
+        for &i in legacy.index.iter() {
+            assert!(v2.contains(i));
+        }
+
+        assert_eq!(v2.num_shreds(), legacy.num_shreds());
+
+        let rand_range = rand::thread_rng().gen_range(1000..MAX_DATA_SHREDS_PER_SLOT as u64);
+        assert_eq!(
+            v2.range(0..rand_range).sum::<u64>(),
+            legacy.range(0..rand_range).sum::<u64>()
+        );
+
+        assert_eq!(ShredIndexV2::from(legacy.clone()), v2);
+        assert_eq!(ShredIndex::from(v2), legacy);
+    }
+
+    #[test]
+    fn test_shred_index_v2_range_bounds() {
+        let mut index = ShredIndexV2::default();
+
+        index.insert(10);
+        index.insert(20);
+        index.insert(30);
+        index.insert(40);
+
+        use std::ops::Bound::*;
+
+        // Test all combinations of bounds
+        let test_cases = [
+            // (start_bound, end_bound, expected_result)
+            (Included(10), Included(30), vec![10, 20, 30]),
+            (Included(10), Excluded(30), vec![10, 20]),
+            (Excluded(10), Included(30), vec![20, 30]),
+            (Excluded(10), Excluded(30), vec![20]),
+            // Unbounded start
+            (Unbounded, Included(20), vec![10, 20]),
+            (Unbounded, Excluded(20), vec![10]),
+            // Unbounded end
+            (Included(30), Unbounded, vec![30, 40]),
+            (Excluded(30), Unbounded, vec![40]),
+            // Both Unbounded
+            (Unbounded, Unbounded, vec![10, 20, 30, 40]),
+        ];
+
+        for (start_bound, end_bound, expected) in test_cases {
+            let result: Vec<_> = index.range((start_bound, end_bound)).collect();
+            assert_eq!(
+                result, expected,
+                "Failed for bounds: start={:?}, end={:?}",
+                start_bound, end_bound
+            );
+        }
+    }
+
+    #[test]
+    fn test_shred_index_v2_boundary_conditions() {
+        let mut index = ShredIndexV2::default();
+
+        // First possible index
+        index.insert(0);
+        // Last index in first word
+        index.insert(63);
+        // First index in second word
+        index.insert(64);
+        // Last index in second word
+        index.insert(127);
+        // Last valid index
+        index.insert(MAX_DATA_SHREDS_PER_SLOT as u64 - 1);
+        // Should be ignored (too large)
+        index.insert(MAX_DATA_SHREDS_PER_SLOT as u64);
+
+        // Verify contents
+        assert!(index.contains(0));
+        assert!(index.contains(63));
+        assert!(index.contains(64));
+        assert!(index.contains(127));
+        assert!(index.contains(MAX_DATA_SHREDS_PER_SLOT as u64 - 1));
+        assert!(!index.contains(MAX_DATA_SHREDS_PER_SLOT as u64));
+
+        // Cross-word boundary
+        assert_eq!(index.range(50..70).collect::<Vec<_>>(), vec![63, 64]);
+        // Full first word
+        assert_eq!(index.range(0..64).collect::<Vec<_>>(), vec![0, 63]);
+        // Full second word
+        assert_eq!(index.range(64..128).collect::<Vec<_>>(), vec![64, 127]);
+
+        // Empty ranges
+        assert_eq!(index.range(0..0).count(), 0);
+        assert_eq!(index.range(1..1).count(), 0);
+
+        // Test range that exceeds max
+        let oversized_range = index.range(0..MAX_DATA_SHREDS_PER_SLOT as u64 + 1);
+        assert_eq!(oversized_range.count(), 5);
+        assert_eq!(index.num_shreds(), 5);
+
+        index.remove(0);
+        assert!(!index.contains(0));
+        index.remove(63);
+        assert!(!index.contains(63));
+        index.remove(64);
+        assert!(!index.contains(64));
+        index.remove(127);
+        assert!(!index.contains(127));
+        index.remove(MAX_DATA_SHREDS_PER_SLOT as u64 - 1);
+        assert!(!index.contains(MAX_DATA_SHREDS_PER_SLOT as u64 - 1));
+
+        assert_eq!(index.num_shreds(), 0);
     }
 
     #[test]
