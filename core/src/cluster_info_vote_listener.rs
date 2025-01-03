@@ -1,6 +1,6 @@
 use {
     crate::{
-        banking_trace::{BankingPacketBatch, BankingPacketSender},
+        banking_trace::BankingPacketSender,
         consensus::vote_stake_tracker::VoteStakeTracker,
         optimistic_confirmation_verifier::OptimisticConfirmationVerifier,
         replay_stage::DUPLICATE_THRESHOLD,
@@ -16,7 +16,7 @@ use {
     solana_ledger::blockstore::Blockstore,
     solana_measure::measure::Measure,
     solana_metrics::inc_new_counter_debug,
-    solana_perf::packet::{self, PacketBatch},
+    solana_perf::packet::{self, BankingPacketBatch, PacketBatch},
     solana_rpc::{
         optimistically_confirmed_bank_tracker::{BankNotification, BankNotificationSender},
         rpc_subscriptions::RpcSubscriptions,
@@ -194,6 +194,7 @@ impl ClusterInfoVoteListener {
         verified_packets_sender: BankingPacketSender,
         vote_tracker: Arc<VoteTracker>,
         bank_forks: Arc<RwLock<BankForks>>,
+        mut root_bank_cache: RootBankCache,
         subscriptions: Arc<RpcSubscriptions>,
         verified_vote_sender: VerifiedVoteSender,
         gossip_verified_vote_hash_sender: GossipVerifiedVoteHashSender,
@@ -205,7 +206,6 @@ impl ClusterInfoVoteListener {
         let (verified_vote_transactions_sender, verified_vote_transactions_receiver) = unbounded();
         let listen_thread = {
             let exit = exit.clone();
-            let mut root_bank_cache = RootBankCache::new(bank_forks.clone());
             Builder::new()
                 .name("solCiVoteLstnr".to_string())
                 .spawn(move || {

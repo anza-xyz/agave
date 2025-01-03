@@ -2,6 +2,7 @@
 
 use {
     crate::{
+        banking_stage::update_bank_forks_and_poh_recorder_for_new_tpu_bank,
         banking_trace::BankingTracer,
         cluster_info_vote_listener::{
             DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver, VoteTracker,
@@ -2217,11 +2218,12 @@ impl ReplayStage {
             // new()-ing of its child bank
             banking_tracer.hash_event(parent.slot(), &parent.last_blockhash(), &parent.hash());
 
-            let tpu_bank = bank_forks.write().unwrap().insert(tpu_bank);
-            poh_recorder
-                .write()
-                .unwrap()
-                .set_bank(tpu_bank, track_transaction_indexes);
+            update_bank_forks_and_poh_recorder_for_new_tpu_bank(
+                bank_forks,
+                poh_recorder,
+                tpu_bank,
+                track_transaction_indexes,
+            );
             true
         } else {
             error!("{} No next leader found", my_pubkey);
