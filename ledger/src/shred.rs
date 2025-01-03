@@ -1106,6 +1106,7 @@ impl TryFrom<u8> for ShredVariant {
 pub(crate) fn recover(
     shreds: Vec<Shred>,
     reed_solomon_cache: &ReedSolomonCache,
+    get_slot_leader: impl Fn(Slot) -> Option<Pubkey>,
 ) -> Result<Vec<Shred>, Error> {
     match shreds
         .first()
@@ -1114,16 +1115,37 @@ pub(crate) fn recover(
         .shred_variant
     {
         ShredVariant::LegacyData | ShredVariant::LegacyCode => {
-            Shredder::try_recovery(shreds, reed_solomon_cache)
+            let mut shreds = Shredder::try_recovery(shreds, reed_solomon_cache)?;
+            shreds.retain(|shred| {
+                get_slot_leader(shred.slot())
+                    .map(|pubkey| shred.verify(&pubkey))
+                    .unwrap_or_default()
+            });
+            Ok(shreds)
         }
         ShredVariant::MerkleCode { .. } | ShredVariant::MerkleData { .. } => {
             let shreds = shreds
                 .into_iter()
                 .map(merkle::Shred::try_from)
                 .collect::<Result<_, _>>()?;
+            // With Merkle shreds, leader signs the Merkle root of the erasure
+            // batch and all shreds within the same erasure batch have the same
+            // signature.
+            // For recovered shreds, the (unique) signature is copied from
+            // shreds which were received from turbine (or repair) and are
+            // already sig-verified.
+            // The same signature also verifies for recovered shreds because
+            // when reconstructing the Merkle tree for the erasure batch, we
+            // will obtain the same Merkle root.
             Ok(merkle::recover(shreds, reed_solomon_cache)?
                 .into_iter()
-                .map(Shred::from)
+                .map(|shred| {
+                    let shred = Shred::from(shred);
+                    debug_assert!(get_slot_leader(shred.slot())
+                        .map(|pubkey| shred.verify(&pubkey))
+                        .unwrap_or_default());
+                    shred
+                })
                 .collect())
         }
     }
