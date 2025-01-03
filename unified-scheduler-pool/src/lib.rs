@@ -23,7 +23,6 @@ use {
     solana_poh::poh_recorder::{RecordTransactionsSummary, TransactionRecorder},
     solana_pubkey::Pubkey,
     solana_runtime::{
-        bank::PreCommitCallbackFailed,
         installed_scheduler_pool::{
             initialized_result_with_timings, InstalledScheduler, InstalledSchedulerBox,
             InstalledSchedulerPool, InstalledSchedulerPoolArc, ResultWithTimings, ScheduleResult,
@@ -471,7 +470,11 @@ impl TaskHandler for DefaultTaskHandler {
 
         let pre_commit_callback = match scheduling_context.mode() {
             BlockVerification => None,
-            BlockProduction => Some(|| {
+            BlockProduction => Some(|processing_result: &'_ Result<_>| {
+                if let Err(error) = processing_result {
+                    Err(error.clone())?;
+                };
+
                 let RecordTransactionsSummary {
                     result,
                     starting_transaction_index,
@@ -483,7 +486,7 @@ impl TaskHandler for DefaultTaskHandler {
                     .record_transactions(bank.slot(), vec![transaction.to_versioned_transaction()]);
                 match result {
                     Ok(()) => Ok(starting_transaction_index),
-                    Err(_) => Err(PreCommitCallbackFailed),
+                    Err(_) => Err(TransactionError::CommitCancelled),
                 }
             }),
         };
@@ -1521,6 +1524,7 @@ mod tests {
         crate::sleepless_testing,
         assert_matches::assert_matches,
         solana_clock::{Slot, MAX_PROCESSING_AGE},
+        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::{
             blockstore::Blockstore,
@@ -1545,6 +1549,7 @@ mod tests {
             sync::{atomic::Ordering, Arc, RwLock},
             thread::JoinHandle,
         },
+        test_case::test_matrix,
     };
 
     #[derive(Debug)]
@@ -3000,7 +3005,17 @@ mod tests {
         assert_matches!(result, Err(TransactionError::AccountLoadedTwice));
     }
 
-    fn do_test_task_handler_poh_recording(should_succeed: bool) {
+    enum TxResult {
+        ExecutedWithSuccess,
+        ExecutedWithFailure,
+        NotExecuted,
+    }
+
+    #[test_matrix(
+        [TxResult::ExecutedWithSuccess, TxResult::ExecutedWithFailure, TxResult::NotExecuted],
+        [false, true]
+    )]
+    fn test_task_handler_poh_recording(tx_result: TxResult, should_succeed_to_record_to_poh: bool) {
         solana_logger::setup();
 
         let GenesisConfigInfo {
@@ -3012,12 +3027,35 @@ mod tests {
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank = bank_forks.read().unwrap().working_bank_with_scheduler();
 
-        let tx = system_transaction::transfer(
-            mint_keypair,
-            &solana_sdk::pubkey::new_rand(),
-            2,
-            genesis_config.hash(),
-        );
+        let (tx, expected_tx_result) = match tx_result {
+            TxResult::ExecutedWithSuccess => (
+                system_transaction::transfer(
+                    mint_keypair,
+                    &solana_pubkey::new_rand(),
+                    1,
+                    genesis_config.hash(),
+                ),
+                Ok(()),
+            ),
+            TxResult::ExecutedWithFailure => (
+                system_transaction::transfer(
+                    mint_keypair,
+                    &solana_pubkey::new_rand(),
+                    1_000_000,
+                    genesis_config.hash(),
+                ),
+                Ok(()),
+            ),
+            TxResult::NotExecuted => (
+                system_transaction::transfer(
+                    mint_keypair,
+                    &solana_pubkey::new_rand(),
+                    1,
+                    Hash::default(),
+                ),
+                Err(TransactionError::BlockhashNotFound),
+            ),
+        };
         let tx = RuntimeTransaction::from_transaction_for_tests(tx);
 
         let result = &mut Ok(());
@@ -3048,7 +3086,7 @@ mod tests {
 
         // wait until the poh's working bank is cleared.
         // also flush signal_receiver after that.
-        if !should_succeed {
+        if !should_succeed_to_record_to_poh {
             while poh_recorder.read().unwrap().bank().is_some() {
                 sleep(Duration::from_millis(100));
             }
@@ -3056,24 +3094,43 @@ mod tests {
         }
 
         assert_eq!(bank.transaction_count(), 0);
+        assert_eq!(bank.transaction_error_count(), 0);
         DefaultTaskHandler::handle(result, timings, scheduling_context, &task, handler_context);
 
-        if should_succeed {
-            assert_matches!(result, Ok(()));
-            assert_eq!(bank.transaction_count(), 1);
-            assert_matches!(
-                receiver.try_recv(),
-                Ok(TransactionStatusMessage::Batch(
-                    TransactionStatusBatch { .. }
-                ))
-            );
-            assert_matches!(
-                signal_receiver.try_recv(),
-                Ok((_, (solana_entry::entry::Entry {transactions, ..} , _)))
-                    if transactions == vec![tx.to_versioned_transaction()]
-            );
+        if should_succeed_to_record_to_poh {
+            if expected_tx_result.is_ok() {
+                assert_matches!(result, Ok(()));
+                assert_eq!(bank.transaction_count(), 1);
+                if matches!(tx_result, TxResult::ExecutedWithFailure) {
+                    assert_eq!(bank.transaction_error_count(), 1);
+                } else {
+                    assert_eq!(bank.transaction_error_count(), 0);
+                }
+                assert_matches!(
+                    receiver.try_recv(),
+                    Ok(TransactionStatusMessage::Batch(
+                        TransactionStatusBatch { .. }
+                    ))
+                );
+                assert_matches!(
+                    signal_receiver.try_recv(),
+                    Ok((_, (solana_entry::entry::Entry {transactions, ..} , _)))
+                        if transactions == vec![tx.to_versioned_transaction()]
+                );
+            } else {
+                assert_eq!(result, &expected_tx_result);
+                assert_eq!(bank.transaction_count(), 0);
+                assert_eq!(bank.transaction_error_count(), 0);
+                assert_matches!(receiver.try_recv(), Err(_));
+                assert_matches!(signal_receiver.try_recv(), Err(_));
+            }
         } else {
-            assert_matches!(result, Err(TransactionError::CommitCancelled));
+            if expected_tx_result.is_ok() {
+                assert_matches!(result, Err(TransactionError::CommitCancelled));
+            } else {
+                assert_eq!(result, &expected_tx_result);
+            }
+
             assert_eq!(bank.transaction_count(), 0);
             assert_matches!(receiver.try_recv(), Err(_));
             assert_matches!(signal_receiver.try_recv(), Err(_));
@@ -3081,15 +3138,5 @@ mod tests {
 
         exit.store(true, Ordering::Relaxed);
         poh_service.join().unwrap();
-    }
-
-    #[test]
-    fn test_task_handler_poh_recording_success() {
-        do_test_task_handler_poh_recording(true);
-    }
-
-    #[test]
-    fn test_task_handler_poh_recording_failure() {
-        do_test_task_handler_poh_recording(false);
     }
 }

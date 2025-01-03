@@ -360,10 +360,6 @@ impl TransactionBalancesSet {
 }
 pub type TransactionBalances = Vec<Vec<u64>>;
 
-#[derive(Clone, Copy, Debug)]
-pub struct PreCommitCallbackFailed;
-pub type PreCommitCallbackResult<T> = std::result::Result<T, PreCommitCallbackFailed>;
-
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub enum TransactionLogCollectorFilter {
     All,
@@ -3791,52 +3787,56 @@ impl Bank {
     ) -> Vec<TransactionCommitResult> {
         processing_results
             .into_iter()
-            .map(|processing_result| match processing_result? {
-                ProcessedTransaction::Executed(executed_tx) => {
-                    let execution_details = executed_tx.execution_details;
-                    let LoadedTransaction {
-                        rent_debits,
-                        accounts: loaded_accounts,
-                        loaded_accounts_data_size,
-                        fee_details,
-                        ..
-                    } = executed_tx.loaded_transaction;
+            .map(|processing_result| {
+                let processing_result = processing_result?;
+                let executed_units = processing_result.executed_units();
+                let loaded_accounts_data_size = processing_result.loaded_accounts_data_size();
 
-                    // Rent is only collected for successfully executed transactions
-                    let rent_debits = if execution_details.was_successful() {
-                        rent_debits
-                    } else {
-                        RentDebits::default()
-                    };
+                match processing_result {
+                    ProcessedTransaction::Executed(executed_tx) => {
+                        let execution_details = executed_tx.execution_details;
+                        let LoadedTransaction {
+                            rent_debits,
+                            accounts: loaded_accounts,
+                            fee_details,
+                            ..
+                        } = executed_tx.loaded_transaction;
 
-                    Ok(CommittedTransaction {
-                        status: execution_details.status,
-                        log_messages: execution_details.log_messages,
-                        inner_instructions: execution_details.inner_instructions,
-                        return_data: execution_details.return_data,
-                        executed_units: execution_details.executed_units,
-                        fee_details,
-                        rent_debits,
+                        // Rent is only collected for successfully executed transactions
+                        let rent_debits = if execution_details.was_successful() {
+                            rent_debits
+                        } else {
+                            RentDebits::default()
+                        };
+
+                        Ok(CommittedTransaction {
+                            status: execution_details.status,
+                            log_messages: execution_details.log_messages,
+                            inner_instructions: execution_details.inner_instructions,
+                            return_data: execution_details.return_data,
+                            executed_units,
+                            fee_details,
+                            rent_debits,
+                            loaded_account_stats: TransactionLoadedAccountsStats {
+                                loaded_accounts_count: loaded_accounts.len(),
+                                loaded_accounts_data_size,
+                            },
+                        })
+                    }
+                    ProcessedTransaction::FeesOnly(fees_only_tx) => Ok(CommittedTransaction {
+                        status: Err(fees_only_tx.load_error),
+                        log_messages: None,
+                        inner_instructions: None,
+                        return_data: None,
+                        executed_units,
+                        rent_debits: RentDebits::default(),
+                        fee_details: fees_only_tx.fee_details,
                         loaded_account_stats: TransactionLoadedAccountsStats {
-                            loaded_accounts_count: loaded_accounts.len(),
+                            loaded_accounts_count: fees_only_tx.rollback_accounts.count(),
                             loaded_accounts_data_size,
                         },
-                    })
+                    }),
                 }
-                ProcessedTransaction::FeesOnly(fees_only_tx) => Ok(CommittedTransaction {
-                    status: Err(fees_only_tx.load_error),
-                    log_messages: None,
-                    inner_instructions: None,
-                    return_data: None,
-                    executed_units: 0,
-                    rent_debits: RentDebits::default(),
-                    fee_details: fees_only_tx.fee_details,
-                    loaded_account_stats: TransactionLoadedAccountsStats {
-                        loaded_accounts_count: fees_only_tx.rollback_accounts.count(),
-                        loaded_accounts_data_size: fees_only_tx.rollback_accounts.data_size()
-                            as u32,
-                    },
-                }),
             })
             .collect()
     }
@@ -4524,14 +4524,14 @@ impl Bank {
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
     ) -> (Vec<TransactionCommitResult>, TransactionBalancesSet) {
-        self.load_execute_and_commit_transactions_with_pre_commit_callback(
+        self.do_load_execute_and_commit_transactions_with_pre_commit_callback(
             batch,
             max_age,
             collect_balances,
             recording_config,
             timings,
             log_messages_bytes_limit,
-            None::<fn() -> PreCommitCallbackResult<()>>,
+            None::<fn(&mut _, &_) -> _>,
         )
         .unwrap()
     }
@@ -4544,10 +4544,34 @@ impl Bank {
         recording_config: ExecutionRecordingConfig,
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
-        // None is meaningfully used to skip the block producing unified scheduler special case.
-        // This makes the special case assert!()-ed.
-        pre_commit_callback: Option<impl FnOnce() -> PreCommitCallbackResult<()>>,
-    ) -> PreCommitCallbackResult<(Vec<TransactionCommitResult>, TransactionBalancesSet)> {
+        pre_commit_callback: impl FnOnce(
+            &mut ExecuteTimings,
+            &[TransactionProcessingResult],
+        ) -> Result<()>,
+    ) -> Result<(Vec<TransactionCommitResult>, TransactionBalancesSet)> {
+        self.do_load_execute_and_commit_transactions_with_pre_commit_callback(
+            batch,
+            max_age,
+            collect_balances,
+            recording_config,
+            timings,
+            log_messages_bytes_limit,
+            Some(pre_commit_callback),
+        )
+    }
+
+    fn do_load_execute_and_commit_transactions_with_pre_commit_callback(
+        &self,
+        batch: &TransactionBatch<impl TransactionWithMeta>,
+        max_age: usize,
+        collect_balances: bool,
+        recording_config: ExecutionRecordingConfig,
+        timings: &mut ExecuteTimings,
+        log_messages_bytes_limit: Option<usize>,
+        pre_commit_callback: Option<
+            impl FnOnce(&mut ExecuteTimings, &[TransactionProcessingResult]) -> Result<()>,
+        >,
+    ) -> Result<(Vec<TransactionCommitResult>, TransactionBalancesSet)> {
         let pre_balances = if collect_balances {
             self.collect_balances(batch)
         } else {
@@ -4574,22 +4598,8 @@ impl Bank {
         );
 
         if let Some(pre_commit_callback) = pre_commit_callback {
-            // We're entering into the block-producing unified scheduler special case...
-            // `processing_results` should always contain exactly only 1 result in that case.
-            assert_eq!(processing_results.len(), 1);
-
-            // Make `pre_commit_callback()` unconditionally take precedence over
-            // `processing_results[0].was_processed()`, potentially shadowing processing errors.
-            // That's desired because pre commit failure signalling is actually used to propagate
-            // poh recording failures, which is time-sensitive by nature to winds down the unified
-            // scheduler's active scheduling session as soon as possible upon the blockage by poh
-            // recorder.
-            // Also, bail out here rather than overwriting `processing_results[0]`. Reconciling
-            // various state is rather error-prone at this point. For example, processed_counts
-            // would need to be correctly updated...
-            pre_commit_callback()?
+            pre_commit_callback(timings, &processing_results)?;
         }
-
         let commit_results = self.commit_transactions(
             batch.sanitized_transactions(),
             processing_results,

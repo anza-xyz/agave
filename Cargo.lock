@@ -10020,6 +10020,8 @@ dependencies = [
  "qualifier_attr",
  "scopeguard",
  "solana-clock",
+ "solana-entry",
+ "solana-hash",
  "solana-keypair",
  "solana-ledger",
  "solana-logger",
@@ -10033,6 +10035,7 @@ dependencies = [
  "solana-transaction-error",
  "solana-unified-scheduler-logic",
  "static_assertions",
+ "test-case",
  "vec_extract_if_polyfill",
 ]
 

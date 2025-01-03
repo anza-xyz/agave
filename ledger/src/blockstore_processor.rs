@@ -28,7 +28,7 @@ use {
     solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
     solana_runtime::{
         accounts_background_service::{AbsRequestSender, SnapshotRequestKind},
-        bank::{Bank, PreCommitCallbackResult, TransactionBalancesSet},
+        bank::{Bank, TransactionBalancesSet},
         bank_forks::{BankForks, SetRootError},
         bank_utils,
         commitment::VOTE_THRESHOLD_SIZE,
@@ -54,6 +54,7 @@ use {
     },
     solana_svm::{
         transaction_commit_result::{TransactionCommitResult, TransactionCommitResultExtensions},
+        transaction_processing_result::{ProcessedTransaction, TransactionProcessingResult},
         transaction_processor::ExecutionRecordingConfig,
     },
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
@@ -108,36 +109,40 @@ fn first_err(results: &[Result<()>]) -> Result<()> {
 }
 
 // Includes transaction signature for unit-testing
-fn get_first_error(
-    batch: &TransactionBatch<impl SVMTransaction>,
-    commit_results: &[TransactionCommitResult],
-    is_block_producing_unified_scheduler: bool,
+fn do_get_first_error<T, Tx: SVMTransaction>(
+    batch: &TransactionBatch<Tx>,
+    results: &[Result<T>],
 ) -> Option<(Result<()>, Signature)> {
     let mut first_err = None;
-    for (commit_result, transaction) in commit_results.iter().zip(batch.sanitized_transactions()) {
-        if let Err(err) = commit_result {
+    for (result, transaction) in results.iter().zip(batch.sanitized_transactions()) {
+        if let Err(err) = result {
             if first_err.is_none() {
                 first_err = Some((Err(err.clone()), *transaction.signature()));
             }
-            // Skip with block producing unified scheduler because it's quite common to observe
-            // transaction errors...
-            if !is_block_producing_unified_scheduler {
-                warn!(
-                    "Unexpected validator error: {:?}, transaction: {:?}",
-                    err, transaction
-                );
-                datapoint_error!(
-                    "validator_process_entry_error",
-                    (
-                        "error",
-                        format!("error: {err:?}, transaction: {transaction:?}"),
-                        String
-                    )
-                );
-            }
+            warn!(
+                "Unexpected validator error: {:?}, transaction: {:?}",
+                err, transaction
+            );
+            datapoint_error!(
+                "validator_process_entry_error",
+                (
+                    "error",
+                    format!("error: {err:?}, transaction: {transaction:?}"),
+                    String
+                )
+            );
         }
     }
     first_err
+}
+
+fn get_first_error<T, Tx: SVMTransaction>(
+    batch: &TransactionBatch<Tx>,
+    commit_results: &[Result<T>],
+) -> Result<()> {
+    do_get_first_error(batch, commit_results)
+        .map(|(error, _signature)| error)
+        .unwrap_or(Ok(()))
 }
 
 fn create_thread_pool(num_threads: usize) -> ThreadPool {
@@ -158,7 +163,9 @@ pub fn execute_batch(
     prioritization_fee_cache: &PrioritizationFeeCache,
     // None is meaningfully used to detect this is called from the block producing unified
     // scheduler. If so, suppress too verbose logging for the code path.
-    pre_commit_callback: Option<impl FnOnce() -> PreCommitCallbackResult<Option<usize>>>,
+    extra_pre_commit_callback: Option<
+        impl FnOnce(&Result<ProcessedTransaction>) -> Result<Option<usize>>,
+    >,
 ) -> Result<()> {
     let TransactionBatchWithIndexes {
         batch,
@@ -175,19 +182,26 @@ pub fn execute_batch(
         vec![]
     };
 
-    let is_block_producing_unified_scheduler = pre_commit_callback.is_some();
-    let pre_commit_callback = pre_commit_callback.map(|wrapped_callback| {
-        || {
-            wrapped_callback().map(|maybe_index| {
+    let pre_commit_callback = |timings: &mut _, processing_results: &_| {
+        match extra_pre_commit_callback {
+            None => {
+                get_first_error(batch, processing_results)?;
+                check_block_cost_limits_if_enabled(batch, bank, timings, processing_results)?;
+            }
+            Some(extra_pre_commit_callback) => {
+                // We're entering into the block-producing unified scheduler special case...
+                // `processing_results` should always contain exactly only 1 result in that case.
+                assert_eq!(processing_results.len(), 1);
                 assert!(transaction_indexes.is_empty());
-                transaction_indexes.to_mut().extend(maybe_index);
-                // Strip the index away by implicitly returning (), now that we're done with it
-                // here (= `solana-ledger`), to make `solana-runtime` not bothered with it.
-            })
-        }
-    });
 
-    let Ok((commit_results, balances)) = batch
+                let maybe_index = extra_pre_commit_callback(&processing_results[0])?;
+                transaction_indexes.to_mut().extend(maybe_index);
+            }
+        }
+        Ok(())
+    };
+
+    let (commit_results, balances) = batch
         .bank()
         .load_execute_and_commit_transactions_with_pre_commit_callback(
             batch,
@@ -197,10 +211,7 @@ pub fn execute_batch(
             timings,
             log_messages_bytes_limit,
             pre_commit_callback,
-        )
-    else {
-        return Err(TransactionError::CommitCancelled);
-    };
+        )?;
 
     bank_utils::find_and_send_votes(
         batch.sanitized_transactions(),
@@ -208,28 +219,11 @@ pub fn execute_batch(
         replay_vote_sender,
     );
 
-    let (check_block_cost_limits_result, check_block_cost_limits_us) = measure_us!(if bank
-        .feature_set
-        .is_active(&solana_feature_set::apply_cost_tracker_during_replay::id())
-    {
-        check_block_cost_limits(bank, &commit_results, batch.sanitized_transactions())
-    } else {
-        Ok(())
-    });
-
-    timings.saturating_add_in_place(
-        ExecuteTimingType::CheckBlockLimitsUs,
-        check_block_cost_limits_us,
-    );
-    check_block_cost_limits_result?;
-
     let committed_transactions = commit_results
         .iter()
         .zip(batch.sanitized_transactions())
         .filter_map(|(commit_result, tx)| commit_result.was_committed().then_some(tx))
         .collect_vec();
-
-    let first_err = get_first_error(batch, &commit_results, is_block_producing_unified_scheduler);
 
     if let Some(transaction_status_sender) = transaction_status_sender {
         let transactions: Vec<SanitizedTransaction> = batch
@@ -258,7 +252,7 @@ pub fn execute_batch(
 
     prioritization_fee_cache.update(bank, committed_transactions.into_iter());
 
-    first_err.map(|(result, _)| result).unwrap_or(Ok(()))
+    Ok(())
 }
 
 // collect transactions actual execution costs, subject to block limits;
@@ -266,20 +260,20 @@ pub fn execute_batch(
 // reported to metric `replay-stage-mark_dead_slot`
 fn check_block_cost_limits(
     bank: &Bank,
-    commit_results: &[TransactionCommitResult],
+    processing_results: &[TransactionProcessingResult],
     sanitized_transactions: &[impl TransactionWithMeta],
 ) -> Result<()> {
-    assert_eq!(sanitized_transactions.len(), commit_results.len());
+    assert_eq!(sanitized_transactions.len(), processing_results.len());
 
-    let tx_costs_with_actual_execution_units: Vec<_> = commit_results
+    let tx_costs_with_actual_execution_units: Vec<_> = processing_results
         .iter()
         .zip(sanitized_transactions)
-        .filter_map(|(commit_result, tx)| {
-            if let Ok(committed_tx) = commit_result {
+        .filter_map(|(processing_result, tx)| {
+            if let Ok(processed_tx) = processing_result {
                 Some(CostModel::calculate_cost_for_executed_transaction(
                     tx,
-                    committed_tx.executed_units,
-                    committed_tx.loaded_account_stats.loaded_accounts_data_size,
+                    processed_tx.executed_units(),
+                    processed_tx.loaded_accounts_data_size(),
                     &bank.feature_set,
                 ))
             } else {
@@ -297,6 +291,28 @@ fn check_block_cost_limits(
         }
     }
     Ok(())
+}
+
+fn check_block_cost_limits_if_enabled(
+    batch: &TransactionBatch<impl TransactionWithMeta>,
+    bank: &Bank,
+    timings: &mut ExecuteTimings,
+    processing_results: &[TransactionProcessingResult],
+) -> Result<()> {
+    let (check_block_cost_limits_result, check_block_cost_limits_us) = measure_us!(if bank
+        .feature_set
+        .is_active(&solana_feature_set::apply_cost_tracker_during_replay::id())
+    {
+        check_block_cost_limits(bank, processing_results, batch.sanitized_transactions())
+    } else {
+        Ok(())
+    });
+
+    timings.saturating_add_in_place(
+        ExecuteTimingType::CheckBlockLimitsUs,
+        check_block_cost_limits_us,
+    );
+    check_block_cost_limits_result
 }
 
 #[derive(Default)]
@@ -350,7 +366,7 @@ fn execute_batches_internal(
                     &mut timings,
                     log_messages_bytes_limit,
                     prioritization_fee_cache,
-                    None::<fn() -> PreCommitCallbackResult<Option<usize>>>,
+                    None::<fn(&_) -> _>,
                 ));
 
                 let thread_index = replay_tx_thread_pool.current_thread_index().unwrap();
@@ -2351,7 +2367,7 @@ pub mod tests {
         solana_entry::entry::{create_ticks, next_entry, next_entry_mut},
         solana_program_runtime::declare_process_instruction,
         solana_runtime::{
-            bank::{bank_hash_details::SlotDetails, PreCommitCallbackFailed},
+            bank::bank_hash_details::SlotDetails,
             genesis_utils::{
                 self, create_genesis_config_with_vote_accounts, ValidatorVoteKeypairs,
             },
@@ -2363,12 +2379,10 @@ pub mod tests {
         solana_sdk::{
             account::{AccountSharedData, WritableAccount},
             epoch_schedule::EpochSchedule,
-            fee::FeeDetails,
             hash::Hash,
             instruction::{Instruction, InstructionError},
             native_token::LAMPORTS_PER_SOL,
             pubkey::Pubkey,
-            rent_debits::RentDebits,
             signature::{Keypair, Signer},
             signer::SeedDerivable,
             system_instruction::SystemError,
@@ -2376,8 +2390,9 @@ pub mod tests {
             transaction::{Transaction, TransactionError},
         },
         solana_svm::{
-            transaction_commit_result::CommittedTransaction,
-            transaction_execution_result::TransactionLoadedAccountsStats,
+            account_loader::LoadedTransaction,
+            transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
+            transaction_processing_result::ProcessedTransaction,
             transaction_processor::ExecutionRecordingConfig,
         },
         solana_vote::vote_account::VoteAccount,
@@ -2386,8 +2401,8 @@ pub mod tests {
             vote_state::{TowerSync, VoteState, VoteStateVersions, MAX_LOCKOUT_HISTORY},
             vote_transaction,
         },
-        std::{collections::BTreeSet, sync::RwLock},
-        test_case::test_case,
+        std::{collections::BTreeSet, slice, sync::RwLock},
+        test_case::{test_case, test_matrix},
         trees::tr,
     };
 
@@ -3386,17 +3401,19 @@ pub mod tests {
         assert_matches!(bank.transfer(4, &mint_keypair, &keypair2.pubkey()), Ok(_));
         assert_matches!(bank.transfer(4, &mint_keypair, &keypair4.pubkey()), Ok(_));
 
+        let good_tx = system_transaction::transfer(
+            &keypair1,
+            &mint_keypair.pubkey(),
+            1,
+            bank.last_blockhash(),
+        );
+
         // construct an Entry whose 2nd transaction would cause a lock conflict with previous entry
         let entry_1_to_mint = next_entry(
             &bank.last_blockhash(),
             1,
             vec![
-                system_transaction::transfer(
-                    &keypair1,
-                    &mint_keypair.pubkey(),
-                    1,
-                    bank.last_blockhash(),
-                ),
+                good_tx.clone(),
                 system_transaction::transfer(
                     &keypair4,
                     &keypair4.pubkey(),
@@ -3425,14 +3442,16 @@ pub mod tests {
             ],
         );
 
-        assert!(process_entries_for_tests_without_scheduler(
-            &bank,
-            vec![entry_1_to_mint.clone(), entry_2_to_3_mint_to_1.clone()],
-        )
-        .is_err());
+        assert_matches!(
+            process_entries_for_tests_without_scheduler(
+                &bank,
+                vec![entry_1_to_mint.clone(), entry_2_to_3_mint_to_1.clone()],
+            ),
+            Err(TransactionError::BlockhashNotFound)
+        );
 
-        // First transaction in first entry succeeded, so keypair1 lost 1 lamport
-        assert_eq!(bank.get_balance(&keypair1.pubkey()), 3);
+        // First transaction in first entry was rolled-back, so keypair1 didn't lost 1 lamport
+        assert_eq!(bank.get_balance(&keypair1.pubkey()), 4);
         assert_eq!(bank.get_balance(&keypair2.pubkey()), 4);
 
         // Check all accounts are unlocked
@@ -3448,6 +3467,16 @@ pub mod tests {
         for result in batch2.lock_results() {
             assert!(result.is_ok());
         }
+        drop(batch2);
+
+        // ensure good_tx will succeed and was just rolled back above due to other failing tx
+        let entry_3 = next_entry(&entry_2_to_3_mint_to_1.hash, 1, vec![good_tx]);
+        assert_matches!(
+            process_entries_for_tests_without_scheduler(&bank, vec![entry_3]),
+            Ok(())
+        );
+        // First transaction in third entry succeeded, so keypair1 lost 1 lamport
+        assert_eq!(bank.get_balance(&keypair1.pubkey()), 3);
     }
 
     #[test_case(true; "rent_collected")]
@@ -4423,7 +4452,7 @@ pub mod tests {
             &mut ExecuteTimings::default(),
             None,
         );
-        let (err, signature) = get_first_error(&batch, &commit_results, false).unwrap();
+        let (err, signature) = do_get_first_error(&batch, &commit_results).unwrap();
         assert_eq!(err.unwrap_err(), TransactionError::AccountNotFound);
         assert_eq!(signature, account_not_found_sig);
     }
@@ -5072,8 +5101,19 @@ pub mod tests {
         do_test_schedule_batches_for_execution(false);
     }
 
-    fn do_test_execute_batch_pre_commit_callback(
-        poh_result: PreCommitCallbackResult<Option<usize>>,
+    enum TxResult {
+        ExecutedWithSuccess,
+        ExecutedWithFailure,
+        NotExecuted,
+    }
+
+    #[test_matrix(
+        [TxResult::ExecutedWithSuccess, TxResult::ExecutedWithFailure, TxResult::NotExecuted],
+        [Ok(None), Ok(Some(4)), Err(TransactionError::CommitCancelled)]
+    )]
+    fn test_execute_batch_pre_commit_callback(
+        tx_result: TxResult,
+        poh_result: Result<Option<usize>>,
     ) {
         solana_logger::setup();
         let dummy_leader_pubkey = solana_sdk::pubkey::new_rand();
@@ -5085,14 +5125,43 @@ pub mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let bank = Arc::new(bank);
-        let txs = create_test_transactions(&mint_keypair, &genesis_config.hash());
+        let pubkey = solana_sdk::pubkey::new_rand();
+        let (tx, expected_tx_result) = match tx_result {
+            TxResult::ExecutedWithSuccess => (
+                RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+                    &mint_keypair,
+                    &pubkey,
+                    1,
+                    genesis_config.hash(),
+                )),
+                Ok(()),
+            ),
+            TxResult::ExecutedWithFailure => (
+                RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+                    &mint_keypair,
+                    &pubkey,
+                    100000000,
+                    genesis_config.hash(),
+                )),
+                Ok(()),
+            ),
+            TxResult::NotExecuted => (
+                RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+                    &mint_keypair,
+                    &pubkey,
+                    1,
+                    Hash::default(),
+                )),
+                Err(TransactionError::BlockhashNotFound),
+            ),
+        };
         let mut batch = TransactionBatch::new(
             vec![Ok(()); 1],
             &bank,
-            OwnedOrBorrowed::Borrowed(&txs[0..1]),
+            OwnedOrBorrowed::Borrowed(slice::from_ref(&tx)),
         );
         batch.set_needs_unlock(false);
-        let poh_with_index = matches!(poh_result, Ok(Some(_)));
+        let poh_with_index = matches!(&poh_result, Ok(Some(_)));
         let batch = TransactionBatchWithIndexes {
             batch,
             transaction_indexes: vec![],
@@ -5102,6 +5171,9 @@ pub mod tests {
         let (sender, receiver) = crossbeam_channel::unbounded();
 
         assert_eq!(bank.transaction_count(), 0);
+        assert_eq!(bank.transaction_error_count(), 0);
+        let should_commit = poh_result.is_ok();
+        let mut is_called = false;
         let result = execute_batch(
             &batch,
             &bank,
@@ -5110,23 +5182,42 @@ pub mod tests {
             &mut timing,
             None,
             &prioritization_fee_cache,
-            Some(|| poh_result),
+            Some(|processing_result: &'_ Result<_>| {
+                is_called = true;
+                let ok = poh_result?;
+                if let Err(error) = processing_result {
+                    Err(error.clone())?;
+                };
+                Ok(ok)
+            }),
         );
-        let should_succeed = poh_result.is_ok();
-        if should_succeed {
-            assert_matches!(result, Ok(()));
-            assert_eq!(bank.transaction_count(), 1);
+
+        // pre_commit_callback() should alwasy be called regardless of tx_result
+        assert!(is_called);
+
+        if should_commit {
+            assert_eq!(result, expected_tx_result);
+            if expected_tx_result.is_ok() {
+                assert_eq!(bank.transaction_count(), 1);
+                if matches!(tx_result, TxResult::ExecutedWithFailure) {
+                    assert_eq!(bank.transaction_error_count(), 1);
+                } else {
+                    assert_eq!(bank.transaction_error_count(), 0);
+                }
+            } else {
+                assert_eq!(bank.transaction_count(), 0);
+            }
         } else {
             assert_matches!(result, Err(TransactionError::CommitCancelled));
             assert_eq!(bank.transaction_count(), 0);
         }
-        if poh_with_index {
+        if poh_with_index && expected_tx_result.is_ok() {
             assert_matches!(
                 receiver.try_recv(),
                 Ok(TransactionStatusMessage::Batch(TransactionStatusBatch{transaction_indexes, ..}))
                     if transaction_indexes == vec![4_usize]
             );
-        } else if should_succeed {
+        } else if should_commit && expected_tx_result.is_ok() {
             assert_matches!(
                 receiver.try_recv(),
                 Ok(TransactionStatusMessage::Batch(TransactionStatusBatch{transaction_indexes, ..}))
@@ -5135,21 +5226,6 @@ pub mod tests {
         } else {
             assert_matches!(receiver.try_recv(), Err(_));
         }
-    }
-
-    #[test]
-    fn test_execute_batch_pre_commit_callback_success() {
-        do_test_execute_batch_pre_commit_callback(Ok(None));
-    }
-
-    #[test]
-    fn test_execute_batch_pre_commit_callback_success_with_index() {
-        do_test_execute_batch_pre_commit_callback(Ok(Some(4)));
-    }
-
-    #[test]
-    fn test_execute_batch_pre_commit_callback_failure() {
-        do_test_execute_batch_pre_commit_callback(Err(PreCommitCallbackFailed));
     }
 
     #[test]
@@ -5309,27 +5385,31 @@ pub mod tests {
             .unwrap()
             .set_limits(u64::MAX, block_limit, u64::MAX);
         let txs = vec![tx.clone(), tx];
-        let commit_results = vec![
-            Ok(CommittedTransaction {
-                status: Ok(()),
-                log_messages: None,
-                inner_instructions: None,
-                return_data: None,
-                executed_units: actual_execution_cu,
-                fee_details: FeeDetails::default(),
-                rent_debits: RentDebits::default(),
-                loaded_account_stats: TransactionLoadedAccountsStats {
-                    loaded_accounts_data_size: actual_loaded_accounts_data_size,
-                    loaded_accounts_count: 2,
+        let processing_results = vec![
+            Ok(ProcessedTransaction::Executed(Box::new(
+                ExecutedTransaction {
+                    execution_details: TransactionExecutionDetails {
+                        status: Ok(()),
+                        log_messages: None,
+                        inner_instructions: None,
+                        return_data: None,
+                        executed_units: actual_execution_cu,
+                        accounts_data_len_delta: 0,
+                    },
+                    loaded_transaction: LoadedTransaction {
+                        loaded_accounts_data_size: actual_loaded_accounts_data_size,
+                        ..LoadedTransaction::default()
+                    },
+                    programs_modified_by_tx: HashMap::new(),
                 },
-            }),
+            ))),
             Err(TransactionError::AccountNotFound),
         ];
 
-        assert!(check_block_cost_limits(&bank, &commit_results, &txs).is_ok());
+        assert!(check_block_cost_limits(&bank, &processing_results, &txs).is_ok());
         assert_eq!(
             Err(TransactionError::WouldExceedMaxBlockCostLimit),
-            check_block_cost_limits(&bank, &commit_results, &txs)
+            check_block_cost_limits(&bank, &processing_results, &txs)
         );
     }
 }
