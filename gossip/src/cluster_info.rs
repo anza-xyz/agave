@@ -2289,31 +2289,35 @@ impl ClusterInfo {
         const RECV_TIMEOUT: Duration = Duration::from_secs(1);
         fn count_packets_received(packets: &PacketBatch, counts: &mut [u64; 7]) {
             for packet in packets {
-                let k = match packet
+                let k = packet
                     .data(..4)
                     .and_then(|data| <[u8; 4]>::try_from(data).ok())
                     .map(u32::from_le_bytes)
-                {
-                    Some(k @ 0..=6) => k as usize,
-                    None | Some(_) => 6,
-                };
+                    .filter(|&k| k < 6)
+                    .unwrap_or(/*invalid:*/ 6) as usize;
                 counts[k] += 1;
             }
         }
-        let packets = receiver.recv_timeout(RECV_TIMEOUT)?;
         let mut counts = [0u64; 7];
-        count_packets_received(&packets, &mut counts);
-        let packets = Vec::from(packets);
-        let mut packets = VecDeque::from(packets);
-        for packet_batch in receiver.try_iter() {
+        let mut num_packets = 0;
+        let mut packets = VecDeque::with_capacity(2);
+        for packet_batch in receiver
+            .recv_timeout(RECV_TIMEOUT)
+            .map(std::iter::once)?
+            .chain(receiver.try_iter())
+        {
             count_packets_received(&packet_batch, &mut counts);
-            packets.extend(packet_batch.iter().cloned());
-            let excess_count = packets.len().saturating_sub(MAX_GOSSIP_TRAFFIC);
-            if excess_count > 0 {
-                packets.drain(0..excess_count);
+            num_packets += packet_batch.len();
+            packets.push_back(packet_batch);
+            while num_packets > MAX_GOSSIP_TRAFFIC {
+                // Discard older packets in favor of more recent ones.
+                let Some(packet_batch) = packets.pop_front() else {
+                    break;
+                };
+                num_packets -= packet_batch.len();
                 self.stats
                     .gossip_packets_dropped_count
-                    .add_relaxed(excess_count as u64);
+                    .add_relaxed(packet_batch.len() as u64);
             }
         }
         fn verify_packet(packet: &Packet) -> Option<(SocketAddr, Protocol)> {
@@ -2325,7 +2329,17 @@ impl ClusterInfo {
         }
         let packets: Vec<_> = {
             let _st = ScopedTimer::from(&self.stats.verify_gossip_packets_time);
-            thread_pool.install(|| packets.par_iter().filter_map(verify_packet).collect())
+            thread_pool.install(|| {
+                if packets.len() == 1 {
+                    packets[0].par_iter().filter_map(verify_packet).collect()
+                } else {
+                    packets
+                        .par_iter()
+                        .flatten()
+                        .filter_map(verify_packet)
+                        .collect()
+                }
+            })
         };
         self.stats
             .packets_received_count
