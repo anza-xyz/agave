@@ -7,13 +7,15 @@ use {
         pubkey::Pubkey,
         transaction::{TransactionError, MAX_TX_ACCOUNT_LOCKS},
     },
-    std::{cell::RefCell, collections::hash_map},
+    std::{cell::RefCell, collections::hash_map, thread::ThreadId},
 };
+
+const HANA_FEATURE_PLACEHOLDER: bool = false;
 
 #[derive(Debug, Default)]
 pub struct AccountLocks {
-    write_locks: AHashSet<Pubkey>,
-    readonly_locks: AHashMap<Pubkey, u64>,
+    write_locks: AHashMap<Pubkey, (ThreadId, u64)>,
+    readonly_locks: AHashMap<ThreadId, AHashMap<Pubkey, u64>>,
 }
 
 impl AccountLocks {
@@ -62,14 +64,28 @@ impl AccountLocks {
 
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn is_locked_readonly(&self, key: &Pubkey) -> bool {
-        self.readonly_locks
-            .get(key)
-            .map_or(false, |count| *count > 0)
+        let thread_id = std::thread::current().id();
+        for (locking_thread_id, thread_readonly_locks) in &self.readonly_locks {
+            if HANA_FEATURE_PLACEHOLDER && locking_thread_id == &thread_id {
+                continue;
+            }
+
+            if thread_readonly_locks.contains_key(key) {
+                return true;
+            }
+        }
+
+        false
     }
 
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn is_locked_write(&self, key: &Pubkey) -> bool {
-        self.write_locks.contains(key)
+        if HANA_FEATURE_PLACEHOLDER {
+            let thread_id = std::thread::current().id();
+            matches!(self.write_locks.get(key), Some((locking_thread_id, _)) if locking_thread_id != &thread_id)
+        } else {
+            self.write_locks.contains_key(key)
+        }
     }
 
     fn can_read_lock(&self, key: &Pubkey) -> bool {
@@ -83,15 +99,36 @@ impl AccountLocks {
     }
 
     fn lock_readonly(&mut self, key: &Pubkey) {
-        *self.readonly_locks.entry(*key).or_default() += 1;
+        let thread_id = std::thread::current().id();
+        *self
+            .readonly_locks
+            .entry(thread_id)
+            .or_default()
+            .entry(*key)
+            .or_default() += 1;
     }
 
     fn lock_write(&mut self, key: &Pubkey) {
-        self.write_locks.insert(*key);
+        let thread_id = std::thread::current().id();
+        if let hash_map::Entry::Occupied(mut occupied_entry) = self.write_locks.entry(*key) {
+            let (locking_thread_id, count) = occupied_entry.get_mut();
+            debug_assert!(
+                *locking_thread_id == thread_id,
+                "Attempted to steal a write lock from another thread."
+            );
+            *count += 1;
+        } else {
+            self.write_locks.insert(*key, (thread_id, 1));
+        }
     }
 
     fn unlock_readonly(&mut self, key: &Pubkey) {
-        if let hash_map::Entry::Occupied(mut occupied_entry) = self.readonly_locks.entry(*key) {
+        let thread_id = std::thread::current().id();
+        if let Some(hash_map::Entry::Occupied(mut occupied_entry)) = self
+            .readonly_locks
+            .get_mut(&thread_id)
+            .map(|thread_readonly_locks| thread_readonly_locks.entry(*key))
+        {
             let count = occupied_entry.get_mut();
             *count -= 1;
             if *count == 0 {
@@ -106,11 +143,22 @@ impl AccountLocks {
     }
 
     fn unlock_write(&mut self, key: &Pubkey) {
-        let removed = self.write_locks.remove(key);
-        debug_assert!(
-            removed,
-            "Attempted to remove a write-lock for a key that wasn't write-locked"
-        );
+        if let hash_map::Entry::Occupied(mut occupied_entry) = self.write_locks.entry(*key) {
+            let (locking_thread_id, count) = occupied_entry.get_mut();
+            debug_assert!(
+                *locking_thread_id == std::thread::current().id(),
+                "Attempted to steal a write lock from another thread."
+            );
+            *count -= 1;
+            if *count == 0 {
+                occupied_entry.remove_entry();
+            }
+        } else {
+            debug_assert!(
+                false,
+                "Attempted to remove a write-lock for a key that wasn't write-locked"
+            );
+        }
     }
 }
 
