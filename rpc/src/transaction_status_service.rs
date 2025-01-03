@@ -12,7 +12,7 @@ use {
     },
     std::{
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
+            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
             Arc,
         },
         thread::{self, sleep, Builder, JoinHandle},
@@ -37,9 +37,14 @@ impl TransactionStatusService {
         let thread_hdl = Builder::new()
             .name("solTxStatusWrtr".to_string())
             .spawn(move || {
-                info!("TransactionStatusService has started");
+                let inflight_count = Arc::new(AtomicUsize::new(0));
                 loop {
                     if exit.load(Ordering::Relaxed) {
+                        // Some tests expect that in-flight TX status and memo updates are completed
+                        // when the service is shut down before performing verifications.
+                        while inflight_count.load(Ordering::Relaxed) > 0 {
+                            sleep(Duration::from_millis(1));
+                        }
                         break;
                     }
 
@@ -64,6 +69,9 @@ impl TransactionStatusService {
                     let blockstore = Arc::clone(&blockstore);
                     let transaction_notifier = transaction_notifier.clone();
                     let exit_clone = Arc::clone(&exit);
+                    let inflight_clone = inflight_count.clone();
+
+                    inflight_count.fetch_add(1, Ordering::Relaxed);
 
                     rayon::spawn(move || {
                         match Self::write_transaction_status_batch(
@@ -80,6 +88,7 @@ impl TransactionStatusService {
                                 exit_clone.store(true, Ordering::Relaxed);
                             }
                         }
+                        inflight_clone.fetch_sub(1, Ordering::Relaxed);
                     });
                 }
                 info!("TransactionStatusService has stopped");
