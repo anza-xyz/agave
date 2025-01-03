@@ -70,7 +70,7 @@ pub struct ConnectionWorkersSchedulerConfig {
 
     /// Optional stake identity keypair used in the endpoint certificate for
     /// identifying the sender.
-    pub identity: Option<Keypair>,
+    pub stake_identity: Option<Keypair>,
 
     /// The number of connections to be maintained by the scheduler.
     pub num_connections: usize,
@@ -90,11 +90,6 @@ pub struct ConnectionWorkersSchedulerConfig {
     pub leaders_fanout: Fanout,
 }
 
-pub type TransactionStatsAndReceiver = (
-    SendTransactionStatsPerAddr,
-    mpsc::Receiver<TransactionBatch>,
-);
-
 impl ConnectionWorkersScheduler {
     /// Starts the scheduler, which manages the distribution of transactions to
     /// the network's upcoming leaders.
@@ -108,7 +103,7 @@ impl ConnectionWorkersScheduler {
     pub async fn run(
         ConnectionWorkersSchedulerConfig {
             bind,
-            identity,
+            stake_identity: validator_identity,
             num_connections,
             skip_check_transaction_age,
             worker_channel_size,
@@ -118,14 +113,14 @@ impl ConnectionWorkersScheduler {
         mut leader_updater: Box<dyn LeaderUpdater>,
         mut transaction_receiver: mpsc::Receiver<TransactionBatch>,
         cancel: CancellationToken,
-    ) -> Result<TransactionStatsAndReceiver, ConnectionWorkersSchedulerError> {
-        let endpoint = Self::setup_endpoint(bind, identity.as_ref())?;
+    ) -> Result<SendTransactionStatsPerAddr, ConnectionWorkersSchedulerError> {
+        let endpoint = Self::setup_endpoint(bind, validator_identity)?;
         debug!("Client endpoint bind address: {:?}", endpoint.local_addr());
         let mut workers = WorkersCache::new(num_connections, cancel.clone());
         let mut send_stats_per_addr = SendTransactionStatsPerAddr::new();
 
         loop {
-            let transaction_batch: TransactionBatch = tokio::select! {
+            let transaction_batch = tokio::select! {
                 recv_res = transaction_receiver.recv() => match recv_res {
                     Some(txs) => txs,
                     None => {
@@ -189,15 +184,19 @@ impl ConnectionWorkersScheduler {
 
         endpoint.close(0u32.into(), b"Closing connection");
         leader_updater.stop().await;
-        Ok((send_stats_per_addr, transaction_receiver))
+        Ok(send_stats_per_addr)
     }
 
     /// Sets up the QUIC endpoint for the scheduler to handle connections.
     fn setup_endpoint(
         bind: SocketAddr,
-        identity: Option<&Keypair>,
+        validator_identity: Option<Keypair>,
     ) -> Result<Endpoint, ConnectionWorkersSchedulerError> {
-        let client_certificate = QuicClientCertificate::new(identity);
+        let client_certificate = if let Some(validator_identity) = validator_identity {
+            Arc::new(QuicClientCertificate::new(&validator_identity))
+        } else {
+            Arc::new(QuicClientCertificate::new(&Keypair::new()))
+        };
         let client_config = create_client_config(client_certificate);
         let endpoint = create_client_endpoint(bind, client_config)?;
         Ok(endpoint)

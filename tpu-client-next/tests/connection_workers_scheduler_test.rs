@@ -15,13 +15,11 @@ use {
         streamer::StakedNodes,
     },
     solana_tpu_client_next::{
-        connection_workers_scheduler::{
-            ConnectionWorkersSchedulerConfig, Fanout, TransactionStatsAndReceiver,
-        },
+        connection_workers_scheduler::{ConnectionWorkersSchedulerConfig, Fanout},
         leader_updater::create_leader_updater,
         send_transaction_stats::SendTransactionStatsNonAtomic,
         transaction_batch::TransactionBatch,
-        ConnectionWorkersScheduler, ConnectionWorkersSchedulerError,
+        ConnectionWorkersScheduler, ConnectionWorkersSchedulerError, SendTransactionStatsPerAddr,
     },
     std::{
         collections::HashMap,
@@ -42,10 +40,10 @@ use {
     tokio_util::sync::CancellationToken,
 };
 
-fn test_config(identity: Option<Keypair>) -> ConnectionWorkersSchedulerConfig {
+fn test_config(validator_identity: Option<Keypair>) -> ConnectionWorkersSchedulerConfig {
     ConnectionWorkersSchedulerConfig {
         bind: SocketAddr::new(Ipv4Addr::new(127, 0, 0, 1).into(), 0),
-        identity,
+        stake_identity: validator_identity,
         num_connections: 1,
         skip_check_transaction_age: false,
         // At the moment we have only one strategy to send transactions: we try
@@ -65,9 +63,9 @@ fn test_config(identity: Option<Keypair>) -> ConnectionWorkersSchedulerConfig {
 async fn setup_connection_worker_scheduler(
     tpu_address: SocketAddr,
     transaction_receiver: Receiver<TransactionBatch>,
-    identity: Option<Keypair>,
+    validator_identity: Option<Keypair>,
 ) -> (
-    JoinHandle<Result<TransactionStatsAndReceiver, ConnectionWorkersSchedulerError>>,
+    JoinHandle<Result<SendTransactionStatsPerAddr, ConnectionWorkersSchedulerError>>,
     CancellationToken,
 ) {
     let json_rpc_url = "http://127.0.0.1:8899";
@@ -84,7 +82,7 @@ async fn setup_connection_worker_scheduler(
         .expect("Leader updates was successfully created");
 
     let cancel = CancellationToken::new();
-    let config = test_config(identity);
+    let config = test_config(validator_identity);
     let scheduler = tokio::spawn(ConnectionWorkersScheduler::run(
         config,
         leader_updater,
@@ -97,10 +95,10 @@ async fn setup_connection_worker_scheduler(
 
 async fn join_scheduler(
     scheduler_handle: JoinHandle<
-        Result<TransactionStatsAndReceiver, ConnectionWorkersSchedulerError>,
+        Result<SendTransactionStatsPerAddr, ConnectionWorkersSchedulerError>,
     >,
 ) -> SendTransactionStatsNonAtomic {
-    let (stats_per_ip, _) = scheduler_handle
+    let stats_per_ip = scheduler_handle
         .await
         .unwrap()
         .expect("Scheduler should stop successfully.");
@@ -402,8 +400,8 @@ async fn test_connection_pruned_and_reopened() {
 /// connection and verify that all the txs has been received.
 #[tokio::test]
 async fn test_staked_connection() {
-    let identity = Keypair::new();
-    let stakes = HashMap::from([(identity.pubkey(), 100_000)]);
+    let validator_identity = Keypair::new();
+    let stakes = HashMap::from([(validator_identity.pubkey(), 100_000)]);
     let staked_nodes = StakedNodes::new(Arc::new(stakes), HashMap::<Pubkey, u64>::default());
 
     let SpawnTestServerResult {
@@ -434,7 +432,8 @@ async fn test_staked_connection() {
     } = spawn_tx_sender(tx_size, expected_num_txs, Duration::from_millis(100));
 
     let (scheduler_handle, _scheduler_cancel) =
-        setup_connection_worker_scheduler(server_address, tx_receiver, Some(identity)).await;
+        setup_connection_worker_scheduler(server_address, tx_receiver, Some(validator_identity))
+            .await;
 
     // Check results
     let actual_num_packets = count_received_packets_for(receiver, tx_size, TEST_MAX_TIME).await;
@@ -534,7 +533,7 @@ async fn test_no_host() {
 
     // While attempting to establish a connection with a nonexistent host, we fill the worker's
     // channel.
-    let (stats, _) = scheduler_handle
+    let stats = scheduler_handle
         .await
         .expect("Scheduler should stop successfully")
         .expect("Scheduler execution was successful");
