@@ -9013,21 +9013,16 @@ dependencies = [
 name = "solana-send-transaction-service"
 version = "2.2.0"
 dependencies = [
- "async-trait",
  "crossbeam-channel",
- "itertools 0.12.1",
  "log",
  "solana-client",
  "solana-connection-cache",
  "solana-logger",
  "solana-measure",
  "solana-metrics",
- "solana-quic-client",
  "solana-runtime",
  "solana-sdk",
- "solana-tpu-client-next",
- "tokio",
- "tokio-util 0.7.13",
+ "solana-tpu-client",
 ]
 
 [[package]]
