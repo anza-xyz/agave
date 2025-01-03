@@ -1,8 +1,9 @@
 #[cfg(feature = "dev-context-only-utils")]
 use solana_compute_budget_instruction::compute_budget_instruction_details::ComputeBudgetInstructionDetails;
 use {
-    crate::block_cost_limits, solana_runtime_transaction::transaction_meta::StaticMeta,
-    solana_sdk::pubkey::Pubkey, solana_svm_transaction::svm_message::SVMMessage,
+    crate::block_cost_limits, solana_pubkey::Pubkey,
+    solana_runtime_transaction::transaction_meta::StaticMeta,
+    solana_svm_transaction::svm_message::SVMMessage,
 };
 
 /// TransactionCost is used to represent resources required to process
@@ -135,6 +136,16 @@ impl<Tx: StaticMeta> TransactionCost<'_, Tx> {
                 .num_ed25519_instruction_signatures(),
         }
     }
+
+    pub fn num_secp256r1_instruction_signatures(&self) -> u64 {
+        match self {
+            Self::SimpleVote { .. } => 0,
+            Self::Transaction(usage_cost) => usage_cost
+                .transaction
+                .signature_details()
+                .num_secp256r1_instruction_signatures(),
+        }
+    }
 }
 
 // costs are stored in number of 'compute unit's
@@ -173,7 +184,7 @@ impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction
         unimplemented!("WritableKeysTransaction::num_write_locks")
     }
 
-    fn recent_blockhash(&self) -> &solana_sdk::hash::Hash {
+    fn recent_blockhash(&self) -> &solana_hash::Hash {
         unimplemented!("WritableKeysTransaction::recent_blockhash")
     }
 
@@ -194,8 +205,8 @@ impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction
         core::iter::empty()
     }
 
-    fn account_keys(&self) -> solana_sdk::message::AccountKeys {
-        solana_sdk::message::AccountKeys::new(&self.0, None)
+    fn account_keys(&self) -> solana_message::AccountKeys {
+        solana_message::AccountKeys::new(&self.0, None)
     }
 
     fn fee_payer(&self) -> &Pubkey {
@@ -229,18 +240,18 @@ impl solana_svm_transaction::svm_message::SVMMessage for WritableKeysTransaction
 
 #[cfg(feature = "dev-context-only-utils")]
 impl solana_svm_transaction::svm_transaction::SVMTransaction for WritableKeysTransaction {
-    fn signature(&self) -> &solana_sdk::signature::Signature {
+    fn signature(&self) -> &solana_signature::Signature {
         unimplemented!("WritableKeysTransaction::signature")
     }
 
-    fn signatures(&self) -> &[solana_sdk::signature::Signature] {
+    fn signatures(&self) -> &[solana_signature::Signature] {
         unimplemented!("WritableKeysTransaction::signatures")
     }
 }
 
 #[cfg(feature = "dev-context-only-utils")]
 impl solana_runtime_transaction::transaction_meta::StaticMeta for WritableKeysTransaction {
-    fn message_hash(&self) -> &solana_sdk::hash::Hash {
+    fn message_hash(&self) -> &solana_hash::Hash {
         unimplemented!("WritableKeysTransaction::message_hash")
     }
 
@@ -248,9 +259,9 @@ impl solana_runtime_transaction::transaction_meta::StaticMeta for WritableKeysTr
         unimplemented!("WritableKeysTransaction::is_simple_vote_transaction")
     }
 
-    fn signature_details(&self) -> &solana_sdk::message::TransactionSignatureDetails {
-        const DUMMY: solana_sdk::message::TransactionSignatureDetails =
-            solana_sdk::message::TransactionSignatureDetails::new(0, 0, 0, 0);
+    fn signature_details(&self) -> &solana_message::TransactionSignatureDetails {
+        const DUMMY: solana_message::TransactionSignatureDetails =
+            solana_message::TransactionSignatureDetails::new(0, 0, 0, 0);
         &DUMMY
     }
 
@@ -266,11 +277,11 @@ impl solana_runtime_transaction::transaction_with_meta::TransactionWithMeta
     #[allow(refining_impl_trait)]
     fn as_sanitized_transaction(
         &self,
-    ) -> std::borrow::Cow<solana_sdk::transaction::SanitizedTransaction> {
+    ) -> std::borrow::Cow<solana_transaction::sanitized::SanitizedTransaction> {
         unimplemented!("WritableKeysTransaction::as_sanitized_transaction");
     }
 
-    fn to_versioned_transaction(&self) -> solana_sdk::transaction::VersionedTransaction {
+    fn to_versioned_transaction(&self) -> solana_transaction::versioned::VersionedTransaction {
         unimplemented!("WritableKeysTransaction::to_versioned_transaction")
     }
 }
@@ -281,14 +292,12 @@ mod tests {
         super::*,
         crate::cost_model::CostModel,
         solana_feature_set::FeatureSet,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
+        solana_message::SimpleAddressLoader,
+        solana_reserved_account_keys::ReservedAccountKeys,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-        solana_sdk::{
-            hash::Hash,
-            message::SimpleAddressLoader,
-            reserved_account_keys::ReservedAccountKeys,
-            signer::keypair::Keypair,
-            transaction::{MessageHash, VersionedTransaction},
-        },
+        solana_transaction::{sanitized::MessageHash, versioned::VersionedTransaction},
         solana_vote_program::{vote_state::TowerSync, vote_transaction},
     };
 

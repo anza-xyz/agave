@@ -3,7 +3,7 @@
 use {
     crate::accounts_db::{AccountStorageEntry, AccountsFileId},
     dashmap::DashMap,
-    solana_sdk::clock::Slot,
+    solana_clock::Slot,
     std::sync::Arc,
 };
 

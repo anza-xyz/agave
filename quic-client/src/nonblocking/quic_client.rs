@@ -23,7 +23,9 @@ use {
     },
     solana_rpc_client_api::client_error::ErrorKind as ClientErrorKind,
     solana_streamer::nonblocking::quic::ALPN_TPU_PROTOCOL_ID,
-    solana_tls_utils::{new_dummy_x509_certificate, QuicClientCertificate, SkipServerVerification},
+    solana_tls_utils::{
+        new_dummy_x509_certificate, tls_client_config_builder, QuicClientCertificate,
+    },
     solana_transaction_error::TransportResult,
     std::{
         net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
@@ -85,9 +87,7 @@ impl QuicLazyInitializedEndpoint {
             QuicNewConnection::create_endpoint(EndpointConfig::default(), client_socket)
         };
 
-        let mut crypto = rustls::ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(SkipServerVerification::new())
+        let mut crypto = tls_client_config_builder()
             .with_client_auth_cert(
                 vec![self.client_certificate.certificate.clone()],
                 self.client_certificate.key.clone_key(),

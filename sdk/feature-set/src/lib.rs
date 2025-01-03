@@ -893,11 +893,15 @@ pub mod disable_account_loader_special_case {
 }
 
 pub mod enable_secp256r1_precompile {
-    solana_pubkey::declare_id!("sr11RdZWgbHTHxSroPALe6zgaT5A1K9LcE4nfsZS4gi");
+    solana_pubkey::declare_id!("sryYyFwxzJop1Bh9XpyiVWjZP4nfHExiqNp3Dh71W9i");
 }
 
 pub mod accounts_lt_hash {
     solana_pubkey::declare_id!("LtHaSHHsUge7EWTPVrmpuexKz6uVHZXZL6cgJa7W7Zn");
+}
+
+pub mod snapshots_lt_hash {
+    solana_pubkey::declare_id!("LTsNAP8h1voEVVToMNBNqoiNQex4aqfUrbFhRH3mSQ2");
 }
 
 pub mod migrate_stake_program_to_core_bpf {
@@ -1135,6 +1139,7 @@ lazy_static! {
         (lift_cpi_caller_restriction::id(), "Lift the restriction in CPI that the caller must have the callee as an instruction account #2202"),
         (disable_account_loader_special_case::id(), "Disable account loader special case #3513"),
         (accounts_lt_hash::id(), "enables lattice-based accounts hash #3333"),
+        (snapshots_lt_hash::id(), "snapshots use lattice-based accounts hash #3598"),
         (enable_secp256r1_precompile::id(), "Enable secp256r1 precompile SIMD-0075"),
         (migrate_stake_program_to_core_bpf::id(), "Migrate Stake program to Core BPF SIMD-0196 #3655"),
         (deplete_cu_meter_on_vm_failure::id(), "Deplete compute meter for vm errors SIMD-0182 #3993"),

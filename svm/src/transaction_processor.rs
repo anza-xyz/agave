@@ -20,17 +20,27 @@ use {
     },
     log::debug,
     percentage::Percentage,
+    solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount, PROGRAM_OWNERS},
     solana_bpf_loader_program::syscalls::{
         create_program_runtime_environment_v1, create_program_runtime_environment_v2,
     },
+    solana_clock::{Epoch, Slot},
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_feature_set::{
         enable_transaction_loading_failure_fees, remove_accounts_executable_flag_checks,
         remove_rounding_in_fee_calculation, FeatureSet,
     },
+    solana_fee_structure::{FeeBudgetLimits, FeeStructure},
+    solana_hash::Hash,
+    solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
     solana_log_collector::LogCollector,
     solana_measure::{measure::Measure, measure_us},
+    solana_message::compiled_instruction::CompiledInstruction,
+    solana_nonce::{
+        state::{DurableNonce, State as NonceState},
+        versions::Versions as NonceVersions,
+    },
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
@@ -43,25 +53,17 @@ use {
         },
         sysvar_cache::SysvarCache,
     },
+    solana_pubkey::Pubkey,
     solana_sdk::{
-        account::{AccountSharedData, ReadableAccount, PROGRAM_OWNERS},
-        account_utils::StateMut,
-        clock::{Epoch, Slot},
-        fee::{FeeBudgetLimits, FeeStructure},
-        hash::Hash,
         inner_instruction::{InnerInstruction, InnerInstructionsList},
-        instruction::{CompiledInstruction, TRANSACTION_LEVEL_STACK_HEIGHT},
-        native_loader,
-        nonce::state::{DurableNonce, State as NonceState, Versions as NonceVersions},
-        pubkey::Pubkey,
         rent_collector::RentCollector,
-        saturating_add_assign, system_program,
-        transaction::{self, TransactionError},
-        transaction_context::{ExecutionRecord, TransactionContext},
     },
+    solana_sdk_ids::{native_loader, system_program},
     solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
     solana_timings::{ExecuteTimingType, ExecuteTimings},
+    solana_transaction_context::{ExecutionRecord, TransactionContext},
+    solana_transaction_error::{TransactionError, TransactionResult},
     solana_type_overrides::sync::{atomic::Ordering, Arc, RwLock, RwLockReadGuard},
     std::{
         collections::{hash_map::Entry, HashMap, HashSet},
@@ -525,7 +527,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         fee_lamports_per_signature: u64,
         rent_collector: &dyn SVMRentCollector,
         error_counters: &mut TransactionErrorMetrics,
-    ) -> transaction::Result<ValidatedTransactionDetails> {
+    ) -> TransactionResult<ValidatedTransactionDetails> {
         // If this is a nonce transaction, validate the nonce info.
         // This must be done for every transaction to support SIMD83 because
         // it may have changed due to use, authorization, or deallocation.
@@ -566,7 +568,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         fee_lamports_per_signature: u64,
         rent_collector: &dyn SVMRentCollector,
         error_counters: &mut TransactionErrorMetrics,
-    ) -> transaction::Result<ValidatedTransactionDetails> {
+    ) -> TransactionResult<ValidatedTransactionDetails> {
         let compute_budget_limits = process_compute_budget_instructions(
             message.program_instructions_iter(),
             &account_loader.feature_set,
@@ -643,7 +645,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         nonce_info: &NonceInfo,
         next_durable_nonce: &DurableNonce,
         error_counters: &mut TransactionErrorMetrics,
-    ) -> transaction::Result<()> {
+    ) -> TransactionResult<()> {
         // When SIMD83 is enabled, if the nonce has been used in this batch already, we must drop
         // the transaction. This is the same as if it was used in different batches in the same slot.
         // If the nonce account was closed in the batch, we error as if the blockhash didn't validate.
@@ -711,7 +713,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     .for_each(|key| match result.entry(*key) {
                         Entry::Occupied(mut entry) => {
                             let (_, count) = entry.get_mut();
-                            saturating_add_assign!(*count, 1);
+                            *count = count.saturating_add(1);
                         }
                         Entry::Vacant(entry) => {
                             if let Some(index) =
@@ -1197,6 +1199,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
 #[cfg(test)]
 mod tests {
+    #[allow(deprecated)]
+    use solana_sysvar::fees::Fees;
     use {
         super::*,
         crate::{
@@ -1205,28 +1209,28 @@ mod tests {
             rollback_accounts::RollbackAccounts,
             transaction_processing_callback::AccountState,
         },
+        solana_account::{create_account_shared_data_for_test, WritableAccount},
+        solana_clock::Clock,
         solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
+        solana_compute_budget_interface::ComputeBudgetInstruction,
+        solana_epoch_schedule::EpochSchedule,
         solana_feature_set::FeatureSet,
+        solana_fee_calculator::FeeCalculator,
+        solana_fee_structure::{FeeDetails, FeeStructure},
+        solana_hash::Hash,
+        solana_keypair::Keypair,
+        solana_message::{LegacyMessage, Message, MessageHeader, SanitizedMessage},
+        solana_nonce as nonce,
         solana_program_runtime::loaded_programs::{BlockRelation, ProgramCacheEntryType},
-        solana_sdk::{
-            account::{create_account_shared_data_for_test, WritableAccount},
-            bpf_loader,
-            compute_budget::ComputeBudgetInstruction,
-            epoch_schedule::EpochSchedule,
-            fee::{FeeDetails, FeeStructure},
-            fee_calculator::FeeCalculator,
-            hash::Hash,
-            message::{LegacyMessage, Message, MessageHeader, SanitizedMessage},
-            nonce,
-            rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
-            rent_debits::RentDebits,
-            reserved_account_keys::ReservedAccountKeys,
-            signature::{Keypair, Signature},
-            system_program,
-            sysvar::{self, rent::Rent},
-            transaction::{SanitizedTransaction, Transaction, TransactionError},
-            transaction_context::TransactionContext,
-        },
+        solana_rent::Rent,
+        solana_rent_debits::RentDebits,
+        solana_reserved_account_keys::ReservedAccountKeys,
+        solana_sdk::rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
+        solana_sdk_ids::{bpf_loader, system_program, sysvar},
+        solana_signature::Signature,
+        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+        solana_transaction_context::TransactionContext,
+        solana_transaction_error::TransactionError,
         test_case::test_case,
     };
 
@@ -1910,7 +1914,7 @@ mod tests {
     fn test_sysvar_cache_initialization1() {
         let mock_bank = MockBankCallback::default();
 
-        let clock = sysvar::clock::Clock {
+        let clock = Clock {
             slot: 1,
             epoch_start_timestamp: 2,
             epoch: 3,
@@ -1932,7 +1936,7 @@ mod tests {
             .unwrap()
             .insert(sysvar::epoch_schedule::id(), epoch_schedule_account);
 
-        let fees = sysvar::fees::Fees {
+        let fees = Fees {
             fee_calculator: FeeCalculator {
                 lamports_per_signature: 123,
             },
@@ -1986,7 +1990,7 @@ mod tests {
     fn test_reset_and_fill_sysvar_cache() {
         let mock_bank = MockBankCallback::default();
 
-        let clock = sysvar::clock::Clock {
+        let clock = Clock {
             slot: 1,
             epoch_start_timestamp: 2,
             epoch: 3,
@@ -2008,7 +2012,7 @@ mod tests {
             .unwrap()
             .insert(sysvar::epoch_schedule::id(), epoch_schedule_account);
 
-        let fees = sysvar::fees::Fees {
+        let fees = Fees {
             fee_calculator: FeeCalculator {
                 lamports_per_signature: 123,
             },
@@ -2139,7 +2143,9 @@ mod tests {
             epoch: current_epoch,
             ..RentCollector::default()
         };
-        let min_balance = rent_collector.rent.minimum_balance(nonce::State::size());
+        let min_balance = rent_collector
+            .rent
+            .minimum_balance(nonce::state::State::size());
         let transaction_fee = lamports_per_signature;
         let priority_fee = 2_000_000u64;
         let starting_balance = transaction_fee + priority_fee;
@@ -2475,7 +2481,7 @@ mod tests {
         )
         .unwrap();
         let fee_payer_address = message.fee_payer();
-        let min_balance = Rent::default().minimum_balance(nonce::State::size());
+        let min_balance = Rent::default().minimum_balance(nonce::state::State::size());
         let transaction_fee = lamports_per_signature;
         let priority_fee = compute_unit_limit;
 
@@ -2483,11 +2489,13 @@ mod tests {
         {
             let fee_payer_account = AccountSharedData::new_data(
                 min_balance + transaction_fee + priority_fee,
-                &nonce::state::Versions::new(nonce::State::Initialized(nonce::state::Data::new(
-                    *fee_payer_address,
-                    DurableNonce::default(),
-                    lamports_per_signature,
-                ))),
+                &nonce::versions::Versions::new(nonce::state::State::Initialized(
+                    nonce::state::Data::new(
+                        *fee_payer_address,
+                        DurableNonce::default(),
+                        lamports_per_signature,
+                    ),
+                )),
                 &system_program::id(),
             )
             .unwrap();
@@ -2556,7 +2564,7 @@ mod tests {
         {
             let fee_payer_account = AccountSharedData::new_data(
                 transaction_fee + priority_fee, // no min_balance this time
-                &nonce::state::Versions::new(nonce::State::Initialized(
+                &nonce::versions::Versions::new(nonce::state::State::Initialized(
                     nonce::state::Data::default(),
                 )),
                 &system_program::id(),

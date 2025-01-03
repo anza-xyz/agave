@@ -112,11 +112,11 @@ pub mod tests {
         let recent_timestamp: UnixTimestamp = 1_578_909_061;
         let slot = 5;
         let slot_duration = Duration::from_millis(400);
-        let pubkey0 = solana_sdk::pubkey::new_rand();
-        let pubkey1 = solana_sdk::pubkey::new_rand();
-        let pubkey2 = solana_sdk::pubkey::new_rand();
-        let pubkey3 = solana_sdk::pubkey::new_rand();
-        let pubkey4 = solana_sdk::pubkey::new_rand();
+        let pubkey0 = solana_pubkey::new_rand();
+        let pubkey1 = solana_pubkey::new_rand();
+        let pubkey2 = solana_pubkey::new_rand();
+        let pubkey3 = solana_pubkey::new_rand();
+        let pubkey4 = solana_pubkey::new_rand();
         let max_allowable_drift = MaxAllowableDrift { fast: 25, slow: 25 };
 
         // Test low-staked outlier(s)
@@ -327,9 +327,9 @@ pub mod tests {
         };
         let acceptable_delta = (max_allowable_drift_percentage * poh_offset as u32 / 100) as i64;
         let poh_estimate = epoch_start_timestamp + poh_offset as i64;
-        let pubkey0 = solana_sdk::pubkey::new_rand();
-        let pubkey1 = solana_sdk::pubkey::new_rand();
-        let pubkey2 = solana_sdk::pubkey::new_rand();
+        let pubkey0 = solana_pubkey::new_rand();
+        let pubkey1 = solana_pubkey::new_rand();
+        let pubkey2 = solana_pubkey::new_rand();
 
         let stakes: HashMap<Pubkey, (u64, Account)> = [
             (
@@ -468,9 +468,9 @@ pub mod tests {
             (max_allowable_drift_percentage_50 * poh_offset as u32 / 100) as i64;
         assert!(acceptable_delta_50 > acceptable_delta_25 + 1);
         let poh_estimate = epoch_start_timestamp + poh_offset as i64;
-        let pubkey0 = solana_sdk::pubkey::new_rand();
-        let pubkey1 = solana_sdk::pubkey::new_rand();
-        let pubkey2 = solana_sdk::pubkey::new_rand();
+        let pubkey0 = solana_pubkey::new_rand();
+        let pubkey1 = solana_pubkey::new_rand();
+        let pubkey2 = solana_pubkey::new_rand();
 
         let stakes: HashMap<Pubkey, (u64, Account)> = [
             (
@@ -604,9 +604,9 @@ pub mod tests {
             (max_allowable_drift_percentage_50 * poh_offset as u32 / 100) as i64;
         assert!(acceptable_delta_slow > acceptable_delta_fast + 1);
         let poh_estimate = epoch_start_timestamp + poh_offset as i64;
-        let pubkey0 = solana_sdk::pubkey::new_rand();
-        let pubkey1 = solana_sdk::pubkey::new_rand();
-        let pubkey2 = solana_sdk::pubkey::new_rand();
+        let pubkey0 = solana_pubkey::new_rand();
+        let pubkey1 = solana_pubkey::new_rand();
+        let pubkey2 = solana_pubkey::new_rand();
 
         let stakes: HashMap<Pubkey, (u64, Account)> = [
             (
@@ -742,9 +742,9 @@ pub mod tests {
         };
         let acceptable_delta = (max_allowable_drift_percentage * poh_offset as u32 / 100) as i64;
         let poh_estimate = epoch_start_timestamp + poh_offset as i64;
-        let pubkey0 = solana_sdk::pubkey::new_rand();
-        let pubkey1 = solana_sdk::pubkey::new_rand();
-        let pubkey2 = solana_sdk::pubkey::new_rand();
+        let pubkey0 = solana_pubkey::new_rand();
+        let pubkey1 = solana_pubkey::new_rand();
+        let pubkey2 = solana_pubkey::new_rand();
 
         let stakes: HashMap<Pubkey, (u64, Account)> = [
             (

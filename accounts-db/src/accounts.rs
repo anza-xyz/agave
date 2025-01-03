@@ -866,13 +866,13 @@ mod tests {
         let accounts = Accounts::new(Arc::new(accounts_db));
 
         // Load accounts owned by various programs into AccountsDb
-        let pubkey0 = solana_sdk::pubkey::new_rand();
+        let pubkey0 = solana_pubkey::new_rand();
         let account0 = AccountSharedData::new(1, 0, &Pubkey::from([2; 32]));
         accounts.store_slow_uncached(0, &pubkey0, &account0);
-        let pubkey1 = solana_sdk::pubkey::new_rand();
+        let pubkey1 = solana_pubkey::new_rand();
         let account1 = AccountSharedData::new(1, 0, &Pubkey::from([2; 32]));
         accounts.store_slow_uncached(0, &pubkey1, &account1);
-        let pubkey2 = solana_sdk::pubkey::new_rand();
+        let pubkey2 = solana_pubkey::new_rand();
         let account2 = AccountSharedData::new(1, 0, &Pubkey::from([3; 32]));
         accounts.store_slow_uncached(0, &pubkey2, &account2);
 
@@ -1107,7 +1107,7 @@ mod tests {
                 .lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS);
             for result in results.iter() {
                 if result.is_ok() {
-                    counter_clone.clone().fetch_add(1, Ordering::SeqCst);
+                    counter_clone.clone().fetch_add(1, Ordering::Release);
                 }
             }
             accounts_clone.unlock_accounts(txs.iter().zip(&results));
@@ -1122,9 +1122,9 @@ mod tests {
                 .clone()
                 .lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS);
             if results[0].is_ok() {
-                let counter_value = counter_clone.clone().load(Ordering::SeqCst);
+                let counter_value = counter_clone.clone().load(Ordering::Acquire);
                 thread::sleep(time::Duration::from_millis(50));
-                assert_eq!(counter_value, counter_clone.clone().load(Ordering::SeqCst));
+                assert_eq!(counter_value, counter_clone.clone().load(Ordering::Acquire));
             }
             accounts_arc.unlock_accounts(txs.iter().zip(&results));
             thread::sleep(time::Duration::from_millis(50));
@@ -1292,7 +1292,7 @@ mod tests {
         let zero_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
         info!("storing..");
         for i in 0..2_000 {
-            let pubkey = solana_sdk::pubkey::new_rand();
+            let pubkey = solana_pubkey::new_rand();
             let account = AccountSharedData::new(i + 1, 0, AccountSharedData::default().owner());
             accounts.store_for_tests(i, &pubkey, &account);
             accounts.store_for_tests(i, &old_pubkey, &zero_account);

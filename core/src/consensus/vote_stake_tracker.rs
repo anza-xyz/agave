@@ -1,4 +1,4 @@
-use {solana_sdk::pubkey::Pubkey, std::collections::HashSet};
+use {solana_pubkey::Pubkey, std::collections::HashSet};
 
 #[derive(Default)]
 pub struct VoteStakeTracker {
@@ -55,7 +55,7 @@ mod test {
         let total_epoch_stake = 10;
         let mut vote_stake_tracker = VoteStakeTracker::default();
         for i in 0..10 {
-            let pubkey = solana_sdk::pubkey::new_rand();
+            let pubkey = solana_pubkey::new_rand();
             let (is_confirmed_thresholds, is_new) = vote_stake_tracker.add_vote_pubkey(
                 pubkey,
                 1,

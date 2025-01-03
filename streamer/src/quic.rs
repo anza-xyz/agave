@@ -19,7 +19,7 @@ use {
     solana_quic_definitions::{
         NotifyKeyUpdate, QUIC_MAX_TIMEOUT, QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS,
     },
-    solana_tls_utils::{new_dummy_x509_certificate, SkipClientVerification},
+    solana_tls_utils::{new_dummy_x509_certificate, tls_server_config_builder},
     std::{
         net::UdpSocket,
         sync::{
@@ -58,9 +58,8 @@ pub(crate) fn configure_server(
     }];
     let cert_chain_pem = pem::encode_many(&cert_chain_pem_parts);
 
-    let mut server_tls_config = rustls::ServerConfig::builder()
-        .with_client_cert_verifier(SkipClientVerification::new())
-        .with_single_cert(vec![cert], priv_key)?;
+    let mut server_tls_config =
+        tls_server_config_builder().with_single_cert(vec![cert], priv_key)?;
     server_tls_config.alpn_protocols = vec![ALPN_TPU_PROTOCOL_ID.to_vec()];
     server_tls_config.key_log = Arc::new(KeyLogFile::new());
     let quic_server_config = QuicServerConfig::try_from(server_tls_config)?;
@@ -565,6 +564,7 @@ pub fn spawn_server(
     )
 }
 
+#[derive(Clone)]
 pub struct QuicServerParams {
     pub max_connections_per_peer: usize,
     pub max_staked_connections: usize,
@@ -633,8 +633,11 @@ pub fn spawn_server_multi(
 #[cfg(test)]
 mod test {
     use {
-        super::*, crate::nonblocking::quic::test::*, crossbeam_channel::unbounded,
-        solana_net_utils::bind_to_localhost, std::net::SocketAddr,
+        super::*,
+        crate::nonblocking::{quic::test::*, testing_utilities::check_multiple_streams},
+        crossbeam_channel::unbounded,
+        solana_net_utils::bind_to_localhost,
+        std::net::SocketAddr,
     };
 
     fn setup_quic_server() -> (
@@ -724,7 +727,7 @@ mod test {
         .unwrap();
 
         let runtime = rt("solQuicTestRt".to_string());
-        runtime.block_on(check_multiple_streams(receiver, server_address));
+        runtime.block_on(check_multiple_streams(receiver, server_address, None));
         exit.store(true, Ordering::Relaxed);
         t.join().unwrap();
     }

@@ -1186,7 +1186,7 @@ mod tests {
     fn test_unprocessed_transaction_storage_insert() -> Result<(), Box<dyn Error>> {
         let keypair = Keypair::new();
         let vote_keypair = Keypair::new();
-        let pubkey = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
 
         let small_transfer = Packet::from_data(
             None,

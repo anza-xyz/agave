@@ -18,8 +18,8 @@ use {
     },
     rand::{thread_rng, Rng},
     rayon::prelude::{IntoParallelRefIterator, ParallelIterator},
+    solana_clock::Slot,
     solana_measure::measure_us,
-    solana_sdk::clock::Slot,
     std::{
         collections::{HashMap, VecDeque},
         num::{NonZeroU64, Saturating},
@@ -1420,7 +1420,7 @@ pub mod tests {
                     .map(|storage| {
                         (0..(total_accounts_per_storage - 1))
                             .map(|_| {
-                                let pk = solana_sdk::pubkey::new_rand();
+                                let pk = solana_pubkey::new_rand();
                                 let mut account = account_template.clone();
                                 account.set_lamports(lamports);
                                 lamports += 1;
@@ -1527,7 +1527,7 @@ pub mod tests {
                     .map(|storage| {
                         (0..(total_accounts_per_storage - 1))
                             .map(|_| {
-                                let pk = solana_sdk::pubkey::new_rand();
+                                let pk = solana_pubkey::new_rand();
                                 let mut account = account_template.clone();
                                 account.set_data((0..data_size).map(|x| (x % 256) as u8).collect());
                                 data_size += 1;
@@ -1873,7 +1873,7 @@ pub mod tests {
 
                                 if add_dead_account {
                                     storages.iter().for_each(|storage| {
-                                        let pk = solana_sdk::pubkey::new_rand();
+                                        let pk = solana_pubkey::new_rand();
                                         let alive = false;
                                         append_single_account_with_default_hash(
                                             storage,
@@ -2044,7 +2044,7 @@ pub mod tests {
                 .iter()
                 .map(|store| db.get_unique_accounts_from_storage(store))
                 .collect::<Vec<_>>();
-            let pk_with_1_ref = solana_sdk::pubkey::new_rand();
+            let pk_with_1_ref = solana_pubkey::new_rand();
             let slot1 = slots.start;
             let account_with_2_refs = original_results
                 .first()
@@ -2238,7 +2238,7 @@ pub mod tests {
                 .map(|store| db.get_unique_accounts_from_storage(store))
                 .collect::<Vec<_>>();
             let storage = storages.first().unwrap().clone();
-            let pk_with_1_ref = solana_sdk::pubkey::new_rand();
+            let pk_with_1_ref = solana_pubkey::new_rand();
             let slot1 = slots.start;
             let account_with_2_refs = original_results
                 .first()
@@ -3902,7 +3902,7 @@ pub mod tests {
         let empty_account = AccountSharedData::default();
         for count in 0..3 {
             let pubkeys_to_unref = (0..count)
-                .map(|_| solana_sdk::pubkey::new_rand())
+                .map(|_| solana_pubkey::new_rand())
                 .collect::<Vec<_>>();
             // how many of `many_ref_accounts` should be found in the index with ref_count=1
             let mut expected_ref_counts_before_unref = HashMap::<Pubkey, u64>::default();

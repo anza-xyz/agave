@@ -17,26 +17,42 @@ percentage = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
 serde = { workspace = true, features = ["rc"] }
 serde_derive = { workspace = true }
+solana-account = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
+solana-clock = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-compute-budget-instruction = { workspace = true }
 solana-feature-set = { workspace = true }
 solana-fee = { workspace = true }
+solana-fee-structure = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
 solana-frozen-abi-macro = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
+solana-hash = { workspace = true }
+solana-instruction = { workspace = true, features = ["std"] }
+solana-instructions-sysvar = { workspace = true }
 solana-loader-v4-program = { workspace = true }
 solana-log-collector = { workspace = true }
 solana-measure = { workspace = true }
+solana-message = { workspace = true }
+solana-nonce = { workspace = true }
+solana-precompiles = { workspace = true }
+solana-program = { workspace = true, default-features = false }
 solana-program-runtime = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-rent = { workspace = true }
+solana-rent-debits = { workspace = true }
 solana-sdk = { workspace = true }
+solana-sdk-ids = { workspace = true }
 solana-svm-rent-collector = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-system-program = { workspace = true }
 solana-timings = { workspace = true }
+solana-transaction-context = { workspace = true }
+solana-transaction-error = { workspace = true }
 solana-type-overrides = { workspace = true }
 thiserror = { workspace = true }
 
@@ -54,15 +70,30 @@ openssl = { workspace = true }
 prost = { workspace = true }
 rand0-7 = { workspace = true }
 shuttle = { workspace = true }
+solana-clock = { workspace = true }
+solana-compute-budget-interface = { workspace = true }
 solana-compute-budget-program = { workspace = true }
 solana-ed25519-program = { workspace = true }
+solana-epoch-schedule = { workspace = true }
+solana-fee-calculator = { workspace = true }
+solana-keypair = { workspace = true }
 solana-logger = { workspace = true }
+solana-native-token = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-rent = { workspace = true }
+solana-reserved-account-keys = { workspace = true }
 solana-sbpf = { workspace = true }
 solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
+solana-secp256k1-program = { workspace = true }
 solana-secp256r1-program = { workspace = true, features = ["openssl-vendored"] }
+solana-signature = { workspace = true }
+solana-signer = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-svm = { path = ".", features = ["dev-context-only-utils"] }
 solana-svm-conformance = { workspace = true }
+solana-system-transaction = { workspace = true }
+solana-sysvar = { workspace = true }
+solana-transaction = { workspace = true }
 test-case = { workspace = true }
 
 [package.metadata.docs.rs]

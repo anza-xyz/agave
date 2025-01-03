@@ -199,7 +199,8 @@ mod tests {
     use {
         super::*,
         bincode::{serialize_into, DefaultOptions, Options},
-        solana_sdk::{packet::PACKET_DATA_SIZE, short_vec::ShortU16},
+        solana_packet::PACKET_DATA_SIZE,
+        solana_short_vec::ShortU16,
     };
 
     #[test]

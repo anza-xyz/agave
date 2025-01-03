@@ -193,7 +193,7 @@ mod tests {
     }
 
     fn setup(insert_conflicting_tx: bool) -> (Bank, Vec<RuntimeTransaction<SanitizedTransaction>>) {
-        let dummy_leader_pubkey = solana_sdk::pubkey::new_rand();
+        let dummy_leader_pubkey = solana_pubkey::new_rand();
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
@@ -201,9 +201,9 @@ mod tests {
         } = create_genesis_config_with_leader(500, &dummy_leader_pubkey, 100);
         let bank = Bank::new_for_tests(&genesis_config);
 
-        let pubkey = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
         let keypair2 = Keypair::new();
-        let pubkey2 = solana_sdk::pubkey::new_rand();
+        let pubkey2 = solana_pubkey::new_rand();
 
         let mut txs = vec![RuntimeTransaction::from_transaction_for_tests(
             system_transaction::transfer(&mint_keypair, &pubkey, 1, genesis_config.hash()),

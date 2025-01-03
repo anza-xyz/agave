@@ -1,21 +1,18 @@
 use {
     crate::transaction_processing_callback::TransactionProcessingCallback,
+    solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount},
+    solana_clock::Slot,
+    solana_instruction::error::InstructionError,
+    solana_program::bpf_loader_upgradeable::{self, UpgradeableLoaderState},
     solana_program_runtime::loaded_programs::{
         LoadProgramMetrics, ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
         ProgramRuntimeEnvironment, ProgramRuntimeEnvironments, DELAY_VISIBILITY_SLOT_OFFSET,
     },
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        account_utils::StateMut,
-        bpf_loader, bpf_loader_deprecated,
-        bpf_loader_upgradeable::{self, UpgradeableLoaderState},
-        clock::Slot,
-        instruction::InstructionError,
-        loader_v4::{self, LoaderV4State, LoaderV4Status},
-        pubkey::Pubkey,
-        transaction::{self, TransactionError},
-    },
+    solana_pubkey::Pubkey,
+    solana_sdk::loader_v4::{self, LoaderV4State, LoaderV4Status},
+    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated},
     solana_timings::ExecuteTimings,
+    solana_transaction_error::{TransactionError, TransactionResult},
     solana_type_overrides::sync::Arc,
 };
 
@@ -219,7 +216,7 @@ pub fn load_program_with_pubkey<CB: TransactionProcessingCallback>(
 pub(crate) fn get_program_modification_slot<CB: TransactionProcessingCallback>(
     callbacks: &CB,
     pubkey: &Pubkey,
-) -> transaction::Result<Slot> {
+) -> TransactionResult<Slot> {
     let program = callbacks
         .get_account_shared_data(pubkey)
         .ok_or(TransactionError::ProgramAccountNotFound)?;
@@ -254,11 +251,12 @@ mod tests {
     use {
         super::*,
         crate::transaction_processor::TransactionBatchProcessor,
+        solana_account::WritableAccount,
         solana_program_runtime::{
             loaded_programs::{BlockRelation, ForkGraph, ProgramRuntimeEnvironments},
             solana_sbpf::program::BuiltinProgram,
         },
-        solana_sdk::{account::WritableAccount, bpf_loader, bpf_loader_upgradeable},
+        solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable},
         std::{
             cell::RefCell,
             collections::HashMap,
