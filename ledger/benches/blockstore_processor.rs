@@ -12,7 +12,7 @@ use {
         genesis_utils::{create_genesis_config, GenesisConfigInfo},
     },
     solana_runtime::{
-        bank::Bank,
+        bank::{Bank, PreCommitCallbackResult},
         bank_forks::BankForks,
         prioritization_fee_cache::PrioritizationFeeCache,
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
@@ -133,7 +133,7 @@ fn bench_execute_batch(
         prioritization_fee_cache,
     } = setup(apply_cost_tracker_during_replay);
     let transactions = create_transactions(&bank, 2_usize.pow(20));
-    let batches: Vec<_> = transactions
+    let mut batches: Vec<_> = transactions
         .chunks(batch_size)
         .map(|txs| {
             let mut batch = TransactionBatch::new(
@@ -148,7 +148,7 @@ fn bench_execute_batch(
             }
         })
         .collect();
-    let mut batches_iter = batches.iter();
+    let mut batches_iter = batches.iter_mut();
 
     let mut timing = ExecuteTimings::default();
     bencher.iter(|| {
@@ -162,6 +162,7 @@ fn bench_execute_batch(
                 &mut timing,
                 None,
                 &prioritization_fee_cache,
+                None::<fn() -> PreCommitCallbackResult<Option<usize>>>,
             );
         }
     });

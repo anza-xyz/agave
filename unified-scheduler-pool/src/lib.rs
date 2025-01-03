@@ -20,7 +20,9 @@ use {
     solana_ledger::blockstore_processor::{
         execute_batch, TransactionBatchWithIndexes, TransactionStatusSender,
     },
+    solana_poh::poh_recorder::{RecordTransactionsSummary, TransactionRecorder},
     solana_runtime::{
+        bank::PreCommitCallbackFailed,
         installed_scheduler_pool::{
             initialized_result_with_timings, InstalledScheduler, InstalledSchedulerBox,
             InstalledSchedulerPool, InstalledSchedulerPoolArc, ResultWithTimings, ScheduleResult,
@@ -36,7 +38,10 @@ use {
         transaction::{Result, SanitizedTransaction, TransactionError},
     },
     solana_timings::ExecuteTimings,
-    solana_unified_scheduler_logic::{SchedulingStateMachine, Task, UsageQueue},
+    solana_unified_scheduler_logic::{
+        SchedulingMode::{BlockProduction, BlockVerification},
+        SchedulingStateMachine, Task, UsageQueue,
+    },
     static_assertions::const_assert_eq,
     std::{
         fmt::Debug,
@@ -101,6 +106,7 @@ pub struct HandlerContext {
     transaction_status_sender: Option<TransactionStatusSender>,
     replay_vote_sender: Option<ReplayVoteSender>,
     prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+    transaction_recorder: Option<TransactionRecorder>,
 }
 
 pub type DefaultSchedulerPool =
@@ -177,6 +183,8 @@ where
                 transaction_status_sender,
                 replay_vote_sender,
                 prioritization_fee_cache,
+                // will be configurable later
+                transaction_recorder: None,
             },
             weak_self: weak_self.clone(),
             next_scheduler_id: AtomicSchedulerId::default(),
@@ -437,19 +445,59 @@ impl TaskHandler for DefaultTaskHandler {
         let index = task.task_index();
 
         let batch = bank.prepare_unlocked_batch_from_single_tx(transaction);
-        let batch_with_indexes = TransactionBatchWithIndexes {
+        let transaction_indexes = match scheduling_context.mode() {
+            BlockVerification => vec![index],
+            BlockProduction => {
+                let mut vec = vec![];
+                // transaction_status_sender is usually None for staked nodes because it's only
+                // used for RPC-related additional data recording. However, a staked node could
+                // also be running with rpc functionalities during development. So, we need to
+                // correctly support the use case for produced blocks as well, like verified blocks
+                // via the replaying stage.
+                // Refer `record_token_balances` in `execute_batch()` as this conditional treatment
+                // is mirrored from it.
+                if handler_context.transaction_status_sender.is_some() {
+                    // Adjust the empty new vec with the exact needed capacity, which will be
+                    // filled inside `execute_batch()` below. Otherwise, excess cap would be
+                    // reserved on `.extend()` in it.
+                    vec.reserve_exact(1);
+                }
+                vec
+            }
+        };
+        let mut batch_with_indexes = TransactionBatchWithIndexes {
             batch,
-            transaction_indexes: vec![index],
+            transaction_indexes,
+        };
+
+        let pre_commit_callback = match scheduling_context.mode() {
+            BlockVerification => None,
+            BlockProduction => Some(|| {
+                let RecordTransactionsSummary {
+                    result,
+                    starting_transaction_index,
+                    ..
+                } = handler_context
+                    .transaction_recorder
+                    .as_ref()
+                    .unwrap()
+                    .record_transactions(bank.slot(), vec![transaction.to_versioned_transaction()]);
+                match result {
+                    Ok(()) => Ok(starting_transaction_index),
+                    Err(_) => Err(PreCommitCallbackFailed),
+                }
+            }),
         };
 
         *result = execute_batch(
-            &batch_with_indexes,
+            &mut batch_with_indexes,
             bank,
             handler_context.transaction_status_sender.as_ref(),
             handler_context.replay_vote_sender.as_ref(),
             timings,
             handler_context.log_messages_bytes_limit,
             &handler_context.prioritization_fee_cache,
+            pre_commit_callback,
         );
         sleepless_testing::at(CheckPoint::TaskHandled(index));
     }
@@ -1473,6 +1521,13 @@ mod tests {
         super::*,
         crate::sleepless_testing,
         assert_matches::assert_matches,
+        solana_ledger::{
+            blockstore::Blockstore,
+            blockstore_processor::{TransactionStatusBatch, TransactionStatusMessage},
+            create_new_tmp_ledger_auto_delete,
+            leader_schedule_cache::LeaderScheduleCache,
+        },
+        solana_poh::poh_recorder::create_test_recorder_with_index_tracking,
         solana_runtime::{
             bank::Bank,
             bank_forks::BankForks,
@@ -1489,7 +1544,7 @@ mod tests {
         },
         solana_timings::ExecuteTimingType,
         std::{
-            sync::{Arc, RwLock},
+            sync::{atomic::Ordering, Arc, RwLock},
             thread::JoinHandle,
         },
     };
@@ -2939,10 +2994,104 @@ mod tests {
             transaction_status_sender: None,
             replay_vote_sender: None,
             prioritization_fee_cache,
+            transaction_recorder: None,
         };
 
         let task = SchedulingStateMachine::create_task(tx, 0, &mut |_| UsageQueue::default());
         DefaultTaskHandler::handle(result, timings, scheduling_context, &task, handler_context);
         assert_matches!(result, Err(TransactionError::AccountLoadedTwice));
+    }
+
+    fn do_test_task_handler_poh_recording(should_succeed: bool) {
+        solana_logger::setup();
+
+        let GenesisConfigInfo {
+            genesis_config,
+            ref mint_keypair,
+            ..
+        } = solana_ledger::genesis_utils::create_genesis_config(10_000);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let bank_forks = BankForks::new_rw_arc(bank);
+        let bank = bank_forks.read().unwrap().working_bank_with_scheduler();
+
+        let tx = system_transaction::transfer(
+            mint_keypair,
+            &solana_sdk::pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        );
+        let tx = RuntimeTransaction::from_transaction_for_tests(tx);
+
+        let result = &mut Ok(());
+        let timings = &mut ExecuteTimings::default();
+        let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
+        let scheduling_context = &SchedulingContext::for_production(bank.clone());
+        let (sender, receiver) = crossbeam_channel::unbounded();
+        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let (exit, poh_recorder, poh_service, signal_receiver) =
+            create_test_recorder_with_index_tracking(
+                bank.clone(),
+                blockstore.clone(),
+                None,
+                Some(leader_schedule_cache),
+            );
+        let handler_context = &HandlerContext {
+            log_messages_bytes_limit: None,
+            transaction_status_sender: Some(TransactionStatusSender { sender }),
+            replay_vote_sender: None,
+            prioritization_fee_cache,
+            transaction_recorder: Some(poh_recorder.read().unwrap().new_recorder()),
+        };
+
+        let task =
+            SchedulingStateMachine::create_task(tx.clone(), 0, &mut |_| UsageQueue::default());
+
+        // wait until the poh's working bank is cleared.
+        // also flush signal_receiver after that.
+        if !should_succeed {
+            while poh_recorder.read().unwrap().bank().is_some() {
+                sleep(Duration::from_millis(100));
+            }
+            while signal_receiver.try_recv().is_ok() {}
+        }
+
+        assert_eq!(bank.transaction_count(), 0);
+        DefaultTaskHandler::handle(result, timings, scheduling_context, &task, handler_context);
+
+        if should_succeed {
+            assert_matches!(result, Ok(()));
+            assert_eq!(bank.transaction_count(), 1);
+            assert_matches!(
+                receiver.try_recv(),
+                Ok(TransactionStatusMessage::Batch(
+                    TransactionStatusBatch { .. }
+                ))
+            );
+            assert_matches!(
+                signal_receiver.try_recv(),
+                Ok((_, (solana_entry::entry::Entry {transactions, ..} , _)))
+                    if transactions == vec![tx.to_versioned_transaction()]
+            );
+        } else {
+            assert_matches!(result, Err(TransactionError::CommitCancelled));
+            assert_eq!(bank.transaction_count(), 0);
+            assert_matches!(receiver.try_recv(), Err(_));
+            assert_matches!(signal_receiver.try_recv(), Err(_));
+        }
+
+        exit.store(true, Ordering::Relaxed);
+        poh_service.join().unwrap();
+    }
+
+    #[test]
+    fn test_task_handler_poh_recording_success() {
+        do_test_task_handler_poh_recording(true);
+    }
+
+    #[test]
+    fn test_task_handler_poh_recording_failure() {
+        do_test_task_handler_poh_recording(false);
     }
 }
