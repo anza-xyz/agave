@@ -1,0 +1,39 @@
+Aprobar ejecuciones de flujo de trabajo desde bifurcaciones públicas
+Cuando un colaborador externo emite una solicitud de cambios a un repositorio público, podría ser que un mantenedor con acceso de escritura tenga que aprobar las ejecuciones de flujo de trabajo.
+
+En este artículo
+Acerca de las ejecuciones de flujo de trabajo de las bifurcaciones públicas
+Aprobar las ejecuciones de flujo de trabajo en una solicitud de cambios de una bifurcación pública
+Acerca de las ejecuciones de flujo de trabajo de las bifurcaciones públicas
+Cualquiera puede bifurcar un repositorio público y luego emitir una solicitud de cambios que proponga cambios en los flujos de trabajo de GitHub Actions del mismo. Aunque los flujos de trabajo de las bifurcaciones no tienen acceso a datos sensibles tales como los secretos, pueden ser molestos para los mantenedores si se modifican para fines de abuso.
+
+Para ayudar a prevenir esto, los flujos de trabajo sobre las solicitudes de cambio en los repositorios públicos de algunos contribuyentes no se ejecutarán automáticamente y podrían necesitar aprobarse primero. En función de la configuración "Approval for running fork pull request workflows from contributors", los flujos de trabajo de solicitudes de cambios en los repositorios públicos no se ejecutarán automáticamente y pueden necesitar aprobación si:
+
+La solicitud de cambios la crea un usuario que requiere aprobaciones basadas en la directiva seleccionada.
+El evento de solicitud de cambios lo desencadena un usuario que requiere aprobaciones basadas en la directiva seleccionada.
+Predeterminadamente, todos los contribuyentes de primera vez necesitan aprobación para ejecutar flujos de trabajo.
+
+Los flujos de trabajo desencadenados por eventos pull_request_target se ejecutan en el contexto de la rama base. Ya que la rama base se considera como confiable, los flujos de trabajo que activen estos eventos siempre se ejecutarán, sin importar los ajustes de aprobaciones. Para obtener más información sobre el evento pull_request_target, consulte "Eventos que desencadenan flujos de trabajo".
+
+Warning
+
+Estas directivas de aprobación de flujo de trabajo están pensadas para restringir el conjunto de usuarios que pueden ejecutar flujos de trabajo en ejecutores de GitHub Actions que podrían provocar un consumo inesperado de recursos y procesos al usar ejecutores hospedados en GitHub. Si usas ejecutores auto-hospedados, el código de flujo de trabajo controlado por el usuario potencialmente malintencionado se ejecutará automáticamente si el usuario puede omitir la aprobación en la directiva de aprobación establecida o si se aprueba la solicitud de cambios. Debes tener en cuenta el riesgo de ejecutar este código en la infraestructura y revisar y seguir las recomendaciones de seguridad del ejecutor auto-hospedado independientemente de la configuración de aprobación utilizada. Consulte "Fortalecimiento de seguridad para GitHub Actions".
+
+Puede configurar los requisitos de aprobación de flujo de trabajo para un repositorio, una organización o una empresa.
+
+Las ejecuciones de flujos de trabajo que hayan estado esperando una aprobación por más de 30 días se borrarán automáticamente.
+
+Aprobar las ejecuciones de flujo de trabajo en una solicitud de cambios de una bifurcación pública
+Los mantenedores con acceso de escritura en un repositorio pueden utilizar el siguiente procedimiento para revisar y ejecutar flujos de trabajo en las solicitudes de extracción de los contribuyentes que requieran aprobación.
+
+En el nombre del repositorio, haga clic en  Solicitudes de incorporación de cambios.
+
+Captura de pantalla de la página principal de un repositorio. En la barra de navegación horizontal, una pestaña, con la etiqueta "Solicitudes de incorporación de cambios", se destaca en naranja oscuro.
+En la lista de solicitudes de incorporación de cambios, haga clic en la que quiera revisar.
+
+En la solicitud de incorporación de cambios, haz clic en  Archivos cambiados.
+
+Captura de pantalla de las pestañas de una solicitud de incorporación de cambios. La pestaña "Archivos cambiados" está resaltada en naranja oscuro.
+Inspecciona los cambios propuestos en la solicitud de cambios y asegúrate de que estés de acuerdo para ejecutar tus flujos de trabajo en la rama de la solicitud de cambios. Debe estar especialmente alerta de los cambios propuestos en el directorio .github/workflows/ que afecten a los archivos de flujo de trabajo.
+
+Si estás familiarizado con la ejecución de flujos de trabajo en la rama de solicitud de incorporación de cambios, vuelve a la pestaña  Conversación y, en "Flujos de trabajo en espera de aprobación", haz clic en Aprobar y ejecutar.
