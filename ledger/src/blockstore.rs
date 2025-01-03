@@ -4811,8 +4811,7 @@ fn update_completed_data_indexes(
         .windows(2)
         .filter(|ix| {
             let (begin, end) = (ix[0] as u64, ix[1] as u64);
-            let num_shreds = (end - begin) as usize;
-            received_data_shreds.range(begin..end).count() == num_shreds
+            received_data_shreds.is_complete(begin..end)
         })
         .map(|ix| (ix[0], ix[1] - 1))
         .collect()
