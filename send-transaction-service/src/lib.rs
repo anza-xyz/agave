@@ -8,5 +8,8 @@ pub use {
     transaction_client::{CurrentLeaderInfo, LEADER_INFO_REFRESH_RATE_MS},
 };
 
+#[cfg(any(test, feature = "dev-context-only-utils"))]
+pub mod test_utils;
+
 #[macro_use]
 extern crate solana_metrics;

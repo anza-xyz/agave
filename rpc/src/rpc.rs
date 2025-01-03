@@ -126,7 +126,9 @@ use {
     solana_ledger::get_tmp_ledger_path,
     solana_runtime::commitment::CommitmentSlots,
     solana_send_transaction_service::{
-        send_transaction_service::SendTransactionService, tpu_info::NullTpuInfo,
+        send_transaction_service::{self, SendTransactionService},
+        tpu_info::NullTpuInfo,
+        transaction_client::ConnectionCacheClient,
     },
     solana_streamer::socket::SocketAddrSpace,
 };
@@ -458,14 +460,22 @@ impl JsonRpcRequestProcessor {
             .tpu(connection_cache.protocol())
             .unwrap();
         let (transaction_sender, transaction_receiver) = unbounded();
-        SendTransactionService::new::<NullTpuInfo>(
+
+        let client = ConnectionCacheClient::<NullTpuInfo>::new(
+            connection_cache.clone(),
             tpu_address,
-            &bank_forks,
             None,
-            transaction_receiver,
-            &connection_cache,
-            1000,
+            None,
             1,
+        );
+        SendTransactionService::new_with_client(
+            &bank_forks,
+            transaction_receiver,
+            client,
+            send_transaction_service::Config {
+                retry_rate_ms: 1_000,
+                ..send_transaction_service::Config::default()
+            },
             exit.clone(),
         );
 
@@ -4572,7 +4582,9 @@ pub mod tests {
             },
             vote::state::VoteState,
         },
-        solana_send_transaction_service::tpu_info::NullTpuInfo,
+        solana_send_transaction_service::{
+            tpu_info::NullTpuInfo, transaction_client::ConnectionCacheClient,
+        },
         solana_transaction_status::{
             EncodedConfirmedBlock, EncodedTransaction, EncodedTransactionWithStatusMeta,
             TransactionDetails,
@@ -6693,15 +6705,22 @@ pub mod tests {
             Arc::new(PrioritizationFeeCache::default()),
             service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj),
         );
-        SendTransactionService::new::<NullTpuInfo>(
+        let client = ConnectionCacheClient::<NullTpuInfo>::new(
+            connection_cache.clone(),
             tpu_address,
-            &bank_forks,
             None,
-            receiver,
-            &connection_cache,
-            1000,
+            None,
             1,
-            exit,
+        );
+        SendTransactionService::new_with_client(
+            &bank_forks,
+            receiver,
+            client,
+            send_transaction_service::Config {
+                retry_rate_ms: 1_000,
+                ..send_transaction_service::Config::default()
+            },
+            exit.clone(),
         );
 
         let mut bad_transaction = system_transaction::transfer(
@@ -6975,16 +6994,24 @@ pub mod tests {
             Arc::new(PrioritizationFeeCache::default()),
             service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj),
         );
-        SendTransactionService::new::<NullTpuInfo>(
+        let client = ConnectionCacheClient::<NullTpuInfo>::new(
+            connection_cache.clone(),
             tpu_address,
-            &bank_forks,
             None,
-            receiver,
-            &connection_cache,
-            1000,
+            None,
             1,
-            exit,
         );
+        SendTransactionService::new_with_client(
+            &bank_forks,
+            receiver,
+            client,
+            send_transaction_service::Config {
+                retry_rate_ms: 1_000,
+                ..send_transaction_service::Config::default()
+            },
+            exit.clone(),
+        );
+
         assert_eq!(
             request_processor.get_block_commitment(0),
             RpcBlockCommitment {
