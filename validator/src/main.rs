@@ -73,7 +73,7 @@ use {
         signature::{read_keypair, Keypair, Signer},
     },
     solana_send_transaction_service::send_transaction_service,
-    solana_streamer::socket::SocketAddrSpace,
+    solana_streamer::{quic::QuicServerParams, socket::SocketAddrSpace},
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     std::{
         collections::{HashSet, VecDeque},
@@ -1139,8 +1139,6 @@ pub fn main() {
     };
 
     let tpu_connection_pool_size = value_t_or_exit!(matches, "tpu_connection_pool_size", usize);
-    let tpu_max_connections_per_ipaddr_per_minute =
-        value_t_or_exit!(matches, "tpu_max_connections_per_ipaddr_per_minute", u64);
 
     let shrink_ratio = value_t_or_exit!(matches, "accounts_shrink_ratio", f64);
     if !(0.0..=1.0).contains(&shrink_ratio) {
@@ -1964,6 +1962,22 @@ pub fn main() {
             });
 
     let num_quic_endpoints = value_t_or_exit!(matches, "num_quic_endpoints", NonZeroUsize);
+
+    let tpu_max_connections_per_peer =
+        value_t_or_exit!(matches, "tpu_max_connections_per_peer", u64);
+    let tpu_max_staked_connections = value_t_or_exit!(matches, "tpu_max_staked_connections", u64);
+    let tpu_max_unstaked_connections =
+        value_t_or_exit!(matches, "tpu_max_unstaked_connections", u64);
+
+    let tpu_max_fwd_staked_connections =
+        value_t_or_exit!(matches, "tpu_max_fwd_staked_connections", u64);
+    let tpu_max_fwd_unstaked_connections =
+        value_t_or_exit!(matches, "tpu_max_fwd_unstaked_connections", u64);
+
+    let tpu_max_connections_per_ipaddr_per_minute: u64 =
+        value_t_or_exit!(matches, "tpu_max_connections_per_ipaddr_per_minute", u64);
+    let max_streams_per_ms = value_t_or_exit!(matches, "tpu_max_streams_per_ms", u64);
+
     let node_config = NodeConfig {
         gossip_addr,
         port_range: dynamic_port_range,
@@ -2067,6 +2081,32 @@ pub fn main() {
     // the one pushed by bootstrap.
     node.info.hot_swap_pubkey(identity_keypair.pubkey());
 
+    let tpu_quic_server_config = QuicServerParams {
+        max_connections_per_peer: tpu_max_connections_per_peer.try_into().unwrap(),
+        max_staked_connections: tpu_max_staked_connections.try_into().unwrap(),
+        max_unstaked_connections: tpu_max_unstaked_connections.try_into().unwrap(),
+        max_streams_per_ms,
+        max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
+        coalesce: tpu_coalesce,
+        ..Default::default()
+    };
+
+    let tpu_fwd_quic_server_config = QuicServerParams {
+        max_connections_per_peer: tpu_max_connections_per_peer.try_into().unwrap(),
+        max_staked_connections: tpu_max_fwd_staked_connections.try_into().unwrap(),
+        max_unstaked_connections: tpu_max_fwd_unstaked_connections.try_into().unwrap(),
+        max_streams_per_ms,
+        max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
+        coalesce: tpu_coalesce,
+        ..Default::default()
+    };
+
+    // Vote shares TPU forward's characteristics, except that we accept 1 connection
+    // per peer and no unstaked connections are accepted.
+    let mut vote_quic_server_config = tpu_fwd_quic_server_config.clone();
+    vote_quic_server_config.max_connections_per_peer = 1;
+    vote_quic_server_config.max_unstaked_connections = 0;
+
     let validator = match Validator::new(
         node,
         identity_keypair,
@@ -2084,7 +2124,9 @@ pub fn main() {
             vote_use_quic,
             tpu_connection_pool_size,
             tpu_enable_udp,
-            tpu_max_connections_per_ipaddr_per_minute,
+            tpu_quic_server_config,
+            tpu_fwd_quic_server_config,
+            vote_quic_server_config,
         },
         admin_service_post_init,
     ) {

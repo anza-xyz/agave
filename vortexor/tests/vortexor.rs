@@ -3,11 +3,11 @@ use {
     solana_net_utils::VALIDATOR_PORT_RANGE,
     solana_sdk::{net::DEFAULT_TPU_COALESCE, pubkey::Pubkey, signature::Keypair, signer::Signer},
     solana_streamer::{
-        nonblocking::{
-            quic::{DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_STREAMS_PER_MS},
-            testing_utilities::check_multiple_streams,
+        nonblocking::testing_utilities::check_multiple_streams,
+        quic::{
+            DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_STAKED_CONNECTIONS,
+            DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS,
         },
-        quic::{MAX_STAKED_CONNECTIONS, MAX_UNSTAKED_CONNECTIONS},
         streamer::StakedNodes,
     },
     solana_vortexor::{
@@ -54,10 +54,10 @@ async fn test_vortexor() {
         tpu_sender,
         tpu_fwd_sender,
         DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER.try_into().unwrap(),
-        MAX_STAKED_CONNECTIONS.try_into().unwrap(),
-        MAX_UNSTAKED_CONNECTIONS.try_into().unwrap(),
-        MAX_STAKED_CONNECTIONS
-            .saturating_add(MAX_UNSTAKED_CONNECTIONS)
+        DEFAULT_MAX_STAKED_CONNECTIONS.try_into().unwrap(),
+        DEFAULT_MAX_UNSTAKED_CONNECTIONS.try_into().unwrap(),
+        DEFAULT_MAX_STAKED_CONNECTIONS
+            .saturating_add(DEFAULT_MAX_UNSTAKED_CONNECTIONS)
             .try_into()
             .unwrap(), // max_fwd_staked_connections
         0, // max_fwd_unstaked_connections
