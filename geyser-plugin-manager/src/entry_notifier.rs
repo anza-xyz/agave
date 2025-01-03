@@ -5,11 +5,11 @@ use {
         ReplicaEntryInfoV2, ReplicaEntryInfoVersions,
     },
     log::*,
+    solana_clock::Slot,
     solana_entry::entry::EntrySummary,
     solana_ledger::entry_notifier_interface::EntryNotifier,
     solana_measure::measure::Measure,
     solana_metrics::*,
-    solana_sdk::clock::Slot,
     std::sync::{Arc, RwLock},
 };
 

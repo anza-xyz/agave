@@ -5,10 +5,12 @@ use {
         ReplicaTransactionInfoV2, ReplicaTransactionInfoVersions,
     },
     log::*,
+    solana_clock::Slot,
     solana_measure::measure::Measure,
     solana_metrics::*,
     solana_rpc::transaction_notifier_interface::TransactionNotifier,
-    solana_sdk::{clock::Slot, signature::Signature, transaction::SanitizedTransaction},
+    solana_signature::Signature,
+    solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_status::TransactionStatusMeta,
     std::sync::{Arc, RwLock},
 };

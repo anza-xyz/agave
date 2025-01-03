@@ -2,10 +2,10 @@ use {
     crate::geyser_plugin_manager::GeyserPluginManager,
     agave_geyser_plugin_interface::geyser_plugin_interface::SlotStatus,
     log::*,
+    solana_clock::Slot,
     solana_measure::measure::Measure,
     solana_metrics::*,
     solana_rpc::slot_status_notifier::SlotStatusNotifierInterface,
-    solana_sdk::clock::Slot,
     std::sync::{Arc, RwLock},
 };
 

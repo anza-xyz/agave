@@ -7,10 +7,10 @@ use {
         ReplicaBlockInfoV4, ReplicaBlockInfoVersions,
     },
     log::*,
+    solana_clock::UnixTimestamp,
     solana_measure::measure::Measure,
     solana_metrics::*,
     solana_runtime::bank::KeyedRewardsAndNumPartitions,
-    solana_sdk::clock::UnixTimestamp,
     solana_transaction_status::{Reward, RewardsAndNumPartitions},
     std::sync::{Arc, RwLock},
 };
