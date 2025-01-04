@@ -782,7 +782,7 @@ fn make_merkle_proof(
 pub(super) fn recover(
     mut shreds: Vec<Shred>,
     reed_solomon_cache: &ReedSolomonCache,
-) -> Result<Vec<Shred>, Error> {
+) -> Result<impl Iterator<Item = Shred>, Error> {
     // Grab {common, coding} headers from first coding shred.
     // Incoming shreds are resigned immediately after signature verification,
     // so we can just grab the retransmitter signature from one of the
@@ -983,8 +983,7 @@ pub(super) fn recover(
         .into_iter()
         .zip(mask)
         .filter(|(_, mask)| !mask)
-        .map(|(shred, _)| shred)
-        .collect())
+        .map(|(shred, _)| shred))
 }
 
 // Maps number of (code + data) shreds to merkle_proof.len().
@@ -1631,19 +1630,19 @@ mod test {
                 )
             }) {
                 assert_matches!(
-                    recover(shreds, reed_solomon_cache),
-                    Err(Error::ErasureError(TooFewParityShards))
+                    recover(shreds, reed_solomon_cache).err(),
+                    Some(Error::ErasureError(TooFewParityShards))
                 );
                 continue;
             }
             if shreds.len() < num_data_shreds {
                 assert_matches!(
-                    recover(shreds, reed_solomon_cache),
-                    Err(Error::ErasureError(TooFewShardsPresent))
+                    recover(shreds, reed_solomon_cache).err(),
+                    Some(Error::ErasureError(TooFewShardsPresent))
                 );
                 continue;
             }
-            let recovered_shreds = recover(shreds, reed_solomon_cache).unwrap();
+            let recovered_shreds: Vec<_> = recover(shreds, reed_solomon_cache).unwrap().collect();
             assert_eq!(size + recovered_shreds.len(), num_shreds);
             assert_eq!(recovered_shreds.len(), removed_shreds.len());
             removed_shreds.sort_by(|a, b| {

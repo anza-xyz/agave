@@ -1138,7 +1138,6 @@ pub(crate) fn recover(
             // when reconstructing the Merkle tree for the erasure batch, we
             // will obtain the same Merkle root.
             Ok(merkle::recover(shreds, reed_solomon_cache)?
-                .into_iter()
                 .map(|shred| {
                     let shred = Shred::from(shred);
                     debug_assert!(get_slot_leader(shred.slot())
