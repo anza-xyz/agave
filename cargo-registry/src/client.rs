@@ -7,12 +7,10 @@ use {
     },
     solana_cli::cli::{CliConfig, DEFAULT_CONFIRM_TX_TIMEOUT_SECONDS, DEFAULT_RPC_TIMEOUT_SECONDS},
     solana_cli_config::{Config, ConfigInput},
+    solana_commitment_config::CommitmentConfig,
+    solana_keypair::{read_keypair_file, Keypair},
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::config::RpcSendTransactionConfig,
-    solana_sdk::{
-        commitment_config,
-        signature::{read_keypair_file, Keypair},
-    },
     std::{error, sync::Arc, time::Duration},
 };
 
@@ -21,7 +19,7 @@ pub(crate) struct Client {
     pub port: u16,
     pub server_url: String,
     websocket_url: String,
-    commitment: commitment_config::CommitmentConfig,
+    commitment: CommitmentConfig,
     cli_signers: Vec<Keypair>,
     pub authority_signer_index: SignerIndex,
     send_transaction_config: RpcSendTransactionConfig,
