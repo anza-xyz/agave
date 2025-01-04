@@ -106,6 +106,7 @@ pub enum HeaviestForkFailures {
         Slot,
         /* vote depth */ u64,
         /* Observed stake */ u64,
+        /* Observed fork choice stake */ u64,
         /* Total stake */ u64,
     ),
     FailedSwitchThreshold(
@@ -3472,6 +3473,7 @@ impl ReplayStage {
                         progress,
                         bank,
                         bank_forks,
+                        heaviest_subtree_fork_choice,
                     );
                     let computed_bank_state = Tower::collect_vote_lockouts(
                         my_vote_pubkey,
@@ -3532,7 +3534,13 @@ impl ReplayStage {
                 cluster_slots,
             );
 
-            Self::cache_tower_stats(progress, tower, bank_slot, ancestors);
+            Self::cache_tower_stats(
+                progress,
+                tower,
+                heaviest_subtree_fork_choice,
+                bank_slot,
+                ancestors,
+            );
         }
         new_stats
     }
@@ -3545,6 +3553,7 @@ impl ReplayStage {
         progress: &mut ProgressMap,
         bank: &Arc<Bank>,
         bank_forks: &RwLock<BankForks>,
+        heaviest_subtree_fork_choice: &HeaviestSubtreeForkChoice,
     ) {
         let Some(vote_account) = bank.get_vote_account(my_vote_pubkey) else {
             return;
@@ -3657,22 +3666,30 @@ impl ReplayStage {
             {
                 continue;
             }
-            Self::cache_tower_stats(progress, tower, slot, ancestors);
+            Self::cache_tower_stats(
+                progress,
+                tower,
+                heaviest_subtree_fork_choice,
+                slot,
+                ancestors,
+            );
         }
     }
 
     fn cache_tower_stats(
         progress: &mut ProgressMap,
         tower: &Tower,
+        heaviest_subtree_fork_choice: &HeaviestSubtreeForkChoice,
         slot: Slot,
         ancestors: &HashMap<u64, HashSet<u64>>,
     ) {
+        let vote_threshold =
+            tower.check_vote_stake_thresholds(slot, progress, heaviest_subtree_fork_choice);
         let stats = progress
             .get_fork_stats_mut(slot)
             .expect("All frozen banks must exist in the Progress map");
 
-        stats.vote_threshold =
-            tower.check_vote_stake_thresholds(slot, &stats.voted_stakes, stats.total_stake);
+        stats.vote_threshold = vote_threshold;
         stats.is_locked_out = tower.is_locked_out(
             slot,
             ancestors
@@ -4168,6 +4185,7 @@ impl ReplayStage {
                     slot,
                     depth,
                     observed_stake,
+                    observed_fork_choice_stake,
                     total_stake,
                 ) => {
                     if slot > *last_threshold_failure_slot {
@@ -4186,6 +4204,11 @@ impl ReplayStage {
                             ("slot", slot as i64, i64),
                             ("depth", depth as i64, i64),
                             ("observed_stake", observed_stake as i64, i64),
+                            (
+                                "observed_fork_choice_stake",
+                                observed_fork_choice_stake as i64,
+                                i64
+                            ),
                             ("total_stake", total_stake as i64, i64),
                             ("in_partition", in_partition, bool),
                         );
@@ -5323,6 +5346,7 @@ pub(crate) mod tests {
             1,
             ForkProgress::new(bank0.last_blockhash(), None, None, 0, 0),
         );
+        progress.get_fork_stats_mut(1).unwrap().bank_hash = Some(bank1.hash());
         let ancestors = bank_forks.read().unwrap().ancestors();
         let mut frozen_banks: Vec<_> = bank_forks
             .read()
@@ -8843,7 +8867,11 @@ pub(crate) mod tests {
         let tree = tr(0) / (tr(1) / (tr(3) / (tr(4))) / (tr(2) / (tr(5) / (tr(6)))));
         let (vote_simulator, _blockstore) =
             setup_forks_from_tree(tree, 3, Some(Box::new(generate_votes)));
-        let (bank_forks, mut progress) = (vote_simulator.bank_forks, vote_simulator.progress);
+        let (bank_forks, mut progress, heaviest_subtree_fork_choice) = (
+            vote_simulator.bank_forks,
+            vote_simulator.progress,
+            vote_simulator.heaviest_subtree_fork_choice,
+        );
         let bank_hash = |slot| bank_forks.read().unwrap().bank_hash(slot).unwrap();
         let my_vote_pubkey = vote_simulator.vote_pubkeys[0];
         let mut tower = Tower::default();
@@ -8862,7 +8890,7 @@ pub(crate) mod tests {
 
         // slot 3 was computed in a previous iteration and failed threshold check, but was not locked out
         let fork_stats_3 = progress.get_fork_stats_mut(3).unwrap();
-        fork_stats_3.vote_threshold = vec![ThresholdDecision::FailedThreshold(4, 4000)];
+        fork_stats_3.vote_threshold = vec![ThresholdDecision::FailedThreshold(4, 4000, 4000)];
         fork_stats_3.is_locked_out = false;
         fork_stats_3.computed = true;
         // slot 4 is yet to be computed.
@@ -8881,6 +8909,7 @@ pub(crate) mod tests {
             &mut progress,
             bank_6,
             &bank_forks,
+            &heaviest_subtree_fork_choice,
         );
 
         // slot 3 should now pass the threshold check but be locked out.

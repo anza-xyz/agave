@@ -54,7 +54,11 @@ use {
 pub enum ThresholdDecision {
     #[default]
     PassedThreshold,
-    FailedThreshold(/* vote depth */ u64, /* Observed stake */ u64),
+    FailedThreshold(
+        /* vote depth */ u64,
+        /* Observed stake */ u64,
+        /* Observed fork choice stake */ u64,
+    ),
 }
 
 impl ThresholdDecision {
@@ -1271,21 +1275,29 @@ impl Tower {
 
     /// Checks a single vote threshold for `slot`
     fn check_vote_stake_threshold(
-        threshold_vote: Option<&Lockout>,
+        threshold_vote: Option<(&Lockout, Hash)>,
         vote_state_before_applying_vote: &VoteState,
         threshold_depth: usize,
         threshold_size: f64,
         slot: Slot,
         voted_stakes: &HashMap<Slot, u64>,
+        heaviest_subtree_fork_choice: &HeaviestSubtreeForkChoice,
         total_stake: u64,
     ) -> ThresholdDecision {
-        let Some(threshold_vote) = threshold_vote else {
+        let Some((threshold_vote, hash)) = threshold_vote else {
             // Tower isn't that deep.
             return ThresholdDecision::PassedThreshold;
         };
+        let fork_choice_stake = heaviest_subtree_fork_choice
+            .stake_voted_subtree(&(threshold_vote.slot(), hash))
+            .unwrap_or_default();
         let Some(fork_stake) = voted_stakes.get(&threshold_vote.slot()) else {
             // We haven't seen any votes on this fork yet, so no stake
-            return ThresholdDecision::FailedThreshold(threshold_depth as u64, 0);
+            return ThresholdDecision::FailedThreshold(
+                threshold_depth as u64,
+                0,
+                fork_choice_stake,
+            );
         };
 
         let lockout = *fork_stake as f64 / total_stake as f64;
@@ -1305,15 +1317,15 @@ impl Tower {
         {
             return ThresholdDecision::PassedThreshold;
         }
-        ThresholdDecision::FailedThreshold(threshold_depth as u64, *fork_stake)
+        ThresholdDecision::FailedThreshold(threshold_depth as u64, *fork_stake, fork_choice_stake)
     }
 
     /// Performs vote threshold checks for `slot`
     pub fn check_vote_stake_thresholds(
         &self,
         slot: Slot,
-        voted_stakes: &VotedStakes,
-        total_stake: Stake,
+        progress: &ProgressMap,
+        heaviest_subtree_fork_choice: &HeaviestSubtreeForkChoice,
     ) -> Vec<ThresholdDecision> {
         let mut threshold_decisions = vec![];
         // Generate the vote state assuming this vote is included.
@@ -1333,18 +1345,47 @@ impl Tower {
 
         // Check one by one and add any failures to be returned
         for (threshold_depth, threshold_size) in vote_thresholds_and_depths {
-            if let ThresholdDecision::FailedThreshold(vote_depth, stake) =
+            let threshold_lockout = vote_state.nth_recent_lockout(threshold_depth);
+            let threshold_vote = threshold_lockout.map(|threshold_lockout| {
+                // This is safe even in the presence of duplicate dump and repair, since `threshold_slot` is an ancestor of
+                // `slot`, it is not possible for `threshold_slot` to be missing but `slot` to be frozen.
+                //
+                // However we cannot unwrap here as the tower/ledger could be arbitrarily corrupted on restart.
+                // If we have a future tower from a botched restart we can
+                // get in a situation where the threshold slot is not frozen. We must allow this so that the validator
+                // can eventually vote.
+                let threshold_hash = progress
+                    .get_hash(threshold_lockout.slot())
+                    .unwrap_or_else(|| {
+                        warn!(
+                            "The threshold slot {} has not been frozen. This indicates a future tower from a corrupted ledger.\
+                            Voting will be paused until we catch up",
+                            threshold_lockout.slot()
+                        );
+                        Hash::default()
+                    });
+                (threshold_lockout, threshold_hash)
+            });
+            let stats = progress
+                .get_fork_stats(slot)
+                .expect("All frozen banks must exist in the Progress map");
+            if let ThresholdDecision::FailedThreshold(vote_depth, stake, fork_choice_stake) =
                 Self::check_vote_stake_threshold(
-                    vote_state.nth_recent_lockout(threshold_depth),
+                    threshold_vote,
                     &self.vote_state,
                     threshold_depth,
                     threshold_size,
                     slot,
-                    voted_stakes,
-                    total_stake,
+                    &stats.voted_stakes,
+                    heaviest_subtree_fork_choice,
+                    stats.total_stake,
                 )
             {
-                threshold_decisions.push(ThresholdDecision::FailedThreshold(vote_depth, stake));
+                threshold_decisions.push(ThresholdDecision::FailedThreshold(
+                    vote_depth,
+                    stake,
+                    fork_choice_stake,
+                ));
             }
         }
         threshold_decisions
@@ -1787,6 +1828,7 @@ pub mod test {
             vote_simulator::VoteSimulator,
         },
         itertools::Itertools,
+        progress_map::ForkProgress,
         solana_ledger::{blockstore::make_slot_entries, get_tmp_ledger_path_auto_delete},
         solana_runtime::bank::Bank,
         solana_sdk::{
@@ -2552,11 +2594,31 @@ pub mod test {
         assert_eq!(new_votes, account_latest_votes);
     }
 
+    fn test_check_vote_stake_thresholds(
+        tower: &Tower,
+        slot: Slot,
+        stakes: &HashMap<Slot, u64>,
+        total_stake: u64,
+    ) -> Vec<ThresholdDecision> {
+        let mut progress = ProgressMap::default();
+        for s in 0..=slot {
+            progress.insert(s, ForkProgress::new(Hash::default(), None, None, 1, 0));
+            progress.get_fork_stats_mut(s).unwrap().bank_hash = Some(Hash::default());
+        }
+
+        let fork_stats = progress.get_fork_stats_mut(slot).unwrap();
+        fork_stats.voted_stakes = stakes.clone();
+        fork_stats.total_stake = total_stake;
+        let heaviest_subtree_fork_choice = HeaviestSubtreeForkChoice::new((slot, Hash::default()));
+
+        tower.check_vote_stake_thresholds(slot, &progress, &heaviest_subtree_fork_choice)
+    }
+
     #[test]
     fn test_check_vote_threshold_without_votes() {
         let tower = Tower::new_for_tests(1, 0.67);
         let stakes = vec![(0, 1)].into_iter().collect();
-        assert!(tower.check_vote_stake_thresholds(0, &stakes, 2).is_empty());
+        assert!(test_check_vote_stake_thresholds(&tower, 0, &stakes, 2).is_empty());
     }
 
     #[test]
@@ -2568,9 +2630,13 @@ pub mod test {
             stakes.insert(i, 1);
             tower.record_vote(i, Hash::default());
         }
-        assert!(!tower
-            .check_vote_stake_thresholds(MAX_LOCKOUT_HISTORY as u64 + 1, &stakes, 2)
-            .is_empty());
+        assert!(!test_check_vote_stake_thresholds(
+            &tower,
+            MAX_LOCKOUT_HISTORY as u64 + 1,
+            &stakes,
+            2
+        )
+        .is_empty());
     }
 
     #[test]
@@ -2706,14 +2772,15 @@ pub mod test {
         let mut tower = Tower::new_for_tests(1, 0.67);
         let stakes = vec![(0, 1)].into_iter().collect();
         tower.record_vote(0, Hash::default());
-        assert!(!tower.check_vote_stake_thresholds(1, &stakes, 2).is_empty());
+        assert!(!test_check_vote_stake_thresholds(&tower, 1, &stakes, 2).is_empty());
     }
+
     #[test]
     fn test_check_vote_threshold_above_threshold() {
         let mut tower = Tower::new_for_tests(1, 0.67);
         let stakes = vec![(0, 2)].into_iter().collect();
         tower.record_vote(0, Hash::default());
-        assert!(tower.check_vote_stake_thresholds(1, &stakes, 2).is_empty());
+        assert!(test_check_vote_stake_thresholds(&tower, 1, &stakes, 2).is_empty());
     }
 
     #[test]
@@ -2729,9 +2796,13 @@ pub mod test {
         for slot in 0..VOTE_THRESHOLD_DEPTH {
             tower.record_vote(slot as Slot, Hash::default());
         }
-        assert!(tower
-            .check_vote_stake_thresholds(VOTE_THRESHOLD_DEPTH.try_into().unwrap(), &stakes, 4)
-            .is_empty());
+        assert!(test_check_vote_stake_thresholds(
+            &tower,
+            VOTE_THRESHOLD_DEPTH.try_into().unwrap(),
+            &stakes,
+            4
+        )
+        .is_empty());
     }
 
     #[test]
@@ -2743,9 +2814,13 @@ pub mod test {
         for slot in 0..VOTE_THRESHOLD_DEPTH {
             tower.record_vote(slot as Slot, Hash::default());
         }
-        assert!(!tower
-            .check_vote_stake_thresholds(VOTE_THRESHOLD_DEPTH.try_into().unwrap(), &stakes, 10)
-            .is_empty());
+        assert!(!test_check_vote_stake_thresholds(
+            &tower,
+            VOTE_THRESHOLD_DEPTH.try_into().unwrap(),
+            &stakes,
+            10
+        )
+        .is_empty());
     }
 
     #[test]
@@ -2757,9 +2832,13 @@ pub mod test {
         for slot in 0..VOTE_THRESHOLD_DEPTH {
             tower.record_vote(slot as Slot, Hash::default());
         }
-        assert!(!tower
-            .check_vote_stake_thresholds(VOTE_THRESHOLD_DEPTH.try_into().unwrap(), &stakes, 10)
-            .is_empty());
+        assert!(!test_check_vote_stake_thresholds(
+            &tower,
+            VOTE_THRESHOLD_DEPTH.try_into().unwrap(),
+            &stakes,
+            10
+        )
+        .is_empty());
     }
 
     #[test]
@@ -2769,7 +2848,7 @@ pub mod test {
         tower.record_vote(0, Hash::default());
         tower.record_vote(1, Hash::default());
         tower.record_vote(2, Hash::default());
-        assert!(tower.check_vote_stake_thresholds(6, &stakes, 2).is_empty());
+        assert!(test_check_vote_stake_thresholds(&tower, 6, &stakes, 2).is_empty());
     }
 
     #[test]
@@ -2777,7 +2856,7 @@ pub mod test {
         let mut tower = Tower::new_for_tests(1, 0.67);
         let stakes = HashMap::new();
         tower.record_vote(0, Hash::default());
-        assert!(!tower.check_vote_stake_thresholds(1, &stakes, 2).is_empty());
+        assert!(!test_check_vote_stake_thresholds(&tower, 1, &stakes, 2).is_empty());
     }
 
     #[test]
@@ -2788,7 +2867,7 @@ pub mod test {
         tower.record_vote(0, Hash::default());
         tower.record_vote(1, Hash::default());
         tower.record_vote(2, Hash::default());
-        assert!(tower.check_vote_stake_thresholds(6, &stakes, 2).is_empty());
+        assert!(test_check_vote_stake_thresholds(&tower, 6, &stakes, 2).is_empty());
     }
 
     #[test]
@@ -2851,9 +2930,13 @@ pub mod test {
             |_| None,
             &mut LatestValidatorVotesForFrozenBanks::default(),
         );
-        assert!(tower
-            .check_vote_stake_thresholds(vote_to_evaluate, &voted_stakes, total_stake)
-            .is_empty());
+        assert!(test_check_vote_stake_thresholds(
+            &tower,
+            vote_to_evaluate,
+            &voted_stakes,
+            total_stake
+        )
+        .is_empty());
 
         // CASE 2: Now we want to evaluate a vote for slot VOTE_THRESHOLD_DEPTH + 1. This slot
         // will expire the vote in one of the vote accounts, so we should have insufficient
@@ -2871,9 +2954,13 @@ pub mod test {
             |_| None,
             &mut LatestValidatorVotesForFrozenBanks::default(),
         );
-        assert!(!tower
-            .check_vote_stake_thresholds(vote_to_evaluate, &voted_stakes, total_stake)
-            .is_empty());
+        assert!(!test_check_vote_stake_thresholds(
+            &tower,
+            vote_to_evaluate,
+            &voted_stakes,
+            total_stake
+        )
+        .is_empty());
     }
 
     fn vote_and_check_recent(num_votes: usize) {

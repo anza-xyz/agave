@@ -355,13 +355,16 @@ fn can_vote_on_candidate_bank(
     // Check if we failed any of the vote thresholds.
     let mut threshold_passed = true;
     for threshold_failure in vote_thresholds {
-        let &ThresholdDecision::FailedThreshold(vote_depth, fork_stake) = threshold_failure else {
+        let &ThresholdDecision::FailedThreshold(vote_depth, fork_stake, fork_choice_stake) =
+            threshold_failure
+        else {
             continue;
         };
         failure_reasons.push(HeaviestForkFailures::FailedThreshold(
             candidate_vote_bank_slot,
             vote_depth,
             fork_stake,
+            fork_choice_stake,
             total_threshold_stake,
         ));
         // Ignore shallow checks for voting purposes
