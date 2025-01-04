@@ -4,7 +4,6 @@ use {
     solana_accounts_db::{
         accounts_db::AccountsDb, read_only_accounts_cache::ReadOnlyAccountsCache,
     },
-    solana_sdk::system_instruction::MAX_PERMITTED_DATA_LENGTH,
     std::{
         hint::black_box,
         sync::{
@@ -22,15 +21,15 @@ mod utils;
 /// - No data.
 /// - 165 bytes (a token account).
 /// - 200 bytes (a stake account).
-/// - 10 mebibytes (the max size for an account).
-const DATA_SIZES: &[usize] = &[0, 165, 200, MAX_PERMITTED_DATA_LENGTH as usize];
+/// - 300 kibibytes (an account with data).
+const DATA_SIZES: &[usize] = &[0, 165, 200, 300 * 1024];
 /// Distribution of the account sizes:
 ///
-/// - 3% of accounts have no data.
+/// - 4% of accounts have no data.
 /// - 75% of accounts are 165 bytes (a token account).
 /// - 20% of accounts are 200 bytes (a stake account).
-/// - 2% of accounts are 10 mebibytes (the max size for an account).
-const WEIGHTS: &[usize] = &[3, 75, 20, 2];
+/// - 1% of accounts are 300 kibibytes (an account with data).
+const WEIGHTS: &[usize] = &[4, 75, 20, 1];
 /// Numbers of reader and writer threads to bench.
 const NUM_READERS_WRITERS: &[usize] = &[
     8, 16,
@@ -61,7 +60,7 @@ fn bench_read_only_accounts_cache(c: &mut Criterion) {
         let cache = Arc::new(ReadOnlyAccountsCache::new(
             AccountsDb::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_LO,
             AccountsDb::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI,
-            AccountsDb::READ_ONLY_CACHE_MS_TO_SKIP_LRU_UPDATE,
+            AccountsDb::DEFAULT_READ_ONLY_CACHE_EVICT_SAMPLE_SIZE,
         ));
 
         for (pubkey, account) in accounts.iter() {
@@ -181,7 +180,7 @@ fn bench_read_only_accounts_cache_eviction(
         let cache = Arc::new(ReadOnlyAccountsCache::new(
             max_data_size_lo,
             max_data_size_hi,
-            AccountsDb::READ_ONLY_CACHE_MS_TO_SKIP_LRU_UPDATE,
+            AccountsDb::DEFAULT_READ_ONLY_CACHE_EVICT_SAMPLE_SIZE,
         ));
 
         // Fill up the cache.
