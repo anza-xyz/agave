@@ -2,6 +2,7 @@
 #![deny(clippy::arithmetic_side_effects)]
 #![deny(clippy::indexing_slicing)]
 
+#[cfg(feature = "metrics")]
 #[macro_use]
 extern crate solana_metrics;
 
