@@ -77,6 +77,9 @@ pub struct RingBuffer<T> {
     /// determine if the buffer is either full or shut down.
     consumer_position: AtomicU64,
 
+    /// To track the currently active bank.
+    working_bank: AtomicU64,
+
     /// Indicates if producers have been shut down.
     /// This is used by consumer so it can still consume even though producers
     /// have been shut down.
@@ -90,7 +93,7 @@ pub struct RingBuffer<T> {
 unsafe impl<T> Sync for RingBuffer<T> {}
 
 impl<T> RingBuffer<T> {
-    pub fn with_capacity(capacity: u32) -> Self {
+    pub fn with_capacity(capacity: u32, bank_id: u64) -> Self {
         let capacity = capacity.next_power_of_two();
         let buffer = (0..capacity)
             .map(|_| AtomicCell::default())
@@ -101,6 +104,7 @@ impl<T> RingBuffer<T> {
             buffer,
             producer_position: AtomicU64::new(0),
             consumer_position: AtomicU64::new(0),
+            working_bank: AtomicU64::new(bank_id),
             producers_shut_down: AtomicBool::new(false),
         }
     }
@@ -207,6 +211,7 @@ impl<T> RingBuffer<T> {
     fn is_shut_down(&self) -> bool {
         self.producers_shut_down.load(Ordering::Acquire)
     }
+    pub fn working_bank(&self) -> u64 { self.working_bank.load(Ordering::Relaxed) }
 }
 
 #[cfg(test)]
@@ -215,7 +220,8 @@ mod tests {
 
     #[test]
     fn test_ring_buffer() {
-        let ring_buffer = RingBuffer::with_capacity(4);
+        let bank_id = 100;
+        let ring_buffer = RingBuffer::with_capacity(4, bank_id);
 
         assert_eq!(ring_buffer.capacity(), 4);
         assert_eq!(ring_buffer.pop(), None);
@@ -240,7 +246,8 @@ mod tests {
 
     #[test]
     fn test_buffer_wrap_around() {
-        let ring_buffer = RingBuffer::with_capacity(4);
+        let bank_id = 100;
+        let ring_buffer = RingBuffer::with_capacity(4, bank_id);
         // Move both positions to the end of the buffer.
         ring_buffer
             .producer_position
@@ -266,7 +273,8 @@ mod tests {
 
     #[test]
     fn test_ring_buffer_optimistic_update() {
-        let ring_buffer = RingBuffer::with_capacity(4);
+        let bank_id = 100;
+        let ring_buffer = RingBuffer::with_capacity(4, bank_id);
 
         // The producer should be able to find a cell to write to in the buffer.
         let ProducerCheckResult::CanWrite(cell) = ring_buffer.producer_check() else {
@@ -303,7 +311,8 @@ mod tests {
 
     #[test]
     fn test_ring_buffer_optimistic_rollback() {
-        let ring_buffer = RingBuffer::<i32>::with_capacity(4);
+        let bank_id = 100;
+        let ring_buffer = RingBuffer::<i32>::with_capacity(4, bank_id);
 
         // This test spoofs the rollback of an optimistic update.
         // The producer should find a cell to write to in the buffer.
@@ -332,7 +341,8 @@ mod tests {
 
     #[test]
     fn test_ring_buffer_many_producers_write() {
-        let ring_buffer = RingBuffer::with_capacity(4);
+        let bank_id = 100;
+        let ring_buffer = RingBuffer::with_capacity(4, bank_id);
 
         // Simulate 5 concurrent producers writing to the buffer.
         let producer_check_results: [_; 5] = core::array::from_fn(|_| ring_buffer.producer_check());
@@ -374,7 +384,8 @@ mod tests {
 
     #[test]
     fn test_ring_buffer_shut_off() {
-        let ring_buffer = RingBuffer::with_capacity(4);
+        let bank_id = 100;
+        let ring_buffer = RingBuffer::with_capacity(4, bank_id);
 
         // Push a few items into the buffer.
         assert!(ring_buffer.try_push(1).is_ok());

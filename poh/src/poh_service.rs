@@ -187,16 +187,19 @@ impl PohService {
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         record_receiver: &Consumer<Record>,
     ) {
+        // TODO: We should pop only from one place. This is too confusing.
         let record = record_receiver.pop();
         if let Some(record) = record {
-            // TODO: Where should we send the starting transaction index now?
-            if poh_recorder
-                .write()
-                .unwrap()
-                .record(record.slot, record.mixin, record.transactions)
-                .is_err()
-            {
-                panic!("Error returning mixin hash");
+            if record.slot == record_receiver.working_bank() {
+                // TODO: Where should we send the starting transaction index now?
+                if poh_recorder
+                    .write()
+                    .unwrap()
+                    .record(record.slot, record.mixin, record.transactions)
+                    .is_err()
+                {
+                    panic!("Error returning mixin hash");
+                }
             }
         }
     }
@@ -247,9 +250,9 @@ impl PohService {
         let min_gap = std::cmp::max(max_tick_height - record_receiver.ring_buffer.capacity(), 64);
         if remaining_slots < min_gap {
             record_receiver.shut_off_producers();
-            if remaining_slots == 0 {
-                record_receiver.enable_producers(); // TODO: Do we need to reset the queue?
-            }
+            //if remaining_slots == 0 {
+            //    record_receiver.enable_producers(); // TODO: Do we need to reset the queue?
+            //}
         }
         match next_record.take() {
             Some(mut record) => {
@@ -269,6 +272,10 @@ impl PohService {
                     debug_assert!(res.is_ok(), "Slot {0} wasn't recorded.", record.slot);
                     timing.num_hashes += 1; // note: may have also ticked inside record
                     if let Some(new_record) = record_receiver.pop() {
+                        if record_receiver.working_bank() != record.slot {
+                            record_receiver.shut_off_producers();
+                            break; // Drop the record.
+                        }
                         // we already have second request to record, so record again while we still have the mutex
                         record = new_record;
                     } else {
@@ -299,8 +306,12 @@ impl PohService {
 
                     // check to see if a record request has been sent
                     if let Some(record) = record_receiver.pop() {
-                        // remember the record we just received as the next record to occur
-                        *next_record = Some(record);
+                        if record_receiver.working_bank() != record.slot {
+                            record_receiver.shut_off_producers(); // Drop the record and shut off.
+                        } else {
+                            // remember the record we just received as the next record to occur
+                            *next_record = Some(record);
+                        }
                         break;
                     }
                     // check to see if we need to wait to catch up to ideal
@@ -315,6 +326,7 @@ impl PohService {
                     drop(poh_l);
                     let d = Duration::from_nanos(target_ns_per_tick*64);
                     while ideal_time > wait_start {
+                        // Stop 64 ticks before the target_poh_time.
                         if ideal_time.checked_duration_since(wait_start).unwrap().ge(&d) {
                             record_receiver.shut_off_producers()
                         }
@@ -344,6 +356,7 @@ impl PohService {
     ) {
         let poh = poh_recorder.read().unwrap().poh.clone();
         let mut timing = PohTiming::new();
+        // TODO: the state of next_record changes with call, and that makes it confusing because it is only used inside the call.
         let mut next_record = None;
         loop {
             let should_tick = Self::record_or_hash(

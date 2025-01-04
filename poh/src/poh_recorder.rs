@@ -202,7 +202,8 @@ impl TransactionRecorder {
         transactions: Vec<VersionedTransaction>,
     ) -> Result<Option<usize>> {
         // TODO: Shut off producer if certain height is reached.
-        // TODO: check if the slot matches the working bank of the service.
+        // TODO(done): check if the slot matches the working bank of the service.
+        // TODO: Reset the bank with a new slot_id.
 
         let rec_send_res = self
             .record_sender
@@ -1017,7 +1018,7 @@ impl PohRecorder {
         );
         let (sender, receiver) = unbounded();
         let (record_sender, record_receiver) =
-            mpsc::with_capacity::<Record>(MPSC_RECORD_QUEUE_CAPACITY);
+            mpsc::with_capacity::<Record>(MPSC_RECORD_QUEUE_CAPACITY, start_bank.bank_id());
         let (leader_first_tick_height_including_grace_ticks, leader_last_tick_height, grace_ticks) =
             Self::compute_leader_slot_tick_heights(next_leader_slot, ticks_per_slot);
         (
@@ -2316,7 +2317,11 @@ mod tests {
     fn test_mpsc_ring_buffer_multi_producer() {
         const COUNT: u32 = 100;
         const THREADS: u32 = 4;
-        let (tx, rx): (mpsc::Producer<u64>, mpsc::Consumer<u64>) = mpsc::with_capacity(COUNT);
+
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+
+        let (tx, rx): (mpsc::Producer<u64>, mpsc::Consumer<u64>) = mpsc::with_capacity(COUNT, bank.bank_id());
 
         std::thread::scope(|scope| {
             for _ in 0..THREADS {
@@ -2334,10 +2339,12 @@ mod tests {
     fn test_mpsc_ring_buffer() {
         const COUNT: usize = 50;
         const THREADS: usize = 4;
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
 
         let t = std::sync::atomic::AtomicUsize::new(THREADS);
         let (tx, rx): (mpsc::Producer<usize>, mpsc::Consumer<usize>) =
-            mpsc::with_capacity(COUNT as u32);
+            mpsc::with_capacity(COUNT as u32, bank.bank_id());
         let v = (0..COUNT)
             .map(|_| std::sync::atomic::AtomicUsize::new(0))
             .collect::<Vec<_>>();
@@ -2379,7 +2386,10 @@ mod tests {
         struct Record {
             m: u32,
         }
-        let (tx, rx) = mpsc::with_capacity::<Record>(4);
+        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+
+        let (tx, rx) = mpsc::with_capacity::<Record>(4, bank.bank_id());
         let r = Record { m: 10 };
         let r1 = Record { m: 100 };
         let tx1 = tx.clone();

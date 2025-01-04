@@ -9,6 +9,8 @@ impl<T> Consumer<T> {
         self.ring_buffer.pop()
     }
 
+    pub fn working_bank(&self) -> u64 { self.ring_buffer.working_bank() }
+
     pub fn shut_off_producers(&self) {
         self.ring_buffer.shut_off_producers();
     }
