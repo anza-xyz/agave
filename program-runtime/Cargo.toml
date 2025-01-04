@@ -37,7 +37,6 @@ solana-instruction = { workspace = true }
 solana-last-restart-slot = { workspace = true }
 solana-log-collector = { workspace = true }
 solana-measure = { workspace = true }
-solana-metrics = { workspace = true }
 solana-precompiles = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
@@ -51,6 +50,9 @@ solana-timings = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-type-overrides = { workspace = true }
 thiserror = { workspace = true }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+solana-metrics = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }

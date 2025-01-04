@@ -2,6 +2,7 @@
 #![deny(clippy::arithmetic_side_effects)]
 #![deny(clippy::indexing_slicing)]
 
+#[cfg(not(target_family = "wasm"))]
 #[macro_use]
 extern crate solana_metrics;
 
