@@ -825,6 +825,7 @@ impl Blockstore {
         erasure_meta: &ErasureMeta,
         prev_inserted_shreds: &HashMap<ShredId, Shred>,
         recovered_shreds: &mut Vec<Shred>,
+        leader_schedule_cache: &LeaderScheduleCache,
         reed_solomon_cache: &ReedSolomonCache,
     ) {
         // Find shreds for this erasure set and try recovery
@@ -833,7 +834,12 @@ impl Blockstore {
             .get_recovery_data_shreds(index, slot, erasure_meta, prev_inserted_shreds)
             .chain(self.get_recovery_coding_shreds(index, slot, erasure_meta, prev_inserted_shreds))
             .collect();
-        if let Ok(mut result) = shred::recover(available_shreds, reed_solomon_cache) {
+        let get_slot_leader = |slot: Slot| -> Option<Pubkey> {
+            leader_schedule_cache.slot_leader_at(slot, /*bank:*/ None)
+        };
+        if let Ok(mut result) =
+            shred::recover(available_shreds, reed_solomon_cache, get_slot_leader)
+        {
             Self::submit_metrics(slot, erasure_meta, true, "complete".into(), result.len());
             recovered_shreds.append(&mut result);
         } else {
@@ -966,6 +972,7 @@ impl Blockstore {
         erasure_metas: &BTreeMap<ErasureSetId, WorkingEntry<ErasureMeta>>,
         index_working_set: &mut HashMap<u64, IndexMetaWorkingSetEntry>,
         prev_inserted_shreds: &HashMap<ShredId, Shred>,
+        leader_schedule_cache: &LeaderScheduleCache,
         reed_solomon_cache: &ReedSolomonCache,
     ) -> Vec<Shred> {
         let mut recovered_shreds = vec![];
@@ -986,6 +993,7 @@ impl Blockstore {
                         erasure_meta,
                         prev_inserted_shreds,
                         &mut recovered_shreds,
+                        leader_schedule_cache,
                         reed_solomon_cache,
                     );
                 }
@@ -1026,6 +1034,7 @@ impl Blockstore {
                 &shred_insertion_tracker.erasure_metas,
                 &mut shred_insertion_tracker.index_working_set,
                 &shred_insertion_tracker.just_inserted_shreds,
+                leader_schedule_cache,
                 reed_solomon_cache,
             );
 
@@ -1036,12 +1045,6 @@ impl Blockstore {
             let recovered_shreds: Vec<_> = recovered_shreds
                 .into_iter()
                 .filter_map(|shred| {
-                    let leader =
-                        leader_schedule_cache.slot_leader_at(shred.slot(), /*bank=*/ None)?;
-                    if !shred.verify(&leader) {
-                        metrics.num_recovered_failed_sig += 1;
-                        return None;
-                    }
                     // Since the data shreds are fully recovered from the
                     // erasure batch, no need to store coding shreds in
                     // blockstore.

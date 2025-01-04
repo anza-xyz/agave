@@ -30,7 +30,6 @@ pub struct BlockstoreInsertionMetrics {
     pub num_recovered: usize,
     pub num_recovered_blockstore_error: usize,
     pub num_recovered_inserted: usize,
-    pub num_recovered_failed_sig: usize,
     pub num_recovered_failed_invalid: usize,
     pub num_recovered_exists: usize,
     pub num_repaired_data_shreds_exists: usize,
@@ -81,11 +80,6 @@ impl BlockstoreInsertionMetrics {
             (
                 "num_recovered_inserted",
                 self.num_recovered_inserted as i64,
-                i64
-            ),
-            (
-                "num_recovered_failed_sig",
-                self.num_recovered_failed_sig as i64,
                 i64
             ),
             (

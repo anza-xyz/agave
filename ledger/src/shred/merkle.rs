@@ -787,31 +787,34 @@ pub(super) fn recover(
     // Incoming shreds are resigned immediately after signature verification,
     // so we can just grab the retransmitter signature from one of the
     // available shreds and attach it to the recovered shreds.
-    let (common_header, coding_header, chained_merkle_root, retransmitter_signature) = shreds
-        .iter()
-        .find_map(|shred| {
-            let Shred::ShredCode(shred) = shred else {
-                return None;
-            };
-            let chained_merkle_root = shred.chained_merkle_root().ok();
-            let retransmitter_signature = shred.retransmitter_signature().ok();
-            let position = u32::from(shred.coding_header.position);
-            let common_header = ShredCommonHeader {
-                index: shred.common_header.index.checked_sub(position)?,
-                ..shred.common_header
-            };
-            let coding_header = CodingShredHeader {
-                position: 0u16,
-                ..shred.coding_header
-            };
-            Some((
-                common_header,
-                coding_header,
-                chained_merkle_root,
-                retransmitter_signature,
-            ))
-        })
-        .ok_or(TooFewParityShards)?;
+    let (common_header, coding_header, merkle_root, chained_merkle_root, retransmitter_signature) =
+        shreds
+            .iter()
+            .find_map(|shred| {
+                let Shred::ShredCode(shred) = shred else {
+                    return None;
+                };
+                let merkle_root = shred.merkle_root().ok()?;
+                let chained_merkle_root = shred.chained_merkle_root().ok();
+                let retransmitter_signature = shred.retransmitter_signature().ok();
+                let position = u32::from(shred.coding_header.position);
+                let common_header = ShredCommonHeader {
+                    index: shred.common_header.index.checked_sub(position)?,
+                    ..shred.common_header
+                };
+                let coding_header = CodingShredHeader {
+                    position: 0u16,
+                    ..shred.coding_header
+                };
+                Some((
+                    common_header,
+                    coding_header,
+                    merkle_root,
+                    chained_merkle_root,
+                    retransmitter_signature,
+                ))
+            })
+            .ok_or(TooFewParityShards)?;
     debug_assert_matches!(common_header.shred_variant, ShredVariant::MerkleCode { .. });
     let (proof_size, chained, resigned) = match common_header.shred_variant {
         ShredVariant::MerkleCode {
@@ -953,6 +956,9 @@ pub(super) fn recover(
         .map(Shred::merkle_node)
         .collect::<Result<_, _>>()?;
     let tree = make_merkle_tree(nodes);
+    if tree.last() != Some(&merkle_root) {
+        return Err(Error::InvalidMerkleRoot);
+    }
     for (index, (shred, mask)) in shreds.iter_mut().zip(&mask).enumerate() {
         let proof = make_merkle_proof(index, num_shards, &tree).ok_or(Error::InvalidMerkleProof)?;
         if proof.len() != usize::from(proof_size) {
