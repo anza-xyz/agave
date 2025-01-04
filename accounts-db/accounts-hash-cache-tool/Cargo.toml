@@ -11,6 +11,7 @@ edition = { workspace = true }
 
 [dependencies]
 ahash = { workspace = true }
+anyhow = { workspace = true }
 bytemuck = { workspace = true }
 clap = { workspace = true }
 memmap2 = { workspace = true }

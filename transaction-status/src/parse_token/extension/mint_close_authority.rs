@@ -23,7 +23,7 @@ mod test {
     use {
         super::*,
         serde_json::Value,
-        solana_sdk::pubkey::Pubkey,
+        solana_pubkey::Pubkey,
         spl_token_2022::{instruction::*, solana_program::message::Message},
     };
 

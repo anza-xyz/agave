@@ -1,6 +1,5 @@
 use {
     crate::{broadcast_stage::BroadcastStage, retransmit_stage::RetransmitStage},
-    itertools::Itertools,
     lazy_lru::LruCache,
     rand::{seq::SliceRandom, Rng, SeedableRng},
     rand_chacha::ChaChaRng,
@@ -27,7 +26,7 @@ use {
     solana_streamer::socket::SocketAddrSpace,
     std::{
         any::TypeId,
-        cmp::Reverse,
+        cmp::Ordering,
         collections::{HashMap, HashSet},
         iter::repeat_with,
         marker::PhantomData,
@@ -50,6 +49,7 @@ pub enum Error {
     Loopback { leader: Pubkey, shred: ShredId },
 }
 
+#[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 enum NodeId {
     // TVU node obtained through gossip (staked or not).
@@ -285,8 +285,8 @@ fn get_nodes(
         let capacity = if should_dedup_addrs { stakes.len() } else { 0 };
         HashMap::<IpAddr, usize>::with_capacity(capacity)
     };
-    // The local node itself.
-    std::iter::once({
+    let mut nodes: Vec<Node> = std::iter::once({
+        // The local node itself.
         let stake = stakes.get(&self_pubkey).copied().unwrap_or_default();
         let node = NodeId::from(cluster_info.my_contact_info());
         Node { node, stake }
@@ -307,11 +307,9 @@ fn get_nodes(
                 stake,
             }),
     )
-    .sorted_by_key(|node| Reverse((node.stake, *node.pubkey())))
-    // Since sorted_by_key is stable, in case of duplicates, this
-    // will keep nodes with contact-info.
-    .dedup_by(|a, b| a.pubkey() == b.pubkey())
-    .filter_map(|node| {
+    .collect();
+    sort_and_dedup_nodes(&mut nodes);
+    nodes.retain_mut(|node| {
         if !should_dedup_addrs
             || node
                 .contact_info()
@@ -324,18 +322,45 @@ fn get_nodes(
                 })
                 <= Some(MAX_NUM_NODES_PER_IP_ADDRESS)
         {
-            Some(node)
-        } else {
-            // If the node is not staked, drop it entirely. Otherwise, keep the
-            // pubkey for deterministic shuffle, but strip the contact-info so
-            // that no more packets are sent to this node.
-            (node.stake > 0u64).then(|| Node {
+            true
+        } else if node.stake > 0u64 {
+            // Staked node: keep the pubkey for deterministic shuffle, but
+            // strip the contact-info so that no more packets are sent to this
+            // IP address.
+            *node = Node {
                 node: NodeId::from(*node.pubkey()),
                 stake: node.stake,
-            })
+            };
+            true
+        } else {
+            false // Non-staked node: drop it entirely.
         }
-    })
-    .collect()
+    });
+    nodes
+}
+
+// Sorts nodes by highest stakes first and dedups by pubkey.
+fn sort_and_dedup_nodes(nodes: &mut Vec<Node>) {
+    nodes.sort_unstable_by(|a, b| cmp_nodes_stake(b, a));
+    // dedup_by keeps the first of consecutive elements which compare equal.
+    // Because if all else are equal above sort puts NodeId::ContactInfo before
+    // NodeId::Pubkey, this will keep nodes with contact-info.
+    nodes.dedup_by(|a, b| a.pubkey() == b.pubkey());
+}
+
+// Compares nodes by stake and tie breaks by pubkeys.
+// For the same pubkey, NodeId::ContactInfo is considered > NodeId::Pubkey.
+#[inline]
+fn cmp_nodes_stake(a: &Node, b: &Node) -> Ordering {
+    a.stake
+        .cmp(&b.stake)
+        .then_with(|| a.pubkey().cmp(b.pubkey()))
+        .then_with(|| match (&a.node, &b.node) {
+            (NodeId::ContactInfo(_), NodeId::ContactInfo(_)) => Ordering::Equal,
+            (NodeId::ContactInfo(_), NodeId::Pubkey(_)) => Ordering::Greater,
+            (NodeId::Pubkey(_), NodeId::ContactInfo(_)) => Ordering::Less,
+            (NodeId::Pubkey(_), NodeId::Pubkey(_)) => Ordering::Equal,
+        })
 }
 
 fn get_seeded_rng(leader: &Pubkey, shred: &ShredId) -> ChaChaRng {
@@ -609,6 +634,7 @@ pub fn check_feature_activation(feature: &Pubkey, shred_slot: Slot, root_bank: &
 mod tests {
     use {
         super::*,
+        itertools::Itertools,
         std::{fmt::Debug, hash::Hash},
         test_case::test_case,
     };
@@ -869,5 +895,56 @@ mod tests {
                 assert_eq!(get_retransmit_parent(fanout, cache[peer], &nodes), parent);
             }
         }
+    }
+
+    #[test]
+    fn test_sort_and_dedup_nodes() {
+        let mut rng = rand::thread_rng();
+        let pubkeys: Vec<Pubkey> = std::iter::repeat_with(|| Pubkey::from(rng.gen::<[u8; 32]>()))
+            .take(50)
+            .collect();
+        let stakes = std::iter::repeat_with(|| rng.gen_range(0..100u64));
+        let stakes: HashMap<Pubkey, u64> = pubkeys.iter().copied().zip(stakes).collect();
+        let mut nodes: Vec<Node> = std::iter::repeat_with(|| {
+            let pubkey = pubkeys.choose(&mut rng).copied().unwrap();
+            let stake = stakes[&pubkey];
+            let node = ContactInfo::new_localhost(&pubkey, /*wallclock:*/ timestamp());
+            [
+                Node {
+                    node: NodeId::from(node),
+                    stake,
+                },
+                Node {
+                    node: NodeId::from(pubkey),
+                    stake,
+                },
+            ]
+        })
+        .flatten()
+        .take(10_000)
+        .collect();
+        let mut unique_pubkeys: HashSet<Pubkey> = nodes.iter().map(Node::pubkey).copied().collect();
+        nodes.shuffle(&mut rng);
+        sort_and_dedup_nodes(&mut nodes);
+        // Assert that stakes are non-decreasing.
+        for (a, b) in nodes.iter().tuple_windows() {
+            assert!(a.stake >= b.stake);
+        }
+        // Assert that larger pubkey tie-breaks equal stakes.
+        for (a, b) in nodes.iter().tuple_windows() {
+            if a.stake == b.stake {
+                assert!(a.pubkey() > b.pubkey());
+            }
+        }
+        // Assert that NodeId::Pubkey are dropped in favor of
+        // NodeId::ContactInfo.
+        for node in &nodes {
+            assert_matches!(node.node, NodeId::ContactInfo(_));
+        }
+        // Assert that unique pubkeys are preserved.
+        for node in &nodes {
+            assert!(unique_pubkeys.remove(node.pubkey()))
+        }
+        assert!(unique_pubkeys.is_empty());
     }
 }

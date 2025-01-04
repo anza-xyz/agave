@@ -259,14 +259,17 @@ impl<'a> AsRef<[u8]> for SignedData<'a> {
 pub struct ShredId(Slot, /*shred index:*/ u32, ShredType);
 
 impl ShredId {
+    #[inline]
     pub(crate) fn new(slot: Slot, index: u32, shred_type: ShredType) -> ShredId {
         ShredId(slot, index, shred_type)
     }
 
+    #[inline]
     pub fn slot(&self) -> Slot {
         self.0
     }
 
+    #[inline]
     pub(crate) fn unpack(&self) -> (Slot, /*shred index:*/ u32, ShredType) {
         (self.0, self.1, self.2)
     }
@@ -636,6 +639,11 @@ pub mod layout {
     pub fn get_shred_mut(packet: &mut Packet) -> Option<&mut [u8]> {
         let size = get_shred_size(packet)?;
         packet.buffer_mut().get_mut(..size)
+    }
+
+    #[inline]
+    pub fn get_common_header_bytes(shred: &[u8]) -> Option<&[u8]> {
+        shred.get(..SIZE_OF_COMMON_SHRED_HEADER)
     }
 
     pub(crate) fn get_signature(shred: &[u8]) -> Option<Signature> {

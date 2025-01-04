@@ -37,6 +37,7 @@ use {
         fs,
         marker::PhantomData,
         mem,
+        num::NonZeroUsize,
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
@@ -415,13 +416,12 @@ pub(crate) struct Rocks {
 
 impl Rocks {
     pub(crate) fn open(path: PathBuf, options: BlockstoreOptions) -> Result<Rocks> {
-        let access_type = options.access_type.clone();
         let recovery_mode = options.recovery_mode.clone();
 
         fs::create_dir_all(&path)?;
 
         // Use default database options
-        let mut db_options = get_db_options(&access_type);
+        let mut db_options = get_db_options(&options);
         if let Some(recovery_mode) = recovery_mode {
             db_options.set_wal_recovery_mode(recovery_mode.into());
         }
@@ -430,7 +430,7 @@ impl Rocks {
         let column_options = Arc::from(options.column_options);
 
         // Open the database
-        let db = match access_type {
+        let db = match options.access_type {
             AccessType::Primary | AccessType::PrimaryForMaintenance => {
                 DB::open_cf_descriptors(&db_options, &path, cf_descriptors)?
             }
@@ -452,7 +452,7 @@ impl Rocks {
         let rocks = Rocks {
             db,
             path,
-            access_type,
+            access_type: options.access_type,
             oldest_slot,
             column_options,
             write_batch_perf_status: PerfSamplingStatus::default(),
@@ -1991,28 +1991,39 @@ fn process_cf_options_advanced<C: 'static + Column + ColumnName>(
     }
 }
 
-fn get_db_options(access_type: &AccessType) -> Options {
+fn get_db_options(blockstore_options: &BlockstoreOptions) -> Options {
     let mut options = Options::default();
 
     // Create missing items to support a clean start
     options.create_if_missing(true);
     options.create_missing_column_families(true);
 
-    // Per the docs, a good value for this is the number of cores on the machine
-    options.increase_parallelism(num_cpus::get() as i32);
-
+    // rocksdb builds two threadpools: low and high priority. The low priority
+    // pool is used for compactions whereas the high priority pool is used for
+    // memtable flushes. Separate pools are created so that compactions are
+    // unable to stall memtable flushes (which could stall memtable writes).
     let mut env = rocksdb::Env::new().unwrap();
-    // While a compaction is ongoing, all the background threads
-    // could be used by the compaction. This can stall writes which
-    // need to flush the memtable. Add some high-priority background threads
-    // which can service these writes.
-    env.set_high_priority_background_threads(4);
+    env.set_low_priority_background_threads(
+        blockstore_options.num_rocksdb_compaction_threads.get() as i32,
+    );
+    env.set_high_priority_background_threads(
+        blockstore_options.num_rocksdb_flush_threads.get() as i32
+    );
     options.set_env(&env);
+    // rocksdb will try to scale threadpool sizes automatically based on the
+    // value set for max_background_jobs. The automatic scaling can increase,
+    // but not decrease the number of threads in each pool. But, we already
+    // set desired threadpool sizes with set_low_priority_background_threads()
+    // and set_high_priority_background_threads(). So, set max_background_jobs
+    // to a small number (2) so that rocksdb will leave the previously
+    // configured threadpool sizes as-is. The value (2) would result in one
+    // low priority and one high priority thread which is the minimum for each.
+    options.set_max_background_jobs(2);
 
     // Set max total wal size to 4G.
     options.set_max_total_wal_size(4 * 1024 * 1024 * 1024);
 
-    if should_disable_auto_compactions(access_type) {
+    if should_disable_auto_compactions(&blockstore_options.access_type) {
         options.set_disable_auto_compactions(true);
     }
 
@@ -2022,6 +2033,18 @@ fn get_db_options(access_type: &AccessType) -> Options {
     options.set_max_open_files(-1);
 
     options
+}
+
+/// The default number of threads to use for rocksdb compaction in the rocksdb
+/// low priority threadpool
+pub fn default_num_compaction_threads() -> NonZeroUsize {
+    NonZeroUsize::new(num_cpus::get()).expect("thread count is non-zero")
+}
+
+/// The default number of threads to use for rocksdb memtable flushes in the
+/// rocksdb high priority threadpool
+pub fn default_num_flush_threads() -> NonZeroUsize {
+    NonZeroUsize::new((num_cpus::get() / 4).max(1)).expect("thread count is non-zero")
 }
 
 // Returns whether automatic compactions should be disabled for the entire

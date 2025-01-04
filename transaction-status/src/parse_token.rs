@@ -1782,7 +1782,7 @@ mod test {
     }
 
     fn test_token_ix_not_enough_keys(program_id: &Pubkey) {
-        let keys: Vec<Pubkey> = repeat_with(solana_sdk::pubkey::new_rand).take(10).collect();
+        let keys: Vec<Pubkey> = repeat_with(solana_pubkey::new_rand).take(10).collect();
 
         // Test InitializeMint variations
         let initialize_mint_ix =

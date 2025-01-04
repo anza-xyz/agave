@@ -23,7 +23,6 @@ use {
             AccountIndex, AccountSecondaryIndexes, AccountSecondaryIndexesIncludeExclude,
             AccountsIndexConfig, IndexLimitMb, ScanFilter,
         },
-        partitioned_rewards::TestPartitionedEpochRewards,
         utils::{
             create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories,
             create_and_canonicalize_directory,
@@ -907,6 +906,8 @@ pub fn main() {
         rayon_global_threads,
         replay_forks_threads,
         replay_transactions_threads,
+        rocksdb_compaction_threads,
+        rocksdb_flush_threads,
         tvu_receive_threads,
         tvu_sigverify_threads,
     } = cli::thread_args::parse_num_threads_args(&matches);
@@ -1055,6 +1056,8 @@ pub fn main() {
         enforce_ulimit_nofile: true,
         // The validator needs primary (read/write)
         access_type: AccessType::Primary,
+        num_rocksdb_compaction_threads: rocksdb_compaction_threads,
+        num_rocksdb_flush_threads: rocksdb_flush_threads,
     };
 
     let accounts_hash_cache_path = matches
@@ -1229,15 +1232,6 @@ pub fn main() {
         accounts_index_config.bins = Some(bins);
     }
 
-    let test_partitioned_epoch_rewards =
-        if matches.is_present("partitioned_epoch_rewards_compare_calculation") {
-            TestPartitionedEpochRewards::CompareResults
-        } else if matches.is_present("partitioned_epoch_rewards_force_enable_single_slot") {
-            TestPartitionedEpochRewards::ForcePartitionedEpochRewardsInOneBlock
-        } else {
-            TestPartitionedEpochRewards::None
-        };
-
     accounts_index_config.index_limit_mb = if matches.is_present("disable_accounts_disk_index") {
         IndexLimitMb::InMemOnly
     } else {
@@ -1362,7 +1356,6 @@ pub fn main() {
         .ok(),
         exhaustively_verify_refcounts: matches.is_present("accounts_db_verify_refcounts"),
         create_ancient_storage,
-        test_partitioned_epoch_rewards,
         test_skip_rewrites_but_include_in_bank_hash: matches
             .is_present("accounts_db_test_skip_rewrites"),
         storage_access,
@@ -1371,6 +1364,8 @@ pub fn main() {
             .is_present("accounts_db_experimental_accumulator_hash"),
         verify_experimental_accumulator_hash: matches
             .is_present("accounts_db_verify_experimental_accumulator_hash"),
+        snapshots_use_experimental_accumulator_hash: matches
+            .is_present("accounts_db_snapshots_use_experimental_accumulator_hash"),
         num_clean_threads: Some(accounts_db_clean_threads),
         num_foreground_threads: Some(accounts_db_foreground_threads),
         num_hash_threads: Some(accounts_db_hash_threads),

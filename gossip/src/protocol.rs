@@ -1,6 +1,5 @@
 use {
     crate::{
-        cluster_info_metrics::GossipStats,
         crds_data::MAX_WALLCLOCK,
         crds_gossip_pull::CrdsFilter,
         crds_value::CrdsValue,
@@ -86,68 +85,16 @@ impl Protocol {
             .unwrap()
     }
 
-    pub(crate) fn par_verify(self, stats: &GossipStats) -> Option<Self> {
+    // Returns true if all signatures verify.
+    #[must_use]
+    pub(crate) fn par_verify(&self) -> bool {
         match self {
-            Protocol::PullRequest(_, ref caller) => {
-                if caller.verify() {
-                    Some(self)
-                } else {
-                    stats.gossip_pull_request_verify_fail.add_relaxed(1);
-                    None
-                }
-            }
-            Protocol::PullResponse(from, data) => {
-                let size = data.len();
-                let data: Vec<_> = data.into_par_iter().filter(Signable::verify).collect();
-                if size != data.len() {
-                    stats
-                        .gossip_pull_response_verify_fail
-                        .add_relaxed((size - data.len()) as u64);
-                }
-                if data.is_empty() {
-                    None
-                } else {
-                    Some(Protocol::PullResponse(from, data))
-                }
-            }
-            Protocol::PushMessage(from, data) => {
-                let size = data.len();
-                let data: Vec<_> = data.into_par_iter().filter(Signable::verify).collect();
-                if size != data.len() {
-                    stats
-                        .gossip_push_msg_verify_fail
-                        .add_relaxed((size - data.len()) as u64);
-                }
-                if data.is_empty() {
-                    None
-                } else {
-                    Some(Protocol::PushMessage(from, data))
-                }
-            }
-            Protocol::PruneMessage(_, ref data) => {
-                if data.verify() {
-                    Some(self)
-                } else {
-                    stats.gossip_prune_msg_verify_fail.add_relaxed(1);
-                    None
-                }
-            }
-            Protocol::PingMessage(ref ping) => {
-                if ping.verify() {
-                    Some(self)
-                } else {
-                    stats.gossip_ping_msg_verify_fail.add_relaxed(1);
-                    None
-                }
-            }
-            Protocol::PongMessage(ref pong) => {
-                if pong.verify() {
-                    Some(self)
-                } else {
-                    stats.gossip_pong_msg_verify_fail.add_relaxed(1);
-                    None
-                }
-            }
+            Self::PullRequest(_, caller) => caller.verify(),
+            Self::PullResponse(_, data) => data.par_iter().all(CrdsValue::verify),
+            Self::PushMessage(_, data) => data.par_iter().all(CrdsValue::verify),
+            Self::PruneMessage(_, data) => data.verify(),
+            Self::PingMessage(ping) => ping.verify(),
+            Self::PongMessage(pong) => pong.verify(),
         }
     }
 }

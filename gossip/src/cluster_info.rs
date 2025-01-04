@@ -2316,15 +2316,16 @@ impl ClusterInfo {
                     .add_relaxed(excess_count as u64);
             }
         }
-        let verify_packet = |packet: Packet| {
+        fn verify_packet(packet: &Packet) -> Option<(SocketAddr, Protocol)> {
             let protocol: Protocol = packet.deserialize_slice(..).ok()?;
             protocol.sanitize().ok()?;
-            let protocol = protocol.par_verify(&self.stats)?;
-            Some((packet.meta().socket_addr(), protocol))
-        };
+            protocol
+                .par_verify()
+                .then(|| (packet.meta().socket_addr(), protocol))
+        }
         let packets: Vec<_> = {
             let _st = ScopedTimer::from(&self.stats.verify_gossip_packets_time);
-            thread_pool.install(|| packets.into_par_iter().filter_map(verify_packet).collect())
+            thread_pool.install(|| packets.par_iter().filter_map(verify_packet).collect())
         };
         self.stats
             .packets_received_count

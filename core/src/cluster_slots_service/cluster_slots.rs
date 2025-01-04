@@ -279,8 +279,8 @@ mod tests {
     fn test_best_peer_2() {
         let cs = ClusterSlots::default();
         let mut map = HashMap::new();
-        let k1 = solana_sdk::pubkey::new_rand();
-        let k2 = solana_sdk::pubkey::new_rand();
+        let k1 = solana_pubkey::new_rand();
+        let k2 = solana_pubkey::new_rand();
         map.insert(k1, u64::MAX / 2);
         map.insert(k2, 0);
         cs.cluster_slots
@@ -296,8 +296,8 @@ mod tests {
     fn test_best_peer_3() {
         let cs = ClusterSlots::default();
         let mut map = HashMap::new();
-        let k1 = solana_sdk::pubkey::new_rand();
-        let k2 = solana_sdk::pubkey::new_rand();
+        let k1 = solana_pubkey::new_rand();
+        let k2 = solana_pubkey::new_rand();
         map.insert(k2, 0);
         cs.cluster_slots
             .write()
@@ -324,7 +324,7 @@ mod tests {
         let cs = ClusterSlots::default();
         let contact_infos: Vec<_> = std::iter::repeat_with(|| {
             ContactInfo::new(
-                solana_sdk::pubkey::new_rand(),
+                solana_pubkey::new_rand(),
                 0, // wallclock
                 0, // shred_version
             )

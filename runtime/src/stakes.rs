@@ -2,16 +2,13 @@
 //! node stakes
 use {
     crate::{stake_account, stake_history::StakeHistory},
-    dashmap::DashMap,
     im::HashMap as ImHashMap,
     log::error,
     num_derive::ToPrimitive,
-    num_traits::ToPrimitive,
     rayon::{prelude::*, ThreadPool},
-    solana_accounts_db::stake_rewards::StakeReward,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount},
-        clock::{Epoch, Slot},
+        clock::Epoch,
         pubkey::Pubkey,
         stake::state::{Delegation, StakeActivationStatus},
         vote::state::VoteStateVersions,
@@ -149,43 +146,6 @@ impl StakesCache {
     ) {
         let mut stakes = self.0.write().unwrap();
         stakes.activate_epoch(next_epoch, thread_pool, new_rate_activation_epoch)
-    }
-
-    pub(crate) fn update_stake_accounts(
-        &self,
-        thread_pool: &ThreadPool,
-        stake_rewards: &[StakeReward],
-        new_rate_activation_epoch: Option<Epoch>,
-    ) {
-        self.0.write().unwrap().update_stake_accounts(
-            thread_pool,
-            stake_rewards,
-            new_rate_activation_epoch,
-        )
-    }
-
-    pub(crate) fn handle_invalid_keys(
-        &self,
-        invalid_vote_keys: DashMap<Pubkey, InvalidCacheEntryReason>,
-        current_slot: Slot,
-    ) {
-        if invalid_vote_keys.is_empty() {
-            return;
-        }
-
-        // Prune invalid stake delegations and vote accounts that were
-        // not properly evicted in normal operation.
-        let mut stakes = self.0.write().unwrap();
-
-        for (vote_pubkey, reason) in invalid_vote_keys {
-            stakes.remove_vote_account(&vote_pubkey);
-            datapoint_warn!(
-                "bank-stake_delegation_accounts-invalid-account",
-                ("slot", current_slot as i64, i64),
-                ("vote-address", format!("{vote_pubkey:?}"), String),
-                ("reason", reason.to_i64().unwrap_or_default(), i64),
-            );
-        }
     }
 }
 
@@ -464,39 +424,6 @@ impl Stakes<StakeAccount> {
         }
     }
 
-    fn update_stake_accounts(
-        &mut self,
-        thread_pool: &ThreadPool,
-        stake_rewards: &[StakeReward],
-        new_rate_activation_epoch: Option<Epoch>,
-    ) {
-        let stake_delegations: Vec<_> = thread_pool.install(|| {
-            stake_rewards
-                .into_par_iter()
-                .filter_map(|stake_reward| {
-                    let stake_account = StakeAccount::try_from(stake_reward.stake_account.clone());
-                    Some((stake_reward.stake_pubkey, stake_account.ok()?))
-                })
-                .collect()
-        });
-        self.stake_delegations = std::mem::take(&mut self.stake_delegations)
-            .into_iter()
-            .chain(stake_delegations)
-            .collect::<HashMap<Pubkey, StakeAccount>>()
-            .into_iter()
-            .filter(|(_, account)| account.lamports() != 0u64)
-            .collect();
-        let stake_delegations: Vec<_> = self.stake_delegations.values().collect();
-        self.vote_accounts = refresh_vote_accounts(
-            thread_pool,
-            self.epoch,
-            &self.vote_accounts,
-            &stake_delegations,
-            &self.stake_history,
-            new_rate_activation_epoch,
-        );
-    }
-
     pub(crate) fn stake_delegations(&self) -> &ImHashMap<Pubkey, StakeAccount> {
         &self.stake_delegations
     }
@@ -686,10 +613,10 @@ pub(crate) mod tests {
     pub(crate) fn create_staked_node_accounts(
         stake: u64,
     ) -> ((Pubkey, AccountSharedData), (Pubkey, AccountSharedData)) {
-        let vote_pubkey = solana_sdk::pubkey::new_rand();
+        let vote_pubkey = solana_pubkey::new_rand();
         let vote_account =
-            vote_state::create_account(&vote_pubkey, &solana_sdk::pubkey::new_rand(), 0, 1);
-        let stake_pubkey = solana_sdk::pubkey::new_rand();
+            vote_state::create_account(&vote_pubkey, &solana_pubkey::new_rand(), 0, 1);
+        let stake_pubkey = solana_pubkey::new_rand();
         (
             (vote_pubkey, vote_account),
             (
@@ -708,7 +635,7 @@ pub(crate) mod tests {
         stake_state::create_account(
             stake_pubkey,
             vote_pubkey,
-            &vote_state::create_account(vote_pubkey, &solana_sdk::pubkey::new_rand(), 0, 1),
+            &vote_state::create_account(vote_pubkey, &solana_pubkey::new_rand(), 0, 1),
             &Rent::free(),
             stake,
         )
@@ -718,9 +645,9 @@ pub(crate) mod tests {
         stake: u64,
         epoch: Epoch,
     ) -> ((Pubkey, AccountSharedData), (Pubkey, AccountSharedData)) {
-        let vote_pubkey = solana_sdk::pubkey::new_rand();
+        let vote_pubkey = solana_pubkey::new_rand();
         let vote_account =
-            vote_state::create_account(&vote_pubkey, &solana_sdk::pubkey::new_rand(), 0, 1);
+            vote_state::create_account(&vote_pubkey, &solana_pubkey::new_rand(), 0, 1);
         (
             (vote_pubkey, vote_account),
             create_warming_stake_account(stake, epoch, &vote_pubkey),
@@ -733,13 +660,13 @@ pub(crate) mod tests {
         epoch: Epoch,
         vote_pubkey: &Pubkey,
     ) -> (Pubkey, AccountSharedData) {
-        let stake_pubkey = solana_sdk::pubkey::new_rand();
+        let stake_pubkey = solana_pubkey::new_rand();
         (
             stake_pubkey,
             stake_state::create_account_with_activation_epoch(
                 &stake_pubkey,
                 vote_pubkey,
-                &vote_state::create_account(vote_pubkey, &solana_sdk::pubkey::new_rand(), 0, 1),
+                &vote_state::create_account(vote_pubkey, &solana_pubkey::new_rand(), 0, 1),
                 &Rent::free(),
                 stake,
                 epoch,
@@ -785,7 +712,7 @@ pub(crate) mod tests {
 
             // activate more
             let mut stake_account =
-                create_stake_account(42, &vote_pubkey, &solana_sdk::pubkey::new_rand());
+                create_stake_account(42, &vote_pubkey, &solana_pubkey::new_rand());
             stakes_cache.check_and_store(&stake_pubkey, &stake_account, None);
             let stake = stake_state::stake_from(&stake_account).unwrap();
             {
@@ -969,7 +896,7 @@ pub(crate) mod tests {
         let ((vote_pubkey, vote_account), (stake_pubkey, stake_account)) =
             create_staked_node_accounts(10);
 
-        let stake_pubkey2 = solana_sdk::pubkey::new_rand();
+        let stake_pubkey2 = solana_pubkey::new_rand();
         let stake_account2 = create_stake_account(10, &vote_pubkey, &stake_pubkey2);
 
         stakes_cache.check_and_store(&vote_pubkey, &vote_account, None);

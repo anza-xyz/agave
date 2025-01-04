@@ -18,7 +18,6 @@ use {
         ThreadPool,
     },
     solana_measure::measure::Measure,
-    solana_nohash_hasher::IntSet,
     solana_sdk::{
         account::ReadableAccount,
         clock::{BankId, Slot},
@@ -441,7 +440,6 @@ pub struct RootsTracker {
     /// Updated every time we add a new root or clean/shrink an append vec into irrelevancy.
     /// Range is approximately the last N slots where N is # slots per epoch.
     pub alive_roots: RollingBitField,
-    uncleaned_roots: IntSet<Slot>,
 }
 
 impl Default for RootsTracker {
@@ -457,7 +455,6 @@ impl RootsTracker {
     pub fn new(max_width: u64) -> Self {
         Self {
             alive_roots: RollingBitField::new(max_width),
-            uncleaned_roots: IntSet::default(),
         }
     }
 
@@ -1735,7 +1732,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             .map(|_| Vec::with_capacity(expected_items_per_bin))
             .collect::<Vec<_>>();
         let mut count = 0;
-        let mut dirty_pubkeys = items
+        let dirty_pubkeys = items
             .filter_map(|(pubkey, account_info)| {
                 let pubkey_bin = self.bin_calculator.bin_from_pubkey(&pubkey);
                 // this value is equivalent to what update() below would have created if we inserted a new item
@@ -1775,6 +1772,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             } else {
                 // not using disk buckets, so just write to in-mem
                 // this is no longer the default case
+                let mut duplicates_from_in_memory = vec![];
                 items
                     .into_iter()
                     .for_each(|(pubkey, (slot, account_info))| {
@@ -1789,11 +1787,17 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                         {
                             InsertNewEntryResults::DidNotExist => {}
                             InsertNewEntryResults::ExistedNewEntryZeroLamports => {}
-                            InsertNewEntryResults::ExistedNewEntryNonZeroLamports => {
-                                dirty_pubkeys.push(pubkey);
+                            InsertNewEntryResults::ExistedNewEntryNonZeroLamports(other_slot) => {
+                                if let Some(other_slot) = other_slot {
+                                    duplicates_from_in_memory.push((other_slot, pubkey));
+                                }
+                                duplicates_from_in_memory.push((slot, pubkey));
                             }
                         }
                     });
+
+                r_account_maps
+                    .startup_update_duplicates_from_in_memory_only(duplicates_from_in_memory);
             }
             insert_time.stop();
             insertion_time.fetch_add(insert_time.as_us(), Ordering::Relaxed);
@@ -1818,7 +1822,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             .into_par_iter()
             .map(|pubkey_bin| {
                 let r_account_maps = &self.account_maps[pubkey_bin];
-                r_account_maps.populate_and_retrieve_duplicate_keys_from_startup()
+                if self.storage.storage.is_disk_index_enabled() {
+                    r_account_maps.populate_and_retrieve_duplicate_keys_from_startup()
+                } else {
+                    r_account_maps.startup_take_duplicates_from_in_memory_only()
+                }
             })
             .for_each(f);
     }
@@ -2013,24 +2021,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         w_roots_tracker.alive_roots.insert(slot);
     }
 
-    pub fn add_uncleaned_roots<I>(&self, roots: I)
-    where
-        I: IntoIterator<Item = Slot>,
-    {
-        let mut w_roots_tracker = self.roots_tracker.write().unwrap();
-        w_roots_tracker.uncleaned_roots.extend(roots);
-    }
-
-    /// Removes `root` from `uncleaned_roots` and returns whether it was previously present
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn remove_uncleaned_root(&self, root: Slot) -> bool {
-        self.roots_tracker
-            .write()
-            .unwrap()
-            .uncleaned_roots
-            .remove(&root)
-    }
-
     pub fn max_root_inclusive(&self) -> Slot {
         self.roots_tracker
             .read()
@@ -2044,12 +2034,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     /// return true if slot was a root
     pub fn clean_dead_slot(&self, slot: Slot) -> bool {
         let mut w_roots_tracker = self.roots_tracker.write().unwrap();
-        let removed_from_unclean_roots = w_roots_tracker.uncleaned_roots.remove(&slot);
         if !w_roots_tracker.alive_roots.remove(&slot) {
-            if removed_from_unclean_roots {
-                error!("clean_dead_slot-removed_from_unclean_roots: {}", slot);
-                inc_new_counter_error!("clean_dead_slot-removed_from_unclean_roots", 1, 1);
-            }
             false
         } else {
             drop(w_roots_tracker);
@@ -2061,23 +2046,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     pub(crate) fn update_roots_stats(&self, stats: &mut AccountsIndexRootsStats) {
         let roots_tracker = self.roots_tracker.read().unwrap();
         stats.roots_len = Some(roots_tracker.alive_roots.len());
-        stats.uncleaned_roots_len = Some(roots_tracker.uncleaned_roots.len());
         stats.roots_range = Some(roots_tracker.alive_roots.range_width());
     }
 
     pub fn min_alive_root(&self) -> Option<Slot> {
         self.roots_tracker.read().unwrap().min_alive_root()
-    }
-
-    pub(crate) fn reset_uncleaned_roots(&self, max_clean_root: Option<Slot>) {
-        let mut w_roots_tracker = self.roots_tracker.write().unwrap();
-        w_roots_tracker.uncleaned_roots.retain(|root| {
-            let is_cleaned = max_clean_root
-                .map(|max_clean_root| *root <= max_clean_root)
-                .unwrap_or(true);
-            // Only keep the slots that have yet to be cleaned
-            !is_cleaned
-        });
     }
 
     pub fn num_alive_roots(&self) -> usize {
@@ -2087,14 +2060,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     pub fn all_alive_roots(&self) -> Vec<Slot> {
         let tracker = self.roots_tracker.read().unwrap();
         tracker.alive_roots.get_all()
-    }
-
-    pub fn clone_uncleaned_roots(&self) -> IntSet<Slot> {
-        self.roots_tracker.read().unwrap().uncleaned_roots.clone()
-    }
-
-    pub fn uncleaned_roots_len(&self) -> usize {
-        self.roots_tracker.read().unwrap().uncleaned_roots.len()
     }
 
     // These functions/fields are only usable from a dev context (i.e. tests and benches)
@@ -2201,7 +2166,7 @@ pub mod tests {
 
     #[test]
     fn test_get_empty() {
-        let key = solana_sdk::pubkey::new_rand();
+        let key = solana_pubkey::new_rand();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         let ancestors = Ancestors::default();
         let key = &key;
@@ -2318,7 +2283,7 @@ pub mod tests {
 
     #[test]
     fn test_insert_no_ancestors() {
-        let key = solana_sdk::pubkey::new_rand();
+        let key = solana_pubkey::new_rand();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         let mut gc = Vec::new();
         index.upsert(
@@ -2365,7 +2330,7 @@ pub mod tests {
 
     #[test]
     fn test_insert_duplicates() {
-        let key = solana_sdk::pubkey::new_rand();
+        let key = solana_pubkey::new_rand();
         let pubkey = &key;
         let slot = 0;
         let mut ancestors = Ancestors::default();
@@ -2389,7 +2354,7 @@ pub mod tests {
 
     #[test]
     fn test_insert_new_with_lock_no_ancestors() {
-        let key = solana_sdk::pubkey::new_rand();
+        let key = solana_pubkey::new_rand();
         let pubkey = &key;
         let slot = 0;
 
@@ -2529,8 +2494,8 @@ pub mod tests {
     #[test]
     fn test_batch_insert() {
         let slot0 = 0;
-        let key0 = solana_sdk::pubkey::new_rand();
-        let key1 = solana_sdk::pubkey::new_rand();
+        let key0 = solana_pubkey::new_rand();
+        let key1 = solana_pubkey::new_rand();
 
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         let account_infos = [true, false];
@@ -2568,7 +2533,7 @@ pub mod tests {
 
         let slot0 = 0;
         let slot1 = 1;
-        let key = solana_sdk::pubkey::new_rand();
+        let key = solana_pubkey::new_rand();
 
         let mut config = ACCOUNTS_INDEX_CONFIG_FOR_TESTING;
         config.index_limit_mb = if use_disk {
@@ -2690,7 +2655,7 @@ pub mod tests {
 
     #[test]
     fn test_insert_with_lock_no_ancestors() {
-        let key = solana_sdk::pubkey::new_rand();
+        let key = solana_pubkey::new_rand();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         let slot = 0;
         let account_info = true;
@@ -2736,7 +2701,7 @@ pub mod tests {
 
     #[test]
     fn test_insert_wrong_ancestors() {
-        let key = solana_sdk::pubkey::new_rand();
+        let key = solana_pubkey::new_rand();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         let mut gc = Vec::new();
         index.upsert(
@@ -2767,7 +2732,7 @@ pub mod tests {
     fn test_insert_ignore_reclaims() {
         {
             // non-cached
-            let key = solana_sdk::pubkey::new_rand();
+            let key = solana_pubkey::new_rand();
             let index = AccountsIndex::<u64, u64>::default_for_tests();
             let mut reclaims = Vec::new();
             let slot = 0;
@@ -2813,7 +2778,7 @@ pub mod tests {
         }
         {
             // cached
-            let key = solana_sdk::pubkey::new_rand();
+            let key = solana_pubkey::new_rand();
             let index = AccountsIndex::<AccountInfoTest, AccountInfoTest>::default_for_tests();
             let mut reclaims = Vec::new();
             let slot = 0;
@@ -2861,7 +2826,7 @@ pub mod tests {
 
     #[test]
     fn test_insert_with_ancestors() {
-        let key = solana_sdk::pubkey::new_rand();
+        let key = solana_pubkey::new_rand();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         let mut gc = Vec::new();
         index.upsert(
@@ -2912,7 +2877,7 @@ pub mod tests {
         let root_slot = 0;
 
         let mut pubkeys: Vec<Pubkey> = std::iter::repeat_with(|| {
-            let new_pubkey = solana_sdk::pubkey::new_rand();
+            let new_pubkey = solana_pubkey::new_rand();
             index.upsert(
                 root_slot,
                 root_slot,
@@ -3076,7 +3041,7 @@ pub mod tests {
         index.upsert(
             0,
             0,
-            &solana_sdk::pubkey::new_rand(),
+            &solana_pubkey::new_rand(),
             &AccountSharedData::default(),
             &AccountSecondaryIndexes::default(),
             true,
@@ -3096,7 +3061,7 @@ pub mod tests {
 
     #[test]
     fn test_insert_with_root() {
-        let key = solana_sdk::pubkey::new_rand();
+        let key = solana_pubkey::new_rand();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         let mut gc = Vec::new();
         index.upsert(
@@ -3142,36 +3107,8 @@ pub mod tests {
     }
 
     #[test]
-    fn test_clean_and_unclean_slot() {
-        let index = AccountsIndex::<bool, bool>::default_for_tests();
-        assert_eq!(0, index.roots_tracker.read().unwrap().uncleaned_roots.len());
-        index.add_root(0);
-        index.add_root(1);
-        index.add_uncleaned_roots([0, 1]);
-        assert_eq!(2, index.roots_tracker.read().unwrap().uncleaned_roots.len());
-
-        index.reset_uncleaned_roots(None);
-        assert_eq!(2, index.roots_tracker.read().unwrap().alive_roots.len());
-        assert_eq!(0, index.roots_tracker.read().unwrap().uncleaned_roots.len());
-
-        index.add_root(2);
-        index.add_root(3);
-        index.add_uncleaned_roots([2, 3]);
-        assert_eq!(4, index.roots_tracker.read().unwrap().alive_roots.len());
-        assert_eq!(2, index.roots_tracker.read().unwrap().uncleaned_roots.len());
-
-        index.clean_dead_slot(1);
-        assert_eq!(3, index.roots_tracker.read().unwrap().alive_roots.len());
-        assert_eq!(2, index.roots_tracker.read().unwrap().uncleaned_roots.len());
-
-        index.clean_dead_slot(2);
-        assert_eq!(2, index.roots_tracker.read().unwrap().alive_roots.len());
-        assert_eq!(1, index.roots_tracker.read().unwrap().uncleaned_roots.len());
-    }
-
-    #[test]
     fn test_update_last_wins() {
-        let key = solana_sdk::pubkey::new_rand();
+        let key = solana_pubkey::new_rand();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         let ancestors = vec![(0, 0)].into_iter().collect();
         let mut gc = Vec::new();
@@ -3228,7 +3165,7 @@ pub mod tests {
     #[test]
     fn test_update_new_slot() {
         solana_logger::setup();
-        let key = solana_sdk::pubkey::new_rand();
+        let key = solana_pubkey::new_rand();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         let ancestors = vec![(0, 0)].into_iter().collect();
         let mut gc = Vec::new();
@@ -3283,7 +3220,7 @@ pub mod tests {
 
     #[test]
     fn test_update_gc_purged_slot() {
-        let key = solana_sdk::pubkey::new_rand();
+        let key = solana_pubkey::new_rand();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         let mut gc = Vec::new();
         index.upsert(
@@ -3375,7 +3312,7 @@ pub mod tests {
 
     #[test]
     fn test_purge() {
-        let key = solana_sdk::pubkey::new_rand();
+        let key = solana_pubkey::new_rand();
         let index = AccountsIndex::<u64, u64>::default_for_tests();
         let mut gc = Vec::new();
         assert_eq!(0, account_maps_stats_len(&index));
@@ -4065,30 +4002,6 @@ pub mod tests {
             assert!(gc.is_empty());
         }
 
-        pub fn clear_uncleaned_roots(&self, max_clean_root: Option<Slot>) -> HashSet<Slot> {
-            let mut cleaned_roots = HashSet::new();
-            let mut w_roots_tracker = self.roots_tracker.write().unwrap();
-            w_roots_tracker.uncleaned_roots.retain(|root| {
-                let is_cleaned = max_clean_root
-                    .map(|max_clean_root| *root <= max_clean_root)
-                    .unwrap_or(true);
-                if is_cleaned {
-                    cleaned_roots.insert(*root);
-                }
-                // Only keep the slots that have yet to be cleaned
-                !is_cleaned
-            });
-            cleaned_roots
-        }
-
-        pub(crate) fn is_uncleaned_root(&self, slot: Slot) -> bool {
-            self.roots_tracker
-                .read()
-                .unwrap()
-                .uncleaned_roots
-                .contains(&slot)
-        }
-
         pub fn clear_roots(&self) {
             self.roots_tracker.write().unwrap().alive_roots.clear()
         }
@@ -4097,7 +4010,7 @@ pub mod tests {
     #[test]
     fn test_unref() {
         let value = true;
-        let key = solana_sdk::pubkey::new_rand();
+        let key = solana_pubkey::new_rand();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         let slot1 = 1;
 
@@ -4129,8 +4042,8 @@ pub mod tests {
     fn test_clean_rooted_entries_return() {
         solana_logger::setup();
         let value = true;
-        let key = solana_sdk::pubkey::new_rand();
-        let key_unknown = solana_sdk::pubkey::new_rand();
+        let key = solana_pubkey::new_rand();
+        let key_unknown = solana_pubkey::new_rand();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         let slot1 = 1;
 
@@ -4227,7 +4140,7 @@ pub mod tests {
 
     #[test]
     fn test_handle_dead_keys_return() {
-        let key = solana_sdk::pubkey::new_rand();
+        let key = solana_pubkey::new_rand();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
 
         assert_eq!(

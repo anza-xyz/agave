@@ -1,5 +1,6 @@
 use {
     ahash::{HashMap, HashSet, RandomState},
+    anyhow::{anyhow, Context as _, Result},
     bytemuck::Zeroable as _,
     clap::{
         crate_description, crate_name, value_t_or_exit, values_t_or_exit, App, AppSettings, Arg,
@@ -38,7 +39,7 @@ const CMD_DIFF_STATE: &str = "state";
 
 const DEFAULT_BINS: &str = "8192";
 
-fn main() {
+fn main() -> Result<()> {
     let matches = App::new(crate_name!())
         .about(crate_description!())
         .version(solana_version::version!())
@@ -216,25 +217,16 @@ fn main() {
         }
         _ => unreachable!(),
     }
-    .unwrap_or_else(|err| {
-        eprintln!("Error: '{command_str}' failed: {err}");
-        std::process::exit(1);
-    });
+    .with_context(|| format!("'{command_str}' failed"))
 }
 
-fn cmd_inspect(
-    _app_matches: &ArgMatches<'_>,
-    subcommand_matches: &ArgMatches<'_>,
-) -> Result<(), String> {
+fn cmd_inspect(_app_matches: &ArgMatches<'_>, subcommand_matches: &ArgMatches<'_>) -> Result<()> {
     let force = subcommand_matches.is_present("force");
     let path = value_t_or_exit!(subcommand_matches, "path", String);
     do_inspect(path, force)
 }
 
-fn cmd_search(
-    _app_matches: &ArgMatches<'_>,
-    subcommand_matches: &ArgMatches<'_>,
-) -> Result<(), String> {
+fn cmd_search(_app_matches: &ArgMatches<'_>, subcommand_matches: &ArgMatches<'_>) -> Result<()> {
     let path = value_t_or_exit!(subcommand_matches, "path", String);
     let addresses = values_t_or_exit!(subcommand_matches, "addresses", Pubkey);
     let addresses = HashSet::from_iter(addresses);
@@ -244,16 +236,13 @@ fn cmd_search(
 fn cmd_diff_files(
     _app_matches: &ArgMatches<'_>,
     subcommand_matches: &ArgMatches<'_>,
-) -> Result<(), String> {
+) -> Result<()> {
     let path1 = value_t_or_exit!(subcommand_matches, "path1", String);
     let path2 = value_t_or_exit!(subcommand_matches, "path2", String);
     do_diff_files(path1, path2)
 }
 
-fn cmd_diff_dirs(
-    _app_matches: &ArgMatches<'_>,
-    subcommand_matches: &ArgMatches<'_>,
-) -> Result<(), String> {
+fn cmd_diff_dirs(_app_matches: &ArgMatches<'_>, subcommand_matches: &ArgMatches<'_>) -> Result<()> {
     let path1 = value_t_or_exit!(subcommand_matches, "path1", String);
     let path2 = value_t_or_exit!(subcommand_matches, "path2", String);
     let then_diff_files = subcommand_matches.is_present("then_diff_files");
@@ -263,7 +252,7 @@ fn cmd_diff_dirs(
 fn cmd_diff_state(
     _app_matches: &ArgMatches<'_>,
     subcommand_matches: &ArgMatches<'_>,
-) -> Result<(), String> {
+) -> Result<()> {
     let path1 = value_t_or_exit!(subcommand_matches, "path1", String);
     let path2 = value_t_or_exit!(subcommand_matches, "path2", String);
     let num_bins = value_t_or_exit!(subcommand_matches, "bins", usize);
@@ -283,10 +272,10 @@ fn cmd_diff_state(
     do_diff_state(path1, path2, num_bins, bins_of_interest)
 }
 
-fn do_inspect(file: impl AsRef<Path>, force: bool) -> Result<(), String> {
-    let (reader, header) = open_file(&file, force).map_err(|err| {
+fn do_inspect(file: impl AsRef<Path>, force: bool) -> Result<()> {
+    let (reader, header) = open_file(&file, force).with_context(|| {
         format!(
-            "failed to open accounts hash cache file '{}': {err}",
+            "failed to open accounts hash cache file '{}'",
             file.as_ref().display(),
         )
     })?;
@@ -307,11 +296,11 @@ fn do_inspect(file: impl AsRef<Path>, force: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn do_search(dir: impl AsRef<Path>, addresses: HashSet<Pubkey>) -> Result<(), String> {
+fn do_search(dir: impl AsRef<Path>, addresses: HashSet<Pubkey>) -> Result<()> {
     let _timer = ElapsedOnDrop::new(format!("searching '{}' took ", dir.as_ref().display()));
-    let files = get_cache_files_in(&dir).map_err(|err| {
+    let files = get_cache_files_in(&dir).with_context(|| {
         format!(
-            "failed to get cache files in dir '{}': {err}",
+            "failed to get cache files in directory '{}'",
             dir.as_ref().display(),
         )
     })?;
@@ -342,17 +331,15 @@ fn do_search(dir: impl AsRef<Path>, addresses: HashSet<Pubkey>) -> Result<(), St
     Ok(())
 }
 
-fn do_diff_files(file1: impl AsRef<Path>, file2: impl AsRef<Path>) -> Result<(), String> {
+fn do_diff_files(file1: impl AsRef<Path>, file2: impl AsRef<Path>) -> Result<()> {
     let LatestEntriesInfo {
         latest_entries: entries1,
         capitalization: capitalization1,
-    } = extract_latest_entries_in(&file1)
-        .map_err(|err| format!("failed to extract entries from file 1: {err}"))?;
+    } = extract_latest_entries_in(&file1).context("failed to extract entries from file 1")?;
     let LatestEntriesInfo {
         latest_entries: entries2,
         capitalization: capitalization2,
-    } = extract_latest_entries_in(&file2)
-        .map_err(|err| format!("failed to extract entries from file 2: {err}"))?;
+    } = extract_latest_entries_in(&file2).context("failed to extract entries from file 2")?;
 
     let num_accounts1 = entries1.len();
     let num_accounts2 = entries2.len();
@@ -437,13 +424,11 @@ fn do_diff_dirs(
     dir1: impl AsRef<Path>,
     dir2: impl AsRef<Path>,
     then_diff_files: bool,
-) -> Result<(), String> {
+) -> Result<()> {
     let _timer = ElapsedOnDrop::new("diffing directories took ");
 
-    let files1 = get_cache_files_in(dir1)
-        .map_err(|err| format!("failed to get cache files in dir1: {err}"))?;
-    let files2 = get_cache_files_in(dir2)
-        .map_err(|err| format!("failed to get cache files in dir2: {err}"))?;
+    let files1 = get_cache_files_in(dir1).context("failed to get cache files in directory 1")?;
+    let files2 = get_cache_files_in(dir2).context("failed to get cache files in directory 2")?;
 
     let mut uniques1 = Vec::new();
     let mut uniques2 = Vec::new();
@@ -586,10 +571,9 @@ fn do_diff_state(
     dir2: impl AsRef<Path>,
     num_bins: usize,
     bins_of_interest: Range<usize>,
-) -> Result<(), String> {
-    let extract = |dir: &Path| -> Result<_, String> {
-        let files =
-            get_cache_files_in(dir).map_err(|err| format!("failed to get cache files: {err}"))?;
+) -> Result<()> {
+    let extract = |dir: &Path| -> Result<_> {
+        let files = get_cache_files_in(dir).context("failed to get cache files")?;
         let BinnedLatestEntriesInfo {
             latest_entries,
             capitalization,
@@ -598,7 +582,7 @@ fn do_diff_state(
             num_bins,
             &bins_of_interest,
         )
-        .map_err(|err| format!("failed to extract entries: {err}"))?;
+        .context("failed to extract entries")?;
         let num_accounts: usize = latest_entries.iter().map(|bin| bin.len()).sum();
         let entries = Vec::from(latest_entries);
         let state: Box<_> = entries.into_iter().map(RwLock::new).collect();
@@ -610,9 +594,9 @@ fn do_diff_state(
     let dir2 = dir2.as_ref();
     let (state1, state2) = rayon::join(|| extract(dir1), || extract(dir2));
     let (state1, capitalization1, num_accounts1) = state1
-        .map_err(|err| format!("failed to get state for dir 1 '{}': {err}", dir1.display()))?;
+        .with_context(|| format!("failed to get state for directory 1 '{}'", dir1.display()))?;
     let (state2, capitalization2, num_accounts2) = state2
-        .map_err(|err| format!("failed to get state for dir 2 '{}': {err}", dir2.display()))?;
+        .with_context(|| format!("failed to get state for directory 2 '{}'", dir2.display()))?;
     drop(timer);
 
     let timer = LoggingTimer::new("Diffing state");
@@ -722,8 +706,8 @@ fn do_diff_state(
 }
 
 /// Returns all the cache hash data files in `dir`, sorted in ascending slot-and-bin-range order
-fn get_cache_files_in(dir: impl AsRef<Path>) -> Result<Vec<CacheFileInfo>, io::Error> {
-    fn get_files_in(dir: impl AsRef<Path>) -> Result<Vec<(PathBuf, Metadata)>, io::Error> {
+fn get_cache_files_in(dir: impl AsRef<Path>) -> Result<Vec<CacheFileInfo>> {
+    fn get_files_in(dir: impl AsRef<Path>) -> Result<Vec<(PathBuf, Metadata)>> {
         let mut files = Vec::new();
         let entries = fs::read_dir(dir)?;
         for entry in entries {
@@ -737,12 +721,8 @@ fn get_cache_files_in(dir: impl AsRef<Path>) -> Result<Vec<CacheFileInfo>, io::E
         Ok(files)
     }
 
-    let files = get_files_in(&dir).map_err(|err| {
-        io::Error::other(format!(
-            "failed to get files in '{}': {err}",
-            dir.as_ref().display(),
-        ))
-    })?;
+    let files = get_files_in(&dir)
+        .with_context(|| format!("failed to get files in '{}'", dir.as_ref().display()))?;
     let mut cache_files: Vec<_> = files
         .into_iter()
         .filter_map(|file| {
@@ -769,7 +749,7 @@ fn get_cache_files_in(dir: impl AsRef<Path>) -> Result<Vec<CacheFileInfo>, io::E
 /// Returns the entries in `file`, and the capitalization
 ///
 /// If there are multiple entries for a pubkey, only the latest is returned.
-fn extract_latest_entries_in(file: impl AsRef<Path>) -> Result<LatestEntriesInfo, String> {
+fn extract_latest_entries_in(file: impl AsRef<Path>) -> Result<LatestEntriesInfo> {
     const NUM_BINS: usize = 1;
     let BinnedLatestEntriesInfo {
         latest_entries,
@@ -798,16 +778,16 @@ fn extract_binned_latest_entries_in(
     files: impl IntoIterator<Item = impl AsRef<Path>>,
     num_bins: usize,
     bins_of_interest: &Range<usize>,
-) -> Result<BinnedLatestEntriesInfo, String> {
+) -> Result<BinnedLatestEntriesInfo> {
     let binner = PubkeyBinCalculator24::new(num_bins);
     let mut entries: Box<_> = iter::repeat_with(HashMap::default).take(num_bins).collect();
     let mut capitalization = Saturating(0);
 
     for file in files.into_iter() {
         let force = false; // skipping sanity checks is not supported when extracting entries
-        let (mmap, header) = mmap_file(&file, force).map_err(|err| {
+        let (mmap, header) = mmap_file(&file, force).with_context(|| {
             format!(
-                "failed to open accounts hash cache file '{}': {err}",
+                "failed to open accounts hash cache file '{}'",
                 file.as_ref().display(),
             )
         })?;
@@ -827,7 +807,7 @@ fn extract_binned_latest_entries_in(
         });
 
         if num_entries != header.count {
-            return Err(format!(
+            return Err(anyhow!(
                 "mismatched number of entries when scanning '{}': expected: {}, actual: {num_entries}",
                 file.as_ref().display(), header.count,
             ));
@@ -860,7 +840,7 @@ fn scan_file(
     mut reader: impl Read,
     num_entries_expected: usize,
     mut user_fn: impl FnMut(CacheHashDataFileEntry),
-) -> Result<(), String> {
+) -> Result<()> {
     let mut num_entries_actual = Saturating(0);
     let mut entry = CacheHashDataFileEntry::zeroed();
     loop {
@@ -874,7 +854,7 @@ fn scan_file(
                     // we've hit the expected end of the file
                     break;
                 } else {
-                    return Err(format!(
+                    return Err(anyhow!(
                         "failed to read file entry {num_entries_actual}, \
                          expected {num_entries_expected} entries: {err}",
                     ));
@@ -887,25 +867,22 @@ fn scan_file(
     Ok(())
 }
 
-fn mmap_file(
-    path: impl AsRef<Path>,
-    force: bool,
-) -> Result<(Mmap, CacheHashDataFileHeader), String> {
+fn mmap_file(path: impl AsRef<Path>, force: bool) -> Result<(Mmap, CacheHashDataFileHeader)> {
     let (reader, header) = open_file(&path, force)?;
     let file = reader.into_inner();
     let mmap = unsafe { Mmap::map(&file) }
-        .map_err(|err| format!("failed to mmap '{}': {err}", path.as_ref().display()))?;
+        .with_context(|| format!("failed to mmap '{}'", path.as_ref().display()))?;
     Ok((mmap, header))
 }
 
 fn open_file(
     path: impl AsRef<Path>,
     force: bool,
-) -> Result<(BufReader<File>, CacheHashDataFileHeader), String> {
-    let file = File::open(path).map_err(|err| format!("{err}"))?;
+) -> Result<(BufReader<File>, CacheHashDataFileHeader)> {
+    let file = File::open(path)?;
     let actual_file_size = file
         .metadata()
-        .map_err(|err| format!("failed to query file metadata: {err}"))?
+        .context("failed to query file metadata")?
         .len();
     let mut reader = BufReader::new(file);
 
@@ -913,7 +890,7 @@ fn open_file(
         let mut header = CacheHashDataFileHeader::zeroed();
         reader
             .read_exact(bytemuck::bytes_of_mut(&mut header))
-            .map_err(|err| format!("failed to read header: {err}"))?;
+            .context("failed to read header")?;
         header
     };
 
@@ -928,7 +905,7 @@ fn open_file(
         if force {
             eprintln!("Warning: {err_msg}\nForced. Continuing... Results may be incorrect.");
         } else {
-            return Err(err_msg);
+            return Err(anyhow!(err_msg));
         }
     }
 

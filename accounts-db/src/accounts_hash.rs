@@ -1280,6 +1280,15 @@ pub const ZERO_LAMPORT_ACCOUNT_LT_HASH: AccountLtHash = AccountLtHash(LtHash::id
 pub struct AccountsLtHash(pub LtHash);
 
 /// Hash of accounts
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum MerkleOrLatticeAccountsHash {
+    /// Merkle-based hash of accounts
+    Merkle(AccountsHashKind),
+    /// Lattice-based hash of accounts
+    Lattice,
+}
+
+/// Hash of accounts
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum AccountsHashKind {
     Full(AccountsHash),

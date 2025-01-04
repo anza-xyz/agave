@@ -1038,9 +1038,9 @@ mod tests {
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         // Set up unparallelizable conflicting transactions
-        let pubkey0 = solana_sdk::pubkey::new_rand();
-        let pubkey1 = solana_sdk::pubkey::new_rand();
-        let pubkey2 = solana_sdk::pubkey::new_rand();
+        let pubkey0 = solana_pubkey::new_rand();
+        let pubkey1 = solana_pubkey::new_rand();
+        let pubkey2 = solana_pubkey::new_rand();
         let transactions = vec![
             system_transaction::transfer(mint_keypair, &pubkey0, 1, genesis_config.hash()),
             system_transaction::transfer(mint_keypair, &pubkey1, 1, genesis_config.hash()),
@@ -1080,7 +1080,7 @@ mod tests {
             ..
         } = create_slow_genesis_config(10_000);
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
-        let pubkey = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
 
         let transactions = sanitize_transactions(vec![system_transaction::transfer(
             &mint_keypair,
@@ -1373,7 +1373,7 @@ mod tests {
             ..
         } = create_slow_genesis_config(10_000);
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
-        let pubkey = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
 
         let transactions = {
             let mut tx =
@@ -1460,7 +1460,7 @@ mod tests {
         let mut bank = Bank::new_for_tests(&genesis_config);
         bank.ns_per_slot = u128::MAX;
         let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
-        let pubkey = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         {
@@ -1616,8 +1616,8 @@ mod tests {
             ..
         } = create_slow_genesis_config(10_000);
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
-        let pubkey = solana_sdk::pubkey::new_rand();
-        let pubkey1 = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
+        let pubkey1 = solana_pubkey::new_rand();
 
         let transactions = sanitize_transactions(vec![
             system_transaction::transfer(&mint_keypair, &pubkey, 1, genesis_config.hash()),
@@ -1823,7 +1823,7 @@ mod tests {
         } = create_slow_genesis_config(10_000);
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
 
-        let pubkey = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
 
         let transactions = sanitize_transactions(vec![system_transaction::transfer(
             &mint_keypair,
@@ -1905,8 +1905,8 @@ mod tests {
         genesis_config.rent.lamports_per_byte_year = 50;
         genesis_config.rent.exemption_threshold = 2.0;
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
-        let pubkey = solana_sdk::pubkey::new_rand();
-        let pubkey1 = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
+        let pubkey1 = solana_pubkey::new_rand();
         let keypair1 = Keypair::new();
 
         let rent_exempt_amount = bank.get_minimum_balance_for_rent_exemption(0);

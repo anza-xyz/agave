@@ -56,7 +56,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-perf = { workspace = true }
-solana-program-runtime = { workspace = true }
+solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-rayon-threadlimit = { workspace = true }
 solana-runtime = { workspace = true }
 solana-runtime-transaction = { workspace = true }

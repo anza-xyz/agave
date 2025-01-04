@@ -9,15 +9,13 @@ use {
         fmt::{Debug, Formatter},
         ops::Deref,
     },
-    solana_sdk::{
-        bpf_loader_upgradeable, ed25519_program,
-        hash::Hash,
-        message::{v0::LoadedAddresses, AccountKeys, TransactionSignatureDetails},
-        pubkey::Pubkey,
-        secp256k1_program,
-        signature::Signature,
+    solana_hash::Hash,
+    solana_message::{v0::LoadedAddresses, AccountKeys, TransactionSignatureDetails},
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::{
+        bpf_loader_upgradeable, ed25519_program, secp256k1_program, secp256r1_program,
     },
-    solana_sdk_ids::secp256r1_program,
+    solana_signature::Signature,
     solana_svm_transaction::{
         instruction::SVMInstruction, message_address_table_lookup::SVMMessageAddressTableLookup,
         svm_message::SVMMessage, svm_transaction::SVMTransaction,
@@ -222,7 +220,7 @@ impl<D: TransactionData> SVMMessage for ResolvedTransactionView<D> {
         &self,
     ) -> impl Iterator<
         Item = (
-            &solana_sdk::pubkey::Pubkey,
+            &solana_pubkey::Pubkey,
             solana_svm_transaction::instruction::SVMInstruction,
         ),
     > + Clone {
@@ -289,16 +287,14 @@ mod tests {
     use {
         super::*,
         crate::transaction_view::SanitizedTransactionView,
-        solana_sdk::{
-            instruction::CompiledInstruction,
-            message::{
-                v0::{self, MessageAddressTableLookup},
-                MessageHeader, VersionedMessage,
-            },
-            signature::Signature,
-            system_program, sysvar,
-            transaction::VersionedTransaction,
+        solana_message::{
+            compiled_instruction::CompiledInstruction,
+            v0::{self, MessageAddressTableLookup},
+            MessageHeader, VersionedMessage,
         },
+        solana_sdk_ids::{system_program, sysvar},
+        solana_signature::Signature,
+        solana_transaction::versioned::VersionedTransaction,
     };
 
     #[test]

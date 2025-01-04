@@ -1,9 +1,7 @@
 use {
     crate::{parse_account_data::ParseAccountError, UiFeeCalculator},
-    solana_sdk::{
-        instruction::InstructionError,
-        nonce::{state::Versions, State},
-    },
+    solana_instruction::error::InstructionError,
+    solana_nonce::{state::State, versions::Versions},
 };
 
 pub fn parse_nonce(data: &[u8]) -> Result<UiNonceState, ParseAccountError> {
@@ -45,14 +43,12 @@ pub struct UiNonceData {
 mod test {
     use {
         super::*,
-        solana_sdk::{
-            hash::Hash,
-            nonce::{
-                state::{Data, Versions},
-                State,
-            },
-            pubkey::Pubkey,
+        solana_hash::Hash,
+        solana_nonce::{
+            state::{Data, State},
+            versions::Versions,
         },
+        solana_pubkey::Pubkey,
     };
 
     #[test]

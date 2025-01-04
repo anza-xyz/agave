@@ -106,15 +106,9 @@ pub struct GossipStats {
     pub(crate) gossip_listen_loop_iterations_since_last_report: Counter,
     pub(crate) gossip_listen_loop_time: Counter,
     pub(crate) gossip_packets_dropped_count: Counter,
-    pub(crate) gossip_ping_msg_verify_fail: Counter,
-    pub(crate) gossip_pong_msg_verify_fail: Counter,
-    pub(crate) gossip_prune_msg_verify_fail: Counter,
     pub(crate) gossip_pull_request_dropped_requests: Counter,
     pub(crate) gossip_pull_request_no_budget: Counter,
     pub(crate) gossip_pull_request_sent_requests: Counter,
-    pub(crate) gossip_pull_request_verify_fail: Counter,
-    pub(crate) gossip_pull_response_verify_fail: Counter,
-    pub(crate) gossip_push_msg_verify_fail: Counter,
     pub(crate) gossip_transmit_loop_iterations_since_last_report: Counter,
     pub(crate) gossip_transmit_loop_time: Counter,
     pub(crate) handle_batch_ping_messages_time: Counter,
@@ -582,36 +576,6 @@ pub(crate) fn submit_gossip_stats(
         (
             "trim_crds_table_purged_values_count",
             stats.trim_crds_table_purged_values_count.clear(),
-            i64
-        ),
-        (
-            "gossip_pull_request_verify_fail",
-            stats.gossip_pull_request_verify_fail.clear(),
-            i64
-        ),
-        (
-            "gossip_pull_response_verify_fail",
-            stats.gossip_pull_response_verify_fail.clear(),
-            i64
-        ),
-        (
-            "gossip_push_msg_verify_fail",
-            stats.gossip_push_msg_verify_fail.clear(),
-            i64
-        ),
-        (
-            "gossip_prune_msg_verify_fail",
-            stats.gossip_prune_msg_verify_fail.clear(),
-            i64
-        ),
-        (
-            "gossip_ping_msg_verify_fail",
-            stats.gossip_ping_msg_verify_fail.clear(),
-            i64
-        ),
-        (
-            "gossip_pong_msg_verify_fail",
-            stats.gossip_pong_msg_verify_fail.clear(),
             i64
         ),
     );

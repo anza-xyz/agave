@@ -235,11 +235,7 @@ mod tests {
     ) {
         let from_keypair = Keypair::new();
         let ixs = vec![
-            system_instruction::transfer(
-                &from_keypair.pubkey(),
-                &solana_sdk::pubkey::new_rand(),
-                1,
-            ),
+            system_instruction::transfer(&from_keypair.pubkey(), &solana_pubkey::new_rand(), 1),
             ComputeBudgetInstruction::set_compute_unit_price(priority),
         ];
         let message = Message::new(&ixs, Some(&from_keypair.pubkey()));

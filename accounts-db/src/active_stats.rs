@@ -5,6 +5,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 #[derive(Debug, Default)]
 pub struct ActiveStats {
     clean: AtomicUsize,
+    clean_construct_candidates: AtomicUsize,
+    clean_scan_candidates: AtomicUsize,
+    clean_old_accounts: AtomicUsize,
+    clean_collect_store_counts: AtomicUsize,
+    clean_calc_delete_deps: AtomicUsize,
+    clean_filter_zero_lamport: AtomicUsize,
+    clean_reclaims: AtomicUsize,
     squash_ancient: AtomicUsize,
     shrink: AtomicUsize,
     hash: AtomicUsize,
@@ -17,6 +24,13 @@ pub struct ActiveStats {
 #[derive(Debug, Copy, Clone)]
 pub enum ActiveStatItem {
     Clean,
+    CleanConstructCandidates,
+    CleanScanCandidates,
+    CleanOldAccounts,
+    CleanCollectStoreCounts,
+    CleanCalcDeleteDeps,
+    CleanFilterZeroLamport,
+    CleanReclaims,
     Shrink,
     SquashAncient,
     Hash,
@@ -56,6 +70,13 @@ impl ActiveStats {
     fn update_and_log(&self, item: ActiveStatItem, modify_stat: impl Fn(&AtomicUsize) -> usize) {
         let stat = match item {
             ActiveStatItem::Clean => &self.clean,
+            ActiveStatItem::CleanConstructCandidates => &self.clean_construct_candidates,
+            ActiveStatItem::CleanScanCandidates => &self.clean_scan_candidates,
+            ActiveStatItem::CleanOldAccounts => &self.clean_old_accounts,
+            ActiveStatItem::CleanCollectStoreCounts => &self.clean_collect_store_counts,
+            ActiveStatItem::CleanCalcDeleteDeps => &self.clean_calc_delete_deps,
+            ActiveStatItem::CleanFilterZeroLamport => &self.clean_filter_zero_lamport,
+            ActiveStatItem::CleanReclaims => &self.clean_reclaims,
             ActiveStatItem::Shrink => &self.shrink,
             ActiveStatItem::SquashAncient => &self.squash_ancient,
             ActiveStatItem::Hash => &self.hash,
@@ -67,6 +88,32 @@ impl ActiveStats {
         let value = modify_stat(stat);
         match item {
             ActiveStatItem::Clean => datapoint_info!("accounts_db_active", ("clean", value, i64)),
+            ActiveStatItem::CleanConstructCandidates => datapoint_info!(
+                "accounts_db_active",
+                ("clean_construct_candidates", value, i64),
+            ),
+            ActiveStatItem::CleanScanCandidates => {
+                datapoint_info!("accounts_db_active", ("clean_scan_candidates", value, i64))
+            }
+            ActiveStatItem::CleanOldAccounts => {
+                datapoint_info!("accounts_db_active", ("clean_old_accounts", value, i64))
+            }
+            ActiveStatItem::CleanCollectStoreCounts => {
+                datapoint_info!(
+                    "accounts_db_active",
+                    ("clean_collect_store_counts", value, i64),
+                )
+            }
+            ActiveStatItem::CleanCalcDeleteDeps => {
+                datapoint_info!("accounts_db_active", ("clean_calc_delete_deps", value, i64))
+            }
+            ActiveStatItem::CleanFilterZeroLamport => datapoint_info!(
+                "accounts_db_active",
+                ("clean_filter_zero_lamport", value, i64),
+            ),
+            ActiveStatItem::CleanReclaims => {
+                datapoint_info!("accounts_db_active", ("clean_reclaims", value, i64))
+            }
             ActiveStatItem::SquashAncient => {
                 datapoint_info!("accounts_db_active", ("squash_ancient", value, i64))
             }

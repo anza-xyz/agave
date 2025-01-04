@@ -1991,7 +1991,7 @@ mod tests {
         );
 
         // test init with an authed voter
-        let authed = solana_sdk::pubkey::new_rand();
+        let authed = solana_pubkey::new_rand();
         let (keypair_file, mut tmp_file) = make_tmp_file();
         let keypair = Keypair::new();
         write_keypair(&keypair, tmp_file.as_file_mut()).unwrap();

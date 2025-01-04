@@ -40,7 +40,7 @@ const SOCKET_TAG_TVU_QUIC: u8 = 11;
 const_assert_eq!(SOCKET_CACHE_SIZE, 13);
 const SOCKET_CACHE_SIZE: usize = SOCKET_TAG_TPU_VOTE_QUIC as usize + 1usize;
 
-#[derive(Debug, Error)]
+#[derive(Copy, Clone, Debug, Eq, Error, PartialEq)]
 pub enum Error {
     #[error("Duplicate IP address: {0}")]
     DuplicateIpAddr(IpAddr),
@@ -84,8 +84,9 @@ pub struct ContactInfo {
     sockets: Vec<SocketEntry>,
     #[serde(with = "short_vec")]
     extensions: Vec<Extension>,
+    // Only sanitized socket-addrs can be cached!
     #[serde(skip_serializing)]
-    cache: [SocketAddr; SOCKET_CACHE_SIZE],
+    cache: [Result<SocketAddr, Error>; SOCKET_CACHE_SIZE],
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -122,21 +123,19 @@ struct ContactInfoLite {
 
 macro_rules! get_socket {
     ($name:ident, $key:ident) => {
+        #[inline]
         pub fn $name(&self) -> Result<SocketAddr, Error> {
-            let socket = self.cache[usize::from($key)];
-            sanitize_socket(&socket)?;
-            Ok(socket)
+            self.cache[usize::from($key)]
         }
     };
     ($name:ident, $udp:ident, $quic:ident) => {
+        #[inline]
         pub fn $name(&self, protocol: Protocol) -> Result<SocketAddr, Error> {
             let key = match protocol {
                 Protocol::QUIC => $quic,
                 Protocol::UDP => $udp,
             };
-            let socket = self.cache[usize::from(key)];
-            sanitize_socket(&socket)?;
-            Ok(socket)
+            self.cache[usize::from(key)]
         }
     };
 }
@@ -188,7 +187,7 @@ impl ContactInfo {
             addrs: Vec::<IpAddr>::default(),
             sockets: Vec::<SocketEntry>::default(),
             extensions: Vec::<Extension>::default(),
-            cache: [SOCKET_ADDR_UNSPECIFIED; SOCKET_CACHE_SIZE],
+            cache: new_empty_cache(),
         }
     }
 
@@ -335,7 +334,7 @@ impl ContactInfo {
             }
         }
         if let Some(entry) = self.cache.get_mut(usize::from(key)) {
-            *entry = socket;
+            *entry = Ok(socket); // socket is already sanitized above.
         }
         debug_assert_matches!(sanitize_entries(&self.addrs, &self.sockets), Ok(()));
         Ok(())
@@ -350,7 +349,7 @@ impl ContactInfo {
             }
             self.maybe_remove_addr(entry.index);
             if let Some(entry) = self.cache.get_mut(usize::from(key)) {
-                *entry = SOCKET_ADDR_UNSPECIFIED;
+                *entry = Err(Error::SocketNotFound(key));
             }
         }
     }
@@ -464,6 +463,11 @@ impl ContactInfo {
     }
 }
 
+fn new_empty_cache() -> [Result<SocketAddr, Error>; SOCKET_CACHE_SIZE] {
+    debug_assert!(SOCKET_CACHE_SIZE < usize::from(u8::MAX));
+    std::array::from_fn(|key| Err(Error::SocketNotFound(key as u8)))
+}
+
 fn get_node_outset() -> u64 {
     let now = SystemTime::now();
     let elapsed = now.duration_since(UNIX_EPOCH).unwrap();
@@ -514,9 +518,10 @@ impl TryFrom<ContactInfoLite> for ContactInfo {
             addrs,
             sockets,
             extensions,
-            cache: [SOCKET_ADDR_UNSPECIFIED; SOCKET_CACHE_SIZE],
+            cache: new_empty_cache(),
         };
         // Populate node.cache.
+        // Only sanitized socket-addrs can be cached!
         let mut port = 0u16;
         for &SocketEntry { key, index, offset } in &node.sockets {
             port += offset;
@@ -527,9 +532,7 @@ impl TryFrom<ContactInfoLite> for ContactInfo {
                 continue;
             };
             let socket = SocketAddr::new(addr, port);
-            if sanitize_socket(&socket).is_ok() {
-                *entry = socket;
-            }
+            *entry = sanitize_socket(&socket).map(|()| socket);
         }
         Ok(node)
     }
@@ -639,7 +642,7 @@ impl solana_frozen_abi::abi_example::AbiExample for ContactInfo {
             addrs: Vec::<IpAddr>::example(),
             sockets: Vec::<SocketEntry>::example(),
             extensions: vec![],
-            cache: <[SocketAddr; SOCKET_CACHE_SIZE]>::example(),
+            cache: new_empty_cache(),
         }
     }
 }
@@ -694,18 +697,30 @@ mod tests {
         let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 10));
         let ci = ContactInfo::new_gossip_entry_point(&addr);
         assert_eq!(ci.gossip().unwrap(), addr);
-        assert_matches!(ci.rpc(), Err(Error::InvalidPort(0)));
-        assert_matches!(ci.rpc_pubsub(), Err(Error::InvalidPort(0)));
-        assert_matches!(ci.serve_repair(Protocol::QUIC), Err(Error::InvalidPort(0)));
-        assert_matches!(ci.serve_repair(Protocol::UDP), Err(Error::InvalidPort(0)));
-        assert_matches!(ci.tpu(Protocol::QUIC), Err(Error::InvalidPort(0)));
-        assert_matches!(ci.tpu(Protocol::UDP), Err(Error::InvalidPort(0)));
-        assert_matches!(ci.tpu_forwards(Protocol::QUIC), Err(Error::InvalidPort(0)));
-        assert_matches!(ci.tpu_forwards(Protocol::UDP), Err(Error::InvalidPort(0)));
-        assert_matches!(ci.tpu_vote(Protocol::UDP), Err(Error::InvalidPort(0)));
-        assert_matches!(ci.tpu_vote(Protocol::QUIC), Err(Error::InvalidPort(0)));
-        assert_matches!(ci.tvu(Protocol::QUIC), Err(Error::InvalidPort(0)));
-        assert_matches!(ci.tvu(Protocol::UDP), Err(Error::InvalidPort(0)));
+        assert_matches!(ci.rpc(), Err(Error::SocketNotFound(2)));
+        assert_matches!(ci.rpc_pubsub(), Err(Error::SocketNotFound(3)));
+        assert_matches!(
+            ci.serve_repair(Protocol::QUIC),
+            Err(Error::SocketNotFound(1))
+        );
+        assert_matches!(
+            ci.serve_repair(Protocol::UDP),
+            Err(Error::SocketNotFound(4))
+        );
+        assert_matches!(ci.tpu(Protocol::QUIC), Err(Error::SocketNotFound(8)));
+        assert_matches!(ci.tpu(Protocol::UDP), Err(Error::SocketNotFound(5)));
+        assert_matches!(
+            ci.tpu_forwards(Protocol::QUIC),
+            Err(Error::SocketNotFound(7))
+        );
+        assert_matches!(
+            ci.tpu_forwards(Protocol::UDP),
+            Err(Error::SocketNotFound(6))
+        );
+        assert_matches!(ci.tpu_vote(Protocol::UDP), Err(Error::SocketNotFound(9)));
+        assert_matches!(ci.tpu_vote(Protocol::QUIC), Err(Error::SocketNotFound(12)));
+        assert_matches!(ci.tvu(Protocol::QUIC), Err(Error::SocketNotFound(11)));
+        assert_matches!(ci.tvu(Protocol::UDP), Err(Error::SocketNotFound(10)));
     }
 
     #[test]
@@ -804,7 +819,7 @@ mod tests {
             addrs: Vec::default(),
             sockets: Vec::default(),
             extensions: Vec::default(),
-            cache: [SOCKET_ADDR_UNSPECIFIED; SOCKET_CACHE_SIZE],
+            cache: new_empty_cache(),
         };
         let mut sockets = HashMap::<u8, SocketAddr>::new();
         for _ in 0..1 << 14 {
@@ -823,9 +838,12 @@ mod tests {
                 assert_eq!(node.get_socket(key).ok().as_ref(), socket);
                 if usize::from(key) < SOCKET_CACHE_SIZE {
                     assert_eq!(
-                        &node.cache[usize::from(key)],
-                        socket.unwrap_or(&SOCKET_ADDR_UNSPECIFIED)
-                    )
+                        node.cache[usize::from(key)],
+                        match socket {
+                            None => Err(Error::SocketNotFound(key)),
+                            Some(&socket) => sanitize_socket(&socket).map(|()| socket),
+                        }
+                    );
                 }
             }
             assert_eq!(node.gossip().ok().as_ref(), sockets.get(&SOCKET_TAG_GOSSIP));
@@ -1042,8 +1060,8 @@ mod tests {
             SocketAddr::new(socket.ip(), socket.port() + QUIC_PORT_OFFSET)
         );
         node.remove_tpu();
-        assert_matches!(node.tpu(Protocol::UDP), Err(Error::InvalidPort(0)));
-        assert_matches!(node.tpu(Protocol::QUIC), Err(Error::InvalidPort(0)));
+        assert_matches!(node.tpu(Protocol::UDP), Err(Error::SocketNotFound(5)));
+        assert_matches!(node.tpu(Protocol::QUIC), Err(Error::SocketNotFound(8)));
         // TPU forwards socket.
         node.set_tpu_forwards(socket).unwrap();
         assert_eq!(node.tpu_forwards(Protocol::UDP).unwrap(), socket);
@@ -1052,10 +1070,13 @@ mod tests {
             SocketAddr::new(socket.ip(), socket.port() + QUIC_PORT_OFFSET)
         );
         node.remove_tpu_forwards();
-        assert_matches!(node.tpu_forwards(Protocol::UDP), Err(Error::InvalidPort(0)));
+        assert_matches!(
+            node.tpu_forwards(Protocol::UDP),
+            Err(Error::SocketNotFound(6))
+        );
         assert_matches!(
             node.tpu_forwards(Protocol::QUIC),
-            Err(Error::InvalidPort(0))
+            Err(Error::SocketNotFound(7))
         );
     }
 

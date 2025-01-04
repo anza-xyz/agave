@@ -105,18 +105,16 @@ mod tests {
     use {
         super::*,
         crate::transaction_view::TransactionView,
-        solana_sdk::{
-            hash::Hash,
-            instruction::CompiledInstruction,
-            message::{
-                v0::{self, MessageAddressTableLookup},
-                Message, MessageHeader, VersionedMessage,
-            },
-            pubkey::Pubkey,
-            signature::Signature,
-            system_instruction,
-            transaction::VersionedTransaction,
+        solana_hash::Hash,
+        solana_message::{
+            compiled_instruction::CompiledInstruction,
+            v0::{self, MessageAddressTableLookup},
+            Message, MessageHeader, VersionedMessage,
         },
+        solana_pubkey::Pubkey,
+        solana_signature::Signature,
+        solana_system_interface::instruction as system_instruction,
+        solana_transaction::versioned::VersionedTransaction,
     };
 
     fn create_legacy_transaction(

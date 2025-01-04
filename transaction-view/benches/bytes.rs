@@ -2,10 +2,8 @@ use {
     agave_transaction_view::bytes::{optimized_read_compressed_u16, read_compressed_u16},
     bincode::{serialize_into, DefaultOptions, Options},
     criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput},
-    solana_sdk::{
-        packet::PACKET_DATA_SIZE,
-        short_vec::{decode_shortu16_len, ShortU16},
-    },
+    solana_packet::PACKET_DATA_SIZE,
+    solana_short_vec::{decode_shortu16_len, ShortU16},
 };
 
 fn setup() -> Vec<(u16, usize, Vec<u8>)> {
