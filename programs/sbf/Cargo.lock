@@ -6044,6 +6044,7 @@ dependencies = [
  "solana-metrics",
  "solana-perf",
  "solana-program-runtime",
+ "solana-pubkey",
  "solana-rayon-threadlimit",
  "solana-runtime",
  "solana-runtime-transaction",

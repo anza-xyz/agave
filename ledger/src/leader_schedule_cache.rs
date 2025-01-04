@@ -371,7 +371,7 @@ mod tests {
 
     #[test]
     fn test_next_leader_slot() {
-        let pubkey = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
         let mut genesis_config =
             create_genesis_config_with_leader(42, &pubkey, bootstrap_validator_stake_lamports())
                 .genesis_config;
@@ -409,7 +409,7 @@ mod tests {
 
         assert_eq!(
             cache.next_leader_slot(
-                &solana_sdk::pubkey::new_rand(), // not in leader_schedule
+                &solana_pubkey::new_rand(), // not in leader_schedule
                 0,
                 &bank,
                 None,
@@ -421,7 +421,7 @@ mod tests {
 
     #[test]
     fn test_next_leader_slot_blockstore() {
-        let pubkey = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
         let mut genesis_config =
             create_genesis_config_with_leader(42, &pubkey, bootstrap_validator_stake_lamports())
                 .genesis_config;
@@ -486,7 +486,7 @@ mod tests {
 
         assert_eq!(
             cache.next_leader_slot(
-                &solana_sdk::pubkey::new_rand(), // not in leader_schedule
+                &solana_pubkey::new_rand(), // not in leader_schedule
                 0,
                 &bank,
                 Some(&blockstore),
@@ -593,7 +593,7 @@ mod tests {
         assert_eq!(bank.get_epoch_and_slot_index(96).0, 2);
         assert!(cache.slot_leader_at(96, Some(&bank)).is_none());
 
-        let bank2 = Bank::new_from_parent(bank, &solana_sdk::pubkey::new_rand(), 95);
+        let bank2 = Bank::new_from_parent(bank, &solana_pubkey::new_rand(), 95);
         assert!(bank2.epoch_vote_accounts(2).is_some());
 
         // Set root for a slot in epoch 1, so that epoch 2 is now confirmed

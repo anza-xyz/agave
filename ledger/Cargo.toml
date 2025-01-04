@@ -57,6 +57,7 @@ solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-perf = { workspace = true }
 solana-program-runtime = { workspace = true }
+solana-pubkey = { workspace = true }
 solana-rayon-threadlimit = { workspace = true }
 solana-runtime = { workspace = true }
 solana-runtime-transaction = { workspace = true }
