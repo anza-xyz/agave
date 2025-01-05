@@ -144,7 +144,7 @@ We have the following constraints:
 
    in CBC mode with `NUM_CHACHA_ROUNDS` of encryption.
 
-6. The archiver initializes a chacha rng with the a signed recent PoH value as
+6. The archiver initializes a chacha rng with the signed recent PoH value as
 
    the seed.
 
