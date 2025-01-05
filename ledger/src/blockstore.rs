@@ -37,7 +37,7 @@ use {
     solana_entry::entry::{create_ticks, Entry},
     solana_measure::measure::Measure,
     solana_metrics::{
-        datapoint_debug, datapoint_error,
+        datapoint_error,
         poh_timing_point::{send_poh_timing_point, PohTimingSender, SlotPohTimingInfo},
     },
     solana_runtime::bank::Bank,
@@ -836,34 +836,7 @@ impl Blockstore {
         let get_slot_leader = |slot: Slot| -> Option<Pubkey> {
             leader_schedule_cache.slot_leader_at(slot, /*bank:*/ None)
         };
-        let result = shred::recover(available_shreds, reed_solomon_cache, get_slot_leader);
-        if let Ok(result) = &result {
-            Self::submit_metrics(slot, erasure_meta, true, "complete".into(), result.len());
-        } else {
-            Self::submit_metrics(slot, erasure_meta, true, "incomplete".into(), 0);
-        }
-        result
-    }
-
-    fn submit_metrics(
-        slot: Slot,
-        erasure_meta: &ErasureMeta,
-        attempted: bool,
-        status: String,
-        recovered: usize,
-    ) {
-        let mut data_shreds_indices = erasure_meta.data_shreds_indices();
-        let start_index = data_shreds_indices.next().unwrap_or_default();
-        let end_index = data_shreds_indices.last().unwrap_or(start_index);
-        datapoint_debug!(
-            "blockstore-erasure",
-            ("slot", slot as i64, i64),
-            ("start_index", start_index, i64),
-            ("end_index", end_index + 1, i64),
-            ("recovery_attempted", attempted, bool),
-            ("recovery_status", status, String),
-            ("recovered", recovered as i64, i64),
-        );
+        shred::recover(available_shreds, reed_solomon_cache, get_slot_leader)
     }
 
     /// Collects and reports [`BlockstoreRocksDbColumnFamilyMetrics`] for the
@@ -995,20 +968,8 @@ impl Blockstore {
                             reed_solomon_cache,
                         )
                         .ok(),
-                    ErasureMetaStatus::DataFull => {
-                        Self::submit_metrics(slot, erasure_meta, false, "complete".into(), 0);
-                        None
-                    }
-                    ErasureMetaStatus::StillNeed(needed) => {
-                        Self::submit_metrics(
-                            slot,
-                            erasure_meta,
-                            false,
-                            format!("still need: {needed}"),
-                            0,
-                        );
-                        None
-                    }
+                    ErasureMetaStatus::DataFull => None,
+                    ErasureMetaStatus::StillNeed(_) => None,
                 }
             })
             .collect()
