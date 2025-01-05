@@ -341,7 +341,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             .iter()
             .filter_map(|shred| {
                 let node = cluster_nodes.get_broadcast_peer(&shred.id())?;
-                if !socket_addr_space.check(&node.tvu(Protocol::UDP).ok()?) {
+                if !socket_addr_space.check(&node.tvu(Protocol::UDP)?) {
                     return None;
                 }
                 if self
@@ -380,15 +380,14 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                                     pubkey,
                                 );
                                 let tvu = cluster_info
-                                    .lookup_contact_info(pubkey, |node| node.tvu(Protocol::UDP))?
-                                    .ok()?;
+                                    .lookup_contact_info(pubkey, |node| node.tvu(Protocol::UDP))??;
                                 Some((shred.payload(), tvu))
                             })
                             .collect(),
                     );
                 }
 
-                Some(vec![(shred.payload(), node.tvu(Protocol::UDP).ok()?)])
+                Some(vec![(shred.payload(), node.tvu(Protocol::UDP)?)])
             })
             .flatten()
             .collect();

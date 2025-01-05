@@ -442,7 +442,7 @@ fn get_target(
         info!("ADDR = {}", entrypoint_addr);
 
         for node in nodes {
-            if node.gossip().ok() == Some(entrypoint_addr) {
+            if node.gossip() == Some(entrypoint_addr) {
                 info!("{:?}", node.gossip());
                 target = match mode {
                     Mode::Gossip => Some((*node.pubkey(), node.gossip().unwrap())),
@@ -475,7 +475,7 @@ fn get_rpc_client(
 
     // find target node
     for node in nodes {
-        if node.gossip().ok() == Some(entrypoint_addr) {
+        if node.gossip() == Some(entrypoint_addr) {
             info!("{:?}", node.gossip());
             return Ok(RpcClient::new_socket(node.rpc().unwrap()));
         }

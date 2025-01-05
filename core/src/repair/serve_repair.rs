@@ -358,8 +358,8 @@ impl RepairPeers {
             .filter_map(|(peer, &weight)| {
                 let node = Node {
                     pubkey: *peer.pubkey(),
-                    serve_repair: peer.serve_repair(Protocol::UDP).ok()?,
-                    serve_repair_quic: peer.serve_repair(Protocol::QUIC).ok()?,
+                    serve_repair: peer.serve_repair(Protocol::UDP)?,
+                    serve_repair_quic: peer.serve_repair(Protocol::QUIC)?,
                 };
                 Some((node, weight))
             })
@@ -1127,7 +1127,7 @@ impl ServeRepair {
             .shuffle(&mut rand::thread_rng())
             .map(|i| index[i])
             .filter_map(|i| {
-                let addr = repair_peers[i].serve_repair(repair_protocol).ok()?;
+                let addr = repair_peers[i].serve_repair(repair_protocol)?;
                 Some((*repair_peers[i].pubkey(), addr))
             })
             .take(get_ancestor_hash_repair_sample_size())
@@ -1141,18 +1141,20 @@ impl ServeRepair {
         slot: Slot,
         cluster_slots: &ClusterSlots,
         repair_validators: &Option<HashSet<Pubkey>>,
-    ) -> Result<(Pubkey, SocketAddr)> {
+    ) -> Option<(Pubkey, SocketAddr)> {
         let repair_peers: Vec<_> = self.repair_peers(repair_validators, slot);
         if repair_peers.is_empty() {
-            return Err(ClusterInfoError::NoPeers.into());
+            return None;
         }
         let (weights, index): (Vec<_>, Vec<_>) = cluster_slots
             .compute_weights_exclude_nonfrozen(slot, &repair_peers)
             .into_iter()
             .unzip();
-        let k = WeightedIndex::new(weights)?.sample(&mut rand::thread_rng());
+        let k = WeightedIndex::new(weights)
+            .ok()?
+            .sample(&mut rand::thread_rng());
         let n = index[k];
-        Ok((
+        Some((
             *repair_peers[n].pubkey(),
             repair_peers[n].serve_repair(Protocol::UDP)?,
         ))

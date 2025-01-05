@@ -25,7 +25,7 @@ const MAX_CONNECTIONS: usize = 1024;
 /// Default connection pool size per remote address
 pub const DEFAULT_CONNECTION_POOL_SIZE: usize = 2;
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Protocol {
     UDP,
     QUIC,

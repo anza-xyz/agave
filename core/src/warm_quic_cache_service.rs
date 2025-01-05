@@ -5,10 +5,7 @@ use {
     rand::{thread_rng, Rng},
     solana_client::connection_cache::{ConnectionCache, Protocol},
     solana_connection_cache::client_connection::ClientConnection as TpuConnection,
-    solana_gossip::{
-        cluster_info::ClusterInfo,
-        contact_info::{ContactInfo, Error},
-    },
+    solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     solana_poh::poh_recorder::PohRecorder,
     solana_pubkey::Pubkey,
     std::{
@@ -35,11 +32,11 @@ impl WarmQuicCacheService {
         cache: Option<&ConnectionCache>,
         cluster_info: &ClusterInfo,
         leader_pubkey: &Pubkey,
-        contact_info_selector: impl Fn(&ContactInfo) -> Result<SocketAddr, Error>,
+        contact_info_selector: impl Fn(&ContactInfo) -> Option<SocketAddr>,
         log_context: &str,
     ) {
         if let Some(connection_cache) = cache {
-            if let Some(Ok(addr)) =
+            if let Some(Some(addr)) =
                 cluster_info.lookup_contact_info(leader_pubkey, contact_info_selector)
             {
                 let conn = connection_cache.get_connection(&addr);

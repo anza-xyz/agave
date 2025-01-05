@@ -768,7 +768,7 @@ impl RepairService {
             .filter_map(|(pubkey, stake)| {
                 let peer_repair_addr = cluster_info
                     .lookup_contact_info(pubkey, |node| node.serve_repair(Protocol::UDP));
-                if let Some(Ok(peer_repair_addr)) = peer_repair_addr {
+                if let Some(Some(peer_repair_addr)) = peer_repair_addr {
                     trace!("Repair peer {pubkey} has a valid repair socket: {peer_repair_addr:?}");
                     Some((
                         *pubkey,
@@ -814,7 +814,7 @@ impl RepairService {
         if let Some(pubkey) = pubkey {
             let peer_repair_addr =
                 cluster_info.lookup_contact_info(&pubkey, |node| node.serve_repair(Protocol::UDP));
-            if let Some(Ok(peer_repair_addr)) = peer_repair_addr {
+            if let Some(Some(peer_repair_addr)) = peer_repair_addr {
                 trace!("Repair peer {pubkey} has valid repair socket: {peer_repair_addr:?}");
                 repair_peers.push((pubkey, peer_repair_addr));
             }
@@ -1011,12 +1011,8 @@ impl RepairService {
         if status.repair_pubkey_and_addr.is_none()
             || now.saturating_sub(status.start_ts) >= MAX_DUPLICATE_WAIT_MS as u64
         {
-            let repair_pubkey_and_addr = serve_repair.repair_request_duplicate_compute_best_peer(
-                slot,
-                cluster_slots,
-                repair_validators,
-            );
-            status.repair_pubkey_and_addr = repair_pubkey_and_addr.ok();
+            status.repair_pubkey_and_addr = serve_repair
+                .repair_request_duplicate_compute_best_peer(slot, cluster_slots, repair_validators);
             status.start_ts = timestamp();
         }
     }
@@ -1036,9 +1032,11 @@ impl RepairService {
         }
         // Mark this slot as special repair, try to download from single
         // validator to avoid corruption
-        let repair_pubkey_and_addr = serve_repair
-            .repair_request_duplicate_compute_best_peer(slot, cluster_slots, repair_validators)
-            .ok();
+        let repair_pubkey_and_addr = serve_repair.repair_request_duplicate_compute_best_peer(
+            slot,
+            cluster_slots,
+            repair_validators,
+        );
         let new_duplicate_slot_repair_status = DuplicateSlotRepairStatus {
             correct_ancestor_to_repair: (slot, Hash::default()),
             repair_pubkey_and_addr,

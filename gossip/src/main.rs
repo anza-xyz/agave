@@ -330,7 +330,7 @@ fn process_rpc_url(
                     .map(|addr| Some(addr) == entrypoint_addr)
                     .unwrap_or_default()
         })
-        .filter_map(|node| node.rpc().ok())
+        .filter_map(ContactInfo::rpc)
         .filter(|addr| socket_addr_space.check(addr))
         .collect();
 

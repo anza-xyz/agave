@@ -189,7 +189,7 @@ impl ClusterNodes<RetransmitStage> {
                 let node = &self.nodes[index];
                 let addr: Option<SocketAddr> = node
                     .contact_info()
-                    .and_then(|node| node.tvu(protocol).ok())
+                    .and_then(|node| node.tvu(protocol))
                     .filter(|&addr| addrs.insert(addr));
                 (node, addr)
             })
@@ -313,7 +313,7 @@ fn get_nodes(
         if !should_dedup_addrs
             || node
                 .contact_info()
-                .and_then(|node| node.tvu(Protocol::UDP).ok())
+                .and_then(|node| node.tvu(Protocol::UDP))
                 .map(|addr| {
                     *counts
                         .entry(addr.ip())

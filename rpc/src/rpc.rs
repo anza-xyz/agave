@@ -3704,42 +3704,33 @@ pub mod rpc_full {
                         };
                         Some(RpcContactInfo {
                             pubkey: contact_info.pubkey().to_string(),
-                            gossip: contact_info.gossip().ok(),
+                            gossip: contact_info.gossip(),
                             tvu: contact_info
                                 .tvu(Protocol::UDP)
-                                .ok()
                                 .filter(|addr| socket_addr_space.check(addr)),
                             tpu: contact_info
                                 .tpu(Protocol::UDP)
-                                .ok()
                                 .filter(|addr| socket_addr_space.check(addr)),
                             tpu_quic: contact_info
                                 .tpu(Protocol::QUIC)
-                                .ok()
                                 .filter(|addr| socket_addr_space.check(addr)),
                             tpu_forwards: contact_info
                                 .tpu_forwards(Protocol::UDP)
-                                .ok()
                                 .filter(|addr| socket_addr_space.check(addr)),
                             tpu_forwards_quic: contact_info
                                 .tpu_forwards(Protocol::QUIC)
-                                .ok()
                                 .filter(|addr| socket_addr_space.check(addr)),
                             tpu_vote: contact_info
                                 .tpu_vote(Protocol::UDP)
-                                .ok()
                                 .filter(|addr| socket_addr_space.check(addr)),
                             serve_repair: contact_info
                                 .serve_repair(Protocol::UDP)
-                                .ok()
                                 .filter(|addr| socket_addr_space.check(addr)),
                             rpc: contact_info
                                 .rpc()
-                                .ok()
                                 .filter(|addr| socket_addr_space.check(addr)),
                             pubsub: contact_info
                                 .rpc_pubsub()
-                                .ok()
                                 .filter(|addr| socket_addr_space.check(addr)),
                             version,
                             feature_set,

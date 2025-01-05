@@ -7,18 +7,20 @@ use {
     crossbeam_channel::Receiver,
     solana_client::connection_cache::ConnectionCache,
     solana_connection_cache::client_connection::ClientConnection,
-    solana_gossip::{cluster_info::ClusterInfo, gossip_error::GossipError},
+    solana_gossip::cluster_info::ClusterInfo,
     solana_measure::measure::Measure,
     solana_poh::poh_recorder::PohRecorder,
     solana_sdk::{
         clock::{Slot, FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET},
         transaction::Transaction,
+        transport::TransportError,
     },
     std::{
         net::SocketAddr,
         sync::{Arc, RwLock},
         thread::{self, Builder, JoinHandle},
     },
+    thiserror::Error,
 };
 
 pub enum VoteOp {
@@ -42,23 +44,35 @@ impl VoteOp {
     }
 }
 
+#[derive(Debug, Error)]
+enum SendVoteError {
+    #[error(transparent)]
+    BincodeError(#[from] bincode::Error),
+    #[error("Invalid TPU address")]
+    InvalidTpuAddress,
+    #[error(transparent)]
+    TransportError(#[from] TransportError),
+}
+
 fn send_vote_transaction(
     cluster_info: &ClusterInfo,
     transaction: &Transaction,
     tpu: Option<SocketAddr>,
     connection_cache: &Arc<ConnectionCache>,
-) -> Result<(), GossipError> {
-    let tpu = tpu.map(Ok).unwrap_or_else(|| {
-        cluster_info
-            .my_contact_info()
-            .tpu(connection_cache.protocol())
-    })?;
+) -> Result<(), SendVoteError> {
+    let tpu = tpu
+        .or_else(|| {
+            cluster_info
+                .my_contact_info()
+                .tpu(connection_cache.protocol())
+        })
+        .ok_or_else(|| SendVoteError::InvalidTpuAddress)?;
     let buf = serialize(transaction)?;
     let client = connection_cache.get_connection(&tpu);
 
     client.send_data_async(buf).map_err(|err| {
         trace!("Ran into an error when sending vote: {err:?} to {tpu:?}");
-        GossipError::SendError
+        SendVoteError::from(err)
     })
 }
 

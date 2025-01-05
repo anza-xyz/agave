@@ -1011,8 +1011,8 @@ impl Validator {
                     &identity_keypair,
                     node.info
                         .tpu(Protocol::UDP)
-                        .map_err(|err| {
-                            ValidatorError::Other(format!("Invalid TPU address: {err:?}"))
+                        .ok_or_else(|| {
+                            ValidatorError::Other(String::from("Invalid UDP address for TPU"))
                         })?
                         .ip(),
                 )),
@@ -1035,8 +1035,8 @@ impl Validator {
                     &identity_keypair,
                     node.info
                         .tpu_vote(Protocol::QUIC)
-                        .map_err(|err| {
-                            ValidatorError::Other(format!("Invalid TPU Vote address: {err:?}"))
+                        .ok_or_else(|| {
+                            ValidatorError::Other(String::from("Invalid QUIC address for TPU Vote"))
                         })?
                         .ip(),
                 )),
@@ -1062,14 +1062,10 @@ impl Validator {
             bank_notification_sender,
         ) = if let Some((rpc_addr, rpc_pubsub_addr)) = config.rpc_addrs {
             assert_eq!(
-                node.info
-                    .rpc()
-                    .map(|addr| socket_addr_space.check(&addr))
-                    .ok(),
+                node.info.rpc().map(|addr| socket_addr_space.check(&addr)),
                 node.info
                     .rpc_pubsub()
                     .map(|addr| socket_addr_space.check(&addr))
-                    .ok()
             );
             let (bank_notification_sender, bank_notification_receiver) = unbounded();
             let confirmed_bank_subscribers = if !bank_notification_senders.is_empty() {

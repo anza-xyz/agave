@@ -618,11 +618,11 @@ impl AdminRpc for AdminRpcImpl {
                 .cluster_info
                 .my_contact_info()
                 .tpu(Protocol::UDP)
-                .map_err(|err| {
+                .ok_or_else(|| {
                     error!(
                         "The public TPU address isn't being published. The node is likely in \
                          repair mode. See help for --restricted-repair-only-mode for more \
-                         information. {err}"
+                         information."
                     );
                     jsonrpc_core::error::Error::internal_error()
                 })?;
@@ -655,11 +655,11 @@ impl AdminRpc for AdminRpcImpl {
                 .cluster_info
                 .my_contact_info()
                 .tpu_forwards(Protocol::UDP)
-                .map_err(|err| {
+                .ok_or_else(|| {
                     error!(
                         "The public TPU Forwards address isn't being published. The node is \
                          likely in repair mode. See help for --restricted-repair-only-mode for \
-                         more information. {err}"
+                         more information."
                     );
                     jsonrpc_core::error::Error::internal_error()
                 })?;

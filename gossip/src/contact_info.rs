@@ -124,18 +124,18 @@ struct ContactInfoLite {
 macro_rules! get_socket {
     ($name:ident, $key:ident) => {
         #[inline]
-        pub fn $name(&self) -> Result<SocketAddr, Error> {
-            self.cache[usize::from($key)]
+        pub fn $name(&self) -> Option<SocketAddr> {
+            self.cache[usize::from($key)].ok()
         }
     };
     ($name:ident, $udp:ident, $quic:ident) => {
         #[inline]
-        pub fn $name(&self, protocol: Protocol) -> Result<SocketAddr, Error> {
+        pub fn $name(&self, protocol: Protocol) -> Option<SocketAddr> {
             let key = match protocol {
                 Protocol::QUIC => $quic,
                 Protocol::UDP => $udp,
             };
-            self.cache[usize::from(key)]
+            self.cache[usize::from(key)].ok()
         }
     };
 }
@@ -697,30 +697,18 @@ mod tests {
         let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 10));
         let ci = ContactInfo::new_gossip_entry_point(&addr);
         assert_eq!(ci.gossip().unwrap(), addr);
-        assert_matches!(ci.rpc(), Err(Error::SocketNotFound(2)));
-        assert_matches!(ci.rpc_pubsub(), Err(Error::SocketNotFound(3)));
-        assert_matches!(
-            ci.serve_repair(Protocol::QUIC),
-            Err(Error::SocketNotFound(1))
-        );
-        assert_matches!(
-            ci.serve_repair(Protocol::UDP),
-            Err(Error::SocketNotFound(4))
-        );
-        assert_matches!(ci.tpu(Protocol::QUIC), Err(Error::SocketNotFound(8)));
-        assert_matches!(ci.tpu(Protocol::UDP), Err(Error::SocketNotFound(5)));
-        assert_matches!(
-            ci.tpu_forwards(Protocol::QUIC),
-            Err(Error::SocketNotFound(7))
-        );
-        assert_matches!(
-            ci.tpu_forwards(Protocol::UDP),
-            Err(Error::SocketNotFound(6))
-        );
-        assert_matches!(ci.tpu_vote(Protocol::UDP), Err(Error::SocketNotFound(9)));
-        assert_matches!(ci.tpu_vote(Protocol::QUIC), Err(Error::SocketNotFound(12)));
-        assert_matches!(ci.tvu(Protocol::QUIC), Err(Error::SocketNotFound(11)));
-        assert_matches!(ci.tvu(Protocol::UDP), Err(Error::SocketNotFound(10)));
+        assert_matches!(ci.rpc(), None);
+        assert_matches!(ci.rpc_pubsub(), None);
+        assert_matches!(ci.serve_repair(Protocol::QUIC), None);
+        assert_matches!(ci.serve_repair(Protocol::UDP), None);
+        assert_matches!(ci.tpu(Protocol::QUIC), None);
+        assert_matches!(ci.tpu(Protocol::UDP), None);
+        assert_matches!(ci.tpu_forwards(Protocol::QUIC), None);
+        assert_matches!(ci.tpu_forwards(Protocol::UDP), None);
+        assert_matches!(ci.tpu_vote(Protocol::UDP), None);
+        assert_matches!(ci.tpu_vote(Protocol::QUIC), None);
+        assert_matches!(ci.tvu(Protocol::QUIC), None);
+        assert_matches!(ci.tvu(Protocol::UDP), None);
     }
 
     #[test]
@@ -846,50 +834,50 @@ mod tests {
                     );
                 }
             }
-            assert_eq!(node.gossip().ok().as_ref(), sockets.get(&SOCKET_TAG_GOSSIP));
-            assert_eq!(node.rpc().ok().as_ref(), sockets.get(&SOCKET_TAG_RPC));
+            assert_eq!(node.gossip().as_ref(), sockets.get(&SOCKET_TAG_GOSSIP));
+            assert_eq!(node.rpc().as_ref(), sockets.get(&SOCKET_TAG_RPC));
             assert_eq!(
-                node.rpc_pubsub().ok().as_ref(),
+                node.rpc_pubsub().as_ref(),
                 sockets.get(&SOCKET_TAG_RPC_PUBSUB)
             );
             assert_eq!(
-                node.serve_repair(Protocol::UDP).ok().as_ref(),
+                node.serve_repair(Protocol::UDP).as_ref(),
                 sockets.get(&SOCKET_TAG_SERVE_REPAIR)
             );
             assert_eq!(
-                node.serve_repair(Protocol::QUIC).ok().as_ref(),
+                node.serve_repair(Protocol::QUIC).as_ref(),
                 sockets.get(&SOCKET_TAG_SERVE_REPAIR_QUIC)
             );
             assert_eq!(
-                node.tpu(Protocol::UDP).ok().as_ref(),
+                node.tpu(Protocol::UDP).as_ref(),
                 sockets.get(&SOCKET_TAG_TPU)
             );
             assert_eq!(
-                node.tpu(Protocol::QUIC).ok().as_ref(),
+                node.tpu(Protocol::QUIC).as_ref(),
                 sockets.get(&SOCKET_TAG_TPU_QUIC)
             );
             assert_eq!(
-                node.tpu_forwards(Protocol::UDP).ok().as_ref(),
+                node.tpu_forwards(Protocol::UDP).as_ref(),
                 sockets.get(&SOCKET_TAG_TPU_FORWARDS)
             );
             assert_eq!(
-                node.tpu_forwards(Protocol::QUIC).ok().as_ref(),
+                node.tpu_forwards(Protocol::QUIC).as_ref(),
                 sockets.get(&SOCKET_TAG_TPU_FORWARDS_QUIC)
             );
             assert_eq!(
-                node.tpu_vote(Protocol::UDP).ok().as_ref(),
+                node.tpu_vote(Protocol::UDP).as_ref(),
                 sockets.get(&SOCKET_TAG_TPU_VOTE)
             );
             assert_eq!(
-                node.tpu_vote(Protocol::QUIC).ok().as_ref(),
+                node.tpu_vote(Protocol::QUIC).as_ref(),
                 sockets.get(&SOCKET_TAG_TPU_VOTE_QUIC)
             );
             assert_eq!(
-                node.tvu(Protocol::UDP).ok().as_ref(),
+                node.tvu(Protocol::UDP).as_ref(),
                 sockets.get(&SOCKET_TAG_TVU)
             );
             assert_eq!(
-                node.tvu(Protocol::QUIC).ok().as_ref(),
+                node.tvu(Protocol::QUIC).as_ref(),
                 sockets.get(&SOCKET_TAG_TVU_QUIC)
             );
             // Assert that all IP addresses are unique.
@@ -1060,8 +1048,8 @@ mod tests {
             SocketAddr::new(socket.ip(), socket.port() + QUIC_PORT_OFFSET)
         );
         node.remove_tpu();
-        assert_matches!(node.tpu(Protocol::UDP), Err(Error::SocketNotFound(5)));
-        assert_matches!(node.tpu(Protocol::QUIC), Err(Error::SocketNotFound(8)));
+        assert_matches!(node.tpu(Protocol::UDP), None);
+        assert_matches!(node.tpu(Protocol::QUIC), None);
         // TPU forwards socket.
         node.set_tpu_forwards(socket).unwrap();
         assert_eq!(node.tpu_forwards(Protocol::UDP).unwrap(), socket);
@@ -1070,14 +1058,8 @@ mod tests {
             SocketAddr::new(socket.ip(), socket.port() + QUIC_PORT_OFFSET)
         );
         node.remove_tpu_forwards();
-        assert_matches!(
-            node.tpu_forwards(Protocol::UDP),
-            Err(Error::SocketNotFound(6))
-        );
-        assert_matches!(
-            node.tpu_forwards(Protocol::QUIC),
-            Err(Error::SocketNotFound(7))
-        );
+        assert_matches!(node.tpu_forwards(Protocol::UDP), None);
+        assert_matches!(node.tpu_forwards(Protocol::QUIC), None);
     }
 
     #[test]

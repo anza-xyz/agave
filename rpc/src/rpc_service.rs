@@ -380,7 +380,12 @@ impl JsonRpcService {
         let tpu_address = cluster_info
             .my_contact_info()
             .tpu(connection_cache.protocol())
-            .map_err(|err| format!("{err}"))?;
+            .ok_or_else(|| {
+                format!(
+                    "Invalid {:?} socket address for TPU",
+                    connection_cache.protocol()
+                )
+            })?;
 
         let runtime = service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj);
 

@@ -80,21 +80,21 @@ fn verify_reachable_ports(
     };
     let mut udp_sockets = vec![&node.sockets.gossip, &node.sockets.repair];
 
-    if verify_address(&node.info.serve_repair(Protocol::UDP).ok()) {
+    if verify_address(&node.info.serve_repair(Protocol::UDP)) {
         udp_sockets.push(&node.sockets.serve_repair);
     }
-    if verify_address(&node.info.tpu(Protocol::UDP).ok()) {
+    if verify_address(&node.info.tpu(Protocol::UDP)) {
         udp_sockets.extend(node.sockets.tpu.iter());
         udp_sockets.extend(&node.sockets.tpu_quic);
     }
-    if verify_address(&node.info.tpu_forwards(Protocol::UDP).ok()) {
+    if verify_address(&node.info.tpu_forwards(Protocol::UDP)) {
         udp_sockets.extend(node.sockets.tpu_forwards.iter());
         udp_sockets.extend(&node.sockets.tpu_forwards_quic);
     }
-    if verify_address(&node.info.tpu_vote(Protocol::UDP).ok()) {
+    if verify_address(&node.info.tpu_vote(Protocol::UDP)) {
         udp_sockets.extend(node.sockets.tpu_vote.iter());
     }
-    if verify_address(&node.info.tvu(Protocol::UDP).ok()) {
+    if verify_address(&node.info.tvu(Protocol::UDP)) {
         udp_sockets.extend(node.sockets.tvu.iter());
         udp_sockets.extend(node.sockets.broadcast.iter());
         udp_sockets.extend(node.sockets.retransmit_sockets.iter());
@@ -106,7 +106,7 @@ fn verify_reachable_ports(
             ("RPC", rpc_addr, node.info.rpc()),
             ("RPC pubsub", rpc_pubsub_addr, node.info.rpc_pubsub()),
         ] {
-            if verify_address(&public_addr.as_ref().ok().copied()) {
+            if verify_address(public_addr) {
                 tcp_listeners.push((
                     bind_addr.port(),
                     TcpListener::bind(bind_addr).unwrap_or_else(|err| {
@@ -188,7 +188,6 @@ fn get_rpc_peers(
         let all_zero_shred_versions = cluster_entrypoints.iter().all(|cluster_entrypoint| {
             cluster_entrypoint
                 .gossip()
-                .ok()
                 .and_then(|addr| cluster_info.lookup_contact_info_by_gossip_addr(&addr))
                 .map_or(false, |entrypoint| entrypoint.shred_version() == 0)
         });
@@ -398,7 +397,9 @@ pub fn attempt_download_genesis_and_snapshot(
     authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
 ) -> Result<(), String> {
     download_then_check_genesis_hash(
-        &rpc_contact_info.rpc().map_err(|err| format!("{err:?}"))?,
+        &rpc_contact_info
+            .rpc()
+            .ok_or_else(|| String::from("Invalid RPC address"))?,
         ledger_path,
         &mut validator_config.expected_genesis_hash,
         bootstrap_config.max_genesis_archive_unpacked_size,
@@ -513,7 +514,7 @@ fn get_vetted_rpc_nodes(
                         rpc_contact_info.rpc()
                     );
 
-                    let rpc_addr = rpc_contact_info.rpc().ok()?;
+                    let rpc_addr = rpc_contact_info.rpc()?;
                     let ping_time = ping(&rpc_addr);
 
                     let rpc_client =
@@ -1249,14 +1250,18 @@ fn download_snapshot(
 
     *start_progress.write().unwrap() = ValidatorStartProgress::DownloadingSnapshot {
         slot: desired_snapshot_hash.0,
-        rpc_addr: rpc_contact_info.rpc().map_err(|err| format!("{err:?}"))?,
+        rpc_addr: rpc_contact_info
+            .rpc()
+            .ok_or_else(|| String::from("Invalid RPC address"))?,
     };
     let desired_snapshot_hash = (
         desired_snapshot_hash.0,
         solana_runtime::snapshot_hash::SnapshotHash(desired_snapshot_hash.1),
     );
     download_snapshot_archive(
-        &rpc_contact_info.rpc().map_err(|err| format!("{err:?}"))?,
+        &rpc_contact_info
+            .rpc()
+            .ok_or_else(|| String::from("Invalid RPC address"))?,
         full_snapshot_archives_dir,
         incremental_snapshot_archives_dir,
         desired_snapshot_hash,

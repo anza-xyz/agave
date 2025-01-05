@@ -315,7 +315,7 @@ impl ClusterInfo {
                 .read()
                 .unwrap()
                 .iter()
-                .filter_map(|node| node.gossip().ok())
+                .filter_map(ContactInfo::gossip)
                 .collect::<HashSet<_>>();
             let self_pubkey = self.id();
             let gossip_crds = self.gossip.crds.read().unwrap();
@@ -479,7 +479,7 @@ impl ClusterInfo {
         let gossip_crds = self.gossip.crds.read().unwrap();
         let mut nodes = gossip_crds.get_nodes_contact_info();
         nodes
-            .find(|node| node.gossip().ok() == Some(*gossip_addr))
+            .find(|node| node.gossip() == Some(*gossip_addr))
             .cloned()
     }
 
@@ -524,7 +524,6 @@ impl ClusterInfo {
             .filter_map(|(node, last_updated)| {
                 let node_rpc = node
                     .rpc()
-                    .ok()
                     .filter(|addr| self.socket_addr_space.check(addr))?;
                 let node_version = self.get_node_version(node.pubkey());
                 if my_shred_version != 0
@@ -548,8 +547,8 @@ impl ClusterInfo {
                     } else {
                         "-".to_string()
                     },
-                    self.addr_to_string(&Some(rpc_addr), &node.rpc().ok()),
-                    self.addr_to_string(&Some(rpc_addr), &node.rpc_pubsub().ok()),
+                    self.addr_to_string(&Some(rpc_addr), &node.rpc()),
+                    self.addr_to_string(&Some(rpc_addr), &node.rpc_pubsub()),
                     node.shred_version(),
                 ))
             })
@@ -591,11 +590,10 @@ impl ClusterInfo {
                     if is_spy_node {
                         shred_spy_nodes = shred_spy_nodes.saturating_add(1);
                     }
-                    let ip_addr = node.gossip().as_ref().map(SocketAddr::ip).ok();
+                    let ip_addr = node.gossip().as_ref().map(SocketAddr::ip);
                     Some(format!(
                         "{:15} {:2}| {:5} | {:44} |{:^9}| {:5}|  {:5}| {:5}| {:5}| {:5}| {:5}| {:5}| {}\n",
                         node.gossip()
-                            .ok()
                             .filter(|addr| self.socket_addr_space.check(addr))
                             .as_ref()
                             .map(SocketAddr::ip)
@@ -610,13 +608,13 @@ impl ClusterInfo {
                         } else {
                             "-".to_string()
                         },
-                        self.addr_to_string(&ip_addr, &node.gossip().ok()),
-                        self.addr_to_string(&ip_addr, &node.tpu_vote(contact_info::Protocol::UDP).ok()),
-                        self.addr_to_string(&ip_addr, &node.tpu(contact_info::Protocol::UDP).ok()),
-                        self.addr_to_string(&ip_addr, &node.tpu_forwards(contact_info::Protocol::UDP).ok()),
-                        self.addr_to_string(&ip_addr, &node.tvu(contact_info::Protocol::UDP).ok()),
-                        self.addr_to_string(&ip_addr, &node.tvu(contact_info::Protocol::QUIC).ok()),
-                        self.addr_to_string(&ip_addr, &node.serve_repair(contact_info::Protocol::UDP).ok()),
+                        self.addr_to_string(&ip_addr, &node.gossip()),
+                        self.addr_to_string(&ip_addr, &node.tpu_vote(contact_info::Protocol::UDP)),
+                        self.addr_to_string(&ip_addr, &node.tpu(contact_info::Protocol::UDP)),
+                        self.addr_to_string(&ip_addr, &node.tpu_forwards(contact_info::Protocol::UDP)),
+                        self.addr_to_string(&ip_addr, &node.tvu(contact_info::Protocol::UDP)),
+                        self.addr_to_string(&ip_addr, &node.tvu(contact_info::Protocol::QUIC)),
+                        self.addr_to_string(&ip_addr, &node.serve_repair(contact_info::Protocol::UDP)),
                         node.shred_version(),
                     ))
                 }
@@ -1061,7 +1059,7 @@ impl ClusterInfo {
             .cloned()
     }
 
-    fn check_socket_addr_space<E>(&self, addr: &Result<SocketAddr, E>) -> bool {
+    fn check_socket_addr_space(&self, addr: &Option<SocketAddr>) -> bool {
         addr.as_ref()
             .map(|addr| self.socket_addr_space.check(addr))
             .unwrap_or_default()
@@ -1222,11 +1220,11 @@ impl ClusterInfo {
                     return;
                 }
                 entrypoint.set_wallclock(now);
-                if let Ok(entrypoint_gossip) = entrypoint.gossip() {
+                if let Some(entrypoint_gossip) = entrypoint.gossip() {
                     if self
                         .time_gossip_read_lock("entrypoint", &self.stats.entrypoint)
                         .get_nodes_contact_info()
-                        .any(|node| node.gossip().ok() == Some(entrypoint_gossip))
+                        .any(|node| node.gossip() == Some(entrypoint_gossip))
                     {
                         return; // Found the entrypoint, no need to pull from it
                     }
@@ -1294,7 +1292,7 @@ impl ClusterInfo {
         self.stats.new_pull_requests_count.add_relaxed(num_requests);
         let pulls = pulls
             .into_iter()
-            .filter_map(|(peer, filters)| Some((peer.gossip().ok()?, filters)))
+            .filter_map(|(peer, filters)| Some((peer.gossip()?, filters)))
             .flat_map(|(addr, filters)| repeat(addr).zip(filters))
             .map(|(gossip_addr, filter)| {
                 let request = Protocol::PullRequest(filter, self_info.clone());
@@ -1343,7 +1341,7 @@ impl ClusterInfo {
                 .into_iter()
                 .filter_map(|(pubkey, messages)| {
                     let peer: &ContactInfo = gossip_crds.get(pubkey)?;
-                    Some((peer.gossip().ok()?, messages))
+                    Some((peer.gossip()?, messages))
                 })
                 .collect()
         };
@@ -1437,7 +1435,6 @@ impl ClusterInfo {
                 // If a pull from the entrypoint was successful it should exist in the CRDS table
                 if let Some(entrypoint_from_gossip) = entrypoint
                     .gossip()
-                    .ok()
                     .and_then(|addr| self.lookup_contact_info_by_gossip_addr(&addr))
                 {
                     // Update the entrypoint's id so future entrypoint pulls correctly reference it
@@ -2084,7 +2081,7 @@ impl ClusterInfo {
                 prunes
                     .into_par_iter()
                     .filter_map(|(pubkey, prunes)| {
-                        let addr = gossip_crds.get::<&ContactInfo>(pubkey)?.gossip().ok()?;
+                        let addr = gossip_crds.get::<&ContactInfo>(pubkey)?.gossip()?;
                         Some((pubkey, addr, prunes))
                     })
                     .collect()
@@ -3107,7 +3104,7 @@ fn verify_gossip_addr<R: Rng + CryptoRng>(
         return true;
     }
     // Invalid addresses are not verifiable.
-    let Some(addr) = addr.ok().filter(|addr| socket_addr_space.check(addr)) else {
+    let Some(addr) = addr.filter(|addr| socket_addr_space.check(addr)) else {
         return false;
     };
     let (out, ping) = {

@@ -461,7 +461,6 @@ pub fn broadcast_shreds(
                 cluster_nodes
                     .get_broadcast_peer(&key)?
                     .tvu(protocol)
-                    .ok()
                     .filter(|addr| socket_addr_space.check(addr))
                     .map(|addr| {
                         (match protocol {

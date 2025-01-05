@@ -363,7 +363,7 @@ pub(crate) fn dedup_gossip_addresses(
 ) -> HashMap</*gossip:*/ SocketAddr, (/*stake:*/ u64, ContactInfo)> {
     nodes
         .into_iter()
-        .filter_map(|node| Some((node.gossip().ok()?, node)))
+        .filter_map(|node| Some((node.gossip()?, node)))
         .into_grouping_map()
         .aggregate(|acc, _node_gossip, node| {
             let stake = stakes.get(node.pubkey()).copied().unwrap_or_default();
@@ -389,7 +389,7 @@ pub(crate) fn maybe_ping_gossip_addresses<R: Rng + CryptoRng>(
     nodes
         .into_iter()
         .filter(|node| {
-            let Ok(node_gossip) = node.gossip() else {
+            let Some(node_gossip) = node.gossip() else {
                 return false;
             };
             let (check, ping) = {
