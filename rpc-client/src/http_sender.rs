@@ -1,7 +1,10 @@
 //! Nonblocking [`RpcSender`] over HTTP.
 
 use {
-    crate::rpc_sender::*,
+    crate::{
+        rpc_sender::*,
+        error_messages::{TOO_MANY_REQUESTS, NODE_UNHEALTHY},
+    },
     async_trait::async_trait,
     log::*,
     reqwest::{
@@ -174,9 +177,12 @@ impl RpcSender for HttpSender {
 
                     too_many_requests_retries -= 1;
                     debug!(
-                                "Too many requests: server responded with {:?}, {} retries left, pausing for {:?}",
-                                response, too_many_requests_retries, duration
-                            );
+                        "{}\nResponse: {:?}, Retries left: {}, Pause duration: {:?}",
+                        TOO_MANY_REQUESTS,
+                        response,
+                        too_many_requests_retries,
+                        duration
+                    );
 
                     sleep(duration).await;
                     stats_updater.add_rate_limited_time(duration);
@@ -190,25 +196,27 @@ impl RpcSender for HttpSender {
                 return match serde_json::from_value::<RpcErrorObject>(json["error"].clone()) {
                     Ok(rpc_error_object) => {
                         let data = match rpc_error_object.code {
-                                    custom_error::JSON_RPC_SERVER_ERROR_SEND_TRANSACTION_PREFLIGHT_FAILURE => {
-                                        match serde_json::from_value::<RpcSimulateTransactionResult>(json["error"]["data"].clone()) {
-                                            Ok(data) => RpcResponseErrorData::SendTransactionPreflightFailure(data),
-                                            Err(err) => {
-                                                debug!("Failed to deserialize RpcSimulateTransactionResult: {:?}", err);
-                                                RpcResponseErrorData::Empty
-                                            }
-                                        }
-                                    },
-                                    custom_error::JSON_RPC_SERVER_ERROR_NODE_UNHEALTHY => {
-                                        match serde_json::from_value::<custom_error::NodeUnhealthyErrorData>(json["error"]["data"].clone()) {
-                                            Ok(custom_error::NodeUnhealthyErrorData {num_slots_behind}) => RpcResponseErrorData::NodeUnhealthy {num_slots_behind},
-                                            Err(_err) => {
-                                                RpcResponseErrorData::Empty
-                                            }
-                                        }
-                                    },
-                                    _ => RpcResponseErrorData::Empty
-                                };
+                            custom_error::JSON_RPC_SERVER_ERROR_SEND_TRANSACTION_PREFLIGHT_FAILURE => {
+                                match serde_json::from_value::<RpcSimulateTransactionResult>(json["error"]["data"].clone()) {
+                                    Ok(data) => RpcResponseErrorData::SendTransactionPreflightFailure(data),
+                                    Err(err) => {
+                                        debug!("Failed to deserialize simulation failure details: {:?}. This may indicate an issue with transaction validation.", err);
+                                        RpcResponseErrorData::Empty
+                                    }
+                                }
+                            },
+                            custom_error::JSON_RPC_SERVER_ERROR_NODE_UNHEALTHY => {
+                                match serde_json::from_value::<custom_error::NodeUnhealthyErrorData>(json["error"]["data"].clone()) {
+                                    Ok(custom_error::NodeUnhealthyErrorData {num_slots_behind}) => 
+                                        RpcResponseErrorData::NodeUnhealthy {num_slots_behind},
+                                    Err(_err) => {
+                                        debug!("{}", NODE_UNHEALTHY);
+                                        RpcResponseErrorData::Empty
+                                    }
+                                }
+                            },
+                            _ => RpcResponseErrorData::Empty
+                        };
 
                         Err(RpcError::RpcResponseError {
                             code: rpc_error_object.code,
