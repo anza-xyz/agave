@@ -183,3 +183,28 @@ This simplifies the process of diffing between versions of the log.
   * Remove `Unreleased` annotation from `vx.y.z` section
   * Add a new section at the top for `vx.y.z+1 - Unreleased`
 * Tag that new commit as the new release
+
+## Unreleased
+
+### Added
+- New `error_messages` module in RPC client providing standardized, detailed error messages (#4202)
+- Comprehensive error descriptions for common RPC failures including:
+  - Transaction confirmation issues
+  - Block and account lookup failures
+  - Node health problems
+  - Rate limiting scenarios
+- Actionable guidance for resolving RPC issues with specific steps
+- Integration tests ensuring error message quality and consistency
+
+### Changed
+- Enhanced error messages in HTTP sender and RPC client for better debugging
+- Improved error handling documentation with examples
+- Added comprehensive test suite for error messages including:
+  - Unit tests for message content
+  - Integration tests with RPC error types
+  - Format and structure validation
+
+### Developer Experience
+- Better error diagnostics for common RPC operations
+- More actionable error messages for faster problem resolution
+- Consistent error message format across all RPC operations
