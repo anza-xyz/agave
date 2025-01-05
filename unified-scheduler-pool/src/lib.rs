@@ -446,21 +446,16 @@ impl TaskHandler for DefaultTaskHandler {
         let transaction_indexes = match scheduling_context.mode() {
             BlockVerification => vec![index],
             BlockProduction => {
-                let mut vec = vec![];
+                // Create a placeholder vec, which will be populated later if
+                // transaction_status_sender is Some(_).
                 // transaction_status_sender is usually None for staked nodes because it's only
                 // used for RPC-related additional data recording. However, a staked node could
                 // also be running with rpc functionalities during development. So, we need to
                 // correctly support the use case for produced blocks as well, like verified blocks
                 // via the replaying stage.
-                // Refer `record_token_balances` in `execute_batch()` as this conditional treatment
-                // is mirrored from it.
-                if handler_context.transaction_status_sender.is_some() {
-                    // Adjust the empty new vec with the exact needed capacity, which will be
-                    // filled inside `execute_batch()` below. Otherwise, excess cap would be
-                    // reserved on `.extend()` in it.
-                    vec.reserve_exact(1);
-                }
-                vec
+                // Refer `record_token_balances` in `execute_batch()` as this treatment is mirrored
+                // from it.
+                vec![]
             }
         };
         let batch_with_indexes = TransactionBatchWithIndexes {

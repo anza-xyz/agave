@@ -194,8 +194,13 @@ pub fn execute_batch(
                 assert_eq!(processing_results.len(), 1);
                 assert!(transaction_indexes.is_empty());
 
-                let maybe_index = extra_pre_commit_callback(&processing_results[0])?;
-                transaction_indexes.to_mut().extend(maybe_index);
+                if let Some(index) = extra_pre_commit_callback(&processing_results[0])? {
+                    let transaction_indexes = transaction_indexes.to_mut();
+                    // Adjust the empty new vec with the exact needed capacity. Otherwise, excess
+                    // cap would be reserved on `.push()` in it.
+                    transaction_indexes.reserve_exact(1);
+                    transaction_indexes.push(index);
+                }
             }
         }
         Ok(())
