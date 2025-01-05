@@ -941,7 +941,7 @@ impl Blockstore {
     fn try_shred_recovery(
         &self,
         erasure_metas: &BTreeMap<ErasureSetId, WorkingEntry<ErasureMeta>>,
-        index_working_set: &mut HashMap<u64, IndexMetaWorkingSetEntry>,
+        index_working_set: &HashMap<u64, IndexMetaWorkingSetEntry>,
         prev_inserted_shreds: &HashMap<ShredId, Shred>,
         leader_schedule_cache: &LeaderScheduleCache,
         reed_solomon_cache: &ReedSolomonCache,
@@ -956,8 +956,8 @@ impl Blockstore {
             .filter_map(|(erasure_set, working_erasure_meta)| {
                 let erasure_meta = working_erasure_meta.as_ref();
                 let slot = erasure_set.slot();
-                let index_meta_entry = index_working_set.get_mut(&slot).expect("Index");
-                let index = &mut index_meta_entry.index;
+                let index_meta_entry = index_working_set.get(&slot).expect("Index");
+                let index = &index_meta_entry.index;
                 match erasure_meta.status(index) {
                     ErasureMetaStatus::CanRecover => self
                         .recover_shreds(
@@ -994,7 +994,7 @@ impl Blockstore {
             let recovered_shreds: Vec<_> = self
                 .try_shred_recovery(
                     &shred_insertion_tracker.erasure_metas,
-                    &mut shred_insertion_tracker.index_working_set,
+                    &shred_insertion_tracker.index_working_set,
                     &shred_insertion_tracker.just_inserted_shreds,
                     leader_schedule_cache,
                     reed_solomon_cache,
