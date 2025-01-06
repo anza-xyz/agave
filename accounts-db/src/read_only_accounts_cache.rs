@@ -202,6 +202,9 @@ impl ReadOnlyAccountsCache {
                 self.data_size.fetch_sub(account_size, Ordering::Relaxed);
                 entry.account = account;
                 entry.slot = slot;
+                entry
+                    .last_update_time
+                    .store(ReadOnlyAccountCacheEntry::timestamp(), Ordering::Release);
                 // Move the entry to the end of the queue.
                 let mut queue = self.queue.lock().unwrap();
                 queue.remove(entry.index());
