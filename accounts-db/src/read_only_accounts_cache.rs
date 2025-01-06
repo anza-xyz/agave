@@ -3,6 +3,7 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
+    ahash::random_state::RandomState as AHashRandomState,
     dashmap::{mapref::entry::Entry, DashMap},
     index_list::{Index, IndexList},
     log::*,
@@ -71,7 +72,7 @@ struct AtomicReadOnlyCacheStats {
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 #[derive(Debug)]
 pub(crate) struct ReadOnlyAccountsCache {
-    cache: Arc<DashMap<ReadOnlyCacheKey, ReadOnlyAccountCacheEntry>>,
+    cache: Arc<DashMap<ReadOnlyCacheKey, ReadOnlyAccountCacheEntry, AHashRandomState>>,
     /// When an item is first entered into the cache, it is added to the end of
     /// the queue. Also each time an entry is looked up from the cache it is
     /// moved to the end of the queue. As a result, items in the queue are
@@ -104,7 +105,7 @@ impl ReadOnlyAccountsCache {
         ms_to_skip_lru_update: u32,
     ) -> Self {
         assert!(max_data_size_lo <= max_data_size_hi);
-        let cache = Arc::new(DashMap::default());
+        let cache = Arc::new(DashMap::with_hasher(AHashRandomState::default()));
         let queue = Arc::new(Mutex::<IndexList<ReadOnlyCacheKey>>::default());
         let data_size = Arc::new(AtomicUsize::default());
         let stats = Arc::new(AtomicReadOnlyCacheStats::default());
@@ -233,7 +234,7 @@ impl ReadOnlyAccountsCache {
     /// Removes `key` from the cache, if present, and returns the removed account
     fn do_remove(
         key: &ReadOnlyCacheKey,
-        cache: &DashMap<ReadOnlyCacheKey, ReadOnlyAccountCacheEntry>,
+        cache: &DashMap<ReadOnlyCacheKey, ReadOnlyAccountCacheEntry, AHashRandomState>,
         queue: &Mutex<IndexList<ReadOnlyCacheKey>>,
         data_size: &AtomicUsize,
     ) -> Option<AccountSharedData> {
@@ -289,7 +290,7 @@ impl ReadOnlyAccountsCache {
         max_data_size_lo: usize,
         max_data_size_hi: usize,
         data_size: Arc<AtomicUsize>,
-        cache: Arc<DashMap<ReadOnlyCacheKey, ReadOnlyAccountCacheEntry>>,
+        cache: Arc<DashMap<ReadOnlyCacheKey, ReadOnlyAccountCacheEntry, AHashRandomState>>,
         queue: Arc<Mutex<IndexList<ReadOnlyCacheKey>>>,
         stats: Arc<AtomicReadOnlyCacheStats>,
     ) -> thread::JoinHandle<()> {
@@ -333,7 +334,7 @@ impl ReadOnlyAccountsCache {
     fn evict(
         target_data_size: usize,
         data_size: &AtomicUsize,
-        cache: &DashMap<ReadOnlyCacheKey, ReadOnlyAccountCacheEntry>,
+        cache: &DashMap<ReadOnlyCacheKey, ReadOnlyAccountCacheEntry, AHashRandomState>,
         queue: &Mutex<IndexList<ReadOnlyCacheKey>>,
     ) -> u64 {
         let mut num_evicts = 0;
