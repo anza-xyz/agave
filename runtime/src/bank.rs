@@ -3125,10 +3125,14 @@ impl Bank {
             })
             .collect::<Result<Vec<_>>>()?;
         let tx_account_lock_limit = self.get_transaction_account_lock_limit();
-        let lock_results = self
-            .rc
-            .accounts
-            .lock_accounts(sanitized_txs.iter(), tx_account_lock_limit);
+        let disable_intrabatch_account_locks = self
+            .feature_set
+            .is_active(&feature_set::disable_intrabatch_account_locks::id());
+        let lock_results = self.rc.accounts.lock_accounts(
+            sanitized_txs.iter(),
+            tx_account_lock_limit,
+            disable_intrabatch_account_locks,
+        );
         Ok(TransactionBatch::new(
             lock_results,
             self,
@@ -3139,9 +3143,14 @@ impl Bank {
     /// Attempt to take locks on the accounts in a transaction batch
     pub fn try_lock_accounts(&self, txs: &[impl SVMMessage]) -> Vec<Result<()>> {
         let tx_account_lock_limit = self.get_transaction_account_lock_limit();
-        self.rc
-            .accounts
-            .lock_accounts(txs.iter(), tx_account_lock_limit)
+        let disable_intrabatch_account_locks = self
+            .feature_set
+            .is_active(&feature_set::disable_intrabatch_account_locks::id());
+        self.rc.accounts.lock_accounts(
+            txs.iter(),
+            tx_account_lock_limit,
+            disable_intrabatch_account_locks,
+        )
     }
 
     /// Prepare a locked transaction batch from a list of sanitized transactions.
@@ -3165,10 +3174,14 @@ impl Bank {
     ) -> TransactionBatch<'a, 'b, Tx> {
         // this lock_results could be: Ok, AccountInUse, WouldExceedBlockMaxLimit or WouldExceedAccountMaxLimit
         let tx_account_lock_limit = self.get_transaction_account_lock_limit();
+        let disable_intrabatch_account_locks = self
+            .feature_set
+            .is_active(&feature_set::disable_intrabatch_account_locks::id());
         let lock_results = self.rc.accounts.lock_accounts_with_results(
             transactions.iter(),
             transaction_results,
             tx_account_lock_limit,
+            disable_intrabatch_account_locks,
         );
         TransactionBatch::new(lock_results, self, OwnedOrBorrowed::Borrowed(transactions))
     }
@@ -6992,10 +7005,14 @@ impl Bank {
             .into_iter()
             .map(RuntimeTransaction::from_transaction_for_tests)
             .collect::<Vec<_>>();
-        let lock_results = self
-            .rc
-            .accounts
-            .lock_accounts(sanitized_txs.iter(), transaction_account_lock_limit);
+        let disable_intrabatch_account_locks = self
+            .feature_set
+            .is_active(&feature_set::disable_intrabatch_account_locks::id());
+        let lock_results = self.rc.accounts.lock_accounts(
+            sanitized_txs.iter(),
+            transaction_account_lock_limit,
+            disable_intrabatch_account_locks,
+        );
         TransactionBatch::new(lock_results, self, OwnedOrBorrowed::Owned(sanitized_txs))
     }
 

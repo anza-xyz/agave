@@ -35,8 +35,6 @@ use {
     },
 };
 
-const HANA_FEATURE_PLACEHOLDER: bool = false;
-
 pub type PubkeyAccountSlot = (Pubkey, AccountSharedData, Slot);
 
 struct TransactionAccountLocksIterator<'a, T: SVMMessage> {
@@ -564,6 +562,7 @@ impl Accounts {
         &self,
         txs: impl Iterator<Item = &'a Tx>,
         tx_account_lock_limit: usize,
+        disable_intrabatch_account_locks: bool,
     ) -> Vec<Result<()>> {
         // Validate the account locks, then get iterator if successful validation.
         let tx_account_locks_results: Vec<Result<_>> = txs
@@ -572,7 +571,7 @@ impl Accounts {
                     .map(|_| TransactionAccountLocksIterator::new(tx))
             })
             .collect();
-        self.lock_accounts_inner(tx_account_locks_results)
+        self.lock_accounts_inner(tx_account_locks_results, disable_intrabatch_account_locks)
     }
 
     #[must_use]
@@ -581,6 +580,7 @@ impl Accounts {
         txs: impl Iterator<Item = &'a (impl SVMMessage + 'a)>,
         results: impl Iterator<Item = Result<()>>,
         tx_account_lock_limit: usize,
+        disable_intrabatch_account_locks: bool,
     ) -> Vec<Result<()>> {
         // Validate the account locks, then get iterator if successful validation.
         let tx_account_locks_results: Vec<Result<_>> = txs
@@ -591,16 +591,17 @@ impl Accounts {
                 Err(err) => Err(err),
             })
             .collect();
-        self.lock_accounts_inner(tx_account_locks_results)
+        self.lock_accounts_inner(tx_account_locks_results, disable_intrabatch_account_locks)
     }
 
     #[must_use]
     fn lock_accounts_inner(
         &self,
         tx_account_locks_results: Vec<Result<TransactionAccountLocksIterator<impl SVMMessage>>>,
+        disable_intrabatch_account_locks: bool,
     ) -> Vec<Result<()>> {
         let account_locks = &mut self.account_locks.lock().unwrap();
-        if HANA_FEATURE_PLACEHOLDER {
+        if disable_intrabatch_account_locks {
             let validated_batch_keys = tx_account_locks_results
                 .into_iter()
                 .map(|tx_account_locks_result| {
