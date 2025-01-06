@@ -5,7 +5,7 @@ use {
     crossbeam_channel::unbounded,
     solana_client::connection_cache::ConnectionCache,
     solana_connection_cache::client_connection::ClientConnection,
-    solana_net_utils::bind_to_unspecified,
+    solana_net_utils::{bind_to_unspecified, SocketConfig},
     solana_sdk::{
         hash::Hash, message::Message, signature::Keypair, signer::Signer, transaction::Transaction,
     },
@@ -139,9 +139,11 @@ fn main() -> Result<()> {
         let mut read_channels = Vec::new();
         let mut read_threads = Vec::new();
         let recycler = PacketBatchRecycler::default();
-        let (port, read_sockets) = solana_net_utils::multi_bind_in_range(
+        let config = SocketConfig::default().reuseport(true);
+        let (port, read_sockets) = solana_net_utils::multi_bind_in_range_with_config(
             ip_addr,
             (port, port + num_sockets as u16),
+            config,
             num_sockets,
         )
         .unwrap();

@@ -54,24 +54,24 @@ impl Vortexor {
         dynamic_port_range: (u16, u16),
         num_quic_endpoints: u64,
     ) -> TpuSockets {
-        let quic_config = SocketConfig { reuseport: true };
+        let quic_config = SocketConfig::default().reuseport(true);
 
         let (_, tpu_quic) =
-            bind_in_range_with_config(bind_address, dynamic_port_range, quic_config.clone())
+            bind_in_range_with_config(bind_address, dynamic_port_range, quic_config)
                 .expect("expected bind to succeed");
 
         let tpu_quic_port = tpu_quic.local_addr().unwrap().port();
         let tpu_quic = bind_more_with_config(
             tpu_quic,
             num_quic_endpoints.try_into().unwrap(),
-            quic_config.clone(),
+            quic_config,
         )
         .unwrap();
 
         let (_, tpu_quic_fwd) = bind_in_range_with_config(
             bind_address,
             (tpu_quic_port.saturating_add(1), dynamic_port_range.1),
-            quic_config.clone(),
+            quic_config,
         )
         .expect("expected bind to succeed");
 
