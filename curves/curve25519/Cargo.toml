@@ -13,6 +13,7 @@ edition = { workspace = true }
 bytemuck = { workspace = true }
 bytemuck_derive = { workspace = true }
 thiserror = { workspace = true }
+subtle = { workspace = true }
 
 [target.'cfg(target_os = "solana")'.dependencies]
 solana-define-syscall = { workspace = true }
