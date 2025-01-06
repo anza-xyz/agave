@@ -479,6 +479,11 @@ impl TransactionViewReceiveAndBuffer {
             return Err(());
         };
 
+        // Discard non-vote packets if in vote-only mode.
+        if root_bank.vote_only_bank() && !view.is_simple_vote_transaction() {
+            return Err(());
+        }
+
         // Check excessive pre-compiles.
         let signature_details = view.signature_details();
         let num_precompiles = signature_details.num_ed25519_instruction_signatures()
