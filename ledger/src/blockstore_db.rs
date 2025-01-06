@@ -1451,11 +1451,21 @@ where
         result
     }
 
+    /// Create a key type suitable for use with multi_get_bytes() and
+    /// multi_get(). Those functions return iterators, so the keys must be
+    /// created with a separate function in order to live long enough
+    pub(crate) fn multi_get_keys<I>(&self, keys: I) -> Vec<Vec<u8>>
+    where
+        I: IntoIterator<Item = C::Index>,
+    {
+        keys.into_iter().map(C::key).collect()
+    }
+
     pub(crate) fn multi_get_bytes<I>(&self, keys: I) -> Vec<Result<Option<Vec<u8>>>>
     where
         I: IntoIterator<Item = C::Index>,
     {
-        let keys: Vec<_> = keys.into_iter().map(C::key).collect();
+        let keys = self.multi_get_keys(keys);
         {
             let is_perf_enabled = maybe_enable_rocksdb_perf(
                 self.column_options.rocks_perf_sample_interval,
@@ -1638,7 +1648,7 @@ where
     where
         I: IntoIterator<Item = C::Index>,
     {
-        let keys: Vec<_> = keys.into_iter().map(C::key).collect();
+        let keys = self.multi_get_keys(keys);
         {
             let is_perf_enabled = maybe_enable_rocksdb_perf(
                 self.column_options.rocks_perf_sample_interval,
