@@ -1138,7 +1138,7 @@ lazy_static! {
         (remove_accounts_executable_flag_checks::id(), "Remove checks of accounts is_executable flag SIMD-0162"),
         (lift_cpi_caller_restriction::id(), "Lift the restriction in CPI that the caller must have the callee as an instruction account #2202"),
         (disable_account_loader_special_case::id(), "Disable account loader special case #3513"),
-        (accounts_lt_hash::id(), "enables lattice-based accounts hash #3333"),
+        (accounts_lt_hash::id(), "enables lattice-based accounts hash SIMD-0215"),
         (snapshots_lt_hash::id(), "snapshots use lattice-based accounts hash #3598"),
         (enable_secp256r1_precompile::id(), "Enable secp256r1 precompile SIMD-0075"),
         (migrate_stake_program_to_core_bpf::id(), "Migrate Stake program to Core BPF SIMD-0196 #3655"),
