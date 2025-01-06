@@ -73,32 +73,40 @@ fn mmsghdr_for_packet(
     const SOCKADDR_IN6_PADDING: usize = SIZE_OF_SOCKADDR_STORAGE - SIZE_OF_SOCKADDR_IN6;
 
     iov.write(iovec {
-        iov_base: packet.as_ptr().cast_mut().cast(),
+        iov_base: packet.as_ptr() as *mut libc::c_void,
         iov_len: packet.len(),
     });
 
     let msg_namelen = match dest {
         SocketAddr::V4(socket_addr_v4) => {
-            let ptr: *mut sockaddr_in = addr.as_mut_ptr().cast();
+            let ptr: *mut sockaddr_in = addr.as_mut_ptr() as *mut _;
             unsafe {
                 ptr::write(
                     ptr,
                     *nix::sys::socket::SockaddrIn::from(*socket_addr_v4).as_ref(),
                 );
                 // Zero the remaining bytes after sockaddr_in
-                ptr::write_bytes(ptr.byte_add(SIZE_OF_SOCKADDR_IN), 0, SOCKADDR_IN_PADDING);
+                ptr::write_bytes(
+                    (ptr as *mut u8).add(SIZE_OF_SOCKADDR_IN),
+                    0,
+                    SOCKADDR_IN_PADDING,
+                );
             }
             SIZE_OF_SOCKADDR_IN as socklen_t
         }
         SocketAddr::V6(socket_addr_v6) => {
-            let ptr: *mut sockaddr_in6 = addr.as_mut_ptr().cast();
+            let ptr: *mut sockaddr_in6 = addr.as_mut_ptr() as *mut _;
             unsafe {
                 ptr::write(
                     ptr,
                     *nix::sys::socket::SockaddrIn6::from(*socket_addr_v6).as_ref(),
                 );
                 // Zero the remaining bytes after sockaddr_in6
-                ptr::write_bytes(ptr.byte_add(SIZE_OF_SOCKADDR_IN6), 0, SOCKADDR_IN6_PADDING);
+                ptr::write_bytes(
+                    (ptr as *mut u8).add(SIZE_OF_SOCKADDR_IN6),
+                    0,
+                    SOCKADDR_IN6_PADDING,
+                );
             }
             SIZE_OF_SOCKADDR_IN6 as socklen_t
         }
@@ -192,7 +200,7 @@ where
     // SAFETY: The first `packets.len()` elements of `hdrs`, `iovs`, and `addrs` are
     // guaranteed to be initialized by `mmsghdr_for_packet` before this loop.
     let hdrs_slice =
-        unsafe { std::slice::from_raw_parts_mut(hdrs.as_mut_ptr().cast(), packets.len()) };
+        unsafe { std::slice::from_raw_parts_mut(hdrs.as_mut_ptr() as *mut mmsghdr, packets.len()) };
 
     let result = sendmmsg_retry(sock, hdrs_slice);
 
