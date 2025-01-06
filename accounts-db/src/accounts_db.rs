@@ -104,6 +104,7 @@ use {
         fs,
         hash::{Hash as StdHash, Hasher as StdHasher},
         io::Result as IoResult,
+        iter,
         num::{NonZeroUsize, Saturating},
         ops::{Range, RangeBounds},
         path::{Path, PathBuf},
@@ -2839,7 +2840,7 @@ impl AccountsDb {
                 candidates_bin.retain(|candidate_pubkey, candidate_info| {
                     let mut should_collect_reclaims = false;
                     self.accounts_index.scan(
-                        [*candidate_pubkey].iter(),
+                        iter::once(candidate_pubkey),
                         |_candidate_pubkey, slot_list_and_ref_count, _entry| {
                             let mut useless = true;
                             if let Some((slot_list, ref_count)) = slot_list_and_ref_count {
