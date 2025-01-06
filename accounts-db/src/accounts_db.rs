@@ -6295,13 +6295,13 @@ impl AccountsDb {
         });
 
         // Always flush up to `requested_flush_root`, which is necessary for things like snapshotting.
-        let cached_roots: BTreeSet<Slot> = self.accounts_cache.clear_roots(requested_flush_root);
+        let flushed_roots: BTreeSet<Slot> = self.accounts_cache.clear_roots(requested_flush_root);
 
         // Iterate from highest to lowest so that we don't need to flush earlier
         // outdated updates in earlier roots
         let mut num_roots_flushed = 0;
         let mut flush_stats = FlushStats::default();
-        for &root in cached_roots.iter().rev() {
+        for &root in flushed_roots.iter().rev() {
             if let Some(stats) =
                 self.flush_slot_cache_with_clean(root, should_flush_f.as_mut(), max_clean_root)
             {
@@ -6309,19 +6309,28 @@ impl AccountsDb {
                 flush_stats.accumulate(&stats);
             }
 
-            // Regardless of whether this slot was *just* flushed from the cache by the above
-            // `flush_slot_cache()`, we should update the `max_flush_root`.
-            // This is because some rooted slots may be flushed to storage *before* they are marked as root.
-            // This can occur for instance when
-            //  the cache is overwhelmed, we flushed some yet to be rooted frozen slots
-            // These slots may then *later* be marked as root, so we still need to handle updating the
-            // `max_flush_root` in the accounts cache.
+            if let Some(storage) = self.storage.get_slot_storage_entry(root) {
+                // In this loop, "flush_slot_cache_with_clean" will handle
+                // cleaning the accounts only for the "flushed_roots". However,
+                // these "flushed_roots" may trigger additional clean for older
+                // roots. Therefore, we need to add them to "dirty_stores" for
+                // clean to pick up such additional cleaning.
+                self.dirty_stores.entry(root).or_insert(storage);
+            }
+        }
+
+        // Regardless of whether this slot was *just* flushed from the cache by
+        // the above loop. we should update the `max_flush_root`. This is
+        // because some rooted slots may be flushed to storage *before* they are
+        // marked as root. This can occur for instance when the cache is
+        // overwhelmed, we flushed some yet to be rooted frozen slots. These
+        // slots may then *later* be marked as root, so we still need to handle
+        // updating the `max_flush_root` in the accounts cache.
+        if let Some(&root) = flushed_roots.last() {
             self.accounts_cache.set_max_flush_root(root);
         }
 
-        // Only add to the uncleaned roots set *after* we've flushed the previous roots,
-        // so that clean will actually be able to clean the slots.
-        let num_new_roots = cached_roots.len();
+        let num_new_roots = flushed_roots.len();
         (num_new_roots, num_roots_flushed, flush_stats)
     }
 
@@ -8384,6 +8393,7 @@ impl AccountsDb {
             .storage
             .get_slot_storage_entry_shrinking_in_progress_ok(slot)
         {
+            info!("haoran add_dirty_store when rooting: {}", slot);
             self.dirty_stores.insert(slot, store);
         }
         store_time.stop();
