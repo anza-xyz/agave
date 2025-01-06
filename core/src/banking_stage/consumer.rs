@@ -908,6 +908,7 @@ mod tests {
             thread::{Builder, JoinHandle},
             time::Duration,
         },
+        test_case::test_case,
         transaction::MessageHash,
     };
 
@@ -1442,8 +1443,11 @@ mod tests {
         let _ = poh_simulator.join();
     }
 
-    #[test]
-    fn test_bank_process_and_record_transactions_cost_tracker() {
+    #[test_case(false; "old")]
+    #[test_case(true; "simd83")]
+    fn test_bank_process_and_record_transactions_cost_tracker(
+        relax_intrabatch_account_locks: bool,
+    ) {
         solana_logger::setup();
         let GenesisConfigInfo {
             genesis_config,
@@ -1451,6 +1455,9 @@ mod tests {
             ..
         } = create_slow_genesis_config(10_000);
         let mut bank = Bank::new_for_tests(&genesis_config);
+        if !relax_intrabatch_account_locks {
+            bank.deactivate_feature(&feature_set::relax_intrabatch_account_locks::id());
+        }
         bank.ns_per_slot = u128::MAX;
         let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let pubkey = solana_pubkey::new_rand();
@@ -1532,6 +1539,14 @@ mod tests {
             system_transaction::transfer(&mint_keypair, &pubkey, 2, genesis_config.hash()),
         ]);
 
+        let conflicting_transaction = sanitize_transactions(vec![system_transaction::transfer(
+            &Keypair::new(),
+            &pubkey,
+            1,
+            genesis_config.hash(),
+        )]);
+        bank.try_lock_accounts(&conflicting_transaction);
+
         let process_transactions_batch_output =
             consumer.process_and_record_transactions(&bank, &transactions, 0);
 
@@ -1596,22 +1611,46 @@ mod tests {
         let _ = poh_simulator.join();
     }
 
-    #[test]
-    fn test_bank_process_and_record_transactions_account_in_use() {
+    #[test_case(false, false; "old::locked")]
+    #[test_case(false, true; "old::duplicate")]
+    #[test_case(true, false; "simd83::locked")]
+    #[test_case(true, true; "simd83::duplicate")]
+    fn test_bank_process_and_record_transactions_account_in_use(
+        relax_intrabatch_account_locks: bool,
+        use_duplicate_transaction: bool,
+    ) {
         solana_logger::setup();
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
             ..
         } = create_slow_genesis_config(10_000);
-        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        if !relax_intrabatch_account_locks {
+            bank.deactivate_feature(&feature_set::relax_intrabatch_account_locks::id());
+        }
+        bank.ns_per_slot = u128::MAX;
+        let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let pubkey = solana_pubkey::new_rand();
         let pubkey1 = solana_pubkey::new_rand();
 
         let transactions = sanitize_transactions(vec![
             system_transaction::transfer(&mint_keypair, &pubkey, 1, genesis_config.hash()),
-            system_transaction::transfer(&mint_keypair, &pubkey1, 1, genesis_config.hash()),
+            system_transaction::transfer(
+                &mint_keypair,
+                if use_duplicate_transaction {
+                    &pubkey
+                } else {
+                    &pubkey1
+                },
+                1,
+                genesis_config.hash(),
+            ),
         ]);
+        assert_eq!(
+            transactions[0].signature() == transactions[1].signature(),
+            use_duplicate_transaction
+        );
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
@@ -1644,6 +1683,20 @@ mod tests {
             Arc::new(PrioritizationFeeCache::new(0u64)),
         );
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
+
+        // with simd83 and no duplicate, we take a cross-batch lock on an account to create a conflict
+        // with a duplicate transaction and simd83 it comes from signature equality in the batch
+        // without simd83 the conflict comes from locks in batch
+        if relax_intrabatch_account_locks && !use_duplicate_transaction {
+            let conflicting_transaction =
+                sanitize_transactions(vec![system_transaction::transfer(
+                    &Keypair::new(),
+                    &pubkey1,
+                    1,
+                    genesis_config.hash(),
+                )]);
+            bank.try_lock_accounts(&conflicting_transaction);
+        }
 
         let process_transactions_batch_output =
             consumer.process_and_record_transactions(&bank, &transactions, 0);
@@ -2264,8 +2317,9 @@ mod tests {
         let _ = poh_simulator.join();
     }
 
-    #[test]
-    fn test_consume_buffered_packets_retryable() {
+    #[test_case(false; "old")]
+    #[test_case(true; "simd83")]
+    fn test_consume_buffered_packets_retryable(relax_intrabatch_account_locks: bool) {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let (transactions, bank, _bank_forks, poh_recorder, _entry_receiver, _, poh_simulator) =
             setup_conflicting_transactions(ledger_path.path());
@@ -2306,6 +2360,7 @@ mod tests {
         let _ = bank_start.working_bank.accounts().lock_accounts(
             std::iter::once(&manual_lock_tx),
             bank_start.working_bank.get_transaction_account_lock_limit(),
+            relax_intrabatch_account_locks,
         );
 
         let banking_stage_stats = BankingStageStats::default();
