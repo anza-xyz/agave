@@ -482,7 +482,8 @@ impl TransactionViewReceiveAndBuffer {
         // Check excessive pre-compiles.
         let signature_details = view.signature_details();
         let num_precompiles = signature_details.num_ed25519_instruction_signatures()
-            + signature_details.num_secp256k1_instruction_signatures();
+            + signature_details.num_secp256k1_instruction_signatures()
+            + signature_details.num_secp256r1_instruction_signatures();
         if num_precompiles > MAX_ALLOWED_PRECOMPILE_SIGNATURES {
             return Err(());
         }
