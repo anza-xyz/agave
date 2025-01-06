@@ -136,6 +136,7 @@ macro_rules! entrypoint {
         }
         $crate::custom_heap_default!();
         $crate::custom_panic_default!();
+        $crate::efficient_panic!();
     };
 }
 
@@ -189,6 +190,7 @@ macro_rules! entrypoint_no_alloc {
         }
         $crate::custom_heap_default!();
         $crate::custom_panic_default!();
+        $crate::efficient_panic!();
     };
 }
 
@@ -270,11 +272,56 @@ macro_rules! custom_heap_default {
 #[macro_export]
 macro_rules! custom_panic_default {
     () => {
-        #[cfg(all(not(feature = "custom-panic"), target_os = "solana"))]
+        #[cfg(all(
+            not(any(feature = "custom-panic", feature = "efficient-panic")),
+            target_os = "solana"
+        ))]
         #[no_mangle]
         fn custom_panic(info: &core::panic::PanicInfo<'_>) {
             // Full panic reporting
             $crate::__msg!("{}", info);
+        }
+    };
+}
+
+/// This is an efficient implementation fo custom panic. It contains two syscalls and has a size
+/// of about 264 bytes. It depends on the unstable feature `panic_info_message`, which is going to
+/// be stabilized in Rust 1.84.
+///
+/// It works just like the default custom panic, except that dynamic generated error messages are
+/// not shown. For instance, trying to access an index out of bounds of a vector would give us
+/// `index Y is out of bounds for length X`. as the length is only known at runtime, this message
+/// is elided.
+///
+/// All messages known at compile time are correctly displayed, e.g. `called unwrap in a None`,
+/// file names, line numbers, and column numbers.
+#[macro_export]
+macro_rules! efficient_panic {
+    () => {
+        #[cfg(all(
+            not(feature = "custom-panic"),
+            feature = "efficient-panic",
+            target_os = "solana"
+        ))]
+        #[no_mangle]
+        fn custom_panic(info: &core::panic::PanicInfo<'_>) {
+            if let Some(Some(mm)) = info.message().map(|mes| mes.as_str()) {
+                let mes = mm.as_bytes();
+                unsafe {
+                    solana_program::syscalls::sol_log_(mes.as_ptr(), mes.len() as u64);
+                }
+            }
+
+            if let Some(loc) = info.location() {
+                unsafe {
+                    solana_program::syscalls::sol_panic_(
+                        loc.file().as_ptr(),
+                        loc.file().len() as u64,
+                        loc.line() as u64,
+                        loc.column() as u64,
+                    );
+                }
+            }
         }
     };
 }

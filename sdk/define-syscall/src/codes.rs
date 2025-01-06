@@ -9,7 +9,7 @@ macro_rules! define_code {
 }
 
 define_code!(ABORT, 1);
-define_code!(SOL_PANIC, 2);
+define_code!(SOL_PANIC_, 2);
 define_code!(SOL_MEMCPY_, 3);
 define_code!(SOL_MEMMOVE_, 4);
 define_code!(SOL_MEMSET_, 5);

@@ -332,7 +332,7 @@ pub fn create_program_runtime_environment_v1<'a>(
     result.register_function("abort", codes::ABORT, SyscallAbort::vm)?;
 
     // Panic
-    result.register_function("sol_panic_", codes::SOL_PANIC, SyscallPanic::vm)?;
+    result.register_function("sol_panic_", codes::SOL_PANIC_, SyscallPanic::vm)?;
 
     // Logging
     result.register_function("sol_log_", codes::SOL_LOG_, SyscallLog::vm)?;
