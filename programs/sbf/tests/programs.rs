@@ -5662,3 +5662,59 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
         }
     }
 }
+
+#[test]
+#[cfg(feature = "sbf_rust")]
+fn test_efficient_panic() {
+    let GenesisConfigInfo {
+        genesis_config,
+        mint_keypair,
+        ..
+    } = create_genesis_config(50);
+
+    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let mut bank_client = BankClient::new_shared(bank.clone());
+    let authority_keypair = Keypair::new();
+
+    let (bank, program_id) = load_upgradeable_program_and_advance_slot(
+        &mut bank_client,
+        bank_forks.as_ref(),
+        &mint_keypair,
+        &authority_keypair,
+        "solana_sbf_rust_efficient_panic",
+    );
+
+    bank.freeze();
+
+    let account_metas = vec![AccountMeta::new(mint_keypair.pubkey(), true)];
+    let instruction = Instruction::new_with_bytes(program_id, &[0, 2], account_metas.clone());
+
+    let blockhash = bank.last_blockhash();
+    let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
+    let transaction = Transaction::new(&[&mint_keypair], message, blockhash);
+    let sanitized_tx = RuntimeTransaction::from_transaction_for_tests(transaction);
+
+    let result = bank.simulate_transaction(&sanitized_tx, false);
+    assert!(result.logs.contains(&format!(
+        "Program {} \
+    failed: SBF program Panicked in rust/efficient_panic/src/lib.rs at 22:21",
+        program_id
+    )));
+
+    let instruction = Instruction::new_with_bytes(program_id, &[1, 2], account_metas);
+
+    let blockhash = bank.last_blockhash();
+    let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
+    let transaction = Transaction::new(&[&mint_keypair], message, blockhash);
+    let sanitized_tx = RuntimeTransaction::from_transaction_for_tests(transaction);
+
+    let result = bank.simulate_transaction(&sanitized_tx, false);
+    assert!(result
+        .logs
+        .contains(&"Program log: called `Option::unwrap()` on a `None` value".to_string()));
+    assert!(result.logs.contains(&format!(
+        "Program {} \
+    failed: SBF program Panicked in rust/efficient_panic/src/lib.rs at 28:23",
+        program_id
+    )));
+}

@@ -161,6 +161,7 @@ members = [
     "rust/deprecated_loader",
     "rust/divide_by_zero",
     "rust/dup_accounts",
+    "rust/efficient_panic",
     "rust/error_handling",
     "rust/external_spend",
     "rust/finalize",

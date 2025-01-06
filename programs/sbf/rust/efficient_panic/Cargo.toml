@@ -1,0 +1,22 @@
+[package]
+name = "solana-sbf-rust-efficient-panic"
+version = { workspace = true }
+description = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+solana-program = { workspace = true }
+
+[features]
+default = ["efficient-panic"]
+efficient-panic = []
+
+[lib]
+crate-type = ["cdylib"]
+
+[lints]
+workspace = true

@@ -136,6 +136,7 @@ macro_rules! entrypoint {
         }
         $crate::custom_heap_default!();
         $crate::custom_panic_default!();
+        $crate::efficient_panic!();
     };
 }
 
@@ -189,6 +190,7 @@ macro_rules! entrypoint_no_alloc {
         }
         $crate::custom_heap_default!();
         $crate::custom_panic_default!();
+        $crate::efficient_panic!();
     };
 }
 
@@ -270,11 +272,48 @@ macro_rules! custom_heap_default {
 #[macro_export]
 macro_rules! custom_panic_default {
     () => {
-        #[cfg(all(not(feature = "custom-panic"), target_os = "solana"))]
+        #[cfg(all(
+            not(any(feature = "custom-panic", feature = "efficient-panic")),
+            target_os = "solana"
+        ))]
         #[no_mangle]
         fn custom_panic(info: &core::panic::PanicInfo<'_>) {
             // Full panic reporting
             $crate::__msg!("{}", info);
+        }
+    };
+}
+
+/// This is an efficient implementation fo custom panic. It contains two syscalls and has a size
+/// of about 264 bytes. This is an alternative of the existing panic to decrease programs size and
+/// requires Rust 1.84.
+#[macro_export]
+macro_rules! efficient_panic {
+    () => {
+        #[cfg(all(
+            not(feature = "custom-panic"),
+            feature = "efficient-panic",
+            target_os = "solana"
+        ))]
+        #[no_mangle]
+        fn custom_panic(info: &core::panic::PanicInfo<'_>) {
+            if let Some(Some(mm)) = info.message().map(|mes| mes.as_str()) {
+                let mes = mm.as_bytes();
+                unsafe {
+                    solana_program::syscalls::sol_log_(mes.as_ptr(), mes.len() as u64);
+                }
+            }
+
+            if let Some(loc) = info.location() {
+                unsafe {
+                    solana_program::syscalls::sol_panic_(
+                        loc.file().as_ptr(),
+                        loc.file().len() as u64,
+                        loc.line() as u64,
+                        loc.column() as u64,
+                    );
+                }
+            }
         }
     };
 }
