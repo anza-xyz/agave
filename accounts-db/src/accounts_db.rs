@@ -2804,6 +2804,7 @@ impl AccountsDb {
         let active_guard = self
             .active_stats
             .activate(ActiveStatItem::CleanConstructCandidates);
+        let mut measure_construct_candidates = Measure::start("construct_candidates");
         let mut key_timings = CleanKeyTimings::default();
         let (candidates, min_dirty_slot) = self.construct_candidate_clean_keys(
             max_clean_root_inclusive,
@@ -2812,6 +2813,7 @@ impl AccountsDb {
             epoch_schedule,
             old_storages_policy,
         );
+        measure_construct_candidates.stop();
         drop(active_guard);
 
         let num_candidates = Self::count_pubkeys(&candidates);
@@ -3120,6 +3122,7 @@ impl AccountsDb {
                 key_timings.dirty_store_processing_us,
                 i64
             ),
+            ("construct_candidates_us", measure_construct_candidates.as_us(), i64),
             ("accounts_scan", accounts_scan.as_us(), i64),
             ("clean_old_rooted", clean_old_rooted.as_us(), i64),
             ("store_counts", store_counts_time.as_us(), i64),
