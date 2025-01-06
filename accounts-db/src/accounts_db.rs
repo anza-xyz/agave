@@ -6171,11 +6171,15 @@ impl AccountsDb {
         // Note even if force_flush is false, we will still flush all roots <= the
         // given `requested_flush_root`, even if some of the later roots cannot be used for
         // cleaning due to an ongoing scan
-        let (total_new_cleaned_roots, num_cleaned_roots_flushed, mut flush_stats) = self
-            .flush_rooted_accounts_cache(
-                requested_flush_root,
-                Some((&mut account_bytes_saved, &mut num_accounts_saved)),
-            );
+        let (
+            total_new_cleaned_roots,
+            num_cleaned_roots_flushed,
+            num_roots_added_to_dirty_stores,
+            mut flush_stats,
+        ) = self.flush_rooted_accounts_cache(
+            requested_flush_root,
+            Some((&mut account_bytes_saved, &mut num_accounts_saved)),
+        );
         flush_roots_elapsed.stop();
 
         // Note we don't purge unrooted slots here because there may be ongoing scans/references
@@ -6183,17 +6187,21 @@ impl AccountsDb {
         // banks
 
         // If 'should_aggressively_flush_cache', then flush the excess ones to storage
-        let (total_new_excess_roots, num_excess_roots_flushed, flush_stats_aggressively) =
-            if self.should_aggressively_flush_cache() {
-                // Start by flushing the roots
-                //
-                // Cannot do any cleaning on roots past `requested_flush_root` because future
-                // snapshots may need updates from those later slots, hence we pass `None`
-                // for `should_clean`.
-                self.flush_rooted_accounts_cache(None, None)
-            } else {
-                (0, 0, FlushStats::default())
-            };
+        let (
+            total_new_excess_roots,
+            num_excess_roots_flushed,
+            num_excess_roots_added_to_dirty_store,
+            flush_stats_aggressively,
+        ) = if self.should_aggressively_flush_cache() {
+            // Start by flushing the roots
+            //
+            // Cannot do any cleaning on roots past `requested_flush_root` because future
+            // snapshots may need updates from those later slots, hence we pass `None`
+            // for `should_clean`.
+            self.flush_rooted_accounts_cache(None, None)
+        } else {
+            (0, 0, 0, FlushStats::default())
+        };
         flush_stats.accumulate(&flush_stats_aggressively);
 
         let mut excess_slot_count = 0;
@@ -6233,6 +6241,16 @@ impl AccountsDb {
             ("num_cleaned_roots_flushed", num_cleaned_roots_flushed, i64),
             ("total_new_excess_roots", total_new_excess_roots, i64),
             ("num_excess_roots_flushed", num_excess_roots_flushed, i64),
+            (
+                "num_roots_added_to_dirty_stores",
+                num_roots_added_to_dirty_stores,
+                i64
+            ),
+            (
+                "num_excess_roots_added_to_dirty_stores",
+                num_excess_roots_added_to_dirty_store,
+                i64
+            ),
             ("excess_slot_count", excess_slot_count, i64),
             (
                 "unflushable_unrooted_slot_count",
@@ -6269,7 +6287,7 @@ impl AccountsDb {
         &self,
         requested_flush_root: Option<Slot>,
         should_clean: Option<(&mut usize, &mut usize)>,
-    ) -> (usize, usize, FlushStats) {
+    ) -> (usize, usize, usize, FlushStats) {
         let max_clean_root = should_clean.as_ref().and_then(|_| {
             // If there is a long running scan going on, this could prevent any cleaning
             // based on updates from slots > `max_clean_root`.
@@ -6300,6 +6318,7 @@ impl AccountsDb {
         // Iterate from highest to lowest so that we don't need to flush earlier
         // outdated updates in earlier roots
         let mut num_roots_flushed = 0;
+        let mut num_roots_added_to_dirty_stores = 0;
         let mut flush_stats = FlushStats::default();
         for &root in flushed_roots.iter().rev() {
             if let Some(stats) =
@@ -6311,11 +6330,18 @@ impl AccountsDb {
 
             if let Some(storage) = self.storage.get_slot_storage_entry(root) {
                 // In this loop, "flush_slot_cache_with_clean" will handle
-                // cleaning the accounts only for the "flushed_roots". However,
+                // cleaning the accounts only for the "flushed_roots". But,
                 // these "flushed_roots" may trigger additional clean for older
-                // roots. Therefore, we need to add them to "dirty_stores" for
-                // clean to pick up such additional cleaning.
-                self.dirty_stores.entry(root).or_insert(storage);
+                // roots. Therefore, we may need to add them to "dirty_stores"
+                // for clean to pick up such additional cleaning. However, the
+                // "dirty_keys" in those stores should have already been added
+                // to 'uncleaned_pubkeys' when we calculate accounts hash.
+                // Therefore, we don't need to add them to dirty_stores here
+                // again if they exists in 'uncleaned_pubkeys'.
+                if !self.uncleaned_pubkeys.contains_key(&root) {
+                    num_roots_added_to_dirty_stores += 1;
+                    self.dirty_stores.entry(root).or_insert(storage);
+                }
             }
         }
 
@@ -6331,7 +6357,12 @@ impl AccountsDb {
         }
 
         let num_new_roots = flushed_roots.len();
-        (num_new_roots, num_roots_flushed, flush_stats)
+        (
+            num_new_roots,
+            num_roots_flushed,
+            num_roots_added_to_dirty_stores,
+            flush_stats,
+        )
     }
 
     fn do_flush_slot_cache(
