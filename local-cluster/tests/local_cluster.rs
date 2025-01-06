@@ -3142,35 +3142,30 @@ fn test_lockout_violation_without_tower() {
 // Validator A, B, C have 31, 36, 33 % of stake respectively. Leader schedule is split, first half
 // of the test B is always leader, second half C is.
 // We don't give validator A any slots because it's going to be deleting its ledger,
-// so it may create versions of slots it's already created on a different fork
+// so it may create different blocks for slots it's already created blocks for on a different fork
 //
-// Step 1: Kill C, only A, B should be running
+// Step 1: Kill C, only A and B should be running
 //
-//  S0 -> S1 -> S2 -> S3 (A & B vote, optimistically confirmed)
+// base_slot -> next_slot_on_a (Wait for A to vote)
 //
 // Step 2:
-// Kill A and B once we verify that they have voted on S3 or beyond. Copy B's ledger to C but only
-// up to slot S2
-// Have `C` generate some blocks like:
+// Kill A and B once we verify that A has voted voted on some `next_slot_on_a` >= 1.
+// Copy B's ledger to A and C but only up to slot `next_slot_on_a`.
 //
-// S0 -> S1 -> S2 -> S4
+// Step 3:
+// Restart validator C to make it produce blocks on a fork from `base_slot`
+// that doesn't include `next_slot_on_a`. Wait for it to vote on its own fork.
 //
-// Step 3: Then restart `A` which had 31% of the stake, and remove S3 from its ledger, so
-// that it only sees `C`'s fork at S2. From `A`'s perspective it sees:
+// base_slot -> next_slot_on_c
 //
-// S0 -> S1 -> S2
-//             |
-//             -> S4 -> S5 (C's vote for S4)
+// Step 4: Restart `A` which had 31% of the stake, it's missing `next_slot_on_a` in
+// its ledger since we copied the ledger from B excluding this slot, so it sees
 //
-// The fork choice rule weights look like:
+// base_slot -> next_slot_on_c
 //
-// S0 -> S1 -> S2 (ABC)
-//             |
-//             -> S4 (C) -> S5
-//
-// Step 4:
+// Step 5:
 // Without the persisted tower:
-//    `A` would choose to vote on the fork with `S4 -> S5`.
+//    `A` would choose to vote on the new fork from C on `next_slot_on_c`
 //
 // With the persisted tower:
 //    `A` should not be able to generate a switching proof.
@@ -3187,7 +3182,7 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
     ];
 
     let validator_b_last_leader_slot: Slot = 8;
-    let truncated_slots: Slot = 100; // just enough to purge all following slots after the S2 and S3
+    let truncated_slots: Slot = 100;
 
     // Each pubkeys are prefixed with A, B, C
     let validator_keys = [
@@ -3282,7 +3277,6 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
     // `base_slot` and `next_slot_on_a`
     loop {
         if let Some((last_vote, _)) = last_vote_in_tower(&val_a_ledger_path, &validator_a_pubkey) {
-            // The vote needs to have a parent so that validator C can create a fork
             if last_vote >= 1 {
                 break;
             }
@@ -3298,8 +3292,8 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
 
     let next_slot_on_a = last_vote_in_tower(&val_a_ledger_path, &validator_a_pubkey)
         .unwrap()
-        .0; // S3
-    let base_slot = next_slot_on_a - 1; // S2
+        .0;
+    let base_slot = next_slot_on_a - 1;
 
     info!(
         "base slot: {}, next_slot_on_a: {}",
@@ -3364,7 +3358,7 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
         SocketAddrSpace::Unspecified,
     );
 
-    let mut votes_on_c_fork = std::collections::BTreeSet::new(); // S4 and S5
+    let mut votes_on_c_fork = std::collections::BTreeSet::new();
     let mut last_vote = 0;
     let now = Instant::now();
     loop {
