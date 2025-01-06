@@ -35,6 +35,8 @@ use {
     },
 };
 
+const HANA_FEATURE_PLACEHOLDER: bool = false;
+
 pub type PubkeyAccountSlot = (Pubkey, AccountSharedData, Slot);
 
 struct TransactionAccountLocksIterator<'a, T: SVMMessage> {
@@ -598,15 +600,26 @@ impl Accounts {
         tx_account_locks_results: Vec<Result<TransactionAccountLocksIterator<impl SVMMessage>>>,
     ) -> Vec<Result<()>> {
         let account_locks = &mut self.account_locks.lock().unwrap();
-        tx_account_locks_results
-            .into_iter()
-            .map(|tx_account_locks_result| match tx_account_locks_result {
-                Ok(tx_account_locks) => {
-                    account_locks.try_lock_accounts(tx_account_locks.accounts_with_is_writable())
-                }
-                Err(err) => Err(err),
-            })
-            .collect()
+        if HANA_FEATURE_PLACEHOLDER {
+            let validated_batch_keys = tx_account_locks_results
+                .into_iter()
+                .map(|tx_account_locks_result| {
+                    tx_account_locks_result
+                        .map(|tx_account_locks| tx_account_locks.accounts_with_is_writable())
+                })
+                .collect();
+
+            account_locks.try_lock_transaction_batch(validated_batch_keys)
+        } else {
+            tx_account_locks_results
+                .into_iter()
+                .map(|tx_account_locks_result| match tx_account_locks_result {
+                    Ok(tx_account_locks) => account_locks
+                        .try_lock_accounts(tx_account_locks.accounts_with_is_writable()),
+                    Err(err) => Err(err),
+                })
+                .collect()
+        }
     }
 
     /// Once accounts are unlocked, new transactions that modify that state can enter the pipeline
