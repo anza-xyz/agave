@@ -22,8 +22,6 @@ default = [
 ]
 full = [
     "byteorder",
-    "chrono",
-    "memmap2",
     "rand",
     "rand0-7",
     "serde_json",
@@ -99,7 +97,6 @@ bs58 = { workspace = true }
 bytemuck = { workspace = true }
 bytemuck_derive = { workspace = true }
 byteorder = { workspace = true, optional = true }
-chrono = { workspace = true, features = ["alloc"], optional = true }
 curve25519-dalek = { workspace = true, optional = true }
 digest = { workspace = true, optional = true }
 ed25519-dalek = { workspace = true, optional = true }
@@ -107,7 +104,6 @@ itertools = { workspace = true }
 lazy_static = { workspace = true }
 libsecp256k1 = { workspace = true, optional = true, features = ["hmac"] }
 log = { workspace = true }
-memmap2 = { workspace = true, optional = true }
 num-derive = { workspace = true }
 num-traits = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }

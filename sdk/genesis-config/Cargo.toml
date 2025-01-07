@@ -11,7 +11,7 @@ edition = { workspace = true }
 
 [dependencies]
 bincode = { workspace = true }
-chrono = { workspace = true }
+chrono = { workspace = true, features = ["alloc"] }
 memmap2 = { workspace = true }
 serde = { workspace = true, optional = true }
 serde_derive = { workspace = true, optional = true }
