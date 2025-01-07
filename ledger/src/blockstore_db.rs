@@ -10,7 +10,7 @@ use {
         },
         blockstore_options::{AccessType, BlockstoreOptions, LedgerColumnOptions},
     },
-    bincode::{deserialize, serialize, Options as BincodeOptions},
+    bincode::{deserialize, Options as BincodeOptions},
     byteorder::{BigEndian, ByteOrder},
     log::*,
     prost::Message,
@@ -2277,7 +2277,7 @@ pub mod tests {
         C: ColumnIndexDeprecation + TypedColumn + ColumnName,
     {
         pub fn put_deprecated(&self, index: C::DeprecatedIndex, value: &C::Type) -> Result<()> {
-            let serialized_value = serialize(value)?;
+            let serialized_value = C::serialize(value)?;
             self.backend
                 .put_cf(self.handle(), &C::deprecated_key(index), &serialized_value)
         }
