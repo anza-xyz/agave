@@ -1,6 +1,15 @@
 #![allow(clippy::arithmetic_side_effects)]
-#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
-use jemallocator::Jemalloc;
+//#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+//use jemallocator::Jemalloc;
+
+#[cfg(all(
+    feature = "alloc_monitor",
+    not(any(target_env = "msvc", target_os = "freebsd"))
+))]
+use solana_memory_management::{
+    jemalloc_monitor::deinit_allocator, jemalloc_monitor::JemWrapAllocator,
+    jemalloc_monitor_metrics::setup_watch_memory_usage,
+};
 use {
     agave_validator::{
         admin_rpc_service,
@@ -90,9 +99,19 @@ use {
     },
 };
 
-#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[cfg(all(
+    feature = "alloc_monitor",
+    not(any(target_env = "msvc", target_os = "freebsd"))
+))]
 #[global_allocator]
-static GLOBAL: Jemalloc = Jemalloc;
+static GLOBAL_ALLOC_WRAP: JemWrapAllocator = JemWrapAllocator::new();
+
+#[cfg(all(
+    not(feature = "alloc_monitor"),
+    not(any(target_env = "msvc", target_os = "freebsd"))
+))]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 #[derive(Debug, PartialEq, Eq)]
 enum Operation {
@@ -452,6 +471,11 @@ fn configure_banking_trace_dir_byte_limit(
 }
 
 pub fn main() {
+    #[cfg(all(
+        feature = "alloc_monitor",
+        not(any(target_env = "msvc", target_os = "freebsd"))
+    ))]
+    setup_watch_memory_usage();
     let default_args = DefaultArgs::new();
     let solana_version = solana_version::version!();
     let cli_app = app(solana_version, &default_args);
@@ -2177,6 +2201,11 @@ pub fn main() {
     info!("Validator initialized");
     validator.join();
     info!("Validator exiting..");
+    #[cfg(all(
+        feature = "alloc_monitor",
+        not(any(target_env = "msvc", target_os = "freebsd"))
+    ))]
+    deinit_allocator();
 }
 
 fn process_account_indexes(matches: &ArgMatches) -> AccountSecondaryIndexes {

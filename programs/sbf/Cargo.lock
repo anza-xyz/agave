@@ -166,6 +166,7 @@ dependencies = [
  "solana-gossip",
  "solana-ledger",
  "solana-logger",
+ "solana-memory-management",
  "solana-metrics",
  "solana-net-utils",
  "solana-perf",
@@ -3111,9 +3112,9 @@ checksum = "0e7465ac9959cc2b1404e8e2367b43684a6d13790fe23056cc8c6c5a6b7bcb94"
 
 [[package]]
 name = "memchr"
-version = "2.6.3"
+version = "2.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f232d6ef707e1956a43342693d2a31e72989554d58299d7a88738cc95b0d35c"
+checksum = "78ca9ab1a0babb1e7d5695e3530886289c18cf2f87ec19a575a0abdce112e3a3"
 
 [[package]]
 name = "memmap2"
@@ -6392,6 +6393,18 @@ dependencies = [
 [[package]]
 name = "solana-measure"
 version = "2.2.0"
+
+[[package]]
+name = "solana-memory-management"
+version = "2.2.0"
+dependencies = [
+ "arrayvec",
+ "libc",
+ "log",
+ "memchr",
+ "solana-metrics",
+ "tikv-jemallocator",
+]
 
 [[package]]
 name = "solana-merkle-tree"
