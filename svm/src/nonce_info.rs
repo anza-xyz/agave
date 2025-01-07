@@ -1,14 +1,14 @@
 #[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 use {
-    solana_account::{state_traits::StateMut, AccountSharedData},
+    qualifier_attr::qualifiers,
+    solana_account::state_traits::StateMut,
     solana_nonce::{
         state::{DurableNonce, State as NonceState},
         versions::Versions as NonceVersions,
     },
-    solana_pubkey::Pubkey,
     thiserror::Error,
 };
+use {solana_account::AccountSharedData, solana_pubkey::Pubkey};
 
 /// Holds limited nonce info available during transaction checks
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -18,6 +18,7 @@ pub struct NonceInfo {
 }
 
 #[derive(Error, Debug, PartialEq)]
+#[cfg(feature = "dev-context-only-utils")]
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 enum AdvanceNonceError {
     #[error("Invalid account")]
@@ -34,6 +35,7 @@ impl NonceInfo {
     // Advance the stored blockhash to prevent fee theft by someone
     // replaying nonce transactions that have failed with an
     // `InstructionError`.
+    #[cfg(feature = "dev-context-only-utils")]
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn try_advance_nonce(
         &mut self,

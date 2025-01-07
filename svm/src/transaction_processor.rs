@@ -1,5 +1,3 @@
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::{field_qualifiers, qualifiers};
 use {
     crate::{
         account_loader::{
@@ -69,8 +67,12 @@ use {
         collections::{hash_map::Entry, HashMap, HashSet},
         fmt::{Debug, Formatter},
         rc::Rc,
-        sync::Weak,
     },
+};
+#[cfg(feature = "dev-context-only-utils")]
+use {
+    qualifier_attr::{field_qualifiers, qualifiers},
+    std::sync::Weak,
 };
 
 /// A list of log messages emitted during a transaction
@@ -240,6 +242,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     ///
     /// The cache will still not contain any builtin programs. It's advisable to
     /// call `add_builtin` to add the required builtins before using the processor.
+    #[cfg(feature = "dev-context-only-utils")]
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn new(
         slot: Slot,
@@ -1192,6 +1195,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         debug!("Added program {} under {:?}", name, program_id);
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn writable_sysvar_cache(&self) -> &RwLock<SysvarCache> {
         &self.sysvar_cache
