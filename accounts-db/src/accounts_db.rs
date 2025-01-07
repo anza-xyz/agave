@@ -84,7 +84,7 @@ use {
     smallvec::SmallVec,
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{meas_dur, measure::Measure, measure_us},
-    solana_nohash_hasher::{IntMap, IntSet},
+    solana_nohash_hasher::{BuildNoHashHasher, IntMap, IntSet},
     solana_rayon_threadlimit::get_thread_count,
     solana_sdk::{
         account::{Account, AccountSharedData, ReadableAccount},
@@ -783,7 +783,8 @@ struct StorageSizeAndCount {
     /// number of accounts in the storage including both alive and dead accounts
     pub count: usize,
 }
-type StorageSizeAndCountMap = DashMap<AccountsFileId, StorageSizeAndCount>;
+type StorageSizeAndCountMap =
+    DashMap<AccountsFileId, StorageSizeAndCount, BuildNoHashHasher<AccountsFileId>>;
 
 impl GenerateIndexTimings {
     pub fn report(&self, startup_stats: &StartupStats) {
