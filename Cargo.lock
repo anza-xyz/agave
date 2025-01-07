@@ -6957,6 +6957,7 @@ dependencies = [
  "bytemuck_derive",
  "curve25519-dalek 4.1.3",
  "solana-define-syscall",
+ "subtle",
  "thiserror 2.0.9",
 ]
 
