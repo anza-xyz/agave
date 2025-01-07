@@ -3749,7 +3749,6 @@ impl Blockstore {
         let mut data_shreds: Vec<Shred> = Vec::with_capacity(keys.len());
         for (idx, shred_bytes) in data_shred_iterator.into_iter().enumerate() {
             let shred_bytes = shred_bytes?;
-
             if shred_bytes.is_none() {
                 if let Some(slot_meta) = slot_meta {
                     if slot > self.lowest_cleanup_slot() {
@@ -3777,7 +3776,6 @@ impl Blockstore {
                     "Could not reconstruct shred from shred payload: {err:?}"
                 ))))
             })?;
-
             data_shreds.push(shred);
         }
 
