@@ -10,7 +10,7 @@ use {
         },
         blockstore_options::{AccessType, BlockstoreOptions, LedgerColumnOptions},
     },
-    bincode::{deserialize, serialize},
+    bincode::{deserialize, serialize, Options as BincodeOptions},
     byteorder::{BigEndian, ByteOrder},
     log::*,
     prost::Message,
@@ -1215,6 +1215,7 @@ impl TypedColumn for columns::Index {
     type Type = blockstore_meta::Index;
 
     fn deserialize(data: &[u8]) -> bincode::Result<Self::Type> {
+        let config = bincode::DefaultOptions::new().reject_trailing_bytes();
         // Migration strategy for new column format:
         // 1. Release 1: Add ability to read new format as fallback, keep writing old format
         // 2. Release 2: Switch to writing new format, keep reading old format as fallback
@@ -1228,11 +1229,11 @@ impl TypedColumn for columns::Index {
         // For example, serializing two `u64`s:
         // - ShredIndexV2 serializes as a collection of bytes, with a length prefix of 16.
         // - ShredIndex serializes as a collection of u64s, with a length prefix of 2.
-        let index: bincode::Result<blockstore_meta::Index> = bincode::deserialize(data);
+        let index: bincode::Result<blockstore_meta::Index> = config.deserialize(data);
         match index {
             Ok(index) => Ok(index),
             Err(_) => {
-                let index: blockstore_meta::IndexV2 = bincode::deserialize(data)?;
+                let index: blockstore_meta::IndexV2 = config.deserialize(data)?;
                 Ok(index.into())
             }
         }
