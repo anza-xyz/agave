@@ -3746,37 +3746,38 @@ impl Blockstore {
         );
         let data_shred_iterator = self.data_shred_cf.multi_get_bytes(&keys);
 
-        let mut data_shreds: Vec<Shred> = Vec::with_capacity(keys.len());
-        for (idx, shred_bytes) in data_shred_iterator.enumerate() {
-            let shred_bytes = shred_bytes?;
-            if shred_bytes.is_none() {
-                if let Some(slot_meta) = slot_meta {
-                    if slot > self.lowest_cleanup_slot() {
-                        panic!(
-                            "Shred with slot: {}, index: {}, consumed: {}, completed_indexes: \
-                             {:?} must exist if shred index was included in a range: {} {}",
-                            slot,
-                            idx,
-                            slot_meta.consumed,
-                            slot_meta.completed_data_indexes,
-                            all_ranges_start_index,
-                            all_ranges_end_index
-                        );
+        let data_shreds: Vec<Shred> = data_shred_iterator
+            .enumerate()
+            .map(|(idx, shred_bytes)| {
+                let shred_bytes = shred_bytes?;
+                if shred_bytes.is_none() {
+                    if let Some(slot_meta) = slot_meta {
+                        if slot > self.lowest_cleanup_slot() {
+                            panic!(
+                                "Shred with slot: {}, index: {}, consumed: {}, completed_indexes: \
+                                 {:?} must exist if shred index was included in a range: {} {}",
+                                slot,
+                                idx,
+                                slot_meta.consumed,
+                                slot_meta.completed_data_indexes,
+                                all_ranges_start_index,
+                                all_ranges_end_index
+                            );
+                        }
                     }
+                    return Err(BlockstoreError::MissingShred(
+                        slot,
+                        u64::try_from(idx).unwrap(),
+                    ));
                 }
-                return Err(BlockstoreError::MissingShred(
-                    slot,
-                    u64::try_from(idx).unwrap(),
-                ));
-            }
 
-            let shred = Shred::new_from_serialized_shred(shred_bytes.unwrap()).map_err(|err| {
-                BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(format!(
-                    "Could not reconstruct shred from shred payload: {err:?}"
-                ))))
-            })?;
-            data_shreds.push(shred);
-        }
+                Shred::new_from_serialized_shred(shred_bytes.unwrap()).map_err(|err| {
+                    BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
+                        format!("Could not reconstruct shred from shred payload: {err:?}"),
+                    )))
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
 
         completed_ranges
             .into_iter()
