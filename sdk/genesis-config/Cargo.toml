@@ -1,6 +1,6 @@
 [package]
 name = "solana-genesis-config"
-description = "The chain's genesis config."
+description = "A Solana network's genesis config."
 documentation = "https://docs.rs/solana-genesis-config"
 version = { workspace = true }
 authors = { workspace = true }
