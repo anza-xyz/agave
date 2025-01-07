@@ -3895,7 +3895,6 @@ impl Blockstore {
         let deduped_shred_checks: Vec<(Hash, bool)> = self
             .data_shred_cf
             .multi_get_bytes(&keys)
-            .into_iter()
             .enumerate()
             .map(|(offset, shred_bytes)| {
                 let shred_bytes = shred_bytes.ok().flatten().ok_or_else(|| {
