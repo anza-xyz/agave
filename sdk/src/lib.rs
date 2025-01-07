@@ -70,7 +70,7 @@ pub mod feature;
 #[deprecated(since = "2.2.0", note = "Use `solana-genesis-config` crate instead")]
 pub use solana_genesis_config as genesis_config;
 #[cfg(feature = "full")]
-#[deprecated(since = "2.2.0", note = "Use `solana_hard_forks` crate instead")]
+#[deprecated(since = "2.2.0", note = "Use `solana-hard-forks` crate instead")]
 pub use solana_hard_forks as hard_forks;
 pub mod hash;
 pub mod log;
