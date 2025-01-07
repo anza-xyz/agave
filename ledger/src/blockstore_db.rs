@@ -1461,20 +1461,24 @@ where
         keys.into_iter().map(C::key).collect()
     }
 
-    pub(crate) fn multi_get_bytes<'a, I, E>(&self, keys: I) -> Vec<Result<Option<Vec<u8>>>>
+    pub(crate) fn multi_get_bytes<'a, I, E>(
+        &'a self,
+        keys: I,
+    ) -> impl Iterator<Item = Result<Option<Vec<u8>>>> + 'a
     where
-        I: IntoIterator<Item = &'a E>,
+        I: IntoIterator<Item = &'a E> + 'a,
         E: AsRef<[u8]> + 'a + ?Sized,
     {
         let is_perf_enabled = maybe_enable_rocksdb_perf(
             self.column_options.rocks_perf_sample_interval,
             &self.read_perf_status,
         );
+
         let result = self
             .backend
             .multi_get_cf(self.handle(), keys)
-            .map(|out| Ok(out?.as_deref().map(<[u8]>::to_vec)))
-            .collect::<Vec<Result<Option<_>>>>();
+            .map(|out| Ok(out?.as_deref().map(<[u8]>::to_vec)));
+
         if let Some(op_start_instant) = is_perf_enabled {
             // use multi-get instead
             report_rocksdb_read_perf(
