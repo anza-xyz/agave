@@ -83,8 +83,9 @@ fn bench_entry_lock_accounts(c: &mut Criterion) {
         group.bench_function(name.as_str(), move |b| {
             b.iter(|| {
                 for batch in &transaction_batches {
+                    // HANA TODO bench both. but ideally in a way where we can compare them? idk
                     let results =
-                        accounts.lock_accounts(black_box(batch.iter()), MAX_TX_ACCOUNT_LOCKS);
+                        accounts.lock_accounts(black_box(batch.iter()), MAX_TX_ACCOUNT_LOCKS, true);
                     accounts.unlock_accounts(batch.iter().zip(&results));
                 }
             })

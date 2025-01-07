@@ -908,6 +908,7 @@ mod tests {
             thread::{Builder, JoinHandle},
             time::Duration,
         },
+        test_case::test_case,
         transaction::MessageHash,
     };
 
@@ -2307,8 +2308,9 @@ mod tests {
         Blockstore::destroy(ledger_path.path()).unwrap();
     }
 
-    #[test]
-    fn test_consume_buffered_packets_retryable() {
+    #[test_case(false; "old")]
+    #[test_case(true; "simd83")]
+    fn test_consume_buffered_packets_retryable(disable_intrabatch_account_locks: bool) {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         {
             let (transactions, bank, _bank_forks, poh_recorder, _entry_receiver, _, poh_simulator) =
@@ -2358,6 +2360,7 @@ mod tests {
             let _ = bank_start.working_bank.accounts().lock_accounts(
                 std::iter::once(&manual_lock_tx),
                 bank_start.working_bank.get_transaction_account_lock_limit(),
+                disable_intrabatch_account_locks,
             );
 
             let banking_stage_stats = BankingStageStats::default();

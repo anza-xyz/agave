@@ -682,6 +682,7 @@ mod tests {
             sync::atomic::{AtomicBool, AtomicU64, Ordering},
             thread, time,
         },
+        test_case::test_case,
     };
 
     fn new_sanitized_tx<T: Signers>(
@@ -898,8 +899,9 @@ mod tests {
         assert_eq!(loaded, vec![]);
     }
 
-    #[test]
-    fn test_lock_accounts_with_duplicates() {
+    #[test_case(false; "old")]
+    #[test_case(true; "simd83")]
+    fn test_lock_accounts_with_duplicates(disable_intrabatch_account_locks: bool) {
         let accounts_db = AccountsDb::new_single_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
 
@@ -914,12 +916,17 @@ mod tests {
         };
 
         let tx = new_sanitized_tx(&[&keypair], message, Hash::default());
-        let results = accounts.lock_accounts([tx].iter(), MAX_TX_ACCOUNT_LOCKS);
+        let results = accounts.lock_accounts(
+            [tx].iter(),
+            MAX_TX_ACCOUNT_LOCKS,
+            disable_intrabatch_account_locks,
+        );
         assert_eq!(results[0], Err(TransactionError::AccountLoadedTwice));
     }
 
-    #[test]
-    fn test_lock_accounts_with_too_many_accounts() {
+    #[test_case(false; "old")]
+    #[test_case(true; "simd83")]
+    fn test_lock_accounts_with_too_many_accounts(disable_intrabatch_account_locks: bool) {
         let accounts_db = AccountsDb::new_single_for_tests();
         let accounts = Accounts::new(Arc::new(accounts_db));
 
@@ -942,7 +949,11 @@ mod tests {
             };
 
             let txs = vec![new_sanitized_tx(&[&keypair], message, Hash::default())];
-            let results = accounts.lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS);
+            let results = accounts.lock_accounts(
+                txs.iter(),
+                MAX_TX_ACCOUNT_LOCKS,
+                disable_intrabatch_account_locks,
+            );
             assert_eq!(results, vec![Ok(())]);
             accounts.unlock_accounts(txs.iter().zip(&results));
         }
@@ -964,13 +975,18 @@ mod tests {
             };
 
             let txs = vec![new_sanitized_tx(&[&keypair], message, Hash::default())];
-            let results = accounts.lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS);
+            let results = accounts.lock_accounts(
+                txs.iter(),
+                MAX_TX_ACCOUNT_LOCKS,
+                disable_intrabatch_account_locks,
+            );
             assert_eq!(results[0], Err(TransactionError::TooManyAccountLocks));
         }
     }
 
-    #[test]
-    fn test_accounts_locks() {
+    #[test_case(false; "old")]
+    #[test_case(true; "simd83")]
+    fn test_accounts_locks(disable_intrabatch_account_locks: bool) {
         let keypair0 = Keypair::new();
         let keypair1 = Keypair::new();
         let keypair2 = Keypair::new();
@@ -998,7 +1014,11 @@ mod tests {
             instructions,
         );
         let tx = new_sanitized_tx(&[&keypair0], message, Hash::default());
-        let results0 = accounts.lock_accounts([tx.clone()].iter(), MAX_TX_ACCOUNT_LOCKS);
+        let results0 = accounts.lock_accounts(
+            [tx.clone()].iter(),
+            MAX_TX_ACCOUNT_LOCKS,
+            disable_intrabatch_account_locks,
+        );
 
         assert_eq!(results0, vec![Ok(())]);
         assert!(accounts
@@ -1028,7 +1048,11 @@ mod tests {
         );
         let tx1 = new_sanitized_tx(&[&keypair1], message, Hash::default());
         let txs = vec![tx0, tx1];
-        let results1 = accounts.lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS);
+        let results1 = accounts.lock_accounts(
+            txs.iter(),
+            MAX_TX_ACCOUNT_LOCKS,
+            disable_intrabatch_account_locks,
+        );
         assert_eq!(
             results1,
             vec![
@@ -1054,7 +1078,11 @@ mod tests {
             instructions,
         );
         let tx = new_sanitized_tx(&[&keypair1], message, Hash::default());
-        let results2 = accounts.lock_accounts([tx].iter(), MAX_TX_ACCOUNT_LOCKS);
+        let results2 = accounts.lock_accounts(
+            [tx].iter(),
+            MAX_TX_ACCOUNT_LOCKS,
+            disable_intrabatch_account_locks,
+        );
         assert_eq!(
             results2,
             vec![Ok(())] // Now keypair1 account can be locked as writable
@@ -1068,8 +1096,9 @@ mod tests {
             .is_locked_readonly(&keypair1.pubkey()));
     }
 
-    #[test]
-    fn test_accounts_locks_multithreaded() {
+    #[test_case(false; "old")]
+    #[test_case(true; "simd83")]
+    fn test_accounts_locks_multithreaded(disable_intrabatch_account_locks: bool) {
         let counter = Arc::new(AtomicU64::new(0));
         let exit = Arc::new(AtomicBool::new(false));
 
@@ -1116,9 +1145,11 @@ mod tests {
         let exit_clone = exit.clone();
         thread::spawn(move || loop {
             let txs = vec![writable_tx.clone()];
-            let results = accounts_clone
-                .clone()
-                .lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS);
+            let results = accounts_clone.clone().lock_accounts(
+                txs.iter(),
+                MAX_TX_ACCOUNT_LOCKS,
+                disable_intrabatch_account_locks,
+            );
             for result in results.iter() {
                 if result.is_ok() {
                     counter_clone.clone().fetch_add(1, Ordering::Release);
@@ -1132,9 +1163,11 @@ mod tests {
         let counter_clone = counter;
         for _ in 0..5 {
             let txs = vec![readonly_tx.clone()];
-            let results = accounts_arc
-                .clone()
-                .lock_accounts(txs.iter(), MAX_TX_ACCOUNT_LOCKS);
+            let results = accounts_arc.clone().lock_accounts(
+                txs.iter(),
+                MAX_TX_ACCOUNT_LOCKS,
+                disable_intrabatch_account_locks,
+            );
             if results[0].is_ok() {
                 let counter_value = counter_clone.clone().load(Ordering::Acquire);
                 thread::sleep(time::Duration::from_millis(50));
@@ -1146,8 +1179,9 @@ mod tests {
         exit.store(true, Ordering::Relaxed);
     }
 
-    #[test]
-    fn test_demote_program_write_locks() {
+    #[test_case(false; "old")]
+    #[test_case(true; "simd83")]
+    fn test_demote_program_write_locks(disable_intrabatch_account_locks: bool) {
         let keypair0 = Keypair::new();
         let keypair1 = Keypair::new();
         let keypair2 = Keypair::new();
@@ -1175,7 +1209,11 @@ mod tests {
             instructions,
         );
         let tx = new_sanitized_tx(&[&keypair0], message, Hash::default());
-        let results0 = accounts.lock_accounts([tx].iter(), MAX_TX_ACCOUNT_LOCKS);
+        let results0 = accounts.lock_accounts(
+            [tx].iter(),
+            MAX_TX_ACCOUNT_LOCKS,
+            disable_intrabatch_account_locks,
+        );
 
         assert!(results0[0].is_ok());
         // Instruction program-id account demoted to readonly
@@ -1211,8 +1249,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_accounts_locks_with_results() {
+    #[test_case(false; "old")]
+    #[test_case(true; "simd83")]
+    fn test_accounts_locks_with_results(disable_intrabatch_account_locks: bool) {
         let keypair0 = Keypair::new();
         let keypair1 = Keypair::new();
         let keypair2 = Keypair::new();
@@ -1272,6 +1311,7 @@ mod tests {
             txs.iter(),
             qos_results.into_iter(),
             MAX_TX_ACCOUNT_LOCKS,
+            disable_intrabatch_account_locks,
         );
 
         assert_eq!(
