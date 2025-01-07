@@ -257,7 +257,7 @@ pub fn cluster_info_retransmit() {
     assert!(done);
     let mut p = Packet::default();
     p.meta_mut().size = 10;
-    let peers = c1.tvu_peers();
+    let peers = c1.tvu_peers(ContactInfo::clone);
     let retransmit_peers: Vec<_> = peers.iter().collect();
     retransmit_to(
         &retransmit_peers,

@@ -1,6 +1,7 @@
 use {
     super::*,
     solana_entry::entry::Entry,
+    solana_gossip::contact_info::ContactInfo,
     solana_ledger::shred::{self, ProcessShredsStats, ReedSolomonCache, Shredder},
     solana_sdk::{hash::Hash, signature::Keypair},
 };
@@ -153,7 +154,7 @@ impl BroadcastRun for BroadcastFakeShredsRun {
     ) -> Result<()> {
         for (data_shreds, batch_info) in receiver {
             let fake = batch_info.is_some();
-            let peers = cluster_info.tvu_peers();
+            let peers = cluster_info.tvu_peers(ContactInfo::clone);
             peers.iter().enumerate().for_each(|(i, peer)| {
                 if fake == (i <= self.partition) {
                     // Send fake shreds to the first N peers
@@ -179,7 +180,6 @@ impl BroadcastRun for BroadcastFakeShredsRun {
 mod tests {
     use {
         super::*,
-        solana_gossip::contact_info::ContactInfo,
         solana_sdk::signature::Signer,
         solana_streamer::socket::SocketAddrSpace,
         std::net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -198,10 +198,10 @@ mod tests {
                 &SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, k)), 8080),
             ));
         }
-        let tvu_peers1 = cluster.tvu_peers();
+        let tvu_peers1 = cluster.tvu_peers(ContactInfo::clone);
         (0..5).for_each(|_| {
             cluster
-                .tvu_peers()
+                .tvu_peers(ContactInfo::clone)
                 .iter()
                 .zip(tvu_peers1.iter())
                 .for_each(|(v1, v2)| {
