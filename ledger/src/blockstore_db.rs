@@ -1646,21 +1646,25 @@ impl<C, const K: usize> LedgerColumn<C, K>
 where
     C: TypedColumn + ColumnName,
 {
-    pub(crate) fn multi_get<I>(&self, keys: I) -> Vec<Result<Option<C::Type>>>
+    pub(crate) fn multi_get<'a, I, E>(
+        &'a self,
+        keys: I,
+    ) -> impl Iterator<Item = Result<Option<C::Type>>> + 'a
     where
-        I: IntoIterator<Item = C::Index>,
+        I: IntoIterator<Item = &'a E> + 'a,
+        E: AsRef<[u8]> + 'a + ?Sized,
     {
-        let keys = self.multi_get_keys(keys);
         {
             let is_perf_enabled = maybe_enable_rocksdb_perf(
                 self.column_options.rocks_perf_sample_interval,
                 &self.read_perf_status,
             );
+
             let result = self
                 .backend
-                .multi_get_cf(self.handle(), &keys)
-                .map(|out| Ok(out?.as_deref().map(deserialize).transpose()?))
-                .collect::<Vec<Result<Option<_>>>>();
+                .multi_get_cf(self.handle(), keys)
+                .map(|out| Ok(out?.as_deref().map(deserialize).transpose()?));
+
             if let Some(op_start_instant) = is_perf_enabled {
                 // use multi-get instead
                 report_rocksdb_read_perf(
