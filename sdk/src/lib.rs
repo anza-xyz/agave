@@ -67,7 +67,7 @@ pub mod entrypoint_deprecated;
 pub mod example_mocks;
 pub mod feature;
 #[cfg(feature = "full")]
-#[deprecated(since = "2.2.0", note = "Use `solana_genesis_config` crate instead")]
+#[deprecated(since = "2.2.0", note = "Use `solana-genesis-config` crate instead")]
 pub use solana_genesis_config as genesis_config;
 #[cfg(feature = "full")]
 #[deprecated(since = "2.2.0", note = "Use `solana_hard_forks` crate instead")]
