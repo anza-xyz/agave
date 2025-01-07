@@ -4,6 +4,7 @@ use {
     crate::proto::FeatureSet as ProtoFeatureSet,
     lazy_static::lazy_static,
     solana_feature_set::{FeatureSet, FEATURE_NAMES},
+    solana_keccak_hasher::Hasher,
     solana_pubkey::Pubkey,
     std::collections::HashMap,
 };
@@ -69,6 +70,14 @@ impl From<FeatureSet> for ProtoFeatureSet {
             .collect();
 
         Self { features }
+    }
+}
+
+pub(crate) fn hash_proto_feature_set(hasher: &mut Hasher, feature_set: &ProtoFeatureSet) {
+    let mut features = feature_set.features.clone();
+    features.sort();
+    for f in &features {
+        hasher.hash(&f.to_le_bytes());
     }
 }
 

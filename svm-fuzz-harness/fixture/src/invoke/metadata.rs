@@ -1,6 +1,6 @@
 //! Instruction metadata.
 
-use crate::proto::FixtureMetadata as ProtoFixtureMetadata;
+use {crate::proto::FixtureMetadata as ProtoFixtureMetadata, solana_keccak_hasher::Hasher};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FixtureMetadata {
@@ -22,4 +22,8 @@ impl From<FixtureMetadata> for ProtoFixtureMetadata {
             fn_entrypoint: value.entrypoint,
         }
     }
+}
+
+pub(crate) fn hash_proto_fixture_metadata(hasher: &mut Hasher, metadata: &ProtoFixtureMetadata) {
+    hasher.hash(metadata.fn_entrypoint.as_bytes());
 }

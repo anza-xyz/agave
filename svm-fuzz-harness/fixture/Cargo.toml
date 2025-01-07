@@ -20,7 +20,9 @@ serde = { workspace = true, features = ["derive"], optional = true }
 solana-account = { workspace = true }
 solana-feature-set = { workspace = true }
 solana-instruction = { workspace = true, features = ["serde"] }
+solana-keccak-hasher = { workspace = true }
 solana-pubkey = { workspace = true, features = ["std"] }
+solana-svm-fuzz-harness-fixture-fs = { workspace = true }
 thiserror = { workspace = true }
 
 [build-dependencies]

@@ -4,6 +4,7 @@ use {
     super::seed_address::SeedAddress,
     crate::{error::FixtureError, proto::AcctState as ProtoAccount},
     solana_account::{Account, AccountSharedData},
+    solana_keccak_hasher::Hasher,
     solana_pubkey::Pubkey,
 };
 
@@ -108,6 +109,22 @@ impl From<(Pubkey, AccountSharedData)> for ProtoAccount {
             executable,
             rent_epoch,
             seed_addr: None,
+        }
+    }
+}
+
+pub(crate) fn hash_proto_accounts(hasher: &mut Hasher, accounts: &[ProtoAccount]) {
+    for account in accounts {
+        hasher.hash(&account.address);
+        hasher.hash(&account.owner);
+        hasher.hash(&account.lamports.to_le_bytes());
+        hasher.hash(&account.data);
+        hasher.hash(&[account.executable as u8]);
+        hasher.hash(&account.rent_epoch.to_le_bytes());
+        if let Some(seed_addr) = &account.seed_addr {
+            hasher.hash(&seed_addr.base);
+            hasher.hash(&seed_addr.seed);
+            hasher.hash(&seed_addr.owner);
         }
     }
 }

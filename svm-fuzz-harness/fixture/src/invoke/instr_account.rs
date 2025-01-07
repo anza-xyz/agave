@@ -1,6 +1,6 @@
 //! Instruction account.
 
-use crate::proto::InstrAcct as ProtoInstrAccount;
+use {crate::proto::InstrAcct as ProtoInstrAccount, solana_keccak_hasher::Hasher};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct InstrAccount {
@@ -39,6 +39,14 @@ impl From<InstrAccount> for ProtoInstrAccount {
             is_signer,
             is_writable,
         }
+    }
+}
+
+pub(crate) fn hash_proto_instr_accounts(hasher: &mut Hasher, instr_accounts: &[ProtoInstrAccount]) {
+    for account in instr_accounts {
+        hasher.hash(&account.index.to_le_bytes());
+        hasher.hash(&[account.is_signer as u8]);
+        hasher.hash(&[account.is_writable as u8]);
     }
 }
 

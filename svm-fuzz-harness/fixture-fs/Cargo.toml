@@ -1,0 +1,21 @@
+[package]
+name = "solana-svm-fuzz-harness-fixture-fs"
+description = "Filesystem management for fuzz tooling."
+documentation = "https://docs.rs/solana-svm-fuzz-harness-fixture-fs"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+bs58 = { workspace = true, features = ["alloc"] }
+prost = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+solana-keccak-hasher = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

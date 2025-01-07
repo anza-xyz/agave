@@ -203,6 +203,7 @@ members = [
     "svm",
     "svm-conformance",
     "svm-fuzz-harness/fixture",
+    "svm-fuzz-harness/fixture-fs",
     "svm-rent-collector",
     "svm-transaction",
     "test-validator",
@@ -595,6 +596,7 @@ solana-storage-proto = { path = "storage-proto", version = "=2.2.0" }
 solana-streamer = { path = "streamer", version = "=2.2.0" }
 solana-svm = { path = "svm", version = "=2.2.0" }
 solana-svm-fuzz-harness-fixture = { path = "svm-fuzz-harness/fixture", version = "=2.2.0" }
+solana-svm-fuzz-harness-fixture-fs = { path = "svm-fuzz-harness/fixture-fs", version = "=2.2.0" }
 solana-svm-conformance = { path = "svm-conformance", version = "=2.2.0" }
 solana-svm-rent-collector = { path = "svm-rent-collector", version = "=2.2.0" }
 solana-svm-transaction = { path = "svm-transaction", version = "=2.2.0" }

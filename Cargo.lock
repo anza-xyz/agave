@@ -9426,7 +9426,21 @@ dependencies = [
  "solana-account",
  "solana-feature-set",
  "solana-instruction",
+ "solana-keccak-hasher",
  "solana-pubkey",
+ "solana-svm-fuzz-harness-fixture-fs",
+ "thiserror 2.0.9",
+]
+
+[[package]]
+name = "solana-svm-fuzz-harness-fixture-fs"
+version = "2.2.0"
+dependencies = [
+ "bs58",
+ "prost",
+ "serde",
+ "serde_json",
+ "solana-keccak-hasher",
  "thiserror 2.0.9",
 ]
 
