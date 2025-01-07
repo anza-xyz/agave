@@ -3741,12 +3741,13 @@ impl Blockstore {
         let Some((_, all_ranges_end_index)) = completed_ranges.last().copied() else {
             return Ok(vec![]);
         };
-        let keys =
-            (all_ranges_start_index..=all_ranges_end_index).map(|index| (slot, u64::from(index)));
+        let keys = self.data_shred_cf.multi_get_keys(
+            (all_ranges_start_index..=all_ranges_end_index).map(|index| (slot, u64::from(index))),
+        );
 
         let data_shreds: Result<Vec<Option<Vec<u8>>>> = self
             .data_shred_cf
-            .multi_get_bytes(keys)
+            .multi_get_bytes(&keys)
             .into_iter()
             .collect();
         let data_shreds = data_shreds?;
@@ -3891,11 +3892,13 @@ impl Blockstore {
                 is_retransmitter_signed: false,
             });
         };
-        let keys = (start_index..=last_shred_index).map(|index| (slot, index));
+        let keys = self
+            .data_shred_cf
+            .multi_get_keys((start_index..=last_shred_index).map(|index| (slot, index)));
 
         let deduped_shred_checks: Vec<(Hash, bool)> = self
             .data_shred_cf
-            .multi_get_bytes(keys)
+            .multi_get_bytes(&keys)
             .into_iter()
             .enumerate()
             .map(|(offset, shred_bytes)| {

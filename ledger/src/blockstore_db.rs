@@ -1461,11 +1461,11 @@ where
         keys.into_iter().map(C::key).collect()
     }
 
-    pub(crate) fn multi_get_bytes<I>(&self, keys: I) -> Vec<Result<Option<Vec<u8>>>>
+    pub(crate) fn multi_get_bytes<'a, I, E>(&self, keys: I) -> Vec<Result<Option<Vec<u8>>>>
     where
-        I: IntoIterator<Item = C::Index>,
+        I: IntoIterator<Item = &'a E>,
+        E: AsRef<[u8]> + 'a + ?Sized,
     {
-        let keys = self.multi_get_keys(keys);
         {
             let is_perf_enabled = maybe_enable_rocksdb_perf(
                 self.column_options.rocks_perf_sample_interval,
@@ -1473,7 +1473,7 @@ where
             );
             let result = self
                 .backend
-                .multi_get_cf(self.handle(), &keys)
+                .multi_get_cf(self.handle(), keys)
                 .map(|out| Ok(out?.as_deref().map(<[u8]>::to_vec)))
                 .collect::<Vec<Result<Option<_>>>>();
             if let Some(op_start_instant) = is_perf_enabled {
