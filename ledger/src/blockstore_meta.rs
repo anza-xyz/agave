@@ -1,15 +1,15 @@
 use {
-    crate::shred::{Shred, ShredType},
+    crate::{
+        blockstore::MAX_DATA_SHREDS_PER_SLOT,
+        shred::{Shred, ShredType},
+    },
     bitflags::bitflags,
     serde::{Deserialize, Deserializer, Serialize, Serializer},
     solana_sdk::{
         clock::{Slot, UnixTimestamp},
         hash::Hash,
     },
-    std::{
-        collections::BTreeSet,
-        ops::{Range, RangeBounds},
-    },
+    std::{collections::BTreeSet, ops::Range},
 };
 
 bitflags! {
@@ -104,6 +104,8 @@ mod serde_compat {
     }
 }
 
+// TODO: For downgrade safety, manually implement
+// Serialize to first convert to LegacyIndex.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 /// Index recording presence/absence of shreds
 pub struct Index {
@@ -112,10 +114,65 @@ pub struct Index {
     coding: ShredIndex,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ShredIndex {
+    #[serde(with = "serde_bytes")]
+    bytes: Vec<u8>,
+    num_shreds: usize,
+}
+
+impl Default for ShredIndex {
+    fn default() -> Self {
+        Self {
+            bytes: vec![0u8; Self::MIN_NUM_BYTES],
+            num_shreds: 0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct LegacyIndex {
+    pub(crate) slot: Slot,
+    data: LegacyShredIndex,
+    coding: LegacyShredIndex,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct LegacyShredIndex {
     /// Map representing presence/absence of shreds
     index: BTreeSet<u64>,
+}
+
+impl From<&LegacyIndex> for Index {
+    fn from(LegacyIndex { slot, data, coding }: &LegacyIndex) -> Self {
+        Self {
+            slot: *slot,
+            data: ShredIndex::from(data),
+            coding: ShredIndex::from(coding),
+        }
+    }
+}
+
+impl From<&LegacyShredIndex> for ShredIndex {
+    fn from(value: &LegacyShredIndex) -> Self {
+        let num_bytes = Self::MIN_NUM_BYTES.max(
+            value
+                .index
+                .last()
+                .copied()
+                .map(Self::get_byte_index)
+                .unwrap_or_default()
+                .saturating_add(1),
+        );
+        let mut bytes = vec![0u8; num_bytes];
+        for &k in &value.index {
+            bytes[Self::get_byte_index(k)] |= Self::get_bit_mask(k);
+        }
+        Self {
+            bytes,
+            num_shreds: value.index.len(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -228,46 +285,134 @@ pub struct FrozenHashStatus {
 
 impl Index {
     pub(crate) fn new(slot: Slot) -> Self {
-        Index {
+        Self {
             slot,
             data: ShredIndex::default(),
             coding: ShredIndex::default(),
         }
     }
 
+    #[inline]
     pub fn data(&self) -> &ShredIndex {
         &self.data
     }
-    pub fn coding(&self) -> &ShredIndex {
+
+    #[inline]
+    pub(crate) fn coding(&self) -> &ShredIndex {
         &self.coding
     }
 
+    #[inline]
     pub(crate) fn data_mut(&mut self) -> &mut ShredIndex {
         &mut self.data
     }
+
+    #[inline]
     pub(crate) fn coding_mut(&mut self) -> &mut ShredIndex {
         &mut self.coding
     }
 }
 
+static_assertions::const_assert!(ShredIndex::MIN_NUM_BYTES >= (MAX_DATA_SHREDS_PER_SLOT + 7) / 8);
+
 impl ShredIndex {
+    const MIN_NUM_BYTES: usize = 4_096;
+
+    #[inline]
     pub fn num_shreds(&self) -> usize {
-        self.index.len()
+        self.num_shreds
     }
 
-    pub(crate) fn range<R>(&self, bounds: R) -> impl Iterator<Item = &u64>
-    where
-        R: RangeBounds<u64>,
-    {
-        self.index.range(bounds)
+    // Returns number of shreds received within the range.
+    fn count_range(&self, Range { mut start, end }: Range<u64>) -> usize {
+        let mut num_ones = 0;
+        // Count bits one by one until byte boundary.
+        while start % 8 != 0 && start < end {
+            if self.contains(start) {
+                num_ones += 1;
+            }
+            start += 1;
+        }
+        // Count ones in full bytes.
+        let mut byte_index = Self::get_byte_index(start);
+        while start.saturating_add(7) < end {
+            num_ones += self
+                .bytes
+                .get(byte_index)
+                .map(|byte| byte.count_ones())
+                .unwrap_or_default() as usize;
+            start += 8;
+            byte_index += 1;
+        }
+        // Count remaining bits one by one.
+        num_ones
+            + (start..end)
+                .map(|index| if self.contains(index) { 1 } else { 0usize })
+                .sum::<usize>()
     }
 
+    // Returns true if all shreds within the range are received.
+    pub(crate) fn is_complete(&self, Range { mut start, end }: Range<u64>) -> bool {
+        // Check bits one by one until byte boundary.
+        while start % 8 != 0 && start < end {
+            if !self.contains(start) {
+                return false;
+            }
+            start += 1;
+        }
+        // Check bytes in full.
+        let mut byte_index = Self::get_byte_index(start);
+        while start.saturating_add(7) < end {
+            if self.bytes.get(byte_index).copied() != Some(0xFF) {
+                return false;
+            }
+            start += 8;
+            byte_index += 1;
+        }
+        // Check remaining bits one by one.
+        (start..end).all(|index| self.contains(index))
+    }
+
+    #[inline]
     pub(crate) fn contains(&self, index: u64) -> bool {
-        self.index.contains(&index)
+        self.bytes
+            .get(Self::get_byte_index(index))
+            .map(|byte| (byte & Self::get_bit_mask(index)) != 0)
+            .unwrap_or_default()
     }
 
     pub(crate) fn insert(&mut self, index: u64) {
-        self.index.insert(index);
+        let byte_index = Self::get_byte_index(index);
+        if self.bytes.len() <= byte_index {
+            // This branch should not happen but just in case.
+            self.bytes.resize(byte_index + 1, 0u8);
+        }
+        let bit_mask = Self::get_bit_mask(index);
+        if self.bytes[byte_index] & bit_mask == 0u8 {
+            self.bytes[byte_index] |= bit_mask;
+            self.num_shreds += 1;
+        }
+    }
+
+    #[inline]
+    fn get_bit_mask(shred_index: u64) -> u8 {
+        1u8 << (shred_index & 7)
+    }
+
+    #[inline]
+    fn get_byte_index(shred_index: u64) -> usize {
+        (shred_index >> 3) as usize
+    }
+
+    #[cfg(test)]
+    fn remove(&mut self, shred_index: u64) {
+        let byte_index = Self::get_byte_index(shred_index);
+        let bit_mask = Self::get_bit_mask(shred_index);
+        // Test only method so no bounds check!
+        if self.bytes[byte_index] & bit_mask != 0u8 {
+            self.bytes[byte_index] ^= bit_mask;
+            self.num_shreds -= 1;
+        }
     }
 }
 
@@ -442,8 +587,8 @@ impl ErasureMeta {
     pub(crate) fn status(&self, index: &Index) -> ErasureMetaStatus {
         use ErasureMetaStatus::*;
 
-        let num_coding = index.coding().range(self.coding_shreds_indices()).count();
-        let num_data = index.data().range(self.data_shreds_indices()).count();
+        let num_coding = index.coding().count_range(self.coding_shreds_indices());
+        let num_data = index.data().count_range(self.data_shreds_indices());
 
         let (data_missing, num_needed) = (
             self.config.num_data.saturating_sub(num_data),
@@ -637,7 +782,7 @@ mod test {
             .collect::<Vec<_>>()
             .choose_multiple(&mut rng, erasure_config.num_data)
         {
-            index.data_mut().index.remove(&idx);
+            index.data_mut().remove(idx);
 
             assert_eq!(e_meta.status(&index), CanRecover);
         }
@@ -650,7 +795,7 @@ mod test {
             .collect::<Vec<_>>()
             .choose_multiple(&mut rng, erasure_config.num_coding)
         {
-            index.coding_mut().index.remove(&idx);
+            index.coding_mut().remove(idx);
 
             assert_eq!(e_meta.status(&index), DataFull);
         }
