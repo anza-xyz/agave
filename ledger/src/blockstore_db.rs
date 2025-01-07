@@ -796,8 +796,12 @@ pub trait ColumnName {
 pub trait TypedColumn: Column {
     type Type: Serialize + DeserializeOwned;
 
-    fn deserialize(data: &[u8]) -> bincode::Result<Self::Type> {
-        bincode::deserialize(data)
+    fn deserialize(data: &[u8]) -> Result<Self::Type> {
+        Ok(bincode::deserialize(data)?)
+    }
+
+    fn serialize(data: &Self::Type) -> Result<Vec<u8>> {
+        Ok(bincode::serialize(data)?)
     }
 }
 
@@ -1214,7 +1218,7 @@ impl ColumnName for columns::Index {
 impl TypedColumn for columns::Index {
     type Type = blockstore_meta::Index;
 
-    fn deserialize(data: &[u8]) -> bincode::Result<Self::Type> {
+    fn deserialize(data: &[u8]) -> Result<Self::Type> {
         let config = bincode::DefaultOptions::new().reject_trailing_bytes();
         // Migration strategy for new column format:
         // 1. Release 1: Add ability to read new format as fallback, keep writing old format
@@ -1237,6 +1241,11 @@ impl TypedColumn for columns::Index {
                 Ok(index.into())
             }
         }
+    }
+
+    fn serialize(data: &Self::Type) -> Result<Vec<u8>> {
+        let config = bincode::DefaultOptions::new().reject_trailing_bytes();
+        Ok(config.serialize(data)?)
     }
 }
 
@@ -1723,7 +1732,7 @@ where
             self.column_options.rocks_perf_sample_interval,
             &self.write_perf_status,
         );
-        let serialized_value = serialize(value)?;
+        let serialized_value = C::serialize(value)?;
 
         let key = Self::key_from_index(index);
         let result = self.backend.put_cf(self.handle(), &key, &serialized_value);
@@ -1746,7 +1755,7 @@ where
         value: &C::Type,
     ) -> Result<()> {
         let key = Self::key_from_index(index);
-        let serialized_value = serialize(value)?;
+        let serialized_value = C::serialize(value)?;
         batch.put_cf(self.handle(), &key, &serialized_value)
     }
 }

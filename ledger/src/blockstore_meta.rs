@@ -967,7 +967,8 @@ mod test {
                 data: data_indices.into_iter().map(|i| i as u64).collect(),
                 slot,
             };
-            let legacy = bincode::deserialize::<Index>(&bincode::serialize(&index).unwrap());
+            let config = bincode::DefaultOptions::new().reject_trailing_bytes();
+            let legacy = config.deserialize::<Index>(&config.serialize(&index).unwrap());
             prop_assert!(legacy.is_err());
         }
 
@@ -990,7 +991,7 @@ mod test {
                 slot,
             };
             let config = bincode::DefaultOptions::new().reject_trailing_bytes();
-            let v2 = config.deserialize::<IndexV2>(&bincode::serialize(&index).unwrap());
+            let v2 = config.deserialize::<IndexV2>(&config.serialize(&index).unwrap());
             prop_assert!(v2.is_err());
         }
 
