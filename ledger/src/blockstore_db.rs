@@ -1677,7 +1677,7 @@ where
             let result = self
                 .backend
                 .multi_get_cf(self.handle(), &keys)
-                .map(|out| Ok(out?.as_deref().map(C::deserialize).transpose()?))
+                .map(|out| out?.as_deref().map(C::deserialize).transpose())
                 .collect::<Vec<Result<Option<_>>>>();
             if let Some(op_start_instant) = is_perf_enabled {
                 // use multi-get instead
