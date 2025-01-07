@@ -3747,7 +3747,7 @@ impl Blockstore {
         let data_shred_iterator = self.data_shred_cf.multi_get_bytes(&keys);
 
         let mut data_shreds: Vec<Shred> = Vec::with_capacity(keys.len());
-        for (idx, shred_bytes) in data_shred_iterator.into_iter().enumerate() {
+        for (idx, shred_bytes) in data_shred_iterator.enumerate() {
             let shred_bytes = shred_bytes?;
             if shred_bytes.is_none() {
                 if let Some(slot_meta) = slot_meta {
