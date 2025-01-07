@@ -3764,11 +3764,10 @@ impl Blockstore {
                         );
                     }
                 }
-                return Err(BlockstoreError::InvalidShredData(Box::new(
-                    bincode::ErrorKind::Custom(format!(
-                        "Missing shred for slot {slot}, index {idx}"
-                    )),
-                )));
+                return Err(BlockstoreError::MissingShred(
+                    slot,
+                    u64::try_from(idx).unwrap(),
+                ));
             }
 
             let shred = Shred::new_from_serialized_shred(shred_bytes.unwrap()).map_err(|err| {
