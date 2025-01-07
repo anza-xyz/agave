@@ -36,6 +36,9 @@ solana-shred-version = { workspace = true }
 solana-signer = { workspace = true }
 solana-time-utils = { workspace = true }
 
+[dev-dependencies]
+solana-pubkey = { workspace = true, features = ["rand"] }
+
 [features]
 frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
 serde = ["dep:serde", "dep:serde_derive"]
