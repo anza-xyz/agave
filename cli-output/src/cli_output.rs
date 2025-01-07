@@ -1025,9 +1025,15 @@ pub struct CliKeyedEpochReward {
 #[serde(rename_all = "camelCase")]
 pub struct CliEpochRewardsMetadata {
     pub epoch: Epoch,
-    // Deprecated
+    #[deprecated(
+        since = "2.2.0",
+        note = "Please use CliEpochReward::effective_slot per reward"
+    )]
     pub effective_slot: Slot,
-    // Deprecated
+    #[deprecated(
+        since = "2.2.0",
+        note = "Please use CliEpochReward::block_time per reward"
+    )]
     pub block_time: UnixTimestamp,
 }
 
