@@ -7,3 +7,11 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+
+[dependencies]
+arrayvec = { workspace = true }
+jemallocator = { workspace = true }
+libc = { workspace = true }
+log = { workspace = true }
+memchr = "2.7.4"
+solana-metrics = { workspace = true }
