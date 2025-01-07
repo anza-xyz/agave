@@ -11,7 +11,7 @@ extern crate solana_metrics;
 #[cfg(feature = "frozen-abi")]
 extern crate solana_frozen_abi_macro;
 
-pub use solana_sdk::vote::{
+pub use solana_program::vote::{
     authorized_voters, error as vote_error, instruction as vote_instruction,
     program::{check_id, id},
 };

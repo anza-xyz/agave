@@ -10,17 +10,25 @@ edition = { workspace = true }
 
 [dependencies]
 log = { workspace = true }
+solana-account = { workspace = true }
+solana-bincode = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
 solana-compute-budget = { workspace = true }
+solana-instruction = { workspace = true }
 solana-log-collector = { workspace = true }
 solana-measure = { workspace = true }
+solana-packet = { workspace = true }
+solana-program = { workspace = true }
 solana-program-runtime = { workspace = true }
+solana-pubkey = { workspace = true }
 solana-sbpf = { workspace = true }
-solana-sdk = { workspace = true }
+solana-transaction-context = { workspace = true }
 solana-type-overrides = { workspace = true }
 
 [dev-dependencies]
 bincode = { workspace = true }
+solana-clock = { workspace = true }
+solana-sysvar = { workspace = true }
 
 [lib]
 crate-type = ["lib"]
@@ -30,4 +38,8 @@ name = "solana_loader_v4_program"
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-shuttle-test = ["solana-type-overrides/shuttle-test", "solana-program-runtime/shuttle-test", "solana-sbpf/shuttle-test"]
+shuttle-test = [
+    "solana-type-overrides/shuttle-test",
+    "solana-program-runtime/shuttle-test",
+    "solana-sbpf/shuttle-test"
+]

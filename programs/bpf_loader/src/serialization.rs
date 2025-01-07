@@ -2,21 +2,19 @@
 
 use {
     byteorder::{ByteOrder, LittleEndian},
+    solana_instruction::error::InstructionError,
+    solana_program_entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, NON_DUP_MARKER},
     solana_program_runtime::invoke_context::SerializedAccountMetadata,
+    solana_pubkey::Pubkey,
     solana_sbpf::{
         aligned_memory::{AlignedMemory, Pod},
         ebpf::{HOST_ALIGN, MM_INPUT_START},
         memory_region::{MemoryRegion, MemoryState},
     },
-    solana_sdk::{
-        bpf_loader_deprecated,
-        entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, NON_DUP_MARKER},
-        instruction::InstructionError,
-        pubkey::Pubkey,
-        system_instruction::MAX_PERMITTED_DATA_LENGTH,
-        transaction_context::{
-            BorrowedAccount, IndexOfAccount, InstructionContext, TransactionContext,
-        },
+    solana_sdk_ids::bpf_loader_deprecated,
+    solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
+    solana_transaction_context::{
+        BorrowedAccount, IndexOfAccount, InstructionContext, TransactionContext,
     },
     std::mem::{self, size_of},
 };
@@ -622,14 +620,12 @@ pub(crate) fn account_data_region_memory_state(account: &BorrowedAccount<'_>) ->
 mod tests {
     use {
         super::*,
+        solana_account::{Account, AccountSharedData, WritableAccount},
+        solana_account_info::AccountInfo,
+        solana_program_entrypoint::deserialize,
         solana_program_runtime::with_mock_invoke_context,
-        solana_sdk::{
-            account::{Account, AccountSharedData, WritableAccount},
-            account_info::AccountInfo,
-            bpf_loader,
-            entrypoint::deserialize,
-            transaction_context::InstructionAccount,
-        },
+        solana_sdk_ids::bpf_loader,
+        solana_transaction_context::InstructionAccount,
         std::{
             cell::RefCell,
             mem::transmute,
@@ -673,7 +669,7 @@ mod tests {
                     expected_err: Some(InstructionError::MaxAccountsExceeded),
                 },
             ] {
-                let program_id = solana_sdk::pubkey::new_rand();
+                let program_id = solana_pubkey::new_rand();
                 let mut transaction_accounts = vec![(
                     program_id,
                     AccountSharedData::from(Account {
@@ -779,7 +775,7 @@ mod tests {
     #[test]
     fn test_serialize_parameters() {
         for copy_account_data in [false, true] {
-            let program_id = solana_sdk::pubkey::new_rand();
+            let program_id = solana_pubkey::new_rand();
             let transaction_accounts = vec![
                 (
                     program_id,
@@ -792,7 +788,7 @@ mod tests {
                     }),
                 ),
                 (
-                    solana_sdk::pubkey::new_rand(),
+                    solana_pubkey::new_rand(),
                     AccountSharedData::from(Account {
                         lamports: 1,
                         data: vec![1u8, 2, 3, 4, 5],
@@ -802,7 +798,7 @@ mod tests {
                     }),
                 ),
                 (
-                    solana_sdk::pubkey::new_rand(),
+                    solana_pubkey::new_rand(),
                     AccountSharedData::from(Account {
                         lamports: 2,
                         data: vec![11u8, 12, 13, 14, 15, 16, 17, 18, 19],
@@ -812,7 +808,7 @@ mod tests {
                     }),
                 ),
                 (
-                    solana_sdk::pubkey::new_rand(),
+                    solana_pubkey::new_rand(),
                     AccountSharedData::from(Account {
                         lamports: 3,
                         data: vec![],
@@ -822,7 +818,7 @@ mod tests {
                     }),
                 ),
                 (
-                    solana_sdk::pubkey::new_rand(),
+                    solana_pubkey::new_rand(),
                     AccountSharedData::from(Account {
                         lamports: 4,
                         data: vec![1u8, 2, 3, 4, 5],
@@ -832,7 +828,7 @@ mod tests {
                     }),
                 ),
                 (
-                    solana_sdk::pubkey::new_rand(),
+                    solana_pubkey::new_rand(),
                     AccountSharedData::from(Account {
                         lamports: 5,
                         data: vec![11u8, 12, 13, 14, 15, 16, 17, 18, 19],
@@ -842,7 +838,7 @@ mod tests {
                     }),
                 ),
                 (
-                    solana_sdk::pubkey::new_rand(),
+                    solana_pubkey::new_rand(),
                     AccountSharedData::from(Account {
                         lamports: 6,
                         data: vec![],

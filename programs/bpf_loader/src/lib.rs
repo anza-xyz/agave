@@ -5,13 +5,22 @@ pub mod serialization;
 pub mod syscalls;
 
 use {
+    solana_account::WritableAccount,
+    solana_bincode::limited_deserialize,
+    solana_clock::Slot,
     solana_compute_budget::compute_budget::MAX_INSTRUCTION_STACK_DEPTH,
     solana_feature_set::{
         bpf_account_data_direct_mapping, enable_bpf_loader_set_authority_checked_ix,
         remove_accounts_executable_flag_checks,
     },
+    solana_instruction::{error::InstructionError, AccountMeta},
     solana_log_collector::{ic_logger_msg, ic_msg, LogCollector},
     solana_measure::measure::Measure,
+    solana_program::{
+        bpf_loader_upgradeable::UpgradeableLoaderState,
+        loader_upgradeable_instruction::UpgradeableLoaderInstruction,
+    },
+    solana_program_entrypoint::{MAX_PERMITTED_DATA_INCREASE, SUCCESS},
     solana_program_runtime::{
         invoke_context::{BpfAllocator, InvokeContext, SerializedAccountMetadata, SyscallContext},
         loaded_programs::{
@@ -22,6 +31,7 @@ use {
         stable_log,
         sysvar_cache::get_sysvar_with_account_check,
     },
+    solana_pubkey::Pubkey,
     solana_sbpf::{
         declare_builtin_function,
         ebpf::{self, MM_HEAP_START},
@@ -32,20 +42,11 @@ use {
         verifier::RequisiteVerifier,
         vm::{ContextObject, EbpfVm},
     },
-    solana_sdk::{
-        account::WritableAccount,
-        bpf_loader, bpf_loader_deprecated,
-        bpf_loader_upgradeable::{self, UpgradeableLoaderState},
-        clock::Slot,
-        entrypoint::{MAX_PERMITTED_DATA_INCREASE, SUCCESS},
-        instruction::{AccountMeta, InstructionError},
-        loader_upgradeable_instruction::UpgradeableLoaderInstruction,
-        loader_v4, native_loader,
-        program_utils::limited_deserialize,
-        pubkey::Pubkey,
-        system_instruction::{self, MAX_PERMITTED_DATA_LENGTH},
-        transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
+    solana_sdk_ids::{
+        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
     },
+    solana_system_interface::{instruction as system_instruction, MAX_PERMITTED_DATA_LENGTH},
+    solana_transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
     solana_type_overrides::sync::{atomic::Ordering, Arc},
     std::{cell::RefCell, mem, rc::Rc},
     syscalls::{create_program_runtime_environment_v1, morph_into_deployment_environment_v1},
@@ -511,7 +512,7 @@ fn process_loader_upgradeable_instruction(
     let instruction_data = instruction_context.get_instruction_data();
     let program_id = instruction_context.get_last_program_key(transaction_context)?;
 
-    match limited_deserialize(instruction_data)? {
+    match limited_deserialize(instruction_data, solana_packet::PACKET_DATA_SIZE as u64)? {
         UpgradeableLoaderInstruction::InitializeBuffer => {
             instruction_context.check_number_of_instruction_accounts(2)?;
             let mut buffer =
@@ -677,7 +678,7 @@ fn process_loader_upgradeable_instruction(
             let signers = [[new_program_id.as_ref(), &[bump_seed]]]
                 .iter()
                 .map(|seeds| Pubkey::create_program_address(seeds, caller_program_id))
-                .collect::<Result<Vec<Pubkey>, solana_sdk::pubkey::PubkeyError>>()?;
+                .collect::<Result<Vec<Pubkey>, solana_pubkey::PubkeyError>>()?;
             invoke_context.native_invoke(instruction.into(), signers.as_slice())?;
 
             // Load and verify the program bits
@@ -1572,9 +1573,8 @@ pub fn execute<'a, 'b: 'a>(
 
 pub mod test_utils {
     use {
-        super::*,
+        super::*, solana_account::ReadableAccount, solana_program::loader_v4::LoaderV4State,
         solana_program_runtime::loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
-        solana_sdk::{account::ReadableAccount, loader_v4::LoaderV4State},
     };
 
     pub fn load_all_invoked_programs(invoke_context: &mut InvokeContext) {
@@ -1637,22 +1637,19 @@ mod tests {
         super::*,
         assert_matches::assert_matches,
         rand::Rng,
+        solana_account::{
+            create_account_shared_data_for_test as create_account_for_test, state_traits::StateMut,
+            AccountSharedData, ReadableAccount, WritableAccount,
+        },
+        solana_clock::Clock,
+        solana_epoch_schedule::EpochSchedule,
+        solana_instruction::{error::InstructionError, AccountMeta},
         solana_program_runtime::{
             invoke_context::mock_process_instruction, with_mock_invoke_context,
         },
-        solana_sdk::{
-            account::{
-                create_account_shared_data_for_test as create_account_for_test, AccountSharedData,
-                ReadableAccount, WritableAccount,
-            },
-            account_utils::StateMut,
-            clock::Clock,
-            epoch_schedule::EpochSchedule,
-            instruction::{AccountMeta, InstructionError},
-            pubkey::Pubkey,
-            rent::Rent,
-            system_program, sysvar,
-        },
+        solana_pubkey::Pubkey,
+        solana_rent::Rent,
+        solana_sdk_ids::{system_program, sysvar},
         std::{fs::File, io::Read, ops::Range, sync::atomic::AtomicU64},
     };
 

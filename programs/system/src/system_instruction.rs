@@ -76,7 +76,7 @@ pub fn advance_nonce_account(
     }
 }
 
-pub fn withdraw_nonce_account(
+pub(crate) fn withdraw_nonce_account(
     from_account_index: IndexOfAccount,
     lamports: u64,
     to_account_index: IndexOfAccount,
@@ -158,7 +158,7 @@ pub fn withdraw_nonce_account(
     Ok(())
 }
 
-pub fn initialize_nonce_account(
+pub(crate) fn initialize_nonce_account(
     account: &mut BorrowedAccount,
     nonce_authority: &Pubkey,
     rent: &Rent,
@@ -208,7 +208,7 @@ pub fn initialize_nonce_account(
     }
 }
 
-pub fn authorize_nonce_account(
+pub(crate) fn authorize_nonce_account(
     account: &mut BorrowedAccount,
     nonce_authority: &Pubkey,
     signers: &HashSet<Pubkey>,

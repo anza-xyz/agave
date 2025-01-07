@@ -5,9 +5,10 @@ use {
     base64::{prelude::BASE64_STANDARD, Engine},
     bincode::deserialize,
     serde_json::json,
+    solana_message::{compiled_instruction::CompiledInstruction, AccountKeys},
     solana_sdk::{
-        instruction::CompiledInstruction, loader_instruction::LoaderInstruction,
-        loader_upgradeable_instruction::UpgradeableLoaderInstruction, message::AccountKeys,
+        loader_instruction::LoaderInstruction,
+        loader_upgradeable_instruction::UpgradeableLoaderInstruction,
     },
 };
 
@@ -207,9 +208,9 @@ mod test {
     use {
         super::*,
         serde_json::Value,
+        solana_message::Message,
         solana_sdk::{
             bpf_loader_upgradeable,
-            message::Message,
             pubkey::{self, Pubkey},
             system_program, sysvar,
         },

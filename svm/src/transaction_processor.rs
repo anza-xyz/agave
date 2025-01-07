@@ -1192,7 +1192,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     }
 
     #[cfg(feature = "dev-context-only-utils")]
-    pub fn writable_sysvar_cache(&self) -> &RwLock<SysvarCache> {
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    fn writable_sysvar_cache(&self) -> &RwLock<SysvarCache> {
         &self.sysvar_cache
     }
 }
@@ -1250,10 +1251,10 @@ mod tests {
     }
 
     #[derive(Default, Clone)]
-    pub struct MockBankCallback {
-        pub account_shared_data: Arc<RwLock<HashMap<Pubkey, AccountSharedData>>>,
+    struct MockBankCallback {
+        account_shared_data: Arc<RwLock<HashMap<Pubkey, AccountSharedData>>>,
         #[allow(clippy::type_complexity)]
-        pub inspected_accounts:
+        inspected_accounts:
             Arc<RwLock<HashMap<Pubkey, Vec<(Option<AccountSharedData>, /* is_writable */ bool)>>>>,
     }
 

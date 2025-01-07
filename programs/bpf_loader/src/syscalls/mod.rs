@@ -12,12 +12,14 @@ pub use self::{
 };
 #[allow(deprecated)]
 use {
+    solana_account_info::AccountInfo,
     solana_bn254::prelude::{
         alt_bn128_addition, alt_bn128_multiplication, alt_bn128_pairing, AltBn128Error,
         ALT_BN128_ADDITION_OUTPUT_LEN, ALT_BN128_MULTIPLICATION_OUTPUT_LEN,
         ALT_BN128_PAIRING_ELEMENT_LEN, ALT_BN128_PAIRING_OUTPUT_LEN,
     },
     solana_compute_budget::compute_budget::ComputeBudget,
+    solana_cpi::MAX_RETURN_DATA,
     solana_define_syscall::codes,
     solana_feature_set::{
         self as feature_set, abort_on_invalid_curve, blake3_syscall_enabled,
@@ -30,34 +32,35 @@ use {
         last_restart_slot_sysvar, reenable_sbpf_v0_execution,
         remaining_compute_units_syscall_enabled, FeatureSet,
     },
+    solana_hash::Hash,
+    solana_instruction::{error::InstructionError, AccountMeta, ProcessedSiblingInstruction},
+    solana_keccak_hasher as keccak,
     solana_log_collector::{ic_logger_msg, ic_msg},
     solana_poseidon as poseidon,
+    solana_precompiles::is_precompile,
+    solana_program::{
+        big_mod_exp::{big_mod_exp, BigModExpParams},
+        blake3,
+    },
+    solana_program_entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, SUCCESS},
     solana_program_memory::is_nonoverlapping,
     solana_program_runtime::{invoke_context::InvokeContext, stable_log},
+    solana_pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN, PUBKEY_BYTES},
     solana_sbpf::{
         declare_builtin_function,
         memory_region::{AccessType, MemoryMapping},
         program::{BuiltinProgram, FunctionRegistry, SBPFVersion},
         vm::Config,
     },
-    solana_sdk::{
-        account_info::AccountInfo,
-        big_mod_exp::{big_mod_exp, BigModExpParams},
-        blake3, bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
-        entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, SUCCESS},
-        hash::{Hash, Hasher},
-        instruction::{AccountMeta, InstructionError, ProcessedSiblingInstruction},
-        keccak, native_loader,
-        precompiles::is_precompile,
-        program::MAX_RETURN_DATA,
-        pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN, PUBKEY_BYTES},
-        secp256k1_recover::{
-            Secp256k1RecoverError, SECP256K1_PUBLIC_KEY_LENGTH, SECP256K1_SIGNATURE_LENGTH,
-        },
-        sysvar::{Sysvar, SysvarId},
-        transaction_context::{IndexOfAccount, InstructionAccount},
+    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, native_loader},
+    solana_secp256k1_recover::{
+        Secp256k1RecoverError, SECP256K1_PUBLIC_KEY_LENGTH, SECP256K1_SIGNATURE_LENGTH,
     },
+    solana_sha256_hasher::Hasher,
+    solana_sysvar::Sysvar,
+    solana_sysvar_id::SysvarId,
     solana_timings::ExecuteTimings,
+    solana_transaction_context::{IndexOfAccount, InstructionAccount},
     solana_type_overrides::sync::Arc,
     std::{
         alloc::Layout,
@@ -2192,31 +2195,30 @@ declare_builtin_function!(
 #[allow(clippy::indexing_slicing)]
 mod tests {
     #[allow(deprecated)]
-    use solana_sdk::sysvar::fees::Fees;
+    use solana_sysvar::fees::Fees;
     use {
         super::*,
         crate::mock_create_vm,
         assert_matches::assert_matches,
         core::slice,
+        solana_account::{create_account_shared_data_for_test, AccountSharedData},
+        solana_clock::Clock,
+        solana_epoch_rewards::EpochRewards,
+        solana_epoch_schedule::EpochSchedule,
+        solana_fee_calculator::FeeCalculator,
+        solana_hash::HASH_BYTES,
+        solana_instruction::Instruction,
+        solana_last_restart_slot::LastRestartSlot,
+        solana_program::program::check_type_assumptions,
         solana_program_runtime::{invoke_context::InvokeContext, with_mock_invoke_context},
         solana_sbpf::{
             error::EbpfError, memory_region::MemoryRegion, program::SBPFVersion, vm::Config,
         },
-        solana_sdk::{
-            account::{create_account_shared_data_for_test, AccountSharedData},
-            bpf_loader,
-            fee_calculator::FeeCalculator,
-            hash::{hashv, HASH_BYTES},
-            instruction::Instruction,
-            program::check_type_assumptions,
-            slot_hashes::{self, SlotHashes},
-            stable_layout::stable_instruction::StableInstruction,
-            stake_history::{self, StakeHistory, StakeHistoryEntry},
-            sysvar::{
-                self, clock::Clock, epoch_rewards::EpochRewards, epoch_schedule::EpochSchedule,
-                last_restart_slot::LastRestartSlot,
-            },
-        },
+        solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, sysvar},
+        solana_sha256_hasher::hashv,
+        solana_slot_hashes::{self as slot_hashes, SlotHashes},
+        solana_stable_layout::stable_instruction::StableInstruction,
+        solana_sysvar::stake_history::{self, StakeHistory, StakeHistoryEntry},
         std::{mem, str::FromStr},
         test_case::test_case,
     };
@@ -2307,7 +2309,7 @@ mod tests {
         let config = Config::default();
 
         // Pubkey
-        let pubkey = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
         let memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_readonly(bytes_of(&pubkey), 0x100000000)],
             &config,
@@ -2320,9 +2322,9 @@ mod tests {
 
         // Instruction
         let instruction = Instruction::new_with_bincode(
-            solana_sdk::pubkey::new_rand(),
+            solana_pubkey::new_rand(),
             &"foobar",
-            vec![AccountMeta::new(solana_sdk::pubkey::new_rand(), false)],
+            vec![AccountMeta::new(solana_pubkey::new_rand(), false)],
         );
         let instruction = StableInstruction::from(instruction);
         let memory_region = MemoryRegion::new_readonly(bytes_of(&instruction), 0x100000000);
@@ -2398,7 +2400,7 @@ mod tests {
         assert!(translate_slice::<u64>(&memory_mapping, 0x100000000, u64::MAX, true).is_err());
 
         // Pubkeys
-        let mut data = vec![solana_sdk::pubkey::new_rand(); 5];
+        let mut data = vec![solana_pubkey::new_rand(); 5];
         let memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_readonly(
                 unsafe {
@@ -2414,7 +2416,7 @@ mod tests {
             translate_slice::<Pubkey>(&memory_mapping, 0x100000000, data.len() as u64, true)
                 .unwrap();
         assert_eq!(data, translated_data);
-        *data.first_mut().unwrap() = solana_sdk::pubkey::new_rand(); // Both should point to same place
+        *data.first_mut().unwrap() = solana_pubkey::new_rand(); // Both should point to same place
         assert_eq!(data, translated_data);
     }
 
@@ -2652,7 +2654,7 @@ mod tests {
             let memory_mapping = &mut vm.memory_mapping;
             let result = SyscallAllocFree::rust(
                 invoke_context,
-                solana_sdk::entrypoint::HEAP_LENGTH as u64,
+                solana_program_entrypoint::HEAP_LENGTH as u64,
                 0,
                 0,
                 0,
@@ -2662,7 +2664,7 @@ mod tests {
             assert_ne!(result.unwrap(), 0);
             let result = SyscallAllocFree::rust(
                 invoke_context,
-                solana_sdk::entrypoint::HEAP_LENGTH as u64,
+                solana_program_entrypoint::HEAP_LENGTH as u64,
                 0,
                 0,
                 0,
@@ -2689,7 +2691,7 @@ mod tests {
             }
             let result = SyscallAllocFree::rust(
                 invoke_context,
-                solana_sdk::entrypoint::HEAP_LENGTH as u64,
+                solana_program_entrypoint::HEAP_LENGTH as u64,
                 0,
                 0,
                 0,
@@ -2712,7 +2714,7 @@ mod tests {
             }
             let result = SyscallAllocFree::rust(
                 invoke_context,
-                solana_sdk::entrypoint::HEAP_LENGTH as u64,
+                solana_program_entrypoint::HEAP_LENGTH as u64,
                 0,
                 0,
                 0,

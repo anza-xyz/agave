@@ -13,7 +13,7 @@ use {
     solana_account_decoder::{
         parse_account_data::SplTokenAdditionalData, parse_token::token_amount_to_ui_amount_v2,
     },
-    solana_sdk::{instruction::CompiledInstruction, message::AccountKeys},
+    solana_message::{compiled_instruction::CompiledInstruction, AccountKeys},
     spl_token_2022::{
         extension::ExtensionType,
         instruction::{AuthorityType, TokenInstruction},
@@ -863,10 +863,8 @@ fn map_coption_pubkey(pubkey: COption<Pubkey>) -> Option<String> {
 #[cfg(test)]
 mod test {
     use {
-        super::*,
-        solana_sdk::{message::Message, pubkey::Pubkey},
-        spl_token_2022::instruction::*,
-        std::iter::repeat_with,
+        super::*, solana_message::Message, solana_sdk::pubkey::Pubkey,
+        spl_token_2022::instruction::*, std::iter::repeat_with,
     };
 
     fn test_parse_token(program_id: &Pubkey) {

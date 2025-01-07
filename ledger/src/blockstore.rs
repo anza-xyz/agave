@@ -941,7 +941,7 @@ impl Blockstore {
     fn try_shred_recovery(
         &self,
         erasure_metas: &BTreeMap<ErasureSetId, WorkingEntry<ErasureMeta>>,
-        index_working_set: &mut HashMap<u64, IndexMetaWorkingSetEntry>,
+        index_working_set: &HashMap<u64, IndexMetaWorkingSetEntry>,
         prev_inserted_shreds: &HashMap<ShredId, Shred>,
         leader_schedule_cache: &LeaderScheduleCache,
         reed_solomon_cache: &ReedSolomonCache,
@@ -956,21 +956,21 @@ impl Blockstore {
             .filter_map(|(erasure_set, working_erasure_meta)| {
                 let erasure_meta = working_erasure_meta.as_ref();
                 let slot = erasure_set.slot();
-                let index_meta_entry = index_working_set.get_mut(&slot).expect("Index");
-                let index = &mut index_meta_entry.index;
-                match erasure_meta.status(index) {
-                    ErasureMetaStatus::CanRecover => self
-                        .recover_shreds(
+                let index_meta_entry = index_working_set.get(&slot).expect("Index");
+                let index = &index_meta_entry.index;
+                erasure_meta
+                    .should_recover_shreds(index)
+                    .then(|| {
+                        self.recover_shreds(
                             index,
                             erasure_meta,
                             prev_inserted_shreds,
                             leader_schedule_cache,
                             reed_solomon_cache,
                         )
-                        .ok(),
-                    ErasureMetaStatus::DataFull => None,
-                    ErasureMetaStatus::StillNeed(_) => None,
-                }
+                        .ok()
+                    })
+                    .flatten()
             })
             .collect()
     }
@@ -994,7 +994,7 @@ impl Blockstore {
             let recovered_shreds: Vec<_> = self
                 .try_shred_recovery(
                     &shred_insertion_tracker.erasure_metas,
-                    &mut shred_insertion_tracker.index_working_set,
+                    &shred_insertion_tracker.index_working_set,
                     &shred_insertion_tracker.just_inserted_shreds,
                     leader_schedule_cache,
                     reed_solomon_cache,
@@ -3741,19 +3741,15 @@ impl Blockstore {
         let Some((_, all_ranges_end_index)) = completed_ranges.last().copied() else {
             return Ok(vec![]);
         };
-        let keys =
-            (all_ranges_start_index..=all_ranges_end_index).map(|index| (slot, u64::from(index)));
+        let keys = self.data_shred_cf.multi_get_keys(
+            (all_ranges_start_index..=all_ranges_end_index).map(|index| (slot, u64::from(index))),
+        );
+        let data_shred_iterator = self.data_shred_cf.multi_get_bytes(&keys);
 
-        let data_shreds: Result<Vec<Option<Vec<u8>>>> = self
-            .data_shred_cf
-            .multi_get_bytes(keys)
-            .into_iter()
-            .collect();
-        let data_shreds = data_shreds?;
-        let data_shreds: Result<Vec<Shred>> = data_shreds
-            .into_iter()
+        let data_shreds: Vec<Shred> = data_shred_iterator
             .enumerate()
             .map(|(idx, shred_bytes)| {
+                let shred_bytes = shred_bytes?;
                 if shred_bytes.is_none() {
                     if let Some(slot_meta) = slot_meta {
                         if slot > self.lowest_cleanup_slot() {
@@ -3769,20 +3765,19 @@ impl Blockstore {
                             );
                         }
                     }
-                    return Err(BlockstoreError::InvalidShredData(Box::new(
-                        bincode::ErrorKind::Custom(format!(
-                            "Missing shred for slot {slot}, index {idx}"
-                        )),
-                    )));
+                    return Err(BlockstoreError::MissingShred(
+                        slot,
+                        u64::try_from(idx).unwrap(),
+                    ));
                 }
+
                 Shred::new_from_serialized_shred(shred_bytes.unwrap()).map_err(|err| {
                     BlockstoreError::InvalidShredData(Box::new(bincode::ErrorKind::Custom(
                         format!("Could not reconstruct shred from shred payload: {err:?}"),
                     )))
                 })
             })
-            .collect();
-        let data_shreds = data_shreds?;
+            .collect::<Result<Vec<_>>>()?;
 
         completed_ranges
             .into_iter()
@@ -3891,12 +3886,13 @@ impl Blockstore {
                 is_retransmitter_signed: false,
             });
         };
-        let keys = (start_index..=last_shred_index).map(|index| (slot, index));
+        let keys = self
+            .data_shred_cf
+            .multi_get_keys((start_index..=last_shred_index).map(|index| (slot, index)));
 
         let deduped_shred_checks: Vec<(Hash, bool)> = self
             .data_shred_cf
-            .multi_get_bytes(keys)
-            .into_iter()
+            .multi_get_bytes(&keys)
             .enumerate()
             .map(|(offset, shred_bytes)| {
                 let shred_bytes = shred_bytes.ok().flatten().ok_or_else(|| {
@@ -3937,20 +3933,18 @@ impl Blockstore {
     /// Returns a mapping from each elements of `slots` to a list of the
     /// element's children slots.
     pub fn get_slots_since(&self, slots: &[Slot]) -> Result<HashMap<Slot, Vec<Slot>>> {
-        let slot_metas: Result<Vec<Option<SlotMeta>>> = self
-            .meta_cf
-            .multi_get(slots.iter().copied())
-            .into_iter()
-            .collect();
-        let slot_metas = slot_metas?;
+        let keys = self.meta_cf.multi_get_keys(slots.iter().copied());
+        let slot_metas = self.meta_cf.multi_get(&keys);
 
-        let result: HashMap<Slot, Vec<Slot>> = slots
-            .iter()
-            .zip(slot_metas)
-            .filter_map(|(slot, meta)| meta.map(|meta| (*slot, meta.next_slots.to_vec())))
-            .collect();
+        let mut slots_since: HashMap<Slot, Vec<Slot>> = HashMap::with_capacity(slots.len());
+        for meta in slot_metas.into_iter() {
+            let meta = meta?;
+            if let Some(meta) = meta {
+                slots_since.insert(meta.slot, meta.next_slots);
+            }
+        }
 
-        Ok(result)
+        Ok(slots_since)
     }
 
     pub fn is_root(&self, slot: Slot) -> bool {
@@ -5693,12 +5687,11 @@ pub mod tests {
                 .expect("Expected meta object to exist");
             assert_eq!(result, meta);
         }
-        let mut keys: Vec<u64> = vec![0; TEST_PUT_ENTRY_COUNT];
-        for (i, key) in keys.iter_mut().enumerate().take(TEST_PUT_ENTRY_COUNT) {
-            *key = u64::try_from(i).unwrap();
-        }
-        let values = blockstore.meta_cf.multi_get(keys);
-        for (i, value) in values.iter().enumerate().take(TEST_PUT_ENTRY_COUNT) {
+        let keys = blockstore
+            .meta_cf
+            .multi_get_keys(0..TEST_PUT_ENTRY_COUNT as Slot);
+        let values = blockstore.meta_cf.multi_get(&keys);
+        for (i, value) in values.enumerate().take(TEST_PUT_ENTRY_COUNT) {
             let k = u64::try_from(i).unwrap();
             assert_eq!(
                 value.as_ref().unwrap().as_ref().unwrap(),

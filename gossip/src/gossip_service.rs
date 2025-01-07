@@ -400,7 +400,7 @@ mod tests {
         let (met_criteria, elapsed, _, tvu_peers) = spy(spy_ref.clone(), None, TIMEOUT, None, None);
         assert!(!met_criteria);
         assert!((TIMEOUT..TIMEOUT + Duration::from_secs(1)).contains(&elapsed));
-        assert_eq!(tvu_peers, spy_ref.tvu_peers());
+        assert_eq!(tvu_peers, spy_ref.tvu_peers(ContactInfo::clone));
 
         // Find num_nodes
         let (met_criteria, _, _, _) = spy(spy_ref.clone(), Some(1), TIMEOUT, None, None);

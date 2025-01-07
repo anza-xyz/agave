@@ -1,19 +1,19 @@
 use {
     crate::{StoredExtendedRewards, StoredTransactionStatusMeta},
     solana_account_decoder::parse_token::{real_number_string_trimmed, UiTokenAmount},
-    solana_sdk::{
-        hash::{Hash, HASH_BYTES},
-        instruction::{CompiledInstruction, InstructionError},
-        message::{
-            legacy::Message as LegacyMessage,
-            v0::{self, LoadedAddresses, MessageAddressTableLookup},
-            MessageHeader, VersionedMessage,
-        },
-        pubkey::Pubkey,
-        signature::Signature,
-        transaction::{Transaction, TransactionError, VersionedTransaction},
-        transaction_context::TransactionReturnData,
+    solana_hash::{Hash, HASH_BYTES},
+    solana_instruction::error::InstructionError,
+    solana_message::{
+        compiled_instruction::CompiledInstruction,
+        legacy::Message as LegacyMessage,
+        v0::{self, LoadedAddresses, MessageAddressTableLookup},
+        MessageHeader, VersionedMessage,
     },
+    solana_pubkey::Pubkey,
+    solana_signature::Signature,
+    solana_transaction::{versioned::VersionedTransaction, Transaction},
+    solana_transaction_context::TransactionReturnData,
+    solana_transaction_error::TransactionError,
     solana_transaction_status::{
         ConfirmedBlock, EntrySummary, InnerInstruction, InnerInstructions, Reward, RewardType,
         RewardsAndNumPartitions, TransactionByAddrInfo, TransactionStatusMeta,

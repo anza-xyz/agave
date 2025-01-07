@@ -4,7 +4,8 @@ use {
     },
     borsh::BorshDeserialize,
     serde_json::json,
-    solana_sdk::{instruction::CompiledInstruction, message::AccountKeys, pubkey::Pubkey},
+    solana_message::{compiled_instruction::CompiledInstruction, AccountKeys},
+    solana_sdk::pubkey::Pubkey,
     spl_associated_token_account::instruction::AssociatedTokenAccountInstruction,
 };
 
@@ -94,7 +95,8 @@ mod test {
     use spl_associated_token_account::create_associated_token_account as create_associated_token_account_deprecated;
     use {
         super::*,
-        solana_sdk::{message::Message, sysvar},
+        solana_message::Message,
+        solana_sdk::sysvar,
         spl_associated_token_account::{
             get_associated_token_address, get_associated_token_address_with_program_id,
             instruction::{

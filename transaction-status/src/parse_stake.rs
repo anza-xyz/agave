@@ -4,10 +4,8 @@ use {
     },
     bincode::deserialize,
     serde_json::{json, Map, Value},
-    solana_sdk::{
-        instruction::CompiledInstruction, message::AccountKeys,
-        stake::instruction::StakeInstruction,
-    },
+    solana_message::{compiled_instruction::CompiledInstruction, AccountKeys},
+    solana_sdk::stake::instruction::StakeInstruction,
 };
 
 pub fn parse_stake(
@@ -333,9 +331,9 @@ fn check_num_stake_accounts(accounts: &[u8], num: usize) -> Result<(), ParseInst
 mod test {
     use {
         super::*,
+        solana_message::Message,
         solana_sdk::{
             instruction::Instruction,
-            message::Message,
             pubkey::Pubkey,
             stake::{
                 config,

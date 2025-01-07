@@ -780,7 +780,7 @@ fn make_merkle_proof(
 }
 
 pub(super) fn recover(
-    mut shreds: Vec<Shred>,
+    shreds: Vec<Shred>,
     reed_solomon_cache: &ReedSolomonCache,
 ) -> Result<impl Iterator<Item = Shred>, Error> {
     // Grab {common, coding} headers from first coding shred.
@@ -831,15 +831,14 @@ pub(super) fn recover(
     // and have consistent headers.
     debug_assert!(shreds.iter().all(|shred| {
         let ShredCommonHeader {
-            signature,
+            signature: _, // signature are verified further below.
             shred_variant,
             slot,
             index: _,
             version,
             fec_set_index,
         } = shred.common_header();
-        signature == &common_header.signature
-            && slot == &common_header.slot
+        slot == &common_header.slot
             && version == &common_header.version
             && fec_set_index == &common_header.fec_set_index
             && match shred {
@@ -874,7 +873,13 @@ pub(super) fn recover(
     // Obtain erasure encoded shards from shreds.
     let shreds = {
         let mut batch = vec![None; num_shards];
-        while let Some(shred) = shreds.pop() {
+        for shred in shreds {
+            // The leader signs the Merkle root and shreds in the same erasure
+            // batch have the same Merkle root. So the signatures are the same
+            // or shreds are not from the same erasure batch.
+            if shred.signature() != &common_header.signature {
+                return Err(Error::InvalidMerkleRoot);
+            }
             let index = match shred.erasure_shard_index() {
                 Ok(index) if index < batch.len() => index,
                 _ => return Err(Error::from(InvalidIndex)),
@@ -956,6 +961,9 @@ pub(super) fn recover(
         .map(Shred::merkle_node)
         .collect::<Result<_, _>>()?;
     let tree = make_merkle_tree(nodes);
+    // The attched signature verfies only if we obtain the same Merkle root.
+    // Because shreds obtained from turbine or repair are sig-verified, this
+    // also means that we don't need to verify signatures for recovered shreds.
     if tree.last() != Some(&merkle_root) {
         return Err(Error::InvalidMerkleRoot);
     }

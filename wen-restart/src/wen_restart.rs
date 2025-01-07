@@ -32,6 +32,7 @@ use {
         clock::{Epoch, Slot},
         hash::Hash,
     },
+    solana_pubkey::Pubkey,
     solana_runtime::{
         accounts_background_service::AbsRequestSender,
         bank::Bank,
@@ -46,7 +47,8 @@ use {
             purge_all_bank_snapshots,
         },
     },
-    solana_sdk::{pubkey::Pubkey, shred_version::compute_shred_version, timing::timestamp},
+    solana_shred_version::compute_shred_version,
+    solana_time_utils::timestamp,
     solana_timings::ExecuteTimings,
     solana_vote_program::vote_state::VoteTransaction,
     std::{
@@ -1428,6 +1430,7 @@ mod tests {
             crds_value::CrdsValue,
             restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
         },
+        solana_keypair::Keypair,
         solana_ledger::{
             blockstore::{create_new_ledger, entries_to_test_shreds, Blockstore},
             blockstore_options::LedgerColumnOptions,
@@ -1438,6 +1441,7 @@ mod tests {
             hash::Hash,
             vote::state::{TowerSync, Vote},
         },
+        solana_pubkey::Pubkey,
         solana_runtime::{
             epoch_stakes::EpochStakes,
             genesis_utils::{
@@ -1448,12 +1452,9 @@ mod tests {
             snapshot_hash::SnapshotHash,
             snapshot_utils::build_incremental_snapshot_archive_path,
         },
-        solana_sdk::{
-            pubkey::Pubkey,
-            signature::{Keypair, Signer},
-            timing::timestamp,
-        },
+        solana_signer::Signer,
         solana_streamer::socket::SocketAddrSpace,
+        solana_time_utils::timestamp,
         solana_vote::vote_account::VoteAccount,
         solana_vote_program::vote_state::create_account_with_authorized,
         std::{fs::remove_file, sync::Arc, thread::Builder},

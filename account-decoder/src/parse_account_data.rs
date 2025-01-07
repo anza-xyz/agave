@@ -166,7 +166,7 @@ mod test {
             state::{Data, State},
             versions::Versions,
         },
-        solana_sdk::vote::{
+        solana_program::vote::{
             program::id as vote_program_id,
             state::{VoteState, VoteStateVersions},
         },

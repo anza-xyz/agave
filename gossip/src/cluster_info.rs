@@ -1112,7 +1112,7 @@ impl ClusterInfo {
     }
 
     /// all validators that have a valid tvu port and are on the same `shred_version`.
-    pub fn tvu_peers(&self) -> Vec<ContactInfo> {
+    pub fn tvu_peers<R>(&self, query: impl Fn(&ContactInfo) -> R) -> Vec<R> {
         let self_pubkey = self.id();
         let self_shred_version = self.my_shred_version();
         self.time_gossip_read_lock("tvu_peers", &self.stats.tvu_peers)
@@ -1122,7 +1122,7 @@ impl ClusterInfo {
                     && node.shred_version() == self_shred_version
                     && self.check_socket_addr_space(&node.tvu(contact_info::Protocol::UDP))
             })
-            .cloned()
+            .map(query)
             .collect()
     }
 

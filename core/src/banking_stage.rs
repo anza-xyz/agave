@@ -2,6 +2,8 @@
 //! to construct a software pipeline. The stage uses all available CPU cores and
 //! can do its processing in parallel with signature verification on the GPU.
 
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     self::{
         committer::Committer,
@@ -23,9 +25,9 @@ use {
                 scheduler_controller::SchedulerController, scheduler_error::SchedulerError,
             },
         },
-        banking_trace::BankingPacketReceiver,
         validator::BlockProductionMethod,
     },
+    agave_banking_stage_ingress_types::BankingPacketReceiver,
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     histogram::Histogram,
     solana_client::connection_cache::ConnectionCache,
@@ -35,7 +37,7 @@ use {
     solana_perf::{data_budget::DataBudget, packet::PACKETS_PER_BATCH},
     solana_poh::poh_recorder::{PohRecorder, TransactionRecorder},
     solana_runtime::{
-        bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
+        bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
         vote_sender_types::ReplayVoteSender,
     },
     solana_sdk::{pubkey::Pubkey, timing::AtomicInterval},
@@ -716,11 +718,26 @@ impl BankingStage {
     }
 }
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+pub(crate) fn update_bank_forks_and_poh_recorder_for_new_tpu_bank(
+    bank_forks: &RwLock<BankForks>,
+    poh_recorder: &RwLock<PohRecorder>,
+    tpu_bank: Bank,
+    track_transaction_indexes: bool,
+) {
+    let tpu_bank = bank_forks.write().unwrap().insert(tpu_bank);
+    poh_recorder
+        .write()
+        .unwrap()
+        .set_bank(tpu_bank, track_transaction_indexes);
+}
+
 #[cfg(test)]
 mod tests {
     use {
         super::*,
-        crate::banking_trace::{BankingPacketBatch, BankingTracer, Channels},
+        crate::banking_trace::{BankingTracer, Channels},
+        agave_banking_stage_ingress_types::BankingPacketBatch,
         crossbeam_channel::{unbounded, Receiver},
         itertools::Itertools,
         solana_entry::entry::{self, Entry, EntrySlice},

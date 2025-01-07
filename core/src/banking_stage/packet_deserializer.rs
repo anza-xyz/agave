@@ -5,7 +5,7 @@ use {
         immutable_deserialized_packet::{DeserializedPacketError, ImmutableDeserializedPacket},
         packet_filter::PacketFilterFailure,
     },
-    crate::banking_trace::{BankingPacketBatch, BankingPacketReceiver},
+    agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     crossbeam_channel::RecvTimeoutError,
     solana_perf::packet::PacketBatch,
     solana_sdk::saturating_add_assign,

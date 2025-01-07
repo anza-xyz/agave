@@ -2,6 +2,7 @@ use {
     crate::{accounts_db::AccountsDb, accounts_hash::AccountHash},
     dashmap::DashMap,
     seqlock::SeqLock,
+    solana_nohash_hasher::BuildNoHashHasher,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount},
         clock::Slot,
@@ -152,7 +153,7 @@ impl CachedAccountInner {
 
 #[derive(Debug, Default)]
 pub struct AccountsCache {
-    cache: DashMap<Slot, SlotCache>,
+    cache: DashMap<Slot, SlotCache, BuildNoHashHasher<Slot>>,
     // Queue of potentially unflushed roots. Random eviction + cache too large
     // could have triggered a flush of this slot already
     maybe_unflushed_roots: RwLock<BTreeSet<Slot>>,

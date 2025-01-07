@@ -1481,33 +1481,45 @@ where
         result
     }
 
-    pub(crate) fn multi_get_bytes<I>(&self, keys: I) -> Vec<Result<Option<Vec<u8>>>>
+    /// Create a key type suitable for use with multi_get_bytes() and
+    /// multi_get(). Those functions return iterators, so the keys must be
+    /// created with a separate function in order to live long enough
+    pub(crate) fn multi_get_keys<I>(&self, keys: I) -> Vec<Vec<u8>>
     where
         I: IntoIterator<Item = C::Index>,
     {
-        let keys: Vec<_> = keys.into_iter().map(C::key).collect();
-        {
-            let is_perf_enabled = maybe_enable_rocksdb_perf(
-                self.column_options.rocks_perf_sample_interval,
-                &self.read_perf_status,
-            );
-            let result = self
-                .backend
-                .multi_get_cf(self.handle(), &keys)
-                .map(|out| Ok(out?.as_deref().map(<[u8]>::to_vec)))
-                .collect::<Vec<Result<Option<_>>>>();
-            if let Some(op_start_instant) = is_perf_enabled {
-                // use multi-get instead
-                report_rocksdb_read_perf(
-                    C::NAME,
-                    PERF_METRIC_OP_NAME_MULTI_GET,
-                    &op_start_instant.elapsed(),
-                    &self.column_options,
-                );
-            }
+        keys.into_iter().map(C::key).collect()
+    }
 
-            result
+    pub(crate) fn multi_get_bytes<'a, I, E>(
+        &'a self,
+        keys: I,
+    ) -> impl Iterator<Item = Result<Option<Vec<u8>>>> + 'a
+    where
+        I: IntoIterator<Item = &'a E> + 'a,
+        E: AsRef<[u8]> + 'a + ?Sized,
+    {
+        let is_perf_enabled = maybe_enable_rocksdb_perf(
+            self.column_options.rocks_perf_sample_interval,
+            &self.read_perf_status,
+        );
+
+        let result = self
+            .backend
+            .multi_get_cf(self.handle(), keys)
+            .map(|out| Ok(out?.as_deref().map(<[u8]>::to_vec)));
+
+        if let Some(op_start_instant) = is_perf_enabled {
+            // use multi-get instead
+            report_rocksdb_read_perf(
+                C::NAME,
+                PERF_METRIC_OP_NAME_MULTI_GET,
+                &op_start_instant.elapsed(),
+                &self.column_options,
+            );
         }
+
+        result
     }
 
     pub fn iter(
@@ -1664,33 +1676,35 @@ impl<C, const K: usize> LedgerColumn<C, K>
 where
     C: TypedColumn + ColumnName,
 {
-    pub(crate) fn multi_get<I>(&self, keys: I) -> Vec<Result<Option<C::Type>>>
+    pub(crate) fn multi_get<'a, I, E>(
+        &'a self,
+        keys: I,
+    ) -> impl Iterator<Item = Result<Option<C::Type>>> + 'a
     where
-        I: IntoIterator<Item = C::Index>,
+        I: IntoIterator<Item = &'a E> + 'a,
+        E: AsRef<[u8]> + 'a + ?Sized,
     {
-        let keys: Vec<_> = keys.into_iter().map(C::key).collect();
-        {
-            let is_perf_enabled = maybe_enable_rocksdb_perf(
-                self.column_options.rocks_perf_sample_interval,
-                &self.read_perf_status,
-            );
-            let result = self
-                .backend
-                .multi_get_cf(self.handle(), &keys)
-                .map(|out| out?.as_deref().map(C::deserialize).transpose())
-                .collect::<Vec<Result<Option<_>>>>();
-            if let Some(op_start_instant) = is_perf_enabled {
-                // use multi-get instead
-                report_rocksdb_read_perf(
-                    C::NAME,
-                    PERF_METRIC_OP_NAME_MULTI_GET,
-                    &op_start_instant.elapsed(),
-                    &self.column_options,
-                );
-            }
+        let is_perf_enabled = maybe_enable_rocksdb_perf(
+            self.column_options.rocks_perf_sample_interval,
+            &self.read_perf_status,
+        );
 
-            result
+        let result = self
+            .backend
+            .multi_get_cf(self.handle(), keys)
+            .map(|out| out?.as_deref().map(C::deserialize).transpose());
+
+        if let Some(op_start_instant) = is_perf_enabled {
+            // use multi-get instead
+            report_rocksdb_read_perf(
+                C::NAME,
+                PERF_METRIC_OP_NAME_MULTI_GET,
+                &op_start_instant.elapsed(),
+                &self.column_options,
+            );
         }
+
+        result
     }
 
     pub fn get(&self, index: C::Index) -> Result<Option<C::Type>> {

@@ -23,14 +23,14 @@ use {
         parse_instruction::parse,
     },
     base64::{prelude::BASE64_STANDARD, Engine},
+    solana_message::{
+        compiled_instruction::CompiledInstruction,
+        v0::{self, LoadedAddresses, LoadedMessage},
+        AccountKeys, Message, VersionedMessage,
+    },
     solana_sdk::{
         clock::{Slot, UnixTimestamp},
         hash::Hash,
-        instruction::CompiledInstruction,
-        message::{
-            v0::{self, LoadedAddresses, LoadedMessage},
-            AccountKeys, Message, VersionedMessage,
-        },
         pubkey::Pubkey,
         reserved_account_keys::ReservedAccountKeys,
         signature::Signature,

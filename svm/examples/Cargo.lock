@@ -64,6 +64,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-banking-stage-ingress-types"
+version = "2.2.0"
+dependencies = [
+ "crossbeam-channel",
+ "solana-perf",
+]
+
+[[package]]
 name = "agave-geyser-plugin-interface"
 version = "2.2.0"
 dependencies = [
@@ -433,9 +441,9 @@ dependencies = [
 
 [[package]]
 name = "async-trait"
-version = "0.1.84"
+version = "0.1.85"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b1244b10dcd56c92219da4e14caa97e312079e185f04ba3eea25061561dc0a0"
+checksum = "3f934833b4b7233644e5848f235df3f57ed8c80f1528a26c3dfa13d2147fa056"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2953,9 +2961,9 @@ dependencies = [
 
 [[package]]
 name = "lz4"
-version = "1.28.0"
+version = "1.28.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d1febb2b4a79ddd1980eede06a8f7902197960aa0383ffcfdd62fe723036725"
+checksum = "a20b523e860d03443e98350ceaac5e71c6ba89aea7d960769ec3ce37f4de5af4"
 dependencies = [
  "lz4-sys",
 ]
@@ -4576,9 +4584,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.134"
+version = "1.0.135"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d00f4175c42ee48b15416f6193a959ba3a0d67fc699a0db9ad12df9f83991c7d"
+checksum = "2b0d7ba2887406110130a978386c4e1befb98c674b4fba677954e4db976630d9"
 dependencies = [
  "itoa",
  "memchr",
@@ -4847,7 +4855,6 @@ dependencies = [
  "solana-program-pack",
  "solana-pubkey",
  "solana-rent",
- "solana-sdk",
  "solana-sdk-ids",
  "solana-slot-hashes",
  "solana-slot-history",
@@ -4941,11 +4948,17 @@ dependencies = [
  "log",
  "num-derive",
  "num-traits",
+ "solana-bincode",
+ "solana-clock",
  "solana-feature-set",
+ "solana-instruction",
  "solana-log-collector",
+ "solana-packet",
  "solana-program",
  "solana-program-runtime",
- "solana-sdk",
+ "solana-pubkey",
+ "solana-system-interface",
+ "solana-transaction-context",
  "thiserror 2.0.9",
 ]
 
@@ -5053,19 +5066,39 @@ dependencies = [
  "byteorder",
  "libsecp256k1",
  "scopeguard",
+ "solana-account",
+ "solana-account-info",
+ "solana-bincode",
  "solana-bn254",
+ "solana-clock",
  "solana-compute-budget",
+ "solana-cpi",
  "solana-curve25519",
  "solana-define-syscall",
  "solana-feature-set",
+ "solana-hash",
+ "solana-instruction",
+ "solana-keccak-hasher",
  "solana-log-collector",
  "solana-measure",
+ "solana-packet",
  "solana-poseidon",
+ "solana-precompiles",
+ "solana-program",
+ "solana-program-entrypoint",
  "solana-program-memory",
  "solana-program-runtime",
+ "solana-pubkey",
  "solana-sbpf",
- "solana-sdk",
+ "solana-sdk-ids",
+ "solana-secp256k1-recover",
+ "solana-sha256-hasher",
+ "solana-stable-layout",
+ "solana-system-interface",
+ "solana-sysvar",
+ "solana-sysvar-id",
  "solana-timings",
+ "solana-transaction-context",
  "solana-type-overrides",
  "thiserror 2.0.9",
 ]
@@ -5365,9 +5398,11 @@ dependencies = [
 name = "solana-core"
 version = "2.2.0"
 dependencies = [
+ "agave-banking-stage-ingress-types",
  "ahash 0.8.11",
  "anyhow",
  "arrayvec",
+ "assert_matches",
  "base64 0.22.1",
  "bincode",
  "bs58",
@@ -5497,6 +5532,7 @@ dependencies = [
  "bytemuck_derive",
  "curve25519-dalek 4.1.3",
  "solana-define-syscall",
+ "subtle",
  "thiserror 2.0.9",
 ]
 
@@ -5965,13 +6001,19 @@ name = "solana-loader-v4-program"
 version = "2.2.0"
 dependencies = [
  "log",
+ "solana-account",
+ "solana-bincode",
  "solana-bpf-loader-program",
  "solana-compute-budget",
+ "solana-instruction",
  "solana-log-collector",
  "solana-measure",
+ "solana-packet",
+ "solana-program",
  "solana-program-runtime",
+ "solana-pubkey",
  "solana-sbpf",
- "solana-sdk",
+ "solana-transaction-context",
  "solana-type-overrides",
 ]
 
@@ -7149,9 +7191,17 @@ dependencies = [
  "serde",
  "serde_derive",
  "smpl_jwt",
+ "solana-clock",
+ "solana-message",
  "solana-metrics",
- "solana-sdk",
+ "solana-pubkey",
+ "solana-reserved-account-keys",
+ "solana-serde",
+ "solana-signature",
  "solana-storage-proto",
+ "solana-time-utils",
+ "solana-transaction",
+ "solana-transaction-error",
  "solana-transaction-status",
  "thiserror 2.0.9",
  "tokio",
@@ -7169,7 +7219,15 @@ dependencies = [
  "protobuf-src",
  "serde",
  "solana-account-decoder",
- "solana-sdk",
+ "solana-hash",
+ "solana-instruction",
+ "solana-message",
+ "solana-pubkey",
+ "solana-serde",
+ "solana-signature",
+ "solana-transaction",
+ "solana-transaction-context",
+ "solana-transaction-error",
  "solana-transaction-status",
  "tonic-build",
 ]
@@ -7613,6 +7671,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "solana-account-decoder",
+ "solana-message",
  "solana-pubkey",
  "solana-sdk",
  "solana-transaction-status-client-types",
@@ -7713,8 +7772,9 @@ name = "solana-unified-scheduler-logic"
 version = "2.2.0"
 dependencies = [
  "assert_matches",
+ "solana-pubkey",
  "solana-runtime-transaction",
- "solana-sdk",
+ "solana-transaction",
  "static_assertions",
 ]
 
@@ -7730,10 +7790,12 @@ dependencies = [
  "qualifier_attr",
  "scopeguard",
  "solana-ledger",
+ "solana-pubkey",
  "solana-runtime",
  "solana-runtime-transaction",
- "solana-sdk",
  "solana-timings",
+ "solana-transaction",
+ "solana-transaction-error",
  "solana-unified-scheduler-logic",
  "static_assertions",
  "vec_extract_if_polyfill",
@@ -7763,8 +7825,18 @@ dependencies = [
  "log",
  "serde",
  "serde_derive",
- "solana-sdk",
+ "solana-account",
+ "solana-bincode",
+ "solana-clock",
+ "solana-hash",
+ "solana-instruction",
+ "solana-packet",
+ "solana-program",
+ "solana-pubkey",
+ "solana-sdk-ids",
+ "solana-signature",
  "solana-svm-transaction",
+ "solana-transaction",
  "thiserror 2.0.9",
 ]
 
@@ -7778,11 +7850,25 @@ dependencies = [
  "num-traits",
  "serde",
  "serde_derive",
+ "solana-account",
+ "solana-bincode",
+ "solana-clock",
+ "solana-epoch-schedule",
  "solana-feature-set",
+ "solana-hash",
+ "solana-instruction",
+ "solana-keypair",
  "solana-metrics",
+ "solana-packet",
  "solana-program",
  "solana-program-runtime",
- "solana-sdk",
+ "solana-pubkey",
+ "solana-rent",
+ "solana-sdk-ids",
+ "solana-signer",
+ "solana-slot-hashes",
+ "solana-transaction",
+ "solana-transaction-context",
  "thiserror 2.0.9",
 ]
 
@@ -7797,12 +7883,16 @@ dependencies = [
  "prost-types",
  "protobuf-src",
  "rayon",
+ "solana-clock",
  "solana-entry",
  "solana-gossip",
+ "solana-hash",
  "solana-ledger",
  "solana-program",
+ "solana-pubkey",
  "solana-runtime",
- "solana-sdk",
+ "solana-shred-version",
+ "solana-time-utils",
  "solana-timings",
  "solana-vote-program",
 ]

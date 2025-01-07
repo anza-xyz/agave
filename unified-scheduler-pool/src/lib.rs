@@ -20,6 +20,7 @@ use {
     solana_ledger::blockstore_processor::{
         execute_batch, TransactionBatchWithIndexes, TransactionStatusSender,
     },
+    solana_pubkey::Pubkey,
     solana_runtime::{
         installed_scheduler_pool::{
             initialized_result_with_timings, InstalledScheduler, InstalledSchedulerBox,
@@ -31,11 +32,9 @@ use {
         vote_sender_types::ReplayVoteSender,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk::{
-        pubkey::Pubkey,
-        transaction::{Result, SanitizedTransaction, TransactionError},
-    },
     solana_timings::ExecuteTimings,
+    solana_transaction::sanitized::SanitizedTransaction,
+    solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_unified_scheduler_logic::{SchedulingStateMachine, Task, UsageQueue},
     static_assertions::const_assert_eq,
     std::{
@@ -1473,6 +1472,9 @@ mod tests {
         super::*,
         crate::sleepless_testing,
         assert_matches::assert_matches,
+        solana_clock::{Slot, MAX_PROCESSING_AGE},
+        solana_keypair::Keypair,
+        solana_pubkey::Pubkey,
         solana_runtime::{
             bank::Bank,
             bank_forks::BankForks,
@@ -1480,14 +1482,10 @@ mod tests {
             installed_scheduler_pool::{BankWithScheduler, SchedulingContext},
             prioritization_fee_cache::PrioritizationFeeCache,
         },
-        solana_sdk::{
-            clock::{Slot, MAX_PROCESSING_AGE},
-            pubkey::Pubkey,
-            signer::keypair::Keypair,
-            system_transaction,
-            transaction::{SanitizedTransaction, TransactionError},
-        },
+        solana_system_transaction as system_transaction,
         solana_timings::ExecuteTimingType,
+        solana_transaction::sanitized::SanitizedTransaction,
+        solana_transaction_error::TransactionError,
         std::{
             sync::{Arc, RwLock},
             thread::JoinHandle,
@@ -1787,7 +1785,7 @@ mod tests {
         let tx_before_stale =
             RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
                 &mint_keypair,
-                &solana_sdk::pubkey::new_rand(),
+                &solana_pubkey::new_rand(),
                 2,
                 genesis_config.hash(),
             ));
@@ -1799,7 +1797,7 @@ mod tests {
         let tx_after_stale =
             RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
                 &mint_keypair,
-                &solana_sdk::pubkey::new_rand(),
+                &solana_pubkey::new_rand(),
                 2,
                 genesis_config.hash(),
             ));
@@ -1907,7 +1905,7 @@ mod tests {
         let tx_before_stale =
             RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
                 &mint_keypair,
-                &solana_sdk::pubkey::new_rand(),
+                &solana_pubkey::new_rand(),
                 2,
                 genesis_config.hash(),
             ));
@@ -1920,7 +1918,7 @@ mod tests {
         let tx_after_stale =
             RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
                 &mint_keypair,
-                &solana_sdk::pubkey::new_rand(),
+                &solana_pubkey::new_rand(),
                 2,
                 genesis_config.hash(),
             ));
@@ -1970,7 +1968,7 @@ mod tests {
 
         let tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
             &mint_keypair,
-            &solana_sdk::pubkey::new_rand(),
+            &solana_pubkey::new_rand(),
             2,
             genesis_config.hash(),
         ));
@@ -2090,7 +2088,7 @@ mod tests {
         for i in 0..MAX_TASK_COUNT {
             let tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
                 &mint_keypair,
-                &solana_sdk::pubkey::new_rand(),
+                &solana_pubkey::new_rand(),
                 2,
                 genesis_config.hash(),
             ));
@@ -2241,7 +2239,7 @@ mod tests {
         } = create_genesis_config(10_000);
         let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
             &mint_keypair,
-            &solana_sdk::pubkey::new_rand(),
+            &solana_pubkey::new_rand(),
             2,
             genesis_config.hash(),
         ));
@@ -2301,7 +2299,7 @@ mod tests {
         let unfunded_keypair = Keypair::new();
         let bad_tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
             &unfunded_keypair,
-            &solana_sdk::pubkey::new_rand(),
+            &solana_pubkey::new_rand(),
             2,
             genesis_config.hash(),
         ));
@@ -2313,7 +2311,7 @@ mod tests {
         let good_tx_after_bad_tx =
             RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
                 &mint_keypair,
-                &solana_sdk::pubkey::new_rand(),
+                &solana_pubkey::new_rand(),
                 3,
                 genesis_config.hash(),
             ));
@@ -2431,7 +2429,7 @@ mod tests {
             // Use 2 non-conflicting txes to exercise the channel disconnected case as well.
             let tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
                 &Keypair::new(),
-                &solana_sdk::pubkey::new_rand(),
+                &solana_pubkey::new_rand(),
                 1,
                 genesis_config.hash(),
             ));
@@ -2504,7 +2502,7 @@ mod tests {
         for i in 0..10 {
             let tx = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
                 &mint_keypair,
-                &solana_sdk::pubkey::new_rand(),
+                &solana_pubkey::new_rand(),
                 2,
                 genesis_config.hash(),
             ));
@@ -2561,13 +2559,13 @@ mod tests {
         // tx0 and tx1 is definitely conflicting to write-lock the mint address
         let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
             &mint_keypair,
-            &solana_sdk::pubkey::new_rand(),
+            &solana_pubkey::new_rand(),
             2,
             genesis_config.hash(),
         ));
         let tx1 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
             &mint_keypair,
-            &solana_sdk::pubkey::new_rand(),
+            &solana_pubkey::new_rand(),
             2,
             genesis_config.hash(),
         ));
@@ -2653,7 +2651,7 @@ mod tests {
         let dummy_tx =
             RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
                 &mint_keypair,
-                &solana_sdk::pubkey::new_rand(),
+                &solana_pubkey::new_rand(),
                 2,
                 genesis_config.hash(),
             ));
@@ -2831,7 +2829,7 @@ mod tests {
         let very_old_valid_tx =
             RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
                 &mint_keypair,
-                &solana_sdk::pubkey::new_rand(),
+                &solana_pubkey::new_rand(),
                 2,
                 genesis_config.hash(),
             ));
@@ -2921,7 +2919,7 @@ mod tests {
 
         let mut tx = system_transaction::transfer(
             mint_keypair,
-            &solana_sdk::pubkey::new_rand(),
+            &solana_pubkey::new_rand(),
             2,
             genesis_config.hash(),
         );

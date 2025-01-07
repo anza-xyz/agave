@@ -13,10 +13,8 @@ use {
     inflector::Inflector,
     serde_json::Value,
     solana_account_decoder::parse_token::spl_token_ids,
-    solana_sdk::{
-        address_lookup_table, instruction::CompiledInstruction, message::AccountKeys,
-        pubkey::Pubkey, stake, system_program, vote,
-    },
+    solana_message::{compiled_instruction::CompiledInstruction, AccountKeys},
+    solana_sdk::{address_lookup_table, pubkey::Pubkey, stake, system_program, vote},
     std::{
         collections::HashMap,
         str::{from_utf8, Utf8Error},

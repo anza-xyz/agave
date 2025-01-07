@@ -4,10 +4,10 @@ use {
         parse_token::{real_number_string_trimmed, UiTokenAmount},
         StringAmount,
     },
-    solana_sdk::{
-        deserialize_utils::default_on_eof, message::v0::LoadedAddresses, transaction::Result,
-        transaction_context::TransactionReturnData,
-    },
+    solana_message::v0::LoadedAddresses,
+    solana_serde::default_on_eof,
+    solana_transaction_context::TransactionReturnData,
+    solana_transaction_error::TransactionResult as Result,
     solana_transaction_status::{
         InnerInstructions, Reward, RewardType, TransactionStatusMeta, TransactionTokenBalance,
     },

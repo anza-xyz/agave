@@ -9,9 +9,10 @@ pub use solana_perf::sigverify::{
 };
 use {
     crate::{
-        banking_trace::{BankingPacketBatch, BankingPacketSender},
+        banking_trace::BankingPacketSender,
         sigverify_stage::{SigVerifier, SigVerifyServiceError},
     },
+    agave_banking_stage_ingress_types::BankingPacketBatch,
     solana_perf::{cuda_runtime::PinnedVec, packet::PacketBatch, recycler::Recycler, sigverify},
 };
 

@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::field_qualifiers;
 use {
     crate::{
         account_overrides::AccountOverrides,
@@ -42,10 +44,10 @@ use {
 pub(crate) type TransactionRent = u64;
 pub(crate) type TransactionProgramIndices = Vec<Vec<IndexOfAccount>>;
 pub type TransactionCheckResult = Result<CheckedTransactionDetails>;
-pub type TransactionValidationResult = Result<ValidatedTransactionDetails>;
+type TransactionValidationResult = Result<ValidatedTransactionDetails>;
 
 #[derive(PartialEq, Eq, Debug)]
-pub enum TransactionLoadResult {
+pub(crate) enum TransactionLoadResult {
     /// All transaction accounts were loaded successfully
     Loaded(LoadedTransaction),
     /// Some transaction accounts needed for execution were unable to be loaded
@@ -66,16 +68,16 @@ pub struct CheckedTransactionDetails {
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 #[cfg_attr(feature = "dev-context-only-utils", derive(Default))]
-pub struct ValidatedTransactionDetails {
-    pub rollback_accounts: RollbackAccounts,
-    pub compute_budget_limits: ComputeBudgetLimits,
-    pub fee_details: FeeDetails,
-    pub loaded_fee_payer_account: LoadedTransactionAccount,
+pub(crate) struct ValidatedTransactionDetails {
+    pub(crate) rollback_accounts: RollbackAccounts,
+    pub(crate) compute_budget_limits: ComputeBudgetLimits,
+    pub(crate) fee_details: FeeDetails,
+    pub(crate) loaded_fee_payer_account: LoadedTransactionAccount,
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 #[cfg_attr(feature = "dev-context-only-utils", derive(Default))]
-pub struct LoadedTransactionAccount {
+pub(crate) struct LoadedTransactionAccount {
     pub(crate) account: AccountSharedData,
     pub(crate) loaded_size: usize,
     pub(crate) rent_collected: u64,
@@ -83,12 +85,16 @@ pub struct LoadedTransactionAccount {
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 #[cfg_attr(feature = "dev-context-only-utils", derive(Default))]
+#[cfg_attr(
+    feature = "dev-context-only-utils",
+    field_qualifiers(program_indices(pub), compute_budget_limits(pub))
+)]
 pub struct LoadedTransaction {
     pub accounts: Vec<TransactionAccount>,
-    pub program_indices: TransactionProgramIndices,
+    pub(crate) program_indices: TransactionProgramIndices,
     pub fee_details: FeeDetails,
     pub rollback_accounts: RollbackAccounts,
-    pub compute_budget_limits: ComputeBudgetLimits,
+    pub(crate) compute_budget_limits: ComputeBudgetLimits,
     pub rent: TransactionRent,
     pub rent_debits: RentDebits,
     pub loaded_accounts_data_size: u32,
@@ -110,7 +116,7 @@ pub(crate) struct AccountLoader<'a, CB: TransactionProcessingCallback> {
     pub(crate) feature_set: Arc<FeatureSet>,
 }
 impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
-    pub fn new_with_account_cache_capacity(
+    pub(crate) fn new_with_account_cache_capacity(
         account_overrides: Option<&'a AccountOverrides>,
         program_cache: ProgramCacheForTxBatch,
         program_accounts: HashMap<Pubkey, (&'a Pubkey, u64)>,
@@ -137,7 +143,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         }
     }
 
-    pub fn load_account(
+    pub(crate) fn load_account(
         &mut self,
         account_key: &Pubkey,
         usage_pattern: AccountUsagePattern,
@@ -196,7 +202,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         })
     }
 
-    pub fn update_accounts_for_executed_tx(
+    pub(crate) fn update_accounts_for_executed_tx(
         &mut self,
         message: &impl SVMMessage,
         executed_transaction: &ExecutedTransaction,
@@ -217,7 +223,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         }
     }
 
-    pub fn update_accounts_for_failed_tx(
+    pub(crate) fn update_accounts_for_failed_tx(
         &mut self,
         message: &impl SVMMessage,
         rollback_accounts: &RollbackAccounts,
@@ -274,7 +280,7 @@ pub(crate) enum AccountUsagePattern {
     ReadOnlyInvisible,
 }
 impl AccountUsagePattern {
-    pub fn new(message: &impl SVMMessage, account_index: usize) -> Self {
+    fn new(message: &impl SVMMessage, account_index: usize) -> Self {
         let is_writable = message.is_writable(account_index);
         let is_instruction_account = message.is_instruction_account(account_index);
 
@@ -414,11 +420,11 @@ pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 struct LoadedTransactionAccounts {
-    pub accounts: Vec<TransactionAccount>,
-    pub program_indices: TransactionProgramIndices,
-    pub rent: TransactionRent,
-    pub rent_debits: RentDebits,
-    pub loaded_accounts_data_size: u32,
+    pub(crate) accounts: Vec<TransactionAccount>,
+    pub(crate) program_indices: TransactionProgramIndices,
+    pub(crate) rent: TransactionRent,
+    pub(crate) rent_debits: RentDebits,
+    pub(crate) loaded_accounts_data_size: u32,
 }
 
 fn load_transaction_accounts<CB: TransactionProcessingCallback>(

@@ -4,10 +4,8 @@ use {
     },
     bincode::deserialize,
     serde_json::json,
-    solana_sdk::{
-        instruction::CompiledInstruction, message::AccountKeys,
-        system_instruction::SystemInstruction,
-    },
+    solana_message::{compiled_instruction::CompiledInstruction, AccountKeys},
+    solana_sdk::system_instruction::SystemInstruction,
 };
 
 pub fn parse_system(
@@ -211,7 +209,8 @@ fn check_num_system_accounts(accounts: &[u8], num: usize) -> Result<(), ParseIns
 mod test {
     use {
         super::*,
-        solana_sdk::{message::Message, pubkey::Pubkey, system_instruction, sysvar},
+        solana_message::Message,
+        solana_sdk::{pubkey::Pubkey, system_instruction, sysvar},
     };
 
     #[test]

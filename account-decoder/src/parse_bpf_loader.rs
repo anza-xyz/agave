@@ -5,8 +5,8 @@ use {
     },
     base64::{prelude::BASE64_STANDARD, Engine},
     bincode::{deserialize, serialized_size},
+    solana_program::bpf_loader_upgradeable::UpgradeableLoaderState,
     solana_pubkey::Pubkey,
-    solana_sdk::bpf_loader_upgradeable::UpgradeableLoaderState,
 };
 
 pub fn parse_bpf_upgradeable_loader(

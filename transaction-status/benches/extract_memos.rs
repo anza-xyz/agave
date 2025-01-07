@@ -3,7 +3,8 @@
 extern crate test;
 
 use {
-    solana_sdk::{instruction::CompiledInstruction, message::Message, pubkey::Pubkey},
+    solana_message::{compiled_instruction::CompiledInstruction, Message},
+    solana_sdk::pubkey::Pubkey,
     solana_transaction_status::extract_memos::{spl_memo_id_v1, spl_memo_id_v3, ExtractMemos},
     test::Bencher,
 };

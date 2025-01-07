@@ -287,7 +287,7 @@ impl<'a> InvokeContext<'a> {
     }
 
     /// Pop a stack frame from the invocation stack
-    pub fn pop(&mut self) -> Result<(), InstructionError> {
+    fn pop(&mut self) -> Result<(), InstructionError> {
         if let Some(Some(syscall_context)) = self.syscall_context.pop() {
             self.traces.push(syscall_context.trace_log);
         }

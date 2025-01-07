@@ -98,8 +98,9 @@
 use {
     crate::utils::{ShortCounter, Token, TokenCell},
     assert_matches::assert_matches,
+    solana_pubkey::Pubkey,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk::{pubkey::Pubkey, transaction::SanitizedTransaction},
+    solana_transaction::sanitized::SanitizedTransaction,
     static_assertions::const_assert_eq,
     std::{collections::VecDeque, mem, sync::Arc},
 };
@@ -884,12 +885,10 @@ impl SchedulingStateMachine {
 mod tests {
     use {
         super::*,
-        solana_sdk::{
-            instruction::{AccountMeta, Instruction},
-            message::Message,
-            pubkey::Pubkey,
-            transaction::{SanitizedTransaction, Transaction},
-        },
+        solana_instruction::{AccountMeta, Instruction},
+        solana_message::Message,
+        solana_pubkey::Pubkey,
+        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
         std::{cell::RefCell, collections::HashMap, rc::Rc},
     };
 

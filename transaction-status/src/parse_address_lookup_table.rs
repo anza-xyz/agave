@@ -4,10 +4,8 @@ use {
     },
     bincode::deserialize,
     serde_json::json,
-    solana_sdk::{
-        address_lookup_table::instruction::ProgramInstruction, instruction::CompiledInstruction,
-        message::AccountKeys,
-    },
+    solana_message::{compiled_instruction::CompiledInstruction, AccountKeys},
+    solana_sdk::address_lookup_table::instruction::ProgramInstruction,
 };
 
 pub fn parse_address_lookup_table(
@@ -117,9 +115,8 @@ fn check_num_address_lookup_table_accounts(
 mod test {
     use {
         super::*,
-        solana_sdk::{
-            address_lookup_table::instruction, message::Message, pubkey::Pubkey, system_program,
-        },
+        solana_message::Message,
+        solana_sdk::{address_lookup_table::instruction, pubkey::Pubkey, system_program},
         std::str::FromStr,
     };
 
