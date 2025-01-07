@@ -11,7 +11,7 @@ use {
 };
 
 #[derive(Debug, Default, Clone, serde_derive::Deserialize, serde_derive::Serialize)]
-pub struct MessageProcessor {}
+pub(crate) struct MessageProcessor {}
 
 #[cfg(feature = "frozen-abi")]
 impl ::solana_frozen_abi::abi_example::AbiExample for MessageProcessor {
@@ -28,7 +28,7 @@ impl MessageProcessor {
     /// For each instruction it calls the program entrypoint method and verifies that the result of
     /// the call does not violate the bank's accounting rules.
     /// The accounts are committed back to the bank only if every instruction succeeds.
-    pub fn process_message(
+    pub(crate) fn process_message(
         message: &impl SVMMessage,
         program_indices: &[Vec<IndexOfAccount>],
         invoke_context: &mut InvokeContext,

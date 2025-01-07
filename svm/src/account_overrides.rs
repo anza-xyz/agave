@@ -28,7 +28,7 @@ impl AccountOverrides {
     }
 
     /// Gets the account if it's found in the list of overrides
-    pub fn get(&self, pubkey: &Pubkey) -> Option<&AccountSharedData> {
+    pub(crate) fn get(&self, pubkey: &Pubkey) -> Option<&AccountSharedData> {
         self.accounts.get(pubkey)
     }
 }

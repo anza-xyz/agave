@@ -275,8 +275,8 @@ mod tests {
     }
 
     #[derive(Default, Clone)]
-    pub struct MockBankCallback {
-        pub account_shared_data: RefCell<HashMap<Pubkey, AccountSharedData>>,
+    pub(crate) struct MockBankCallback {
+        pub(crate) account_shared_data: RefCell<HashMap<Pubkey, AccountSharedData>>,
     }
 
     impl TransactionProcessingCallback for MockBankCallback {
