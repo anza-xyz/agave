@@ -6318,9 +6318,6 @@ impl AccountsDb {
             // `max_flush_root` in the accounts cache.
             self.accounts_cache.set_max_flush_root(root);
         }
-
-        // Only add to the uncleaned roots set *after* we've flushed the previous roots,
-        // so that clean will actually be able to clean the slots.
         let num_new_roots = cached_roots.len();
         (num_new_roots, num_roots_flushed, flush_stats)
     }
