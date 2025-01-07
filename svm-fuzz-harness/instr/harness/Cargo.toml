@@ -1,0 +1,37 @@
+[package]
+name = "solana-svm-fuzz-harness-instr"
+description = "Solana SVM fuzz harness for instruction."
+documentation = "https://docs.rs/solana-svm-fuzz-harness-instr"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+bincode = { workspace = true }
+clap = { version = "4.5.2", features = ["derive"] }
+prost = { workspace = true }
+solana-account = { workspace = true }
+solana-bpf-loader-program = { workspace = true }
+solana-builtins = { workspace = true }
+solana-clock = { workspace = true }
+solana-compute-budget = { workspace = true }
+solana-epoch-schedule = { workspace = true }
+solana-feature-set = { workspace = true }
+solana-instruction = { workspace = true }
+solana-message = { workspace = true }
+solana-precompiles = { workspace = true }
+solana-program-runtime = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-rent = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-svm = { workspace = true }
+solana-svm-fuzz-harness-fixture = { workspace = true }
+solana-svm-fuzz-harness-instr-entrypoint = { workspace = true }
+solana-timings = { workspace = true }
+solana-transaction-context = { workspace = true }
+
+[lints]
+workspace = true

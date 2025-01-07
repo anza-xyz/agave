@@ -1,0 +1,26 @@
+[package]
+name = "solana-svm-fuzz-harness-instr-entrypoint"
+description = "Solana SVM fuzz harness instruction entrypoint."
+documentation = "https://docs.rs/solana-svm-fuzz-harness-instr-entrypoint"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+solana-account = { workspace = true }
+solana-compute-budget = { workspace = true }
+solana-feature-set = { workspace = true }
+solana-hash = { workspace = true }
+solana-instruction = { workspace = true }
+solana-precompiles = { workspace = true }
+solana-program-runtime = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-rent = { workspace = true }
+solana-timings = { workspace = true }
+solana-transaction-context = { workspace = true }
+
+[lints]
+workspace = true
