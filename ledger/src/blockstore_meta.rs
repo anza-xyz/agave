@@ -320,7 +320,7 @@ impl ShredIndex {
 /// - **Reconstruction**: Deserialization involves rebuilding the tree in bulk,
 ///   including dynamic memory allocations and re-balancing nodes.
 ///
-/// In contrast, our bit array implementation provides:
+/// In contrast, our bit vec implementation provides:
 /// - **Contiguous Memory**: All bits are stored in a contiguous array of u64 words,
 ///   allowing direct indexing and efficient memory access patterns.
 /// - **Direct Range Access**: Can load only the specific words that overlap with a
@@ -398,9 +398,9 @@ impl ShredIndexV2 {
     /// Provides an iterator over the set shred indices within a specified range.
     ///
     /// # Algorithm
-    /// 1. Divide the specified range into 64-bit words.
-    /// 2. For each word:
-    ///    - Calculate the base index (position of the word * 64).
+    /// 1. Divide the specified range into 8-bit words (u8).
+    /// 2. For each word:HH
+    ///    - Calculate the base index (position of the word * 8).
     ///    - Process all set bits in the word.
     ///    - For words overlapping the range boundaries:
     ///      - Determine the relevant bit range using boundaries.
@@ -408,27 +408,25 @@ impl ShredIndexV2 {
     ///    - Use bit manipulation to iterate over set bits efficiently.
     ///
     /// ## Explanation
-    /// > Note we're showing 32 bits per word in examples for brevity, but each word is 64 bits.
-    ///
     /// Given range `[75..205]`:
     ///
-    /// Word layout (each word is 64 bits), where each X represents a bit candidate:
+    /// Word layout (each word is 8 bits), where each X represents a bit candidate:
     /// ```text
-    /// Word 1 (0–63):    [................................] ← Not included (outside range)
-    /// Word 2 (64–127):  [..........XXXXXXXXXXXXXXXXXXXXXX] ← Partial word (start)
-    /// Word 3 (128–191): [XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX] ← Full word (entirely in range)
-    /// Word 4 (192–255): [XXXXXXXXXXXXXXXXXXX.............] ← Partial word (end)
+    /// Word 9  (72-79):   [..XXXXXX] ← Partial word (start)
+    /// Word 10 (80-87):   [XXXXXXXX] ← Full word (entirely in range)
+    /// ...
+    /// Word 25 (200-207): [XXXXXX..] ← Partial word (end)
     /// ```
     ///
-    /// Partial Word 2 (contains start boundary 75):
-    /// - Base index = 64
-    /// - Lower boundary = 75 - 64 = 11
-    /// - Lower mask = `11111111111111110000000000000000`
+    /// Partial Word 9 (contains start boundary 75):
+    /// - Base index = 72
+    /// - Lower boundary = 75 - 72 = 3
+    /// - Lower mask = `11111000` (right-shift)
     ///
-    /// Partial Word 4 (contains end boundary 205):
-    /// - Base index = 192
-    /// - Upper boundary = 205 - 192 = 13
-    /// - Upper mask = `00000000000000000000000000001111`
+    /// Partial Word 25 (contains end boundary 205):
+    /// - Base index = 200
+    /// - Upper boundary = 205 - 200 = 5
+    /// - Upper mask = `00111111` (left-shift)
     ///
     /// Final mask = `word & lower_mask & upper_mask`
     ///
