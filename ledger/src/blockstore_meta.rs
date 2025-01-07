@@ -117,6 +117,8 @@ pub struct Index {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct IndexV2 {
+    /// Prevent de(serialization) collisions with [`Index`].
+    _pad: u8,
     pub slot: Slot,
     data: ShredIndexV2,
     coding: ShredIndexV2,
@@ -135,6 +137,7 @@ impl From<IndexV2> for Index {
 impl From<Index> for IndexV2 {
     fn from(index: Index) -> Self {
         IndexV2 {
+            _pad: 0,
             slot: index.slot,
             data: index.data.into(),
             coding: index.coding.into(),
@@ -964,6 +967,7 @@ mod test {
                 coding: coding_indices.into_iter().map(|i| i as u64).collect(),
                 data: data_indices.into_iter().map(|i| i as u64).collect(),
                 slot,
+                _pad: 0,
             };
             let config = bincode::DefaultOptions::new().reject_trailing_bytes();
             let legacy = config.deserialize::<Index>(&config.serialize(&index).unwrap());
