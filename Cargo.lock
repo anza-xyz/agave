@@ -9415,6 +9415,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-svm-fuzz-harness-fixture"
+version = "2.2.0"
+dependencies = [
+ "bincode",
+ "lazy_static",
+ "prost",
+ "prost-build",
+ "serde",
+ "solana-account",
+ "solana-feature-set",
+ "solana-instruction",
+ "solana-pubkey",
+ "thiserror 2.0.9",
+]
+
+[[package]]
 name = "solana-svm-rent-collector"
 version = "2.2.0"
 dependencies = [

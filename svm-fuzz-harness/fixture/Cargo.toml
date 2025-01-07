@@ -1,0 +1,30 @@
+[package]
+name = "solana-svm-fuzz-harness-fixture"
+description = "Solana SVM fuzz harness fixture."
+documentation = "https://docs.rs/solana-svm-fuzz-harness-fixture"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[features]
+serde = ["dep:serde"]
+
+[dependencies]
+bincode = { workspace = true }
+lazy_static = { workspace = true }
+prost = { workspace = true }
+serde = { workspace = true, features = ["derive"], optional = true }
+solana-account = { workspace = true }
+solana-feature-set = { workspace = true }
+solana-instruction = { workspace = true, features = ["serde"] }
+solana-pubkey = { workspace = true, features = ["std"] }
+thiserror = { workspace = true }
+
+[build-dependencies]
+prost-build = { workspace = true }
+
+[lints]
+workspace = true
