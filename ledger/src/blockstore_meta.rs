@@ -192,13 +192,6 @@ pub struct DuplicateSlotProof {
     pub shred2: Vec<u8>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum ErasureMetaStatus {
-    CanRecover,
-    DataFull,
-    StillNeed(usize),
-}
-
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
 pub enum FrozenHashVersioned {
     Current(FrozenHashStatus),
@@ -439,24 +432,20 @@ impl ErasureMeta {
         self.fec_set_index.checked_add(num_data)
     }
 
-    pub(crate) fn status(&self, index: &Index) -> ErasureMetaStatus {
-        use ErasureMetaStatus::*;
-
-        let num_coding = index.coding().range(self.coding_shreds_indices()).count();
+    // Returns true if some data shreds are missing, but there are enough data
+    // and coding shreds to recover the erasure batch.
+    // TODO: In order to retransmit all shreds from the erasure batch, we need
+    // to always recover the batch as soon as possible, even if no data shreds
+    // are missing. But because we currently do not store recovered coding
+    // shreds into the blockstore we cannot identify if the batch was already
+    // recovered (and retransmitted) or not.
+    pub(crate) fn should_recover_shreds(&self, index: &Index) -> bool {
         let num_data = index.data().range(self.data_shreds_indices()).count();
-
-        let (data_missing, num_needed) = (
-            self.config.num_data.saturating_sub(num_data),
-            self.config.num_data.saturating_sub(num_data + num_coding),
-        );
-
-        if data_missing == 0 {
-            DataFull
-        } else if num_needed == 0 {
-            CanRecover
-        } else {
-            StillNeed(num_needed)
+        if num_data >= self.config.num_data {
+            return false; // No data shreds is missing.
         }
+        let num_coding = index.coding().range(self.coding_shreds_indices()).count();
+        self.config.num_data <= num_data + num_coding
     }
 
     #[cfg(test)]
@@ -600,9 +589,7 @@ mod test {
     }
 
     #[test]
-    fn test_erasure_meta_status() {
-        use ErasureMetaStatus::*;
-
+    fn test_should_recover_shreds() {
         let fec_set_index = 0;
         let erasure_config = ErasureConfig {
             num_data: 8,
@@ -620,13 +607,13 @@ mod test {
         let data_indexes = 0..erasure_config.num_data as u64;
         let coding_indexes = 0..erasure_config.num_coding as u64;
 
-        assert_eq!(e_meta.status(&index), StillNeed(erasure_config.num_data));
+        assert!(!e_meta.should_recover_shreds(&index));
 
         for ix in data_indexes.clone() {
             index.data_mut().insert(ix);
         }
 
-        assert_eq!(e_meta.status(&index), DataFull);
+        assert!(!e_meta.should_recover_shreds(&index));
 
         for ix in coding_indexes.clone() {
             index.coding_mut().insert(ix);
@@ -639,7 +626,7 @@ mod test {
         {
             index.data_mut().index.remove(&idx);
 
-            assert_eq!(e_meta.status(&index), CanRecover);
+            assert!(e_meta.should_recover_shreds(&index));
         }
 
         for ix in data_indexes {
@@ -652,7 +639,7 @@ mod test {
         {
             index.coding_mut().index.remove(&idx);
 
-            assert_eq!(e_meta.status(&index), DataFull);
+            assert!(!e_meta.should_recover_shreds(&index));
         }
     }
 

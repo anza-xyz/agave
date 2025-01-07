@@ -958,19 +958,19 @@ impl Blockstore {
                 let slot = erasure_set.slot();
                 let index_meta_entry = index_working_set.get(&slot).expect("Index");
                 let index = &index_meta_entry.index;
-                match erasure_meta.status(index) {
-                    ErasureMetaStatus::CanRecover => self
-                        .recover_shreds(
+                erasure_meta
+                    .should_recover_shreds(index)
+                    .then(|| {
+                        self.recover_shreds(
                             index,
                             erasure_meta,
                             prev_inserted_shreds,
                             leader_schedule_cache,
                             reed_solomon_cache,
                         )
-                        .ok(),
-                    ErasureMetaStatus::DataFull => None,
-                    ErasureMetaStatus::StillNeed(_) => None,
-                }
+                        .ok()
+                    })
+                    .flatten()
             })
             .collect()
     }
