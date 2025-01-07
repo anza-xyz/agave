@@ -417,15 +417,17 @@ impl AppendVec {
         match &self.backing {
             AppendVecFileBacking::Mmap(mmap_only) => {
                 // Check to see if the mmap is actually dirty before flushing.
-                if mmap_only.is_dirty.load(Ordering::Acquire) {
+                let should_flush = mmap_only.is_dirty.swap(false, Ordering::AcqRel);
+                if should_flush {
                     mmap_only.mmap.flush()?;
-                    mmap_only.is_dirty.store(false, Ordering::Release);
                     APPEND_VEC_MMAPPED_FILES_DIRTY.fetch_sub(1, Ordering::Relaxed);
                 }
                 Ok(())
             }
-            // File also means read only, so nothing to flush.
-            AppendVecFileBacking::File(_file) => Ok(()),
+            AppendVecFileBacking::File(_file) => {
+                // File also means read only, so nothing to flush.
+                Ok(())
+            }
         }
     }
 
@@ -1579,7 +1581,7 @@ pub mod tests {
             let mut av = AppendVec::new(path, true, 256);
             av.set_no_remove_on_drop();
 
-            let pubkey = solana_sdk::pubkey::new_rand();
+            let pubkey = solana_pubkey::new_rand();
             let owner = Pubkey::default();
             let data_len = 3_u64;
             let mut account = AccountSharedData::new(0, data_len as usize, &owner);
@@ -1915,7 +1917,7 @@ pub mod tests {
         check_fn: impl Fn(&AppendVec, &[Pubkey], &[usize], &[AccountSharedData]),
     ) {
         const NUM_ACCOUNTS: usize = 37;
-        let pubkeys: Vec<_> = std::iter::repeat_with(solana_sdk::pubkey::new_rand)
+        let pubkeys: Vec<_> = std::iter::repeat_with(solana_pubkey::new_rand)
             .take(NUM_ACCOUNTS)
             .collect();
 
@@ -2008,12 +2010,12 @@ pub mod tests {
             let fake_stored_meta = StoredMeta {
                 write_version_obsolete: 0,
                 data_len: 100,
-                pubkey: solana_sdk::pubkey::new_rand(),
+                pubkey: solana_pubkey::new_rand(),
             };
             let fake_account_meta = AccountMeta {
                 lamports: 100,
                 rent_epoch: 10,
-                owner: solana_sdk::pubkey::new_rand(),
+                owner: solana_pubkey::new_rand(),
                 executable: false,
             };
 
@@ -2107,12 +2109,12 @@ pub mod tests {
             let fake_stored_meta = StoredMeta {
                 write_version_obsolete: 0,
                 data_len: 100,
-                pubkey: solana_sdk::pubkey::new_rand(),
+                pubkey: solana_pubkey::new_rand(),
             };
             let fake_account_meta = AccountMeta {
                 lamports: 100,
                 rent_epoch: 10,
-                owner: solana_sdk::pubkey::new_rand(),
+                owner: solana_pubkey::new_rand(),
                 executable: false,
             };
 

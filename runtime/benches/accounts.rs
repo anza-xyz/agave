@@ -19,7 +19,7 @@ use {
 
 fn deposit_many(bank: &Bank, pubkeys: &mut Vec<Pubkey>, num: usize) -> Result<(), LamportsError> {
     for t in 0..num {
-        let pubkey = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
         let account =
             AccountSharedData::new((t + 1) as u64, 0, AccountSharedData::default().owner());
         pubkeys.push(pubkey);

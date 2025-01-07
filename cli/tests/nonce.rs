@@ -138,7 +138,7 @@ fn test_nonce(seed: Option<String>, use_nonce_authority: bool, compute_unit_pric
     assert_ne!(first_nonce, third_nonce);
 
     // Withdraw from nonce account
-    let payee_pubkey = solana_sdk::pubkey::new_rand();
+    let payee_pubkey = solana_pubkey::new_rand();
     config_payer.signers = authorized_signers;
     config_payer.command = CliCommand::WithdrawFromNonceAccount {
         nonce_account,

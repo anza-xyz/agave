@@ -326,7 +326,7 @@ impl EpochSlots {
     /// New random EpochSlots for tests and simulations.
     pub(crate) fn new_rand<R: rand::Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> Self {
         let now = crds_data::new_rand_timestamp(rng);
-        let pubkey = pubkey.unwrap_or_else(solana_sdk::pubkey::new_rand);
+        let pubkey = pubkey.unwrap_or_else(solana_pubkey::new_rand);
         let mut epoch_slots = Self::new(pubkey, now);
         let num_slots = rng.gen_range(0..20);
         let slots: Vec<_> = std::iter::repeat_with(|| 47825632 + rng.gen_range(0..512))

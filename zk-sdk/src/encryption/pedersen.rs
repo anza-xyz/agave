@@ -1,5 +1,7 @@
 //! Pedersen commitment implementation using the Ristretto prime-order group.
 
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
 use {
     crate::encryption::{PEDERSEN_COMMITMENT_LEN, PEDERSEN_OPENING_LEN},
     core::ops::{Add, Mul, Sub},
@@ -165,6 +167,7 @@ define_mul_variants!(
 );
 
 /// Pedersen commitment type.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct PedersenCommitment(RistrettoPoint);
 impl PedersenCommitment {

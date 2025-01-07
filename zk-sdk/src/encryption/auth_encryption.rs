@@ -2,6 +2,8 @@
 //!
 //! This module is a simple wrapper of the `Aes128GcmSiv` implementation specialized for SPL
 //! token-2022 where the plaintext is always `u64`.
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
 use {
     crate::{
         encryption::{AE_CIPHERTEXT_LEN, AE_KEY_LEN},
@@ -85,12 +87,15 @@ impl AuthenticatedEncryption {
     }
 }
 
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Debug, Zeroize, Eq, PartialEq)]
 pub struct AeKey([u8; AE_KEY_LEN]);
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 impl AeKey {
     /// Generates a random authenticated encryption key.
     ///
     /// This function is randomized. It internally samples a scalar element using `OsRng`.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = newRand))]
     pub fn new_rand() -> Self {
         AuthenticatedEncryption::keygen()
     }
@@ -240,6 +245,7 @@ type Nonce = [u8; NONCE_LEN];
 type Ciphertext = [u8; CIPHERTEXT_LEN];
 
 /// Authenticated encryption nonce and ciphertext
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AeCiphertext {
     nonce: Nonce,

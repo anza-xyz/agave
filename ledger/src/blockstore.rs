@@ -12,7 +12,7 @@ use {
         blockstore_meta::*,
         blockstore_metrics::BlockstoreRpcApiMetrics,
         blockstore_options::{
-            AccessType, BlockstoreOptions, LedgerColumnOptions, BLOCKSTORE_DIRECTORY_ROCKS_LEVEL,
+            BlockstoreOptions, LedgerColumnOptions, BLOCKSTORE_DIRECTORY_ROCKS_LEVEL,
         },
         blockstore_processor::BlockstoreProcessorError,
         leader_schedule_cache::LeaderScheduleCache,
@@ -37,7 +37,7 @@ use {
     solana_entry::entry::{create_ticks, Entry},
     solana_measure::measure::Measure,
     solana_metrics::{
-        datapoint_debug, datapoint_error,
+        datapoint_error,
         poh_timing_point::{send_poh_timing_point, PohTimingSender, SlotPohTimingInfo},
     },
     solana_runtime::bank::Bank,
@@ -90,7 +90,9 @@ pub mod blockstore_purge;
 use static_assertions::const_assert_eq;
 pub use {
     crate::{
-        blockstore_db::BlockstoreError,
+        blockstore_db::{
+            default_num_compaction_threads, default_num_flush_threads, BlockstoreError,
+        },
         blockstore_meta::{OptimisticSlotMetaVersioned, SlotMeta},
         blockstore_metrics::BlockstoreInsertionMetrics,
     },
@@ -822,42 +824,19 @@ impl Blockstore {
         index: &Index,
         erasure_meta: &ErasureMeta,
         prev_inserted_shreds: &HashMap<ShredId, Shred>,
-        recovered_shreds: &mut Vec<Shred>,
+        leader_schedule_cache: &LeaderScheduleCache,
         reed_solomon_cache: &ReedSolomonCache,
-    ) {
+    ) -> std::result::Result<Vec<Shred>, shred::Error> {
         // Find shreds for this erasure set and try recovery
         let slot = index.slot;
         let available_shreds: Vec<_> = self
             .get_recovery_data_shreds(index, slot, erasure_meta, prev_inserted_shreds)
             .chain(self.get_recovery_coding_shreds(index, slot, erasure_meta, prev_inserted_shreds))
             .collect();
-        if let Ok(mut result) = shred::recover(available_shreds, reed_solomon_cache) {
-            Self::submit_metrics(slot, erasure_meta, true, "complete".into(), result.len());
-            recovered_shreds.append(&mut result);
-        } else {
-            Self::submit_metrics(slot, erasure_meta, true, "incomplete".into(), 0);
-        }
-    }
-
-    fn submit_metrics(
-        slot: Slot,
-        erasure_meta: &ErasureMeta,
-        attempted: bool,
-        status: String,
-        recovered: usize,
-    ) {
-        let mut data_shreds_indices = erasure_meta.data_shreds_indices();
-        let start_index = data_shreds_indices.next().unwrap_or_default();
-        let end_index = data_shreds_indices.last().unwrap_or(start_index);
-        datapoint_debug!(
-            "blockstore-erasure",
-            ("slot", slot as i64, i64),
-            ("start_index", start_index, i64),
-            ("end_index", end_index + 1, i64),
-            ("recovery_attempted", attempted, bool),
-            ("recovery_status", status, String),
-            ("recovered", recovered as i64, i64),
-        );
+        let get_slot_leader = |slot: Slot| -> Option<Pubkey> {
+            leader_schedule_cache.slot_leader_at(slot, /*bank:*/ None)
+        };
+        shred::recover(available_shreds, reed_solomon_cache, get_slot_leader)
     }
 
     /// Collects and reports [`BlockstoreRocksDbColumnFamilyMetrics`] for the
@@ -964,44 +943,36 @@ impl Blockstore {
         erasure_metas: &BTreeMap<ErasureSetId, WorkingEntry<ErasureMeta>>,
         index_working_set: &mut HashMap<u64, IndexMetaWorkingSetEntry>,
         prev_inserted_shreds: &HashMap<ShredId, Shred>,
+        leader_schedule_cache: &LeaderScheduleCache,
         reed_solomon_cache: &ReedSolomonCache,
-    ) -> Vec<Shred> {
-        let mut recovered_shreds = vec![];
+    ) -> Vec<Vec<Shred>> {
         // Recovery rules:
         // 1. Only try recovery around indexes for which new data or coding shreds are received
         // 2. For new data shreds, check if an erasure set exists. If not, don't try recovery
         // 3. Before trying recovery, check if enough number of shreds have been received
         // 3a. Enough number of shreds = (#data + #coding shreds) > erasure.num_data
-        for (erasure_set, working_erasure_meta) in erasure_metas.iter() {
-            let erasure_meta = working_erasure_meta.as_ref();
-            let slot = erasure_set.slot();
-            let index_meta_entry = index_working_set.get_mut(&slot).expect("Index");
-            let index = &mut index_meta_entry.index;
-            match erasure_meta.status(index) {
-                ErasureMetaStatus::CanRecover => {
-                    self.recover_shreds(
-                        index,
-                        erasure_meta,
-                        prev_inserted_shreds,
-                        &mut recovered_shreds,
-                        reed_solomon_cache,
-                    );
+        erasure_metas
+            .iter()
+            .filter_map(|(erasure_set, working_erasure_meta)| {
+                let erasure_meta = working_erasure_meta.as_ref();
+                let slot = erasure_set.slot();
+                let index_meta_entry = index_working_set.get_mut(&slot).expect("Index");
+                let index = &mut index_meta_entry.index;
+                match erasure_meta.status(index) {
+                    ErasureMetaStatus::CanRecover => self
+                        .recover_shreds(
+                            index,
+                            erasure_meta,
+                            prev_inserted_shreds,
+                            leader_schedule_cache,
+                            reed_solomon_cache,
+                        )
+                        .ok(),
+                    ErasureMetaStatus::DataFull => None,
+                    ErasureMetaStatus::StillNeed(_) => None,
                 }
-                ErasureMetaStatus::DataFull => {
-                    Self::submit_metrics(slot, erasure_meta, false, "complete".into(), 0);
-                }
-                ErasureMetaStatus::StillNeed(needed) => {
-                    Self::submit_metrics(
-                        slot,
-                        erasure_meta,
-                        false,
-                        format!("still need: {needed}"),
-                        0,
-                    );
-                }
-            };
-        }
-        recovered_shreds
+            })
+            .collect()
     }
 
     /// Attempts shred recovery and does the following for recovered data
@@ -1020,34 +991,27 @@ impl Blockstore {
     ) {
         let mut start = Measure::start("Shred recovery");
         if let Some(leader_schedule_cache) = leader_schedule {
-            let recovered_shreds = self.try_shred_recovery(
-                &shred_insertion_tracker.erasure_metas,
-                &mut shred_insertion_tracker.index_working_set,
-                &shred_insertion_tracker.just_inserted_shreds,
-                reed_solomon_cache,
-            );
-
-            metrics.num_recovered += recovered_shreds
-                .iter()
-                .filter(|shred| shred.is_data())
-                .count();
-            let recovered_shreds: Vec<_> = recovered_shreds
+            let recovered_shreds: Vec<_> = self
+                .try_shred_recovery(
+                    &shred_insertion_tracker.erasure_metas,
+                    &mut shred_insertion_tracker.index_working_set,
+                    &shred_insertion_tracker.just_inserted_shreds,
+                    leader_schedule_cache,
+                    reed_solomon_cache,
+                )
                 .into_iter()
+                .flatten()
                 .filter_map(|shred| {
-                    let leader =
-                        leader_schedule_cache.slot_leader_at(shred.slot(), /*bank=*/ None)?;
-                    if !shred.verify(&leader) {
-                        metrics.num_recovered_failed_sig += 1;
-                        return None;
-                    }
                     // Since the data shreds are fully recovered from the
                     // erasure batch, no need to store coding shreds in
                     // blockstore.
                     if shred.is_code() {
-                        return Some(shred);
+                        return Some(shred.into_payload());
                     }
+                    metrics.num_recovered += 1;
+                    let shred_payload = shred.payload().clone();
                     match self.check_insert_data_shred(
-                        shred.clone(),
+                        shred,
                         shred_insertion_tracker,
                         is_trusted,
                         leader_schedule,
@@ -1068,7 +1032,7 @@ impl Blockstore {
                         }
                         Ok(()) => {
                             metrics.num_recovered_inserted += 1;
-                            Some(shred)
+                            Some(shred_payload)
                         }
                     }
                 })
@@ -1077,12 +1041,7 @@ impl Blockstore {
                 .collect();
             if !recovered_shreds.is_empty() {
                 if let Some(retransmit_sender) = retransmit_sender {
-                    let _ = retransmit_sender.send(
-                        recovered_shreds
-                            .into_iter()
-                            .map(Shred::into_payload)
-                            .collect(),
-                    );
+                    let _ = retransmit_sender.send(recovered_shreds);
                 }
             }
         }
@@ -4960,10 +4919,9 @@ pub fn create_new_ledger(
     let blockstore = Blockstore::open_with_options(
         ledger_path,
         BlockstoreOptions {
-            access_type: AccessType::Primary,
-            recovery_mode: None,
             enforce_ulimit_nofile: false,
             column_options: column_options.clone(),
+            ..BlockstoreOptions::default()
         },
     )?;
     let ticks_per_slot = genesis_config.ticks_per_slot;
@@ -5486,9 +5444,9 @@ pub mod tests {
         for x in 0..num_entries {
             let transaction = Transaction::new_with_compiled_instructions(
                 &[&Keypair::new()],
-                &[solana_sdk::pubkey::new_rand()],
+                &[solana_pubkey::new_rand()],
                 Hash::default(),
-                vec![solana_sdk::pubkey::new_rand()],
+                vec![solana_pubkey::new_rand()],
                 vec![CompiledInstruction::new(1, &(), vec![0])],
             );
             entries.push(next_entry_mut(&mut Hash::default(), 0, vec![transaction]));
@@ -9110,8 +9068,8 @@ pub mod tests {
             .put_protobuf((signature2, lowest_available_slot), &status)
             .unwrap();
 
-        let address0 = solana_sdk::pubkey::new_rand();
-        let address1 = solana_sdk::pubkey::new_rand();
+        let address0 = solana_pubkey::new_rand();
+        let address1 = solana_pubkey::new_rand();
         blockstore
             .write_transaction_status(
                 lowest_cleanup_slot,
@@ -9483,8 +9441,8 @@ pub mod tests {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
-        let address0 = solana_sdk::pubkey::new_rand();
-        let address1 = solana_sdk::pubkey::new_rand();
+        let address0 = solana_pubkey::new_rand();
+        let address1 = solana_pubkey::new_rand();
 
         let slot1 = 1;
         for x in 1..5 {
@@ -9579,7 +9537,7 @@ pub mod tests {
                     &[&Keypair::new()],
                     &[*address],
                     Hash::default(),
-                    vec![solana_sdk::pubkey::new_rand()],
+                    vec![solana_pubkey::new_rand()],
                     vec![CompiledInstruction::new(1, &(), vec![0])],
                 );
                 entries.push(next_entry_mut(&mut Hash::default(), 0, vec![transaction]));
@@ -9589,8 +9547,8 @@ pub mod tests {
             entries
         }
 
-        let address0 = solana_sdk::pubkey::new_rand();
-        let address1 = solana_sdk::pubkey::new_rand();
+        let address0 = solana_pubkey::new_rand();
+        let address1 = solana_pubkey::new_rand();
 
         for slot in 2..=8 {
             let entries = make_slot_entries_with_transaction_addresses(&[
@@ -10049,9 +10007,9 @@ pub mod tests {
         for x in 0..4 {
             let transaction = Transaction::new_with_compiled_instructions(
                 &[&Keypair::new()],
-                &[solana_sdk::pubkey::new_rand()],
+                &[solana_pubkey::new_rand()],
                 Hash::default(),
-                vec![solana_sdk::pubkey::new_rand()],
+                vec![solana_pubkey::new_rand()],
                 vec![CompiledInstruction::new(1, &(), vec![0])],
             );
             let status = TransactionStatusMeta {
@@ -10090,9 +10048,9 @@ pub mod tests {
         transactions.push(
             Transaction::new_with_compiled_instructions(
                 &[&Keypair::new()],
-                &[solana_sdk::pubkey::new_rand()],
+                &[solana_pubkey::new_rand()],
                 Hash::default(),
-                vec![solana_sdk::pubkey::new_rand()],
+                vec![solana_pubkey::new_rand()],
                 vec![CompiledInstruction::new(1, &(), vec![0])],
             )
             .into(),
@@ -10777,7 +10735,7 @@ pub mod tests {
 
         let rewards: Rewards = (0..100)
             .map(|i| Reward {
-                pubkey: solana_sdk::pubkey::new_rand().to_string(),
+                pubkey: solana_pubkey::new_rand().to_string(),
                 lamports: 42 + i,
                 post_balance: u64::MAX,
                 reward_type: Some(RewardType::Fee),
@@ -10898,7 +10856,7 @@ pub mod tests {
         let txs: Vec<_> = (0..num_txs)
             .map(|_| {
                 let keypair0 = Keypair::new();
-                let to = solana_sdk::pubkey::new_rand();
+                let to = solana_pubkey::new_rand();
                 solana_sdk::system_transaction::transfer(&keypair0, &to, 1, Hash::default())
             })
             .collect();

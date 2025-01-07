@@ -18,24 +18,22 @@ use {
         bounded, unbounded, Receiver, RecvTimeoutError, SendError, Sender, TrySendError,
     },
     log::*,
+    solana_clock::{Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
     solana_entry::{
         entry::{hash_transactions, Entry},
         poh::Poh,
     },
+    solana_hash::Hash,
     solana_ledger::{blockstore::Blockstore, leader_schedule_cache::LeaderScheduleCache},
     solana_measure::measure_us,
     solana_metrics::poh_timing_point::{send_poh_timing_point, PohTimingSender, SlotPohTimingInfo},
+    solana_poh_config::PohConfig,
+    solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, installed_scheduler_pool::BankWithScheduler},
-    solana_sdk::{
-        clock::{Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
-        hash::Hash,
-        poh_config::PohConfig,
-        pubkey::Pubkey,
-        saturating_add_assign,
-        transaction::VersionedTransaction,
-    },
+    solana_transaction::versioned::VersionedTransaction,
     std::{
         cmp,
+        num::Saturating,
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc, Mutex, RwLock,
@@ -115,19 +113,16 @@ impl Record {
 
 #[derive(Default, Debug)]
 pub struct RecordTransactionsTimings {
-    pub processing_results_to_transactions_us: u64,
-    pub hash_us: u64,
-    pub poh_record_us: u64,
+    pub processing_results_to_transactions_us: Saturating<u64>,
+    pub hash_us: Saturating<u64>,
+    pub poh_record_us: Saturating<u64>,
 }
 
 impl RecordTransactionsTimings {
     pub fn accumulate(&mut self, other: &RecordTransactionsTimings) {
-        saturating_add_assign!(
-            self.processing_results_to_transactions_us,
-            other.processing_results_to_transactions_us
-        );
-        saturating_add_assign!(self.hash_us, other.hash_us);
-        saturating_add_assign!(self.poh_record_us, other.poh_record_us);
+        self.processing_results_to_transactions_us += other.processing_results_to_transactions_us;
+        self.hash_us += other.hash_us;
+        self.poh_record_us += other.poh_record_us;
     }
 }
 
@@ -167,10 +162,10 @@ impl TransactionRecorder {
 
         if !transactions.is_empty() {
             let (hash, hash_us) = measure_us!(hash_transactions(&transactions));
-            record_transactions_timings.hash_us = hash_us;
+            record_transactions_timings.hash_us = Saturating(hash_us);
 
             let (res, poh_record_us) = measure_us!(self.record(bank_slot, hash, transactions));
-            record_transactions_timings.poh_record_us = poh_record_us;
+            record_transactions_timings.poh_record_us = Saturating(poh_record_us);
 
             match res {
                 Ok(starting_index) => {
@@ -672,7 +667,7 @@ impl PohRecorder {
                 SlotPohTimingInfo::new_slot_start_poh_time_point(
                     self.start_slot() + 1,
                     None,
-                    solana_sdk::timing::timestamp(),
+                    solana_time_utils::timestamp(),
                 ),
             );
         }
@@ -720,7 +715,7 @@ impl PohRecorder {
                     SlotPohTimingInfo::new_slot_start_poh_time_point(
                         slot,
                         None,
-                        solana_sdk::timing::timestamp(),
+                        solana_time_utils::timestamp(),
                     ),
                 );
             }
@@ -821,7 +816,7 @@ impl PohRecorder {
                         SlotPohTimingInfo::new_slot_end_poh_time_point(
                             self.slot_for_tick_height(self.tick_height),
                             None,
-                            solana_sdk::timing::timestamp(),
+                            solana_time_utils::timestamp(),
                         ),
                     );
                 }
@@ -834,7 +829,7 @@ impl PohRecorder {
                         SlotPohTimingInfo::new_slot_start_poh_time_point(
                             self.slot_for_tick_height(self.tick_height),
                             None,
-                            solana_sdk::timing::timestamp(),
+                            solana_time_utils::timestamp(),
                         ),
                     );
                 }
@@ -850,7 +845,7 @@ impl PohRecorder {
                 SlotPohTimingInfo::new_slot_end_poh_time_point(
                     slot,
                     None,
-                    solana_sdk::timing::timestamp(),
+                    solana_time_utils::timestamp(),
                 ),
             );
         }
@@ -1195,11 +1190,12 @@ mod tests {
         super::*,
         bincode::serialize,
         crossbeam_channel::bounded,
+        solana_clock::DEFAULT_TICKS_PER_SLOT,
         solana_ledger::{
             blockstore::Blockstore, blockstore_meta::SlotMeta, get_tmp_ledger_path_auto_delete,
         },
         solana_perf::test_tx::test_tx,
-        solana_sdk::{clock::DEFAULT_TICKS_PER_SLOT, hash::hash},
+        solana_sha256_hasher::hash,
     };
 
     #[test]

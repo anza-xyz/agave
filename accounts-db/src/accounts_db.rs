@@ -66,7 +66,9 @@ use {
         cache_hash_data::{CacheHashData, DeletionPolicy as CacheHashDeletionPolicy},
         contains::Contains,
         epoch_accounts_hash::EpochAccountsHashManager,
-        partitioned_rewards::{PartitionedEpochRewardsConfig, TestPartitionedEpochRewards},
+        partitioned_rewards::{
+            PartitionedEpochRewardsConfig, DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
+        },
         read_only_accounts_cache::ReadOnlyAccountsCache,
         sorted_storages::SortedStorages,
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
@@ -102,6 +104,7 @@ use {
         fs,
         hash::{Hash as StdHash, Hasher as StdHasher},
         io::Result as IoResult,
+        iter,
         num::{NonZeroUsize, Saturating},
         ops::{Range, RangeBounds},
         path::{Path, PathBuf},
@@ -506,12 +509,13 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     skip_initial_hash_calc: false,
     exhaustively_verify_refcounts: false,
     create_ancient_storage: CreateAncientStorage::Pack,
-    test_partitioned_epoch_rewards: TestPartitionedEpochRewards::CompareResults,
+    partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
     test_skip_rewrites_but_include_in_bank_hash: false,
     storage_access: StorageAccess::Mmap,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormalWithVerify,
     enable_experimental_accumulator_hash: false,
     verify_experimental_accumulator_hash: false,
+    snapshots_use_experimental_accumulator_hash: false,
     num_clean_threads: None,
     num_foreground_threads: None,
     num_hash_threads: None,
@@ -532,12 +536,13 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     skip_initial_hash_calc: false,
     exhaustively_verify_refcounts: false,
     create_ancient_storage: CreateAncientStorage::Pack,
-    test_partitioned_epoch_rewards: TestPartitionedEpochRewards::None,
+    partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
     test_skip_rewrites_but_include_in_bank_hash: false,
     storage_access: StorageAccess::Mmap,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormalWithVerify,
     enable_experimental_accumulator_hash: false,
     verify_experimental_accumulator_hash: false,
+    snapshots_use_experimental_accumulator_hash: false,
     num_clean_threads: None,
     num_foreground_threads: None,
     num_hash_threads: None,
@@ -661,11 +666,12 @@ pub struct AccountsDbConfig {
     pub exhaustively_verify_refcounts: bool,
     /// how to create ancient storages
     pub create_ancient_storage: CreateAncientStorage,
-    pub test_partitioned_epoch_rewards: TestPartitionedEpochRewards,
+    pub partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig,
     pub storage_access: StorageAccess,
     pub scan_filter_for_shrinking: ScanFilter,
     pub enable_experimental_accumulator_hash: bool,
     pub verify_experimental_accumulator_hash: bool,
+    pub snapshots_use_experimental_accumulator_hash: bool,
     /// Number of threads for background cleaning operations (`thread_pool_clean')
     pub num_clean_threads: Option<NonZeroUsize>,
     /// Number of threads for foreground operations (`thread_pool`)
@@ -1619,6 +1625,10 @@ pub struct AccountsDb {
     /// (For R&D only)
     pub verify_experimental_accumulator_hash: bool,
 
+    /// Flag to indicate if the experimental accounts lattice hash is used for snapshots.
+    /// (For R&D only; a feature-gate also exists to turn this on.)
+    pub snapshots_use_experimental_accumulator_hash: AtomicBool,
+
     /// These are the ancient storages that could be valuable to
     /// shrink, sorted by amount of dead bytes.  The elements
     /// are sorted from the largest dead bytes to the smallest.
@@ -1964,10 +1974,6 @@ impl AccountsDb {
             accounts_hash_cache_path
         });
 
-        let test_partitioned_epoch_rewards = accounts_db_config.test_partitioned_epoch_rewards;
-        let partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig =
-            PartitionedEpochRewardsConfig::new(test_partitioned_epoch_rewards);
-
         let read_cache_size = accounts_db_config.read_cache_limit_bytes.unwrap_or((
             Self::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_LO,
             Self::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI,
@@ -2030,7 +2036,7 @@ impl AccountsDb {
                 Self::READ_ONLY_CACHE_MS_TO_SKIP_LRU_UPDATE,
             ),
             write_cache_limit_bytes: accounts_db_config.write_cache_limit_bytes,
-            partitioned_epoch_rewards_config,
+            partitioned_epoch_rewards_config: accounts_db_config.partitioned_epoch_rewards_config,
             exhaustively_verify_refcounts: accounts_db_config.exhaustively_verify_refcounts,
             test_skip_rewrites_but_include_in_bank_hash: accounts_db_config
                 .test_skip_rewrites_but_include_in_bank_hash,
@@ -2041,6 +2047,9 @@ impl AccountsDb {
                 .into(),
             verify_experimental_accumulator_hash: accounts_db_config
                 .verify_experimental_accumulator_hash,
+            snapshots_use_experimental_accumulator_hash: accounts_db_config
+                .snapshots_use_experimental_accumulator_hash
+                .into(),
             thread_pool,
             thread_pool_clean,
             thread_pool_hash,
@@ -2131,6 +2140,18 @@ impl AccountsDb {
             .store(is_enabled, Ordering::Release);
     }
 
+    /// Returns if snapshots use the experimental accounts lattice hash
+    pub fn snapshots_use_experimental_accumulator_hash(&self) -> bool {
+        self.snapshots_use_experimental_accumulator_hash
+            .load(Ordering::Acquire)
+    }
+
+    /// Sets if snapshots use the experimental accounts lattice hash
+    pub fn set_snapshots_use_experimental_accumulator_hash(&self, is_enabled: bool) {
+        self.snapshots_use_experimental_accumulator_hash
+            .store(is_enabled, Ordering::Release);
+    }
+
     /// While scanning cleaning candidates obtain slots that can be
     /// reclaimed for each pubkey. In addition, if the pubkey is
     /// removed from the index, insert in pubkeys_removed_from_accounts_index.
@@ -2198,15 +2219,6 @@ impl AccountsDb {
             .clean_old_root_reclaim_us
             .fetch_add(measure.as_us(), Ordering::Relaxed);
         reclaim_result
-    }
-
-    fn do_reset_uncleaned_roots(&self, max_clean_root: Option<Slot>) {
-        let mut measure = Measure::start("reset");
-        self.accounts_index.reset_uncleaned_roots(max_clean_root);
-        measure.stop();
-        self.clean_accounts_stats
-            .reset_uncleaned_roots_us
-            .fetch_add(measure.as_us(), Ordering::Relaxed);
     }
 
     /// increment store_counts to non-zero for all stores that can not be deleted.
@@ -2541,8 +2553,6 @@ impl AccountsDb {
                 slot_one_epoch_old.saturating_sub(acceptable_straggler_slot_count);
             let (old_storages, old_slots) = self.get_storages(..old_slot_cutoff);
             let num_old_storages = old_storages.len();
-            self.accounts_index
-                .add_uncleaned_roots(old_slots.iter().copied());
             for (old_slot, old_storage) in std::iter::zip(old_slots, old_storages) {
                 self.dirty_stores.entry(old_slot).or_insert(old_storage);
             }
@@ -2792,6 +2802,10 @@ impl AccountsDb {
 
         self.report_store_stats();
 
+        let active_guard = self
+            .active_stats
+            .activate(ActiveStatItem::CleanConstructCandidates);
+        let mut measure_construct_candidates = Measure::start("construct_candidates");
         let mut key_timings = CleanKeyTimings::default();
         let (candidates, min_dirty_slot) = self.construct_candidate_clean_keys(
             max_clean_root_inclusive,
@@ -2800,10 +2814,10 @@ impl AccountsDb {
             epoch_schedule,
             old_storages_policy,
         );
+        measure_construct_candidates.stop();
+        drop(active_guard);
 
         let num_candidates = Self::count_pubkeys(&candidates);
-        let mut accounts_scan = Measure::start("accounts_scan");
-        let uncleaned_roots = self.accounts_index.clone_uncleaned_roots();
         let found_not_zero_accum = AtomicU64::new(0);
         let not_found_on_fork_accum = AtomicU64::new(0);
         let missing_accum = AtomicU64::new(0);
@@ -2828,7 +2842,7 @@ impl AccountsDb {
                 candidates_bin.retain(|candidate_pubkey, candidate_info| {
                     let mut should_collect_reclaims = false;
                     self.accounts_index.scan(
-                        [*candidate_pubkey].iter(),
+                        iter::once(candidate_pubkey),
                         |_candidate_pubkey, slot_list_and_ref_count, _entry| {
                             let mut useless = true;
                             if let Some((slot_list, ref_count)) = slot_list_and_ref_count {
@@ -2867,22 +2881,6 @@ impl AccountsDb {
                                             should_collect_reclaims = true;
                                             purges_old_accounts_local += 1;
                                             useless = false;
-                                        }
-                                        // Note, this next if-block is only kept to maintain the
-                                        // `uncleaned_roots_slot_list_1` stat.
-                                        if uncleaned_roots.contains(slot) {
-                                            // Assertion enforced by `accounts_index.get()`, the latest slot
-                                            // will not be greater than the given `max_clean_root`
-                                            if let Some(max_clean_root_inclusive) =
-                                                max_clean_root_inclusive
-                                            {
-                                                assert!(slot <= &max_clean_root_inclusive);
-                                            }
-                                            if slot_list.len() == 1 {
-                                                self.clean_accounts_stats
-                                                    .uncleaned_roots_slot_list_1
-                                                    .fetch_add(1, Ordering::Relaxed);
-                                            }
                                         }
                                     }
                                     None => {
@@ -2935,27 +2933,36 @@ impl AccountsDb {
                 purges_old_accounts_count.fetch_add(purges_old_accounts_local, Ordering::Relaxed);
             });
         };
+        let active_guard = self
+            .active_stats
+            .activate(ActiveStatItem::CleanScanCandidates);
+        let mut accounts_scan = Measure::start("accounts_scan");
         if is_startup {
             do_clean_scan();
         } else {
             self.thread_pool_clean.install(do_clean_scan);
         }
-
         accounts_scan.stop();
+        drop(active_guard);
+
         let retained_keys_count = Self::count_pubkeys(&candidates);
         let reclaims = reclaims.into_inner().unwrap();
         let mut pubkeys_removed_from_accounts_index =
             pubkeys_removed_from_accounts_index.into_inner().unwrap();
+
+        let active_guard = self.active_stats.activate(ActiveStatItem::CleanOldAccounts);
         let mut clean_old_rooted = Measure::start("clean_old_roots");
         let (purged_account_slots, removed_accounts) =
             self.clean_accounts_older_than_root(&reclaims, &pubkeys_removed_from_accounts_index);
-        self.do_reset_uncleaned_roots(max_clean_root_inclusive);
         clean_old_rooted.stop();
-
-        let mut store_counts_time = Measure::start("store_counts");
+        drop(active_guard);
 
         // Calculate store counts as if everything was purged
         // Then purge if we can
+        let active_guard = self
+            .active_stats
+            .activate(ActiveStatItem::CleanCollectStoreCounts);
+        let mut store_counts_time = Measure::start("store_counts");
         let mut store_counts: HashMap<Slot, (usize, HashSet<Pubkey>)> = HashMap::new();
         for candidates_bin in candidates.iter() {
             for (
@@ -3022,11 +3029,19 @@ impl AccountsDb {
             }
         }
         store_counts_time.stop();
+        drop(active_guard);
 
+        let active_guard = self
+            .active_stats
+            .activate(ActiveStatItem::CleanCalcDeleteDeps);
         let mut calc_deps_time = Measure::start("calc_deps");
         self.calc_delete_dependencies(&candidates, &mut store_counts, min_dirty_slot);
         calc_deps_time.stop();
+        drop(active_guard);
 
+        let active_guard = self
+            .active_stats
+            .activate(ActiveStatItem::CleanFilterZeroLamport);
         let mut purge_filter = Measure::start("purge_filter");
         self.filter_zero_lamport_clean_for_incremental_snapshots(
             max_clean_root_inclusive,
@@ -3034,7 +3049,9 @@ impl AccountsDb {
             &candidates,
         );
         purge_filter.stop();
+        drop(active_guard);
 
+        let active_guard = self.active_stats.activate(ActiveStatItem::CleanReclaims);
         let mut reclaims_time = Measure::start("reclaims");
         // Recalculate reclaims with new purge set
         let mut pubkey_to_slot_set = Vec::new();
@@ -3076,6 +3093,8 @@ impl AccountsDb {
         );
 
         reclaims_time.stop();
+        drop(active_guard);
+
         measure_all.stop();
 
         self.clean_accounts_stats.report();
@@ -3104,6 +3123,7 @@ impl AccountsDb {
                 key_timings.dirty_store_processing_us,
                 i64
             ),
+            ("construct_candidates_us", measure_construct_candidates.as_us(), i64),
             ("accounts_scan", accounts_scan.as_us(), i64),
             ("clean_old_rooted", clean_old_rooted.as_us(), i64),
             ("store_counts", store_counts_time.as_us(), i64),
@@ -3127,14 +3147,6 @@ impl AccountsDb {
                 i64
             ),
             ("scan_missing", missing_accum.load(Ordering::Relaxed), i64),
-            ("uncleaned_roots_len", uncleaned_roots.len(), i64),
-            (
-                "uncleaned_roots_slot_list_1",
-                self.clean_accounts_stats
-                    .uncleaned_roots_slot_list_1
-                    .swap(0, Ordering::Relaxed),
-                i64
-            ),
             (
                 "get_account_sizes_us",
                 self.clean_accounts_stats
@@ -3160,13 +3172,6 @@ impl AccountsDb {
                 "clean_old_root_reclaim_us",
                 self.clean_accounts_stats
                     .clean_old_root_reclaim_us
-                    .swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "reset_uncleaned_roots_us",
-                self.clean_accounts_stats
-                    .reset_uncleaned_roots_us
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
@@ -3883,7 +3888,6 @@ impl AccountsDb {
 
                 if store.num_zero_lamport_single_ref_accounts() == store.count() {
                     // all accounts in this storage can be dead
-                    self.accounts_index.add_uncleaned_roots([slot]);
                     self.dirty_stores.entry(slot).or_insert(store);
                     self.shrink_stats
                         .num_dead_slots_added_to_clean
@@ -3908,7 +3912,7 @@ impl AccountsDb {
     }
 
     /// Shrinks `store` by rewriting the alive accounts to a new storage
-    fn shrink_storage(&self, store: &AccountStorageEntry) {
+    fn shrink_storage(&self, store: Arc<AccountStorageEntry>) {
         let slot = store.slot();
         if self.accounts_cache.contains(slot) {
             // It is not correct to shrink a slot while it is in the write cache until flush is complete and the slot is removed from the write cache.
@@ -3925,10 +3929,10 @@ impl AccountsDb {
             return;
         }
         let unique_accounts =
-            self.get_unique_accounts_from_storage_for_shrink(store, &self.shrink_stats);
+            self.get_unique_accounts_from_storage_for_shrink(&store, &self.shrink_stats);
         debug!("do_shrink_slot_store: slot: {}", slot);
         let shrink_collect =
-            self.shrink_collect::<AliveAccounts<'_>>(store, &unique_accounts, &self.shrink_stats);
+            self.shrink_collect::<AliveAccounts<'_>>(&store, &unique_accounts, &self.shrink_stats);
 
         // This shouldn't happen if alive_bytes is accurate.
         // However, it is possible that the remaining alive bytes could be 0. In that case, the whole slot should be marked dead by clean.
@@ -3939,7 +3943,7 @@ impl AccountsDb {
         {
             if shrink_collect.alive_total_bytes == 0 {
                 // clean needs to take care of this dead slot
-                self.accounts_index.add_uncleaned_roots([slot]);
+                self.dirty_stores.insert(slot, store.clone());
             }
 
             if !shrink_collect.all_are_zero_lamports {
@@ -4112,7 +4116,7 @@ impl AccountsDb {
             .get_slot_storage_entry_shrinking_in_progress_ok(slot)
         {
             if Self::is_shrinking_productive(&store) {
-                self.shrink_storage(&store)
+                self.shrink_storage(store)
             }
         }
     }
@@ -4673,7 +4677,7 @@ impl AccountsDb {
                                 .num_ancient_slots_shrunk
                                 .fetch_add(1, Ordering::Relaxed);
                         }
-                        self.shrink_storage(&slot_shrink_candidate);
+                        self.shrink_storage(slot_shrink_candidate);
                     });
             })
         });
@@ -6318,7 +6322,6 @@ impl AccountsDb {
         // Only add to the uncleaned roots set *after* we've flushed the previous roots,
         // so that clean will actually be able to clean the slots.
         let num_new_roots = cached_roots.len();
-        self.accounts_index.add_uncleaned_roots(cached_roots);
         (num_new_roots, num_roots_flushed, flush_stats)
     }
 
@@ -8548,7 +8551,8 @@ impl AccountsDb {
         // a given pubkey. If there is just a single item, there is no cleaning to
         // be done on that pubkey. Use only those pubkeys with multiple updates.
         if !dirty_pubkeys.is_empty() {
-            self.uncleaned_pubkeys.insert(slot, dirty_pubkeys);
+            let old = self.uncleaned_pubkeys.insert(slot, dirty_pubkeys);
+            assert!(old.is_none());
         }
         SlotIndexGenerationInfo {
             insert_time_us,
@@ -8823,24 +8827,13 @@ impl AccountsDb {
                 struct DuplicatePubkeysVisitedInfo {
                     accounts_data_len_from_duplicates: u64,
                     num_duplicate_accounts: u64,
-                    uncleaned_roots: IntSet<Slot>,
                     duplicates_lt_hash: Option<Box<DuplicatesLtHash>>,
                 }
                 impl DuplicatePubkeysVisitedInfo {
-                    fn reduce(mut a: Self, mut b: Self) -> Self {
-                        if a.uncleaned_roots.len() >= b.uncleaned_roots.len() {
-                            a.merge(b);
-                            a
-                        } else {
-                            b.merge(a);
-                            b
-                        }
-                    }
-                    fn merge(&mut self, other: Self) {
+                    fn reduce(mut self, other: Self) -> Self {
                         self.accounts_data_len_from_duplicates +=
                             other.accounts_data_len_from_duplicates;
                         self.num_duplicate_accounts += other.num_duplicate_accounts;
-                        self.uncleaned_roots.extend(other.uncleaned_roots);
 
                         match (
                             self.duplicates_lt_hash.is_some(),
@@ -8865,6 +8858,7 @@ impl AccountsDb {
                                 // nothing to do; no duplicates lt hash at all
                             }
                         }
+                        self
                     }
                 }
 
@@ -8882,7 +8876,6 @@ impl AccountsDb {
                 let DuplicatePubkeysVisitedInfo {
                     accounts_data_len_from_duplicates,
                     num_duplicate_accounts,
-                    uncleaned_roots,
                     duplicates_lt_hash,
                 } = unique_pubkeys_by_bin
                     .par_iter()
@@ -8895,7 +8888,6 @@ impl AccountsDb {
                                     let (
                                         accounts_data_len_from_duplicates,
                                         accounts_duplicates_num,
-                                        uncleaned_roots,
                                         duplicates_lt_hash,
                                     ) = self.visit_duplicate_pubkeys_during_startup(
                                         pubkeys,
@@ -8906,7 +8898,6 @@ impl AccountsDb {
                                     let intermediate = DuplicatePubkeysVisitedInfo {
                                         accounts_data_len_from_duplicates,
                                         num_duplicate_accounts: accounts_duplicates_num,
-                                        uncleaned_roots,
                                         duplicates_lt_hash,
                                     };
                                     DuplicatePubkeysVisitedInfo::reduce(accum, intermediate)
@@ -8924,11 +8915,8 @@ impl AccountsDb {
                     );
                 accounts_data_len_dedup_timer.stop();
                 timings.accounts_data_len_dedup_time_us = accounts_data_len_dedup_timer.as_us();
-                timings.slots_to_clean = uncleaned_roots.len() as u64;
                 timings.num_duplicate_accounts = num_duplicate_accounts;
 
-                self.accounts_index
-                    .add_uncleaned_roots(uncleaned_roots.into_iter());
                 accounts_data_len.fetch_sub(accounts_data_len_from_duplicates, Ordering::Relaxed);
                 if let Some(duplicates_lt_hash) = duplicates_lt_hash {
                     let old_val = outer_duplicates_lt_hash.replace(duplicates_lt_hash);
@@ -8947,7 +8935,6 @@ impl AccountsDb {
                 );
                 for (slot, storage) in all_zero_slots_to_clean {
                     self.dirty_stores.insert(slot, storage);
-                    self.accounts_index.add_uncleaned_roots([slot]);
                 }
             }
 
@@ -9051,10 +9038,9 @@ impl AccountsDb {
         rent_collector: &RentCollector,
         timings: &GenerateIndexTimings,
         should_calculate_duplicates_lt_hash: bool,
-    ) -> (u64, u64, IntSet<Slot>, Option<Box<DuplicatesLtHash>>) {
+    ) -> (u64, u64, Option<Box<DuplicatesLtHash>>) {
         let mut accounts_data_len_from_duplicates = 0;
         let mut num_duplicate_accounts = 0_u64;
-        let mut uncleaned_slots = IntSet::default();
         let mut duplicates_lt_hash =
             should_calculate_duplicates_lt_hash.then(|| Box::new(DuplicatesLtHash::default()));
         let mut removed_rent_paying = 0;
@@ -9072,7 +9058,6 @@ impl AccountsDb {
                         // the slot where duplicate accounts are found in the index need to be in 'uncleaned_slots' list, too.
                         let max = slot_list.iter().map(|(slot, _)| slot).max().unwrap();
                         slot_list.iter().for_each(|(slot, account_info)| {
-                            uncleaned_slots.insert(*slot);
                             if slot == max {
                                 // the info in 'max' is the most recent, current info for this pubkey
                                 return;
@@ -9130,7 +9115,6 @@ impl AccountsDb {
         (
             accounts_data_len_from_duplicates as u64,
             num_duplicate_accounts,
-            uncleaned_slots,
             duplicates_lt_hash,
         )
     }
@@ -9281,6 +9265,12 @@ impl AccountStorageEntry {
 // These functions/fields are only usable from a dev context (i.e. tests and benches)
 #[cfg(feature = "dev-context-only-utils")]
 impl AccountsDb {
+    /// Return the number of slots marked with uncleaned pubkeys.
+    /// This is useful for testing clean aglorithms.
+    pub fn get_len_of_slots_with_uncleaned_pubkeys(&self) -> usize {
+        self.uncleaned_pubkeys.len()
+    }
+
     /// useful to adapt tests written prior to introduction of the write cache
     /// to use the write cache
     pub fn add_root_and_flush_write_cache(&self, slot: Slot) {
@@ -9388,7 +9378,7 @@ impl AccountsDb {
     ) {
         let ancestors = vec![(slot, 0)].into_iter().collect();
         for t in 0..num {
-            let pubkey = solana_sdk::pubkey::new_rand();
+            let pubkey = solana_pubkey::new_rand();
             let account =
                 AccountSharedData::new((t + 1) as u64, space, AccountSharedData::default().owner());
             pubkeys.push(pubkey);
@@ -9396,7 +9386,7 @@ impl AccountsDb {
             self.store_for_tests(slot, &[(&pubkey, &account)]);
         }
         for t in 0..num_vote {
-            let pubkey = solana_sdk::pubkey::new_rand();
+            let pubkey = solana_pubkey::new_rand();
             let account =
                 AccountSharedData::new((num + t + 1) as u64, space, &solana_vote_program::id());
             pubkeys.push(pubkey);
@@ -9535,7 +9525,7 @@ pub mod test_utils {
         }
 
         for t in 0..num {
-            let pubkey = solana_sdk::pubkey::new_rand();
+            let pubkey = solana_pubkey::new_rand();
             let account = AccountSharedData::new(
                 (t + 1) as u64,
                 data_size,

@@ -1,4 +1,4 @@
-use {solana_sdk::fee::FeeDetails, solana_svm_transaction::svm_message::SVMMessage};
+use {solana_fee_structure::FeeDetails, solana_svm_transaction::svm_message::SVMMessage};
 
 /// Calculate fee for `SanitizedMessage`
 pub fn calculate_fee(

@@ -259,14 +259,17 @@ impl<'a> AsRef<[u8]> for SignedData<'a> {
 pub struct ShredId(Slot, /*shred index:*/ u32, ShredType);
 
 impl ShredId {
+    #[inline]
     pub(crate) fn new(slot: Slot, index: u32, shred_type: ShredType) -> ShredId {
         ShredId(slot, index, shred_type)
     }
 
+    #[inline]
     pub fn slot(&self) -> Slot {
         self.0
     }
 
+    #[inline]
     pub(crate) fn unpack(&self) -> (Slot, /*shred index:*/ u32, ShredType) {
         (self.0, self.1, self.2)
     }
@@ -636,6 +639,11 @@ pub mod layout {
     pub fn get_shred_mut(packet: &mut Packet) -> Option<&mut [u8]> {
         let size = get_shred_size(packet)?;
         packet.buffer_mut().get_mut(..size)
+    }
+
+    #[inline]
+    pub fn get_common_header_bytes(shred: &[u8]) -> Option<&[u8]> {
+        shred.get(..SIZE_OF_COMMON_SHRED_HEADER)
     }
 
     pub(crate) fn get_signature(shred: &[u8]) -> Option<Signature> {
@@ -1098,6 +1106,7 @@ impl TryFrom<u8> for ShredVariant {
 pub(crate) fn recover(
     shreds: Vec<Shred>,
     reed_solomon_cache: &ReedSolomonCache,
+    get_slot_leader: impl Fn(Slot) -> Option<Pubkey>,
 ) -> Result<Vec<Shred>, Error> {
     match shreds
         .first()
@@ -1106,16 +1115,36 @@ pub(crate) fn recover(
         .shred_variant
     {
         ShredVariant::LegacyData | ShredVariant::LegacyCode => {
-            Shredder::try_recovery(shreds, reed_solomon_cache)
+            let mut shreds = Shredder::try_recovery(shreds, reed_solomon_cache)?;
+            shreds.retain(|shred| {
+                get_slot_leader(shred.slot())
+                    .map(|pubkey| shred.verify(&pubkey))
+                    .unwrap_or_default()
+            });
+            Ok(shreds)
         }
         ShredVariant::MerkleCode { .. } | ShredVariant::MerkleData { .. } => {
             let shreds = shreds
                 .into_iter()
                 .map(merkle::Shred::try_from)
                 .collect::<Result<_, _>>()?;
+            // With Merkle shreds, leader signs the Merkle root of the erasure
+            // batch and all shreds within the same erasure batch have the same
+            // signature.
+            // For recovered shreds, the (unique) signature is copied from
+            // shreds which were received from turbine (or repair) and are
+            // already sig-verified.
+            // The same signature also verifies for recovered shreds because
+            // when reconstructing the Merkle tree for the erasure batch, we
+            // will obtain the same Merkle root.
             Ok(merkle::recover(shreds, reed_solomon_cache)?
-                .into_iter()
-                .map(Shred::from)
+                .map(|shred| {
+                    let shred = Shred::from(shred);
+                    debug_assert!(get_slot_leader(shred.slot())
+                        .map(|pubkey| shred.verify(&pubkey))
+                        .unwrap_or_default());
+                    shred
+                })
                 .collect())
         }
     }

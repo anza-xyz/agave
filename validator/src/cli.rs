@@ -1456,6 +1456,12 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .hidden(hidden_unless_forced()),
         )
         .arg(
+            Arg::with_name("accounts_db_snapshots_use_experimental_accumulator_hash")
+                .long("accounts-db-snapshots-use-experimental-accumulator-hash")
+                .help("Snapshots use the experimental accumulator hash")
+                .hidden(hidden_unless_forced()),
+        )
+        .arg(
             Arg::with_name("accounts_index_scan_results_limit_mb")
                 .long("accounts-index-scan-results-limit-mb")
                 .value_name("MEGABYTES")
@@ -1473,29 +1479,6 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .validator(is_pow2)
                 .takes_value(true)
                 .help("Number of bins to divide the accounts index into"),
-        )
-        .arg(
-            Arg::with_name("partitioned_epoch_rewards_compare_calculation")
-                .long("partitioned-epoch-rewards-compare-calculation")
-                .takes_value(false)
-                .help(
-                    "Do normal epoch rewards distribution, but also calculate rewards using the \
-                     partitioned rewards code path and compare the resulting vote and stake \
-                     accounts",
-                )
-                .hidden(hidden_unless_forced()),
-        )
-        .arg(
-            Arg::with_name("partitioned_epoch_rewards_force_enable_single_slot")
-                .long("partitioned-epoch-rewards-force-enable-single-slot")
-                .takes_value(false)
-                .help(
-                    "Force the partitioned rewards distribution, but distribute all rewards in \
-                     the first slot in the epoch. This should match consensus with the normal \
-                     rewards distribution.",
-                )
-                .conflicts_with("partitioned_epoch_rewards_compare_calculation")
-                .hidden(hidden_unless_forced()),
         )
         .arg(
             Arg::with_name("accounts_index_path")

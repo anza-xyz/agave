@@ -7,7 +7,7 @@ use {
         parse_account_data::{ParsableAccount, ParseAccountError, SplTokenAdditionalData},
         parse_token_extension::parse_extension,
     },
-    solana_sdk::pubkey::Pubkey,
+    solana_pubkey::Pubkey,
     spl_token_2022::{
         extension::{BaseStateWithExtensions, StateWithExtensions},
         generic_token_account::GenericTokenAccount,

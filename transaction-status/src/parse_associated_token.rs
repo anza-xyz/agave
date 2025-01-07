@@ -9,7 +9,7 @@ use {
 };
 
 // A helper function to convert spl_associated_token_account::id() as spl_sdk::pubkey::Pubkey
-// to solana_sdk::pubkey::Pubkey
+// to solana_pubkey::Pubkey
 pub fn spl_associated_token_id() -> Pubkey {
     Pubkey::new_from_array(spl_associated_token_account::id().to_bytes())
 }

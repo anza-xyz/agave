@@ -2,30 +2,15 @@
 #![cfg(feature = "full")]
 
 // legacy module paths
-use {
-    crate::pubkey::Pubkey,
-    std::borrow::{Borrow, Cow},
-};
+#[deprecated(
+    since = "2.2.0",
+    note = "Use solana_keypair::signable::Signable instead."
+)]
+pub use solana_keypair::signable::Signable;
 pub use {
     crate::signer::{keypair::*, null_signer::*, presigner::*, *},
     solana_signature::{ParseSignatureError, Signature, SIGNATURE_BYTES},
 };
-
-pub trait Signable {
-    fn sign(&mut self, keypair: &Keypair) {
-        let signature = keypair.sign_message(self.signable_data().borrow());
-        self.set_signature(signature);
-    }
-    fn verify(&self) -> bool {
-        self.get_signature()
-            .verify(self.pubkey().as_ref(), self.signable_data().borrow())
-    }
-
-    fn pubkey(&self) -> Pubkey;
-    fn signable_data(&self) -> Cow<[u8]>;
-    fn get_signature(&self) -> Signature;
-    fn set_signature(&mut self, signature: Signature);
-}
 
 #[cfg(test)]
 mod tests {

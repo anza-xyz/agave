@@ -3,11 +3,9 @@
 /// In addition, the dynamic library must export a "C" function _create_plugin which
 /// creates the implementation of the plugin.
 use {
-    solana_sdk::{
-        clock::{Slot, UnixTimestamp},
-        signature::Signature,
-        transaction::SanitizedTransaction,
-    },
+    solana_clock::{Slot, UnixTimestamp},
+    solana_signature::Signature,
+    solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_status::{Reward, RewardsAndNumPartitions, TransactionStatusMeta},
     std::{any::Any, error, io},
     thiserror::Error,

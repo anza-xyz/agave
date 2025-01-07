@@ -218,7 +218,7 @@ mod tests {
     fn simple_deserialized_packet() {
         let tx = system_transaction::transfer(
             &Keypair::new(),
-            &solana_sdk::pubkey::new_rand(),
+            &solana_pubkey::new_rand(),
             1,
             Hash::new_unique(),
         );

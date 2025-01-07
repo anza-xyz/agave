@@ -52,17 +52,17 @@ impl LeaderExecuteAndCommitTimings {
             (
                 "processing_results_to_transactions_us",
                 self.record_transactions_timings
-                    .processing_results_to_transactions_us as i64,
+                    .processing_results_to_transactions_us.0 as i64,
                 i64
             ),
             (
                 "hash_us",
-                self.record_transactions_timings.hash_us as i64,
+                self.record_transactions_timings.hash_us.0 as i64,
                 i64
             ),
             (
                 "poh_record_us",
-                self.record_transactions_timings.poh_record_us as i64,
+                self.record_transactions_timings.poh_record_us.0 as i64,
                 i64
             ),
         );

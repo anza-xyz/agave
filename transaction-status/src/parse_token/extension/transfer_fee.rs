@@ -161,7 +161,7 @@ pub(in crate::parse_token) fn parse_transfer_fee_instruction(
 mod test {
     use {
         super::*,
-        solana_sdk::pubkey::Pubkey,
+        solana_pubkey::Pubkey,
         spl_token_2022::{
             extension::transfer_fee::instruction::*, solana_program::message::Message,
         },

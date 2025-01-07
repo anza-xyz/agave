@@ -5,7 +5,6 @@ use super::Bank;
 mod tests {
     use {
         super::*,
-        solana_feature_set as feature_set,
         solana_sdk::{
             genesis_config::create_genesis_config, pubkey::Pubkey,
             sysvar::epoch_rewards::EpochRewards,
@@ -82,7 +81,7 @@ mod tests {
         let (genesis_config, _mint_keypair) = create_genesis_config(100_000);
         let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
         let bank1_slot = bank0.slot() + 1;
-        let mut bank1 = Bank::new_from_parent(bank0, &Pubkey::default(), bank1_slot);
+        let bank1 = Bank::new_from_parent(bank0, &Pubkey::default(), bank1_slot);
 
         let bank1_sysvar_cache = bank1.transaction_processor.sysvar_cache();
         let bank1_cached_clock = bank1_sysvar_cache.get_clock();
@@ -111,7 +110,6 @@ mod tests {
         drop(bank1_sysvar_cache);
 
         // inject a reward sysvar for test
-        bank1.activate_feature(&feature_set::partitioned_epoch_rewards_superfeature::id());
         let num_partitions = 2; // num_partitions is arbitrary and unimportant for this test
         let total_points = 42_000; // total_points is arbitrary for the purposes of this test
         let expected_epoch_rewards = EpochRewards {
@@ -124,7 +122,6 @@ mod tests {
             active: true,
         };
         bank1.create_epoch_rewards_sysvar(
-            expected_epoch_rewards.total_rewards,
             expected_epoch_rewards.distributed_rewards,
             expected_epoch_rewards.distribution_starting_block_height,
             num_partitions,

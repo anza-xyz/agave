@@ -490,10 +490,10 @@ pub fn ed25519_verify_cpu(batches: &mut [PacketBatch], reject_non_vote: bool, pa
 pub fn ed25519_verify_disabled(batches: &mut [PacketBatch]) {
     let packet_count = count_packets_in_batches(batches);
     debug!("disabled ECDSA for {}", packet_count);
-    batches.into_par_iter().for_each(|batch| {
-        batch
-            .par_iter_mut()
-            .for_each(|p| p.meta_mut().set_discard(false))
+    PAR_THREAD_POOL.install(|| {
+        batches.par_iter_mut().flatten().for_each(|packet| {
+            packet.meta_mut().set_discard(false);
+        });
     });
 }
 

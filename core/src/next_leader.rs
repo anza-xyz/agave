@@ -29,9 +29,7 @@ pub(crate) fn upcoming_leader_tpu_vote_sockets(
         .into_iter()
         .dedup()
         .filter_map(|leader_pubkey| {
-            cluster_info
-                .lookup_contact_info(&leader_pubkey, |node| node.tpu_vote(protocol))?
-                .ok()
+            cluster_info.lookup_contact_info(&leader_pubkey, |node| node.tpu_vote(protocol))?
         })
         // dedup again since leaders could potentially share the same tpu vote socket
         .dedup()
@@ -47,13 +45,13 @@ pub(crate) fn next_leader_tpu_vote(
     })
 }
 
-pub(crate) fn next_leader<F, E>(
+pub(crate) fn next_leader<F>(
     cluster_info: &impl LikeClusterInfo,
     poh_recorder: &RwLock<PohRecorder>,
     port_selector: F,
 ) -> Option<(Pubkey, SocketAddr)>
 where
-    F: FnOnce(&ContactInfo) -> Result<SocketAddr, E>,
+    F: FnOnce(&ContactInfo) -> Option<SocketAddr>,
 {
     let leader_pubkey = poh_recorder
         .read()
@@ -62,5 +60,4 @@ where
     cluster_info
         .lookup_contact_info(&leader_pubkey, port_selector)?
         .map(|addr| (leader_pubkey, addr))
-        .ok()
 }

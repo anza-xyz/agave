@@ -4,6 +4,7 @@ set -ex
 cd "$(dirname "$0")"/../..
 eval "$(ci/channel-info.sh)"
 source ci/rust-version.sh
+source ci/docker/env.sh
 
 CHANNEL_OR_TAG=
 if [[ -n "$CI_TAG" ]]; then
@@ -29,7 +30,9 @@ cp -f ../../fetch-spl.sh usr/bin/
   ./fetch-spl.sh
 )
 
-docker build -t anzaxyz/agave:"$CHANNEL_OR_TAG" .
+docker build \
+  --build-arg "BASE_IMAGE=${CI_DOCKER_ARG_BASE_IMAGE}" \
+  -t anzaxyz/agave:"$CHANNEL_OR_TAG" .
 
 maybeEcho=
 if [[ -z $CI ]]; then

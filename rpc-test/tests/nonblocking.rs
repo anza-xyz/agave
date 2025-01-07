@@ -1,7 +1,9 @@
 use {
     solana_client::nonblocking::tpu_client::{LeaderTpuService, TpuClient},
+    solana_clock::DEFAULT_MS_PER_SLOT,
     solana_connection_cache::connection_cache::Protocol,
-    solana_sdk::{clock::DEFAULT_MS_PER_SLOT, pubkey::Pubkey, system_transaction},
+    solana_pubkey::Pubkey,
+    solana_system_transaction as system_transaction,
     solana_test_validator::TestValidatorGenesis,
     solana_tpu_client::tpu_client::TpuClientConfig,
     std::sync::{

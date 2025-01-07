@@ -6,7 +6,9 @@ use {
         transaction_version::TransactionVersion,
     },
     core::fmt::{Debug, Formatter},
-    solana_sdk::{hash::Hash, pubkey::Pubkey, signature::Signature},
+    solana_hash::Hash,
+    solana_pubkey::Pubkey,
+    solana_signature::Signature,
     solana_svm_transaction::instruction::SVMInstruction,
 };
 
@@ -228,13 +230,11 @@ impl<const SANITIZED: bool, D: TransactionData> Debug for TransactionView<SANITI
 mod tests {
     use {
         super::*,
-        solana_sdk::{
-            message::{Message, VersionedMessage},
-            pubkey::Pubkey,
-            signature::Signature,
-            system_instruction::{self},
-            transaction::VersionedTransaction,
-        },
+        solana_message::{Message, VersionedMessage},
+        solana_pubkey::Pubkey,
+        solana_signature::Signature,
+        solana_system_interface::instruction as system_instruction,
+        solana_transaction::versioned::VersionedTransaction,
     };
 
     fn verify_transaction_view_frame(tx: &VersionedTransaction) {

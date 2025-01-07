@@ -4,10 +4,8 @@ use {
         StringAmount,
     },
     bincode::deserialize,
-    solana_sdk::{
-        clock::{Epoch, UnixTimestamp},
-        stake::state::{Authorized, Delegation, Lockup, Meta, Stake, StakeStateV2},
-    },
+    solana_clock::{Epoch, UnixTimestamp},
+    solana_sdk::stake::state::{Authorized, Delegation, Lockup, Meta, Stake, StakeStateV2},
 };
 
 pub fn parse_stake(data: &[u8]) -> Result<StakeAccountType, ParseAccountError> {
@@ -153,8 +151,8 @@ mod test {
             StakeAccountType::Uninitialized
         );
 
-        let pubkey = solana_sdk::pubkey::new_rand();
-        let custodian = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
+        let custodian = solana_pubkey::new_rand();
         let authorized = Authorized::auto(&pubkey);
         let lockup = Lockup {
             unix_timestamp: 0,
@@ -188,7 +186,7 @@ mod test {
             })
         );
 
-        let voter_pubkey = solana_sdk::pubkey::new_rand();
+        let voter_pubkey = solana_pubkey::new_rand();
         let stake = Stake {
             delegation: Delegation {
                 voter_pubkey,

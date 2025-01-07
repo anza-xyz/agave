@@ -3704,42 +3704,33 @@ pub mod rpc_full {
                         };
                         Some(RpcContactInfo {
                             pubkey: contact_info.pubkey().to_string(),
-                            gossip: contact_info.gossip().ok(),
+                            gossip: contact_info.gossip(),
                             tvu: contact_info
                                 .tvu(Protocol::UDP)
-                                .ok()
                                 .filter(|addr| socket_addr_space.check(addr)),
                             tpu: contact_info
                                 .tpu(Protocol::UDP)
-                                .ok()
                                 .filter(|addr| socket_addr_space.check(addr)),
                             tpu_quic: contact_info
                                 .tpu(Protocol::QUIC)
-                                .ok()
                                 .filter(|addr| socket_addr_space.check(addr)),
                             tpu_forwards: contact_info
                                 .tpu_forwards(Protocol::UDP)
-                                .ok()
                                 .filter(|addr| socket_addr_space.check(addr)),
                             tpu_forwards_quic: contact_info
                                 .tpu_forwards(Protocol::QUIC)
-                                .ok()
                                 .filter(|addr| socket_addr_space.check(addr)),
                             tpu_vote: contact_info
                                 .tpu_vote(Protocol::UDP)
-                                .ok()
                                 .filter(|addr| socket_addr_space.check(addr)),
                             serve_repair: contact_info
                                 .serve_repair(Protocol::UDP)
-                                .ok()
                                 .filter(|addr| socket_addr_space.check(addr)),
                             rpc: contact_info
                                 .rpc()
-                                .ok()
                                 .filter(|addr| socket_addr_space.check(addr)),
                             pubsub: contact_info
                                 .rpc_pubsub()
-                                .ok()
                                 .filter(|addr| socket_addr_space.check(addr)),
                             version,
                             feature_set,
@@ -4969,7 +4960,7 @@ pub mod tests {
 
     #[test]
     fn test_rpc_request_processor_new() {
-        let bob_pubkey = solana_sdk::pubkey::new_rand();
+        let bob_pubkey = solana_pubkey::new_rand();
         let genesis = create_genesis_config(100);
         let bank = Bank::new_for_tests(&genesis.genesis_config);
         let connection_cache = Arc::new(ConnectionCache::new("connection_cache_test"));
@@ -5152,7 +5143,7 @@ pub mod tests {
 
     #[test]
     fn test_rpc_get_tx_count() {
-        let bob_pubkey = solana_sdk::pubkey::new_rand();
+        let bob_pubkey = solana_pubkey::new_rand();
         let genesis = create_genesis_config(10);
         let bank = Bank::new_for_tests(&genesis.genesis_config);
         let connection_cache = Arc::new(ConnectionCache::new("connection_cache_test"));
@@ -5862,7 +5853,7 @@ pub mod tests {
             ref meta, ref io, ..
         } = rpc;
 
-        let bob_pubkey = solana_sdk::pubkey::new_rand();
+        let bob_pubkey = solana_pubkey::new_rand();
         let mut tx = system_transaction::transfer(
             &rpc.mint_keypair,
             &bob_pubkey,
@@ -5895,7 +5886,7 @@ pub mod tests {
                  ]
             }}"#,
             tx_serialized_encoded,
-            solana_sdk::pubkey::new_rand(),
+            solana_pubkey::new_rand(),
             bob_pubkey,
         );
         let res = io.handle_request_sync(&req, meta.clone());
@@ -6228,7 +6219,7 @@ pub mod tests {
                  ]
             }}"#,
             tx_serialized_encoded,
-            solana_sdk::pubkey::new_rand(),
+            solana_pubkey::new_rand(),
             token_account_pubkey,
         );
         let res = io.handle_request_sync(&req, meta.clone());
@@ -6553,7 +6544,7 @@ pub mod tests {
         assert_eq!(None, result.confirmations);
 
         // Test getSignatureStatus request on unprocessed tx
-        let bob_pubkey = solana_sdk::pubkey::new_rand();
+        let bob_pubkey = solana_pubkey::new_rand();
         let tx = system_transaction::transfer(
             &mint_keypair,
             &bob_pubkey,
@@ -6607,7 +6598,7 @@ pub mod tests {
         let RpcHandler { meta, io, .. } = RpcHandler::start();
 
         // Expect internal error because no faucet is available
-        let bob_pubkey = solana_sdk::pubkey::new_rand();
+        let bob_pubkey = solana_pubkey::new_rand();
         let req = format!(
             r#"{{"jsonrpc":"2.0","id":1,"method":"requestAirdrop","params":["{bob_pubkey}", 50]}}"#
         );
@@ -6712,7 +6703,7 @@ pub mod tests {
 
         let mut bad_transaction = system_transaction::transfer(
             &mint_keypair,
-            &solana_sdk::pubkey::new_rand(),
+            &solana_pubkey::new_rand(),
             42,
             Hash::default(),
         );
@@ -6747,7 +6738,7 @@ pub mod tests {
         );
         let mut bad_transaction = system_transaction::transfer(
             &mint_keypair,
-            &solana_sdk::pubkey::new_rand(),
+            &solana_pubkey::new_rand(),
             42,
             recent_blockhash,
         );
@@ -6828,7 +6819,7 @@ pub mod tests {
 
     #[test]
     fn test_rpc_verify_pubkey() {
-        let pubkey = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
         assert_eq!(verify_pubkey(&pubkey.to_string()).unwrap(), pubkey);
         let bad_pubkey = "a1b2c3d4";
         assert_eq!(
@@ -6841,7 +6832,7 @@ pub mod tests {
     fn test_rpc_verify_signature() {
         let tx = system_transaction::transfer(
             &Keypair::new(),
-            &solana_sdk::pubkey::new_rand(),
+            &solana_pubkey::new_rand(),
             20,
             hash(&[0]),
         );
@@ -7686,8 +7677,8 @@ pub mod tests {
             let mint = SplTokenPubkey::new_from_array([2; 32]);
             let owner = SplTokenPubkey::new_from_array([3; 32]);
             let delegate = SplTokenPubkey::new_from_array([4; 32]);
-            let token_account_pubkey = solana_sdk::pubkey::new_rand();
-            let token_with_different_mint_pubkey = solana_sdk::pubkey::new_rand();
+            let token_account_pubkey = solana_pubkey::new_rand();
+            let token_with_different_mint_pubkey = solana_pubkey::new_rand();
             let new_mint = SplTokenPubkey::new_from_array([5; 32]);
             if program_id == solana_inline_spl::token_2022::id() {
                 // Add the token account
@@ -7762,7 +7753,7 @@ pub mod tests {
                 bank.store_account(&Pubkey::from_str(&mint.to_string()).unwrap(), &mint_account);
 
                 // Add another token account with the same owner, delegate, and mint
-                let other_token_account_pubkey = solana_sdk::pubkey::new_rand();
+                let other_token_account_pubkey = solana_pubkey::new_rand();
                 bank.store_account(&other_token_account_pubkey, &token_account);
 
                 // Add another token account with the same owner and delegate but different mint
@@ -7826,7 +7817,7 @@ pub mod tests {
                 bank.store_account(&Pubkey::from_str(&mint.to_string()).unwrap(), &mint_account);
 
                 // Add another token account with the same owner, delegate, and mint
-                let other_token_account_pubkey = solana_sdk::pubkey::new_rand();
+                let other_token_account_pubkey = solana_pubkey::new_rand();
                 bank.store_account(&other_token_account_pubkey, &token_account);
 
                 // Add another token account with the same owner and delegate but different mint
@@ -7868,7 +7859,7 @@ pub mod tests {
             // Test non-existent token account
             let req = format!(
                 r#"{{"jsonrpc":"2.0","id":1,"method":"getTokenAccountBalance","params":["{}"]}}"#,
-                solana_sdk::pubkey::new_rand(),
+                solana_pubkey::new_rand(),
             );
             let res = io.handle_request_sync(&req, meta.clone());
             let result: Value = serde_json::from_str(&res.expect("actual response"))
@@ -7893,7 +7884,7 @@ pub mod tests {
             // Test non-existent mint address
             let req = format!(
                 r#"{{"jsonrpc":"2.0","id":1,"method":"getTokenSupply","params":["{}"]}}"#,
-                solana_sdk::pubkey::new_rand(),
+                solana_pubkey::new_rand(),
             );
             let res = io.handle_request_sync(&req, meta.clone());
             let result: Value = serde_json::from_str(&res.expect("actual response"))
@@ -7977,7 +7968,7 @@ pub mod tests {
                     "params":["{}", {{"programId": "{}"}}]
                 }}"#,
                 owner,
-                solana_sdk::pubkey::new_rand(),
+                solana_pubkey::new_rand(),
             );
             let res = io.handle_request_sync(&req, meta.clone());
             let result: Value = serde_json::from_str(&res.expect("actual response"))
@@ -7991,7 +7982,7 @@ pub mod tests {
                     "params":["{}", {{"mint": "{}"}}]
                 }}"#,
                 owner,
-                solana_sdk::pubkey::new_rand(),
+                solana_pubkey::new_rand(),
             );
             let res = io.handle_request_sync(&req, meta.clone());
             let result: Value = serde_json::from_str(&res.expect("actual response"))
@@ -8006,7 +7997,7 @@ pub mod tests {
                     "method":"getTokenAccountsByOwner",
                     "params":["{}", {{"programId": "{}"}}]
                 }}"#,
-                solana_sdk::pubkey::new_rand(),
+                solana_pubkey::new_rand(),
                 program_id,
             );
             let res = io.handle_request_sync(&req, meta.clone());
@@ -8057,7 +8048,7 @@ pub mod tests {
                     "params":["{}", {{"programId": "{}"}}]
                 }}"#,
                 delegate,
-                solana_sdk::pubkey::new_rand(),
+                solana_pubkey::new_rand(),
             );
             let res = io.handle_request_sync(&req, meta.clone());
             let result: Value = serde_json::from_str(&res.expect("actual response"))
@@ -8071,7 +8062,7 @@ pub mod tests {
                     "params":["{}", {{"mint": "{}"}}]
                 }}"#,
                 delegate,
-                solana_sdk::pubkey::new_rand(),
+                solana_pubkey::new_rand(),
             );
             let res = io.handle_request_sync(&req, meta.clone());
             let result: Value = serde_json::from_str(&res.expect("actual response"))
@@ -8086,7 +8077,7 @@ pub mod tests {
                     "method":"getTokenAccountsByDelegate",
                     "params":["{}", {{"programId": "{}"}}]
                 }}"#,
-                solana_sdk::pubkey::new_rand(),
+                solana_pubkey::new_rand(),
                 program_id,
             );
             let res = io.handle_request_sync(&req, meta.clone());
@@ -8134,7 +8125,7 @@ pub mod tests {
                 owner: program_id,
                 ..Account::default()
             });
-            let token_with_smaller_balance = solana_sdk::pubkey::new_rand();
+            let token_with_smaller_balance = solana_pubkey::new_rand();
             bank.store_account(&token_with_smaller_balance, &token_account);
 
             // Test largest token accounts
@@ -8182,7 +8173,7 @@ pub mod tests {
             let mint = SplTokenPubkey::new_from_array([2; 32]);
             let owner = SplTokenPubkey::new_from_array([3; 32]);
             let delegate = SplTokenPubkey::new_from_array([4; 32]);
-            let token_account_pubkey = solana_sdk::pubkey::new_rand();
+            let token_account_pubkey = solana_pubkey::new_rand();
             let amount = 420;
             let delegated_amount = 30;
             let rent_exempt_amount = 10;

@@ -1,6 +1,6 @@
 use {
+    solana_clock::Slot,
     solana_runtime::bank::Bank,
-    solana_sdk::slot_history::Slot,
     std::{
         sync::{Arc, Condvar, Mutex, MutexGuard, Weak},
         time::{Duration, Instant},

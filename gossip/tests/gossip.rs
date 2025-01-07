@@ -129,13 +129,13 @@ fn retransmit_to(
     let dests: Vec<_> = if forwarded {
         peers
             .iter()
-            .filter_map(|peer| peer.tvu(Protocol::UDP).ok())
+            .filter_map(|peer| peer.tvu(Protocol::UDP))
             .filter(|addr| socket_addr_space.check(addr))
             .collect()
     } else {
         peers
             .iter()
-            .filter_map(|peer| peer.tvu(Protocol::UDP).ok())
+            .filter_map(|peer| peer.tvu(Protocol::UDP))
             .filter(|addr| socket_addr_space.check(addr))
             .collect()
     };

@@ -10,7 +10,7 @@ use {
         crds_gossip_pull::{CrdsTimeouts, CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS},
         crds_value::CrdsValue,
     },
-    solana_sdk::pubkey::Pubkey,
+    solana_pubkey::Pubkey,
     std::{collections::HashMap, time::Duration},
     test::Bencher,
 };

@@ -10,7 +10,7 @@ use {
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     chrono_humanize::{Accuracy, HumanTime, Tense},
-    crossbeam_channel::{Receiver, Sender},
+    crossbeam_channel::Sender,
     itertools::Itertools,
     log::*,
     rayon::{prelude::*, ThreadPool},
@@ -28,7 +28,7 @@ use {
     solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
     solana_runtime::{
         accounts_background_service::{AbsRequestSender, SnapshotRequestKind},
-        bank::{Bank, KeyedRewardsAndNumPartitions, TransactionBalancesSet},
+        bank::{Bank, TransactionBalancesSet},
         bank_forks::{BankForks, SetRootError},
         bank_utils,
         commitment::VOTE_THRESHOLD_SIZE,
@@ -914,7 +914,6 @@ pub fn test_process_blockstore(
         None,
         None,
         None,
-        None,
         &abs_request_sender,
     )
     .unwrap();
@@ -980,7 +979,6 @@ pub fn process_blockstore_from_root(
     opts: &ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
-    rewards_recorder_sender: Option<&RewardsRecorderSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     accounts_background_request_sender: &AbsRequestSender,
 ) -> result::Result<(), BlockstoreProcessorError> {
@@ -1047,7 +1045,6 @@ pub fn process_blockstore_from_root(
             opts,
             transaction_status_sender,
             cache_block_meta_sender,
-            rewards_recorder_sender,
             entry_notification_sender,
             &mut timing,
             accounts_background_request_sender,
@@ -1859,7 +1856,6 @@ fn load_frozen_forks(
     opts: &ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
-    rewards_recorder_sender: Option<&RewardsRecorderSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     timing: &mut ExecuteTimings,
     accounts_background_request_sender: &AbsRequestSender,
@@ -1962,10 +1958,6 @@ fn load_frozen_forks(
             all_banks.insert(bank.slot(), bank.clone_with_scheduler());
             m.stop();
             process_single_slot_us += m.as_us();
-
-            rewards_recorder_sender
-                .as_ref()
-                .inspect(|sender| sender.send_rewards(&bank));
 
             let mut m = Measure::start("voting");
             // If we've reached the last known root in blockstore, start looking
@@ -2277,38 +2269,6 @@ pub fn cache_block_meta(bank: &Arc<Bank>, cache_block_meta_sender: Option<&Cache
         cache_block_meta_sender
             .send(bank.clone())
             .unwrap_or_else(|err| warn!("cache_block_meta_sender failed: {:?}", err));
-    }
-}
-
-pub type RewardsBatch = (Slot, KeyedRewardsAndNumPartitions);
-pub enum RewardsMessage {
-    Batch(RewardsBatch),
-    Complete(Slot),
-}
-
-#[derive(Clone, Debug)]
-pub struct RewardsRecorderSender {
-    pub sender: Sender<RewardsMessage>,
-}
-pub type RewardsRecorderReceiver = Receiver<RewardsMessage>;
-
-impl From<Sender<RewardsMessage>> for RewardsRecorderSender {
-    fn from(sender: Sender<RewardsMessage>) -> Self {
-        Self { sender }
-    }
-}
-
-impl RewardsRecorderSender {
-    pub fn send_rewards(&self, bank: &Bank) {
-        let rewards = bank.get_rewards_and_num_partitions();
-        if rewards.should_record() {
-            self.sender
-                .send(RewardsMessage::Batch((bank.slot(), rewards)))
-                .unwrap_or_else(|err| warn!("rewards_recorder_sender failed: {:?}", err));
-        }
-        self.sender
-            .send(RewardsMessage::Complete(bank.slot()))
-            .unwrap_or_else(|err| warn!("rewards_recorder_sender failed: {:?}", err));
     }
 }
 
@@ -3146,7 +3106,7 @@ pub mod tests {
     #[test]
     fn test_process_ledger_simple() {
         solana_logger::setup();
-        let leader_pubkey = solana_sdk::pubkey::new_rand();
+        let leader_pubkey = solana_pubkey::new_rand();
         let mint = 100;
         let hashes_per_tick = 10;
         let GenesisConfigInfo {
@@ -3823,7 +3783,7 @@ pub mod tests {
                     bank.last_blockhash(),
                     1,
                     0,
-                    &solana_sdk::pubkey::new_rand(),
+                    &solana_pubkey::new_rand(),
                 ));
 
                 next_entry_mut(&mut hash, 0, transactions)
@@ -3982,7 +3942,7 @@ pub mod tests {
         let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
         // Make sure instruction errors still update the signature cache
-        let pubkey = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
         bank.transfer(1_000, &mint_keypair, &pubkey).unwrap();
         assert_eq!(bank.transaction_count(), 1);
         assert_eq!(bank.get_balance(&pubkey), 1_000);
@@ -4207,7 +4167,6 @@ pub mod tests {
             None,
             None,
             None,
-            None,
             &AbsRequestSender::default(),
         )
         .unwrap();
@@ -4285,7 +4244,7 @@ pub mod tests {
                             bank.last_blockhash(),
                             100,
                             100,
-                            &solana_sdk::pubkey::new_rand(),
+                            &solana_pubkey::new_rand(),
                         ));
                         transactions
                     })
@@ -4412,14 +4371,14 @@ pub mod tests {
         // Create array of two transactions which throw different errors
         let account_not_found_tx = system_transaction::transfer(
             &keypair,
-            &solana_sdk::pubkey::new_rand(),
+            &solana_pubkey::new_rand(),
             42,
             bank.last_blockhash(),
         );
         let account_not_found_sig = account_not_found_tx.signatures[0];
         let invalid_blockhash_tx = system_transaction::transfer(
             &mint_keypair,
-            &solana_sdk::pubkey::new_rand(),
+            &solana_pubkey::new_rand(),
             42,
             Hash::default(),
         );
@@ -4459,7 +4418,7 @@ pub mod tests {
             .unwrap()
             .insert(Bank::new_from_parent(
                 bank0.clone(),
-                &solana_sdk::pubkey::new_rand(),
+                &solana_pubkey::new_rand(),
                 1,
             ))
             .clone_without_scheduler();
@@ -4760,7 +4719,7 @@ pub mod tests {
                     let versioned = VoteStateVersions::new_current(vote_state);
                     VoteState::serialize(&versioned, vote_account.data_as_mut_slice()).unwrap();
                     (
-                        solana_sdk::pubkey::new_rand(),
+                        solana_pubkey::new_rand(),
                         (stake, VoteAccount::try_from(vote_account).unwrap()),
                     )
                 })
@@ -4821,11 +4780,11 @@ pub mod tests {
         mint_keypair: &Keypair,
         genesis_hash: &Hash,
     ) -> Vec<RuntimeTransaction<SanitizedTransaction>> {
-        let pubkey = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
         let keypair2 = Keypair::new();
-        let pubkey2 = solana_sdk::pubkey::new_rand();
+        let pubkey2 = solana_pubkey::new_rand();
         let keypair3 = Keypair::new();
-        let pubkey3 = solana_sdk::pubkey::new_rand();
+        let pubkey3 = solana_pubkey::new_rand();
 
         vec![
             RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
@@ -4967,7 +4926,7 @@ pub mod tests {
 
     #[test]
     fn test_rebatch_transactions() {
-        let dummy_leader_pubkey = solana_sdk::pubkey::new_rand();
+        let dummy_leader_pubkey = solana_pubkey::new_rand();
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
@@ -4991,7 +4950,7 @@ pub mod tests {
 
     fn do_test_schedule_batches_for_execution(should_succeed: bool) {
         solana_logger::setup();
-        let dummy_leader_pubkey = solana_sdk::pubkey::new_rand();
+        let dummy_leader_pubkey = solana_pubkey::new_rand();
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
@@ -5206,7 +5165,7 @@ pub mod tests {
 
     #[test]
     fn test_check_block_cost_limit() {
-        let dummy_leader_pubkey = solana_sdk::pubkey::new_rand();
+        let dummy_leader_pubkey = solana_pubkey::new_rand();
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,

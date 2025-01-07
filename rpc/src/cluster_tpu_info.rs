@@ -38,10 +38,7 @@ impl TpuInfo for ClusterTpuInfo {
             .filter_map(|node| {
                 Some((
                     *node.pubkey(),
-                    (
-                        node.tpu(Protocol::UDP).ok()?,
-                        node.tpu(Protocol::QUIC).ok()?,
-                    ),
+                    (node.tpu(Protocol::UDP)?, node.tpu(Protocol::QUIC)?),
                 ))
             })
             .collect();
