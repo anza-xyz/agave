@@ -1021,7 +1021,7 @@ pub struct CliKeyedEpochReward {
     pub reward: Option<CliEpochReward>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CliEpochRewardsMetadata {
     pub epoch: Epoch,

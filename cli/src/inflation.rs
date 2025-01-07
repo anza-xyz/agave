@@ -141,8 +141,7 @@ fn process_rewards(
         }
         Some(CliEpochRewardsMetadata {
             epoch: first_reward.epoch,
-            effective_slot: 0, // Deprecated
-            block_time: 0,     // Deprecated
+            ..CliEpochRewardsMetadata::default()
         })
     } else {
         None
