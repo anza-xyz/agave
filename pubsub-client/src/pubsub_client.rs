@@ -115,7 +115,7 @@ use {
         marker::PhantomData,
         net::TcpStream,
         sync::{
-            atomic::{AtomicBool, Ordering},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
             Arc, RwLock,
         },
         thread::{sleep, JoinHandle},
@@ -246,14 +246,6 @@ where
 
                 Err(PubsubClientError::UnexpectedMessageError(format!(
                     "msg={message_text}"
-                )))
-            }
-            Err(tungstenite::Error::Io(ref err))
-                if err.kind() == std::io::ErrorKind::WouldBlock =>
-            {
-                // Read timed out
-                Err(PubsubClientError::WsError(tungstenite::Error::Io(
-                    std::io::Error::from(std::io::ErrorKind::WouldBlock),
                 )))
             }
             Err(err) => Err(PubsubClientError::WsError(err)),
@@ -842,7 +834,7 @@ impl PubsubClient {
 
             // Send ping if the interval has passed
             if last_ping_time.elapsed() >= ping_interval {
-                if let Err(err) = socket.write().unwrap().write_message(Message::Ping(vec![])) {
+                if let Err(err) = socket.write().unwrap().send(Message::Ping(vec![])) {
                     info!("Error sending ping: {:?}", err);
                     break;
                 }
@@ -868,7 +860,7 @@ impl PubsubClient {
                 .unwrap()
                 .get_mut()
                 .get_mut()
-                .set_read_timeout(Some(Duration::from_secs(0.5)))
+                .set_read_timeout(Some(Duration::from_millis(500)))
                 .unwrap();
 
             match PubsubClientSubscription::read_message(socket) {
