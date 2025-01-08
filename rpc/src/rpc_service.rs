@@ -477,7 +477,7 @@ impl JsonRpcService {
             leader_info,
             send_transaction_service_config.leader_forward_count,
         );
-        let _send_transaction_service = SendTransactionService::new_with_config(
+        let _send_transaction_service = SendTransactionService::new_with_client(
             &bank_forks,
             receiver,
             client,

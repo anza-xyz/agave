@@ -323,7 +323,7 @@ pub const LEADER_INFO_REFRESH_RATE_MS: u64 = 1000;
 /// A struct responsible for holding up-to-date leader information
 /// used for sending transactions.
 #[derive(Clone)]
-pub(crate) struct CurrentLeaderInfo<T>
+pub struct CurrentLeaderInfo<T>
 where
     T: TpuInfoWithSendStatic,
 {

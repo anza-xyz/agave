@@ -27,7 +27,7 @@ use {
         transaction::{self, MessageHash, SanitizedTransaction, VersionedTransaction},
     },
     solana_send_transaction_service::{
-        send_transaction_service::{SendTransactionService, TransactionInfo},
+        send_transaction_service::{self, SendTransactionService, TransactionInfo},
         tpu_info::NullTpuInfo,
         transaction_client::ConnectionCacheClient,
     },
@@ -463,7 +463,16 @@ pub async fn start_tcp_server(
                 0,
             );
 
-            SendTransactionService::new(&bank_forks, receiver, client, 5_000, exit.clone());
+            SendTransactionService::new_with_client(
+                &bank_forks,
+                receiver,
+                client,
+                send_transaction_service::Config {
+                    retry_rate_ms: 5_000,
+                    ..send_transaction_service::Config::default()
+                },
+                exit.clone(),
+            );
 
             let server = BanksServer::new(
                 bank_forks.clone(),
