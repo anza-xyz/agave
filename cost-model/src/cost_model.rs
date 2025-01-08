@@ -686,20 +686,10 @@ mod tests {
             system_transaction::transfer(&mint_keypair, &system_program::id(), 2, start_hash),
         );
 
-        // Feature not enabled - write lock is demoted and does not count towards cost
-        {
-            let tx_cost = CostModel::calculate_cost(&simple_transaction, &FeatureSet::default());
-            assert_eq!(WRITE_LOCK_UNITS, tx_cost.write_lock_cost());
-            assert_eq!(1, tx_cost.writable_accounts().count());
-        }
-
-        // Feature enabled - write lock is demoted but still counts towards cost
-        {
-            let tx_cost =
-                CostModel::calculate_cost(&simple_transaction, &FeatureSet::all_enabled());
-            assert_eq!(2 * WRITE_LOCK_UNITS, tx_cost.write_lock_cost());
-            assert_eq!(1, tx_cost.writable_accounts().count());
-        }
+        // write-lock counts towards cost, even if it is demoted.
+        let tx_cost = CostModel::calculate_cost(&simple_transaction, &FeatureSet::default());
+        assert_eq!(2 * WRITE_LOCK_UNITS, tx_cost.write_lock_cost());
+        assert_eq!(1, tx_cost.writable_accounts().count());
     }
 
     #[test]
