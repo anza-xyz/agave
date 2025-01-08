@@ -9,33 +9,37 @@
 pub use solana_cluster_type::ClusterType;
 #[cfg(feature = "frozen-abi")]
 use solana_frozen_abi_macro::{frozen_abi, AbiExample};
+#[cfg(feature = "serde")]
 use {
     bincode::{deserialize, serialize},
     chrono::{TimeZone, Utc},
     memmap2::Mmap,
-    serde_derive::{Deserialize, Serialize},
-    solana_account::{Account, AccountSharedData},
-    solana_clock::{UnixTimestamp, DEFAULT_TICKS_PER_SLOT},
-    solana_epoch_schedule::EpochSchedule,
-    solana_fee_calculator::FeeRateGovernor,
     solana_hash::Hash,
-    solana_inflation::Inflation,
-    solana_keypair::Keypair,
     solana_native_token::lamports_to_sol,
-    solana_poh_config::PohConfig,
-    solana_pubkey::Pubkey,
-    solana_rent::Rent,
-    solana_sdk_ids::system_program,
     solana_sha256_hasher::hash,
     solana_shred_version::compute_shred_version,
-    solana_signer::Signer,
-    solana_time_utils::years_as_slots,
     std::{
-        collections::BTreeMap,
         fmt,
         fs::{File, OpenOptions},
         io::Write,
         path::{Path, PathBuf},
+    },
+};
+use {
+    solana_account::{Account, AccountSharedData},
+    solana_clock::{UnixTimestamp, DEFAULT_TICKS_PER_SLOT},
+    solana_epoch_schedule::EpochSchedule,
+    solana_fee_calculator::FeeRateGovernor,
+    solana_inflation::Inflation,
+    solana_keypair::Keypair,
+    solana_poh_config::PohConfig,
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
+    solana_sdk_ids::system_program,
+    solana_signer::Signer,
+    solana_time_utils::years_as_slots,
+    std::{
+        collections::BTreeMap,
         time::{SystemTime, UNIX_EPOCH},
     },
 };
@@ -52,7 +56,11 @@ pub const UNUSED_DEFAULT: u64 = 1024;
     derive(AbiExample),
     frozen_abi(digest = "D9VFRSj4fodCuKFC9omQY2zY2Uw8wo6SzJFLeMJaVigm")
 )]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde_derive::Deserialize, serde_derive::Serialize)
+)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GenesisConfig {
     /// when the network (bootstrap validator) was started relative to the UNIX Epoch
     pub creation_time: UnixTimestamp,
@@ -135,15 +143,18 @@ impl GenesisConfig {
         }
     }
 
+    #[cfg(feature = "serde")]
     pub fn hash(&self) -> Hash {
         let serialized = serialize(&self).unwrap();
         hash(&serialized)
     }
 
+    #[cfg(feature = "serde")]
     fn genesis_filename(ledger_path: &Path) -> PathBuf {
         Path::new(ledger_path).join(DEFAULT_GENESIS_FILE)
     }
 
+    #[cfg(feature = "serde")]
     pub fn load(ledger_path: &Path) -> Result<Self, std::io::Error> {
         let filename = Self::genesis_filename(ledger_path);
         let file = OpenOptions::new()
@@ -173,6 +184,7 @@ impl GenesisConfig {
         Ok(genesis_config)
     }
 
+    #[cfg(feature = "serde")]
     pub fn write(&self, ledger_path: &Path) -> Result<(), std::io::Error> {
         let serialized = serialize(&self).map_err(|err| {
             std::io::Error::new(
@@ -219,6 +231,7 @@ impl GenesisConfig {
     }
 }
 
+#[cfg(feature = "serde")]
 impl fmt::Display for GenesisConfig {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
@@ -276,7 +289,7 @@ impl fmt::Display for GenesisConfig {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(feature = "serde", test))]
 mod tests {
     use {super::*, solana_signer::Signer, std::path::PathBuf};
 
