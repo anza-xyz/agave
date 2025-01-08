@@ -56,21 +56,3 @@ fn bench_cost_model(bencher: &mut Bencher) {
         }
     });
 }
-
-#[bench]
-fn bench_cost_model_requested_write_locks(bencher: &mut Bencher) {
-    let BenchSetup {
-        transactions,
-        mut feature_set,
-    } = setup(NUM_TRANSACTIONS_PER_ITER);
-    feature_set.activate(
-        &solana_feature_set::cost_model_requested_write_lock_cost::id(),
-        0,
-    );
-
-    bencher.iter(|| {
-        for transaction in &transactions {
-            let _ = CostModel::calculate_cost(test::black_box(transaction), &feature_set);
-        }
-    });
-}
