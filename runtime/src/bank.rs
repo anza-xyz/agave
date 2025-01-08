@@ -3124,17 +3124,8 @@ impl Bank {
                 )
             })
             .collect::<Result<Vec<_>>>()?;
-        let tx_account_lock_limit = self.get_transaction_account_lock_limit();
-        let disable_intrabatch_account_locks = self
-            .feature_set
-            .is_active(&feature_set::disable_intrabatch_account_locks::id());
-        let lock_results = self.rc.accounts.lock_accounts(
-            sanitized_txs.iter(),
-            tx_account_lock_limit,
-            disable_intrabatch_account_locks,
-        );
         Ok(TransactionBatch::new(
-            lock_results,
+            self.try_lock_accounts(&sanitized_txs),
             self,
             OwnedOrBorrowed::Owned(sanitized_txs),
         ))
@@ -3152,6 +3143,33 @@ impl Bank {
             disable_intrabatch_account_locks,
         )
     }
+
+    /// Attempt to take locks on the accounts in a transaction batch, and their cost
+    /// limited packing status
+    pub fn try_lock_accounts_with_results(
+        &self,
+        txs: &[impl SVMMessage],
+        tx_results: impl Iterator<Item = Result<()>>,
+    ) -> Vec<Result<()>> {
+        let tx_account_lock_limit = self.get_transaction_account_lock_limit();
+        let disable_intrabatch_account_locks = self
+            .feature_set
+            .is_active(&feature_set::disable_intrabatch_account_locks::id());
+        self.rc.accounts.lock_accounts_with_results(
+            txs.iter(),
+            tx_results,
+            tx_account_lock_limit,
+            disable_intrabatch_account_locks,
+        )
+    }
+
+    // HANA TODO ok i think HERE (both functions) is the place i want to dedupe
+    // doing it in `check_age` is wasteful because we already did the work to take locks
+    // doing it in `Accounts::lock_accounts` is better but kind of mixes concerns and forces us to collect iters
+    // we may want to do it in `Bank::try_lock_accounts` above tho because it avoids...
+    // no, we still have to duplicate because the `_with_results` function doesnt use `try_lock_accounts`
+    // NOTE `prepare_batch_for_tests` and `prepare_entry_batch` may also need this logic
+    // actually i think i should add my own `Bank::try_lock_accounts_with_results`
 
     /// Prepare a locked transaction batch from a list of sanitized transactions.
     pub fn prepare_sanitized_batch<'a, 'b, Tx: SVMMessage>(
@@ -3173,17 +3191,11 @@ impl Bank {
         transaction_results: impl Iterator<Item = Result<()>>,
     ) -> TransactionBatch<'a, 'b, Tx> {
         // this lock_results could be: Ok, AccountInUse, WouldExceedBlockMaxLimit or WouldExceedAccountMaxLimit
-        let tx_account_lock_limit = self.get_transaction_account_lock_limit();
-        let disable_intrabatch_account_locks = self
-            .feature_set
-            .is_active(&feature_set::disable_intrabatch_account_locks::id());
-        let lock_results = self.rc.accounts.lock_accounts_with_results(
-            transactions.iter(),
-            transaction_results,
-            tx_account_lock_limit,
-            disable_intrabatch_account_locks,
-        );
-        TransactionBatch::new(lock_results, self, OwnedOrBorrowed::Borrowed(transactions))
+        TransactionBatch::new(
+            self.try_lock_accounts_with_results(transactions, transaction_results),
+            self,
+            OwnedOrBorrowed::Borrowed(transactions),
+        )
     }
 
     /// Prepare a transaction batch from a single transaction without locking accounts
@@ -7000,20 +7012,15 @@ impl Bank {
         &self,
         txs: Vec<Transaction>,
     ) -> TransactionBatch<RuntimeTransaction<SanitizedTransaction>> {
-        let transaction_account_lock_limit = self.get_transaction_account_lock_limit();
         let sanitized_txs = txs
             .into_iter()
             .map(RuntimeTransaction::from_transaction_for_tests)
             .collect::<Vec<_>>();
-        let disable_intrabatch_account_locks = self
-            .feature_set
-            .is_active(&feature_set::disable_intrabatch_account_locks::id());
-        let lock_results = self.rc.accounts.lock_accounts(
-            sanitized_txs.iter(),
-            transaction_account_lock_limit,
-            disable_intrabatch_account_locks,
-        );
-        TransactionBatch::new(lock_results, self, OwnedOrBorrowed::Owned(sanitized_txs))
+        TransactionBatch::new(
+            self.try_lock_accounts(&sanitized_txs),
+            self,
+            OwnedOrBorrowed::Owned(sanitized_txs),
+        )
     }
 
     /// Set the initial accounts data size
