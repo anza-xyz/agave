@@ -170,7 +170,7 @@ use {
             TransactionProcessingConfig, TransactionProcessingEnvironment,
         },
     },
-    solana_svm_transaction::svm_message::SVMMessage,
+    solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
     solana_timings::{ExecuteTimingType, ExecuteTimings},
     solana_vote::vote_account::{VoteAccount, VoteAccountsHashMap},
     std::{
@@ -3132,7 +3132,7 @@ impl Bank {
     }
 
     /// Attempt to take locks on the accounts in a transaction batch
-    pub fn try_lock_accounts(&self, txs: &[impl SVMMessage]) -> Vec<Result<()>> {
+    pub fn try_lock_accounts(&self, txs: &[impl SVMTransaction]) -> Vec<Result<()>> {
         let tx_account_lock_limit = self.get_transaction_account_lock_limit();
         let disable_intrabatch_account_locks = self
             .feature_set
@@ -3148,7 +3148,7 @@ impl Bank {
     /// limited packing status
     pub fn try_lock_accounts_with_results(
         &self,
-        txs: &[impl SVMMessage],
+        txs: &[impl SVMTransaction],
         tx_results: impl Iterator<Item = Result<()>>,
     ) -> Vec<Result<()>> {
         let tx_account_lock_limit = self.get_transaction_account_lock_limit();
@@ -3172,7 +3172,7 @@ impl Bank {
     // actually i think i should add my own `Bank::try_lock_accounts_with_results`
 
     /// Prepare a locked transaction batch from a list of sanitized transactions.
-    pub fn prepare_sanitized_batch<'a, 'b, Tx: SVMMessage>(
+    pub fn prepare_sanitized_batch<'a, 'b, Tx: SVMTransaction>(
         &'a self,
         txs: &'b [Tx],
     ) -> TransactionBatch<'a, 'b, Tx> {
@@ -3185,7 +3185,7 @@ impl Bank {
 
     /// Prepare a locked transaction batch from a list of sanitized transactions, and their cost
     /// limited packing status
-    pub fn prepare_sanitized_batch_with_results<'a, 'b, Tx: SVMMessage>(
+    pub fn prepare_sanitized_batch_with_results<'a, 'b, Tx: SVMTransaction>(
         &'a self,
         transactions: &'b [Tx],
         transaction_results: impl Iterator<Item = Result<()>>,
