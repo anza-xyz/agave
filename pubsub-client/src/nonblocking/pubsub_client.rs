@@ -198,7 +198,7 @@ use {
         net::TcpStream,
         sync::{mpsc, oneshot},
         task::JoinHandle,
-        time::{interval, sleep, Duration, Interval},
+        time::{interval, Duration, Interval},
     },
     tokio_stream::wrappers::UnboundedReceiverStream,
     tokio_tungstenite::{
