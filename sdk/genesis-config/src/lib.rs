@@ -13,6 +13,7 @@ use {
     bincode::{deserialize, serialize},
     chrono::{TimeZone, Utc},
     memmap2::Mmap,
+    serde_derive::{Deserialize, Serialize},
     solana_account::{Account, AccountSharedData},
     solana_clock::{UnixTimestamp, DEFAULT_TICKS_PER_SLOT},
     solana_epoch_schedule::EpochSchedule,
@@ -51,11 +52,7 @@ pub const UNUSED_DEFAULT: u64 = 1024;
     derive(AbiExample),
     frozen_abi(digest = "D9VFRSj4fodCuKFC9omQY2zY2Uw8wo6SzJFLeMJaVigm")
 )]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde_derive::Deserialize, serde_derive::Serialize)
-)]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GenesisConfig {
     /// when the network (bootstrap validator) was started relative to the UNIX Epoch
     pub creation_time: UnixTimestamp,
