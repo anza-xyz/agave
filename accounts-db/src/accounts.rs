@@ -670,10 +670,14 @@ mod tests {
             account::{AccountSharedData, WritableAccount},
             address_lookup_table::state::LookupTableMeta,
             hash::Hash,
-            instruction::CompiledInstruction,
-            message::{v0::MessageAddressTableLookup, Message, MessageHeader},
+            instruction::{AccountMeta, CompiledInstruction, Instruction},
+            message::{
+                v0::MessageAddressTableLookup, LegacyMessage, Message, MessageHeader,
+                SanitizedMessage,
+            },
             native_loader,
-            signature::{signers::Signers, Keypair, Signer},
+            reserved_account_keys::ReservedAccountKeys,
+            signature::{signers::Signers, Keypair, Signature, Signer},
             transaction::{Transaction, TransactionError, MAX_TX_ACCOUNT_LOCKS},
         },
         std::{
@@ -695,6 +699,23 @@ mod tests {
             message,
             recent_blockhash,
         ))
+    }
+
+    fn sanitized_tx_from_metas(accounts: Vec<AccountMeta>) -> SanitizedTransaction {
+        let instruction = Instruction {
+            accounts,
+            program_id: Pubkey::default(),
+            data: vec![],
+        };
+
+        let message = Message::new(&[instruction], None);
+
+        let sanitized_message = SanitizedMessage::Legacy(LegacyMessage::new(
+            message,
+            &ReservedAccountKeys::empty_key_set(),
+        ));
+
+        SanitizedTransaction::new_for_tests(sanitized_message, vec![Signature::new_unique()], false)
     }
 
     #[test]
@@ -1335,6 +1356,89 @@ mod tests {
             .lock()
             .unwrap()
             .is_locked_write(&keypair2.pubkey()));
+    }
+
+    #[test_case(false; "old")]
+    #[test_case(true; "simd83")]
+    fn test_accounts_locks_intrabatch_conflicts(disable_intrabatch_account_locks: bool) {
+        let pubkey = Pubkey::new_unique();
+        let account_data = AccountSharedData::new(1, 0, &Pubkey::default());
+        let accounts_db = Arc::new(AccountsDb::new_single_for_tests());
+        accounts_db.store_for_tests(
+            0,
+            &[
+                (&Pubkey::default(), &account_data),
+                (&pubkey, &account_data),
+            ],
+        );
+
+        let r_tx = sanitized_tx_from_metas(vec![AccountMeta {
+            pubkey,
+            is_writable: false,
+            is_signer: false,
+        }]);
+
+        let w_tx = sanitized_tx_from_metas(vec![AccountMeta {
+            pubkey,
+            is_writable: true,
+            is_signer: false,
+        }]);
+
+        // one w tx alone always works
+        let accounts = Accounts::new(accounts_db.clone());
+        let results = accounts.lock_accounts(
+            [w_tx.clone()].iter(),
+            MAX_TX_ACCOUNT_LOCKS,
+            disable_intrabatch_account_locks,
+        );
+
+        assert_eq!(results, vec![Ok(())]);
+
+        // wr conflict cross-batch always fails
+        let results = accounts.lock_accounts(
+            [r_tx.clone()].iter(),
+            MAX_TX_ACCOUNT_LOCKS,
+            disable_intrabatch_account_locks,
+        );
+
+        assert_eq!(results, vec![Err(TransactionError::AccountInUse)]);
+
+        // ww conflict cross-batch always fails
+        let results = accounts.lock_accounts(
+            [w_tx.clone()].iter(),
+            MAX_TX_ACCOUNT_LOCKS,
+            disable_intrabatch_account_locks,
+        );
+
+        assert_eq!(results, vec![Err(TransactionError::AccountInUse)]);
+
+        // wr conflict in-batch succeeds or fails based on feature
+        let accounts = Accounts::new(accounts_db.clone());
+        let results = accounts.lock_accounts(
+            [w_tx.clone(), r_tx.clone()].iter(),
+            MAX_TX_ACCOUNT_LOCKS,
+            disable_intrabatch_account_locks,
+        );
+
+        if disable_intrabatch_account_locks {
+            assert_eq!(results, vec![Ok(()), Ok(())]);
+        } else {
+            assert_eq!(results, vec![Ok(()), Err(TransactionError::AccountInUse)]);
+        }
+
+        // ww conflict in-batch succeeds or fails based on feature
+        let accounts = Accounts::new(accounts_db.clone());
+        let results = accounts.lock_accounts(
+            [w_tx.clone(), r_tx.clone()].iter(),
+            MAX_TX_ACCOUNT_LOCKS,
+            disable_intrabatch_account_locks,
+        );
+
+        if disable_intrabatch_account_locks {
+            assert_eq!(results, vec![Ok(()), Ok(())]);
+        } else {
+            assert_eq!(results, vec![Ok(()), Err(TransactionError::AccountInUse)]);
+        }
     }
 
     #[test]
