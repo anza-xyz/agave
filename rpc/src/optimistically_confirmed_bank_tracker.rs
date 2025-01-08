@@ -333,7 +333,7 @@ impl OptimisticallyConfirmedBankTracker {
                             num_failed_transactions: bank.transaction_error_count(),
                             max_transactions_per_entry: bank.transactions_per_entry_max(),
                         },
-                        hash: bank.hash().to_string(),
+                        hash: bank.last_blockhash().to_string(),
                     });
 
                     Self::notify_slot_status(
