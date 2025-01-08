@@ -6,7 +6,8 @@ use {
 };
 
 #[cfg(not(target_os = "linux"))]
-struct ThreadSchedulePolicy {}
+#[derive(Clone, Copy)]
+pub(crate) struct ThreadSchedulePolicy {}
 
 static CORE_COUNT: OnceLock<usize> = OnceLock::new();
 
@@ -67,25 +68,31 @@ pub fn parse_policy(policy: &str) -> ThreadSchedulePolicy {
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn parse_policy(policy: &str) -> ThreadSchedulePolicy {
-    ThreadSchedulePolicy
+pub(crate) fn parse_policy(_policy: &str) -> ThreadSchedulePolicy {
+    ThreadSchedulePolicy {}
 }
 
-///Applies policy to the calling thread
-pub fn apply_policy(
-    alloc: &CoreAllocation,
-    policy: ThreadSchedulePolicy,
-    priority: u8,
-    chosen_cores_mask: &std::sync::Mutex<Vec<usize>>,
-) {
-    #[cfg(target_os = "linux")]
+#[cfg(not(target_os = "linux"))]
+fn apply_thread_scheduler_policy(_policy: ThreadSchedulePolicy, _priority: u8) {}
+
+#[cfg(target_os = "linux")]
+fn apply_thread_scheduler_policy(policy: ThreadSchedulePolicy, priority: u8) {
     if let Err(e) = std::thread::current().set_priority_and_policy(
         policy,
         thread_priority::ThreadPriority::Crossplatform((priority).try_into().unwrap()),
     ) {
         panic!("Can not set thread priority, OS error {:?}", e);
     }
+}
 
+///Applies policy to the calling thread
+pub(crate) fn apply_policy(
+    alloc: &CoreAllocation,
+    policy: ThreadSchedulePolicy,
+    priority: u8,
+    chosen_cores_mask: &std::sync::Mutex<Vec<usize>>,
+) {
+    apply_thread_scheduler_policy(policy, priority);
     match alloc {
         CoreAllocation::PinnedCores { min: _, max: _ } => {
             let mut lg = chosen_cores_mask

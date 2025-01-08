@@ -202,9 +202,11 @@ impl ThreadManager {
 
 #[cfg(test)]
 mod tests {
+    use {crate::ThreadManagerConfig, std::io::Read};
+    #[cfg(target_os = "linux")]
     use {
-        crate::{CoreAllocation, NativeConfig, RayonConfig, ThreadManager, ThreadManagerConfig},
-        std::{collections::HashMap, io::Read},
+        crate::{CoreAllocation, NativeConfig, RayonConfig, ThreadManager},
+        std::collections::HashMap,
     };
 
     #[test]
@@ -233,8 +235,6 @@ mod tests {
         let affinity = affinity::get_thread_affinity().unwrap();
         assert_eq!(affinity, expect_cores, "{}", error_msg);
     }
-    #[cfg(not(target_os = "linux"))]
-    fn validate_affinity(_expect_cores: &[usize], _error_msg: &str) {}
 
     /*  #[test]
     fn thread_priority() {
@@ -311,6 +311,7 @@ mod tests {
             .unwrap();
     }*/
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn process_affinity() {
         let conf = ThreadManagerConfig {
@@ -351,6 +352,7 @@ mod tests {
         thread2.join().unwrap();
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn rayon_affinity() {
         let conf = ThreadManagerConfig {
