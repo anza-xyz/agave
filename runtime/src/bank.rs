@@ -5765,7 +5765,7 @@ impl Bank {
     pub fn get_lattice_snapshot_hash(&self) -> SnapshotHash {
         SnapshotHash::new(
             &MerkleOrLatticeAccountsHash::Lattice,
-            self.get_epoch_accounts_hash_to_serialize().as_ref(),
+            None,
             Some(self.accounts_lt_hash.lock().unwrap().0.checksum()),
         )
     }
