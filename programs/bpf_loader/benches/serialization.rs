@@ -1,15 +1,11 @@
-#![feature(test)]
-
-extern crate test;
-
 use {
+    criterion::{criterion_group, criterion_main, Criterion},
     solana_account::{Account, AccountSharedData},
     solana_bpf_loader_program::serialization::serialize_parameters,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated},
     solana_transaction_context::{IndexOfAccount, InstructionAccount, TransactionContext},
-    test::Bencher,
 };
 
 fn create_inputs(owner: Pubkey, num_instruction_accounts: usize) -> TransactionContext {
@@ -117,71 +113,90 @@ fn create_inputs(owner: Pubkey, num_instruction_accounts: usize) -> TransactionC
     transaction_context
 }
 
-#[bench]
-fn bench_serialize_unaligned(bencher: &mut Bencher) {
+fn bench_serialize_unaligned(c: &mut Criterion) {
     let transaction_context = create_inputs(bpf_loader_deprecated::id(), 7);
     let instruction_context = transaction_context
         .get_current_instruction_context()
         .unwrap();
-    bencher.iter(|| {
-        let _ = serialize_parameters(&transaction_context, instruction_context, false).unwrap();
+
+    c.bench_function("serialize_unaligned", |b| {
+        b.iter(|| {
+            let _ = serialize_parameters(&transaction_context, instruction_context, false).unwrap();
+        });
     });
 }
 
-#[bench]
-fn bench_serialize_unaligned_copy_account_data(bencher: &mut Bencher) {
+fn bench_serialize_unaligned_copy_account_data(c: &mut Criterion) {
     let transaction_context = create_inputs(bpf_loader_deprecated::id(), 7);
     let instruction_context = transaction_context
         .get_current_instruction_context()
         .unwrap();
-    bencher.iter(|| {
-        let _ = serialize_parameters(&transaction_context, instruction_context, true).unwrap();
+    c.bench_function("serialize_unaligned_copy_account_data", |b| {
+        b.iter(|| {
+            let _ = serialize_parameters(&transaction_context, instruction_context, true).unwrap();
+        });
     });
 }
 
-#[bench]
-fn bench_serialize_aligned(bencher: &mut Bencher) {
+fn bench_serialize_aligned(c: &mut Criterion) {
     let transaction_context = create_inputs(bpf_loader::id(), 7);
     let instruction_context = transaction_context
         .get_current_instruction_context()
         .unwrap();
 
-    bencher.iter(|| {
-        let _ = serialize_parameters(&transaction_context, instruction_context, false).unwrap();
+    c.bench_function("serialize_aligned", |b| {
+        b.iter(|| {
+            let _ = serialize_parameters(&transaction_context, instruction_context, false).unwrap();
+        });
     });
 }
 
-#[bench]
-fn bench_serialize_aligned_copy_account_data(bencher: &mut Bencher) {
+fn bench_serialize_aligned_copy_account_data(c: &mut Criterion) {
     let transaction_context = create_inputs(bpf_loader::id(), 7);
     let instruction_context = transaction_context
         .get_current_instruction_context()
         .unwrap();
 
-    bencher.iter(|| {
-        let _ = serialize_parameters(&transaction_context, instruction_context, true).unwrap();
+    c.bench_function("serialize_aligned_copy_account_data", |b| {
+        b.iter(|| {
+            let _ = serialize_parameters(&transaction_context, instruction_context, true).unwrap();
+        });
     });
 }
 
-#[bench]
-fn bench_serialize_unaligned_max_accounts(bencher: &mut Bencher) {
+fn bench_serialize_unaligned_max_accounts(c: &mut Criterion) {
     let transaction_context = create_inputs(bpf_loader_deprecated::id(), 255);
     let instruction_context = transaction_context
         .get_current_instruction_context()
         .unwrap();
-    bencher.iter(|| {
-        let _ = serialize_parameters(&transaction_context, instruction_context, false).unwrap();
+
+    c.bench_function("serialize_unaligned_max_accounts", |b| {
+        b.iter(|| {
+            let _ = serialize_parameters(&transaction_context, instruction_context, false).unwrap();
+        });
     });
 }
 
-#[bench]
-fn bench_serialize_aligned_max_accounts(bencher: &mut Bencher) {
+fn bench_serialize_aligned_max_accounts(c: &mut Criterion) {
     let transaction_context = create_inputs(bpf_loader::id(), 255);
     let instruction_context = transaction_context
         .get_current_instruction_context()
         .unwrap();
 
-    bencher.iter(|| {
-        let _ = serialize_parameters(&transaction_context, instruction_context, false).unwrap();
+    c.bench_function("serialize_aligned_max_accounts", |b| {
+        b.iter(|| {
+            let _ = serialize_parameters(&transaction_context, instruction_context, false).unwrap();
+        });
     });
 }
+
+criterion_group!(
+    benches,
+    bench_serialize_unaligned,
+    bench_serialize_unaligned_copy_account_data,
+    bench_serialize_aligned,
+    bench_serialize_aligned_copy_account_data,
+    bench_serialize_unaligned_max_accounts,
+    bench_serialize_aligned_max_accounts
+);
+criterion_main!(benches);

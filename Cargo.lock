@@ -6274,6 +6274,7 @@ dependencies = [
  "assert_matches",
  "bincode",
  "byteorder",
+ "criterion",
  "libsecp256k1",
  "rand 0.8.5",
  "scopeguard",
