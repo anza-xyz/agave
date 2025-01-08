@@ -1,5 +1,5 @@
 use {
-    crate::policy::{apply_policy, CoreAllocation},
+    crate::policy::{apply_policy, parse_policy, CoreAllocation},
     serde::{Deserialize, Serialize},
     solana_metrics::datapoint_info,
     std::{
@@ -20,7 +20,9 @@ pub struct TokioConfig {
     pub worker_threads: usize,
     ///max number of blocking threads tokio is allowed to spawn
     pub max_blocking_threads: usize,
+    /// Priority in range 1..99
     pub priority: u8,
+    pub policy: String,
     pub stack_size_bytes: usize,
     pub event_interval: u32,
     pub core_allocation: CoreAllocation,
@@ -32,7 +34,8 @@ impl Default for TokioConfig {
             core_allocation: CoreAllocation::OsDefault,
             worker_threads: 8,
             max_blocking_threads: 1,
-            priority: 0,
+            priority: crate::policy::DEFAULT_PRIORITY,
+            policy: "OTHER".to_owned(),
             stack_size_bytes: 2 * 1024 * 1024,
             event_interval: 61,
         }
@@ -116,7 +119,12 @@ impl TokioRuntime {
             // todo - tracing
             //let tname = cur_thread.name().unwrap();
             //println!("thread {tname} id {tid} started");
-            apply_policy(&c.core_allocation, c.priority, &chosen_cores_mask);
+            apply_policy(
+                &c.core_allocation,
+                parse_policy(&c.policy),
+                c.priority,
+                &chosen_cores_mask,
+            );
         });
         Ok(TokioRuntime {
             tokio: builder.build()?,

@@ -1,5 +1,5 @@
 use {
-    crate::policy::{apply_policy, CoreAllocation},
+    crate::policy::{apply_policy, parse_policy, CoreAllocation},
     anyhow::bail,
     log::error,
     serde::{Deserialize, Serialize},
@@ -18,7 +18,9 @@ use {
 pub struct NativeConfig {
     pub core_allocation: CoreAllocation,
     pub max_threads: usize,
+    /// Priority in range 1..99
     pub priority: u8,
+    pub policy: String,
     pub stack_size_bytes: usize,
 }
 
@@ -27,7 +29,8 @@ impl Default for NativeConfig {
         Self {
             core_allocation: CoreAllocation::OsDefault,
             max_threads: 16,
-            priority: 0,
+            priority: crate::policy::DEFAULT_PRIORITY,
+            policy: "OTHER".to_owned(),
             stack_size_bytes: 2 * 1024 * 1024,
         }
     }
@@ -131,12 +134,13 @@ impl NativeThreadRuntime {
 
         let core_alloc = self.config.core_allocation.clone();
         let priority = self.config.priority;
+        let policy = parse_policy(&self.config.policy);
         let chosen_cores_mask = Mutex::new(self.config.core_allocation.as_core_mask_vector());
         let jh = std::thread::Builder::new()
             .name(name)
             .stack_size(self.config.stack_size_bytes)
             .spawn(move || {
-                apply_policy(&core_alloc, priority, &chosen_cores_mask);
+                apply_policy(&core_alloc, policy, priority, &chosen_cores_mask);
                 f()
             })?;
         let rc = self.running_count.fetch_add(1, Ordering::Relaxed);

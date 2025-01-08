@@ -57,13 +57,9 @@ fn main() -> anyhow::Result<()> {
         let cfg: ThreadManagerConfig = toml::from_str(&buf)?;
 
         let manager = ThreadManager::new(cfg).unwrap();
-        let tokio1 = manager
-            .get_tokio("axum1")
-            .expect("Expecting runtime named axum1");
+        let tokio1 = manager.get_tokio("axum1");
         tokio1.start_metrics_sampling(Duration::from_secs(1));
-        let tokio2 = manager
-            .get_tokio("axum2")
-            .expect("Expecting runtime named axum2");
+        let tokio2 = manager.get_tokio("axum2");
         tokio2.start_metrics_sampling(Duration::from_secs(1));
 
         let wrk_cores: Vec<_> = (32..64).collect();

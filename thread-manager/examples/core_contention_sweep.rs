@@ -109,36 +109,15 @@ fn main() -> anyhow::Result<()> {
             let (tokio1, tokio2) = match regime {
                 Regime::Shared => {
                     manager = ThreadManager::new(make_config_shared(core_count)).unwrap();
-                    (
-                        manager
-                            .get_tokio("axum1")
-                            .expect("Expecting runtime named axum1"),
-                        manager
-                            .get_tokio("axum2")
-                            .expect("Expecting runtime named axum2"),
-                    )
+                    (manager.get_tokio("axum1"), manager.get_tokio("axum2"))
                 }
                 Regime::Dedicated => {
                     manager = ThreadManager::new(make_config_dedicated(core_count)).unwrap();
-                    (
-                        manager
-                            .get_tokio("axum1")
-                            .expect("Expecting runtime named axum1"),
-                        manager
-                            .get_tokio("axum2")
-                            .expect("Expecting runtime named axum2"),
-                    )
+                    (manager.get_tokio("axum1"), manager.get_tokio("axum2"))
                 }
                 Regime::Single => {
                     manager = ThreadManager::new(make_config_shared(core_count)).unwrap();
-                    (
-                        manager
-                            .get_tokio("axum1")
-                            .expect("Expecting runtime named axum1"),
-                        manager
-                            .get_tokio("axum2")
-                            .expect("Expecting runtime named axum2"),
-                    )
+                    (manager.get_tokio("axum1"), manager.get_tokio("axum2"))
                 }
             };
 

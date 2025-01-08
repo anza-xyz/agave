@@ -8,6 +8,24 @@ and context switches that would occur if Rayon was entirely unaware it was runni
 tokio, and each was to spawn as many threads as there are cores.
 
 # Supported threading models
+## Affinity
+All threading models allow setting core affinity, but only on linux
+
+For core affinity you can set e.g.
+```toml
+core_allocation.DedicatedCoreSet = { min = 16, max = 64 }
+```
+to pin the pool to cores 16-64.
+
+## Scheduling policy and priority
+If you want you can set thread scheduling policy and priority. Keep in mind that this will likely require
+```bash
+ sudo setcap cap_sys_nice+ep
+ ```
+or root priviledges to run the resulting process.
+To see which policies are supported check (the sources)[./src/policy.rs]
+If you use realtime policies, priority to values from 1 (lowest) to 99 (highest) are possible.
+
 ## Tokio
 Multiple tokio runtimes can be created, and each may be assigned its own pool of CPU cores to run on.
 Number of worker and blocking threads is configurable, as are thread priorities for the pool.

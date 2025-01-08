@@ -120,22 +120,44 @@ impl ThreadManager {
         }
     }
 
-    pub fn get_native(&self, name: &str) -> Option<&NativeThreadRuntime> {
+    pub fn try_get_native(&self, name: &str) -> Option<&NativeThreadRuntime> {
         self.lookup(
             name,
             &self.native_runtime_mapping,
             &self.native_thread_runtimes,
         )
     }
+    pub fn get_native(&self, name: &str) -> &NativeThreadRuntime {
+        if let Some(runtime) = self.try_get_native(name) {
+            runtime
+        } else {
+            panic!("Native thread pool {name} not configured!");
+        }
+    }
 
-    pub fn get_rayon(&self, name: &str) -> Option<&RayonRuntime> {
+    pub fn try_get_rayon(&self, name: &str) -> Option<&RayonRuntime> {
         self.lookup(name, &self.rayon_runtime_mapping, &self.rayon_runtimes)
     }
 
-    pub fn get_tokio(&self, name: &str) -> Option<&TokioRuntime> {
+    pub fn get_rayon(&self, name: &str) -> &RayonRuntime {
+        if let Some(runtime) = self.try_get_rayon(name) {
+            runtime
+        } else {
+            panic!("Rayon thread pool {name} not configured!");
+        }
+    }
+
+    pub fn try_get_tokio(&self, name: &str) -> Option<&TokioRuntime> {
         self.lookup(name, &self.tokio_runtime_mapping, &self.tokio_runtimes)
     }
 
+    pub fn get_tokio(&self, name: &str) -> &TokioRuntime {
+        if let Some(runtime) = self.try_get_tokio(name) {
+            runtime
+        } else {
+            panic!("Tokio runtime {name} not configured!");
+        }
+    }
     pub fn set_process_affinity(config: &ThreadManagerConfig) -> anyhow::Result<Vec<usize>> {
         let chosen_cores_mask = config.default_core_allocation.as_core_mask_vector();
 
@@ -214,6 +236,81 @@ mod tests {
     #[cfg(not(target_os = "linux"))]
     fn validate_affinity(_expect_cores: &[usize], _error_msg: &str) {}
 
+    /*  #[test]
+    fn thread_priority() {
+        let priority_high = 10;
+        let priority_default = crate::policy::DEFAULT_PRIORITY;
+        let priority_low = 1;
+        let conf = ThreadManagerConfig {
+            native_configs: HashMap::from([
+                (
+                    "high".to_owned(),
+                    NativeConfig {
+                        priority: priority_high,
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "default".to_owned(),
+                    NativeConfig {
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "low".to_owned(),
+                    NativeConfig {
+                        priority: priority_low,
+                        ..Default::default()
+                    },
+                ),
+            ]),
+            ..Default::default()
+        };
+
+        let manager = ThreadManager::new(conf).unwrap();
+        let high = manager.get_native("high");
+        let low = manager.get_native("low");
+        let default = manager.get_native("default");
+
+        high.spawn(move || {
+            let prio =
+                thread_priority::get_thread_priority(thread_priority::thread_native_id()).unwrap();
+            assert_eq!(
+                prio,
+                thread_priority::ThreadPriority::Crossplatform((priority_high).try_into().unwrap())
+            );
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+        low.spawn(move || {
+            let prio =
+                thread_priority::get_thread_priority(thread_priority::thread_native_id()).unwrap();
+            assert_eq!(
+                prio,
+                thread_priority::ThreadPriority::Crossplatform((priority_low).try_into().unwrap())
+            );
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+        default
+            .spawn(move || {
+                let prio =
+                    thread_priority::get_thread_priority(thread_priority::thread_native_id())
+                        .unwrap();
+                assert_eq!(
+                    prio,
+                    thread_priority::ThreadPriority::Crossplatform(
+                        (priority_default).try_into().unwrap()
+                    )
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }*/
+
     #[test]
     fn process_affinity() {
         let conf = ThreadManagerConfig {
@@ -222,7 +319,6 @@ mod tests {
                 NativeConfig {
                     core_allocation: CoreAllocation::DedicatedCoreSet { min: 0, max: 4 },
                     max_threads: 5,
-                    priority: 0,
                     ..Default::default()
                 },
             )]),
@@ -232,7 +328,7 @@ mod tests {
         };
 
         let manager = ThreadManager::new(conf).unwrap();
-        let runtime = manager.get_native("test").unwrap();
+        let runtime = manager.get_native("test");
 
         let thread1 = runtime
             .spawn(|| {
@@ -263,7 +359,6 @@ mod tests {
                 RayonConfig {
                     core_allocation: CoreAllocation::DedicatedCoreSet { min: 1, max: 4 },
                     worker_threads: 3,
-                    priority: 0,
                     ..Default::default()
                 },
             )]),
@@ -273,7 +368,7 @@ mod tests {
         };
 
         let manager = ThreadManager::new(conf).unwrap();
-        let rayon_runtime = manager.get_rayon("test").unwrap();
+        let rayon_runtime = manager.get_rayon("test");
 
         let _rr = rayon_runtime.rayon_pool.broadcast(|ctx| {
             println!("Rayon thread {} reporting", ctx.index());
