@@ -45,7 +45,6 @@ solana-geyser-plugin-manager = { workspace = true }
 solana-gossip = { workspace = true }
 solana-ledger = { workspace = true }
 solana-logger = { workspace = true }
-solana-memory-management = { workspace = true }
 solana-metrics = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-perf = { workspace = true }
@@ -80,6 +79,7 @@ tempfile = { workspace = true }
 
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
 jemallocator = { workspace = true }
+solana-memory-management = { workspace = true }
 
 [target."cfg(unix)".dependencies]
 libc = { workspace = true }

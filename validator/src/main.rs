@@ -1,7 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
-//#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
-//use jemallocator::Jemalloc;
 
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+use jemallocator::Jemalloc;
 #[cfg(all(
     feature = "alloc_monitor",
     not(any(target_env = "msvc", target_os = "freebsd"))
@@ -104,14 +104,14 @@ use {
     not(any(target_env = "msvc", target_os = "freebsd"))
 ))]
 #[global_allocator]
-static GLOBAL_ALLOC_WRAP: JemWrapAllocator = JemWrapAllocator::new();
+static GLOBAL: JemWrapAllocator = JemWrapAllocator::new();
 
 #[cfg(all(
     not(feature = "alloc_monitor"),
     not(any(target_env = "msvc", target_os = "freebsd"))
 ))]
 #[global_allocator]
-static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
+static GLOBAL: Jemalloc = Jemalloc;
 
 #[derive(Debug, PartialEq, Eq)]
 enum Operation {

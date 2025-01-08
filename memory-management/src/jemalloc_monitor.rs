@@ -1,3 +1,4 @@
+#![cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
 use {
     jemallocator::Jemalloc,
     std::{

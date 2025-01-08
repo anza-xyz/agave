@@ -1,3 +1,4 @@
+#![cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
 use {
     crate::jemalloc_monitor::*, log::Level, solana_metrics::datapoint::DataPoint,
     std::time::Duration,
@@ -47,15 +48,20 @@ fn watcher_thread() {
     }
 }
 
+//Agave specific helper to watch for memory usage
 pub fn setup_watch_memory_usage() {
     let mut mps = MemPoolStats::default();
-    // his list is brittle but there does not appear to be a better way
+    // this list is brittle but there does not appear to be a better way
+    // Order of entries matters here, as first matching prefix will be used
+    // So solGossip will match solGossipConsume as well
     for thread in [
         "solPohTickProd",
         "solSigVerTpuVote",
         "solRcvrGossip",
         "solSigVerTpu",
         "solClusterInfo",
+        "solGossipCons",
+        "solGossipWork",
         "solGossip",
         "solRepair",
         "FetchStage",
@@ -67,11 +73,9 @@ pub fn setup_watch_memory_usage() {
         "solSigVerify",
         "solRetransmit",
         "solRunGossip",
-        "solGossipWork",
         "solWinInsert",
-        "solGossipCons",
-        "solAccounts",
         "solAccountsLo",
+        "solAccounts",
         "solAcctHash",
         "solVoteSigVerTpu",
         "solTrSigVerTpu",
