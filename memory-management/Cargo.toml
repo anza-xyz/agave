@@ -10,8 +10,10 @@ edition = { workspace = true }
 
 [dependencies]
 arrayvec = { workspace = true }
-jemallocator = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }
 memchr = "2.7.4"
 solana-metrics = { workspace = true }
+
+[target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
+jemallocator = { workspace = true }
