@@ -79,7 +79,7 @@ fn check_program_account(
     Ok(*state)
 }
 
-pub fn process_instruction_write(
+fn process_instruction_write(
     invoke_context: &mut InvokeContext,
     offset: u32,
     bytes: Vec<u8>,
@@ -116,7 +116,7 @@ pub fn process_instruction_write(
     Ok(())
 }
 
-pub fn process_instruction_truncate(
+fn process_instruction_truncate(
     invoke_context: &mut InvokeContext,
     new_size: u32,
 ) -> Result<(), InstructionError> {
@@ -204,9 +204,7 @@ pub fn process_instruction_truncate(
     Ok(())
 }
 
-pub fn process_instruction_deploy(
-    invoke_context: &mut InvokeContext,
-) -> Result<(), InstructionError> {
+fn process_instruction_deploy(invoke_context: &mut InvokeContext) -> Result<(), InstructionError> {
     let log_collector = invoke_context.get_log_collector();
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
@@ -283,9 +281,7 @@ pub fn process_instruction_deploy(
     Ok(())
 }
 
-pub fn process_instruction_retract(
-    invoke_context: &mut InvokeContext,
-) -> Result<(), InstructionError> {
+fn process_instruction_retract(invoke_context: &mut InvokeContext) -> Result<(), InstructionError> {
     let log_collector = invoke_context.get_log_collector();
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
@@ -327,7 +323,7 @@ pub fn process_instruction_retract(
     Ok(())
 }
 
-pub fn process_instruction_transfer_authority(
+fn process_instruction_transfer_authority(
     invoke_context: &mut InvokeContext,
 ) -> Result<(), InstructionError> {
     let log_collector = invoke_context.get_log_collector();
@@ -359,7 +355,7 @@ pub fn process_instruction_transfer_authority(
     Ok(())
 }
 
-pub fn process_instruction_finalize(
+fn process_instruction_finalize(
     invoke_context: &mut InvokeContext,
 ) -> Result<(), InstructionError> {
     let log_collector = invoke_context.get_log_collector();
@@ -419,7 +415,7 @@ declare_builtin_function!(
     }
 );
 
-pub fn process_instruction_inner(
+fn process_instruction_inner(
     invoke_context: &mut InvokeContext,
 ) -> Result<u64, Box<dyn std::error::Error>> {
     let log_collector = invoke_context.get_log_collector();

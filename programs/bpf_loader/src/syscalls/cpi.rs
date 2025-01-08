@@ -2602,7 +2602,7 @@ mod tests {
         assert_eq!(caller_account.original_data_len, original_data_len);
     }
 
-    pub type TestTransactionAccount = (Pubkey, AccountSharedData, bool);
+    type TestTransactionAccount = (Pubkey, AccountSharedData, bool);
     struct MockCallerAccount {
         lamports: u64,
         owner: Pubkey,
