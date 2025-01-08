@@ -3132,7 +3132,7 @@ impl Bank {
     }
 
     /// Attempt to take locks on the accounts in a transaction batch
-    pub fn try_lock_accounts(&self, txs: &[impl SVMTransaction]) -> Vec<Result<()>> {
+    pub fn try_lock_accounts(&self, txs: &[impl SVMMessage]) -> Vec<Result<()>> {
         let tx_account_lock_limit = self.get_transaction_account_lock_limit();
         let disable_intrabatch_account_locks = self
             .feature_set
@@ -3148,7 +3148,7 @@ impl Bank {
     /// limited packing status
     pub fn try_lock_accounts_with_results(
         &self,
-        txs: &[impl SVMTransaction],
+        txs: &[impl SVMMessage],
         tx_results: impl Iterator<Item = Result<()>>,
     ) -> Vec<Result<()>> {
         let tx_account_lock_limit = self.get_transaction_account_lock_limit();
@@ -3163,21 +3163,24 @@ impl Bank {
         )
     }
 
-    // HANA TODO ok i think HERE (both functions) is the place i want to dedupe
-    // doing it in `check_age` is wasteful because we already did the work to take locks
-    // doing it in `Accounts::lock_accounts` is better but kind of mixes concerns and forces us to collect iters
-    // we may want to do it in `Bank::try_lock_accounts` above tho because it avoids...
-    // no, we still have to duplicate because the `_with_results` function doesnt use `try_lock_accounts`
-    // NOTE `prepare_batch_for_tests` and `prepare_entry_batch` may also need this logic
-    // actually i think i should add my own `Bank::try_lock_accounts_with_results`
-
     /// Prepare a locked transaction batch from a list of sanitized transactions.
     pub fn prepare_sanitized_batch<'a, 'b, Tx: SVMTransaction>(
         &'a self,
         txs: &'b [Tx],
     ) -> TransactionBatch<'a, 'b, Tx> {
+        // HANA TODO there is probably something clever i can do where
+        // if we have no duplicates we never allocate the results vector at all
+        // NOTE we should gate this, leaving it open to see what tests fail
+        let mut deduped_tx_results: Vec<Result<()>> = vec![Ok(()); txs.len()];
+        let mut batch_signatures = AHashSet::with_capacity(txs.len());
+        for (i, tx) in txs.iter().enumerate() {
+            if batch_signatures.insert(tx.signature()) {
+                deduped_tx_results[i] = Err(TransactionError::AccountInUse);
+            }
+        }
+
         TransactionBatch::new(
-            self.try_lock_accounts(txs),
+            self.try_lock_accounts_with_results(txs, deduped_tx_results.into_iter()),
             self,
             OwnedOrBorrowed::Borrowed(txs),
         )
@@ -3191,8 +3194,19 @@ impl Bank {
         transaction_results: impl Iterator<Item = Result<()>>,
     ) -> TransactionBatch<'a, 'b, Tx> {
         // this lock_results could be: Ok, AccountInUse, WouldExceedBlockMaxLimit or WouldExceedAccountMaxLimit
+
+        // HANA TODO if possible, change the callers to pass owned memory instead of an iter
+        // NOTE we should gate this, leaving it open to see what tests fail
+        let mut deduped_tx_results: Vec<_> = transaction_results.collect();
+        let mut batch_signatures = AHashSet::with_capacity(transactions.len());
+        for (i, tx) in transactions.iter().enumerate() {
+            if batch_signatures.insert(tx.signature()) && deduped_tx_results[i].is_ok() {
+                deduped_tx_results[i] = Err(TransactionError::AccountInUse);
+            }
+        }
+
         TransactionBatch::new(
-            self.try_lock_accounts_with_results(transactions, transaction_results),
+            self.try_lock_accounts_with_results(transactions, deduped_tx_results.into_iter()),
             self,
             OwnedOrBorrowed::Borrowed(transactions),
         )
