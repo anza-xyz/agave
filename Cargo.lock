@@ -6534,6 +6534,7 @@ dependencies = [
  "solana-connection-cache",
  "solana-decode-error",
  "solana-faucet",
+ "solana-feature-gate-client",
  "solana-feature-set",
  "solana-loader-v4-program",
  "solana-logger",
@@ -7254,6 +7255,19 @@ dependencies = [
  "spl-memo",
  "thiserror 2.0.11",
  "tokio",
+]
+
+[[package]]
+name = "solana-feature-gate-client"
+version = "0.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1056507c534839b5cd1b1010ffedb9e8c92313269786fb5066ff53b30326dc3"
+dependencies = [
+ "borsh 0.10.3",
+ "num-derive",
+ "num-traits",
+ "solana-program",
+ "thiserror 2.0.11",
 ]
 
 [[package]]
