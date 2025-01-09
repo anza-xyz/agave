@@ -825,7 +825,7 @@ impl PubsubClient {
         let ping_interval: Duration = Duration::from_secs(DEFAULT_PING_DURATION_SECONDS);
         let max_failed_pings: usize = DEFAULT_MAX_FAILED_PINGS;
         let mut last_ping_time: std::time::Instant = std::time::Instant::now();
-        let unmatched_pings: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
+        let elapsed_pings: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
 
         loop {
             if exit.load(Ordering::Relaxed) {
@@ -840,7 +840,7 @@ impl PubsubClient {
                 }
 
                 last_ping_time = std::time::Instant::now();
-                let pings = unmatched_pings.fetch_add(1, Ordering::Relaxed) + 1;
+                let pings = elapsed_pings.fetch_add(1, Ordering::Relaxed) + 1;
 
                 // Check if max_failed_pings has been exceeded
                 if pings > max_failed_pings {
@@ -865,12 +865,12 @@ impl PubsubClient {
 
             match PubsubClientSubscription::read_message(socket) {
                 Ok(Some(message)) => {
-                    unmatched_pings.store(0, Ordering::Relaxed);
+                    elapsed_pings.store(0, Ordering::Relaxed);
                     handler(message)
                 }
                 Ok(None) => {
                     // Nothing useful, means we received a ping message
-                    unmatched_pings.store(0, Ordering::Relaxed);
+                    elapsed_pings.store(0, Ordering::Relaxed);
                 }
                 Err(ref err) if err.is_timeout() => {
                     // Read timed out - continue the loop
