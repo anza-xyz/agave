@@ -34,7 +34,6 @@ use {
         duplicate_shred::DuplicateShred,
         epoch_slots::EpochSlots,
         gossip_error::GossipError,
-        legacy_contact_info::LegacyContactInfo,
         ping_pong::Pong,
         protocol::{
             split_gossip_messages, Ping, PingCache, Protocol, PruneData,
@@ -284,18 +283,12 @@ impl ClusterInfo {
 
     // TODO kill insert_info, only used by tests
     pub fn insert_info(&self, node: ContactInfo) {
-        let entries: Vec<_> = [
-            LegacyContactInfo::try_from(&node)
-                .map(CrdsData::LegacyContactInfo)
-                .expect("Operator must spin up node with valid contact-info"),
-            CrdsData::ContactInfo(node),
-        ]
-        .into_iter()
-        .map(|entry| CrdsValue::new(entry, &self.keypair()))
-        .collect();
-        let mut gossip_crds = self.gossip.crds.write().unwrap();
-        for entry in entries {
-            let _ = gossip_crds.insert(entry, timestamp(), GossipRoute::LocalMessage);
+        let entry = CrdsValue::new(CrdsData::ContactInfo(node), &self.keypair());
+        if let Err(err) = {
+            let mut gossip_crds = self.gossip.crds.write().unwrap();
+            gossip_crds.insert(entry, timestamp(), GossipRoute::LocalMessage)
+        } {
+            error!("ClusterInfo.insert_info: {err:?}");
         }
     }
 
@@ -1184,9 +1177,6 @@ impl ClusterInfo {
             node.clone()
         };
         let entries: Vec<_> = [
-            LegacyContactInfo::try_from(&node)
-                .map(CrdsData::LegacyContactInfo)
-                .expect("Operator must spin up node with valid contact-info"),
             CrdsData::ContactInfo(node),
             CrdsData::NodeInstance(instance),
         ]
@@ -1829,7 +1819,7 @@ impl ClusterInfo {
                     score
                 };
                 let score = match response.data() {
-                    CrdsData::LegacyContactInfo(_) | CrdsData::ContactInfo(_) => 2 * score,
+                    CrdsData::ContactInfo(_) => 2 * score,
                     _ => score,
                 };
                 ((addr, response), score)
