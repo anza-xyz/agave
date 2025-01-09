@@ -7040,6 +7040,7 @@ pub(crate) fn get_all_accounts(
         .collect::<Vec<_>>()
 }
 
+#[track_caller]
 pub(crate) fn compare_all_accounts(
     one: &[(Pubkey, AccountSharedData)],
     two: &[(Pubkey, AccountSharedData)],
@@ -7234,7 +7235,10 @@ fn test_shrink_ancient_overflow() {
 
     let num_normal_slots = 2;
     // build an ancient append vec at slot 'ancient_slot'
-    let (db, ancient_slot) = get_one_ancient_append_vec_and_others(true, num_normal_slots);
+    let (mut db, ancient_slot) = get_one_ancient_append_vec_and_others(true, num_normal_slots);
+
+    // This test is testing the squash-append code, which can only work with mmaps.
+    db.set_storage_access(StorageAccess::Mmap);
 
     let max_slot_inclusive = ancient_slot + (num_normal_slots as Slot);
     let initial_accounts = get_all_accounts(&db, ancient_slot..(max_slot_inclusive + 1));
