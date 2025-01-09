@@ -330,7 +330,7 @@ pub struct ShredIndexV2 {
 impl Default for ShredIndexV2 {
     fn default() -> Self {
         Self {
-            index: vec![0; Self::MAX_WORDS_PER_SHRED],
+            index: vec![0; Self::MAX_WORDS_PER_SLOT],
             num_shreds: 0,
         }
     }
@@ -339,16 +339,16 @@ impl Default for ShredIndexV2 {
 type ShredIndexV2Word = u8;
 impl ShredIndexV2 {
     const SIZE_OF_WORD: usize = std::mem::size_of::<ShredIndexV2Word>();
-    const WORD_BITS: usize = Self::SIZE_OF_WORD * 8;
-    const MAX_WORDS_PER_SHRED: usize = MAX_DATA_SHREDS_PER_SLOT.div_ceil(Self::WORD_BITS);
+    const BITS_PER_WORD: usize = Self::SIZE_OF_WORD * 8;
+    const MAX_WORDS_PER_SLOT: usize = MAX_DATA_SHREDS_PER_SLOT.div_ceil(Self::BITS_PER_WORD);
 
     pub fn num_shreds(&self) -> usize {
         self.num_shreds
     }
 
     fn index_and_mask(index: u64) -> (usize, ShredIndexV2Word) {
-        let word_idx = index as usize / Self::WORD_BITS;
-        let bit_idx = index as usize % Self::WORD_BITS;
+        let word_idx = index as usize / Self::BITS_PER_WORD;
+        let bit_idx = index as usize % Self::BITS_PER_WORD;
         let mask = 1 << bit_idx;
         (word_idx, mask as ShredIndexV2Word)
     }
@@ -445,24 +445,26 @@ impl ShredIndexV2 {
             Bound::Unbounded => MAX_DATA_SHREDS_PER_SLOT,
         };
 
-        let end_word = end.div_ceil(Self::WORD_BITS).min(Self::MAX_WORDS_PER_SHRED);
-        let start_word = (start / Self::WORD_BITS).min(end_word);
+        let end_word = end
+            .div_ceil(Self::BITS_PER_WORD)
+            .min(Self::MAX_WORDS_PER_SLOT);
+        let start_word = (start / Self::BITS_PER_WORD).min(end_word);
 
         self.index[start_word..end_word]
             .iter()
             .enumerate()
             .flat_map(move |(word_offset, &word)| {
-                let base_idx = (start_word + word_offset) * Self::WORD_BITS;
+                let base_idx = (start_word + word_offset) * Self::BITS_PER_WORD;
 
                 let lower_bound = start.saturating_sub(base_idx);
-                let upper_bound = if base_idx + Self::WORD_BITS > end {
+                let upper_bound = if base_idx + Self::BITS_PER_WORD > end {
                     end - base_idx
                 } else {
-                    Self::WORD_BITS
+                    Self::BITS_PER_WORD
                 };
 
                 let lower_mask = !0 << lower_bound;
-                let upper_mask = !0 >> (Self::WORD_BITS - upper_bound);
+                let upper_mask = !0 >> (Self::BITS_PER_WORD - upper_bound);
                 let mask = word & lower_mask & upper_mask;
 
                 std::iter::from_fn({
