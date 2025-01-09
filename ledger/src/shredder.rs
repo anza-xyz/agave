@@ -3,8 +3,8 @@ use {
         self, Error, ProcessShredsStats, Shred, ShredData, ShredFlags, DATA_SHREDS_PER_FEC_BLOCK,
     },
     itertools::Itertools,
+    lazy_lru::LruCache,
     lazy_static::lazy_static,
-    lru::LruCache,
     rayon::{prelude::*, ThreadPool},
     reed_solomon_erasure::{
         galois_8::ReedSolomon,
@@ -17,7 +17,7 @@ use {
     std::{
         borrow::Borrow,
         fmt::Debug,
-        sync::{Arc, Mutex},
+        sync::{Arc, RwLock},
     },
 };
 
@@ -39,7 +39,7 @@ pub(crate) const ERASURE_BATCH_SIZE: [usize; 33] = [
 ];
 
 pub struct ReedSolomonCache(
-    Mutex<LruCache<(/*data_shards:*/ usize, /*parity_shards:*/ usize), Arc<ReedSolomon>>>,
+    RwLock<LruCache<(/*data_shards:*/ usize, /*parity_shards:*/ usize), Arc<ReedSolomon>>>,
 );
 
 #[derive(Debug)]
@@ -424,18 +424,14 @@ impl ReedSolomonCache {
         parity_shards: usize,
     ) -> Result<Arc<ReedSolomon>, reed_solomon_erasure::Error> {
         let key = (data_shards, parity_shards);
-        {
-            let mut cache = self.0.lock().unwrap();
-            if let Some(entry) = cache.get(&key) {
-                return Ok(entry.clone());
-            }
+        if let Some(entry) = self.0.read().unwrap().get(&key).cloned() {
+            return Ok(entry);
         }
         let entry = ReedSolomon::new(data_shards, parity_shards)?;
         let entry = Arc::new(entry);
         {
             let entry = entry.clone();
-            let mut cache = self.0.lock().unwrap();
-            cache.put(key, entry);
+            self.0.write().unwrap().put(key, entry);
         }
         Ok(entry)
     }
@@ -443,7 +439,7 @@ impl ReedSolomonCache {
 
 impl Default for ReedSolomonCache {
     fn default() -> Self {
-        Self(Mutex::new(LruCache::new(Self::CAPACITY)))
+        Self(RwLock::new(LruCache::new(Self::CAPACITY)))
     }
 }
 
