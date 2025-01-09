@@ -10,7 +10,7 @@ use {
         },
         blockstore_options::{AccessType, BlockstoreOptions, LedgerColumnOptions},
     },
-    bincode::{deserialize, serialize, Options as BincodeOptions},
+    bincode::{deserialize, Options as BincodeOptions},
     byteorder::{BigEndian, ByteOrder},
     log::*,
     prost::Message,
@@ -798,6 +798,10 @@ pub trait TypedColumn: Column {
 
     fn deserialize(data: &[u8]) -> Result<Self::Type> {
         Ok(bincode::deserialize(data)?)
+    }
+
+    fn serialize(data: &Self::Type) -> Result<Vec<u8>> {
+        Ok(bincode::serialize(data)?)
     }
 }
 
@@ -1734,7 +1738,7 @@ where
             self.column_options.rocks_perf_sample_interval,
             &self.write_perf_status,
         );
-        let serialized_value = serialize(value)?;
+        let serialized_value = C::serialize(value)?;
 
         let key = Self::key_from_index(index);
         let result = self.backend.put_cf(self.handle(), &key, &serialized_value);
@@ -1757,7 +1761,7 @@ where
         value: &C::Type,
     ) -> Result<()> {
         let key = Self::key_from_index(index);
-        let serialized_value = serialize(value)?;
+        let serialized_value = C::serialize(value)?;
         batch.put_cf(self.handle(), &key, &serialized_value)
     }
 }
@@ -2279,7 +2283,7 @@ pub mod tests {
         C: ColumnIndexDeprecation + TypedColumn + ColumnName,
     {
         pub fn put_deprecated(&self, index: C::DeprecatedIndex, value: &C::Type) -> Result<()> {
-            let serialized_value = serialize(value)?;
+            let serialized_value = C::serialize(value)?;
             self.backend
                 .put_cf(self.handle(), &C::deprecated_key(index), &serialized_value)
         }
