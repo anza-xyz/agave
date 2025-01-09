@@ -6310,13 +6310,14 @@ impl AccountsDb {
             }
         }
 
-        // Regardless of whether this slot was *just* flushed from the cache by
-        // the above loop. we should update the `max_flush_root`. This is
-        // because some rooted slots may be flushed to storage *before* they are
-        // marked as root. This can occur for instance when the cache is
-        // overwhelmed, we flushed some yet to be rooted frozen slots. These
-        // slots may then *later* be marked as root, so we still need to handle
-        // updating the `max_flush_root` in the accounts cache.
+        // Note that self.flush_slot_cache_with_clean() can return None if the
+        // slot is already been flushed. This can happen if the cache is
+        // overwhelmed and we flushed some yet to be rooted frozen slots.
+        // However, Independent of whether the last slot was actually flushed
+        // from the cache by the above loop, we should always update the
+        // `max_flush_root` to the max of the flushed roots, because that's
+        // max_flushed_root tracks the logical last root that was flushed to
+        // storage by snapshotting.
         if let Some(&root) = flushed_roots.last() {
             self.accounts_cache.set_max_flush_root(root);
         }
