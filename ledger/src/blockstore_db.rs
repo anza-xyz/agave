@@ -10,7 +10,7 @@ use {
         },
         blockstore_options::{AccessType, BlockstoreOptions, LedgerColumnOptions},
     },
-    bincode::{deserialize, Options as BincodeOptions},
+    bincode::{deserialize, serialize, Options as BincodeOptions},
     byteorder::{BigEndian, ByteOrder},
     log::*,
     prost::Message,
@@ -799,10 +799,6 @@ pub trait TypedColumn: Column {
     fn deserialize(data: &[u8]) -> Result<Self::Type> {
         Ok(bincode::deserialize(data)?)
     }
-
-    fn serialize(data: &Self::Type) -> Result<Vec<u8>> {
-        Ok(bincode::serialize(data)?)
-    }
 }
 
 impl TypedColumn for columns::AddressSignatures {
@@ -1219,7 +1215,11 @@ impl TypedColumn for columns::Index {
     type Type = blockstore_meta::Index;
 
     fn deserialize(data: &[u8]) -> Result<Self::Type> {
-        let config = bincode::DefaultOptions::new().reject_trailing_bytes();
+        let config = bincode::DefaultOptions::new()
+            // `bincode::serialize` uses fixint encoding by default, so we need to use the same here
+            .with_fixint_encoding()
+            .reject_trailing_bytes();
+
         // Migration strategy for new column format:
         // 1. Release 1: Add ability to read new format as fallback, keep writing old format
         // 2. Release 2: Switch to writing new format, keep reading old format as fallback
@@ -1234,11 +1234,6 @@ impl TypedColumn for columns::Index {
                 Ok(index.into())
             }
         }
-    }
-
-    fn serialize(data: &Self::Type) -> Result<Vec<u8>> {
-        let config = bincode::DefaultOptions::new().reject_trailing_bytes();
-        Ok(config.serialize(data)?)
     }
 }
 
@@ -1739,7 +1734,7 @@ where
             self.column_options.rocks_perf_sample_interval,
             &self.write_perf_status,
         );
-        let serialized_value = C::serialize(value)?;
+        let serialized_value = serialize(value)?;
 
         let key = Self::key_from_index(index);
         let result = self.backend.put_cf(self.handle(), &key, &serialized_value);
@@ -1762,7 +1757,7 @@ where
         value: &C::Type,
     ) -> Result<()> {
         let key = Self::key_from_index(index);
-        let serialized_value = C::serialize(value)?;
+        let serialized_value = serialize(value)?;
         batch.put_cf(self.handle(), &key, &serialized_value)
     }
 }
@@ -2284,7 +2279,7 @@ pub mod tests {
         C: ColumnIndexDeprecation + TypedColumn + ColumnName,
     {
         pub fn put_deprecated(&self, index: C::DeprecatedIndex, value: &C::Type) -> Result<()> {
-            let serialized_value = C::serialize(value)?;
+            let serialized_value = serialize(value)?;
             self.backend
                 .put_cf(self.handle(), &C::deprecated_key(index), &serialized_value)
         }
