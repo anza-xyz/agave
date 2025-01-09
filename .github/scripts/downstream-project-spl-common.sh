@@ -8,12 +8,12 @@ program="$1"
 source "$here"/../../ci/downstream-projects/common.sh
 
 set -x
-rm -rf ${program}
-git clone https://github.com/solana-program/${program}.git
+rm -rf "${program}"
+git clone https://github.com/solana-program/"${program}".git
 
 # copy toolchain file to use solana's rust version
-cp "$SOLANA_DIR"/rust-toolchain.toml ${program}/
-cd ${program} || exit 1
+cp "$SOLANA_DIR"/rust-toolchain.toml "${program}"/
+cd "${program}" || exit 1
 echo "HEAD: $(git rev-parse HEAD)"
 
 project_used_solana_version=$(sed -nE 's/solana = \"(.*)\"/\1/p' <"Cargo.toml")
