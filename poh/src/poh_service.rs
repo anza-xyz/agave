@@ -241,19 +241,6 @@ impl PohService {
         poh: &Arc<Mutex<Poh>>,
         target_ns_per_tick: u64,
     ) -> bool {
-        // If the difference between min tick height and capacity is small then shutoff.
-        // remaining_tick_time, ticks_per_slot, compute_leader_slot_tick_heights
-        // tick_height, Bank::max_tick_height
-        let tick_height = poh_recorder.read().unwrap().tick_height();
-        let max_tick_height = poh_recorder.read().unwrap().bank().unwrap().max_tick_height();
-        let remaining_slots = max_tick_height - tick_height;
-        let min_gap = std::cmp::max(max_tick_height - record_receiver.ring_buffer.capacity(), 64);
-        if remaining_slots < min_gap {
-            record_receiver.shut_off_producers();
-            //if remaining_slots == 0 {
-            //    record_receiver.enable_producers(); // TODO: Do we need to reset the queue?
-            //}
-        }
         match next_record.take() {
             Some(mut record) => {
                 // received message to record
@@ -300,6 +287,8 @@ impl PohService {
                     hash_time.stop();
                     timing.total_hash_time_ns += hash_time.as_ns();
                     if should_tick {
+                        // Only one hash remained.
+                        record_receiver.shut_off_producers();
                         // nothing else can be done. tick required.
                         return true;
                     }
