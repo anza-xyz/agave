@@ -19,9 +19,9 @@ solana-commitment-config = { workspace = true }
 solana-derivation-path = { workspace = true }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true, features = ["seed-derivable"] }
+solana-message = { workspace = true }
 solana-native-token = { workspace = true }
 solana-presigner = { workspace = true }
-solana-program = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-remote-wallet = { workspace = true, features = ["default"] }
 solana-seed-phrase = { workspace = true }
@@ -35,6 +35,7 @@ url = { workspace = true }
 [dev-dependencies]
 assert_matches = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
+solana-system-interface = { workspace = true, features = ["bincode"] }
 tempfile = { workspace = true }
 
 [lib]

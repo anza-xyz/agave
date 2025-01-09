@@ -24,8 +24,8 @@ use {
         keypair_from_seed, keypair_from_seed_phrase_and_passphrase, read_keypair,
         read_keypair_file, seed_derivable::keypair_from_seed_and_derivation_path, Keypair,
     },
+    solana_message::Message,
     solana_presigner::Presigner,
-    solana_program::message::Message,
     solana_pubkey::Pubkey,
     solana_remote_wallet::{
         locator::{Locator as RemoteWalletLocator, LocatorError as RemoteWalletLocatorError},
@@ -1125,8 +1125,8 @@ mod tests {
         assert_matches::assert_matches,
         clap::{value_t_or_exit, App, Arg},
         solana_keypair::write_keypair_file,
-        solana_program::system_instruction,
         solana_remote_wallet::{locator::Manufacturer, remote_wallet::initialize_wallet_manager},
+        solana_system_interface::instruction::transfer,
         tempfile::{NamedTempFile, TempDir},
     };
 
@@ -1147,11 +1147,7 @@ mod tests {
         let nonsigner2 = Keypair::new();
         let recipient = Pubkey::new_unique();
         let message = Message::new(
-            &[system_instruction::transfer(
-                &source.pubkey(),
-                &recipient,
-                42,
-            )],
+            &[transfer(&source.pubkey(), &recipient, 42)],
             Some(&fee_payer.pubkey()),
         );
         let signers = vec![
