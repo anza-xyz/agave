@@ -442,12 +442,14 @@ impl HeaviestSubtreeForkChoice {
         self.tree_root = root_parent;
     }
 
-    pub fn add_new_leaf_slot(&mut self, slot_hash_key: SlotHashKey, parent: Option<SlotHashKey>) {
+    pub fn maybe_print_state(&mut self) {
         if self.last_root_time.elapsed().as_secs() > MAX_ROOT_PRINT_SECONDS {
             self.print_state();
             self.last_root_time = Instant::now();
         }
+    }
 
+    pub fn add_new_leaf_slot(&mut self, slot_hash_key: SlotHashKey, parent: Option<SlotHashKey>) {
         if self.fork_infos.contains_key(&slot_hash_key) {
             // Can potentially happen if we repair the same version of the duplicate slot, after
             // dumping the original version

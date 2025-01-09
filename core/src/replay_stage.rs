@@ -3217,6 +3217,7 @@ impl ReplayStage {
                     (bank.slot(), bank.hash()),
                     Some((bank.parent_slot(), bank.parent_hash())),
                 );
+                heaviest_subtree_fork_choice.maybe_print_state();
                 bank_progress.fork_stats.bank_hash = Some(bank.hash());
                 let bank_frozen_state = BankFrozenState::new_from_state(
                     bank.slot(),
