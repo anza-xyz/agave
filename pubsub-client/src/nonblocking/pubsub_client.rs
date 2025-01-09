@@ -166,7 +166,6 @@
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
-use crate::nonblocking::pubsub_client::{DEFAULT_MAX_FAILED_PINGS, DEFAULT_PING_DURATION_SECONDS};
 use {
     futures_util::{
         future::{ready, BoxFuture, FutureExt},
@@ -174,6 +173,7 @@ use {
         stream::{BoxStream, StreamExt},
     },
     log::*,
+    pubsub_client::{DEFAULT_MAX_FAILED_PINGS, DEFAULT_PING_DURATION_SECONDS},
     serde::de::DeserializeOwned,
     serde_json::{json, Map, Value},
     solana_account_decoder_client_types::UiAccount,
