@@ -572,7 +572,7 @@ impl StakeSubCommands for App<'_, '_> {
                         .required(true)
                         .help(
                             "The amount to withdraw from the stake account, in SOL; accepts \
-                             keyword ALL and AVAILABLE",
+                             keywords ALL or AVAILABLE",
                         ),
                 )
                 .arg(
