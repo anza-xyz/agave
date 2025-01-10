@@ -151,6 +151,7 @@ fi
 # consistency with other CI steps and for the possibility of new similar lints.
 # shellcheck disable=SC2155
 export RUSTFLAGS="-D warnings -Z threads=$(nproc) $RUSTFLAGS"
+unset RUST_WRAPPER
 
 if [[ $mode = "check-bins-and-lib" || $mode = "full" ]]; then
   _ cargo "+${rust_nightly}" hack "$@" check
