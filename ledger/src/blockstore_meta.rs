@@ -1060,12 +1060,12 @@ mod test {
 
         // First possible index
         index.insert(0);
-        // Last index in first word
-        index.insert(63);
-        // First index in second word
-        index.insert(64);
+        // Last index in first word (bits 0-7)
+        index.insert(7);
+        // First index in second word (bits 8-15)
+        index.insert(8);
         // Last index in second word
-        index.insert(127);
+        index.insert(15);
         // Last valid index
         index.insert(MAX_DATA_SHREDS_PER_SLOT as u64 - 1);
         // Should be ignored (too large)
@@ -1073,18 +1073,18 @@ mod test {
 
         // Verify contents
         assert!(index.contains(0));
-        assert!(index.contains(63));
-        assert!(index.contains(64));
-        assert!(index.contains(127));
+        assert!(index.contains(7));
+        assert!(index.contains(8));
+        assert!(index.contains(15));
         assert!(index.contains(MAX_DATA_SHREDS_PER_SLOT as u64 - 1));
         assert!(!index.contains(MAX_DATA_SHREDS_PER_SLOT as u64));
 
         // Cross-word boundary
-        assert_eq!(index.range(50..70).collect::<Vec<_>>(), vec![63, 64]);
+        assert_eq!(index.range(6..10).collect::<Vec<_>>(), vec![7, 8]);
         // Full first word
-        assert_eq!(index.range(0..64).collect::<Vec<_>>(), vec![0, 63]);
+        assert_eq!(index.range(0..8).collect::<Vec<_>>(), vec![0, 7]);
         // Full second word
-        assert_eq!(index.range(64..128).collect::<Vec<_>>(), vec![64, 127]);
+        assert_eq!(index.range(8..16).collect::<Vec<_>>(), vec![8, 15]);
 
         // Empty ranges
         assert_eq!(index.range(0..0).count(), 0);
@@ -1097,12 +1097,12 @@ mod test {
 
         index.remove(0);
         assert!(!index.contains(0));
-        index.remove(63);
-        assert!(!index.contains(63));
-        index.remove(64);
-        assert!(!index.contains(64));
-        index.remove(127);
-        assert!(!index.contains(127));
+        index.remove(7);
+        assert!(!index.contains(7));
+        index.remove(8);
+        assert!(!index.contains(8));
+        index.remove(15);
+        assert!(!index.contains(15));
         index.remove(MAX_DATA_SHREDS_PER_SLOT as u64 - 1);
         assert!(!index.contains(MAX_DATA_SHREDS_PER_SLOT as u64 - 1));
 
