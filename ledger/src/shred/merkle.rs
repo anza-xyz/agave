@@ -31,6 +31,7 @@ use {
     std::{
         cmp::Ordering,
         io::{Cursor, Write},
+        iter::successors,
         ops::Range,
         time::Instant,
     },
@@ -651,9 +652,20 @@ fn get_merkle_node(shred: &[u8], offsets: Range<usize>) -> Result<Hash, Error> {
     Ok(hashv(&[MERKLE_HASH_PREFIX_LEAF, node]))
 }
 
-fn make_merkle_tree(mut nodes: Vec<Hash>) -> Vec<Hash> {
-    let mut size = nodes.len();
-    while size > 1 {
+fn make_merkle_tree<I>(shreds: I) -> Result<Vec<Hash>, Error>
+where
+    I: IntoIterator<Item = Result<Hash, Error>>,
+    <I as IntoIterator>::IntoIter: ExactSizeIterator,
+{
+    let shreds = shreds.into_iter();
+    let num_shreds = shreds.len();
+    let capacity = get_merkle_tree_size(num_shreds);
+    let mut nodes = Vec::with_capacity(capacity);
+    for shred in shreds {
+        nodes.push(shred?);
+    }
+    let init = (num_shreds > 1).then_some(num_shreds);
+    for size in successors(init, |&k| (k > 2).then_some((k + 1) >> 1)) {
         let offset = nodes.len() - size;
         for index in (offset..offset + size).step_by(2) {
             let node = &nodes[index];
@@ -661,9 +673,14 @@ fn make_merkle_tree(mut nodes: Vec<Hash>) -> Vec<Hash> {
             let parent = join_nodes(node, other);
             nodes.push(parent);
         }
-        size = nodes.len() - offset - size;
     }
-    nodes
+    debug_assert_eq!(nodes.len(), capacity);
+    Ok(nodes)
+}
+
+// Given number of shreds, returns the number of nodes in the Merkle tree.
+fn get_merkle_tree_size(num_shreds: usize) -> usize {
+    successors(Some(num_shreds), |&k| (k > 1).then_some((k + 1) >> 1)).sum()
 }
 
 fn make_merkle_proof(
@@ -830,7 +847,7 @@ pub(super) fn recover(
         .reconstruct(&mut shards)?;
     // Verify and sanitize recovered shreds, re-compute the Merkle tree and set
     // the merkle proof on the recovered shreds.
-    let nodes: Vec<_> = shreds
+    let nodes = shreds
         .iter_mut()
         .zip(&mask)
         .enumerate()
@@ -852,9 +869,8 @@ pub(super) fn recover(
                 shred.sanitize()?;
             }
             shred.merkle_node()
-        })
-        .collect::<Result<_, _>>()?;
-    let tree = make_merkle_tree(nodes);
+        });
+    let tree = make_merkle_tree(nodes)?;
     // The attched signature verfies only if we obtain the same Merkle root.
     // Because shreds obtained from turbine or repair are sig-verified, this
     // also means that we don't need to verify signatures for recovered shreds.
@@ -1312,12 +1328,8 @@ fn make_erasure_batch(
         coding_header.position += 1;
     }
     // Compute Merkle tree for the erasure batch.
-    let tree = make_merkle_tree(
-        shreds
-            .iter()
-            .map(Shred::merkle_node)
-            .collect::<Result<_, _>>()?,
-    );
+    let nodes = shreds.iter().map(Shred::merkle_node);
+    let tree = make_merkle_tree(nodes)?;
     // Sign root of Merkle tree.
     let root = tree.last().ok_or(Error::InvalidMerkleProof)?;
     let signature = keypair.sign_message(root.as_ref());
@@ -1435,10 +1447,18 @@ mod test {
         assert_eq!(entry, &bytes[..SIZE_OF_MERKLE_PROOF_ENTRY]);
     }
 
+    #[test]
+    fn test_get_merkle_tree_size() {
+        const TREE_SIZE: [usize; 15] = [0, 1, 3, 6, 7, 11, 12, 14, 15, 20, 21, 23, 24, 27, 28];
+        for (num_shreds, size) in TREE_SIZE.into_iter().enumerate() {
+            assert_eq!(get_merkle_tree_size(num_shreds), size);
+        }
+    }
+
     fn run_merkle_tree_round_trip<R: Rng>(rng: &mut R, size: usize) {
         let nodes = repeat_with(|| rng.gen::<[u8; 32]>()).map(Hash::from);
         let nodes: Vec<_> = nodes.take(size).collect();
-        let tree = make_merkle_tree(nodes.clone());
+        let tree = make_merkle_tree(nodes.iter().cloned().map(Ok)).unwrap();
         let root = tree.last().copied().unwrap();
         for index in 0..size {
             let proof = make_merkle_proof(index, size, &tree).unwrap();
@@ -1592,12 +1612,8 @@ mod test {
             };
             shreds.push(Shred::ShredCode(shred));
         }
-        let nodes: Vec<_> = shreds
-            .iter()
-            .map(Shred::merkle_node)
-            .collect::<Result<_, _>>()
-            .unwrap();
-        let tree = make_merkle_tree(nodes);
+        let nodes = shreds.iter().map(Shred::merkle_node);
+        let tree = make_merkle_tree(nodes).unwrap();
         for (index, shred) in shreds.iter_mut().enumerate() {
             let proof = make_merkle_proof(index, num_shreds, &tree).unwrap();
             assert_eq!(proof.len(), usize::from(proof_size));
