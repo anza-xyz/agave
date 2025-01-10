@@ -25,7 +25,7 @@ pub enum CoreAllocation {
 }
 
 impl CoreAllocation {
-    /// Converts into a vector of core IDs. OsDefault is converted to empty vector.
+    /// Converts into a vector of core IDs. OsDefault is converted to vector with all core IDs.
     pub fn as_core_mask_vector(&self) -> Vec<usize> {
         match *self {
             CoreAllocation::PinnedCores { min, max } => (min..max).collect(),

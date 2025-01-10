@@ -4,7 +4,7 @@ use {
         MAX_THREAD_NAME_CHARS,
     },
     anyhow::bail,
-    log::error,
+    log::warn,
     serde::{Deserialize, Serialize},
     solana_metrics::datapoint_info,
     std::{
@@ -95,7 +95,7 @@ impl<T> JoinHandle<T> {
 impl<T> Drop for JoinHandle<T> {
     fn drop(&mut self) {
         if self.std_handle.is_some() {
-            error!("Attempting to drop a Join Handle of a running thread will leak thread IDs, please join your managed threads!");
+            warn!("Attempting to drop a Join Handle of a running thread will leak thread IDs, please join your managed threads!");
             self.join_inner().expect("Child thread panicked");
         }
     }
