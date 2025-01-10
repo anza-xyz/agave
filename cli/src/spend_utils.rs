@@ -137,6 +137,7 @@ where
                         true,
                         None,
                         false,
+                        None,
                     )?;
                     let mut sub_rent_exempt = false;
                     if let Some(active_stake) = state.active_stake {
@@ -223,12 +224,14 @@ where
                     SpendAmount::AllForAccountCreation {
                         create_account_min_balance,
                     } => create_account_min_balance,
-                    SpendAmount::All | SpendAmount::RentExempt => 0,
+                    SpendAmount::All | SpendAmount::Available | SpendAmount::RentExempt => 0,
                 }
             } else {
                 match amount {
                     SpendAmount::Some(lamports) => lamports,
-                    SpendAmount::AllForAccountCreation { .. } | SpendAmount::All => from_balance,
+                    SpendAmount::AllForAccountCreation { .. }
+                    | SpendAmount::All
+                    | SpendAmount::Available => from_balance,
                     SpendAmount::RentExempt => {
                         from_balance.saturating_sub(from_rent_exempt_minimum)
                     }

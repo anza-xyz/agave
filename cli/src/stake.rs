@@ -2631,6 +2631,7 @@ pub fn process_show_stake_account(
         use_lamports_unit,
         with_rewards,
         use_csv,
+        starting_epoch,
     )?;
     Ok(config.output_format.formatted_string(&state))
 }
@@ -2642,6 +2643,7 @@ pub fn get_account_stake_state(
     use_lamports_unit: bool,
     with_rewards: Option<usize>,
     use_csv: bool,
+    starting_epoch: Option<u64>,
 ) -> Result<CliStakeState, CliError> {
     if stake_account.owner != stake::program::id() {
         return Err(CliError::RpcRequestError(format!(
