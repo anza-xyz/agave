@@ -1,5 +1,5 @@
 use {
-    crate::compute_budget_instruction_details::*, solana_compute_budget::compute_budget_limits::*,
+    crate::instruction_details::*, solana_compute_budget::compute_budget_limits::*,
     solana_feature_set::FeatureSet, solana_pubkey::Pubkey,
     solana_svm_transaction::instruction::SVMInstruction,
     solana_transaction_error::TransactionError,
@@ -14,7 +14,7 @@ pub fn process_compute_budget_instructions<'a>(
     instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)> + Clone,
     feature_set: &FeatureSet,
 ) -> Result<ComputeBudgetLimits, TransactionError> {
-    ComputeBudgetInstructionDetails::try_from(instructions)?
+    InstructionDetails::try_from(instructions)?
         .sanitize_and_convert_to_compute_budget_limits(feature_set)
 }
 

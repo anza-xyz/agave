@@ -12,7 +12,7 @@
 use {
     crate::transaction_meta::{DynamicMeta, StaticMeta, TransactionMeta},
     core::ops::Deref,
-    solana_compute_budget_instruction::compute_budget_instruction_details::*,
+    solana_compute_budget_instruction::instruction_details::*,
     solana_hash::Hash,
     solana_message::{AccountKeys, TransactionSignatureDetails},
     solana_pubkey::Pubkey,
@@ -45,8 +45,8 @@ impl<T> StaticMeta for RuntimeTransaction<T> {
     fn signature_details(&self) -> &TransactionSignatureDetails {
         &self.meta.signature_details
     }
-    fn compute_budget_instruction_details(&self) -> &ComputeBudgetInstructionDetails {
-        &self.meta.compute_budget_instruction_details
+    fn instruction_details(&self) -> &InstructionDetails {
+        &self.meta.instruction_details
     }
 }
 

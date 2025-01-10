@@ -1,5 +1,5 @@
 use {
-    super::{ComputeBudgetInstructionDetails, RuntimeTransaction},
+    super::{InstructionDetails, RuntimeTransaction},
     crate::{
         signature_details::get_precompile_signature_details,
         transaction_meta::{StaticMeta, TransactionMeta},
@@ -59,8 +59,8 @@ impl<D: TransactionData> RuntimeTransaction<SanitizedTransactionView<D>> {
             precompile_signature_details.num_ed25519_instruction_signatures,
             precompile_signature_details.num_secp256r1_instruction_signatures,
         );
-        let compute_budget_instruction_details =
-            ComputeBudgetInstructionDetails::try_from(transaction.program_instructions_iter())?;
+        let instruction_details =
+            InstructionDetails::try_from(transaction.program_instructions_iter())?;
 
         Ok(Self {
             transaction,
@@ -68,7 +68,7 @@ impl<D: TransactionData> RuntimeTransaction<SanitizedTransactionView<D>> {
                 message_hash,
                 is_simple_vote_transaction: is_simple_vote_tx,
                 signature_details,
-                compute_budget_instruction_details,
+                instruction_details,
             },
         })
     }
