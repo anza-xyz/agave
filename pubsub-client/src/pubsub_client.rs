@@ -854,14 +854,18 @@ impl PubsubClient {
                 }
             }
 
-            // Read timeout to prevent indefinite blocking on `read_message`
-            socket
-                .write()
-                .unwrap()
-                .get_mut()
-                .get_mut()
-                .set_read_timeout(Some(Duration::from_millis(500)))
-                .unwrap();
+            let mut ws = socket.write().unwrap();
+            let maybe_tls_stream = ws.get_mut();
+
+            match maybe_tls_stream {
+                MaybeTlsStream::Plain(tcp_stream) => {
+                    if let Err(e) = tcp_stream.set_read_timeout(Some(Duration::from_millis(500))) {
+                        info!("Failed to set read timeout on TcpStream: {:?}", e);
+                    }
+                }
+                // We can only set a read time out safely if it's a plain TCP connection
+                _ => {}
+            }
 
             match PubsubClientSubscription::read_message(socket) {
                 Ok(Some(message)) => {
