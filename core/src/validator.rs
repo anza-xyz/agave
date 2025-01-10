@@ -1892,7 +1892,7 @@ fn load_genesis(
     // grows too large
     let leader_schedule_slot_offset = genesis_config.epoch_schedule.leader_schedule_slot_offset;
     let slots_per_epoch = genesis_config.epoch_schedule.slots_per_epoch;
-    let leader_epoch_offset = (leader_schedule_slot_offset + slots_per_epoch - 1) / slots_per_epoch;
+    let leader_epoch_offset = leader_schedule_slot_offset.div_ceil(slots_per_epoch);
     assert!(leader_epoch_offset <= MAX_LEADER_SCHEDULE_EPOCH_OFFSET);
 
     let genesis_hash = genesis_config.hash();

@@ -210,9 +210,8 @@ fn main() {
         let max_fee = FeeRateGovernor::new(*target_lamports_per_signature, 0)
             .max_lamports_per_signature
             .saturating_add(max_lamports_for_prioritization(compute_unit_price));
-        let num_lamports_per_account = (num_accounts - 1 + NUM_SIGNATURES_FOR_TXS * max_fee)
-            / num_accounts
-            + num_lamports_per_account;
+        let num_lamports_per_account =
+            (NUM_SIGNATURES_FOR_TXS * max_fee).div_ceil(num_accounts) + num_lamports_per_account;
         let mut accounts = HashMap::new();
         keypairs.iter().for_each(|keypair| {
             accounts.insert(

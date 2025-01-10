@@ -690,7 +690,7 @@ impl EntrySlice for [Entry] {
             transactions: vec![],
         }];
 
-        let aligned_len = ((self.len() + simd_len - 1) / simd_len) * simd_len;
+        let aligned_len = self.len().div_ceil(simd_len) * simd_len;
         let mut hashes_bytes = vec![0u8; HASH_BYTES * aligned_len];
         genesis
             .iter()

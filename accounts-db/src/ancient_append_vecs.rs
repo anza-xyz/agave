@@ -1207,7 +1207,7 @@ fn div_ceil(x: u64, y: NonZeroU64) -> u64 {
     // SAFETY: Since `y` is NonZero:
     // - we know the denominator is > 0, and thus safe (cannot have divide-by-zero)
     // - we know `x + y` is non-zero, and thus the numerator is safe (cannot underflow)
-    (x + y - 1) / y
+    x.div_ceil(y)
 }
 
 #[cfg(test)]

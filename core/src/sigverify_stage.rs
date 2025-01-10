@@ -255,7 +255,7 @@ impl SigVerifyStage {
         while max_packets > 0 && !addrs.is_empty() {
             let num_addrs = addrs.len();
             addrs.retain(|_, packets| {
-                let cap = (max_packets + num_addrs - 1) / num_addrs;
+                let cap = max_packets.div_ceil(num_addrs);
                 max_packets -= packets.len().min(cap);
                 packets.truncate(packets.len().saturating_sub(cap));
                 !packets.is_empty()

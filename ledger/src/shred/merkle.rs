@@ -1103,7 +1103,7 @@ pub(super) fn make_shreds_from_data(
         let (proof_size, data_buffer_size, num_data_shreds) = (1u8..32)
             .find_map(|proof_size| {
                 let data_buffer_size = ShredData::capacity(proof_size, chained, resigned).ok()?;
-                let num_data_shreds = (data.len() + data_buffer_size - 1) / data_buffer_size;
+                let num_data_shreds = data.len().div_ceil(data_buffer_size);
                 let num_data_shreds = num_data_shreds.max(min_num_data_shreds);
                 let erasure_batch_size =
                     shredder::get_erasure_batch_size(num_data_shreds, is_last_in_slot);

@@ -553,7 +553,7 @@ pub(crate) mod tests {
         let num_values_per_payload = (PUSH_MESSAGE_MAX_PAYLOAD_SIZE / value_size).max(1);
 
         // Expected len is the ceiling of the division
-        let expected_len = (NUM_VALUES + num_values_per_payload - 1) / num_values_per_payload;
+        let expected_len = NUM_VALUES.div_ceil(num_values_per_payload);
         let msgs = vec![value; NUM_VALUES];
 
         assert!(split_gossip_messages(PUSH_MESSAGE_MAX_PAYLOAD_SIZE, msgs).count() <= expected_len);

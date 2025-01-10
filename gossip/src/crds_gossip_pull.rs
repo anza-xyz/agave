@@ -155,7 +155,7 @@ impl CrdsFilterSet {
         let mask_bits = CrdsFilter::mask_bits(num_items as f64, max_items);
         let mut filters: Vec<_> = repeat_with(|| None).take(1usize << mask_bits).collect();
         let mut indices: Vec<_> = (0..filters.len()).collect();
-        let size = (filters.len() + SAMPLE_RATE - 1) / SAMPLE_RATE;
+        let size = filters.len().div_ceil(SAMPLE_RATE);
         for _ in 0..MAX_NUM_FILTERS.min(size) {
             let k = rng.gen_range(0..indices.len());
             let k = indices.swap_remove(k);

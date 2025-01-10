@@ -136,7 +136,7 @@ impl Shredder {
         process_stats.data_buffer_residual +=
             (data_buffer_size - serialized_shreds.len() % data_buffer_size) % data_buffer_size;
         // Integer division to ensure we have enough shreds to fit all the data
-        let num_shreds = (serialized_shreds.len() + data_buffer_size - 1) / data_buffer_size;
+        let num_shreds = serialized_shreds.len().div_ceil(data_buffer_size);
         let last_shred_index = next_shred_index + num_shreds as u32 - 1;
         // 1) Generate data shreds
         let make_data_shred = |data, shred_index: u32, fec_set_index: u32| {
@@ -471,7 +471,7 @@ fn get_fec_set_offsets(
             return None;
         }
         let num_chunks = (num_shreds / min_chunk_size).max(1);
-        let chunk_size = (num_shreds + num_chunks - 1) / num_chunks;
+        let chunk_size = num_shreds.div_ceil(num_chunks);
         let offsets = std::iter::repeat(offset).take(chunk_size);
         num_shreds -= chunk_size;
         offset += chunk_size;
@@ -541,7 +541,7 @@ mod tests {
         let size = serialized_size(&entries).unwrap() as usize;
         // Integer division to ensure we have enough shreds to fit all the data
         let data_buffer_size = ShredData::capacity(/*merkle_proof_size:*/ None).unwrap();
-        let num_expected_data_shreds = (size + data_buffer_size - 1) / data_buffer_size;
+        let num_expected_data_shreds = size.div_ceil(data_buffer_size);
         let num_expected_data_shreds = num_expected_data_shreds.max(if is_last_in_slot {
             DATA_SHREDS_PER_FEC_BLOCK
         } else {
