@@ -210,7 +210,7 @@ mod tests {
     };
 
     #[test]
-    fn configtest() {
+    fn test_config_files() {
         let experiments = [
             "examples/core_contention_dedicated_set.toml",
             "examples/core_contention_contending_set.toml",
@@ -237,7 +237,7 @@ mod tests {
     }
 
     /*  #[test]
-    fn thread_priority() {
+    fn test_thread_priority() {
         let priority_high = 10;
         let priority_default = crate::policy::DEFAULT_PRIORITY;
         let priority_low = 1;
@@ -313,7 +313,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn process_affinity() {
+    fn test_process_affinity() {
         let conf = ThreadManagerConfig {
             native_configs: HashMap::from([(
                 "pool1".to_owned(),
@@ -354,7 +354,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn rayon_affinity() {
+    fn test_rayon_affinity() {
         let conf = ThreadManagerConfig {
             rayon_configs: HashMap::from([(
                 "test".to_owned(),

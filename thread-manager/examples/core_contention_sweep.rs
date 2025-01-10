@@ -1,45 +1,13 @@
 use {
     agave_thread_manager::*,
-    log::{debug, info},
-    std::{
-        collections::HashMap,
-        future::IntoFuture,
-        io::Write,
-        net::{IpAddr, Ipv4Addr, SocketAddr},
-        path::PathBuf,
-        time::Duration,
-    },
+    log::info,
+    std::{collections::HashMap, time::Duration},
+    tokio::sync::oneshot,
 };
 
-async fn axum_main(port: u16) {
-    use axum::{routing::get, Router};
-    // basic handler that responds with a static string
-    async fn root() -> &'static str {
-        tokio::time::sleep(Duration::from_millis(1)).await;
-        "Hello, World!"
-    }
+mod common;
+use common::*;
 
-    // build our application with a route
-    let app = Router::new().route("/", get(root));
-
-    // run our app with hyper, listening globally on port 3000
-    let listener =
-        tokio::net::TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port))
-            .await
-            .unwrap();
-    info!("Server on port {port} ready");
-    let timeout = tokio::time::timeout(
-        Duration::from_secs(11),
-        axum::serve(listener, app).into_future(),
-    )
-    .await;
-    match timeout {
-        Ok(v) => v.unwrap(),
-        Err(_) => {
-            info!("Terminating server on port {port}");
-        }
-    }
-}
 fn make_config_shared(cc: usize) -> ThreadManagerConfig {
     let tokio_cfg_1 = TokioConfig {
         core_allocation: CoreAllocation::DedicatedCoreSet { min: 0, max: cc },
@@ -94,7 +62,7 @@ impl Regime {
 #[derive(Debug, Default, serde::Serialize)]
 struct Results {
     latencies_s: Vec<f32>,
-    rps: Vec<f32>,
+    requests_per_second: Vec<f32>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -121,34 +89,44 @@ fn main() -> anyhow::Result<()> {
                 }
             };
 
-            let wrk_cores: Vec<_> = (32..64).collect();
+            let workload_runtime = TokioRuntime::new(
+                "LoadGenerator".to_owned(),
+                TokioConfig {
+                    core_allocation: CoreAllocation::DedicatedCoreSet { min: 32, max: 64 },
+                    ..Default::default()
+                },
+            )?;
             let measurement = std::thread::scope(|s| {
+                let (tx1, rx1) = oneshot::channel();
+                let (tx2, rx2) = oneshot::channel();
                 s.spawn(|| {
                     tokio1.start_metrics_sampling(Duration::from_secs(1));
-                    tokio1.tokio.block_on(axum_main(8888));
+                    tokio1.tokio.block_on(axum_main(8888, tx1));
                 });
                 let jh = match regime {
                     Regime::Single => s.spawn(|| {
-                        run_wrk(&[8888, 8888], &wrk_cores, wrk_cores.len(), 3000).unwrap()
+                        rx1.blocking_recv().unwrap();
+                        workload_runtime.block_on(workload_main(&[8888, 8888], 3000))
                     }),
                     _ => {
                         s.spawn(|| {
                             tokio2.start_metrics_sampling(Duration::from_secs(1));
-                            tokio2.tokio.block_on(axum_main(8889));
+                            tokio2.tokio.block_on(axum_main(8889, tx2));
                         });
                         s.spawn(|| {
-                            run_wrk(&[8888, 8889], &wrk_cores, wrk_cores.len(), 3000).unwrap()
+                            rx1.blocking_recv().unwrap();
+                            rx2.blocking_recv().unwrap();
+                            workload_runtime.block_on(workload_main(&[8888, 8889], 3000))
                         })
                     }
                 };
-                jh.join().expect("WRK crashed!")
-            });
+                jh.join().expect("Some of the threads crashed!")
+            })?;
             info!("Results are: {:?}", measurement);
-            results.latencies_s.push(
-                measurement.0.iter().map(|a| a.as_secs_f32()).sum::<f32>()
-                    / measurement.0.len() as f32,
-            );
-            results.rps.push(measurement.1.iter().sum());
+            results.latencies_s.push(measurement.latency_s);
+            results
+                .requests_per_second
+                .push(measurement.requests_per_second);
         }
         all_results.insert(format!("{regime:?}"), results);
         std::thread::sleep(Duration::from_secs(3));
@@ -158,59 +136,4 @@ fn main() -> anyhow::Result<()> {
     println!("{}", serde_json::to_string_pretty(&all_results)?);
 
     Ok(())
-}
-
-fn run_wrk(
-    ports: &[u16],
-    cpus: &[usize],
-    threads: usize,
-    connections: usize,
-) -> anyhow::Result<(Vec<Duration>, Vec<f32>)> {
-    //Sleep a bit to let axum start
-    std::thread::sleep(Duration::from_millis(500));
-
-    let mut script = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    script.push("examples/report.lua");
-    let cpus: Vec<String> = cpus.iter().map(|c| c.to_string()).collect();
-    let cpus = cpus.join(",");
-
-    let mut children: Vec<_> = ports
-        .iter()
-        .map(|p| {
-            std::process::Command::new("taskset")
-                .arg("-c")
-                .arg(&cpus)
-                .arg("wrk")
-                .arg(format!("http://localhost:{}", p))
-                .arg("-d10")
-                .arg(format!("-s{}", script.to_str().unwrap()))
-                .arg(format!("-t{threads}"))
-                .arg(format!("-c{connections}"))
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-                .unwrap()
-        })
-        .collect();
-
-    use std::str;
-    let outs = children.drain(..).map(|c| c.wait_with_output().unwrap());
-    let mut all_latencies = vec![];
-    let mut all_rps = vec![];
-    for (out, port) in outs.zip(ports.iter()) {
-        debug!("=========================");
-        std::io::stdout().write_all(&out.stderr)?;
-        let res = str::from_utf8(&out.stdout)?;
-        let mut res = res.lines().last().unwrap().split(' ');
-
-        let latency_us: u64 = res.next().unwrap().parse()?;
-        let latency = Duration::from_micros(latency_us);
-
-        let requests: usize = res.next().unwrap().parse()?;
-        let rps = requests as f32 / 10.0;
-        debug!("WRK results for port {port}: {latency:?} {rps}");
-        all_latencies.push(Duration::from_micros(latency_us));
-        all_rps.push(rps);
-    }
-    Ok((all_latencies, all_rps))
 }

@@ -1,10 +1,12 @@
 # thread-manager
-Balances machine resources between multiple threaded runtimes. The purpose is to manage thread contention
-between different parts of the code that may
-benefit from a diverse set of management options. For example, we may want to have cores 1-4 handling
-networking via Tokio, core 5 handling file IO via Tokio, cores 9-16 hallocated for Rayon thread pool,
-and cores 6-8 available for general use by std::thread. This will minimize contention for CPU caches
-and context switches that would occur if Rayon was entirely unaware it was running side-by-side with
+Balances machine resources between multiple threaded runtimes.
+The purpose is to manage thread contention between different parts
+of the code that may benefit from a diverse set of management options.
+For example, we may want to have cores 1-4 handling networking via
+Tokio, core 5 handling file IO via Tokio, cores 9-16 allocated for
+Rayon thread pool, and cores 6-8 available for general use by std::thread.
+This will minimize contention for CPU caches and context switches that
+would occur if Rayon was entirely unaware it was running side-by-side with
 tokio, and each was to spawn as many threads as there are cores.
 
 # Supported threading models
@@ -22,7 +24,7 @@ If you want you can set thread scheduling policy and priority. Keep in mind that
 ```bash
  sudo setcap cap_sys_nice+ep
  ```
-or root priviledges to run the resulting process.
+or root privileges to run the resulting process.
 To see which policies are supported check (the sources)[./src/policy.rs]
 If you use realtime policies, priority to values from 1 (lowest) to 99 (highest) are possible.
 
@@ -31,7 +33,7 @@ Multiple tokio runtimes can be created, and each may be assigned its own pool of
 Number of worker and blocking threads is configurable, as are thread priorities for the pool.
 
 ## Native
-Native threads (std::thread) can be spawned from managed pools, this allows them to inheirt a particular
+Native threads (std::thread) can be spawned from managed pools, this allows them to inherit a particular
 affinity from the pool, as well as to
 control the total number of threads made in every pool.
 
@@ -44,7 +46,8 @@ one may want to spawn many rayon pools.
 
  * Thread pools can only be created at process startup
  * Once thread pool is created, its policy can not be modified at runtime
- * Thread affinity not supported outside of linux
+ * Thread affinity & priority are not supported outside of linux
+ * Thread priority generally requires kernel level support and extra capabilities
 
 # TODO:
 
@@ -55,7 +58,7 @@ one may want to spawn many rayon pools.
 
 
 # Examples
-All examples need wrk for workload generation. Please install it before running.
+All examples need `wrk` HTTP behnchmarking tool for load generation. Please install it before running.
 
  * core_contention_basics will demonstrate why core contention is bad, and how thread configs can help
  * core_contention_sweep will sweep across a range of core counts to show how benefits scale with core counts

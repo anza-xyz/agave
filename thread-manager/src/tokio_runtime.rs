@@ -116,9 +116,7 @@ impl TokioRuntime {
             let _tid = cur_thread
                 .get_native_id()
                 .expect("Can not get thread id for newly created thread");
-            // todo - tracing
-            //let tname = cur_thread.name().unwrap();
-            //println!("thread {tname} id {tid} started");
+
             apply_policy(
                 &c.core_allocation,
                 parse_policy(&c.policy),
