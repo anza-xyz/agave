@@ -19,7 +19,7 @@ use {
     solana_client::connection_cache::ConnectionCache,
     solana_gossip::{
         cluster_info::{ClusterInfo, Node},
-        contact_info::ContactInfo,
+        contact_info::ContactInfoQuery,
     },
     solana_ledger::{
         blockstore::{Blockstore, PurgeType},
@@ -248,10 +248,7 @@ impl LikeClusterInfo for Arc<DummyClusterInfo> {
         *self.id.read().unwrap()
     }
 
-    fn lookup_contact_info<F, Y>(&self, _id: &Pubkey, _map: F) -> Option<Y>
-    where
-        F: FnOnce(&ContactInfo) -> Y,
-    {
+    fn lookup_contact_info<R>(&self, _: &Pubkey, _: impl ContactInfoQuery<R>) -> Option<R> {
         None
     }
 }

@@ -3,7 +3,7 @@ use {
     itertools::Itertools,
     solana_gossip::{
         cluster_info::ClusterInfo,
-        contact_info::{ContactInfo, Protocol},
+        contact_info::{ContactInfoQuery, Protocol},
     },
     solana_poh::poh_recorder::PohRecorder,
     solana_sdk::{clock::FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, pubkey::Pubkey},
@@ -45,14 +45,11 @@ pub(crate) fn next_leader_tpu_vote(
     })
 }
 
-pub(crate) fn next_leader<F>(
+pub(crate) fn next_leader(
     cluster_info: &impl LikeClusterInfo,
     poh_recorder: &RwLock<PohRecorder>,
-    port_selector: F,
-) -> Option<(Pubkey, SocketAddr)>
-where
-    F: FnOnce(&ContactInfo) -> Option<SocketAddr>,
-{
+    port_selector: impl ContactInfoQuery<Option<SocketAddr>>,
+) -> Option<(Pubkey, SocketAddr)> {
     let leader_pubkey = poh_recorder
         .read()
         .unwrap()

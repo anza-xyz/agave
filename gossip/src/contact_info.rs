@@ -42,6 +42,11 @@ const SOCKET_TAG_TVU_QUIC: u8 = 11;
 const_assert_eq!(SOCKET_CACHE_SIZE, 13);
 const SOCKET_CACHE_SIZE: usize = SOCKET_TAG_TPU_VOTE_QUIC as usize + 1usize;
 
+// An alias for a function that reads data from a ContactInfo entry stored in
+// the gossip CRDS table.
+pub trait ContactInfoQuery<R>: Fn(&ContactInfo) -> R {}
+impl<R, F: Fn(&ContactInfo) -> R> ContactInfoQuery<R> for F {}
+
 #[derive(Copy, Clone, Debug, Eq, Error, PartialEq)]
 pub enum Error {
     #[error("Duplicate IP address: {0}")]
