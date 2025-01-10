@@ -135,7 +135,7 @@ impl Config {
             return "".to_string();
         }
         let json_rpc_url = json_rpc_url.unwrap();
-        let is_secure = json_rpc_url.scheme().to_ascii_lowercase() == "https";
+        let is_secure = json_rpc_url.scheme().eq_ignore_ascii_case("https");
         let mut ws_url = json_rpc_url.clone();
         ws_url
             .set_scheme(if is_secure { "wss" } else { "ws" })

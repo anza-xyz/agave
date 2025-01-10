@@ -2453,7 +2453,7 @@ fn hash_validator(hash: String) -> Result<(), String> {
 /// Test validator
 
 pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<'a, 'a> {
-    return App::new("solana-test-validator")
+    App::new("solana-test-validator")
         .about("Test Validator")
         .version(version)
         .arg({
@@ -2904,7 +2904,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                      argument in the genesis configuration. If the ledger \
                      already exists then this parameter is silently ignored",
                 ),
-        );
+        )
 }
 
 pub struct DefaultTestArgs {

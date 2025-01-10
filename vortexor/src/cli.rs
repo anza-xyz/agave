@@ -66,7 +66,7 @@ fn port_range_validator(port_range: String) -> Result<(), String> {
 }
 
 pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
-    return App::new(crate_name!())
+    App::new(crate_name!())
         .about(crate_description!())
         .version(version)
         .global_setting(AppSettings::ColoredHelp)
@@ -173,5 +173,5 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .takes_value(true)
                 .validator(is_parsable::<u64>)
                 .help("Milliseconds to wait in the TPU receiver for packet coalescing."),
-        );
+        )
 }
