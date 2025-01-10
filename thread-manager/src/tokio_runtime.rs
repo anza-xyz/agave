@@ -136,12 +136,14 @@ impl TokioRuntime {
     }
 
     /// Makes test runtime with 2 threads, only for unittests
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn new_for_tests() -> Self {
         let cfg = TokioConfig {
             worker_threads: 2,
             ..Default::default()
         };
-        TokioRuntime::new("solNetTest".to_owned(), cfg.clone()).unwrap()
+        TokioRuntime::new("solNetTest".to_owned(), cfg.clone())
+            .expect("Failed to create Tokio runtime for tests")
     }
 }
 

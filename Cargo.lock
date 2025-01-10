@@ -272,8 +272,10 @@ name = "agave-thread-manager"
 version = "2.2.0"
 dependencies = [
  "affinity",
+ "agave-thread-manager",
  "anyhow",
  "axum 0.7.9",
+ "cfg-if 1.0.0",
  "env_logger",
  "hyper 0.14.32",
  "log",

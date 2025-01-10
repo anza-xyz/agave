@@ -9,6 +9,18 @@ This will minimize contention for CPU caches and context switches that
 would occur if Rayon was entirely unaware it was running side-by-side with
 tokio, and each was to spawn as many threads as there are cores.
 
+## Thread pool mapping
+Thread manager will, by default, look for a particular named pool, e.g. "solGossip".
+Matching is done independently for each type of runtime.
+However, if no named pool is found, it will fall back to the "default" thread pool
+of the same type (if specified in the config). If the default pool is not specified,
+thread pool lookup will fail.
+
+Multiple names can point to the same pool. For example, "solGossipConsume" and
+"solSigverify" can both be executed on the same rayon pool named "rayonSigverify".
+This, in principle, allows some degree of runtime sharing between different crates
+in the codebase without having to manually patch the pointers through.
+
 # Supported threading models
 ## Affinity
 All threading models allow setting core affinity, but only on linux
@@ -51,14 +63,10 @@ one may want to spawn many rayon pools.
 
 # TODO:
 
- * support tracing
- * better metrics integration
- * proper error handling everywhere
  * even more tests
+ * better thread priority support
 
 
 # Examples
-All examples need `wrk` HTTP behnchmarking tool for load generation. Please install it before running.
-
  * core_contention_basics will demonstrate why core contention is bad, and how thread configs can help
  * core_contention_sweep will sweep across a range of core counts to show how benefits scale with core counts

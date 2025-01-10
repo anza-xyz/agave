@@ -15,21 +15,21 @@ pub use {
     rayon_runtime::{RayonConfig, RayonRuntime},
     tokio_runtime::{TokioConfig, TokioRuntime},
 };
-pub type ConstString = Box<str>;
 
 pub const MAX_THREAD_NAME_CHARS: usize = 12;
 
 #[derive(Default, Debug)]
 pub struct ThreadManagerInner {
-    pub tokio_runtimes: HashMap<ConstString, TokioRuntime>,
-    pub tokio_runtime_mapping: HashMap<ConstString, ConstString>,
+    pub tokio_runtimes: HashMap<String, TokioRuntime>,
+    pub tokio_runtime_mapping: HashMap<String, String>,
 
-    pub native_thread_runtimes: HashMap<ConstString, NativeThreadRuntime>,
-    pub native_runtime_mapping: HashMap<ConstString, ConstString>,
+    pub native_thread_runtimes: HashMap<String, NativeThreadRuntime>,
+    pub native_runtime_mapping: HashMap<String, String>,
 
-    pub rayon_runtimes: HashMap<ConstString, RayonRuntime>,
-    pub rayon_runtime_mapping: HashMap<ConstString, ConstString>,
+    pub rayon_runtimes: HashMap<String, RayonRuntime>,
+    pub rayon_runtime_mapping: HashMap<String, String>,
 }
+
 impl ThreadManagerInner {
     /// Populates mappings with copies of config names, overrides as appropriate
     fn populate_mappings(&mut self, config: &ThreadManagerConfig) {
@@ -37,29 +37,26 @@ impl ThreadManagerInner {
 
         for name in config.native_configs.keys() {
             self.native_runtime_mapping
-                .insert(name.clone().into_boxed_str(), name.clone().into_boxed_str());
+                .insert(name.clone(), name.clone());
         }
         for (k, v) in config.native_runtime_mapping.iter() {
-            self.native_runtime_mapping
-                .insert(k.clone().into_boxed_str(), v.clone().into_boxed_str());
+            self.native_runtime_mapping.insert(k.clone(), v.clone());
         }
 
         for name in config.tokio_configs.keys() {
             self.tokio_runtime_mapping
-                .insert(name.clone().into_boxed_str(), name.clone().into_boxed_str());
+                .insert(name.clone(), name.clone());
         }
         for (k, v) in config.tokio_runtime_mapping.iter() {
-            self.tokio_runtime_mapping
-                .insert(k.clone().into_boxed_str(), v.clone().into_boxed_str());
+            self.tokio_runtime_mapping.insert(k.clone(), v.clone());
         }
 
         for name in config.rayon_configs.keys() {
             self.rayon_runtime_mapping
-                .insert(name.clone().into_boxed_str(), name.clone().into_boxed_str());
+                .insert(name.clone(), name.clone());
         }
         for (k, v) in config.rayon_runtime_mapping.iter() {
-            self.rayon_runtime_mapping
-                .insert(k.clone().into_boxed_str(), v.clone().into_boxed_str());
+            self.rayon_runtime_mapping.insert(k.clone(), v.clone());
         }
     }
 }
@@ -68,6 +65,7 @@ impl ThreadManagerInner {
 pub struct ThreadManager {
     inner: Arc<ThreadManagerInner>,
 }
+
 impl Deref for ThreadManager {
     type Target = ThreadManagerInner;
 
@@ -110,13 +108,16 @@ impl ThreadManager {
     fn lookup<'a, T>(
         &'a self,
         name: &str,
-        mapping: &HashMap<ConstString, ConstString>,
-        runtimes: &'a HashMap<ConstString, T>,
+        mapping: &HashMap<String, String>,
+        runtimes: &'a HashMap<String, T>,
     ) -> Option<&'a T> {
         match mapping.get(name) {
             Some(n) => runtimes.get(n),
             None => match mapping.get("default") {
-                Some(n) => runtimes.get(n),
+                Some(n) => {
+                    log::warn!("Falling back to default runtime for {name}");
+                    runtimes.get(n)
+                }
                 None => None,
             },
         }
@@ -133,7 +134,7 @@ impl ThreadManager {
         if let Some(runtime) = self.try_get_native(name) {
             runtime
         } else {
-            panic!("Native thread pool {name} not configured!");
+            panic!("Native thread pool for {name} can not be found!");
         }
     }
 
@@ -145,7 +146,7 @@ impl ThreadManager {
         if let Some(runtime) = self.try_get_rayon(name) {
             runtime
         } else {
-            panic!("Rayon thread pool {name} not configured!");
+            panic!("Rayon thread pool for {name} can not be found!");
         }
     }
 
@@ -157,44 +158,35 @@ impl ThreadManager {
         if let Some(runtime) = self.try_get_tokio(name) {
             runtime
         } else {
-            panic!("Tokio runtime {name} not configured!");
+            panic!("Tokio thread pool for {name} can not be found!");
         }
     }
+
     pub fn set_process_affinity(config: &ThreadManagerConfig) -> anyhow::Result<Vec<usize>> {
         let chosen_cores_mask = config.default_core_allocation.as_core_mask_vector();
-
         crate::policy::set_thread_affinity(&chosen_cores_mask);
         Ok(chosen_cores_mask)
     }
 
     pub fn new(config: ThreadManagerConfig) -> anyhow::Result<Self> {
-        let mut core_allocations = HashMap::<ConstString, Vec<usize>>::new();
+        let mut core_allocations = HashMap::<String, Vec<usize>>::new();
         Self::set_process_affinity(&config)?;
         let mut manager = ThreadManagerInner::default();
         manager.populate_mappings(&config);
         for (name, cfg) in config.native_configs.iter() {
             let nrt = NativeThreadRuntime::new(name.clone(), cfg.clone());
-            manager
-                .native_thread_runtimes
-                .insert(name.clone().into_boxed_str(), nrt);
+            manager.native_thread_runtimes.insert(name.clone(), nrt);
         }
         for (name, cfg) in config.rayon_configs.iter() {
             let rrt = RayonRuntime::new(name.clone(), cfg.clone())?;
-            manager
-                .rayon_runtimes
-                .insert(name.clone().into_boxed_str(), rrt);
+            manager.rayon_runtimes.insert(name.clone(), rrt);
         }
 
         for (name, cfg) in config.tokio_configs.iter() {
             let tokiort = TokioRuntime::new(name.clone(), cfg.clone())?;
 
-            core_allocations.insert(
-                name.clone().into_boxed_str(),
-                cfg.core_allocation.as_core_mask_vector(),
-            );
-            manager
-                .tokio_runtimes
-                .insert(name.clone().into_boxed_str(), tokiort);
+            core_allocations.insert(name.clone(), cfg.core_allocation.as_core_mask_vector());
+            manager.tokio_runtimes.insert(name.clone(), tokiort);
         }
         Ok(Self {
             inner: Arc::new(manager),

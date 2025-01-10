@@ -80,7 +80,9 @@ impl RayonRuntime {
         })
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn new_for_tests(name: &str) -> Self {
-        Self::new(name.to_owned(), RayonConfig::default()).unwrap()
+        Self::new(name.to_owned(), RayonConfig::default())
+            .expect("Failed to create rayon runtime for tests")
     }
 }

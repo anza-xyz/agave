@@ -95,7 +95,7 @@ impl<T> JoinHandle<T> {
 impl<T> Drop for JoinHandle<T> {
     fn drop(&mut self) {
         if self.std_handle.is_some() {
-            warn!("Attempting to drop a Join Handle of a running thread will leak thread IDs, please join your managed threads!");
+            warn!("Attempting to drop a Join Handle of a running thread will leak thread IDs, please join your  threads!");
             self.join_inner().expect("Child thread panicked");
         }
     }
@@ -154,5 +154,10 @@ impl NativeThreadRuntime {
             std_handle: Some(jh),
             running_count: self.running_count.clone(),
         })
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn new_for_tests(name: &str) -> Self {
+        Self::new(name.to_owned(), NativeConfig::default())
     }
 }

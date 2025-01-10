@@ -55,7 +55,7 @@ fn main() -> anyhow::Result<()> {
 
             let join_handle =
                 scope.spawn(|| workload_runtime.block_on(workload_main(&[8888, 8889], 1000)));
-            join_handle.join().expect("WRK crashed!")
+            join_handle.join().expect("Load generator crashed!")
         });
         //print out the results of the bench run
         println!("Results are: {:?}", results);

@@ -1,13 +1,16 @@
-#[cfg(target_os = "linux")]
-use thread_priority::{NormalThreadSchedulePolicy, ThreadExt, ThreadSchedulePolicy};
+cfg_if::cfg_if! {
+    if #[cfg(target_os = "linux")]{
+        use thread_priority::{NormalThreadSchedulePolicy, ThreadExt, ThreadSchedulePolicy};
+    }
+    else{
+        #[derive(Clone, Copy)]
+        pub(crate) struct ThreadSchedulePolicy {}
+    }
+}
 use {
     serde::{Deserialize, Serialize},
     std::sync::OnceLock,
 };
-
-#[cfg(not(target_os = "linux"))]
-#[derive(Clone, Copy)]
-pub(crate) struct ThreadSchedulePolicy {}
 
 static CORE_COUNT: OnceLock<usize> = OnceLock::new();
 
@@ -34,53 +37,50 @@ impl CoreAllocation {
         }
     }
 }
+cfg_if::cfg_if! {
+    if #[cfg(target_os = "linux")]{
 
-#[cfg(target_os = "linux")]
-pub fn set_thread_affinity(cores: &[usize]) {
-    assert!(
-        !cores.is_empty(),
-        "Can not call setaffinity with empty cores mask"
-    );
-    if let Err(e) = affinity::set_thread_affinity(cores) {
-        let thread = std::thread::current();
-        panic!(
-            "Can not set core affinity {:?} for thread {:?} named {:?}, error {}",
-            cores,
-            thread.id(),
-            thread.name(),
-            e
-        );
+        pub fn set_thread_affinity(cores: &[usize]) {
+            assert!(
+                !cores.is_empty(),
+                "Can not call setaffinity with empty cores mask"
+            );
+            if let Err(e) = affinity::set_thread_affinity(cores) {
+                let thread = std::thread::current();
+                panic!(
+                    "Can not set core affinity {:?} for thread {:?} named {:?}, error {}",
+                    cores,
+                    thread.id(),
+                    thread.name(),
+                    e
+                );
+            }
+        }
+        fn apply_thread_scheduler_policy(policy: ThreadSchedulePolicy, priority: u8) {
+            if let Err(e) = std::thread::current().set_priority_and_policy(
+                policy,
+                thread_priority::ThreadPriority::Crossplatform((priority).try_into().expect("Priority value outside of OS-supported range")),
+            ) {
+                panic!("Can not set thread priority, OS error {:?}", e);
+            }
+        }
+        pub fn parse_policy(policy: &str) -> ThreadSchedulePolicy {
+            match policy.to_uppercase().as_ref() {
+                "BATCH" => ThreadSchedulePolicy::Normal(NormalThreadSchedulePolicy::Batch),
+                "OTHER" => ThreadSchedulePolicy::Normal(NormalThreadSchedulePolicy::Other),
+                "IDLE" => ThreadSchedulePolicy::Normal(NormalThreadSchedulePolicy::Idle),
+                _ => panic!("Could not parse the policy"),
+            }
+        }
     }
-}
+    else{
 
-#[cfg(not(target_os = "linux"))]
-pub fn set_thread_affinity(_cores: &[usize]) {}
+        pub fn set_thread_affinity(_cores: &[usize]) {}
 
-#[cfg(target_os = "linux")]
-pub fn parse_policy(policy: &str) -> ThreadSchedulePolicy {
-    match policy.to_uppercase().as_ref() {
-        "BATCH" => ThreadSchedulePolicy::Normal(NormalThreadSchedulePolicy::Batch),
-        "OTHER" => ThreadSchedulePolicy::Normal(NormalThreadSchedulePolicy::Other),
-        "IDLE" => ThreadSchedulePolicy::Normal(NormalThreadSchedulePolicy::Idle),
-        _ => panic!("Could not parse the policy"),
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-pub(crate) fn parse_policy(_policy: &str) -> ThreadSchedulePolicy {
-    ThreadSchedulePolicy {}
-}
-
-#[cfg(not(target_os = "linux"))]
-fn apply_thread_scheduler_policy(_policy: ThreadSchedulePolicy, _priority: u8) {}
-
-#[cfg(target_os = "linux")]
-fn apply_thread_scheduler_policy(policy: ThreadSchedulePolicy, priority: u8) {
-    if let Err(e) = std::thread::current().set_priority_and_policy(
-        policy,
-        thread_priority::ThreadPriority::Crossplatform((priority).try_into().unwrap()),
-    ) {
-        panic!("Can not set thread priority, OS error {:?}", e);
+        pub(crate) fn parse_policy(_policy: &str) -> ThreadSchedulePolicy {
+            ThreadSchedulePolicy {}
+        }
+        fn apply_thread_scheduler_policy(_policy: ThreadSchedulePolicy, _priority: u8) {}
     }
 }
 
