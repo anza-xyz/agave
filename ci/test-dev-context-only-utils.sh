@@ -21,7 +21,7 @@ case "$shard" in
     check_dcou --partition 6/9
     check_dcou --partition 7/9
     ;;
-  2-of-4)
+  3-of-4)
     check_dcou --partition 8/9
     ;;
   4-of-4)
