@@ -14,7 +14,7 @@ shard=$1
 shift
 case "$shard" in
   1-of-4)
-    check_dcou1
+    check_dcou1 --partition 1/1
     #check_dcou1 --partition 1/9
     #check_dcou1 --partition 2/9
     #check_dcou1 --partition 3/9
@@ -27,7 +27,7 @@ case "$shard" in
     #check_dcou2 --partition 5/9
     ;;
   2-of-4)
-    check_dcou2
+    check_dcou2 --partition 1/1
     #check_dcou1 --partition 6/9
     #check_dcou1 --partition 7/9
     #check_dcou2 --partition 6/9
