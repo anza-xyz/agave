@@ -28,7 +28,7 @@ use {
     solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
     solana_runtime::{
         accounts_background_service::{AbsRequestSender, SnapshotRequestKind},
-        bank::{Bank, TransactionBalancesSet},
+        bank::{Bank, PreCommitResult, TransactionBalancesSet},
         bank_forks::{BankForks, SetRootError},
         bank_utils,
         commitment::VOTE_THRESHOLD_SIZE,
@@ -153,14 +153,14 @@ fn create_thread_pool(num_threads: usize) -> ThreadPool {
         .expect("new rayon threadpool")
 }
 
-pub fn execute_batch(
-    batch: &TransactionBatchWithIndexes<impl TransactionWithMeta>,
-    bank: &Arc<Bank>,
-    transaction_status_sender: Option<&TransactionStatusSender>,
-    replay_vote_sender: Option<&ReplayVoteSender>,
-    timings: &mut ExecuteTimings,
+pub fn execute_batch<'a>(
+    batch: &'a TransactionBatchWithIndexes<impl TransactionWithMeta>,
+    bank: &'a Arc<Bank>,
+    transaction_status_sender: Option<&'a TransactionStatusSender>,
+    replay_vote_sender: Option<&'a ReplayVoteSender>,
+    timings: &'a mut ExecuteTimings,
     log_messages_bytes_limit: Option<usize>,
-    prioritization_fee_cache: &PrioritizationFeeCache,
+    prioritization_fee_cache: &'a PrioritizationFeeCache,
     // None is meaningfully used to detect this is called from the block producing unified
     // scheduler. If so, suppress too verbose logging for the code path.
     extra_pre_commit_callback: Option<
@@ -182,17 +182,24 @@ pub fn execute_batch(
         vec![]
     };
 
-    let pre_commit_callback = |timings: &mut _, processing_results: &_| {
+    let pre_commit_callback = |timings: &mut _, processing_results: &_| -> PreCommitResult {
         match extra_pre_commit_callback {
             None => {
                 get_first_error(batch, processing_results)?;
                 check_block_cost_limits_if_enabled(batch, bank, timings, processing_results)?;
+                Ok(None)
             }
             Some(extra_pre_commit_callback) => {
                 // We're entering into the block-producing unified scheduler special case...
                 // `processing_results` should always contain exactly only 1 result in that case.
                 assert_eq!(processing_results.len(), 1);
                 assert!(transaction_indexes.is_empty());
+
+                // From now on, we need to freeze-lock the tpu bank, in order to prevent it from
+                // freezing in the middle of this code-path. Otherwise, the assertion at the start
+                // of commit_transactions() would trigger panic because it's fatal runtime
+                // invariant violation.
+                let freeze_lock = bank.freeze_lock();
 
                 if let Some(index) = extra_pre_commit_callback(&processing_results[0])? {
                     let transaction_indexes = transaction_indexes.to_mut();
@@ -201,9 +208,14 @@ pub fn execute_batch(
                     transaction_indexes.reserve_exact(1);
                     transaction_indexes.push(index);
                 }
+                // At this point, poh should have been succeeded so it's guaranteed that the bank
+                // hasn't been frozen yet and we're still holding the lock. So, it's okay to pass
+                // down freeze_lock without any introspection here to be unconditionally dropped
+                // after commit_transactions(). This reasoning is same as
+                // solana_core::banking_stage::Consumer::execute_and_commit_transactions_locked()
+                Ok(Some(freeze_lock))
             }
         }
-        Ok(())
     };
 
     let (commit_results, balances) = batch

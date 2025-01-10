@@ -360,6 +360,8 @@ impl TransactionBalancesSet {
 }
 pub type TransactionBalances = Vec<Vec<u64>>;
 
+pub type PreCommitResult<'a> = Result<Option<RwLockReadGuard<'a, Hash>>>;
+
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub enum TransactionLogCollectorFilter {
     All,
@@ -4536,8 +4538,8 @@ impl Bank {
         .unwrap()
     }
 
-    pub fn load_execute_and_commit_transactions_with_pre_commit_callback(
-        &self,
+    pub fn load_execute_and_commit_transactions_with_pre_commit_callback<'a>(
+        &'a self,
         batch: &TransactionBatch<impl TransactionWithMeta>,
         max_age: usize,
         collect_balances: bool,
@@ -4547,7 +4549,7 @@ impl Bank {
         pre_commit_callback: impl FnOnce(
             &mut ExecuteTimings,
             &[TransactionProcessingResult],
-        ) -> Result<()>,
+        ) -> PreCommitResult<'a>,
     ) -> Result<(Vec<TransactionCommitResult>, TransactionBalancesSet)> {
         self.do_load_execute_and_commit_transactions_with_pre_commit_callback(
             batch,
@@ -4560,8 +4562,8 @@ impl Bank {
         )
     }
 
-    fn do_load_execute_and_commit_transactions_with_pre_commit_callback(
-        &self,
+    fn do_load_execute_and_commit_transactions_with_pre_commit_callback<'a>(
+        &'a self,
         batch: &TransactionBatch<impl TransactionWithMeta>,
         max_age: usize,
         collect_balances: bool,
@@ -4569,7 +4571,7 @@ impl Bank {
         timings: &mut ExecuteTimings,
         log_messages_bytes_limit: Option<usize>,
         pre_commit_callback: Option<
-            impl FnOnce(&mut ExecuteTimings, &[TransactionProcessingResult]) -> Result<()>,
+            impl FnOnce(&mut ExecuteTimings, &[TransactionProcessingResult]) -> PreCommitResult<'a>,
         >,
     ) -> Result<(Vec<TransactionCommitResult>, TransactionBalancesSet)> {
         let pre_balances = if collect_balances {
@@ -4597,15 +4599,22 @@ impl Bank {
             },
         );
 
-        if let Some(pre_commit_callback) = pre_commit_callback {
-            pre_commit_callback(timings, &processing_results)?;
-        }
+        // pre_commit_callback could initiate an atomic operation (i.e. poh recording with block
+        // producing unified scheduler). in that case, it returns Some(freeze_lock), which should
+        // unlocked only after calling commit_transactions() immediately after calling the
+        // callback.
+        let freeze_lock = if let Some(pre_commit_callback) = pre_commit_callback {
+            pre_commit_callback(timings, &processing_results)?
+        } else {
+            None
+        };
         let commit_results = self.commit_transactions(
             batch.sanitized_transactions(),
             processing_results,
             &processed_counts,
             timings,
         );
+        drop(freeze_lock);
         let post_balances = if collect_balances {
             self.collect_balances(batch)
         } else {
