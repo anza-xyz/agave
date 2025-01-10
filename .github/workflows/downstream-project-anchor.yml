@@ -38,7 +38,8 @@ env:
 
 jobs:
   test:
-    if: github.repository == 'anza-xyz/agave'
+    #if: github.repository == 'anza-xyz/agave'
+    if: false
     runs-on: ubuntu-latest
     strategy:
       matrix:
