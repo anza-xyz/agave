@@ -71,6 +71,7 @@ prost = { workspace = true }
 rand0-7 = { workspace = true }
 shuttle = { workspace = true }
 solana-clock = { workspace = true }
+solana-compute-budget = { workspace = true, features = ["dev-context-only-utils"] }
 solana-compute-budget-interface = { workspace = true }
 solana-compute-budget-program = { workspace = true }
 solana-ed25519-program = { workspace = true }
