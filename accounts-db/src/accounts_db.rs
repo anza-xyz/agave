@@ -6314,7 +6314,7 @@ impl AccountsDb {
         // Note that self.flush_slot_cache_with_clean() can return None if the
         // slot is already been flushed. This can happen if the cache is
         // overwhelmed and we flushed some yet to be rooted frozen slots.
-        // However, Independent of whether the last slot was actually flushed
+        // However, independent of whether the last slot was actually flushed
         // from the cache by the above loop, we should always update the
         // `max_flush_root` to the max of the flushed roots, because that's
         // max_flushed_root tracks the logical last root that was flushed to
