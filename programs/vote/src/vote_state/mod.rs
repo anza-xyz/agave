@@ -451,7 +451,7 @@ fn check_slots_are_valid(
         // where `s` >= `last_voted_slot`
         if vote_state
             .last_voted_slot()
-            .map_or(false, |last_voted_slot| vote_slots[i] <= last_voted_slot)
+            .is_some_and(|last_voted_slot| vote_slots[i] <= last_voted_slot)
         {
             i = i
                 .checked_add(1)

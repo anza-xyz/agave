@@ -76,9 +76,7 @@ impl WarmQuicCacheService {
                         .unwrap()
                         .leader_after_n_slots((CACHE_OFFSET_SLOT + slot_jitter) as u64);
                     if let Some(leader_pubkey) = leader_pubkey {
-                        if maybe_last_leader
-                            .map_or(true, |last_leader| last_leader != leader_pubkey)
-                        {
+                        if maybe_last_leader != Some(leader_pubkey) {
                             maybe_last_leader = Some(leader_pubkey);
                             // Warm cache for regular transactions
                             Self::warmup_connection(

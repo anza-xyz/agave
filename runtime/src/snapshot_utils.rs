@@ -114,7 +114,7 @@ impl FromStr for SnapshotVersion {
         // Remove leading 'v' or 'V' from slice
         let version_string = if version_string
             .get(..1)
-            .map_or(false, |s| s.eq_ignore_ascii_case("v"))
+            .is_some_and(|s| s.eq_ignore_ascii_case("v"))
         {
             &version_string[1..]
         } else {

@@ -701,7 +701,7 @@ impl VoteState {
         // Ignore votes for slots earlier than we already have votes for
         if self
             .last_voted_slot()
-            .map_or(false, |last_voted_slot| next_vote_slot <= last_voted_slot)
+            .is_some_and(|last_voted_slot| next_vote_slot <= last_voted_slot)
         {
             return;
         }
