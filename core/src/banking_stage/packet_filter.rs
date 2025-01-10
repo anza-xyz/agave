@@ -1,7 +1,7 @@
 use {
     super::immutable_deserialized_packet::ImmutableDeserializedPacket,
     lazy_static::lazy_static,
-    solana_builtins_default_costs::get_builtin_instruction_cost,
+    solana_builtins::cost_modeling::get_builtin_instruction_cost,
     solana_sdk::{
         ed25519_program, feature_set::FeatureSet, saturating_add_assign, secp256k1_program,
     },

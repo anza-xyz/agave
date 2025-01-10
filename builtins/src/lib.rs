@@ -10,11 +10,13 @@
 //!   Core BPF, as well as whether or not that feature gate has been activated.
 
 pub mod core_bpf_migration;
+pub mod cost_modeling;
 pub mod prototype;
 
 use {
     crate::{
         core_bpf_migration::{CoreBpfMigrationConfig, CoreBpfMigrationTargetType},
+        cost_modeling::CostModelingConfig,
         prototype::{BuiltinPrototype, StatelessBuiltinPrototype},
     },
     solana_feature_set as feature_set,
@@ -23,48 +25,55 @@ use {
 
 macro_rules! testable_prototype {
     ($prototype:ident {
-        core_bpf_migration_config: $core_bpf_migration_config:expr,
         name: $name:ident,
+        core_bpf_migration_config: $core_bpf_migration_config:expr,
         $($field:ident : $value:expr),* $(,)?
     }) => {
         $prototype {
+            name: stringify!($name),
             core_bpf_migration_config: {
-                #[cfg(not(feature = "dev-context-only-utils"))]
+                #[cfg(not(feature = "mock-builtin-migrations"))]
                 {
                     $core_bpf_migration_config
                 }
-                #[cfg(feature = "dev-context-only-utils")]
+                #[cfg(feature = "mock-builtin-migrations")]
                 {
                     Some( test_only::$name::CONFIG )
                 }
             },
-            name: stringify!($name),
             $($field: $value),*
         }
     };
 }
 
-/// DEVELOPER: when a builtin is migrated to sbpf, please add its corresponding
-/// migration feature ID to solana-builtin-default-costs::BUILTIN_INSTRUCTION_COSTS,
-/// so the builtin's default cost can be determined properly based on feature status.
-/// When migration completed, and the feature gate is enabled everywhere, please
-/// remove that builtin entry from solana-builtin-default-costs::BUILTIN_INSTRUCTION_COSTS.
+/// CONTRIBUTOR: When a builtin is scheduled to be migrated to Core BPF, add
+/// the `CoreBpfMigrationConfig` to the builtin prototype here, and adjust the
+/// length value in `cost_modeling::NUM_COST_MODELED_BUILTINS_WITH_MIGRATIONS`.
+/// When the migration is completed and the feature is cleaned up, remove the
+/// builtin from this list and update the length value again.
 pub static BUILTINS: &[BuiltinPrototype] = &[
     testable_prototype!(BuiltinPrototype {
-        core_bpf_migration_config: None,
         name: system_program,
+        core_bpf_migration_config: None,
+        cost_modeling_config: CostModelingConfig::CostModeled {
+            default_cost: solana_system_program::system_processor::DEFAULT_COMPUTE_UNITS,
+        },
         enable_feature_id: None,
         program_id: solana_system_program::id(),
         entrypoint: solana_system_program::system_processor::Entrypoint::vm,
     }),
     testable_prototype!(BuiltinPrototype {
-        core_bpf_migration_config: None,
         name: vote_program,
+        core_bpf_migration_config: None,
+        cost_modeling_config: CostModelingConfig::CostModeled {
+            default_cost: solana_vote_program::vote_processor::DEFAULT_COMPUTE_UNITS,
+        },
         enable_feature_id: None,
         program_id: solana_vote_program::id(),
         entrypoint: solana_vote_program::vote_processor::Entrypoint::vm,
     }),
     BuiltinPrototype {
+        name: "stake_program",
         core_bpf_migration_config: Some(CoreBpfMigrationConfig {
             source_buffer_address: buffer_accounts::stake_program::id(),
             upgrade_authority_address: None,
@@ -72,12 +81,15 @@ pub static BUILTINS: &[BuiltinPrototype] = &[
             migration_target: CoreBpfMigrationTargetType::Builtin,
             datapoint_name: "migrate_builtin_to_core_bpf_stake_program",
         }),
-        name: "stake_program",
+        cost_modeling_config: CostModelingConfig::CostModeled {
+            default_cost: solana_stake_program::stake_instruction::DEFAULT_COMPUTE_UNITS,
+        },
         enable_feature_id: None,
         program_id: solana_stake_program::id(),
         entrypoint: solana_stake_program::stake_instruction::Entrypoint::vm,
     },
     BuiltinPrototype {
+        name: "config_program",
         core_bpf_migration_config: Some(CoreBpfMigrationConfig {
             source_buffer_address: buffer_accounts::config_program::id(),
             upgrade_authority_address: None,
@@ -85,40 +97,55 @@ pub static BUILTINS: &[BuiltinPrototype] = &[
             migration_target: CoreBpfMigrationTargetType::Builtin,
             datapoint_name: "migrate_builtin_to_core_bpf_config_program",
         }),
-        name: "config_program",
+        cost_modeling_config: CostModelingConfig::CostModeled {
+            default_cost: solana_config_program::config_processor::DEFAULT_COMPUTE_UNITS,
+        },
         enable_feature_id: None,
         program_id: solana_config_program::id(),
         entrypoint: solana_config_program::config_processor::Entrypoint::vm,
     },
     testable_prototype!(BuiltinPrototype {
-        core_bpf_migration_config: None,
         name: solana_bpf_loader_deprecated_program,
+        core_bpf_migration_config: None,
+        cost_modeling_config: CostModelingConfig::CostModeled {
+            default_cost: solana_bpf_loader_program::DEPRECATED_LOADER_COMPUTE_UNITS,
+        },
         enable_feature_id: None,
         program_id: bpf_loader_deprecated::id(),
         entrypoint: solana_bpf_loader_program::Entrypoint::vm,
     }),
     testable_prototype!(BuiltinPrototype {
-        core_bpf_migration_config: None,
         name: solana_bpf_loader_program,
+        core_bpf_migration_config: None,
+        cost_modeling_config: CostModelingConfig::CostModeled {
+            default_cost: solana_bpf_loader_program::DEFAULT_LOADER_COMPUTE_UNITS,
+        },
         enable_feature_id: None,
         program_id: bpf_loader::id(),
         entrypoint: solana_bpf_loader_program::Entrypoint::vm,
     }),
     testable_prototype!(BuiltinPrototype {
-        core_bpf_migration_config: None,
         name: solana_bpf_loader_upgradeable_program,
+        core_bpf_migration_config: None,
+        cost_modeling_config: CostModelingConfig::CostModeled {
+            default_cost: solana_bpf_loader_program::UPGRADEABLE_LOADER_COMPUTE_UNITS,
+        },
         enable_feature_id: None,
         program_id: bpf_loader_upgradeable::id(),
         entrypoint: solana_bpf_loader_program::Entrypoint::vm,
     }),
     testable_prototype!(BuiltinPrototype {
-        core_bpf_migration_config: None,
         name: compute_budget_program,
+        core_bpf_migration_config: None,
+        cost_modeling_config: CostModelingConfig::CostModeled {
+            default_cost: solana_compute_budget_program::DEFAULT_COMPUTE_UNITS,
+        },
         enable_feature_id: None,
         program_id: solana_sdk_ids::compute_budget::id(),
         entrypoint: solana_compute_budget_program::Entrypoint::vm,
     }),
     BuiltinPrototype {
+        name: "address_lookup_table_program",
         core_bpf_migration_config: Some(CoreBpfMigrationConfig {
             source_buffer_address: buffer_accounts::address_lookup_table_program::id(),
             upgrade_authority_address: None,
@@ -126,28 +153,35 @@ pub static BUILTINS: &[BuiltinPrototype] = &[
             migration_target: CoreBpfMigrationTargetType::Builtin,
             datapoint_name: "migrate_builtin_to_core_bpf_address_lookup_table_program",
         }),
-        name: "address_lookup_table_program",
+        cost_modeling_config: CostModelingConfig::CostModeled {
+            default_cost: solana_address_lookup_table_program::processor::DEFAULT_COMPUTE_UNITS,
+        },
         enable_feature_id: None,
         program_id: solana_sdk_ids::address_lookup_table::id(),
         entrypoint: solana_address_lookup_table_program::processor::Entrypoint::vm,
     },
     testable_prototype!(BuiltinPrototype {
-        core_bpf_migration_config: None,
         name: zk_token_proof_program,
+        core_bpf_migration_config: None,
+        cost_modeling_config: CostModelingConfig::NotCostModeled, // WARNING: DO NOT CHANGE WITHOUT FEATURE GATE!!
         enable_feature_id: Some(feature_set::zk_token_sdk_enabled::id()),
         program_id: solana_sdk_ids::zk_token_proof_program::id(),
         entrypoint: solana_zk_token_proof_program::Entrypoint::vm,
     }),
     testable_prototype!(BuiltinPrototype {
-        core_bpf_migration_config: None,
         name: loader_v4,
+        core_bpf_migration_config: None,
+        cost_modeling_config: CostModelingConfig::CostModeled {
+            default_cost: solana_loader_v4_program::DEFAULT_COMPUTE_UNITS,
+        },
         enable_feature_id: Some(feature_set::enable_program_runtime_v2_and_loader_v4::id()),
         program_id: solana_sdk_ids::loader_v4::id(),
         entrypoint: solana_loader_v4_program::Entrypoint::vm,
     }),
     testable_prototype!(BuiltinPrototype {
-        core_bpf_migration_config: None,
         name: zk_elgamal_proof_program,
+        core_bpf_migration_config: None,
+        cost_modeling_config: CostModelingConfig::NotCostModeled, // WARNING: DO NOT CHANGE WITHOUT FEATURE GATE!!
         enable_feature_id: Some(feature_set::zk_elgamal_proof_program_enabled::id()),
         program_id: solana_sdk_ids::zk_elgamal_proof_program::id(),
         entrypoint: solana_zk_elgamal_proof_program::Entrypoint::vm,
@@ -189,7 +223,7 @@ mod buffer_accounts {
 // into the builtins list for both the feature ID and the source program ID.
 // These arbitrary IDs can then be used to configure feature-activation runtime
 // tests.
-#[cfg(any(test, feature = "dev-context-only-utils"))]
+#[cfg(any(test, feature = "mock-builtin-migrations"))]
 pub mod test_only {
     use crate::core_bpf_migration::{CoreBpfMigrationConfig, CoreBpfMigrationTargetType};
     pub mod system_program {
@@ -364,7 +398,7 @@ pub mod test_only {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(feature = "mock-builtin-migrations", test))]
 mod tests {
     // Since a macro is used to initialize the test IDs from the `test_only`
     // module, best to ensure the lists have the expected values within a test
