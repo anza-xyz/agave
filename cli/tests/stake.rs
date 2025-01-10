@@ -362,7 +362,6 @@ fn test_stake_delegation_and_withdraw_available() {
         nonce_authority: 0,
         memo: None,
         fee_payer: 0,
-        redelegation_stake_account: None,
         compute_unit_price: None,
     };
     process_command(&config_validator).unwrap();
@@ -494,7 +493,6 @@ fn test_stake_delegation_and_withdraw_all() {
         nonce_authority: 0,
         memo: None,
         fee_payer: 0,
-        redelegation_stake_account: None,
         compute_unit_price: None,
     };
     process_command(&config_validator).unwrap();
