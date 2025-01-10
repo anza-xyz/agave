@@ -181,9 +181,15 @@ wait_step() {
 
 all_test_steps() {
   command_step checks1 "ci/docker-run-default-image.sh ci/test-checks.sh" 20 check
-  command_step dcou-1-of-3 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 1/3" 20 check
-  command_step dcou-2-of-3 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 2/3" 20 check
-  command_step dcou-3-of-3 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 3/3" 20 check
+  command_step dcou-1-of-9 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 1/9" 20 check
+  command_step dcou-2-of-9 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 2/9" 20 check
+  command_step dcou-3-of-9 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 3/9" 20 check
+  command_step dcou-4-of-9 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 4/9" 20 check
+  command_step dcou-5-of-9 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 5/9" 20 check
+  command_step dcou-6-of-9 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 6/9" 20 check
+  command_step dcou-7-of-9 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 7/9" 20 check
+  command_step dcou-8-of-9 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 8/9" 20 check
+  command_step dcou-9-of-9 "ci/docker-run-default-image.sh ci/test-dev-context-only-utils.sh --partition 9/9" 20 check
   command_step miri "ci/docker-run-default-image.sh ci/test-miri.sh" 5 check
   command_step frozen-abi "ci/docker-run-default-image.sh ./test-abi.sh" 15 check
   wait_step
