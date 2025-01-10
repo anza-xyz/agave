@@ -1,5 +1,8 @@
 use {
-    crate::policy::{apply_policy, parse_policy, CoreAllocation},
+    crate::{
+        policy::{apply_policy, parse_policy, CoreAllocation},
+        MAX_THREAD_NAME_CHARS,
+    },
     anyhow::bail,
     log::error,
     serde::{Deserialize, Serialize},
@@ -18,7 +21,7 @@ use {
 pub struct NativeConfig {
     pub core_allocation: CoreAllocation,
     pub max_threads: usize,
-    /// Priority in range 1..99
+    /// Priority in range 0..99
     pub priority: u8,
     pub policy: String,
     pub stack_size_bytes: usize,
@@ -100,6 +103,7 @@ impl<T> Drop for JoinHandle<T> {
 
 impl NativeThreadRuntime {
     pub fn new(name: String, cfg: NativeConfig) -> Self {
+        debug_assert!(name.len() < MAX_THREAD_NAME_CHARS, "Thread name too long");
         Self {
             inner: Arc::new(NativeThreadRuntimeInner {
                 id_count: AtomicUsize::new(0),
@@ -127,6 +131,7 @@ impl NativeThreadRuntime {
         F: Send + 'static,
         T: Send + 'static,
     {
+        debug_assert!(name.len() < MAX_THREAD_NAME_CHARS, "Thread name too long");
         let spawned = self.running_count.load(Ordering::Relaxed);
         if spawned >= self.config.max_threads {
             bail!("All allowed threads in this pool are already spawned");

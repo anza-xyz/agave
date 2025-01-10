@@ -1,11 +1,14 @@
 use {
-    crate::policy::{apply_policy, parse_policy, CoreAllocation},
+    crate::{
+        policy::{apply_policy, parse_policy, CoreAllocation},
+        MAX_THREAD_NAME_CHARS,
+    },
     serde::{Deserialize, Serialize},
     solana_metrics::datapoint_info,
     std::{
         ops::Deref,
         sync::{
-            atomic::{AtomicI64, AtomicUsize, Ordering},
+            atomic::{AtomicU64, AtomicUsize, Ordering},
             Arc, Mutex,
         },
         time::Duration,
@@ -20,7 +23,7 @@ pub struct TokioConfig {
     pub worker_threads: usize,
     ///max number of blocking threads tokio is allowed to spawn
     pub max_blocking_threads: usize,
-    /// Priority in range 1..99
+    /// Priority in range 0..99
     pub priority: u8,
     pub policy: String,
     pub stack_size_bytes: usize,
@@ -65,6 +68,7 @@ impl TokioRuntime {
     }
 
     pub fn new(name: String, cfg: TokioConfig) -> anyhow::Result<Self> {
+        debug_assert!(name.len() < MAX_THREAD_NAME_CHARS, "Thread name too long");
         let num_workers = if cfg.worker_threads == 0 {
             num_cpus::get()
         } else {
@@ -85,9 +89,9 @@ impl TokioRuntime {
 
         let counters = Arc::new(ThreadCounters {
             namespace: format!("thread-manager-tokio-{}", &base_name).leak(), // no workaround, metrics crate will only consume 'static str
-            parked_threads_cnt: AtomicI64::new(0),
-            active_threads_cnt: AtomicI64::new(
-                (num_workers.wrapping_add(cfg.max_blocking_threads)) as i64,
+            total_threads_cnt: cfg.worker_threads as u64,
+            active_threads_cnt: AtomicU64::new(
+                (num_workers.wrapping_add(cfg.max_blocking_threads)) as u64,
             ),
         });
         let counters_clone1 = counters.clone();
@@ -145,18 +149,16 @@ impl TokioRuntime {
 #[derive(Debug)]
 pub struct ThreadCounters {
     pub namespace: &'static str,
-    pub parked_threads_cnt: AtomicI64,
-    pub active_threads_cnt: AtomicI64,
+    pub total_threads_cnt: u64,
+    pub active_threads_cnt: AtomicU64,
 }
 
 impl ThreadCounters {
     pub fn on_park(&self) {
-        self.parked_threads_cnt.fetch_add(1, Ordering::Relaxed);
         self.active_threads_cnt.fetch_sub(1, Ordering::Relaxed);
     }
 
     pub fn on_unpark(&self) {
-        self.parked_threads_cnt.fetch_sub(1, Ordering::Relaxed);
         self.active_threads_cnt.fetch_add(1, Ordering::Relaxed);
     }
 }
@@ -165,8 +167,9 @@ async fn metrics_sampler(counters: Arc<ThreadCounters>, period: Duration) {
     let mut interval = tokio::time::interval(period);
     loop {
         interval.tick().await;
-        let parked = counters.parked_threads_cnt.load(Ordering::Relaxed);
-        let active = counters.active_threads_cnt.load(Ordering::Relaxed);
+        let active = counters.active_threads_cnt.load(Ordering::Relaxed) as i64;
+        #[allow(clippy::arithmetic_side_effects)]
+        let parked = counters.total_threads_cnt as i64 - active;
         datapoint_info!(
             counters.namespace,
             ("threads_parked", parked, i64),

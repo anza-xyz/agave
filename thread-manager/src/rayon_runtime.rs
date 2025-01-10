@@ -1,5 +1,8 @@
 use {
-    crate::policy::{apply_policy, parse_policy, CoreAllocation},
+    crate::{
+        policy::{apply_policy, parse_policy, CoreAllocation},
+        MAX_THREAD_NAME_CHARS,
+    },
     anyhow::Ok,
     serde::{Deserialize, Serialize},
     std::{
@@ -12,7 +15,7 @@ use {
 #[serde(default)]
 pub struct RayonConfig {
     pub worker_threads: usize,
-    /// Priority in range 1..99
+    /// Priority in range 0..99
     pub priority: u8,
     pub policy: String,
     pub stack_size_bytes: usize,
@@ -59,6 +62,7 @@ impl Deref for RayonRuntime {
 
 impl RayonRuntime {
     pub fn new(name: String, config: RayonConfig) -> anyhow::Result<Self> {
+        debug_assert!(name.len() < MAX_THREAD_NAME_CHARS, "Thread name too long");
         let core_allocation = config.core_allocation.clone();
         let chosen_cores_mask = Mutex::new(core_allocation.as_core_mask_vector());
         let priority = config.priority;

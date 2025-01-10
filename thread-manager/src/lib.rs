@@ -17,6 +17,8 @@ pub use {
 };
 pub type ConstString = Box<str>;
 
+pub const MAX_THREAD_NAME_CHARS: usize = 12;
+
 #[derive(Default, Debug)]
 pub struct ThreadManagerInner {
     pub tokio_runtimes: HashMap<ConstString, TokioRuntime>,

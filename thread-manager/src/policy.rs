@@ -27,11 +27,10 @@ pub enum CoreAllocation {
 impl CoreAllocation {
     /// Converts into a vector of core IDs. OsDefault is converted to empty vector.
     pub fn as_core_mask_vector(&self) -> Vec<usize> {
-        let core_count = CORE_COUNT.get_or_init(num_cpus::get);
         match *self {
             CoreAllocation::PinnedCores { min, max } => (min..max).collect(),
             CoreAllocation::DedicatedCoreSet { min, max } => (min..max).collect(),
-            CoreAllocation::OsDefault => Vec::from_iter(0..*core_count),
+            CoreAllocation::OsDefault => Vec::from_iter(0..*CORE_COUNT.get_or_init(num_cpus::get)),
         }
     }
 }
