@@ -1,8 +1,12 @@
+/// Deprecated, reexported to avoid breaking public API.
+pub use crate::{
+    send_transaction_service_stats::SendTransactionServiceStats,
+    transaction_client::{CurrentLeaderInfo, LEADER_INFO_REFRESH_RATE_MS},
+};
+
 use {
     crate::{
-        send_transaction_service_stats::{
-            SendTransactionServiceStats, SendTransactionServiceStatsReport,
-        },
+        send_transaction_service_stats::SendTransactionServiceStatsReport,
         tpu_info::TpuInfo,
         transaction_client::{ConnectionCacheClient, TransactionClient},
     },
