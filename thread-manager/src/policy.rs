@@ -43,13 +43,13 @@ pub fn set_thread_affinity(cores: &[usize]) {
     );
     if let Err(e) = affinity::set_thread_affinity(cores) {
         let thread = std::thread::current();
-        let msg = format!(
-            "Can not set core affinity {:?} for thread {:?} named {:?}, error {e}",
+        panic!(
+            "Can not set core affinity {:?} for thread {:?} named {:?}, error {}",
             cores,
             thread.id(),
-            thread.name()
+            thread.name(),
+            e
         );
-        panic!("{}", msg);
     }
 }
 
