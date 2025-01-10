@@ -23,7 +23,7 @@ impl<'a> RootedSlotIterator<'a> {
         }
     }
 }
-impl<'a> Iterator for RootedSlotIterator<'a> {
+impl Iterator for RootedSlotIterator<'_> {
     type Item = (Slot, Option<SlotMeta>);
 
     fn next(&mut self) -> Option<Self::Item> {

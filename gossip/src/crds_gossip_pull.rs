@@ -585,7 +585,7 @@ impl<'a> CrdsTimeouts<'a> {
     }
 }
 
-impl<'a> Index<&Pubkey> for CrdsTimeouts<'a> {
+impl Index<&Pubkey> for CrdsTimeouts<'_> {
     type Output = u64;
 
     fn index(&self, pubkey: &Pubkey) -> &Self::Output {

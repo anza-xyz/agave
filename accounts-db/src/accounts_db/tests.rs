@@ -2361,7 +2361,7 @@ lazy_static! {
     pub static ref RENT_COLLECTOR: RentCollector = RentCollector::default();
 }
 
-impl<'a> CalcAccountsHashConfig<'a> {
+impl CalcAccountsHashConfig<'_> {
     pub(crate) fn default() -> Self {
         Self {
             use_bg_thread_pool: false,

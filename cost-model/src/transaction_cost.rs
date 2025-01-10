@@ -22,7 +22,7 @@ pub enum TransactionCost<'a, Tx> {
     Transaction(UsageCostDetails<'a, Tx>),
 }
 
-impl<'a, Tx> TransactionCost<'a, Tx> {
+impl<Tx> TransactionCost<'_, Tx> {
     pub fn sum(&self) -> u64 {
         #![allow(clippy::assertions_on_constants)]
         match self {
@@ -160,7 +160,7 @@ pub struct UsageCostDetails<'a, Tx> {
     pub allocated_accounts_data_size: u64,
 }
 
-impl<'a, Tx> UsageCostDetails<'a, Tx> {
+impl<Tx> UsageCostDetails<'_, Tx> {
     pub fn sum(&self) -> u64 {
         self.signature_cost
             .saturating_add(self.write_lock_cost)

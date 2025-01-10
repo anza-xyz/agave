@@ -130,7 +130,7 @@ pub fn download_file<'a, 'b>(
         notification_count: u64,
     }
 
-    impl<'e, 'f, R: Read> Read for DownloadProgress<'e, 'f, R> {
+    impl<R: Read> Read for DownloadProgress<'_, '_, R> {
         fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
             let n = self.response.read(buf)?;
 

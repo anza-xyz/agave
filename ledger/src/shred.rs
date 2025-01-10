@@ -245,7 +245,7 @@ pub(crate) enum SignedData<'a> {
     MerkleRoot(Hash),
 }
 
-impl<'a> AsRef<[u8]> for SignedData<'a> {
+impl AsRef<[u8]> for SignedData<'_> {
     fn as_ref(&self) -> &[u8] {
         match self {
             Self::Chunk(chunk) => chunk,

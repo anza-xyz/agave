@@ -55,7 +55,7 @@ struct ScanState<'a> {
     stats_num_zero_lamport_accounts_ancient: Arc<AtomicU64>,
 }
 
-impl<'a> AppendVecScan for ScanState<'a> {
+impl AppendVecScan for ScanState<'_> {
     fn set_slot(&mut self, slot: Slot, is_ancient: bool) {
         self.current_slot = slot;
         self.is_ancient = is_ancient;

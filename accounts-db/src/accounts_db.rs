@@ -166,7 +166,7 @@ enum StoreTo<'a> {
     Storage(&'a Arc<AccountStorageEntry>),
 }
 
-impl<'a> StoreTo<'a> {
+impl StoreTo<'_> {
     fn is_cached(&self) -> bool {
         matches!(self, StoreTo::Cache)
     }
@@ -1091,7 +1091,7 @@ pub enum LoadedAccount<'a> {
     Cached(Cow<'a, CachedAccount>),
 }
 
-impl<'a> LoadedAccount<'a> {
+impl LoadedAccount<'_> {
     pub fn loaded_hash(&self) -> AccountHash {
         match self {
             LoadedAccount::Stored(stored_account_meta) => *stored_account_meta.hash(),
@@ -1131,7 +1131,7 @@ impl<'a> LoadedAccount<'a> {
     }
 }
 
-impl<'a> ReadableAccount for LoadedAccount<'a> {
+impl ReadableAccount for LoadedAccount<'_> {
     fn lamports(&self) -> u64 {
         match self {
             LoadedAccount::Stored(stored_account_meta) => stored_account_meta.lamports(),
@@ -1875,7 +1875,7 @@ impl solana_frozen_abi::abi_example::AbiExample for AccountsDb {
     }
 }
 
-impl<'a> ZeroLamport for StoredAccountMeta<'a> {
+impl ZeroLamport for StoredAccountMeta<'_> {
     fn is_zero_lamport(&self) -> bool {
         self.lamports() == 0
     }

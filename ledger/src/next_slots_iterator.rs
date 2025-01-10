@@ -17,7 +17,7 @@ impl<'a> NextSlotsIterator<'a> {
     }
 }
 
-impl<'a> Iterator for NextSlotsIterator<'a> {
+impl Iterator for NextSlotsIterator<'_> {
     type Item = (Slot, SlotMeta);
     fn next(&mut self) -> Option<Self::Item> {
         if self.pending_slots.is_empty() {

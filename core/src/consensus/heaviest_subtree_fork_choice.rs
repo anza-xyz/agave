@@ -1402,7 +1402,7 @@ impl<'a> AncestorIterator<'a> {
     }
 }
 
-impl<'a> Iterator for AncestorIterator<'a> {
+impl Iterator for AncestorIterator<'_> {
     type Item = SlotHashKey;
     fn next(&mut self) -> Option<Self::Item> {
         let parent_slot_hash_key = self
