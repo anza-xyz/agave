@@ -1,12 +1,13 @@
+//! These are syscall codes specified in SIMD-0178.
+//! If a new syscall is to be included, add a new number constant
+//! for correct registration.
+
 macro_rules! define_code {
     ($name:ident, $code:literal) => {
         pub const $name: u32 = $code;
     };
 }
 
-// These are syscall codes specified in SIMD-0178.
-// If a new syscall is to be included, add a new number constant
-// for correct registration.
 define_code!(ABORT, 1);
 define_code!(SOL_PANIC, 2);
 define_code!(SOL_MEMCPY_, 3);
