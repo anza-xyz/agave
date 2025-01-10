@@ -313,12 +313,13 @@ fn test_stake_delegation_and_withdraw_available() {
     config_validator.signers = vec![&validator_keypair];
 
     let stake_keypair = keypair_from_seed(&[0u8; 32]).unwrap();
+    let recipient_pubkey = Pubkey::new_unique();
 
     request_and_confirm_airdrop(
         &rpc_client,
         &config_validator,
         &config_validator.signers[0].pubkey(),
-        100_000_000_000,
+        sol_to_lamports(100.0),
     )
     .unwrap();
     check_balance!(
@@ -336,7 +337,7 @@ fn test_stake_delegation_and_withdraw_available() {
         withdrawer: None,
         withdrawer_signer: None,
         lockup: Lockup::default(),
-        amount: SpendAmount::Some(50_000_000_000),
+        amount: SpendAmount::Some(sol_to_lamports(50.0)),
         sign_only: false,
         dump_transaction_message: false,
         blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
@@ -367,11 +368,11 @@ fn test_stake_delegation_and_withdraw_available() {
     };
     process_command(&config_validator).unwrap();
 
-    // Withdraw stake
+    // Withdraw available stake
     config_validator.signers = vec![&validator_keypair];
     config_validator.command = CliCommand::WithdrawStake {
         stake_account_pubkey: stake_keypair.pubkey(),
-        destination_account_pubkey: stake_keypair.pubkey(),
+        destination_account_pubkey: recipient_pubkey,
         amount: SpendAmount::Available,
         withdraw_authority: 0,
         custodian: None,
@@ -386,6 +387,41 @@ fn test_stake_delegation_and_withdraw_available() {
         compute_unit_price: None,
     };
     process_command(&config_validator).unwrap();
+    // While withdraw transaction succeeds, no lamports move because all stake
+    // is activating
+    check_balance!(0, &rpc_client, &recipient_pubkey);
+
+    // Add extra SOL to the stake account
+    request_and_confirm_airdrop(
+        &rpc_client,
+        &config_validator,
+        &stake_keypair.pubkey(),
+        sol_to_lamports(5.0),
+    )
+    .unwrap();
+    check_balance!(sol_to_lamports(55.0), &rpc_client, &stake_keypair.pubkey());
+
+    // Withdraw available stake
+    config_validator.signers = vec![&validator_keypair];
+    config_validator.command = CliCommand::WithdrawStake {
+        stake_account_pubkey: stake_keypair.pubkey(),
+        destination_account_pubkey: recipient_pubkey,
+        amount: SpendAmount::Available,
+        withdraw_authority: 0,
+        custodian: None,
+        sign_only: false,
+        dump_transaction_message: false,
+        blockhash_query: BlockhashQuery::All(blockhash_query::Source::Cluster),
+        nonce_authority: 0,
+        nonce_account: None,
+        memo: None,
+        seed: None,
+        fee_payer: 0,
+        compute_unit_price: None,
+    };
+    process_command(&config_validator).unwrap();
+    // Extra (inactive) SOL is withdrawn
+    check_balance!(sol_to_lamports(5.0), &rpc_client, &recipient_pubkey);
 
     // Deactivate stake
     config_validator.command = CliCommand::DeactivateStake {
@@ -404,11 +440,11 @@ fn test_stake_delegation_and_withdraw_available() {
     };
     process_command(&config_validator).unwrap();
 
-    // Withdraw stake
+    // Withdraw available stake
     config_validator.signers = vec![&validator_keypair];
     config_validator.command = CliCommand::WithdrawStake {
         stake_account_pubkey: stake_keypair.pubkey(),
-        destination_account_pubkey: stake_keypair.pubkey(),
+        destination_account_pubkey: recipient_pubkey,
         amount: SpendAmount::Available,
         withdraw_authority: 0,
         custodian: None,
@@ -423,6 +459,8 @@ fn test_stake_delegation_and_withdraw_available() {
         compute_unit_price: None,
     };
     process_command(&config_validator).unwrap();
+    // Complete balance is withdrawn because all stake is inactive
+    check_balance!(sol_to_lamports(55.0), &rpc_client, &recipient_pubkey);
 }
 
 #[test]
