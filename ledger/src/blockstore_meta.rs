@@ -830,6 +830,7 @@ impl OptimisticSlotMetaVersioned {
         }
     }
 }
+
 #[cfg(test)]
 mod test {
     use {
@@ -901,23 +902,32 @@ mod test {
         }
     }
 
+    /// Generate a random Range<u64>.
+    fn rand_range(range: Range<u64>) -> impl Strategy<Value = Range<u64>> {
+        (range.clone(), range).prop_map(
+            // Avoid descending (empty) ranges
+            |(start, end)| {
+                if start > end {
+                    end..start
+                } else {
+                    start..end
+                }
+            },
+        )
+    }
+
     proptest! {
-        // Property: ShredIndexV2 can be converted to ShredIndex and vice versa
         #[test]
         fn shred_index_legacy_compat(
-            shreds in prop::collection::btree_set(
-                0..MAX_DATA_SHREDS_PER_SLOT,
-                0..MAX_DATA_SHREDS_PER_SLOT
-            ),
-            start in 0..MAX_DATA_SHREDS_PER_SLOT,
-            end in 0..MAX_DATA_SHREDS_PER_SLOT,
+            shreds in rand_range(0..MAX_DATA_SHREDS_PER_SLOT as u64),
+            range in rand_range(0..MAX_DATA_SHREDS_PER_SLOT as u64)
         ) {
             let mut legacy = ShredIndex::default();
             let mut v2 = ShredIndexV2::default();
 
             for i in shreds {
-                v2.insert(i as u64);
-                legacy.insert(i as u64);
+                v2.insert(i);
+                legacy.insert(i);
             }
 
             for &i in legacy.index.iter() {
@@ -925,7 +935,6 @@ mod test {
             }
 
             assert_eq!(v2.num_shreds(), legacy.num_shreds());
-            let range = std::cmp::min(start, end) as u64..std::cmp::max(start, end) as u64;
 
             assert_eq!(
                 v2.range(range.clone()).sum::<u64>(),
@@ -939,19 +948,13 @@ mod test {
         // Property: Index cannot be deserialized from IndexV2
         #[test]
         fn test_legacy_collision(
-            coding_indices in prop::collection::btree_set(
-                0..MAX_DATA_SHREDS_PER_SLOT,
-                0..MAX_DATA_SHREDS_PER_SLOT
-            ),
-            data_indices in prop::collection::btree_set(
-                0..MAX_DATA_SHREDS_PER_SLOT,
-                0..MAX_DATA_SHREDS_PER_SLOT
-            ),
+            coding_indices in rand_range(0..MAX_DATA_SHREDS_PER_SLOT as u64),
+            data_indices in rand_range(0..MAX_DATA_SHREDS_PER_SLOT as u64),
             slot in 0..u64::MAX
         ) {
             let index = IndexV2 {
-                coding: coding_indices.into_iter().map(|i| i as u64).collect(),
-                data: data_indices.into_iter().map(|i| i as u64).collect(),
+                coding: coding_indices.into_iter().collect(),
+                data: data_indices.into_iter().collect(),
                 slot,
             };
             let config = bincode::DefaultOptions::new().with_fixint_encoding().reject_trailing_bytes();
@@ -962,19 +965,13 @@ mod test {
         // Property: IndexV2 cannot be deserialized from Index
         #[test]
         fn test_legacy_collision_inverse(
-            coding_indices in prop::collection::btree_set(
-                0..MAX_DATA_SHREDS_PER_SLOT,
-                0..MAX_DATA_SHREDS_PER_SLOT
-            ),
-            data_indices in prop::collection::btree_set(
-                0..MAX_DATA_SHREDS_PER_SLOT,
-                0..MAX_DATA_SHREDS_PER_SLOT
-            ),
+            coding_indices in rand_range(0..MAX_DATA_SHREDS_PER_SLOT as u64),
+            data_indices in rand_range(0..MAX_DATA_SHREDS_PER_SLOT as u64),
             slot in 0..u64::MAX
         ) {
             let index = Index {
-                coding: coding_indices.into_iter().map(|i| i as u64).collect(),
-                data: data_indices.into_iter().map(|i| i as u64).collect(),
+                coding: coding_indices.into_iter().collect(),
+                data: data_indices.into_iter().collect(),
                 slot,
             };
             let config = bincode::DefaultOptions::new()
@@ -987,32 +984,18 @@ mod test {
         // Property: range queries should return correct indices
         #[test]
         fn range_query_correctness(
-            indices in prop::collection::btree_set(
-                0..MAX_DATA_SHREDS_PER_SLOT,
-                0..MAX_DATA_SHREDS_PER_SLOT
-            ),
-            ranges in prop::collection::vec(
-                (0..MAX_DATA_SHREDS_PER_SLOT)
-                    .prop_flat_map(|start| {
-                        (start + 1..=MAX_DATA_SHREDS_PER_SLOT)
-                            .prop_map(move |end| (start, end))
-                    }),
-                1..1000
-            )
+            indices in rand_range(0..MAX_DATA_SHREDS_PER_SLOT as u64),
         ) {
             let mut index = ShredIndexV2::default();
 
-            for &idx in &indices {
-                index.insert(idx as u64);
+            for idx in indices.clone() {
+                index.insert(idx);
             }
 
-            for (start, end) in ranges {
-                // Test indices match
-                assert_eq!(
-                    index.range(start as u64..end as u64).collect::<Vec<_>>(),
-                    indices.range(start..end).map(|&i| i as u64).collect::<Vec<_>>()
-                );
-            }
+            assert_eq!(
+                index.range(indices.clone()).collect::<Vec<_>>(),
+                indices.into_iter().collect::<Vec<_>>()
+            );
         }
     }
 
