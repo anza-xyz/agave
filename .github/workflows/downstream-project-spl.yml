@@ -50,8 +50,7 @@ jobs:
           - single-pool
           - slashing
           - stake-pool
-          # re-enable with https://github.com/solana-program/token-2022/pull/56
-          # - token-2022
+          - token-2022
           # re-enable with https://github.com/buffalojoec/mollusk/pull/74
           # - token
     steps:
@@ -81,8 +80,7 @@ jobs:
       matrix:
         programs:
           - single-pool
-          # re-enable with https://github.com/solana-program/token-2022/pull/56
-          # - token-2022
+          - token-2022
     steps:
       - uses: actions/checkout@v4
 
@@ -118,8 +116,7 @@ jobs:
           - single-pool
           - slashing
           - stake-pool
-          # re-enable with https://github.com/solana-program/token-2022/pull/56
-          # - token-2022
+          - token-2022
           # re-enable with https://github.com/buffalojoec/mollusk/pull/74
           # - token
     steps:
