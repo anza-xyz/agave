@@ -2451,7 +2451,6 @@ fn hash_validator(hash: String) -> Result<(), String> {
 }
 
 /// Test validator
-
 pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<'a, 'a> {
     App::new("solana-test-validator")
         .about("Test Validator")

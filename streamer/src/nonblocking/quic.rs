@@ -230,7 +230,6 @@ pub fn spawn_server_multi(
 /// litter the code with open connection tracking. This is added into the
 /// connection table as part of the ConnectionEntry. The reference is auto
 /// reduced when it is dropped.
-
 struct ClientConnectionTracker {
     stats: Arc<StreamerStats>,
 }
