@@ -423,7 +423,7 @@ mod test {
             .write()
             .unwrap()
             .insert(
-                CrdsValue::new_unsigned(CrdsData::ContactInfo(ci.clone())),
+                CrdsValue::new_unsigned(CrdsData::from(&ci)),
                 0,
                 GossipRoute::LocalMessage,
             )

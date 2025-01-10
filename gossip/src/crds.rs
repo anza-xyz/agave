@@ -795,7 +795,7 @@ mod tests {
     #[test]
     fn test_insert() {
         let mut crds = Crds::default();
-        let val = CrdsValue::new_unsigned(CrdsData::ContactInfo(ContactInfo::default()));
+        let val = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::default()));
         assert_eq!(
             crds.insert(val.clone(), 0, GossipRoute::LocalMessage),
             Ok(())
@@ -807,7 +807,7 @@ mod tests {
     #[test]
     fn test_update_old() {
         let mut crds = Crds::default();
-        let val = CrdsValue::new_unsigned(CrdsData::ContactInfo(ContactInfo::default()));
+        let val = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::default()));
         assert_eq!(
             crds.insert(val.clone(), 0, GossipRoute::LocalMessage),
             Ok(())
@@ -822,13 +822,13 @@ mod tests {
     #[test]
     fn test_update_new() {
         let mut crds = Crds::default();
-        let original = CrdsValue::new_unsigned(CrdsData::ContactInfo(ContactInfo::new_localhost(
+        let original = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(
             &Pubkey::default(),
             0,
         )));
         let value_hash = *original.hash();
         assert_matches!(crds.insert(original, 0, GossipRoute::LocalMessage), Ok(()));
-        let val = CrdsValue::new_unsigned(CrdsData::ContactInfo(ContactInfo::new_localhost(
+        let val = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(
             &Pubkey::default(),
             1,
         )));
@@ -842,7 +842,7 @@ mod tests {
     #[test]
     fn test_update_timestamp() {
         let mut crds = Crds::default();
-        let val1 = CrdsValue::new_unsigned(CrdsData::ContactInfo(ContactInfo::new_localhost(
+        let val1 = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(
             &Pubkey::default(),
             0,
         )));
@@ -855,7 +855,7 @@ mod tests {
         assert_eq!(crds.table[&val1.label()].ordinal, 0);
 
         // `val2` is expected to overwrite `val1` based on the `wallclock` value.
-        let val2 = CrdsValue::new_unsigned(CrdsData::ContactInfo(ContactInfo::new_localhost(
+        let val2 = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(
             &Pubkey::default(),
             1,
         )));
@@ -939,7 +939,7 @@ mod tests {
         let mut crds = Crds::default();
         let val = {
             let node = ContactInfo::new_localhost(&Pubkey::default(), /*now:*/ 1);
-            CrdsValue::new_unsigned(CrdsData::ContactInfo(node))
+            CrdsValue::new_unsigned(CrdsData::from(node))
         };
         assert_eq!(
             crds.insert(val.clone(), 1, GossipRoute::LocalMessage),
@@ -1036,7 +1036,7 @@ mod tests {
     fn test_remove_default() {
         let thread_pool = ThreadPoolBuilder::new().build().unwrap();
         let mut crds = Crds::default();
-        let val = CrdsValue::new_unsigned(CrdsData::ContactInfo(ContactInfo::default()));
+        let val = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::default()));
         assert_matches!(
             crds.insert(val.clone(), 1, GossipRoute::LocalMessage),
             Ok(_)
@@ -1061,7 +1061,7 @@ mod tests {
         let mut crds = Crds::default();
         let val = {
             let node = ContactInfo::new_localhost(&Pubkey::default(), /*now:*/ 1);
-            CrdsValue::new_unsigned(CrdsData::ContactInfo(node))
+            CrdsValue::new_unsigned(CrdsData::from(node))
         };
         assert_eq!(
             crds.insert(val.clone(), 1, GossipRoute::LocalMessage),
@@ -1337,7 +1337,7 @@ mod tests {
         let wallclock = node.wallclock();
         node.set_shred_version(42);
         {
-            let node = CrdsData::ContactInfo(node.clone());
+            let node = CrdsData::from(&node);
             let node = CrdsValue::new_unsigned(node);
             assert_eq!(
                 crds.insert(node, timestamp(), GossipRoute::LocalMessage),
@@ -1349,7 +1349,7 @@ mod tests {
         let mut node = node.clone();
         node.set_wallclock(wallclock - 1); // outdated.
         node.set_shred_version(8);
-        let node = CrdsData::ContactInfo(node);
+        let node = CrdsData::from(node);
         let node = CrdsValue::new_unsigned(node);
         assert_eq!(
             crds.insert(node, timestamp(), GossipRoute::LocalMessage),
@@ -1360,7 +1360,7 @@ mod tests {
         let mut node = ContactInfo::new_rand(&mut rng, Some(pubkey));
         node.set_wallclock(wallclock + 1); // so that it overrides the prev one.
         node.set_shred_version(8);
-        let node = CrdsData::ContactInfo(node);
+        let node = CrdsData::from(node);
         let node = CrdsValue::new_unsigned(node);
         assert_eq!(
             crds.insert(node, timestamp(), GossipRoute::LocalMessage),
@@ -1450,7 +1450,7 @@ mod tests {
     fn test_remove_staked() {
         let thread_pool = ThreadPoolBuilder::new().build().unwrap();
         let mut crds = Crds::default();
-        let val = CrdsValue::new_unsigned(CrdsData::ContactInfo(ContactInfo::default()));
+        let val = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::default()));
         assert_matches!(
             crds.insert(val.clone(), 1, GossipRoute::LocalMessage),
             Ok(_)
@@ -1473,7 +1473,7 @@ mod tests {
     #[test]
     #[allow(clippy::neg_cmp_op_on_partial_ord)]
     fn test_equal() {
-        let val = CrdsValue::new_unsigned(CrdsData::ContactInfo(ContactInfo::default()));
+        let val = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::default()));
         let v1 =
             VersionedCrdsValue::new(val.clone(), Cursor::default(), 1, GossipRoute::LocalMessage);
         let v2 = VersionedCrdsValue::new(val, Cursor::default(), 1, GossipRoute::LocalMessage);
@@ -1487,7 +1487,7 @@ mod tests {
     fn test_hash_order() {
         let mut node = ContactInfo::new_localhost(&Pubkey::default(), 0);
         let v1 = VersionedCrdsValue::new(
-            CrdsValue::new_unsigned(CrdsData::ContactInfo(node.clone())),
+            CrdsValue::new_unsigned(CrdsData::from(&node)),
             Cursor::default(),
             1, // local_timestamp
             GossipRoute::LocalMessage,
@@ -1495,7 +1495,7 @@ mod tests {
         let v2 = VersionedCrdsValue::new(
             {
                 node.set_rpc((Ipv4Addr::LOCALHOST, 1244)).unwrap();
-                CrdsValue::new_unsigned(CrdsData::ContactInfo(node))
+                CrdsValue::new_unsigned(CrdsData::from(node))
             },
             Cursor::default(),
             1, // local_timestamp
@@ -1520,14 +1520,14 @@ mod tests {
     fn test_wallclock_order() {
         let mut node = ContactInfo::new_localhost(&Pubkey::default(), 1);
         let v1 = VersionedCrdsValue::new(
-            CrdsValue::new_unsigned(CrdsData::ContactInfo(node.clone())),
+            CrdsValue::new_unsigned(CrdsData::from(&node)),
             Cursor::default(),
             1, // local_timestamp
             GossipRoute::LocalMessage,
         );
         node.set_wallclock(0);
         let v2 = VersionedCrdsValue::new(
-            CrdsValue::new_unsigned(CrdsData::ContactInfo(node)),
+            CrdsValue::new_unsigned(CrdsData::from(node)),
             Cursor::default(),
             1, // local_timestamp
             GossipRoute::LocalMessage,
@@ -1543,7 +1543,7 @@ mod tests {
     #[allow(clippy::neg_cmp_op_on_partial_ord)]
     fn test_label_order() {
         let v1 = VersionedCrdsValue::new(
-            CrdsValue::new_unsigned(CrdsData::ContactInfo(ContactInfo::new_localhost(
+            CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(
                 &solana_pubkey::new_rand(),
                 0,
             ))),
@@ -1552,7 +1552,7 @@ mod tests {
             GossipRoute::LocalMessage,
         );
         let v2 = VersionedCrdsValue::new(
-            CrdsValue::new_unsigned(CrdsData::ContactInfo(ContactInfo::new_localhost(
+            CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(
                 &solana_pubkey::new_rand(),
                 0,
             ))),

@@ -121,7 +121,7 @@ impl CrdsData {
         // TODO: Assign ranges to each arm proportional to their frequency in
         // the mainnet crds table.
         match kind {
-            0 => CrdsData::ContactInfo(ContactInfo::new_rand(rng, pubkey)),
+            0 => CrdsData::from(ContactInfo::new_rand(rng, pubkey)),
             // Index for LowestSlot is deprecated and should be zero.
             1 => CrdsData::LowestSlot(0, LowestSlot::new_rand(rng, pubkey)),
             2 => CrdsData::LegacySnapshotHashes(LegacySnapshotHashes::new_rand(rng, pubkey)),
@@ -197,6 +197,20 @@ impl CrdsData {
             Self::RestartLastVotedForkSlots(_) => false,
             Self::RestartHeaviestFork(_) => false,
         }
+    }
+}
+
+impl From<ContactInfo> for CrdsData {
+    #[inline]
+    fn from(node: ContactInfo) -> Self {
+        Self::ContactInfo(node)
+    }
+}
+
+impl From<&ContactInfo> for CrdsData {
+    #[inline]
+    fn from(node: &ContactInfo) -> Self {
+        Self::ContactInfo(node.clone())
     }
 }
 

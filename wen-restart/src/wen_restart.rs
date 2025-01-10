@@ -1488,7 +1488,7 @@ mod tests {
         )
         .unwrap();
         let entries = vec![
-            CrdsValue::new(CrdsData::ContactInfo(node.clone()), node_keypair),
+            CrdsValue::new(CrdsData::from(node), node_keypair),
             CrdsValue::new(CrdsData::RestartLastVotedForkSlots(slots), node_keypair),
         ];
         {
