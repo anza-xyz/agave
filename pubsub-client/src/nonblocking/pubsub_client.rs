@@ -167,13 +167,13 @@
 //! ```
 
 use {
+    crate::pubsub_client::{DEFAULT_MAX_FAILED_PINGS, DEFAULT_PING_DURATION_SECONDS},
     futures_util::{
         future::{ready, BoxFuture, FutureExt},
         sink::SinkExt,
         stream::{BoxStream, StreamExt},
     },
     log::*,
-    pubsub_client::{DEFAULT_MAX_FAILED_PINGS, DEFAULT_PING_DURATION_SECONDS},
     serde::de::DeserializeOwned,
     serde_json::{json, Map, Value},
     solana_account_decoder_client_types::UiAccount,
