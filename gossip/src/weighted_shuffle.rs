@@ -220,7 +220,7 @@ fn get_num_nodes_and_tree_size(count: usize) -> (/*num_nodes:*/ usize, /*tree_si
         size += nodes;
         nodes *= FANOUT;
     }
-    (size + nodes, size + (count + FANOUT - 1) / FANOUT)
+    (size + nodes, size + count.div_ceil(FANOUT))
 }
 
 #[cfg(test)]

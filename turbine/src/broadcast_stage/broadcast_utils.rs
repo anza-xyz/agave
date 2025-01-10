@@ -104,9 +104,9 @@ pub(super) fn get_chained_merkle_root_from_parent(
     debug_assert!(parent < slot, "parent: {parent} >= slot: {slot}");
     let index = blockstore
         .meta(parent)?
-        .ok_or_else(|| Error::UnknownSlotMeta(parent))?
+        .ok_or(Error::UnknownSlotMeta(parent))?
         .last_index
-        .ok_or_else(|| Error::UnknownLastIndex(parent))?;
+        .ok_or(Error::UnknownLastIndex(parent))?;
     let shred = blockstore
         .get_data_shred(parent, index)?
         .ok_or(Error::ShredNotFound {

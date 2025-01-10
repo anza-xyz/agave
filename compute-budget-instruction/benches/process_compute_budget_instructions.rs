@@ -1,18 +1,16 @@
 use {
     criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput},
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
-    solana_sdk::{
-        compute_budget::ComputeBudgetInstruction,
-        feature_set::FeatureSet,
-        instruction::Instruction,
-        message::Message,
-        pubkey::Pubkey,
-        signature::Keypair,
-        signer::Signer,
-        system_instruction::{self},
-        transaction::{SanitizedTransaction, Transaction},
-    },
+    solana_compute_budget_interface::ComputeBudgetInstruction,
+    solana_feature_set::FeatureSet,
+    solana_instruction::Instruction,
+    solana_keypair::Keypair,
+    solana_message::Message,
+    solana_pubkey::Pubkey,
+    solana_signer::Signer,
     solana_svm_transaction::svm_message::SVMMessage,
+    solana_system_interface::instruction::transfer,
+    solana_transaction::{sanitized::SanitizedTransaction, Transaction},
 };
 
 const NUM_TRANSACTIONS_PER_ITER: usize = 1024;
@@ -110,14 +108,18 @@ fn bench_process_compute_budget_instructions_builtins(c: &mut Criterion) {
             .throughput(Throughput::Elements(NUM_TRANSACTIONS_PER_ITER as u64))
             .bench_function("4 dummy builtins", |bencher| {
                 let ixs = vec![
-                    Instruction::new_with_bincode(solana_sdk::bpf_loader::id(), &(), vec![]),
-                    Instruction::new_with_bincode(solana_sdk::secp256k1_program::id(), &(), vec![]),
+                    Instruction::new_with_bincode(solana_sdk_ids::bpf_loader::id(), &(), vec![]),
                     Instruction::new_with_bincode(
-                        solana_sdk::address_lookup_table::program::id(),
+                        solana_sdk_ids::secp256k1_program::id(),
                         &(),
                         vec![],
                     ),
-                    Instruction::new_with_bincode(solana_sdk::loader_v4::id(), &(), vec![]),
+                    Instruction::new_with_bincode(
+                        solana_sdk_ids::address_lookup_table::id(),
+                        &(),
+                        vec![],
+                    ),
+                    Instruction::new_with_bincode(solana_sdk_ids::loader_v4::id(), &(), vec![]),
                 ];
                 let tx = build_sanitized_transaction(&Keypair::new(), &ixs);
                 bencher.iter(|| {
@@ -156,11 +158,7 @@ fn bench_process_compute_budget_instructions_mixed(c: &mut Criterion) {
                         ComputeBudgetInstruction::set_compute_unit_limit(u32::MAX),
                         ComputeBudgetInstruction::set_compute_unit_price(u64::MAX),
                         ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(u32::MAX),
-                        system_instruction::transfer(
-                            &payer_keypair.pubkey(),
-                            &Pubkey::new_unique(),
-                            1,
-                        ),
+                        transfer(&payer_keypair.pubkey(), &Pubkey::new_unique(), 1),
                     ]);
                     let tx = build_sanitized_transaction(&payer_keypair, &ixs);
 

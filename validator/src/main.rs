@@ -66,7 +66,7 @@ use {
         snapshot_utils::{self, ArchiveFormat, SnapshotVersion},
     },
     solana_sdk::{
-        clock::{Slot, DEFAULT_S_PER_SLOT},
+        clock::{Slot, DEFAULT_SLOTS_PER_EPOCH, DEFAULT_S_PER_SLOT},
         commitment_config::CommitmentConfig,
         hash::Hash,
         pubkey::Pubkey,
@@ -1820,6 +1820,18 @@ pub fn main() {
             incremental_snapshot_archive_interval_slots.to_string()
         },
     );
+
+    // It is unlikely that a full snapshot interval greater than an epoch is a good idea.
+    // Minimally we should warn the user in case this was a mistake.
+    if full_snapshot_archive_interval_slots > DEFAULT_SLOTS_PER_EPOCH
+        && full_snapshot_archive_interval_slots != DISABLED_SNAPSHOT_ARCHIVE_INTERVAL
+    {
+        warn!(
+            "The full snapshot interval is excessively large: {}! This will negatively \
+            impact the background cleanup tasks in accounts-db. Consider a smaller value.",
+            full_snapshot_archive_interval_slots,
+        );
+    }
 
     if !is_snapshot_config_valid(
         &validator_config.snapshot_config,

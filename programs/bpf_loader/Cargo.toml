@@ -35,7 +35,7 @@ solana-precompiles = { workspace = true }
 solana-program = { workspace = true }
 solana-program-entrypoint = { workspace = true }
 solana-program-memory = { workspace = true }
-solana-program-runtime = { workspace = true, features = ["metrics"] }
+solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sbpf = { workspace = true }
 solana-sdk-ids = { workspace = true }
@@ -80,6 +80,8 @@ harness = false
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
+default = ["metrics"]
+metrics = ["solana-program-runtime/metrics"]
 shuttle-test = [
     "solana-type-overrides/shuttle-test",
     "solana-program-runtime/shuttle-test",

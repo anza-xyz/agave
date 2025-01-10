@@ -2,10 +2,10 @@
 //! Used by `solana-runtime`.
 
 use {
+    solana_pubkey::Pubkey,
     solana_sdk::{
         clock::Epoch,
         instruction::InstructionError,
-        pubkey::Pubkey,
         stake::state::{Delegation, Stake, StakeStateV2},
         stake_history::StakeHistory,
     },

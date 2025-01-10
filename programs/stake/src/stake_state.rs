@@ -12,12 +12,12 @@ use {
     solana_feature_set::FeatureSet,
     solana_log_collector::ic_msg,
     solana_program_runtime::invoke_context::InvokeContext,
+    solana_pubkey::Pubkey,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount},
         account_utils::StateMut,
         clock::{Clock, Epoch},
         instruction::{checked_add, InstructionError},
-        pubkey::Pubkey,
         rent::Rent,
         stake::{
             instruction::{LockupArgs, StakeError},
@@ -1448,10 +1448,10 @@ mod tests {
         super::*,
         proptest::prelude::*,
         solana_program_runtime::with_mock_invoke_context,
+        solana_pubkey::Pubkey,
         solana_sdk::{
             account::{create_account_shared_data_for_test, AccountSharedData},
             epoch_schedule::EpochSchedule,
-            pubkey::Pubkey,
             stake::state::warmup_cooldown_rate,
             sysvar::{epoch_schedule, SysvarId},
         },
@@ -1460,7 +1460,7 @@ mod tests {
 
     #[test]
     fn test_authorized_authorize() {
-        let staker = solana_sdk::pubkey::new_rand();
+        let staker = solana_pubkey::new_rand();
         let mut authorized = Authorized::auto(&staker);
         let mut signers = HashSet::new();
         assert_eq!(
@@ -1476,9 +1476,9 @@ mod tests {
 
     #[test]
     fn test_authorized_authorize_with_custodian() {
-        let staker = solana_sdk::pubkey::new_rand();
-        let custodian = solana_sdk::pubkey::new_rand();
-        let invalid_custodian = solana_sdk::pubkey::new_rand();
+        let staker = solana_pubkey::new_rand();
+        let custodian = solana_pubkey::new_rand();
+        let invalid_custodian = solana_pubkey::new_rand();
         let mut authorized = Authorized::auto(&staker);
         let mut signers = HashSet::new();
         signers.insert(staker);
@@ -2174,7 +2174,7 @@ mod tests {
 
     #[test]
     fn test_lockup_is_expired() {
-        let custodian = solana_sdk::pubkey::new_rand();
+        let custodian = solana_pubkey::new_rand();
         let lockup = Lockup {
             epoch: 1,
             unix_timestamp: 1,

@@ -669,7 +669,7 @@ version = "0.69.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a00dc851838a2120612785d195287475a3ac45514741da670b735818822129a0"
 dependencies = [
- "bitflags 2.6.0",
+ "bitflags 2.7.0",
  "cexpr",
  "clang-sys",
  "itertools 0.12.1",
@@ -706,9 +706,9 @@ checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
 name = "bitflags"
-version = "2.6.0"
+version = "2.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b048fb63fd8b5923fc5aa7b340d8e156aec7ec02f0c78fa8a6ddc2613f6f71de"
+checksum = "1be3f42a67d6d345ecd59f675f3f012d6974981560836e938c22b424b85ce1be"
 dependencies = [
  "serde",
 ]
@@ -3270,7 +3270,7 @@ version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
 dependencies = [
- "bitflags 2.6.0",
+ "bitflags 2.7.0",
  "cfg-if 1.0.0",
  "cfg_aliases",
  "libc",
@@ -3481,7 +3481,7 @@ version = "0.10.68"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6174bc48f102d208783c2c84bf931bb75927a617866870de8a4ea85597f871f5"
 dependencies = [
- "bitflags 2.6.0",
+ "bitflags 2.7.0",
  "cfg-if 1.0.0",
  "foreign-types",
  "libc",
@@ -4179,7 +4179,7 @@ version = "11.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb9ee317cfe3fbd54b36a511efc1edd42e216903c9cd575e686dd68a2ba90d8d"
 dependencies = [
- "bitflags 2.6.0",
+ "bitflags 2.7.0",
 ]
 
 [[package]]
@@ -4453,7 +4453,7 @@ version = "0.38.39"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "375116bee2be9ed569afe2154ea6a99dfdffd257f533f187498c2a8f5feaf4ee"
 dependencies = [
- "bitflags 2.6.0",
+ "bitflags 2.7.0",
  "errno",
  "libc",
  "linux-raw-sys",
@@ -5366,11 +5366,27 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "solana-account",
  "solana-account-decoder",
+ "solana-bincode",
  "solana-clap-utils",
  "solana-cli-config",
+ "solana-clock",
+ "solana-epoch-info",
+ "solana-hash",
+ "solana-message",
+ "solana-native-token",
+ "solana-packet",
+ "solana-program",
+ "solana-pubkey",
+ "solana-reserved-account-keys",
  "solana-rpc-client-api",
- "solana-sdk",
+ "solana-sdk-ids",
+ "solana-signature",
+ "solana-system-interface",
+ "solana-sysvar",
+ "solana-transaction",
+ "solana-transaction-error",
  "solana-transaction-status",
  "solana-vote-program",
  "spl-memo",
@@ -5480,11 +5496,17 @@ name = "solana-compute-budget-instruction"
 version = "2.2.0"
 dependencies = [
  "log",
+ "solana-borsh",
  "solana-builtins-default-costs",
  "solana-compute-budget",
+ "solana-compute-budget-interface",
+ "solana-feature-set",
+ "solana-instruction",
+ "solana-packet",
  "solana-pubkey",
- "solana-sdk",
+ "solana-sdk-ids",
  "solana-svm-transaction",
+ "solana-transaction-error",
  "thiserror 2.0.9",
 ]
 
@@ -6043,7 +6065,7 @@ dependencies = [
 name = "solana-instructions-sysvar"
 version = "2.2.0"
 dependencies = [
- "bitflags 2.6.0",
+ "bitflags 2.7.0",
  "solana-account-info",
  "solana-instruction",
  "solana-program-error",
@@ -6108,7 +6130,7 @@ version = "2.2.0"
 dependencies = [
  "assert_matches",
  "bincode",
- "bitflags 2.6.0",
+ "bitflags 2.7.0",
  "byteorder 1.5.0",
  "bzip2",
  "chrono",
@@ -6338,7 +6360,7 @@ name = "solana-packet"
 version = "2.2.0"
 dependencies = [
  "bincode",
- "bitflags 2.6.0",
+ "bitflags 2.7.0",
  "cfg_eval",
  "serde",
  "serde_derive",
@@ -6996,6 +7018,7 @@ dependencies = [
  "solana-system-program",
  "solana-timings",
  "solana-transaction-status-client-types",
+ "solana-unified-scheduler-logic",
  "solana-version",
  "solana-vote",
  "solana-vote-program",
@@ -7553,7 +7576,7 @@ name = "solana-sdk"
 version = "2.2.0"
 dependencies = [
  "bincode",
- "bitflags 2.6.0",
+ "bitflags 2.7.0",
  "borsh 1.5.3",
  "bs58",
  "bytemuck",
@@ -7598,6 +7621,7 @@ dependencies = [
  "solana-inflation",
  "solana-instruction",
  "solana-keypair",
+ "solana-message",
  "solana-native-token",
  "solana-nonce-account",
  "solana-offchain-message",
@@ -7718,20 +7742,15 @@ dependencies = [
 name = "solana-send-transaction-service"
 version = "2.2.0"
 dependencies = [
- "async-trait",
  "crossbeam-channel",
- "itertools 0.12.1",
  "log",
  "solana-client",
  "solana-connection-cache",
  "solana-measure",
  "solana-metrics",
- "solana-quic-client",
  "solana-runtime",
  "solana-sdk",
- "solana-tpu-client-next",
- "tokio",
- "tokio-util 0.7.1",
+ "solana-tpu-client",
 ]
 
 [[package]]
@@ -7845,6 +7864,7 @@ dependencies = [
  "solana-feature-set",
  "solana-log-collector",
  "solana-program-runtime",
+ "solana-pubkey",
  "solana-sdk",
  "solana-type-overrides",
  "solana-vote-program",
@@ -8231,31 +8251,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-tpu-client-next"
-version = "2.2.0"
-dependencies = [
- "async-trait",
- "log",
- "lru",
- "quinn",
- "rustls 0.23.20",
- "solana-clock",
- "solana-connection-cache",
- "solana-keypair",
- "solana-logger",
- "solana-measure",
- "solana-quic-definitions",
- "solana-rpc-client",
- "solana-streamer",
- "solana-time-utils",
- "solana-tls-utils",
- "solana-tpu-client",
- "thiserror 2.0.9",
- "tokio",
- "tokio-util 0.7.1",
-]
-
-[[package]]
 name = "solana-transaction"
 version = "2.2.0"
 dependencies = [
@@ -8454,6 +8449,7 @@ dependencies = [
  "qualifier_attr",
  "scopeguard",
  "solana-ledger",
+ "solana-poh",
  "solana-pubkey",
  "solana-runtime",
  "solana-runtime-transaction",

@@ -1,7 +1,10 @@
 use {
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol},
     solana_poh::poh_recorder::PohRecorder,
-    solana_sdk::{clock::NUM_CONSECUTIVE_LEADER_SLOTS, pubkey::Pubkey},
+    solana_sdk::{
+        clock::{Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
+        pubkey::Pubkey,
+    },
     solana_send_transaction_service::tpu_info::TpuInfo,
     std::{
         collections::HashMap,
@@ -44,7 +47,7 @@ impl TpuInfo for ClusterTpuInfo {
             .collect();
     }
 
-    fn get_unique_leader_tpus(&self, max_count: u64, protocol: Protocol) -> Vec<&SocketAddr> {
+    fn get_leader_tpus(&self, max_count: u64, protocol: Protocol) -> Vec<&SocketAddr> {
         let recorder = self.poh_recorder.read().unwrap();
         let leaders: Vec<_> = (0..max_count)
             .filter_map(|i| recorder.leader_after_n_slots(i * NUM_CONSECUTIVE_LEADER_SLOTS))
@@ -64,23 +67,37 @@ impl TpuInfo for ClusterTpuInfo {
         unique_leaders
     }
 
-    fn get_leader_tpus(&self, max_count: u64, protocol: Protocol) -> Vec<&SocketAddr> {
+    fn get_leader_tpus_with_slots(
+        &self,
+        max_count: u64,
+        protocol: Protocol,
+    ) -> Vec<(&SocketAddr, Slot)> {
         let recorder = self.poh_recorder.read().unwrap();
-        let leader_pubkeys: Vec<_> = (0..max_count)
-            .filter_map(|i| recorder.leader_after_n_slots(i * NUM_CONSECUTIVE_LEADER_SLOTS))
-            .collect();
-        drop(recorder);
-        leader_pubkeys
-            .iter()
-            .filter_map(|leader_pubkey| {
-                self.recent_peers
-                    .get(leader_pubkey)
-                    .map(|addr| match protocol {
-                        Protocol::UDP => &addr.0,
-                        Protocol::QUIC => &addr.1,
+        let leaders: Vec<_> = (0..max_count)
+            .rev()
+            .filter_map(|future_slot| {
+                NUM_CONSECUTIVE_LEADER_SLOTS
+                    .checked_mul(future_slot)
+                    .and_then(|slots_in_the_future| {
+                        recorder.leader_and_slot_after_n_slots(slots_in_the_future)
                     })
             })
-            .collect()
+            .collect();
+        drop(recorder);
+        let addrs_to_slots = leaders
+            .into_iter()
+            .filter_map(|(leader_id, leader_slot)| {
+                self.recent_peers
+                    .get(&leader_id)
+                    .map(|(udp_tpu, quic_tpu)| match protocol {
+                        Protocol::UDP => (udp_tpu, leader_slot),
+                        Protocol::QUIC => (quic_tpu, leader_slot),
+                    })
+            })
+            .collect::<HashMap<_, _>>();
+        let mut unique_leaders = Vec::from_iter(addrs_to_slots);
+        unique_leaders.sort_by_key(|(_addr, slot)| *slot);
+        unique_leaders
     }
 }
 
@@ -255,12 +272,12 @@ mod test {
         let first_leader =
             solana_ledger::leader_schedule_utils::slot_leader_at(slot, &bank).unwrap();
         assert_eq!(
-            leader_info.get_unique_leader_tpus(1, Protocol::UDP),
+            leader_info.get_leader_tpus(1, Protocol::UDP),
             vec![&recent_peers.get(&first_leader).unwrap().0]
         );
         assert_eq!(
-            leader_info.get_leader_tpus(1, Protocol::UDP),
-            vec![&recent_peers.get(&first_leader).unwrap().0]
+            leader_info.get_leader_tpus_with_slots(1, Protocol::UDP),
+            vec![(&recent_peers.get(&first_leader).unwrap().0, 0)]
         );
 
         let second_leader = solana_ledger::leader_schedule_utils::slot_leader_at(
@@ -274,12 +291,15 @@ mod test {
         ];
         expected_leader_sockets.dedup();
         assert_eq!(
-            leader_info.get_unique_leader_tpus(2, Protocol::UDP),
+            leader_info.get_leader_tpus(2, Protocol::UDP),
             expected_leader_sockets
         );
         assert_eq!(
-            leader_info.get_leader_tpus(2, Protocol::UDP),
+            leader_info.get_leader_tpus_with_slots(2, Protocol::UDP),
             expected_leader_sockets
+                .into_iter()
+                .zip([0, 4])
+                .collect::<Vec<_>>()
         );
 
         let third_leader = solana_ledger::leader_schedule_utils::slot_leader_at(
@@ -294,17 +314,26 @@ mod test {
         ];
         expected_leader_sockets.dedup();
         assert_eq!(
-            leader_info.get_unique_leader_tpus(3, Protocol::UDP),
+            leader_info.get_leader_tpus(3, Protocol::UDP),
             expected_leader_sockets
+        );
+        // Only 2 leader tpus are returned always... so [0, 4, 8] isn't right here.
+        // This assumption is safe. After all, leader schedule generation must be deterministic.
+        assert_eq!(
+            leader_info.get_leader_tpus_with_slots(3, Protocol::UDP),
+            expected_leader_sockets
+                .into_iter()
+                .zip([0, 4])
+                .collect::<Vec<_>>()
         );
 
         for x in 4..8 {
+            assert!(leader_info.get_leader_tpus(x, Protocol::UDP).len() <= recent_peers.len());
             assert!(
-                leader_info.get_unique_leader_tpus(x, Protocol::UDP).len() <= recent_peers.len()
-            );
-            assert_eq!(
-                leader_info.get_leader_tpus(x, Protocol::UDP).len(),
-                x as usize
+                leader_info
+                    .get_leader_tpus_with_slots(x, Protocol::UDP)
+                    .len()
+                    <= recent_peers.len()
             );
         }
     }

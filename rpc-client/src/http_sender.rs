@@ -119,7 +119,7 @@ impl<'a> StatsUpdater<'a> {
     }
 }
 
-impl<'a> Drop for StatsUpdater<'a> {
+impl Drop for StatsUpdater<'_> {
     fn drop(&mut self) {
         let mut stats = self.stats.write().unwrap();
         stats.request_count += 1;

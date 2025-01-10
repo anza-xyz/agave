@@ -18,6 +18,7 @@ log = { workspace = true }
 qualifier_attr = { workspace = true }
 scopeguard = { workspace = true }
 solana-ledger = { workspace = true }
+solana-poh = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-runtime = { workspace = true }
 solana-runtime-transaction = { workspace = true }
@@ -32,10 +33,13 @@ vec_extract_if_polyfill = { workspace = true }
 assert_matches = { workspace = true }
 lazy_static = { workspace = true }
 solana-clock = { workspace = true }
+solana-entry = { workspace = true }
+solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
 solana-logger = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-system-transaction = { workspace = true }
+test-case = { workspace = true }
 
 [features]
 dev-context-only-utils = []

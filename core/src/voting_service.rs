@@ -66,7 +66,7 @@ fn send_vote_transaction(
                 .my_contact_info()
                 .tpu(connection_cache.protocol())
         })
-        .ok_or_else(|| SendVoteError::InvalidTpuAddress)?;
+        .ok_or(SendVoteError::InvalidTpuAddress)?;
     let buf = serialize(transaction)?;
     let client = connection_cache.get_connection(&tpu);
 

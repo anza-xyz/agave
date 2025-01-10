@@ -38,7 +38,7 @@ pub struct AccountInfo<'a> {
     pub executable: bool,
 }
 
-impl<'a> fmt::Debug for AccountInfo<'a> {
+impl fmt::Debug for AccountInfo<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut f = f.debug_struct("AccountInfo");
 

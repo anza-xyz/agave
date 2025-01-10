@@ -135,7 +135,7 @@ impl RollingCondition for RollingConditionGrouped {
     }
 }
 
-impl<'a> Write for GroupedWriter<'a> {
+impl Write for GroupedWriter<'_> {
     fn write(&mut self, buf: &[u8]) -> std::result::Result<usize, io::Error> {
         self.underlying.write_with_datetime(buf, &self.now)
     }

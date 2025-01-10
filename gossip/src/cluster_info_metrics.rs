@@ -68,20 +68,20 @@ impl<'a, T> TimedGuard<'a, T> {
     }
 }
 
-impl<'a, T> Deref for TimedGuard<'a, T> {
+impl<T> Deref for TimedGuard<'_, T> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
         &self.guard
     }
 }
 
-impl<'a, T> DerefMut for TimedGuard<'a, T> {
+impl<T> DerefMut for TimedGuard<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.guard
     }
 }
 
-impl<'a, T> Drop for TimedGuard<'a, T> {
+impl<T> Drop for TimedGuard<'_, T> {
     fn drop(&mut self) {
         self.counter.add_measure(&mut self.timer);
     }

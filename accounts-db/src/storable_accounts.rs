@@ -32,7 +32,7 @@ impl<'a> From<&'a StoredAccountMeta<'a>> for AccountForStorage<'a> {
     }
 }
 
-impl<'a> ZeroLamport for AccountForStorage<'a> {
+impl ZeroLamport for AccountForStorage<'_> {
     fn is_zero_lamport(&self) -> bool {
         self.lamports() == 0
     }
@@ -47,7 +47,7 @@ impl<'a> AccountForStorage<'a> {
     }
 }
 
-impl<'a> ReadableAccount for AccountForStorage<'a> {
+impl ReadableAccount for AccountForStorage<'_> {
     fn lamports(&self) -> u64 {
         match self {
             AccountForStorage::AddressAndAccount((_pubkey, account)) => account.lamports(),

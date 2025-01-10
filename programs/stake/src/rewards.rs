@@ -231,7 +231,8 @@ mod tests {
     use {
         super::*,
         crate::{points::null_tracer, stake_state::new_stake},
-        solana_sdk::{native_token, pubkey::Pubkey},
+        solana_pubkey::Pubkey,
+        solana_sdk::native_token,
         test_case::test_case,
     };
 

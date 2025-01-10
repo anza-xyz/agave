@@ -50,7 +50,7 @@ enum VmValue<'a, 'b, T> {
     Translated(&'a mut T),
 }
 
-impl<'a, 'b, T> VmValue<'a, 'b, T> {
+impl<T> VmValue<'_, '_, T> {
     fn get(&self) -> Result<&T, Error> {
         match self {
             VmValue::VmAddress {
@@ -2867,7 +2867,7 @@ mod tests {
         rent_epoch: Epoch,
     }
 
-    impl<'a> MockAccountInfo<'a> {
+    impl MockAccountInfo<'_> {
         fn new(key: Pubkey, account: &AccountSharedData) -> MockAccountInfo {
             MockAccountInfo {
                 key,

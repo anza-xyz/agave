@@ -105,6 +105,12 @@ use {
     std::{collections::VecDeque, mem, sync::Arc},
 };
 
+#[derive(Clone, Copy, Debug)]
+pub enum SchedulingMode {
+    BlockVerification,
+    BlockProduction,
+}
+
 /// Internal utilities. Namely this contains [`ShortCounter`] and [`TokenCell`].
 mod utils {
     use std::{

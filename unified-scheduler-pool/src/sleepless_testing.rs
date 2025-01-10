@@ -285,7 +285,7 @@ mod real {
             spawned_thread
         }
 
-        impl<'scope, 'env> ScopeTracked<'scope> for Scope<'scope, 'env> {
+        impl<'scope> ScopeTracked<'scope> for Scope<'scope, '_> {
             fn spawn_tracked<T: Send + 'scope>(
                 &'scope self,
                 f: impl FnOnce() -> T + Send + 'scope,
@@ -350,7 +350,7 @@ mod dummy {
             spawn(f)
         }
 
-        impl<'scope, 'env> ScopeTracked<'scope> for Scope<'scope, 'env> {
+        impl<'scope> ScopeTracked<'scope> for Scope<'scope, '_> {
             #[inline]
             fn spawn_tracked<T: Send + 'scope>(
                 &'scope self,

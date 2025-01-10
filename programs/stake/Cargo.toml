@@ -16,6 +16,7 @@ solana-config-program = { workspace = true }
 solana-feature-set = { workspace = true }
 solana-log-collector = { workspace = true }
 solana-program-runtime = { workspace = true }
+solana-pubkey = { workspace = true }
 solana-sdk = { workspace = true }
 solana-type-overrides = { workspace = true }
 solana-vote-program = { workspace = true }

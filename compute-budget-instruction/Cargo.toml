@@ -11,11 +11,17 @@ edition = { workspace = true }
 
 [dependencies]
 log = { workspace = true }
+solana-borsh = { workspace = true }
 solana-builtins-default-costs = { workspace = true }
 solana-compute-budget = { workspace = true }
+solana-compute-budget-interface = { workspace = true }
+solana-feature-set = { workspace = true }
+solana-instruction = { workspace = true }
+solana-packet = { workspace = true }
 solana-pubkey = { workspace = true }
-solana-sdk = { workspace = true }
+solana-sdk-ids = { workspace = true }
 solana-svm-transaction = { workspace = true }
+solana-transaction-error = { workspace = true }
 thiserror = { workspace = true }
 
 [lib]
@@ -26,8 +32,14 @@ name = "solana_compute_budget_instruction"
 bincode = { workspace = true }
 criterion = { workspace = true }
 rand = { workspace = true }
-solana-builtins-default-costs =  { workspace = true, features = ["dev-context-only-utils"] }
+solana-builtins-default-costs = { workspace = true, features = ["dev-context-only-utils"] }
+solana-hash = { workspace = true }
+solana-keypair = { workspace = true }
+solana-message = { workspace = true }
 solana-program = { workspace = true }
+solana-signer = { workspace = true }
+solana-system-interface = { workspace = true }
+solana-transaction = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

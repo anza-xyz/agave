@@ -3,11 +3,11 @@ use {
     criterion::{black_box, criterion_group, criterion_main, Criterion},
     solana_feature_set::FeatureSet,
     solana_program_runtime::invoke_context::mock_process_instruction,
+    solana_pubkey::Pubkey,
     solana_sdk::{
         account::{create_account_shared_data_for_test, AccountSharedData, WritableAccount},
         clock::{Clock, Epoch},
         instruction::AccountMeta,
-        pubkey::Pubkey,
         stake::{
             instruction::{
                 self, AuthorizeCheckedWithSeedArgs, AuthorizeWithSeedArgs, LockupArgs,
@@ -48,7 +48,7 @@ impl TestSetup {
             StakeStateV2::size_of(),
             &solana_stake_program::id(),
         );
-        let stake_address = solana_sdk::pubkey::Pubkey::new_unique();
+        let stake_address = solana_pubkey::Pubkey::new_unique();
         Self {
             // some stake instructions are behind feature gate, enable all
             // feature gates to bench all instructions

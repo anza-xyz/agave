@@ -3035,7 +3035,7 @@ impl Node {
     }
 }
 
-pub fn push_messages_to_peer(
+pub fn push_messages_to_peer_for_tests(
     messages: Vec<CrdsValue>,
     self_id: Pubkey,
     peer_gossip: SocketAddr,

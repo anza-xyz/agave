@@ -36,7 +36,7 @@ pub struct LegacyMessage<'a> {
     pub is_writable_account_cache: Vec<bool>,
 }
 
-impl<'a> LegacyMessage<'a> {
+impl LegacyMessage<'_> {
     pub fn new(message: legacy::Message, reserved_account_keys: &HashSet<Pubkey>) -> Self {
         let is_writable_account_cache = message
             .account_keys

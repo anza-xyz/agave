@@ -2,7 +2,8 @@ use {
     solana_builtins_default_costs::{
         get_builtin_migration_feature_index, BuiltinMigrationFeatureIndex, MAYBE_BUILTIN_KEY,
     },
-    solana_sdk::{packet::PACKET_DATA_SIZE, pubkey::Pubkey},
+    solana_packet::PACKET_DATA_SIZE,
+    solana_pubkey::Pubkey,
 };
 
 // The maximum number of pubkeys that a packet can contain.
@@ -64,7 +65,7 @@ impl BuiltinProgramsFilter {
 mod test {
     use {
         super::*, solana_builtins_default_costs::get_migration_feature_position,
-        solana_sdk::feature_set,
+        solana_feature_set as feature_set,
     };
 
     const DUMMY_PROGRAM_ID: &str = "dummmy1111111111111111111111111111111111111";
@@ -90,36 +91,36 @@ mod test {
         // lookup same `index` will return cached data, will not lookup `program_id`
         // again
         assert_eq!(
-            test_store.get_program_kind(index, &solana_sdk::loader_v4::id()),
+            test_store.get_program_kind(index, &solana_sdk_ids::loader_v4::id()),
             ProgramKind::NotBuiltin
         );
 
         // not-migrating builtin
         index += 1;
         assert_eq!(
-            test_store.get_program_kind(index, &solana_sdk::loader_v4::id()),
+            test_store.get_program_kind(index, &solana_sdk_ids::loader_v4::id()),
             ProgramKind::Builtin,
         );
 
         // compute-budget
         index += 1;
         assert_eq!(
-            test_store.get_program_kind(index, &solana_sdk::compute_budget::id()),
+            test_store.get_program_kind(index, &solana_sdk_ids::compute_budget::id()),
             ProgramKind::Builtin,
         );
 
         // migrating builtins
         for (migrating_builtin_pubkey, migration_feature_id) in [
             (
-                solana_sdk::stake::program::id(),
+                solana_sdk_ids::stake::id(),
                 feature_set::migrate_stake_program_to_core_bpf::id(),
             ),
             (
-                solana_sdk::config::program::id(),
+                solana_sdk_ids::config::id(),
                 feature_set::migrate_config_program_to_core_bpf::id(),
             ),
             (
-                solana_sdk::address_lookup_table::program::id(),
+                solana_sdk_ids::address_lookup_table::id(),
                 feature_set::migrate_address_lookup_table_program_to_core_bpf::id(),
             ),
         ] {

@@ -84,7 +84,7 @@ impl<'storage> StoredAccountMeta<'storage> {
     }
 }
 
-impl<'storage> ReadableAccount for StoredAccountMeta<'storage> {
+impl ReadableAccount for StoredAccountMeta<'_> {
     fn lamports(&self) -> u64 {
         match self {
             Self::AppendVec(av) => av.lamports(),

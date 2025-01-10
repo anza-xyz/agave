@@ -65,21 +65,21 @@ impl Entry {
 #[derive(Clone, Debug)]
 pub struct IterItem<'a>(pub u64, pub &'a Hash, pub u64);
 
-impl<'a> Eq for IterItem<'a> {}
+impl Eq for IterItem<'_> {}
 
-impl<'a> PartialEq for IterItem<'a> {
+impl PartialEq for IterItem<'_> {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
     }
 }
 
-impl<'a> Ord for IterItem<'a> {
+impl Ord for IterItem<'_> {
     fn cmp(&self, other: &Self) -> Ordering {
         self.0.cmp(&other.0)
     }
 }
 
-impl<'a> PartialOrd for IterItem<'a> {
+impl PartialOrd for IterItem<'_> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }

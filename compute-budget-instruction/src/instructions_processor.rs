@@ -1,8 +1,8 @@
 use {
-    crate::compute_budget_instruction_details::*,
-    solana_compute_budget::compute_budget_limits::*,
-    solana_sdk::{feature_set::FeatureSet, pubkey::Pubkey, transaction::TransactionError},
+    crate::compute_budget_instruction_details::*, solana_compute_budget::compute_budget_limits::*,
+    solana_feature_set::FeatureSet, solana_pubkey::Pubkey,
     solana_svm_transaction::instruction::SVMInstruction,
+    solana_transaction_error::TransactionError,
 };
 
 /// Processing compute_budget could be part of tx sanitizing, failed to process
@@ -22,18 +22,17 @@ pub fn process_compute_budget_instructions<'a>(
 mod tests {
     use {
         super::*,
-        solana_sdk::{
-            compute_budget::ComputeBudgetInstruction,
-            hash::Hash,
-            instruction::{Instruction, InstructionError},
-            message::Message,
-            pubkey::Pubkey,
-            signature::Keypair,
-            signer::Signer,
-            system_instruction::{self},
-            transaction::{SanitizedTransaction, Transaction, TransactionError},
-        },
+        solana_compute_budget_interface::ComputeBudgetInstruction,
+        solana_hash::Hash,
+        solana_instruction::{error::InstructionError, Instruction},
+        solana_keypair::Keypair,
+        solana_message::Message,
+        solana_pubkey::Pubkey,
+        solana_signer::Signer,
         solana_svm_transaction::svm_message::SVMMessage,
+        solana_system_interface::instruction::transfer,
+        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+        solana_transaction_error::TransactionError,
         std::num::NonZeroU32,
     };
 
@@ -412,7 +411,7 @@ mod tests {
             SanitizedTransaction::from_transaction_for_tests(Transaction::new_signed_with_payer(
                 &[
                     Instruction::new_with_bincode(Pubkey::new_unique(), &0_u8, vec![]),
-                    system_instruction::transfer(&payer_keypair.pubkey(), &Pubkey::new_unique(), 2),
+                    transfer(&payer_keypair.pubkey(), &Pubkey::new_unique(), 2),
                 ],
                 Some(&payer_keypair.pubkey()),
                 &[&payer_keypair],

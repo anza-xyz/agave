@@ -536,7 +536,7 @@ impl<'a> Iterator for MemoryChunkIterator<'a> {
     }
 }
 
-impl<'a> DoubleEndedIterator for MemoryChunkIterator<'a> {
+impl DoubleEndedIterator for MemoryChunkIterator<'_> {
     fn next_back(&mut self) -> Option<Self::Item> {
         if self.vm_addr_start == self.vm_addr_end {
             return None;

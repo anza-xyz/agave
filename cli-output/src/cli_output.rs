@@ -16,27 +16,26 @@ use {
     inflector::cases::titlecase::to_title_case,
     serde::{Deserialize, Serialize},
     serde_json::{Map, Value},
+    solana_account::ReadableAccount,
     solana_account_decoder::{
         encode_ui_account, parse_account_data::AccountAdditionalDataV2,
         parse_token::UiTokenAccount, UiAccountEncoding, UiDataSliceConfig,
     },
     solana_clap_utils::keypair::SignOnly,
+    solana_clock::{Epoch, Slot, UnixTimestamp},
+    solana_epoch_info::EpochInfo,
+    solana_hash::Hash,
+    solana_native_token::lamports_to_sol,
+    solana_program::stake::state::{Authorized, Lockup},
+    solana_pubkey::Pubkey,
     solana_rpc_client_api::response::{
         RpcAccountBalance, RpcContactInfo, RpcInflationGovernor, RpcInflationRate, RpcKeyedAccount,
         RpcSupply, RpcVoteAccountInfo,
     },
-    solana_sdk::{
-        account::ReadableAccount,
-        clock::{Epoch, Slot, UnixTimestamp},
-        epoch_info::EpochInfo,
-        hash::Hash,
-        native_token::lamports_to_sol,
-        pubkey::Pubkey,
-        signature::Signature,
-        stake::state::{Authorized, Lockup},
-        stake_history::StakeHistoryEntry,
-        transaction::{Transaction, TransactionError, VersionedTransaction},
-    },
+    solana_signature::Signature,
+    solana_sysvar::stake_history::StakeHistoryEntry,
+    solana_transaction::{versioned::VersionedTransaction, Transaction},
+    solana_transaction_error::TransactionError,
     solana_transaction_status::{
         EncodedConfirmedBlock, EncodedTransaction, TransactionConfirmationStatus,
         UiTransactionStatusMeta,
@@ -3280,13 +3279,13 @@ mod tests {
     use {
         super::*,
         clap::{App, Arg},
-        solana_sdk::{
-            message::Message,
-            pubkey::Pubkey,
-            signature::{keypair_from_seed, NullSigner, Signature, Signer, SignerError},
-            system_instruction,
-            transaction::Transaction,
-        },
+        solana_keypair::keypair_from_seed,
+        solana_message::Message,
+        solana_pubkey::Pubkey,
+        solana_signature::Signature,
+        solana_signer::{null_signer::NullSigner, Signer, SignerError},
+        solana_system_interface::instruction::transfer,
+        solana_transaction::Transaction,
     };
 
     #[test]
@@ -3324,7 +3323,7 @@ mod tests {
         let fee_payer = absent.pubkey();
         let nonce_auth = bad.pubkey();
         let mut tx = Transaction::new_unsigned(Message::new_with_nonce(
-            vec![system_instruction::transfer(&from, &to, 42)],
+            vec![transfer(&from, &to, 42)],
             Some(&fee_payer),
             &nonce,
             &nonce_auth,
