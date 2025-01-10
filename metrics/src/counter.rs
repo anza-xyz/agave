@@ -57,21 +57,16 @@ macro_rules! create_counter {
 #[macro_export]
 macro_rules! inc_counter {
     ($name:expr, $level:expr, $count:expr) => {
-        #[allow(clippy::macro_metavars_in_unsafe)]
-        unsafe {
-            $name.inc($level, $count)
-        };
+        $name.inc($level, $count)
     };
 }
 
 #[macro_export]
 macro_rules! inc_counter_info {
     ($name:expr, $count:expr) => {
-        unsafe {
-            if log_enabled!(log::Level::Info) {
-                $name.inc(log::Level::Info, $count)
-            }
-        };
+        if log_enabled!(log::Level::Info) {
+            $name.inc(log::Level::Info, $count)
+        }
     };
 }
 
@@ -79,15 +74,14 @@ macro_rules! inc_counter_info {
 macro_rules! inc_new_counter {
     ($name:expr, $count:expr, $level:expr, $lograte:expr, $metricsrate:expr) => {{
         if log_enabled!($level) {
-            static mut INC_NEW_COUNTER: $crate::counter::Counter =
-                create_counter!($name, $lograte, $metricsrate);
-            static INIT_HOOK: std::sync::Once = std::sync::Once::new();
-            unsafe {
-                INIT_HOOK.call_once(|| {
-                    INC_NEW_COUNTER.init();
+            static INC_NEW_COUNTER: std::sync::LazyLock<$crate::counter::Counter> =
+                std::sync::LazyLock::new(|| {
+                    let mut counter = create_counter!($name, $lograte, $metricsrate);
+                    counter.init();
+                    counter
                 });
-            }
-            inc_counter!(INC_NEW_COUNTER, $level, $count);
+
+            INC_NEW_COUNTER.inc($level, $count);
         }
     }};
 }
@@ -172,7 +166,7 @@ impl Counter {
         self.metricsrate
             .compare_and_swap(0, Self::default_metrics_rate(), Ordering::Relaxed);
     }
-    pub fn inc(&mut self, level: log::Level, events: usize) {
+    pub fn inc(&self, level: log::Level, events: usize) {
         let now = solana_time_utils::timestamp();
         let counts = self.counts.fetch_add(events, Ordering::Relaxed);
         let times = self.times.fetch_add(1, Ordering::Relaxed);
