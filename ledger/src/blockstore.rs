@@ -673,6 +673,7 @@ impl Blockstore {
     }
 
     #[cfg(feature = "dev-context-only-utils")]
+    #[allow(clippy::type_complexity)]
     pub fn iterator_cf(
         &self,
         cf_name: &str,
@@ -682,6 +683,7 @@ impl Blockstore {
         Ok(iterator.map(|pair| pair.unwrap()))
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn slot_data_iterator(
         &self,
         slot: Slot,
@@ -694,6 +696,7 @@ impl Blockstore {
         Ok(slot_iterator.take_while(move |((shred_slot, _), _)| *shred_slot == slot))
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn slot_coding_iterator(
         &self,
         slot: Slot,
