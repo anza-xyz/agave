@@ -6736,6 +6736,7 @@ dependencies = [
 name = "solana-compute-budget"
 version = "2.2.0"
 dependencies = [
+ "qualifier_attr",
  "solana-fee-structure",
  "solana-frozen-abi",
  "solana-program-entrypoint",
