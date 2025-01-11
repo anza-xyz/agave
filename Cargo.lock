@@ -2938,7 +2938,7 @@ dependencies = [
  "httpdate",
  "itoa",
  "pin-project-lite",
- "socket2 0.5.8",
+ "socket2",
  "tokio",
  "tower-service",
  "tracing",
@@ -3799,13 +3799,13 @@ dependencies = [
 
 [[package]]
 name = "mio"
-version = "0.8.11"
+version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4a650543ca06a924e8b371db273b2756685faae30f8487da1b56505a8f78b0c"
+checksum = "2886843bf800fba2e3377cff24abf6379b4c4d5c6681eaf9ea5b0d15090450bd"
 dependencies = [
  "libc",
  "wasi 0.11.0+wasi-snapshot-preview1",
- "windows-sys 0.48.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4728,7 +4728,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.0.0",
  "rustls 0.23.20",
- "socket2 0.5.8",
+ "socket2",
  "thiserror 2.0.9",
  "tokio",
  "tracing",
@@ -4763,7 +4763,7 @@ checksum = "4fe68c2e9e1a1234e218683dbdf9f9dfcb094113c5ac2b938dfcb9bab4c4140b"
 dependencies = [
  "libc",
  "once_cell",
- "socket2 0.5.8",
+ "socket2",
  "tracing",
  "windows-sys 0.59.0",
 ]
@@ -5799,16 +5799,6 @@ dependencies = [
  "serde_json",
  "simpl",
  "time",
-]
-
-[[package]]
-name = "socket2"
-version = "0.4.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "64a4a911eed85daf18834cfaa86a79b7d266ff93ff5ba14005426219480ed662"
-dependencies = [
- "libc",
- "winapi 0.3.9",
 ]
 
 [[package]]
@@ -7950,7 +7940,7 @@ dependencies = [
  "rand 0.8.5",
  "serde",
  "serde_derive",
- "socket2 0.5.8",
+ "socket2",
  "solana-logger",
  "solana-serde",
  "solana-version",
@@ -9420,7 +9410,7 @@ dependencies = [
  "rand 0.8.5",
  "rustls 0.23.20",
  "smallvec",
- "socket2 0.5.8",
+ "socket2",
  "solana-keypair",
  "solana-logger",
  "solana-measure",
@@ -10209,7 +10199,7 @@ dependencies = [
  "rand 0.8.5",
  "rustls 0.23.20",
  "smallvec",
- "socket2 0.5.8",
+ "socket2",
  "solana-clap-utils",
  "solana-logger",
  "solana-measure",
@@ -11293,21 +11283,20 @@ checksum = "cda74da7e1a664f795bb1f8a87ec406fb89a02522cf6e50620d016add6dbbf5c"
 
 [[package]]
 name = "tokio"
-version = "1.29.1"
-source = "git+https://github.com/anza-xyz/solana-tokio.git?rev=7cf47705faacf7bf0e43e4131a5377b3291fce21#7cf47705faacf7bf0e43e4131a5377b3291fce21"
+version = "1.43.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d61fa4ffa3de412bfea335c6ecff681de2b609ba3c77ef3e00e521813a9ed9e"
 dependencies = [
- "autocfg",
  "backtrace",
  "bytes",
  "libc",
  "mio",
- "num_cpus",
  "parking_lot 0.12.3",
  "pin-project-lite",
  "signal-hook-registry",
- "socket2 0.4.9",
+ "socket2",
  "tokio-macros",
- "windows-sys 0.48.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -11322,8 +11311,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-macros"
-version = "2.1.0"
-source = "git+https://github.com/anza-xyz/solana-tokio.git?rev=7cf47705faacf7bf0e43e4131a5377b3291fce21#7cf47705faacf7bf0e43e4131a5377b3291fce21"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e06d43f1345a3bcd39f6a56dbb7dcab2ba47e68e8ac134855e7e2bdbaf8cab8"
 dependencies = [
  "proc-macro2",
  "quote",
