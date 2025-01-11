@@ -945,7 +945,14 @@ mod test {
             assert_eq!(ShredIndex::from(v2), legacy);
         }
 
-        // Property: Index cannot be deserialized from IndexV2
+        /// Property: [`Index`] cannot be deserialized from [`IndexV2`].
+        ///
+        /// # Failure cases
+        /// 1. Empty [`IndexV2`]
+        ///     - [`ShredIndex`] deserialization should fail due to trailing bytes of `num_shreds`.
+        /// 2. Non-empty [`IndexV2`]
+        ///     - Encoded length of [`ShredIndexV2::index`] (`Vec<u8>`) will be relative to a sequence of `u8`,
+        ///       resulting in not enough bytes when deserialized into sequence of `u64`.
         #[test]
         fn test_legacy_collision(
             coding_indices in rand_range(0..MAX_DATA_SHREDS_PER_SLOT as u64),
@@ -962,7 +969,14 @@ mod test {
             prop_assert!(legacy.is_err());
         }
 
-        // Property: IndexV2 cannot be deserialized from Index
+        /// Property: [`IndexV2`] cannot be deserialized from [`Index`].
+        ///
+        /// # Failure cases
+        /// 1. Empty [`Index`]
+        ///     - [`ShredIndexV2`] deserialization should fail due to missing `num_shreds` (not enough bytes).
+        /// 2. Non-empty [`Index`]
+        ///     - Encoded length of [`ShredIndex::index`] (`BTreeSet<u64>`) will be relative to a sequence of `u64`,
+        ///       resulting in trailing bytes when deserialized into sequence of `u8`.
         #[test]
         fn test_legacy_collision_inverse(
             coding_indices in rand_range(0..MAX_DATA_SHREDS_PER_SLOT as u64),
