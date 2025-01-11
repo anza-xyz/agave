@@ -2016,10 +2016,6 @@ where
             .is_overgrown(self.thread_manager.pool.max_usage_queue_count)
     }
 
-    fn is_trashed(&self) -> bool {
-        self.is_aborted() || self.is_overgrown()
-    }
-
     fn reset(&self) {
         if let Err(a) = self
             .thread_manager
@@ -3469,10 +3465,6 @@ mod tests {
 
         fn is_overgrown(&self) -> bool {
             unimplemented!()
-        }
-
-        fn is_trashed(&self) -> bool {
-            false
         }
 
         fn reset(&self) {
