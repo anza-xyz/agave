@@ -1,7 +1,7 @@
 use {
     super::decision_maker::{BufferedPacketsDecision, DecisionMaker},
     crate::banking_stage::packet_deserializer::PacketDeserializer,
-    solana_perf::packet::BankingPacketReceiver,
+    agave_banking_stage_ingress_types::BankingPacketReceiver,
     solana_runtime::bank_forks::BankForks,
     solana_unified_scheduler_pool::{BankingStageAdapter, BatchConverterCreator},
     std::sync::{Arc, RwLock},
