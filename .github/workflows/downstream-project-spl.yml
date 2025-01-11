@@ -39,6 +39,20 @@ jobs:
   check:
     if: github.repository == 'anza-xyz/agave'
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        programs:
+          - associated-token-account
+          - feature-proposal
+          - instruction-padding
+          - memo
+          - record
+          - single-pool
+          - slashing
+          - stake-pool
+          - token-2022
+          # re-enable with https://github.com/buffalojoec/mollusk/pull/74
+          # - token
     steps:
       - uses: actions/checkout@v4
 
@@ -53,45 +67,20 @@ jobs:
       - shell: bash
         run: |
           source .github/scripts/downstream-project-spl-install-deps.sh
-          source .github/scripts/downstream-project-spl-common.sh
+          source .github/scripts/downstream-project-spl-common.sh "${{ matrix.programs }}"
           if [ -n "$SKIP_SPL_DOWNSTREAM_PROJECT_TEST" ]; then
             exit 0
           fi
-
           cargo check
 
-  test:
+  test_cli:
     if: github.repository == 'anza-xyz/agave'
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        arrays:
-          [
-            {
-              test_paths: ["token/cli"],
-              required_programs:
-                [
-                  "token/program",
-                  "token/program-2022",
-                  "associated-token-account/program",
-                  "instruction-padding/program",
-                ],
-            },
-            {
-              test_paths: ["single-pool/cli"],
-              required_programs:
-                [
-                  "single-pool/program",
-                ],
-            },
-            {
-              test_paths: ["token-upgrade/cli"],
-              required_programs:
-                [
-                  "token-upgrade/program",
-                ],
-            },
-          ]
+        programs:
+          - single-pool
+          - token-2022
     steps:
       - uses: actions/checkout@v4
 
@@ -106,22 +95,12 @@ jobs:
       - shell: bash
         run: |
           source .github/scripts/downstream-project-spl-install-deps.sh
-          source .github/scripts/downstream-project-spl-common.sh
+          source .github/scripts/downstream-project-spl-common.sh "${{ matrix.programs }}"
           if [ -n "$SKIP_SPL_DOWNSTREAM_PROJECT_TEST" ]; then
             exit 0
           fi
-
-          programStr="${{ tojson(matrix.arrays.required_programs) }}"
-          IFS=', ' read -ra programs <<<"${programStr//[\[\]$'\n'$'\r' ]/}"
-          for program in "${programs[@]}"; do
-            $CARGO_BUILD_SBF --manifest-path "$program"/Cargo.toml
-          done
-
-          testPathsStr="${{ tojson(matrix.arrays.test_paths) }}"
-          IFS=', ' read -ra test_paths <<<"${testPathsStr//[\[\]$'\n'$'\r' ]/}"
-          for test_path in "${test_paths[@]}"; do
-            cargo test --manifest-path "$test_path"/Cargo.toml
-          done
+          $CARGO_BUILD_SBF --manifest-path program/Cargo.toml
+          cargo test --manifest-path clients/cli/Cargo.toml
 
   cargo-test-sbf:
     if: github.repository == 'anza-xyz/agave'
@@ -129,22 +108,17 @@ jobs:
     strategy:
       matrix:
         programs:
-          - [token/program]
-          - [
-              instruction-padding/program,
-              token/program-2022,
-              token/program-2022-test,
-            ]
-          - [
-              associated-token-account/program,
-              associated-token-account/program-test,
-            ]
-          - [token-upgrade/program]
-          - [feature-proposal/program]
-          - [governance/addin-mock/program, governance/program]
-          - [name-service/program]
-          - [stake-pool/program]
-          - [single-pool/program]
+          - associated-token-account
+          - feature-proposal
+          - instruction-padding
+          - memo
+          - record
+          - single-pool
+          - slashing
+          - stake-pool
+          - token-2022
+          # re-enable with https://github.com/buffalojoec/mollusk/pull/74
+          # - token
     steps:
       - uses: actions/checkout@v4
 
@@ -159,14 +133,8 @@ jobs:
       - shell: bash
         run: |
           source .github/scripts/downstream-project-spl-install-deps.sh
-          source .github/scripts/downstream-project-spl-common.sh
+          source .github/scripts/downstream-project-spl-common.sh "${{ matrix.programs }}"
           if [ -n "$SKIP_SPL_DOWNSTREAM_PROJECT_TEST" ]; then
             exit 0
           fi
-
-          programStr="${{ tojson(matrix.programs) }}"
-          IFS=', ' read -ra programs <<<"${programStr//[\[\]$'\n'$'\r' ]/}"
-
-          for program in "${programs[@]}"; do
-            $CARGO_TEST_SBF --manifest-path "$program"/Cargo.toml
-          done
+          $CARGO_TEST_SBF --manifest-path program/Cargo.toml

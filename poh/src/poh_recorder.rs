@@ -352,15 +352,14 @@ impl PohRecorder {
 
     pub fn would_be_leader(&self, within_next_n_ticks: u64) -> bool {
         self.has_bank()
-            || self.leader_first_tick_height_including_grace_ticks.map_or(
-                false,
-                |leader_first_tick_height_including_grace_ticks| {
+            || self
+                .leader_first_tick_height_including_grace_ticks
+                .is_some_and(|leader_first_tick_height_including_grace_ticks| {
                     let ideal_leader_tick_height = leader_first_tick_height_including_grace_ticks
                         .saturating_sub(self.grace_ticks);
                     self.tick_height + within_next_n_ticks >= ideal_leader_tick_height
                         && self.tick_height <= self.leader_last_tick_height
-                },
-            )
+                })
     }
 
     // Return the slot for a given tick height

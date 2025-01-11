@@ -7,7 +7,7 @@ use {
 };
 
 // The maximum number of pubkeys that a packet can contain.
-pub const FILTER_SIZE: u8 = (PACKET_DATA_SIZE / core::mem::size_of::<Pubkey>()) as u8;
+pub(crate) const FILTER_SIZE: u8 = (PACKET_DATA_SIZE / core::mem::size_of::<Pubkey>()) as u8;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum ProgramKind {

@@ -511,7 +511,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     create_ancient_storage: CreateAncientStorage::Pack,
     partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
     test_skip_rewrites_but_include_in_bank_hash: false,
-    storage_access: StorageAccess::Mmap,
+    storage_access: StorageAccess::File,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormalWithVerify,
     enable_experimental_accumulator_hash: false,
     verify_experimental_accumulator_hash: false,
@@ -538,7 +538,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     create_ancient_storage: CreateAncientStorage::Pack,
     partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
     test_skip_rewrites_but_include_in_bank_hash: false,
-    storage_access: StorageAccess::Mmap,
+    storage_access: StorageAccess::File,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormalWithVerify,
     enable_experimental_accumulator_hash: false,
     verify_experimental_accumulator_hash: false,
@@ -6314,7 +6314,7 @@ impl AccountsDb {
         // Note that self.flush_slot_cache_with_clean() can return None if the
         // slot is already been flushed. This can happen if the cache is
         // overwhelmed and we flushed some yet to be rooted frozen slots.
-        // However, Independent of whether the last slot was actually flushed
+        // However, independent of whether the last slot was actually flushed
         // from the cache by the above loop, we should always update the
         // `max_flush_root` to the max of the flushed roots, because that's
         // max_flushed_root tracks the logical last root that was flushed to

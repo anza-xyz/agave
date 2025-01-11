@@ -122,8 +122,8 @@ impl From<GroupedCiphertext2HandlesValidityProof> for PodGroupedCiphertext2Handl
         Self(decoded_proof.to_bytes())
     }
 }
-#[cfg(not(target_os = "solana"))]
 
+#[cfg(not(target_os = "solana"))]
 impl TryFrom<PodGroupedCiphertext2HandlesValidityProof> for GroupedCiphertext2HandlesValidityProof {
     type Error = ValidityProofVerificationError;
 
