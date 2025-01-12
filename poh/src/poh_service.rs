@@ -259,10 +259,7 @@ impl PohService {
                     debug_assert!(res.is_ok(), "Slot {0} wasn't recorded.", record.slot);
                     timing.num_hashes += 1; // note: may have also ticked inside record
                     if let Some(new_record) = record_receiver.pop() {
-                        if record_receiver.working_bank() != record.slot {
-                            record_receiver.shut_off_producers();
-                            break; // Drop the record.
-                        }
+                        assert!(record_receiver.working_bank() == record.slot, "Record must belong to working bank");
                         // we already have second request to record, so record again while we still have the mutex
                         record = new_record;
                     } else {

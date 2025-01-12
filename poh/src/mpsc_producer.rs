@@ -8,6 +8,7 @@ impl<T> Producer<T> {
     pub fn try_push(&self, item: T) -> Result<(), T> {
         self.ring_buffer.try_push(item)
     }
+    pub fn bank_slot(&self) -> u64 { self.ring_buffer.working_bank() }
 }
 
 // Explicitly implement Clone to account for types that don't implement Clone.

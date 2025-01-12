@@ -60,6 +60,9 @@ pub enum PohRecorderError {
     #[error("min height not reached")]
     MinHeightNotReached,
 
+    #[error("mismatch in slot id")]
+    InvalidSlot,
+
     #[error("send WorkingBankEntry error")]
     SendError(#[from] SendError<WorkingBankEntry>),
 }
@@ -195,6 +198,7 @@ impl TransactionRecorder {
     }
 
     // Returns the index of `transactions.first()` in the slot, if being tracked by WorkingBank
+    // TODO: Make this pub for test-only
     pub fn record(
         &self,
         bank_slot: Slot,
@@ -204,6 +208,9 @@ impl TransactionRecorder {
         // TODO: Shut off producer if certain height is reached.
         // TODO(done): check if the slot matches the working bank of the service.
         // TODO: Reset the bank with a new slot_id.
+        if bank_slot != self.record_sender.bank_slot() {
+            return Err(PohRecorderError::InvalidSlot);
+        }
 
         let rec_send_res = self
             .record_sender
