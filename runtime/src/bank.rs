@@ -84,6 +84,7 @@ use {
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         ancestors::{Ancestors, AncestorsForSerialization},
         blockhash_queue::BlockhashQueue,
+        chili_pepper::BLOCK_CHILI_PEPPER_LIMIT,
         epoch_accounts_hash::EpochAccountsHash,
         sorted_storages::SortedStorages,
         storable_accounts::StorableAccounts,
@@ -587,6 +588,7 @@ impl PartialEq for Bank {
             cache_for_accounts_lt_hash: _,
             stats_for_accounts_lt_hash: _,
             block_id,
+            loaded_account_chili_peppers: _,
             bank_hash_stats: _,
             // Ignore new fields explicitly if they do not impact PartialEq.
             // Adding ".." will remove compile-time checks that if a new field
@@ -945,6 +947,9 @@ pub struct Bank {
     /// until bankless leader. Can be computed directly from shreds without needing to execute transactions.
     block_id: RwLock<Option<Hash>>,
 
+    /// The set of accounts that have been read during the current slot with corresponding chili peppers
+    loaded_account_chili_peppers: RwLock<HashMap<Pubkey, Option<u64>>>,
+
     /// Accounts stats for computing the bank hash
     bank_hash_stats: AtomicBankHashStats,
 }
@@ -1146,6 +1151,7 @@ impl Bank {
             cache_for_accounts_lt_hash: DashMap::default(),
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
+            loaded_account_chili_peppers: RwLock::new(HashMap::new()),
             bank_hash_stats: AtomicBankHashStats::default(),
         };
 
@@ -1402,6 +1408,7 @@ impl Bank {
             cache_for_accounts_lt_hash: DashMap::default(),
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
+            loaded_account_chili_peppers: RwLock::new(HashMap::new()),
             bank_hash_stats: AtomicBankHashStats::default(),
         };
 
@@ -1801,6 +1808,7 @@ impl Bank {
             cache_for_accounts_lt_hash: DashMap::default(),
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
+            loaded_account_chili_peppers: RwLock::new(HashMap::new()),
             bank_hash_stats: AtomicBankHashStats::new(&fields.bank_hash_stats),
         };
 
@@ -2606,36 +2614,42 @@ impl Bank {
                 // updating the accounts lt hash must happen *outside* of hash_internal_state() so
                 // that rehash() can be called and *not* modify self.accounts_lt_hash.
                 self.update_accounts_lt_hash();
+            }
 
-                // For lattice-hash R&D, we have a CLI arg to do extra verfication.  If set, we'll
-                // re-calculate the accounts lt hash every slot and compare it against the value
-                // already stored in the bank.
-                if self
-                    .rc
-                    .accounts
-                    .accounts_db
-                    .verify_experimental_accumulator_hash
-                {
-                    let slot = self.slot();
-                    info!("Verifying the accounts lt hash for slot {slot}...");
-                    let (calculated_accounts_lt_hash, duration) = meas_dur!({
-                        self.rc
-                            .accounts
-                            .accounts_db
-                            .calculate_accounts_lt_hash_at_startup_from_index(&self.ancestors, slot)
-                    });
-                    let actual_accounts_lt_hash = self.accounts_lt_hash.lock().unwrap();
-                    assert_eq!(
+            // For lattice-hash R&D, we have a CLI arg to do extra verfication.  If set, we'll
+            // re-calculate the accounts lt hash every slot and compare it against the value
+            // already stored in the bank.
+            if self
+                .rc
+                .accounts
+                .accounts_db
+                .verify_experimental_accumulator_hash
+            {
+                let slot = self.slot();
+                info!("Verifying the accounts lt hash for slot {slot}...");
+                let (calculated_accounts_lt_hash, duration) = meas_dur!({
+                    self.rc
+                        .accounts
+                        .accounts_db
+                        .calculate_accounts_lt_hash_at_startup_from_index(&self.ancestors, slot)
+                });
+                let actual_accounts_lt_hash = self.accounts_lt_hash.lock().unwrap();
+                assert_eq!(
                         calculated_accounts_lt_hash,
                         *actual_accounts_lt_hash,
                         "Verifying the accounts lt hash for slot {slot} failed! calculated checksum: {}, actual checksum: {}",
                         calculated_accounts_lt_hash.0.checksum(),
                         actual_accounts_lt_hash.0.checksum(),
                     );
-                    info!("Verifying the accounts lt hash for slot {slot}... Done successfully in {duration:?}");
-                }
+                info!("Verifying the accounts lt hash for slot {slot}... Done successfully in {duration:?}");
             }
+
             *hash = self.hash_internal_state();
+
+            if self.is_accounts_chili_pepper_enabled() {
+                self.update_accounts_chili_pepper();
+            }
+
             self.rc.accounts.accounts_db.mark_slot_frozen(self.slot());
         }
     }
@@ -3355,6 +3369,33 @@ impl Bank {
         balances
     }
 
+    fn check_chili_pepper<T>(&self, txs: &[impl TransactionWithMeta], check_results: &[Result<T>]) {
+        // TODO: optimize this function
+        // This function is very slow!!!
+        if self.is_accounts_chili_pepper_enabled() {
+            let slot = self.slot();
+            let mut result = HashMap::new();
+            check_results.iter().zip(txs).for_each(|etx| {
+                if let (Ok(_), tx) = etx {
+                    tx.account_keys().iter().for_each(|key| {
+                        let chili_pepper = self
+                            .rc
+                            .accounts
+                            .accounts_db
+                            .loaded_account_chili_peppers(&self.ancestors, key);
+                        // info!("load chili_pepper {} {} {:?}", slot, key, chili_pepper);
+                        result.insert(*key, chili_pepper);
+                    });
+                    // TODO: fail transaction if chili_pepper is below what is specified in the transaction.
+                }
+            });
+            self.loaded_account_chili_peppers
+                .write()
+                .unwrap()
+                .extend(result.into_iter().map(|(k, v)| (k, v)));
+        }
+    }
+
     pub fn load_and_execute_transactions(
         &self,
         batch: &TransactionBatch<impl TransactionWithMeta>,
@@ -3372,6 +3413,11 @@ impl Bank {
             error_counters,
         ));
         timings.saturating_add_in_place(ExecuteTimingType::CheckUs, check_us);
+
+        let (_, check_chili_pepper_us) =
+            measure_us!(self.check_chili_pepper(sanitized_txs, &check_results[..]));
+        timings
+            .saturating_add_in_place(ExecuteTimingType::CheckChiliPepperUs, check_chili_pepper_us);
 
         let (blockhash, blockhash_lamports_per_signature) =
             self.last_blockhash_and_lamports_per_signature();
@@ -3715,6 +3761,8 @@ impl Bank {
                 &maybe_transaction_refs,
                 &processing_results,
             );
+
+            // move the chili pepper update here??
 
             let to_store = (self.slot(), accounts_to_store.as_slice());
             self.update_bank_hash_stats(&to_store);
@@ -6815,6 +6863,45 @@ impl Bank {
 
     pub fn get_bank_hash_stats(&self) -> BankHashStats {
         self.bank_hash_stats.load()
+    }
+
+    pub fn is_accounts_chili_pepper_enabled(&self) -> bool {
+        // TODO: feature gate this
+        self.rc
+            .accounts
+            .accounts_db
+            .is_accounts_chili_pepper_enabled()
+    }
+
+    pub fn update_accounts_chili_pepper(&self) {
+        debug_assert!(self.is_accounts_chili_pepper_enabled());
+        let slot = self.slot();
+
+        // Fake the current chili pepper clock for each pubkey for test
+        let current_chili_pepper_clock = slot * BLOCK_CHILI_PEPPER_LIMIT;
+        let (sender, receiver) = crossbeam_channel::bounded(1);
+
+        let pubkeys: Vec<_> = self
+            .loaded_account_chili_peppers
+            .write()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+
+        info!(
+            "insert chili_pepper for slot: {}, pubkeys: {}",
+            slot,
+            pubkeys.len()
+        );
+
+        self.rc.accounts.accounts_db.insert_chili_peppers(
+            slot,
+            pubkeys,
+            current_chili_pepper_clock,
+            sender,
+        );
+        receiver.recv().unwrap();
     }
 }
 

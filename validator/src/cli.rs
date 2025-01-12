@@ -1324,7 +1324,11 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                      prior to clean",
                 )
                 .hidden(hidden_unless_forced()),
-        )
+        ).arg(
+            Arg::with_name("accounts_db_enable_chili_pepper")
+                .long("accounts-db-enable-chili-pepper")
+                .help("Enables chili pepper")
+                .hidden(hidden_unless_forced()),)
         .arg(
             Arg::with_name("accounts_db_scan_filter_for_shrinking")
                 .long("accounts-db-scan-filter-for-shrinking")

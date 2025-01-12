@@ -32,6 +32,7 @@ num_enum = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
 rand = { workspace = true }
 rayon = { workspace = true }
+redb = { workspace = true }
 seqlock = { workspace = true }
 serde = { workspace = true, features = ["rc"] }
 serde_derive = { workspace = true }
@@ -117,6 +118,10 @@ harness = false
 
 [[bench]]
 name = "bench_lock_accounts"
+harness = false
+
+[[bench]]
+name = "bench_chili_pepper_store"
 harness = false
 
 [lints]
