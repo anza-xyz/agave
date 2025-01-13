@@ -17,7 +17,7 @@ use {
 
 /// [`WorkerInfo`] holds information about a worker responsible for sending
 /// transaction batches.
-pub(crate) struct WorkerInfo {
+pub struct WorkerInfo {
     sender: mpsc::Sender<TransactionBatch>,
     handle: JoinHandle<()>,
     cancel: CancellationToken,
@@ -69,11 +69,11 @@ impl WorkerInfo {
 
 /// [`WorkersCache`] manages and caches workers. It uses an LRU cache to store and
 /// manage workers. It also tracks transaction statistics for each peer.
-pub(crate) struct WorkersCache {
+pub struct WorkersCache {
     workers: LruCache<SocketAddr, WorkerInfo>,
 
     /// Indicates that the `WorkersCache` is been `shutdown()`, interrupting any outstanding
-    /// `send_txs()` invocations.
+    /// `send_transactions_to_address()` invocations.
     cancel: CancellationToken,
 }
 
@@ -130,7 +130,7 @@ impl WorkersCache {
     }
 
     /// Try sending a batch of transactions to the worker for a given peer.
-    pub(crate) fn try_send_transactions_to_address(
+    pub fn try_send_transactions_to_address(
         &mut self,
         peer: &SocketAddr,
         txs_batch: TransactionBatch,
@@ -195,6 +195,7 @@ impl WorkersCache {
 
             send_res
         };
+
         cancel
             .run_until_cancelled(body)
             .await
