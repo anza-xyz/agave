@@ -1,23 +1,18 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     super::decision_maker::{BufferedPacketsDecision, DecisionMaker},
-    crate::banking_stage::packet_deserializer::PacketDeserializer,
-    agave_banking_stage_ingress_types::BankingPacketReceiver,
+    crate::{
+        banking_stage::{packet_deserializer::PacketDeserializer, BankingStage, LikeClusterInfo},
+        banking_trace::Channels,
+    },
+    solana_poh::poh_recorder::PohRecorder,
     solana_runtime::bank_forks::BankForks,
-    solana_unified_scheduler_pool::{BankingStageAdapter, BatchConverterCreator},
+    solana_unified_scheduler_pool::{
+        BankingStageAdapter, BatchConverterCreator, DefaultSchedulerPool,
+    },
     std::sync::{Arc, RwLock},
 };
-
-pub(crate) fn unified_receiver(
-    non_vote_receiver: BankingPacketReceiver,
-    tpu_vote_receiver: BankingPacketReceiver,
-    gossip_vote_receiver: BankingPacketReceiver,
-) -> BankingPacketReceiver {
-    assert!(non_vote_receiver.same_channel(&tpu_vote_receiver));
-    assert!(non_vote_receiver.same_channel(&gossip_vote_receiver));
-    drop((tpu_vote_receiver, gossip_vote_receiver));
-
-    non_vote_receiver
-}
 
 pub(crate) fn batch_converter_creator(
     decision_maker: DecisionMaker,
@@ -57,4 +52,30 @@ pub(crate) fn batch_converter_creator(
             }
         })
     })
+}
+
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+pub(crate) fn ensure_banking_stage_setup(
+    pool: &DefaultSchedulerPool,
+    bank_forks: &Arc<RwLock<BankForks>>,
+    channels: &Channels,
+    cluster_info: &impl LikeClusterInfo,
+    poh_recorder: &Arc<RwLock<PohRecorder>>,
+) {
+    if !pool.block_production_supported() {
+        return;
+    }
+
+    let unified_receiver = channels.unified_receiver().clone();
+    let block_producing_scheduler_handler_threads = BankingStage::num_threads() as usize;
+    let decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
+    let banking_stage_monitor = Box::new(decision_maker.clone());
+    let converter = batch_converter_creator(decision_maker, bank_forks.clone());
+
+    pool.register_banking_stage(
+        unified_receiver,
+        block_producing_scheduler_handler_threads,
+        banking_stage_monitor,
+        converter,
+    );
 }

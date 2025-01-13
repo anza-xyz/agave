@@ -9,7 +9,10 @@ use {
     rayon::prelude::*,
     solana_client::connection_cache::ConnectionCache,
     solana_core::{
-        banking_stage::{update_bank_forks_and_poh_recorder_for_new_tpu_bank, BankingStage},
+        banking_stage::{
+            unified_scheduler::ensure_banking_stage_setup,
+            update_bank_forks_and_poh_recorder_for_new_tpu_bank, BankingStage,
+        },
         banking_trace::{BankingTracer, Channels, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT},
         validator::BlockProductionMethod,
     },
@@ -445,7 +448,13 @@ fn main() {
         )))
         .unwrap();
     let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-    let scheduler_pool = if matches!(
+    let cluster_info = {
+        let keypair = Arc::new(Keypair::new());
+        let node = Node::new_localhost_with_pubkey(&keypair.pubkey());
+        ClusterInfo::new(node.info, keypair, SocketAddrSpace::Unspecified)
+    };
+    let cluster_info = Arc::new(cluster_info);
+    let banking_tracer_channels = if matches!(
         block_production_method,
         BlockProductionMethod::UnifiedScheduler
     ) {
@@ -458,13 +467,12 @@ fn main() {
             prioritization_fee_cache.clone(),
             poh_recorder.read().unwrap().new_recorder(),
         );
-        bank_forks
-            .write()
-            .unwrap()
-            .install_scheduler_pool(pool.clone());
-        Some(pool)
+        let channels = banking_tracer.create_channels_for_scheduler_pool(&pool);
+        ensure_banking_stage_setup(&pool, &bank_forks, &channels, &cluster_info, &poh_recorder);
+        bank_forks.write().unwrap().install_scheduler_pool(pool);
+        channels
     } else {
-        None
+        banking_tracer.create_channels(false)
     };
     let Channels {
         non_vote_sender,
@@ -473,13 +481,7 @@ fn main() {
         tpu_vote_receiver,
         gossip_vote_sender,
         gossip_vote_receiver,
-    } = banking_tracer.create_channels_for_scheduler_pool(scheduler_pool.as_ref());
-    let cluster_info = {
-        let keypair = Arc::new(Keypair::new());
-        let node = Node::new_localhost_with_pubkey(&keypair.pubkey());
-        ClusterInfo::new(node.info, keypair, SocketAddrSpace::Unspecified)
-    };
-    let cluster_info = Arc::new(cluster_info);
+    } = banking_tracer_channels;
     let tpu_disable_quic = matches.is_present("tpu_disable_quic");
     let connection_cache = if tpu_disable_quic {
         ConnectionCache::with_udp(

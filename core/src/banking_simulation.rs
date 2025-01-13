@@ -2,6 +2,7 @@
 use {
     crate::{
         banking_stage::{
+            unified_scheduler::ensure_banking_stage_setup,
             update_bank_forks_and_poh_recorder_for_new_tpu_bank, BankingStage, LikeClusterInfo,
         },
         banking_trace::{
@@ -770,6 +771,17 @@ impl BankingSimulator {
             BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
         );
 
+        // Create a partially-dummy ClusterInfo for the banking stage.
+        let cluster_info = Arc::new(DummyClusterInfo {
+            id: simulated_leader.into(),
+        });
+        let banking_tracer_channels = if let Some(pool) = unified_scheduler_pool {
+            let channels = retracer.create_channels_for_scheduler_pool(&pool);
+            ensure_banking_stage_setup(&pool, &bank_forks, &channels, &cluster_info, &poh_recorder);
+            channels
+        } else {
+            retracer.create_channels(false)
+        };
         let Channels {
             non_vote_sender,
             non_vote_receiver,
@@ -777,7 +789,7 @@ impl BankingSimulator {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = retracer.create_channels_for_scheduler_pool(unified_scheduler_pool.as_ref());
+        } = banking_tracer_channels;
 
         let connection_cache = Arc::new(ConnectionCache::new("connection_cache_sim"));
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
@@ -812,10 +824,6 @@ impl BankingSimulator {
         );
 
         info!("Start banking stage!...");
-        // Create a partially-dummy ClusterInfo for the banking stage.
-        let cluster_info = Arc::new(DummyClusterInfo {
-            id: simulated_leader.into(),
-        });
         let prioritization_fee_cache = &Arc::new(PrioritizationFeeCache::new(0u64));
         let banking_stage = BankingStage::new_num_threads(
             block_production_method.clone(),

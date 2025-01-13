@@ -5,6 +5,7 @@ use {
     crate::{
         accounts_hash_verifier::AccountsHashVerifier,
         admin_rpc_post_init::AdminRpcRequestMetadataPostInit,
+        banking_stage::unified_scheduler::ensure_banking_stage_setup,
         banking_trace::{self, BankingTracer, TraceError},
         cluster_info_vote_listener::VoteTracker,
         completed_data_sets_service::CompletedDataSetsService,
@@ -943,31 +944,7 @@ impl Validator {
         ) {
             methods @ (BlockVerificationMethod::UnifiedScheduler, _)
             | methods @ (_, BlockProductionMethod::UnifiedScheduler) => {
-                let banking_tracer_channels = banking_tracer.create_channels(true);
-                use crate::{
-                    banking_stage::{
-                        decision_maker::DecisionMaker, unified_scheduler, BankingStage,
-                    },
-                    banking_trace::Channels,
-                };
-
-                let Channels {
-                    non_vote_sender: _,
-                    non_vote_receiver,
-                    tpu_vote_sender: _,
-                    tpu_vote_receiver,
-                    gossip_vote_sender: _,
-                    gossip_vote_receiver,
-                } = &banking_tracer_channels;
-                let unified_receiver = unified_scheduler::unified_receiver(
-                    non_vote_receiver.clone(),
-                    tpu_vote_receiver.clone(),
-                    gossip_vote_receiver.clone(),
-                );
-                let block_producing_scheduler_handler_threads =
-                    BankingStage::num_threads() as usize;
-
-                let pool = DefaultSchedulerPool::new(
+                let scheduler_pool = DefaultSchedulerPool::new(
                     supported_scheduling_mode(methods),
                     config.unified_scheduler_handler_threads,
                     config.runtime_config.log_messages_bytes_limit,
@@ -976,23 +953,20 @@ impl Validator {
                     prioritization_fee_cache.clone(),
                     poh_recorder.read().unwrap().new_recorder(),
                 );
-                let decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
-                let banking_stage_monitor = Box::new(decision_maker.clone());
-                let converter =
-                    unified_scheduler::batch_converter_creator(decision_maker, bank_forks.clone());
-                pool.register_banking_stage(
-                    unified_receiver,
-                    block_producing_scheduler_handler_threads,
-                    banking_stage_monitor,
-                    converter,
-                );
 
+                let channels = banking_tracer.create_channels_for_scheduler_pool(&scheduler_pool);
+                ensure_banking_stage_setup(
+                    &scheduler_pool,
+                    &bank_forks,
+                    &channels,
+                    &cluster_info,
+                    &poh_recorder,
+                );
                 bank_forks
                     .write()
                     .unwrap()
-                    .install_scheduler_pool(pool.clone());
-                // this actually won't be used and but return this for type safety
-                banking_tracer_channels
+                    .install_scheduler_pool(scheduler_pool);
+                channels
             }
             _ => {
                 info!("no scheduler pool is installed for block verification/production...");

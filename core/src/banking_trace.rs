@@ -185,6 +185,16 @@ pub struct Channels {
     pub gossip_vote_receiver: BankingPacketReceiver,
 }
 
+impl Channels {
+    pub(crate) fn unified_receiver(&self) -> &BankingPacketReceiver {
+        assert!(self.non_vote_receiver.same_channel(&self.tpu_vote_receiver));
+        assert!(self
+            .non_vote_receiver
+            .same_channel(&self.gossip_vote_receiver));
+        &self.non_vote_receiver
+    }
+}
+
 impl BankingTracer {
     pub fn new(
         maybe_config: Option<(&PathBuf, Arc<AtomicBool>, DirByteLimit)>,
@@ -264,14 +274,9 @@ impl BankingTracer {
         }
     }
 
-    pub fn create_channels_for_scheduler_pool(
-        &self,
-        pool: Option<&Arc<DefaultSchedulerPool>>,
-    ) -> Channels {
-        self.create_channels(
-            pool.map(|pool| pool.block_production_supported())
-                .unwrap_or_default(),
-        )
+    pub fn create_channels_for_scheduler_pool(&self, pool: &DefaultSchedulerPool) -> Channels {
+        let should_unify = pool.block_production_supported();
+        self.create_channels(should_unify)
     }
 
     fn create_channel(&self, label: ChannelLabel) -> (BankingPacketSender, BankingPacketReceiver) {
