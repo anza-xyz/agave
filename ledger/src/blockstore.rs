@@ -119,16 +119,13 @@ pub struct SignatureInfosForAddress {
 }
 
 #[derive(Error, Debug)]
-pub enum InsertDataShredError {
+enum InsertDataShredError {
+    #[error("Data shred already exists in Blockstore")]
     Exists,
+    #[error("Invalid data shred")]
     InvalidShred,
+    #[error(transparent)]
     BlockstoreError(#[from] BlockstoreError),
-}
-
-impl std::fmt::Display for InsertDataShredError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "insert data shred error")
-    }
 }
 
 #[derive(Eq, PartialEq, Debug, Clone)]
@@ -940,14 +937,14 @@ impl Blockstore {
         metrics.insert_shreds_elapsed_us += start.as_us();
     }
 
-    fn try_shred_recovery(
-        &self,
-        erasure_metas: &BTreeMap<ErasureSetId, WorkingEntry<ErasureMeta>>,
-        index_working_set: &HashMap<u64, IndexMetaWorkingSetEntry>,
-        prev_inserted_shreds: &HashMap<ShredId, Shred>,
-        leader_schedule_cache: &LeaderScheduleCache,
-        reed_solomon_cache: &ReedSolomonCache,
-    ) -> Vec<Vec<Shred>> {
+    fn try_shred_recovery<'a>(
+        &'a self,
+        erasure_metas: &'a BTreeMap<ErasureSetId, WorkingEntry<ErasureMeta>>,
+        index_working_set: &'a HashMap<u64, IndexMetaWorkingSetEntry>,
+        prev_inserted_shreds: &'a HashMap<ShredId, Shred>,
+        leader_schedule_cache: &'a LeaderScheduleCache,
+        reed_solomon_cache: &'a ReedSolomonCache,
+    ) -> impl Iterator<Item = Vec<Shred>> + 'a {
         // Recovery rules:
         // 1. Only try recovery around indexes for which new data or coding shreds are received
         // 2. For new data shreds, check if an erasure set exists. If not, don't try recovery
@@ -970,11 +967,9 @@ impl Blockstore {
                             leader_schedule_cache,
                             reed_solomon_cache,
                         )
-                        .ok()
-                    })
-                    .flatten()
+                    })?
+                    .ok()
             })
-            .collect()
     }
 
     /// Attempts shred recovery and does the following for recovered data
@@ -993,7 +988,8 @@ impl Blockstore {
     ) {
         let mut start = Measure::start("Shred recovery");
         if let Some(leader_schedule_cache) = leader_schedule {
-            let recovered_shreds: Vec<_> = self
+            let mut recovered_shreds = Vec::new();
+            let recovered_data_shreds: Vec<_> = self
                 .try_shred_recovery(
                     &shred_insertion_tracker.erasure_metas,
                     &shred_insertion_tracker.index_working_set,
@@ -1001,50 +997,40 @@ impl Blockstore {
                     leader_schedule_cache,
                     reed_solomon_cache,
                 )
-                .into_iter()
-                .flatten()
-                .filter_map(|shred| {
-                    // Since the data shreds are fully recovered from the
-                    // erasure batch, no need to store coding shreds in
-                    // blockstore.
-                    if shred.is_code() {
-                        return Some(shred.into_payload());
-                    }
-                    metrics.num_recovered += 1;
-                    let shred_payload = shred.payload().clone();
-                    match self.check_insert_data_shred(
-                        shred,
-                        shred_insertion_tracker,
-                        is_trusted,
-                        leader_schedule,
-                        ShredSource::Recovered,
-                    ) {
-                        Err(InsertDataShredError::Exists) => {
-                            metrics.num_recovered_exists += 1;
-                            None
-                        }
-                        Err(InsertDataShredError::InvalidShred) => {
-                            metrics.num_recovered_failed_invalid += 1;
-                            None
-                        }
-                        Err(InsertDataShredError::BlockstoreError(err)) => {
-                            metrics.num_recovered_blockstore_error += 1;
-                            error!("blockstore error: {}", err);
-                            None
-                        }
-                        Ok(()) => {
-                            metrics.num_recovered_inserted += 1;
-                            Some(shred_payload)
-                        }
-                    }
+                .map(|mut shreds| {
+                    // All shreds should be retransmitted, but because there
+                    // are no more missing data shreds in the erasure batch,
+                    // coding shreds are not stored in blockstore.
+                    recovered_shreds
+                        .extend(shred::drain_coding_shreds(&mut shreds).map(Shred::into_payload));
+                    recovered_shreds.extend(shreds.iter().map(Shred::payload).cloned());
+                    shreds
                 })
-                // Always collect recovered-shreds so that above insert code is
-                // executed even if retransmit-sender is None.
                 .collect();
             if !recovered_shreds.is_empty() {
                 if let Some(retransmit_sender) = retransmit_sender {
                     let _ = retransmit_sender.send(recovered_shreds);
                 }
+            }
+            for shred in recovered_data_shreds.into_iter().flatten() {
+                metrics.num_recovered += 1;
+                *match self.check_insert_data_shred(
+                    shred,
+                    shred_insertion_tracker,
+                    is_trusted,
+                    leader_schedule,
+                    ShredSource::Recovered,
+                ) {
+                    Err(InsertDataShredError::Exists) => &mut metrics.num_recovered_exists,
+                    Err(InsertDataShredError::InvalidShred) => {
+                        &mut metrics.num_recovered_failed_invalid
+                    }
+                    Err(InsertDataShredError::BlockstoreError(err)) => {
+                        error!("blockstore error: {err}");
+                        &mut metrics.num_recovered_blockstore_error
+                    }
+                    Ok(()) => &mut metrics.num_recovered_inserted,
+                } += 1;
             }
         }
         start.stop();

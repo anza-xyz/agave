@@ -69,7 +69,7 @@ use {
         signature::{Keypair, Signature, Signer, SIGNATURE_BYTES},
     },
     static_assertions::const_assert_eq,
-    std::{fmt::Debug, time::Instant},
+    std::{fmt::Debug, time::Instant, vec::Drain},
     thiserror::Error,
 };
 pub use {
@@ -513,9 +513,12 @@ impl Shred {
         ShredType::from(self.common_header().shred_variant)
     }
 
+    #[inline]
     pub fn is_data(&self) -> bool {
         self.shred_type() == ShredType::Data
     }
+
+    #[inline]
     pub fn is_code(&self) -> bool {
         self.shred_type() == ShredType::Code
     }
@@ -1296,6 +1299,28 @@ pub fn should_discard_shred(
     false
 }
 
+// Drains coding shreds out of the vector of shreds.
+// Note that the function does not preserve the order of either the retained or
+// the drained shreds.
+// TODO: Use Vec::extract_if instead once stable.
+pub(crate) fn drain_coding_shreds(shreds: &mut Vec<Shred>) -> Drain<'_, Shred> {
+    let (mut i, mut j) = (0, shreds.len().saturating_sub(1));
+    loop {
+        while i < j && shreds[i].is_data() {
+            i += 1;
+        }
+        while i < j && shreds[j].is_code() {
+            j -= 1;
+        }
+        if i < j {
+            shreds.swap(i, j);
+        } else {
+            let offset = usize::from(shreds.get(i).map(Shred::is_data).unwrap_or_default());
+            return shreds.drain(i + offset..);
+        }
+    }
+}
+
 pub fn max_ticks_per_n_shreds(num_shreds: u64, shred_data_size: Option<usize>) -> u64 {
     let ticks = create_ticks(1, 0, Hash::default());
     max_entries_per_n_shred(&ticks[0], num_shreds, shred_data_size)
@@ -1353,7 +1378,7 @@ mod tests {
         super::*,
         assert_matches::assert_matches,
         bincode::serialized_size,
-        rand::Rng,
+        rand::{seq::SliceRandom, Rng},
         rand_chacha::{rand_core::SeedableRng, ChaChaRng},
         rayon::ThreadPoolBuilder,
         solana_sdk::{shred_version, signature::Signer, signer::keypair::keypair_from_seed},
@@ -1365,6 +1390,36 @@ mod tests {
 
     fn bs58_decode<T: AsRef<[u8]>>(data: T) -> Vec<u8> {
         bs58::decode(data).into_vec().unwrap()
+    }
+
+    fn make_merkle_shreds_for_tests<R: Rng>(
+        rng: &mut R,
+        slot: Slot,
+        data_size: usize,
+        chained: bool,
+        is_last_in_slot: bool,
+    ) -> Result<Vec<Vec<merkle::Shred>>, Error> {
+        let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
+        let chained_merkle_root = chained.then(|| Hash::new_from_array(rng.gen()));
+        let parent_offset = rng.gen_range(1..=u16::try_from(slot).unwrap_or(u16::MAX));
+        let parent_slot = slot.checked_sub(u64::from(parent_offset)).unwrap();
+        let mut data = vec![0u8; data_size];
+        rng.fill(&mut data[..]);
+        merkle::make_shreds_from_data(
+            &thread_pool,
+            &Keypair::new(),
+            chained_merkle_root,
+            &data[..],
+            slot,
+            parent_slot,
+            rng.gen(),            // shred_version
+            rng.gen_range(1..64), // reference_tick
+            is_last_in_slot,
+            rng.gen_range(0..671), // next_shred_index
+            rng.gen_range(0..781), // next_code_index
+            &ReedSolomonCache::default(),
+            &mut ProcessShredsStats::default(),
+        )
     }
 
     #[test]
@@ -1482,36 +1537,21 @@ mod tests {
     fn test_should_discard_shred(chained: bool, is_last_in_slot: bool) {
         solana_logger::setup();
         let mut rng = rand::thread_rng();
-        let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
-        let reed_solomon_cache = ReedSolomonCache::default();
-        let keypair = Keypair::new();
-        let chained_merkle_root = chained.then(|| Hash::new_from_array(rng.gen()));
         let slot = 18_291;
-        let parent_slot = rng.gen_range(1..slot);
-        let shred_version = rng.gen();
-        let reference_tick = rng.gen_range(1..64);
-        let next_shred_index = rng.gen_range(0..671);
-        let next_code_index = rng.gen_range(0..781);
-        let mut data = vec![0u8; 1200 * 5];
-        rng.fill(&mut data[..]);
-        let shreds = merkle::make_shreds_from_data(
-            &thread_pool,
-            &keypair,
-            chained_merkle_root,
-            &data[..],
+        let shreds = make_merkle_shreds_for_tests(
+            &mut rng,
             slot,
-            parent_slot,
-            shred_version,
-            reference_tick,
+            1200 * 5, // data_size
+            chained,
             is_last_in_slot,
-            next_shred_index,
-            next_code_index,
-            &reed_solomon_cache,
-            &mut ProcessShredsStats::default(),
         )
         .unwrap();
         assert_eq!(shreds.len(), 1);
         let shreds: Vec<_> = shreds.into_iter().flatten().map(Shred::from).collect();
+
+        assert_matches!(shreds[0].shred_type(), ShredType::Data);
+        let parent_slot = shreds[0].parent().unwrap();
+        let shred_version = shreds[0].common_header().version;
 
         let root = rng.gen_range(0..parent_slot);
         let max_slot = slot + rng.gen_range(1..65536);
@@ -2179,32 +2219,13 @@ mod tests {
             Shred::new_from_serialized_shred(shred).unwrap()
         }
         let mut rng = rand::thread_rng();
-        let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
-        let reed_solomon_cache = ReedSolomonCache::default();
-        let keypair = Keypair::new();
-        let chained_merkle_root = chained.then(|| Hash::new_from_array(rng.gen()));
         let slot = 285_376_049 + rng.gen_range(0..100_000);
-        let parent_slot = slot - rng.gen_range(1..=65535);
-        let shred_version = rng.gen();
-        let reference_tick = rng.gen_range(1..64);
-        let next_shred_index = rng.gen_range(0..671);
-        let next_code_index = rng.gen_range(0..781);
-        let mut data = vec![0u8; 1200 * 5];
-        rng.fill(&mut data[..]);
-        let shreds: Vec<_> = merkle::make_shreds_from_data(
-            &thread_pool,
-            &keypair,
-            chained_merkle_root,
-            &data[..],
+        let shreds: Vec<_> = make_merkle_shreds_for_tests(
+            &mut rng,
             slot,
-            parent_slot,
-            shred_version,
-            reference_tick,
+            1200 * 5, // data_size
+            chained,
             is_last_in_slot,
-            next_shred_index,
-            next_code_index,
-            &reed_solomon_cache,
-            &mut ProcessShredsStats::default(),
         )
         .unwrap()
         .into_iter()
@@ -2248,6 +2269,38 @@ mod tests {
             );
             assert!(shred.is_shred_duplicate(&other));
             assert!(other.is_shred_duplicate(shred));
+        }
+    }
+
+    #[test]
+    fn test_drain_coding_shreds() {
+        let mut rng = rand::thread_rng();
+        let slot = 314_972_727 + rng.gen_range(0..100_000);
+        let (chained, is_last_in_slot) = rng.gen();
+        let mut shreds: Vec<_> = make_merkle_shreds_for_tests(
+            &mut rng,
+            slot,
+            20 * 1232, // data_size
+            chained,
+            is_last_in_slot,
+        )
+        .unwrap()
+        .into_iter()
+        .flatten()
+        .map(Shred::from)
+        .collect();
+        shreds.shuffle(&mut rng);
+        assert!(shreds.iter().filter(|shred| shred.is_data()).count() > 20);
+        assert!(shreds.iter().filter(|shred| shred.is_code()).count() > 20);
+        let num_shreds = shreds.len();
+        for offset in 0..num_shreds {
+            for size in 0..(num_shreds - offset) {
+                let mut shreds = Vec::from(&shreds[offset..offset + size]);
+                let coding_shreds: Vec<_> = drain_coding_shreds(&mut shreds).collect();
+                assert_eq!(shreds.len() + coding_shreds.len(), size);
+                assert!(shreds.iter().all(Shred::is_data));
+                assert!(coding_shreds.iter().all(Shred::is_code));
+            }
         }
     }
 }
