@@ -2181,8 +2181,7 @@ impl ReplayStage {
                 rpc_subscriptions,
                 NewBankOptions { vote_only_bank },
             );
-            tpu_bank.update_data_from_parent();
-            // make sure parent is frozen for finalized hashes via the above
+            // make sure parent is vote only frozen for finalized hashes via the above
             // new()-ing of its child bank
             banking_tracer.hash_event(
                 parent.slot(),
