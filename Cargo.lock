@@ -10178,7 +10178,6 @@ dependencies = [
  "solana-pubkey",
  "solana-runtime",
  "solana-runtime-transaction",
- "solana-sdk",
  "solana-system-transaction",
  "solana-timings",
  "solana-transaction",
