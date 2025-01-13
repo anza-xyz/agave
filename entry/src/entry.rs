@@ -63,8 +63,9 @@ fn init(name: &OsStr) {
             name
         };
 
-        if let Ok(api) = unsafe { Container::load(lib_name) } {
-            _ = API.set(api);
+        match unsafe { Container::load(lib_name) } {
+            Ok(api) => _ = API.set(api),
+            Err(err) => error!("Unable to load {lib_name:?}: {err}"),
         }
     })
 }
