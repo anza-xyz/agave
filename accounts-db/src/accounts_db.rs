@@ -2822,17 +2822,6 @@ impl AccountsDb {
         if self.exhaustively_verify_refcounts {
             self.exhaustively_verify_refcounts(max_clean_root_inclusive);
         }
-
-        // Clean chili pepper store
-        if let Some(chili_pepper_store) = self.chili_pepper_store.as_ref() {
-            let max_slot_inclusive = self.accounts_index.max_root_inclusive();
-            let threshold = max_slot_inclusive * chili_pepper::BLOCK_CHILI_PEPPER_LIMIT
-                - chili_pepper::GLOBAL_CHILI_PEPPER_CACHE_LIMIT;
-
-            let clean_cmd = ChiliPepperMutatorThreadCommand::Clean(threshold);
-            chili_pepper_store.send(clean_cmd).unwrap();
-        }
-
         let _guard = self.active_stats.activate(ActiveStatItem::Clean);
 
         let ancient_account_cleans = AtomicU64::default();
@@ -3289,11 +3278,18 @@ impl AccountsDb {
         // Clean chili pepper store
         if let Some(chili_pepper_store) = self.chili_pepper_store.as_ref() {
             let max_slot_inclusive = self.accounts_index.max_root_inclusive();
-            let threshold = max_slot_inclusive * chili_pepper::BLOCK_CHILI_PEPPER_LIMIT
-                - chili_pepper::GLOBAL_CHILI_PEPPER_CACHE_LIMIT;
 
-            let clean_cmd =
-                ChiliPepperMutatorThreadCommand::Clean(max_clean_root_inclusive, threshold);
+            // TODO: This is a temporary solution to clean the chili pepper
+            // store. In future, we will need to find the real cutoff for the
+            // chili pepper slot threshold.
+            let chili_pepper_slot_threshold = chili_pepper::BLOCK_CHILI_PEPPER_LIMIT
+                / chili_pepper::GLOBAL_CHILI_PEPPER_CACHE_LIMIT;
+
+            let max_clean_slot_inclusive = max_clean_root_inclusive.unwrap_or(max_slot_inclusive);
+            let clean_cmd = ChiliPepperMutatorThreadCommand::Clean(
+                max_clean_slot_inclusive,
+                chili_pepper_slot_threshold,
+            );
             chili_pepper_store.send(clean_cmd).unwrap();
         }
     }

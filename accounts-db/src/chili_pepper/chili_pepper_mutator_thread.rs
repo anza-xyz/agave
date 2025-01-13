@@ -18,7 +18,7 @@ use {
 pub enum ChiliPepperMutatorThreadCommand {
     Insert((Vec<Pubkey>, Slot, u64), Sender<()>),
     Delete(Vec<Pubkey>, Slot),
-    Clean(u64),
+    Clean(Slot, Slot),
     CreateSavePoint(Sender<u64>),
     DeleteSavePoint(u64),
     Snapshot(u64, PathBuf),
@@ -117,11 +117,11 @@ impl ChiliPepperMutatorThread {
                                     .bulk_remove(iter)
                                     .expect("chili pepper store delete failed");
                             }
-                            ChiliPepperMutatorThreadCommand::Clean(threshold) => {
+                            ChiliPepperMutatorThreadCommand::Clean(clean_slot, threshold_slot) => {
                                 let (_, clean_time) = measure_us!({
                                     // TODO handle clean error
                                     store
-                                        .clean(threshold)
+                                        .clean(clean_slot, threshold_slot)
                                         .expect("chili pepper store clean failed");
                                 });
                                 stat.clean_time += clean_time;
@@ -209,10 +209,21 @@ mod test {
         thread::sleep(Duration::from_millis(100));
         assert_eq!(store.len().unwrap(), 10);
 
-        let clean_cmd = ChiliPepperMutatorThreadCommand::Clean(300);
+        let (reply_sender, reply_receiver) = bounded(1);
+        let insert_cmd =
+            ChiliPepperMutatorThreadCommand::Insert((pks.clone(), 10, 100), reply_sender);
+        sender.send(insert_cmd).unwrap();
+        reply_receiver.recv().unwrap();
+        assert_eq!(store.len().unwrap(), 20);
+
+        let clean_cmd = ChiliPepperMutatorThreadCommand::Clean(20, 11);
+        for pk in pks.iter() {
+            store.add_uncleaned_pubkey(*pk);
+        }
+
         sender.send(clean_cmd).unwrap();
         thread::sleep(Duration::from_millis(100));
-        assert_eq!(store.len().unwrap(), 0);
+        assert_eq!(store.len().unwrap(), 10);
 
         let (reply_sender, reply_receiver) = bounded(1);
         let insert_cmd =

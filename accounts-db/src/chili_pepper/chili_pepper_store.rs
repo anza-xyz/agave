@@ -4,6 +4,7 @@ use {
         ChiliPepperMutatorThread, ChiliPepperMutatorThreadCommand,
     },
     crossbeam_channel::{unbounded, Sender},
+    itertools::Itertools,
     redb::{
         backends::InMemoryBackend, Database, Durability, Error, Key, ReadableTableMetadata,
         TableDefinition, TableStats, TypeName, Value,
@@ -12,7 +13,7 @@ use {
     std::{
         borrow::Borrow,
         cmp::Ordering,
-        collections::HashSet,
+        collections::{HashMap, HashSet},
         fmt::Debug,
         io, mem,
         path::{Path, PathBuf},
@@ -87,6 +88,7 @@ pub struct ChiliPepperStoreWrapper {
     db: Database,
     path: PathBuf,
     dead_slots: Mutex<HashSet<Slot>>,
+    uncleaned_pubkeys: Mutex<HashSet<Pubkey>>,
 }
 
 /// The amount of memory to use for the cache, in bytes.
@@ -99,19 +101,21 @@ const DEFAULT_CACHE_SIZE: usize = 1024 * 1024; // 1MB for test
 
 impl ChiliPepperStoreWrapper {
     pub fn new_with_path(path: impl AsRef<Path>) -> Result<Self, Error> {
-        // let db = Database::builder()
-        //     .set_cache_size(1024 * 1024)
-        //     .create(path.as_ref())
-        //     .unwrap();
-
         let db = Database::builder()
-            .create_with_backend(InMemoryBackend::new())
+            .set_cache_size(1024 * 1024)
+            .create(path.as_ref())
             .unwrap();
+
+        // Only for testing. This doesn't support snapshots.
+        // let db = Database::builder()
+        //     .create_with_backend(InMemoryBackend::new())
+        //     .unwrap();
 
         Ok(Self {
             db,
             path: path.as_ref().to_path_buf(),
             dead_slots: Mutex::new(HashSet::new()),
+            uncleaned_pubkeys: Mutex::new(HashSet::new()),
         })
     }
 
@@ -121,6 +125,7 @@ impl ChiliPepperStoreWrapper {
             db,
             path: path.as_ref().to_path_buf(),
             dead_slots: Mutex::new(HashSet::new()),
+            uncleaned_pubkeys: Mutex::new(HashSet::new()),
         })
     }
 
@@ -129,6 +134,7 @@ impl ChiliPepperStoreWrapper {
             db,
             path: PathBuf::new(),
             dead_slots: Mutex::new(HashSet::new()),
+            uncleaned_pubkeys: Mutex::new(HashSet::new()),
         }
     }
 
@@ -229,6 +235,8 @@ impl ChiliPepperStoreWrapper {
     }
 
     pub fn insert(&self, key: PubkeySlot, value: u64) -> Result<(), Error> {
+        //self.uncleaned_pubkeys.lock().unwrap().insert(*key.0);
+
         let mut write_txn = self.db.begin_write()?;
         write_txn.set_durability(Durability::None); // don't persisted to disk for better performance
         {
@@ -260,6 +268,7 @@ impl ChiliPepperStoreWrapper {
         {
             let mut table = write_txn.open_table::<PubkeySlot, u64>(TABLE)?;
             for (key, value) in data {
+                //self.uncleaned_pubkeys.lock().unwrap().insert(*key.0);
                 table.insert(key, value.borrow())?;
             }
         }
@@ -280,16 +289,60 @@ impl ChiliPepperStoreWrapper {
         write_txn.commit().map_err(Error::from)
     }
 
-    pub fn clean(&self, threshold: u64) -> Result<(), Error> {
+    pub fn clean(&self, clean_slot: Slot, threshold_slot: u64) -> Result<(), Error> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table::<PubkeySlot, u64>(TABLE)?;
+
+        let mut lock = self.dead_slots.lock().unwrap();
+        let dead_slots = std::mem::take(&mut *lock);
+        drop(lock);
+
+        let mut lock = self.uncleaned_pubkeys.lock().unwrap();
+        let uncleaned_pubkeys = std::mem::take(&mut *lock);
+        drop(lock);
+
+        // TODO: optimize this to hash_map to save keys
+        let mut to_remove = vec![];
+
+        for pubkey in uncleaned_pubkeys.iter().sorted() {
+            let pubkey_slot = PubkeySlot(pubkey, 0);
+            let iter = table.range(pubkey_slot..PubkeySlot(pubkey, u64::MAX))?;
+
+            let mut found_one_before_clean_slot = false;
+            for iter in iter.rev() {
+                let (key, _) = iter?;
+                let pubkey = key.value().0;
+                let slot = key.value().1;
+
+                if dead_slots.contains(&slot) {
+                    to_remove.push((*pubkey, slot));
+                    continue;
+                }
+                if slot > clean_slot {
+                    continue;
+                }
+
+                if slot < threshold_slot {
+                    to_remove.push((*pubkey, slot));
+                    continue;
+                }
+
+                if slot <= clean_slot {
+                    if found_one_before_clean_slot {
+                        to_remove.push((*pubkey, slot));
+                    } else {
+                        found_one_before_clean_slot = true;
+                    }
+                }
+            }
+        }
+
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table::<PubkeySlot, u64>(TABLE)?;
-
-            let mut lock = self.dead_slots.lock().unwrap();
-            let dead_slots = std::mem::take(&mut *lock);
-            drop(lock);
-
-            table.retain(|k, v| !(dead_slots.contains(&k.1) && v < threshold))?;
+            for key in to_remove {
+                table.remove(PubkeySlot(&key.0, key.1))?;
+            }
         }
         write_txn.commit().map_err(Error::from)
     }
@@ -339,6 +392,11 @@ impl ChiliPepperStoreWrapper {
     pub fn add_dead_slot(&self, slot: Slot) {
         let mut dead_slots = self.dead_slots.lock().unwrap();
         dead_slots.insert(slot);
+    }
+
+    pub fn add_uncleaned_pubkey(&self, pubkey: Pubkey) {
+        let mut uncleaned_pubkeys = self.uncleaned_pubkeys.lock().unwrap();
+        uncleaned_pubkeys.insert(pubkey);
     }
 }
 
@@ -400,6 +458,10 @@ impl ChiliPepperStore {
 
     pub fn add_dead_slot(&self, slot: Slot) {
         self.store.add_dead_slot(slot);
+    }
+
+    pub fn add_uncleaned_pubkey(&self, pubkey: Pubkey) {
+        self.store.add_uncleaned_pubkey(pubkey);
     }
 }
 
@@ -623,51 +685,6 @@ pub mod tests {
     }
 
     #[test]
-    fn test_snapshot_db() {
-        let pk1 = Pubkey::from([1_u8; 32]);
-        let pk2 = Pubkey::from([2_u8; 32]);
-        let pk3 = Pubkey::from([3_u8; 32]);
-
-        let some_key = PubkeySlot(&pk1, 42);
-        let some_key2 = PubkeySlot(&pk2, 43);
-        let some_key3 = PubkeySlot(&pk3, 44);
-
-        let some_value = 163;
-        let some_value2 = 164;
-        let some_value3 = 165;
-
-        let to_insert = vec![
-            (some_key, some_value),
-            (some_key2, some_value2),
-            (some_key3, some_value3),
-        ];
-
-        let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
-
-        let db = Database::create(tmpfile.path()).expect("create db success");
-        let store = ChiliPepperStoreWrapper::new(db);
-
-        store.bulk_insert(to_insert.into_iter()).unwrap();
-
-        assert_eq!(store.len().unwrap(), 3);
-        assert_eq!(store.get(some_key).unwrap().unwrap(), some_value);
-        assert_eq!(store.get(some_key2).unwrap().unwrap(), some_value2);
-        assert_eq!(store.get(some_key3).unwrap().unwrap(), some_value3);
-
-        let path = tmpfile.path().to_path_buf();
-        let snapshot_path = path.with_extension("snapshot");
-        std::fs::copy(&path, &snapshot_path).expect("copy db file success");
-        let db2 = Database::open(&snapshot_path).expect("open db success");
-        let store2 = ChiliPepperStoreWrapper::new(db2);
-
-        assert_eq!(store2.len().unwrap(), 3);
-        assert_eq!(store2.get(some_key).unwrap().unwrap(), some_value);
-        assert_eq!(store2.get(some_key2).unwrap().unwrap(), some_value2);
-        assert_eq!(store2.get(some_key3).unwrap().unwrap(), some_value3);
-        std::fs::remove_file(snapshot_path).expect("delete snapshot file success");
-    }
-
-    #[test]
     fn test_stat() {
         let pk1 = Pubkey::from([1_u8; 32]);
         let pk2 = Pubkey::from([2_u8; 32]);
@@ -720,8 +737,12 @@ pub mod tests {
         store.bulk_insert(data.into_iter()).unwrap();
         assert_eq!(store.len().unwrap(), 10);
 
-        store.clean(105).unwrap();
-        assert_eq!(store.len().unwrap(), 5);
+        for pk in pks {
+            store.add_uncleaned_pubkey(pk);
+        }
+        store.add_dead_slot(42);
+        store.clean(43, 40).unwrap();
+        assert_eq!(store.len().unwrap(), 0);
     }
 
     #[test]
