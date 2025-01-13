@@ -94,19 +94,23 @@ impl TokioRuntime {
                 (num_workers.wrapping_add(cfg.max_blocking_threads)) as u64,
             ),
         });
-        let counters_clone1 = counters.clone();
-        let counters_clone2 = counters.clone();
         builder
             .event_interval(cfg.event_interval)
             .thread_name_fn(move || {
                 let id = atomic_id.fetch_add(1, Ordering::Relaxed);
                 format!("{}-{}", base_name, id)
             })
-            .on_thread_park(move || {
-                counters_clone1.on_park();
+            .on_thread_park({
+                let counters = counters.clone();
+                move || {
+                    counters.on_park();
+                }
             })
-            .on_thread_unpark(move || {
-                counters_clone2.on_unpark();
+            .on_thread_unpark({
+                let counters = counters.clone();
+                move || {
+                    counters.on_unpark();
+                }
             })
             .thread_stack_size(cfg.stack_size_bytes)
             .enable_all()
