@@ -170,6 +170,32 @@ impl ChiliPepperStoreWrapper {
         Ok(v)
     }
 
+    pub fn load_for_pubkey_with_ancestors(
+        &self,
+        pubkey: &Pubkey,
+        ancestors: Vec<Slot>,
+    ) -> Result<Option<(Slot, u64)>, Error> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table::<PubkeySlot, u64>(TABLE)?;
+
+        for slot in ancestors.iter().rev() {
+            let key = PubkeySlot(pubkey, *slot);
+            let iter = table.get(&key)?;
+            if let Some(value) = iter {
+                return Ok(Some((*slot, value.value())));
+            }
+        }
+
+        let min_slot = *ancestors.first().unwrap_or(&1);
+        let range = table.range(PubkeySlot(pubkey, 0)..PubkeySlot(pubkey, min_slot))?;
+        range.last().map_or(Ok(None), |iter| {
+            let (key, value) = iter?;
+            let slot = key.value().1;
+            let value = value.value();
+            Ok(Some((slot, value)))
+        })
+    }
+
     /// Get all the (slot, chili_pepper_value) for a given list of pubkeys.
     pub fn bulk_get_for_pubkeys<'a, I>(&self, pubkeys: I) -> Result<Vec<Vec<(Slot, u64)>>, Error>
     where
@@ -347,6 +373,14 @@ impl ChiliPepperStore {
 
     pub fn get_all_for_pubkey(&self, pubkey: &Pubkey) -> Result<Vec<(Slot, u64)>, Error> {
         self.store.get_all_for_pubkey(pubkey)
+    }
+
+    pub fn load_with_ancestors(
+        &self,
+        pubkey: &Pubkey,
+        ancestors: Vec<Slot>,
+    ) -> Result<Option<(Slot, u64)>, Error> {
+        self.store.load_for_pubkey_with_ancestors(pubkey, ancestors)
     }
 }
 

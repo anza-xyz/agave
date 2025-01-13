@@ -5401,21 +5401,15 @@ impl AccountsDb {
         &self,
         ancestors: &Ancestors,
         pubkey: &Pubkey,
-    ) -> Option<u64> {
+    ) -> Option<(Slot, u64)> {
         assert!(self.chili_pepper_store.is_some());
-        let result = self
-            .chili_pepper_store
+
+        // TODO: add a chili_pepper_cache layer to improve performance.
+        self.chili_pepper_store
             .as_ref()
             .unwrap()
-            .get_all_for_pubkey(pubkey)
-            .ok()?;
-
-        for (slot, chili_pepper) in result.iter().rev() {
-            if ancestors.contains_key(&slot) {
-                return Some(*chili_pepper);
-            }
-        }
-        return None;
+            .load_with_ancestors(pubkey, ancestors.keys())
+            .ok()?
     }
 
     /// Load account with `pubkey` and maybe put into read cache.

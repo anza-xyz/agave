@@ -3387,12 +3387,13 @@ impl Bank {
                         result.insert(*key, chili_pepper);
                     });
                     // TODO: fail transaction if chili_pepper is below what is specified in the transaction.
+                    // In the future, we will fail the whole block if we exceeded the chili_pepper limit.
                 }
             });
             self.loaded_account_chili_peppers
                 .write()
                 .unwrap()
-                .extend(result.into_iter().map(|(k, v)| (k, v)));
+                .extend(result.into_iter().map(|(k, v)| (k, v.map(|v| v.1))));
         }
     }
 
