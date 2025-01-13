@@ -857,11 +857,11 @@ pub enum IndexError {
 
 /// Helper trait to transition primary indexes out from the columns that are using them.
 pub trait ColumnIndexDeprecation: Column {
-    const DEPRECATED_INDEX_LEN: usize;
     const CURRENT_INDEX_LEN: usize;
     type DeprecatedIndex;
+    type DeprecatedKey: AsRef<[u8]>;
 
-    fn deprecated_key(index: Self::DeprecatedIndex) -> Vec<u8>;
+    fn deprecated_key(index: Self::DeprecatedIndex) -> Self::DeprecatedKey;
     fn try_deprecated_index(key: &[u8]) -> std::result::Result<Self::DeprecatedIndex, IndexError>;
 
     fn try_current_index(key: &[u8]) -> std::result::Result<Self::Index, IndexError>;
@@ -882,8 +882,8 @@ pub trait ColumnIndexDeprecation: Column {
 }
 
 macro_rules! concat_key_bytes {
-    ($($range:expr => $bytes:expr),* $(,)?) => {{
-        let mut key = [0u8; std::mem::size_of::<Self::Key>()];
+    ($key:ident, $($range:expr => $bytes:expr),* $(,)?) => {{
+        let mut key = [0u8; std::mem::size_of::<Self::$key>()];
         debug_assert_eq!(0 $(+$bytes.len())*, key.len());
         $(key[$range].copy_from_slice($bytes);)*
         key
@@ -896,7 +896,7 @@ impl Column for columns::TransactionStatus {
 
     #[inline]
     fn key((signature, slot): &Self::Index) -> Self::Key {
-        concat_key_bytes!(
+        concat_key_bytes!(Key,
             ..64 => signature.as_ref(),
             64.. => &slot.to_be_bytes(),
         )
@@ -924,20 +924,20 @@ impl ProtobufColumn for columns::TransactionStatus {
 }
 
 impl ColumnIndexDeprecation for columns::TransactionStatus {
-    const DEPRECATED_INDEX_LEN: usize = 80;
     const CURRENT_INDEX_LEN: usize = 72;
     type DeprecatedIndex = (u64, Signature, Slot);
+    type DeprecatedKey = [u8; 80];
 
-    fn deprecated_key((index, signature, slot): Self::DeprecatedIndex) -> Vec<u8> {
-        let mut key = vec![0; Self::DEPRECATED_INDEX_LEN];
-        BigEndian::write_u64(&mut key[0..8], index);
-        key[8..72].copy_from_slice(&signature.as_ref()[0..64]);
-        BigEndian::write_u64(&mut key[72..80], slot);
-        key
+    fn deprecated_key((index, signature, slot): Self::DeprecatedIndex) -> Self::DeprecatedKey {
+        concat_key_bytes!(DeprecatedKey,
+              ..8  => &index.to_be_bytes(),
+             8..72 => signature.as_ref(),
+            72..   => &slot.to_be_bytes(),
+        )
     }
 
     fn try_deprecated_index(key: &[u8]) -> std::result::Result<Self::DeprecatedIndex, IndexError> {
-        if key.len() != Self::DEPRECATED_INDEX_LEN {
+        if key.len() != std::mem::size_of::<Self::DeprecatedKey>() {
             return Err(IndexError::UnpackError);
         }
         let primary_index = BigEndian::read_u64(&key[0..8]);
@@ -970,7 +970,7 @@ impl Column for columns::AddressSignatures {
 
     #[inline]
     fn key((pubkey, slot, transaction_index, signature): &Self::Index) -> Self::Key {
-        concat_key_bytes!(
+        concat_key_bytes!(Key,
               ..32 => pubkey.as_ref(),
             32..40 => &slot.to_be_bytes(),
             40..44 => &transaction_index.to_be_bytes(),
@@ -997,21 +997,23 @@ impl ColumnName for columns::AddressSignatures {
 }
 
 impl ColumnIndexDeprecation for columns::AddressSignatures {
-    const DEPRECATED_INDEX_LEN: usize = 112;
     const CURRENT_INDEX_LEN: usize = 108;
     type DeprecatedIndex = (u64, Pubkey, Slot, Signature);
+    type DeprecatedKey = [u8; 112];
 
-    fn deprecated_key((primary_index, pubkey, slot, signature): Self::DeprecatedIndex) -> Vec<u8> {
-        let mut key = vec![0; Self::DEPRECATED_INDEX_LEN];
-        BigEndian::write_u64(&mut key[0..8], primary_index);
-        key[8..40].clone_from_slice(&pubkey.as_ref()[0..32]);
-        BigEndian::write_u64(&mut key[40..48], slot);
-        key[48..112].clone_from_slice(&signature.as_ref()[0..64]);
-        key
+    fn deprecated_key(
+        (primary_index, pubkey, slot, signature): Self::DeprecatedIndex,
+    ) -> Self::DeprecatedKey {
+        concat_key_bytes!(DeprecatedKey,
+              ..8  => &primary_index.to_be_bytes(),
+             8..40 => pubkey.as_ref(),
+            40..48 => &slot.to_be_bytes(),
+            48..   => signature.as_ref(),
+        )
     }
 
     fn try_deprecated_index(key: &[u8]) -> std::result::Result<Self::DeprecatedIndex, IndexError> {
-        if key.len() != Self::DEPRECATED_INDEX_LEN {
+        if key.len() != std::mem::size_of::<Self::DeprecatedKey>() {
             return Err(IndexError::UnpackError);
         }
         let primary_index = BigEndian::read_u64(&key[0..8]);
@@ -1044,7 +1046,7 @@ impl Column for columns::TransactionMemos {
 
     #[inline]
     fn key((signature, slot): &Self::Index) -> Self::Key {
-        concat_key_bytes!(
+        concat_key_bytes!(Key,
             ..64 => signature.as_ref(),
             64.. => &slot.to_be_bytes(),
         )
@@ -1067,14 +1069,12 @@ impl ColumnName for columns::TransactionMemos {
 }
 
 impl ColumnIndexDeprecation for columns::TransactionMemos {
-    const DEPRECATED_INDEX_LEN: usize = 64;
     const CURRENT_INDEX_LEN: usize = 72;
     type DeprecatedIndex = Signature;
+    type DeprecatedKey = [u8; 64];
 
-    fn deprecated_key(signature: Self::DeprecatedIndex) -> Vec<u8> {
-        let mut key = vec![0; Self::DEPRECATED_INDEX_LEN];
-        key[0..64].copy_from_slice(&signature.as_ref()[0..64]);
-        key
+    fn deprecated_key(signature: Self::DeprecatedIndex) -> Self::DeprecatedKey {
+        Self::DeprecatedKey::from(signature)
     }
 
     fn try_deprecated_index(key: &[u8]) -> std::result::Result<Self::DeprecatedIndex, IndexError> {
@@ -1209,7 +1209,7 @@ impl Column for columns::ShredData {
 
     #[inline]
     fn key((slot, index): &Self::Index) -> Self::Key {
-        concat_key_bytes!(
+        concat_key_bytes!(Key,
             ..8 => &slot.to_be_bytes(),
             8.. => &index.to_be_bytes(),
         )
@@ -1317,7 +1317,7 @@ impl Column for columns::ErasureMeta {
 
     #[inline]
     fn key((slot, fec_set_index): &Self::Index) -> Self::Key {
-        concat_key_bytes!(
+        concat_key_bytes!(Key,
             ..8 => &slot.to_be_bytes(),
             8.. => &fec_set_index.to_be_bytes(),
         )
@@ -1359,7 +1359,7 @@ impl Column for columns::MerkleRootMeta {
 
     #[inline]
     fn key((slot, fec_set_index): &Self::Index) -> Self::Key {
-        concat_key_bytes!(
+        concat_key_bytes!(Key,
             ..8 => &slot.to_be_bytes(),
             8.. => &fec_set_index.to_be_bytes(),
         )
@@ -1885,13 +1885,13 @@ where
         &self,
         iterator_mode: IteratorMode<C::DeprecatedIndex>,
     ) -> Result<impl Iterator<Item = (C::DeprecatedIndex, Box<[u8]>)> + '_> {
-        let start_key;
+        let start_key: <C as ColumnIndexDeprecation>::DeprecatedKey;
         let iterator_mode = match iterator_mode {
             IteratorMode::Start => RocksIteratorMode::Start,
             IteratorMode::End => RocksIteratorMode::End,
             IteratorMode::From(start_from, direction) => {
                 start_key = C::deprecated_key(start_from);
-                RocksIteratorMode::From(&start_key, direction)
+                RocksIteratorMode::From(start_key.as_ref(), direction)
             }
         };
 
