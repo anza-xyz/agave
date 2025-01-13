@@ -415,7 +415,7 @@ reqwest = { version = "0.11.27", default-features = false }
 reqwest-middleware = "0.2.5"
 rolling-file = "0.2.0"
 rpassword = "7.3"
-rustls = { version = "0.23.20", features = ["std"], default-features = false }
+rustls = { version = "0.23.21", features = ["std"], default-features = false }
 scopeguard = "1.2.0"
 semver = "1.0.24"
 seqlock = "0.2.0"
