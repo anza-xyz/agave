@@ -12,10 +12,11 @@ use {
     std::{
         borrow::Borrow,
         cmp::Ordering,
+        collections::HashSet,
         fmt::Debug,
-        io,
+        io, mem,
         path::{Path, PathBuf},
-        sync::Arc,
+        sync::{Arc, Mutex},
     },
 };
 
@@ -85,6 +86,7 @@ const TABLE: TableDefinition<PubkeySlot, u64> = TableDefinition::new("chili_pepp
 pub struct ChiliPepperStoreWrapper {
     db: Database,
     path: PathBuf,
+    dead_slots: Mutex<HashSet<Slot>>,
 }
 
 /// The amount of memory to use for the cache, in bytes.
@@ -109,6 +111,7 @@ impl ChiliPepperStoreWrapper {
         Ok(Self {
             db,
             path: path.as_ref().to_path_buf(),
+            dead_slots: Mutex::new(HashSet::new()),
         })
     }
 
@@ -117,6 +120,7 @@ impl ChiliPepperStoreWrapper {
         Ok(Self {
             db,
             path: path.as_ref().to_path_buf(),
+            dead_slots: Mutex::new(HashSet::new()),
         })
     }
 
@@ -124,6 +128,7 @@ impl ChiliPepperStoreWrapper {
         Self {
             db,
             path: PathBuf::new(),
+            dead_slots: Mutex::new(HashSet::new()),
         }
     }
 
@@ -279,7 +284,12 @@ impl ChiliPepperStoreWrapper {
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table::<PubkeySlot, u64>(TABLE)?;
-            table.retain(|_k, v| v >= threshold)?;
+
+            let mut lock = self.dead_slots.lock().unwrap();
+            let dead_slots = std::mem::take(&mut *lock);
+            drop(lock);
+
+            table.retain(|k, v| !(dead_slots.contains(&k.1) && v < threshold))?;
         }
         write_txn.commit().map_err(Error::from)
     }
@@ -324,6 +334,11 @@ impl ChiliPepperStoreWrapper {
         txn.commit()?;
 
         Ok(())
+    }
+
+    pub fn add_dead_slot(&self, slot: Slot) {
+        let mut dead_slots = self.dead_slots.lock().unwrap();
+        dead_slots.insert(slot);
     }
 }
 
@@ -381,6 +396,10 @@ impl ChiliPepperStore {
         ancestors: Vec<Slot>,
     ) -> Result<Option<(Slot, u64)>, Error> {
         self.store.load_for_pubkey_with_ancestors(pubkey, ancestors)
+    }
+
+    pub fn add_dead_slot(&self, slot: Slot) {
+        self.store.add_dead_slot(slot);
     }
 }
 

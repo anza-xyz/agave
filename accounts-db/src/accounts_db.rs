@@ -3285,6 +3285,17 @@ impl AccountsDb {
             ),
             ("next_store_id", self.next_id.load(Ordering::Relaxed), i64),
         );
+
+        // Clean chili pepper store
+        if let Some(chili_pepper_store) = self.chili_pepper_store.as_ref() {
+            let max_slot_inclusive = self.accounts_index.max_root_inclusive();
+            let threshold = max_slot_inclusive * chili_pepper::BLOCK_CHILI_PEPPER_LIMIT
+                - chili_pepper::GLOBAL_CHILI_PEPPER_CACHE_LIMIT;
+
+            let clean_cmd =
+                ChiliPepperMutatorThreadCommand::Clean(max_clean_root_inclusive, threshold);
+            chili_pepper_store.send(clean_cmd).unwrap();
+        }
     }
 
     /// Removes the accounts in the input `reclaims` from the tracked "count" of
@@ -8002,6 +8013,9 @@ impl AccountsDb {
                 if self.accounts_index.clean_dead_slot(*slot) {
                     rooted_cleaned_count += 1;
                 } else {
+                    self.chili_pepper_store.as_ref().map(|store| {
+                        store.add_dead_slot(*slot);
+                    });
                     unrooted_cleaned_count += 1;
                 }
                 *slot
