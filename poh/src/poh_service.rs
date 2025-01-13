@@ -292,12 +292,9 @@ impl PohService {
 
                     // check to see if a record request has been sent
                     if let Some(record) = record_receiver.pop() {
-                        if record_receiver.working_bank() != record.slot {
-                            record_receiver.shut_off_producers(); // Drop the record and shut off.
-                        } else {
-                            // remember the record we just received as the next record to occur
-                            *next_record = Some(record);
-                        }
+                        assert!(record_receiver.working_bank() == record.slot, "Record must belong to working bank");
+                        // remember the record we just received as the next record to occur
+                        *next_record = Some(record);
                         break;
                     }
                     // check to see if we need to wait to catch up to ideal
