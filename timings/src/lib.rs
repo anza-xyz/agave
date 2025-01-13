@@ -202,7 +202,7 @@ eager_macro_rules! { $eager_1
             ),
             (
                 "check_chili_pepper_us",
-                *$self.metrics.index(ExecuteTimingType::CheckChiliPepperUs),
+                $self.metrics.index(ExecuteTimingType::CheckChiliPepperUs).0,
                 i64
             ),
             (
