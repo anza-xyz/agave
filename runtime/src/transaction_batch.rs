@@ -127,8 +127,8 @@ mod tests {
 
     #[test_case(false; "old")]
     #[test_case(true; "simd83")]
-    fn test_transaction_batch(disable_intrabatch_account_locks: bool) {
-        let (bank, txs) = setup(disable_intrabatch_account_locks, false);
+    fn test_transaction_batch(relax_intrabatch_account_locks: bool) {
+        let (bank, txs) = setup(relax_intrabatch_account_locks, false);
 
         // Test getting locked accounts
         let batch = bank.prepare_sanitized_batch(&txs);
@@ -150,8 +150,8 @@ mod tests {
 
     #[test_case(false; "old")]
     #[test_case(true; "simd83")]
-    fn test_simulation_batch(disable_intrabatch_account_locks: bool) {
-        let (bank, txs) = setup(disable_intrabatch_account_locks, false);
+    fn test_simulation_batch(relax_intrabatch_account_locks: bool) {
+        let (bank, txs) = setup(relax_intrabatch_account_locks, false);
 
         // Prepare batch without locks
         let batch = bank.prepare_unlocked_batch_from_single_tx(&txs[0]);
@@ -168,9 +168,9 @@ mod tests {
 
     #[test_case(false; "old")]
     #[test_case(true; "simd83")]
-    fn test_unlock_failures(disable_intrabatch_account_locks: bool) {
-        let (bank, txs) = setup(disable_intrabatch_account_locks, true);
-        let expected_lock_results = if disable_intrabatch_account_locks {
+    fn test_unlock_failures(relax_intrabatch_account_locks: bool) {
+        let (bank, txs) = setup(relax_intrabatch_account_locks, true);
+        let expected_lock_results = if relax_intrabatch_account_locks {
             vec![Ok(()), Ok(()), Ok(())]
         } else {
             vec![Ok(()), Err(TransactionError::AccountInUse), Ok(())]
@@ -197,7 +197,7 @@ mod tests {
     }
 
     fn setup(
-        disable_intrabatch_account_locks: bool,
+        relax_intrabatch_account_locks: bool,
         insert_conflicting_tx: bool,
     ) -> (Bank, Vec<RuntimeTransaction<SanitizedTransaction>>) {
         let dummy_leader_pubkey = solana_pubkey::new_rand();
@@ -207,8 +207,8 @@ mod tests {
             ..
         } = create_genesis_config_with_leader(500, &dummy_leader_pubkey, 100);
         let mut bank = Bank::new_for_tests(&genesis_config);
-        if !disable_intrabatch_account_locks {
-            bank.deactivate_feature(&feature_set::disable_intrabatch_account_locks::id());
+        if !relax_intrabatch_account_locks {
+            bank.deactivate_feature(&feature_set::relax_intrabatch_account_locks::id());
         }
 
         let pubkey = solana_pubkey::new_rand();

@@ -3146,15 +3146,15 @@ fn test_debits_before_credits() {
 
 #[test_case(false; "old")]
 #[test_case(true; "simd83")]
-fn test_readonly_accounts(disable_intrabatch_account_locks: bool) {
+fn test_readonly_accounts(relax_intrabatch_account_locks: bool) {
     let GenesisConfigInfo {
         genesis_config,
         mint_keypair,
         ..
     } = create_genesis_config_with_leader(500, &solana_pubkey::new_rand(), 0);
     let mut bank = Bank::new_for_tests(&genesis_config);
-    if !disable_intrabatch_account_locks {
-        bank.deactivate_feature(&feature_set::disable_intrabatch_account_locks::id());
+    if !relax_intrabatch_account_locks {
+        bank.deactivate_feature(&feature_set::relax_intrabatch_account_locks::id());
     }
     let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
 
@@ -3224,7 +3224,7 @@ fn test_readonly_accounts(disable_intrabatch_account_locks: bool) {
     assert_eq!(results[0], Ok(()));
     assert_eq!(
         results[1],
-        if disable_intrabatch_account_locks {
+        if relax_intrabatch_account_locks {
             Ok(())
         } else {
             Err(TransactionError::AccountInUse)
@@ -9472,7 +9472,7 @@ fn test_vote_epoch_panic() {
 
 #[test_case(false; "old")]
 #[test_case(true; "simd83")]
-fn test_tx_log_order(disable_intrabatch_account_locks: bool) {
+fn test_tx_log_order(relax_intrabatch_account_locks: bool) {
     let GenesisConfigInfo {
         genesis_config,
         mint_keypair,
@@ -9483,8 +9483,8 @@ fn test_tx_log_order(disable_intrabatch_account_locks: bool) {
         bootstrap_validator_stake_lamports(),
     );
     let mut bank = Bank::new_for_tests(&genesis_config);
-    if !disable_intrabatch_account_locks {
-        bank.deactivate_feature(&feature_set::disable_intrabatch_account_locks::id());
+    if !relax_intrabatch_account_locks {
+        bank.deactivate_feature(&feature_set::relax_intrabatch_account_locks::id());
     }
     let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
     *bank.transaction_log_collector_config.write().unwrap() = TransactionLogCollectorConfig {
@@ -9543,7 +9543,7 @@ fn test_tx_log_order(disable_intrabatch_account_locks: bool) {
         .as_ref()
         .unwrap()[2]
         .contains(&"failed".to_string()));
-    if disable_intrabatch_account_locks {
+    if relax_intrabatch_account_locks {
         assert!(commit_results[2].is_ok());
     } else {
         assert!(commit_results[2].is_err());

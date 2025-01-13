@@ -3134,13 +3134,13 @@ impl Bank {
     /// Attempt to take locks on the accounts in a transaction batch
     pub fn try_lock_accounts(&self, txs: &[impl SVMMessage]) -> Vec<Result<()>> {
         let tx_account_lock_limit = self.get_transaction_account_lock_limit();
-        let disable_intrabatch_account_locks = self
+        let relax_intrabatch_account_locks = self
             .feature_set
-            .is_active(&feature_set::disable_intrabatch_account_locks::id());
+            .is_active(&feature_set::relax_intrabatch_account_locks::id());
         self.rc.accounts.lock_accounts(
             txs.iter(),
             tx_account_lock_limit,
-            disable_intrabatch_account_locks,
+            relax_intrabatch_account_locks,
         )
     }
 
@@ -3152,14 +3152,14 @@ impl Bank {
         tx_results: impl Iterator<Item = Result<()>>,
     ) -> Vec<Result<()>> {
         let tx_account_lock_limit = self.get_transaction_account_lock_limit();
-        let disable_intrabatch_account_locks = self
+        let relax_intrabatch_account_locks = self
             .feature_set
-            .is_active(&feature_set::disable_intrabatch_account_locks::id());
+            .is_active(&feature_set::relax_intrabatch_account_locks::id());
         self.rc.accounts.lock_accounts_with_results(
             txs.iter(),
             tx_results,
             tx_account_lock_limit,
-            disable_intrabatch_account_locks,
+            relax_intrabatch_account_locks,
         )
     }
 

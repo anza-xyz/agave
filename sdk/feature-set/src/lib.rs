@@ -924,7 +924,7 @@ pub mod raise_block_limits_to_50m {
     solana_pubkey::declare_id!("5oMCU3JPaFLr8Zr4ct7yFA7jdk6Mw1RmB8K4u9ZbS42z");
 }
 
-pub mod disable_intrabatch_account_locks {
+pub mod relax_intrabatch_account_locks {
     solana_pubkey::declare_id!("EbAhnReKK8Sf88CvAfAXbgKji8DV48rsp4q2sgHqgWef");
 }
 
@@ -1155,6 +1155,7 @@ lazy_static! {
         (raise_block_limits_to_50m::id(), "Raise block limit to 50M SIMD-0207"),
         (fix_alt_bn128_multiplication_input_length::id(), "fix alt_bn128 multiplication input length SIMD-0222 #3686"),
         (disable_intrabatch_account_locks::id(), "Allow batched transactions to read/write and write/write the same accounts SIMD-0083"),
+        (relax_intrabatch_account_locks::id(), "Allow batched transactions to read/write and write/write the same accounts SIMD-0083"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
