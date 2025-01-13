@@ -12,6 +12,7 @@ use {
         workers_cache::{maybe_shutdown_worker, WorkerInfo, WorkersCache, WorkersCacheError},
         SendTransactionStats,
     },
+    async_trait::async_trait,
     log::*,
     quinn::Endpoint,
     solana_keypair::Keypair,
@@ -90,6 +91,50 @@ pub struct ConnectionWorkersSchedulerConfig {
     pub leaders_fanout: Fanout,
 }
 
+#[async_trait]
+pub trait WorkersBroadcast {
+    async fn send_to_workers(
+        workers: &mut WorkersCache,
+        leaders: &[SocketAddr],
+        transaction_batch: TransactionBatch,
+    ) -> Result<(), ConnectionWorkersSchedulerError>;
+}
+
+struct WorkersBroadcasterWithoutBackpressure;
+
+impl WorkersBroadcast for WorkersBroadcasterWithoutBackpressure {
+    async fn send_to_workers(
+        workers: &mut WorkersCache,
+        leaders: &[SocketAddr],
+        transaction_batch: TransactionBatch,
+    ) -> Result<(), ConnectionWorkersSchedulerError> {
+        for new_leader in leaders {
+            if !workers.contains(new_leader) {
+                warn!("No existing worker for {new_leader:?}, skip sending to this leader.");
+                continue;
+            }
+
+            let send_res =
+                workers.try_send_transactions_to_address(new_leader, transaction_batch.clone());
+            match send_res {
+                Ok(()) => (),
+                Err(WorkersCacheError::ShutdownError) => {
+                    debug!("Connection to {new_leader} was closed, worker cache shutdown");
+                }
+                Err(WorkersCacheError::ReceiverDropped) => {
+                    // Remove the worker from the cache, if the peer has disconnected.
+                    maybe_shutdown_worker(workers.pop(*new_leader));
+                }
+                Err(err) => {
+                    warn!("Connection to {new_leader} was closed, worker error: {err}");
+                    // If we have failed to send batch, it will be dropped.
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 pub type TransactionStatsAndReceiver = (
     SendTransactionStatsPerAddr,
     mpsc::Receiver<TransactionBatch>,
@@ -109,6 +154,21 @@ impl ConnectionWorkersScheduler {
     /// Importantly, if some transactions were not delivered due to network
     /// problems, they will not be retried when the problem is resolved.
     pub async fn run(
+        config: ConnectionWorkersSchedulerConfig,
+        leader_updater: Box<dyn LeaderUpdater>,
+        transaction_receiver: mpsc::Receiver<TransactionBatch>,
+        cancel: CancellationToken,
+    ) -> Result<TransactionStatsAndReceiver, ConnectionWorkersSchedulerError> {
+        Self::run_with_broadcaster::<NonblockingBroadcaster>(
+            config,
+            leader_updater,
+            transaction_receiver,
+            cancel,
+        )
+        .await
+    }
+
+    pub async fn run_with_broadcaster<Broadcaster: WorkersBroadcaster>(
         ConnectionWorkersSchedulerConfig {
             bind,
             stake_identity,
@@ -163,29 +223,7 @@ impl ConnectionWorkersScheduler {
                 }
             }
 
-            for new_leader in fanout_leaders {
-                if !workers.contains(new_leader) {
-                    warn!("No existing worker for {new_leader:?}, skip sending to this leader.");
-                    continue;
-                }
-
-                let send_res =
-                    workers.try_send_transactions_to_address(new_leader, transaction_batch.clone());
-                match send_res {
-                    Ok(()) => (),
-                    Err(WorkersCacheError::ShutdownError) => {
-                        debug!("Connection to {new_leader} was closed, worker cache shutdown");
-                    }
-                    Err(WorkersCacheError::ReceiverDropped) => {
-                        // Remove the worker from the cache, if the peer has disconnected.
-                        maybe_shutdown_worker(workers.pop(*new_leader));
-                    }
-                    Err(err) => {
-                        warn!("Connection to {new_leader} was closed, worker error: {err}");
-                        // If we have failed to send batch, it will be dropped.
-                    }
-                }
-            }
+            Broadcaster::send_to_workers(&mut workers, fanout_leaders, transaction_batch).await?;
         }
 
         workers.shutdown().await;
