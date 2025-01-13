@@ -912,6 +912,10 @@ pub mod snapshots_lt_hash {
     solana_pubkey::declare_id!("LTsNAP8h1voEVVToMNBNqoiNQex4aqfUrbFhRH3mSQ2");
 }
 
+pub mod remove_accounts_delta_hash {
+    solana_pubkey::declare_id!("LTdLt9Ycbyoipz5fLysCi1NnDnASsZfmJLJXts5ZxZz");
+}
+
 pub mod migrate_stake_program_to_core_bpf {
     solana_pubkey::declare_id!("6M4oQ6eXneVhtLoiAr4yRYQY43eVLjrKbiDZDJc892yk");
 }
@@ -1153,6 +1157,7 @@ lazy_static! {
         (disable_account_loader_special_case::id(), "Disable account loader special case #3513"),
         (accounts_lt_hash::id(), "enables lattice-based accounts hash SIMD-0215"),
         (snapshots_lt_hash::id(), "snapshots use lattice-based accounts hash SIMD-0220"),
+        (remove_accounts_delta_hash::id(), "removes accounts delta hash SIMD-0223"),
         (enable_secp256r1_precompile::id(), "Enable secp256r1 precompile SIMD-0075"),
         (migrate_stake_program_to_core_bpf::id(), "Migrate Stake program to Core BPF SIMD-0196 #3655"),
         (deplete_cu_meter_on_vm_failure::id(), "Deplete compute meter for vm errors SIMD-0182 #3993"),
