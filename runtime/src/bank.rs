@@ -3174,7 +3174,7 @@ impl Bank {
         let mut deduped_tx_results: Vec<Result<()>> = vec![Ok(()); txs.len()];
         let mut batch_signatures = AHashSet::with_capacity(txs.len());
         for (i, tx) in txs.iter().enumerate() {
-            if batch_signatures.insert(tx.signature()) {
+            if !batch_signatures.insert(tx.signature()) {
                 deduped_tx_results[i] = Err(TransactionError::AccountInUse);
             }
         }
