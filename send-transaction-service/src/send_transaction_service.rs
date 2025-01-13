@@ -1,22 +1,15 @@
-/// Deprecated, reexported to avoid breaking public API.
-pub use crate::{
-    send_transaction_service_stats::SendTransactionServiceStats,
-    transaction_client::{CurrentLeaderInfo, LEADER_INFO_REFRESH_RATE_MS},
-};
-
 use {
-    crate::{
-        send_transaction_service_stats::SendTransactionServiceStatsReport,
-        tpu_info::TpuInfo,
-        transaction_client::{ConnectionCacheClient, TransactionClient},
-    },
+    crate::tpu_info::TpuInfo,
     crossbeam_channel::{Receiver, RecvTimeoutError},
     itertools::Itertools,
-    log::*,
+    log::{warn, *},
     solana_client::connection_cache::ConnectionCache,
+    solana_connection_cache::client_connection::ClientConnection as TpuConnection,
+    solana_measure::measure::Measure,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_sdk::{
         hash::Hash, nonce_account, pubkey::Pubkey, saturating_add_assign, signature::Signature,
+        timing::AtomicInterval,
     },
     std::{
         collections::{
@@ -25,7 +18,7 @@ use {
         },
         net::SocketAddr,
         sync::{
-            atomic::{AtomicBool, Ordering},
+            atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, Mutex, RwLock,
         },
         thread::{self, sleep, Builder, JoinHandle},
@@ -142,6 +135,199 @@ impl Default for Config {
 /// The maximum duration the retry thread may be configured to sleep before
 /// processing the transactions that need to be retried.
 pub const MAX_RETRY_SLEEP_MS: u64 = 1000;
+
+/// The leader info refresh rate.
+pub const LEADER_INFO_REFRESH_RATE_MS: u64 = 1000;
+
+/// A struct responsible for holding up-to-date leader information
+/// used for sending transactions.
+pub struct CurrentLeaderInfo<T>
+where
+    T: TpuInfo + std::marker::Send + 'static,
+{
+    /// The last time the leader info was refreshed
+    last_leader_refresh: Option<Instant>,
+
+    /// The leader info
+    leader_info: Option<T>,
+
+    /// How often to refresh the leader info
+    refresh_rate: Duration,
+}
+
+impl<T> CurrentLeaderInfo<T>
+where
+    T: TpuInfo + std::marker::Send + 'static,
+{
+    /// Get the leader info, refresh if expired
+    pub fn get_leader_info(&mut self) -> Option<&T> {
+        if let Some(leader_info) = self.leader_info.as_mut() {
+            let now = Instant::now();
+            let need_refresh = self
+                .last_leader_refresh
+                .map(|last| now.duration_since(last) >= self.refresh_rate)
+                .unwrap_or(true);
+
+            if need_refresh {
+                leader_info.refresh_recent_peers();
+                self.last_leader_refresh = Some(now);
+            }
+        }
+        self.leader_info.as_ref()
+    }
+
+    pub fn new(leader_info: Option<T>) -> Self {
+        Self {
+            last_leader_refresh: None,
+            leader_info,
+            refresh_rate: Duration::from_millis(LEADER_INFO_REFRESH_RATE_MS),
+        }
+    }
+}
+
+/// Metrics of the send-transaction-service.
+#[derive(Default)]
+pub struct SendTransactionServiceStats {
+    /// Count of the received transactions
+    pub received_transactions: AtomicU64,
+
+    /// Count of the received duplicate transactions
+    pub received_duplicate_transactions: AtomicU64,
+
+    /// Count of transactions sent in batch
+    pub sent_transactions: AtomicU64,
+
+    /// Count of transactions not being added to retry queue
+    /// due to queue size limit
+    pub retry_queue_overflow: AtomicU64,
+
+    /// retry queue size
+    pub retry_queue_size: AtomicU64,
+
+    /// The count of calls of sending transactions which can be in batch or single.
+    pub send_attempt_count: AtomicU64,
+
+    /// Time spent on transactions in micro seconds
+    pub send_us: AtomicU64,
+
+    /// Send failure count
+    pub send_failure_count: AtomicU64,
+
+    /// Count of nonced transactions
+    pub nonced_transactions: AtomicU64,
+
+    /// Count of rooted transactions
+    pub rooted_transactions: AtomicU64,
+
+    /// Count of expired transactions
+    pub expired_transactions: AtomicU64,
+
+    /// Count of transactions exceeding max retries
+    pub transactions_exceeding_max_retries: AtomicU64,
+
+    /// Count of retries of transactions
+    pub retries: AtomicU64,
+
+    /// Count of transactions failed
+    pub failed_transactions: AtomicU64,
+}
+
+#[derive(Default)]
+pub(crate) struct SendTransactionServiceStatsReport {
+    pub stats: SendTransactionServiceStats,
+    last_report: AtomicInterval,
+}
+
+impl SendTransactionServiceStatsReport {
+    /// report metrics of the send transaction service
+    pub fn report(&self) {
+        if self
+            .last_report
+            .should_update(SEND_TRANSACTION_METRICS_REPORT_RATE_MS)
+        {
+            datapoint_info!(
+                "send_transaction_service",
+                (
+                    "recv-tx",
+                    self.stats.received_transactions.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "recv-duplicate",
+                    self.stats
+                        .received_duplicate_transactions
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "sent-tx",
+                    self.stats.sent_transactions.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "retry-queue-overflow",
+                    self.stats.retry_queue_overflow.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "retry-queue-size",
+                    self.stats.retry_queue_size.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "send-us",
+                    self.stats.send_us.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "send-attempt-count",
+                    self.stats.send_attempt_count.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "send-failure-count",
+                    self.stats.send_failure_count.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "nonced-tx",
+                    self.stats.nonced_transactions.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "rooted-tx",
+                    self.stats.rooted_transactions.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "expired-tx",
+                    self.stats.expired_transactions.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "max-retries-exceeded-tx",
+                    self.stats
+                        .transactions_exceeding_max_retries
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "retries",
+                    self.stats.retries.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "failed-tx",
+                    self.stats.failed_transactions.swap(0, Ordering::Relaxed),
+                    i64
+                )
+            );
+        }
+    }
+}
+
+/// Report the send transaction metrics for every 5 seconds.
+const SEND_TRANSACTION_METRICS_REPORT_RATE_MS: u64 = 5000;
 
 impl SendTransactionService {
     pub fn new<T: TpuInfo + std::marker::Send + 'static>(
@@ -495,6 +681,119 @@ impl SendTransactionService {
         self.receive_txn_thread.join()?;
         self.exit.store(true, Ordering::Relaxed);
         self.retry_thread.join()
+    }
+}
+
+pub trait TransactionClient {
+    fn send_transactions_in_batch(
+        &self,
+        wire_transactions: Vec<Vec<u8>>,
+        stats: &SendTransactionServiceStats,
+    );
+}
+
+pub struct ConnectionCacheClient<T: TpuInfo + std::marker::Send + 'static> {
+    connection_cache: Arc<ConnectionCache>,
+    tpu_address: SocketAddr,
+    tpu_peers: Option<Vec<SocketAddr>>,
+    leader_info_provider: Arc<Mutex<CurrentLeaderInfo<T>>>,
+    leader_forward_count: u64,
+}
+
+// Manual implementation of Clone without requiring T to be Clone
+impl<T> Clone for ConnectionCacheClient<T>
+where
+    T: TpuInfo + std::marker::Send + 'static,
+{
+    fn clone(&self) -> Self {
+        Self {
+            connection_cache: Arc::clone(&self.connection_cache),
+            tpu_address: self.tpu_address,
+            tpu_peers: self.tpu_peers.clone(),
+            leader_info_provider: Arc::clone(&self.leader_info_provider),
+            leader_forward_count: self.leader_forward_count,
+        }
+    }
+}
+
+impl<T> ConnectionCacheClient<T>
+where
+    T: TpuInfo + std::marker::Send + 'static,
+{
+    pub fn new(
+        connection_cache: Arc<ConnectionCache>,
+        tpu_address: SocketAddr,
+        tpu_peers: Option<Vec<SocketAddr>>,
+        leader_info: Option<T>,
+        leader_forward_count: u64,
+    ) -> Self {
+        let leader_info_provider = Arc::new(Mutex::new(CurrentLeaderInfo::new(leader_info)));
+        Self {
+            connection_cache,
+            tpu_address,
+            tpu_peers,
+            leader_info_provider,
+            leader_forward_count,
+        }
+    }
+
+    fn get_tpu_addresses<'a>(&'a self, leader_info: Option<&'a T>) -> Vec<&'a SocketAddr> {
+        leader_info
+            .map(|leader_info| {
+                leader_info
+                    .get_leader_tpus(self.leader_forward_count, self.connection_cache.protocol())
+            })
+            .filter(|addresses| !addresses.is_empty())
+            .unwrap_or_else(|| vec![&self.tpu_address])
+    }
+
+    fn send_transactions(
+        &self,
+        peer: &SocketAddr,
+        wire_transactions: Vec<Vec<u8>>,
+        stats: &SendTransactionServiceStats,
+    ) {
+        let mut measure = Measure::start("send-us");
+        let conn = self.connection_cache.get_connection(peer);
+        let result = conn.send_data_batch_async(wire_transactions);
+
+        if let Err(err) = result {
+            warn!(
+                "Failed to send transaction transaction to {}: {:?}",
+                self.tpu_address, err
+            );
+            stats.send_failure_count.fetch_add(1, Ordering::Relaxed);
+        }
+
+        measure.stop();
+        stats.send_us.fetch_add(measure.as_us(), Ordering::Relaxed);
+        stats.send_attempt_count.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+impl<T> TransactionClient for ConnectionCacheClient<T>
+where
+    T: TpuInfo + std::marker::Send + 'static,
+{
+    fn send_transactions_in_batch(
+        &self,
+        wire_transactions: Vec<Vec<u8>>,
+        stats: &SendTransactionServiceStats,
+    ) {
+        // Processing the transactions in batch
+        let mut addresses = self
+            .tpu_peers
+            .as_ref()
+            .map(|addrs| addrs.iter().collect::<Vec<_>>())
+            .unwrap_or_default();
+        let mut leader_info_provider = self.leader_info_provider.lock().unwrap();
+        let leader_info = leader_info_provider.get_leader_info();
+        let leader_addresses = self.get_tpu_addresses(leader_info);
+        addresses.extend(leader_addresses);
+
+        for address in &addresses {
+            self.send_transactions(address, wire_transactions.clone(), stats);
+        }
     }
 }
 
