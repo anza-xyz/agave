@@ -143,11 +143,6 @@ lazy_static! {
     };
 }
 
-<<<<<<< HEAD
-#[inline]
-pub fn is_builtin_program(program_id: &Pubkey) -> bool {
-    BUILTIN_INSTRUCTION_COSTS.contains_key(program_id)
-=======
 pub fn get_builtin_instruction_cost<'a>(
     program_id: &'a Pubkey,
     feature_set: &'a FeatureSet,
@@ -165,6 +160,11 @@ pub fn get_builtin_instruction_cost<'a>(
             },
         )
         .map(|builtin_cost| builtin_cost.native_cost)
+}
+
+#[inline]
+pub fn is_builtin_program(program_id: &Pubkey) -> bool {
+    BUILTIN_INSTRUCTION_COSTS.contains_key(program_id)
 }
 
 #[cfg(test)]
@@ -201,5 +201,4 @@ mod test {
                 .is_none()
         );
     }
->>>>>>> d791c9a76 (Fix builtin default cost dependents on migration (#3768))
 }
