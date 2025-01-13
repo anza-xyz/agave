@@ -212,6 +212,17 @@ impl<T> RingBuffer<T> {
         self.producers_shut_down.load(Ordering::Acquire)
     }
     pub fn working_bank(&self) -> u64 { self.working_bank.load(Ordering::Relaxed) }
+    pub fn set_bank(&self, bank_id: u64) {
+        assert!(self.empty());
+        self.enable_producers();
+        self.working_bank.store(bank_id, Ordering::SeqCst);
+    }
+    pub fn empty(&self) -> bool {
+        match self.check_consumer() {
+            ConsumerCheckResult::NoItems => return true,
+            _ => return false,
+        }
+    }
 }
 
 #[cfg(test)]

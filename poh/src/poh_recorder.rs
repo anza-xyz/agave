@@ -198,8 +198,7 @@ impl TransactionRecorder {
     }
 
     // Returns the index of `transactions.first()` in the slot, if being tracked by WorkingBank
-    // TODO: Make this pub for test-only
-    pub fn record(
+    fn record(
         &self,
         bank_slot: Slot,
         mixin: Hash,
@@ -629,7 +628,7 @@ impl PohRecorder {
 
         self.tick_cache = vec![];
         if reset_start_bank {
-            self.start_bank = reset_bank;
+            self.start_bank = reset_bank; // Bank is reset here.
             self.start_bank_active_descendants = vec![];
         }
         self.tick_height = (self.start_slot() + 1) * self.ticks_per_slot;
@@ -692,6 +691,16 @@ impl PohRecorder {
                 self.reset_poh(working_bank.bank.clone(), false);
             }
         }
+        loop {
+            assert!(self.record_sender.empty(), "Bank capacity: {}", self.record_sender.ring_buffer.capacity());
+            if !self.record_sender.empty() {
+                println!("Bank capacity: {}", self.record_sender.ring_buffer.capacity());
+                continue;
+            }
+            self.record_sender.set_bank(working_bank.bank.slot());
+            break;
+        }
+
         self.working_bank = Some(working_bank);
 
         // send poh slot start timing point
