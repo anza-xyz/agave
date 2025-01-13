@@ -1139,7 +1139,7 @@ lazy_static! {
         (lift_cpi_caller_restriction::id(), "Lift the restriction in CPI that the caller must have the callee as an instruction account #2202"),
         (disable_account_loader_special_case::id(), "Disable account loader special case #3513"),
         (accounts_lt_hash::id(), "enables lattice-based accounts hash SIMD-0215"),
-        (snapshots_lt_hash::id(), "snapshots use lattice-based accounts hash #3598"),
+        (snapshots_lt_hash::id(), "snapshots use lattice-based accounts hash SIMD-0220"),
         (enable_secp256r1_precompile::id(), "Enable secp256r1 precompile SIMD-0075"),
         (migrate_stake_program_to_core_bpf::id(), "Migrate Stake program to Core BPF SIMD-0196 #3655"),
         (deplete_cu_meter_on_vm_failure::id(), "Deplete compute meter for vm errors SIMD-0182 #3993"),
