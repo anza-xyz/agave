@@ -9232,6 +9232,9 @@ impl AccountsDb {
         reply_sender: Sender<()>,
     ) {
         if let Some(ref chili_pepper_store) = self.chili_pepper_store {
+            for pubkey in pubkeys.iter() {
+                chili_pepper_store.add_uncleaned_pubkey(*pubkey);
+            }
             let insert_cmd = ChiliPepperMutatorThreadCommand::Insert(
                 (pubkeys, slot, chili_pepper_clock),
                 reply_sender,
