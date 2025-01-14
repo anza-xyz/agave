@@ -893,7 +893,7 @@ mod tests {
             signature::Keypair,
             signer::Signer,
             system_instruction, system_program, system_transaction,
-            transaction::{Transaction, VersionedTransaction},
+            transaction::{SanitizedTransaction, Transaction, VersionedTransaction},
         },
         solana_svm::account_loader::CheckedTransactionDetails,
         solana_timings::ProgramTiming,
@@ -1452,8 +1452,11 @@ mod tests {
         Blockstore::destroy(ledger_path.path()).unwrap();
     }
 
-    #[test]
-    fn test_bank_process_and_record_transactions_cost_tracker() {
+    #[test_case(false; "old")]
+    #[test_case(true; "simd83")]
+    fn test_bank_process_and_record_transactions_cost_tracker(
+        relax_intrabatch_account_locks: bool,
+    ) {
         solana_logger::setup();
         let GenesisConfigInfo {
             genesis_config,
@@ -1461,6 +1464,9 @@ mod tests {
             ..
         } = create_slow_genesis_config(10_000);
         let mut bank = Bank::new_for_tests(&genesis_config);
+        if !relax_intrabatch_account_locks {
+            bank.deactivate_feature(&feature_set::relax_intrabatch_account_locks::id());
+        }
         bank.ns_per_slot = u128::MAX;
         let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let pubkey = solana_pubkey::new_rand();
@@ -1529,8 +1535,8 @@ mod tests {
             assert_eq!(get_tx_count(), 1);
 
             // TEST: it's expected that the allocation will execute but the transfer will not
-            // because of a shared write-lock between mint_keypair. Ensure only the first transaction
-            // takes compute units in the block
+            // because of a conflicting write-lock on pubkey from another (notional) thread.
+            // Ensure only the first transaction takes compute units in the block
             let allocate_keypair = Keypair::new();
             let transactions = sanitize_transactions(vec![
                 system_transaction::allocate(
@@ -1539,12 +1545,18 @@ mod tests {
                     genesis_config.hash(),
                     100,
                 ),
-                // this one won't execute in process_and_record_transactions from shared account lock overlap
+                // this one won't execute in process_and_record_transactions from cross-thread account lock overlap
                 system_transaction::transfer(&mint_keypair, &pubkey, 2, genesis_config.hash()),
             ]);
 
+            let conflicting_transaction = SanitizedTransaction::from_transaction_for_tests(
+                system_transaction::transfer(&Keypair::new(), &pubkey, 1, genesis_config.hash()),
+            );
+
+            bank.try_lock_accounts(&[conflicting_transaction.clone()]);
             let process_transactions_batch_output =
                 consumer.process_and_record_transactions(&bank, &transactions, 0);
+            bank.unlock_accounts([(&conflicting_transaction, &Ok(()))].into_iter());
 
             let ExecuteAndCommitTransactionsOutput {
                 transaction_counts,
@@ -1677,6 +1689,7 @@ mod tests {
                 ..
             } = process_transactions_batch_output.execute_and_commit_transactions_output;
 
+            // HANA here
             assert_eq!(
                 transaction_counts,
                 LeaderProcessedTransactionCounts {

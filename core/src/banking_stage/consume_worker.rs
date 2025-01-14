@@ -1022,6 +1022,7 @@ mod tests {
         assert_eq!(consumed.work.batch_id, bid);
         assert_eq!(consumed.work.ids, vec![id1, id2]);
         assert_eq!(consumed.work.max_ages, vec![max_age, max_age]);
+        // HANA here
         assert_eq!(consumed.retryable_indexes, vec![1]); // id2 is retryable since lock conflict
 
         drop(test_frame);
