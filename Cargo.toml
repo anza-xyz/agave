@@ -262,12 +262,10 @@ check-cfg = [
 
 [workspace.dependencies]
 Inflector = "0.11.4"
-thread-priority = "1.2.0"
-
+axum = "0.7.9"
 agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", version = "=2.2.0" }
 agave-transaction-view = { path = "transaction-view", version = "=2.2.0" }
 aquamarine = "0.3.3"
-cfg-if = "1.0.0"
 aes-gcm-siv = "0.11.1"
 ahash = "0.8.11"
 anyhow = "1.0.95"
@@ -303,6 +301,7 @@ bzip2 = "0.4.4"
 caps = "0.5.5"
 cargo_metadata = "0.15.4"
 cfg_eval = "0.1.2"
+cfg-if = "1.0.0"
 chrono = { version = "0.4.39", default-features = false }
 chrono-humanize = "0.2.3"
 clap = "2.33.1"
@@ -665,6 +664,7 @@ tarpc = "0.29.0"
 tempfile = "3.14.0"
 test-case = "3.3.1"
 thiserror = "2.0.11"
+thread-priority = "1.2.0"
 tiny-bip39 = "0.8.2"
 # Update solana-tokio patch below when updating this version
 tokio = "1.43.0"
@@ -675,6 +675,7 @@ tokio-util = "0.7"
 toml = "0.8.12"
 tonic = "0.9.2"
 tonic-build = "0.9.2"
+tower = "0.5.2"
 trees = "0.4.2"
 tungstenite = "0.20.1"
 uriparse = "0.6.4"

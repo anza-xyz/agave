@@ -229,8 +229,9 @@ mod tests {
         let affinity = affinity::get_thread_affinity().unwrap();
         assert_eq!(affinity, expect_cores, "{}", error_msg);
     }
-
-    /*  #[test]
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[ignore] //test ignored for now as thread priority requires kernel support and extra permissions
     fn test_thread_priority() {
         let priority_high = 10;
         let priority_default = crate::policy::DEFAULT_PRIORITY;
@@ -303,7 +304,7 @@ mod tests {
             .unwrap()
             .join()
             .unwrap();
-    }*/
+    }
 
     #[cfg(target_os = "linux")]
     #[test]
