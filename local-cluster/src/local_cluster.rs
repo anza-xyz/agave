@@ -33,6 +33,7 @@ use {
         clock::{Slot, DEFAULT_DEV_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE},
         commitment_config::CommitmentConfig,
         epoch_schedule::EpochSchedule,
+        fee::FeeStructure,
         genesis_config::{ClusterType, GenesisConfig},
         message::Message,
         native_token::LAMPORTS_PER_SOL,
@@ -254,7 +255,8 @@ impl LocalCluster {
 
         // Mint used to fund validator identities for non-genesis accounts.
         // Verify we have enough lamports in the mint address to do those transfers.
-        let mut required_mint_lamports = 0;
+        // 10 SOL for fees for all funding transactions.
+        let mut required_mint_lamports = 10 * LAMPORTS_PER_SOL;
 
         // Bootstrap leader should always be in genesis block
         validator_keys[0].1 = true;
@@ -270,6 +272,8 @@ impl LocalCluster {
                         vote_keypair.pubkey(),
                         stake
                     );
+                    required_mint_lamports += Self::required_validator_funding(*stake)
+                        + 10 * FeeStructure::default().lamports_per_signature;
                     if *in_genesis {
                         Some((
                             ValidatorVoteKeypairs {
@@ -280,7 +284,6 @@ impl LocalCluster {
                             stake,
                         ))
                     } else {
-                        required_mint_lamports += Self::required_validator_funding(*stake);
                         None
                     }
                 })
@@ -386,6 +389,17 @@ impl LocalCluster {
             genesis_config,
             connection_cache,
         };
+
+        // Begin with a transaction to fund the identity of the bootstrap node.
+        // For all other validators this is done in the `add_validator` loop below.
+        Self::transfer_with_client(
+            &cluster
+                .build_validator_tpu_quic_client(cluster.entry_point_info.pubkey())
+                .expect("tpu_client"),
+            &cluster.funding_keypair,
+            &validator_keys[0].0.pubkey(),
+            Self::required_validator_funding(config.node_stakes[0]),
+        );
 
         let node_pubkey_to_vote_key: HashMap<Pubkey, Arc<Keypair>> = keys_in_genesis
             .into_iter()
@@ -524,24 +538,33 @@ impl LocalCluster {
         if is_listener {
             // setup as a listener
             info!("listener {} ", validator_pubkey,);
-        } else if should_create_vote_pubkey {
-            let validator_balance = Self::transfer_with_client(
+        } else {
+            // Fund identity account regardless of whether the voting keypair already exists.
+            Self::transfer_with_client(
                 &client,
                 &self.funding_keypair,
                 &validator_pubkey,
                 Self::required_validator_funding(stake),
             );
+            let validator_balance = client
+                .rpc_client()
+                .get_balance_with_commitment(&validator_pubkey, CommitmentConfig::processed())
+                .map(|response| response.value)
+                .unwrap_or_default();
             info!(
                 "validator {} balance {}",
                 validator_pubkey, validator_balance
             );
-            Self::setup_vote_and_stake_accounts(
-                &client,
-                voting_keypair.as_ref().unwrap(),
-                &validator_keypair,
-                stake,
-            )
-            .unwrap();
+
+            if should_create_vote_pubkey {
+                Self::setup_vote_and_stake_accounts(
+                    &client,
+                    voting_keypair.as_ref().unwrap(),
+                    &validator_keypair,
+                    stake,
+                )
+                .unwrap();
+            }
         }
 
         let mut config = safe_clone_config(validator_config);
@@ -603,11 +626,11 @@ impl LocalCluster {
         self.close_preserve_ledgers();
     }
 
-    pub fn transfer(&self, source_keypair: &Keypair, dest_pubkey: &Pubkey, lamports: u64) -> u64 {
+    pub fn transfer(&self, source_keypair: &Keypair, dest_pubkey: &Pubkey, lamports: u64) {
         let client = self
             .build_validator_tpu_quic_client(self.entry_point_info.pubkey())
             .expect("new tpu quic client");
-        Self::transfer_with_client(&client, source_keypair, dest_pubkey, lamports)
+        Self::transfer_with_client(&client, source_keypair, dest_pubkey, lamports);
     }
 
     fn discover_nodes(
@@ -751,7 +774,7 @@ impl LocalCluster {
         source_keypair: &Keypair,
         dest_pubkey: &Pubkey,
         lamports: u64,
-    ) -> u64 {
+    ) {
         trace!("getting leader blockhash");
         let (blockhash, _) = client
             .rpc_client()
@@ -767,14 +790,6 @@ impl LocalCluster {
 
         LocalCluster::send_transaction_with_retries(client, &[source_keypair], &mut tx, 10, 0)
             .expect("client transfer should succeed");
-        client
-            .rpc_client()
-            .wait_for_balance_with_commitment(
-                dest_pubkey,
-                Some(lamports),
-                CommitmentConfig::processed(),
-            )
-            .expect("get balance should succeed")
     }
 
     fn setup_vote_and_stake_accounts(
@@ -983,8 +998,12 @@ impl LocalCluster {
         Ok(tpu_client)
     }
 
-    fn required_validator_funding(stake: u64) -> u64 {
-        stake.saturating_mul(2).saturating_add(2)
+    pub fn required_validator_funding(stake: u64) -> u64 {
+        stake.saturating_mul(2).saturating_add(
+            FeeStructure::default()
+                .lamports_per_signature
+                .saturating_mul(1_000),
+        )
     }
 }
 

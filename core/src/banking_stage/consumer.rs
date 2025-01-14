@@ -764,7 +764,6 @@ impl Consumer {
         );
         let fee = solana_fee::calculate_fee(
             transaction,
-            bank.get_lamports_per_signature() == 0,
             bank.fee_structure().lamports_per_signature,
             fee_budget_limits.prioritization_fee,
             bank.feature_set
@@ -1080,7 +1079,7 @@ mod tests {
             genesis_config,
             mint_keypair,
             ..
-        } = create_slow_genesis_config(10_000);
+        } = create_slow_genesis_config(1_000_000);
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         let pubkey = solana_pubkey::new_rand();
 
@@ -1458,7 +1457,7 @@ mod tests {
             genesis_config,
             mint_keypair,
             ..
-        } = create_slow_genesis_config(10_000);
+        } = create_slow_genesis_config(1_000_000);
         let mut bank = Bank::new_for_tests(&genesis_config);
         bank.ns_per_slot = u128::MAX;
         let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
@@ -1693,7 +1692,7 @@ mod tests {
     #[test]
     fn test_process_transactions_instruction_error() {
         solana_logger::setup();
-        let lamports = 10_000;
+        let lamports = 1_000_000;
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
@@ -1761,7 +1760,7 @@ mod tests {
             genesis_config,
             mint_keypair,
             ..
-        } = create_slow_genesis_config(10_000);
+        } = create_slow_genesis_config(1_000_000);
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         // set cost tracker limits to MAX so it will not filter out TXs
         bank.write_cost_tracker()
@@ -1932,8 +1931,12 @@ mod tests {
         let entries = vec![entry_1, entry_2];
 
         let transactions = sanitize_transactions(vec![success_tx, ix_error_tx]);
-        bank.transfer(rent_exempt_amount, &mint_keypair, &keypair1.pubkey())
-            .unwrap();
+        bank.transfer(
+            rent_exempt_amount + 2 * 5_000,
+            &mint_keypair,
+            &keypair1.pubkey(),
+        )
+        .unwrap();
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         {
@@ -2035,9 +2038,11 @@ mod tests {
             genesis_config,
             mint_keypair,
             ..
-        } = create_slow_genesis_config(10_000);
+        } = create_slow_genesis_config(1_000_000);
         let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         let keypair = Keypair::new();
+        bank.transfer(10_000, &mint_keypair, &keypair.pubkey())
+            .unwrap();
 
         let address_table_key = Pubkey::new_unique();
         let address_table_state = generate_new_address_lookup_table(None, 2);
@@ -2151,8 +2156,9 @@ mod tests {
                 recorded_meta,
                 TransactionStatusMeta {
                     status: Ok(()),
-                    pre_balances: vec![1, 0, 0],
-                    post_balances: vec![1, 0, 0],
+                    fee: 5_000,
+                    pre_balances: vec![10_001, 0, 0],
+                    post_balances: vec![5001, 0, 0],
                     pre_token_balances: Some(vec![]),
                     post_token_balances: Some(vec![]),
                     rewards: Some(vec![]),
@@ -2427,7 +2433,7 @@ mod tests {
             let keypair_c = Keypair::new();
             let keypair_d = Keypair::new();
             for keypair in &[&keypair_a, &keypair_b, &keypair_c, &keypair_d] {
-                bank.transfer(5_000, &genesis_config_info.mint_keypair, &keypair.pubkey())
+                bank.transfer(10_000, &genesis_config_info.mint_keypair, &keypair.pubkey())
                     .unwrap();
             }
 
@@ -2573,43 +2579,22 @@ mod tests {
             Consumer::filter_valid_transaction_indexes(&[
                 Err(TransactionError::BlockhashNotFound),
                 Err(TransactionError::BlockhashNotFound),
-                Ok(CheckedTransactionDetails {
-                    nonce: None,
-                    lamports_per_signature: 0
-                }),
+                Ok(CheckedTransactionDetails { nonce: None }),
                 Err(TransactionError::BlockhashNotFound),
-                Ok(CheckedTransactionDetails {
-                    nonce: None,
-                    lamports_per_signature: 0
-                }),
-                Ok(CheckedTransactionDetails {
-                    nonce: None,
-                    lamports_per_signature: 0
-                }),
+                Ok(CheckedTransactionDetails { nonce: None }),
+                Ok(CheckedTransactionDetails { nonce: None }),
             ]),
             [2, 4, 5]
         );
 
         assert_eq!(
             Consumer::filter_valid_transaction_indexes(&[
-                Ok(CheckedTransactionDetails {
-                    nonce: None,
-                    lamports_per_signature: 0,
-                }),
+                Ok(CheckedTransactionDetails { nonce: None }),
                 Err(TransactionError::BlockhashNotFound),
                 Err(TransactionError::BlockhashNotFound),
-                Ok(CheckedTransactionDetails {
-                    nonce: None,
-                    lamports_per_signature: 0,
-                }),
-                Ok(CheckedTransactionDetails {
-                    nonce: None,
-                    lamports_per_signature: 0,
-                }),
-                Ok(CheckedTransactionDetails {
-                    nonce: None,
-                    lamports_per_signature: 0,
-                }),
+                Ok(CheckedTransactionDetails { nonce: None }),
+                Ok(CheckedTransactionDetails { nonce: None }),
+                Ok(CheckedTransactionDetails { nonce: None }),
             ]),
             [0, 3, 4, 5]
         );

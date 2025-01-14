@@ -175,10 +175,7 @@ impl PayTubeChannel {
         let results = processor.load_and_execute_sanitized_transactions(
             &account_loader,
             &svm_transactions,
-            get_transaction_check_results(
-                svm_transactions.len(),
-                fee_structure.lamports_per_signature,
-            ),
+            get_transaction_check_results(svm_transactions.len()),
             &processing_environment,
             &processing_config,
         );

@@ -1069,7 +1069,7 @@ mod tests {
             genesis_config,
             mint_keypair,
             ..
-        } = create_genesis_config(10);
+        } = create_genesis_config(1_000_000);
         let (current_bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
         let simple_transactions: Vec<Transaction> = (0..256)
@@ -1260,11 +1260,20 @@ mod tests {
     #[test]
     fn test_process_packets_retryable_indexes_reinserted() -> Result<(), Box<dyn Error>> {
         let node_keypair = Keypair::new();
-        let genesis_config =
-            genesis_utils::create_genesis_config_with_leader(100, &node_keypair.pubkey(), 200)
-                .genesis_config;
-        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let genesis_config_info = genesis_utils::create_genesis_config_with_leader(
+            1_000_000,
+            &node_keypair.pubkey(),
+            200,
+        );
+        let (bank, _bank_forks) =
+            Bank::new_with_bank_forks_for_tests(&genesis_config_info.genesis_config);
         let vote_keypair = Keypair::new();
+        bank.transfer(
+            100_000,
+            &genesis_config_info.mint_keypair,
+            &node_keypair.pubkey(),
+        )
+        .unwrap();
         let mut vote = Packet::from_data(
             None,
             new_tower_sync_transaction(
@@ -1318,7 +1327,7 @@ mod tests {
             genesis_config,
             mint_keypair,
             ..
-        } = create_genesis_config(10);
+        } = create_genesis_config(1_000_000);
 
         let simple_transactions: Vec<Transaction> = (0..256)
             .map(|_id| {

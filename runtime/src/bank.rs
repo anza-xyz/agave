@@ -2906,7 +2906,7 @@ impl Bank {
     pub fn get_fee_for_message_with_lamports_per_signature(
         &self,
         message: &impl SVMMessage,
-        lamports_per_signature: u64,
+        _lamports_per_signature: u64,
     ) -> u64 {
         let fee_budget_limits = FeeBudgetLimits::from(
             process_compute_budget_instructions(
@@ -2917,7 +2917,6 @@ impl Bank {
         );
         solana_fee::calculate_fee(
             message,
-            lamports_per_signature == 0,
             self.fee_structure().lamports_per_signature,
             fee_budget_limits.prioritization_fee,
             self.feature_set

@@ -13,7 +13,7 @@ use {
     crate::{
         cluster::{Cluster, ClusterValidatorInfo},
         cluster_tests,
-        local_cluster::{ClusterConfig, LocalCluster},
+        local_cluster::{ClusterConfig, LocalCluster, DEFAULT_MINT_LAMPORTS},
         validator_configs::*,
     },
     log::*,
@@ -37,6 +37,7 @@ use {
     solana_sdk::{
         account::AccountSharedData,
         clock::{self, Slot, DEFAULT_MS_PER_SLOT, DEFAULT_TICKS_PER_SLOT},
+        fee::FeeStructure,
         hash::Hash,
         native_token::LAMPORTS_PER_SOL,
         pubkey::Pubkey,
@@ -318,7 +319,14 @@ pub fn run_cluster_partition<C>(
         .map(|stake_weight| 100 * *stake_weight as u64)
         .collect();
     assert_eq!(node_stakes.len(), num_nodes);
-    let mint_lamports = node_stakes.iter().sum::<u64>() * 2;
+    let mint_lamports = node_stakes
+        .iter()
+        .map(|stake| {
+            LocalCluster::required_validator_funding(*stake)
+                + 10 * FeeStructure::default().lamports_per_signature
+        })
+        .sum::<u64>()
+        + DEFAULT_MINT_LAMPORTS;
     let turbine_disabled = Arc::new(AtomicBool::new(false));
     let mut validator_config = ValidatorConfig {
         turbine_disabled: turbine_disabled.clone(),

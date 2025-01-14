@@ -63,7 +63,6 @@ pub(crate) enum TransactionLoadResult {
 #[cfg_attr(feature = "dev-context-only-utils", derive(Default))]
 pub struct CheckedTransactionDetails {
     pub nonce: Option<NonceInfo>,
-    pub lamports_per_signature: u64,
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]

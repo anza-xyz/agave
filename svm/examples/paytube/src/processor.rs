@@ -90,13 +90,6 @@ pub(crate) fn create_transaction_batch_processor<CB: TransactionProcessingCallba
 /// PayTube, since we don't need to perform such pre-checks.
 pub(crate) fn get_transaction_check_results(
     len: usize,
-    lamports_per_signature: u64,
 ) -> Vec<transaction::Result<CheckedTransactionDetails>> {
-    vec![
-        transaction::Result::Ok(CheckedTransactionDetails {
-            nonce: None,
-            lamports_per_signature,
-        });
-        len
-    ]
+    vec![transaction::Result::Ok(CheckedTransactionDetails { nonce: None }); len]
 }

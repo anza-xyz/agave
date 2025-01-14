@@ -87,7 +87,7 @@ impl SnapshotTestConfig {
         // bank stakes which results in mismatch when banks are loaded from
         // snapshots.
         let mut genesis_config_info = create_genesis_config_with_leader(
-            10_000,                     // mint_lamports
+            10_000_000,                 // mint_lamports
             &solana_pubkey::new_rand(), // validator_pubkey
             1,                          // validator_stake_lamports
         );

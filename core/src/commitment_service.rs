@@ -548,13 +548,26 @@ mod tests {
 
         let validator_vote_keypairs = ValidatorVoteKeypairs::new_rand();
         let validator_keypairs = vec![&validator_vote_keypairs];
-        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config_with_vote_accounts(
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config_with_vote_accounts(
             1_000_000_000,
             &validator_keypairs,
             vec![100; 1],
         );
 
-        let (_bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+
+        // Fund fees for votes
+        bank0
+            .transfer(
+                10_000_000,
+                &mint_keypair,
+                &validator_vote_keypairs.node_keypair.pubkey(),
+            )
+            .unwrap();
 
         // Fill bank_forks with banks with votes landing in the next slot
         // Create enough banks such that vote account will root slots 0 and 1

@@ -112,22 +112,16 @@ impl Bank {
         error_counters: &mut TransactionErrorMetrics,
     ) -> TransactionCheckResult {
         let recent_blockhash = tx.recent_blockhash();
-        if let Some(hash_info) = hash_queue.get_hash_info_if_valid(recent_blockhash, max_age) {
-            Ok(CheckedTransactionDetails {
-                nonce: None,
-                lamports_per_signature: hash_info.lamports_per_signature(),
-            })
-        } else if let Some((nonce, previous_lamports_per_signature)) = self
+        if let Some(_hash_info) = hash_queue.get_hash_info_if_valid(recent_blockhash, max_age) {
+            Ok(CheckedTransactionDetails { nonce: None })
+        } else if let Some((nonce, _previous_lamports_per_signature)) = self
             .check_load_and_advance_message_nonce_account(
                 tx,
                 next_durable_nonce,
                 next_lamports_per_signature,
             )
         {
-            Ok(CheckedTransactionDetails {
-                nonce: Some(nonce),
-                lamports_per_signature: previous_lamports_per_signature,
-            })
+            Ok(CheckedTransactionDetails { nonce: Some(nonce) })
         } else {
             error_counters.blockhash_not_found += 1;
             Err(TransactionError::BlockhashNotFound)

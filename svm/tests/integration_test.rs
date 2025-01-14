@@ -431,7 +431,6 @@ impl TransactionBatchItem {
         Self {
             check_result: Ok(CheckedTransactionDetails {
                 nonce: Some(nonce_info),
-                lamports_per_signature: LAMPORTS_PER_SIGNATURE,
             }),
             ..Self::default()
         }
@@ -442,10 +441,7 @@ impl Default for TransactionBatchItem {
     fn default() -> Self {
         Self {
             transaction: Transaction::default(),
-            check_result: Ok(CheckedTransactionDetails {
-                nonce: None,
-                lamports_per_signature: LAMPORTS_PER_SIGNATURE,
-            }),
+            check_result: Ok(CheckedTransactionDetails { nonce: None }),
             asserts: TransactionBatchItemAsserts::default(),
         }
     }

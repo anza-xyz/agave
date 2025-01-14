@@ -400,7 +400,7 @@ pub fn initialize_state(
     bank0.set_block_id(Some(Hash::new_unique()));
 
     for pubkey in validator_keypairs_map.keys() {
-        bank0.transfer(10_000, &mint_keypair, pubkey).unwrap();
+        bank0.transfer(1_000_000, &mint_keypair, pubkey).unwrap();
     }
 
     while bank0.tick_height() < bank0.max_tick_height() {

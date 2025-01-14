@@ -820,7 +820,7 @@ mod tests {
             genesis_config,
             mint_keypair,
             ..
-        } = create_slow_genesis_config(10_000);
+        } = create_slow_genesis_config(1_000_000);
         let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         // Warp to next epoch for MaxAge tests.
         let bank = Arc::new(Bank::new_from_parent(
@@ -1186,7 +1186,7 @@ mod tests {
             bank.process_transaction(&system_transaction::transfer(
                 mint_keypair,
                 &tx.account_keys()[0],
-                2,
+                2 + 5_000,
                 genesis_config.hash(),
             ))
             .unwrap();

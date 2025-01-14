@@ -4248,6 +4248,7 @@ pub(crate) mod tests {
         },
         solana_sdk::{
             clock::NUM_CONSECUTIVE_LEADER_SLOTS,
+            fee::FeeStructure,
             genesis_config,
             hash::{hash, Hash},
             instruction::InstructionError,
@@ -5184,7 +5185,7 @@ pub(crate) mod tests {
             mut genesis_config,
             mint_keypair,
             ..
-        } = create_genesis_config(solana_sdk::native_token::sol_to_lamports(1000.0));
+        } = create_genesis_config(10_000_000);
         genesis_config.rent.lamports_per_byte_year = 50;
         genesis_config.rent.exemption_threshold = 2.0;
         let (ledger_path, _) = create_new_tmp_ledger!(&genesis_config);
@@ -5200,7 +5201,8 @@ pub(crate) mod tests {
             let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
             bank0
                 .transfer(
-                    bank0.get_minimum_balance_for_rent_exemption(0),
+                    bank0.get_minimum_balance_for_rent_exemption(0)
+                        + FeeStructure::default().lamports_per_signature,
                     &mint_keypair,
                     &keypair2.pubkey(),
                 )

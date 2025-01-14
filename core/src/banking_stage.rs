@@ -1009,7 +1009,7 @@ mod tests {
             genesis_config,
             mint_keypair,
             ..
-        } = create_slow_genesis_config(10);
+        } = create_slow_genesis_config(100_000);
         let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         let start_hash = bank.last_blockhash();
         let banking_tracer = BankingTracer::new_disabled();
@@ -1155,7 +1155,7 @@ mod tests {
             genesis_config,
             mint_keypair,
             ..
-        } = create_slow_genesis_config(2);
+        } = create_slow_genesis_config(2 + 2 * 5_000); // 2 lamports for transfering. Fees for 2 transactions
         let banking_tracer = BankingTracer::new_disabled();
         let Channels {
             non_vote_sender,
@@ -1383,7 +1383,7 @@ mod tests {
             genesis_config,
             mint_keypair,
             ..
-        } = create_slow_genesis_config(10000);
+        } = create_slow_genesis_config(1_000_000);
         let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         let start_hash = bank.last_blockhash();
         let banking_tracer = BankingTracer::new_disabled();
