@@ -27,7 +27,7 @@ env:
 
 jobs:
   clippy-nightly:
-    if: github.repository == 'anza-xyz/agave'
+    if: github.repository == 'btigrouplabs/agave'
     strategy:
       matrix:
         os:

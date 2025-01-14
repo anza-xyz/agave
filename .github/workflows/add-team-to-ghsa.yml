@@ -7,7 +7,7 @@ on:
 
 jobs:
   add-team-to-ghsa:
-    if: github.repository == 'anza-xyz/agave'
+    if: github.repository == 'btigrouplabs/agave'
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout

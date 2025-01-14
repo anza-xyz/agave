@@ -14,7 +14,7 @@ on:
 
 jobs:
   check:
-    if: github.repository == 'anza-xyz/agave'
+    if: github.repository == 'btigrouplabs/agave'
     outputs:
       continue: ${{ steps.check.outputs.need_to_build }}
     runs-on: ubuntu-20.04
@@ -70,7 +70,7 @@ jobs:
     needs:
       - check
     if: >
-      github.repository == 'anza-xyz/agave' &&
+      github.repository == 'btigrouplabs/agave' &&
       needs.check.outputs.continue == 1
     # the name is used by .mergify.yml as well
     name: build & deploy docs
