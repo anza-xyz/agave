@@ -11,7 +11,6 @@ use {
         blockstore_options::{AccessType, BlockstoreOptions, LedgerColumnOptions},
     },
     bincode::{deserialize, Options as BincodeOptions},
-    byteorder::{BigEndian, ByteOrder},
     log::*,
     prost::Message,
     rocksdb::{
@@ -102,6 +101,21 @@ const PROGRAM_COSTS_CF: &str = "program_costs";
 const OPTIMISTIC_SLOTS_CF: &str = "optimistic_slots";
 /// Column family for merkle roots
 const MERKLE_ROOT_META_CF: &str = "merkle_root_meta";
+
+macro_rules! concat_key_bytes {
+    ($key:ident, $($range:expr => $bytes:expr),* $(,)?) => {{
+        let mut key = [0u8; std::mem::size_of::<Self::$key>()];
+        debug_assert_eq!(0 $(+$bytes.len())*, key.len());
+        $(key[$range].copy_from_slice($bytes);)*
+        key
+    }};
+}
+
+macro_rules! convert_key_bytes {
+    ($k:ident, $($a:literal..$b:literal => $f:expr),* $(,)?) => {{
+        ($($f(<[u8; $b-$a]>::try_from(&$k[$a..$b]).unwrap())),*)
+    }};
+}
 
 #[derive(Error, Debug)]
 pub enum BlockstoreError {
@@ -837,8 +851,8 @@ impl<T: SlotColumn> Column for T {
     }
 
     /// Converts a RocksDB key to its u64 Index.
-    fn index(key: &[u8]) -> u64 {
-        BigEndian::read_u64(&key[..8])
+    fn index(key: &[u8]) -> Self::Index {
+        convert_key_bytes!(key, 0..8 => Slot::from_be_bytes)
     }
 
     fn slot(index: Self::Index) -> Slot {
@@ -879,15 +893,6 @@ pub trait ColumnIndexDeprecation: Column {
             Self::as_index(0)
         }
     }
-}
-
-macro_rules! concat_key_bytes {
-    ($key:ident, $($range:expr => $bytes:expr),* $(,)?) => {{
-        let mut key = [0u8; std::mem::size_of::<Self::$key>()];
-        debug_assert_eq!(0 $(+$bytes.len())*, key.len());
-        $(key[$range].copy_from_slice($bytes);)*
-        key
-    }};
 }
 
 impl Column for columns::TransactionStatus {
@@ -940,19 +945,21 @@ impl ColumnIndexDeprecation for columns::TransactionStatus {
         if key.len() != std::mem::size_of::<Self::DeprecatedKey>() {
             return Err(IndexError::UnpackError);
         }
-        let primary_index = BigEndian::read_u64(&key[0..8]);
-        let signature = Signature::try_from(&key[8..72]).unwrap();
-        let slot = BigEndian::read_u64(&key[72..80]);
-        Ok((primary_index, signature, slot))
+        Ok(convert_key_bytes!(key,
+             0..8  => u64::from_be_bytes,  // primary index
+             8..72 => Signature::from,
+            72..80 => Slot::from_be_bytes,
+        ))
     }
 
     fn try_current_index(key: &[u8]) -> std::result::Result<Self::Index, IndexError> {
         if key.len() != Self::CURRENT_INDEX_LEN {
             return Err(IndexError::UnpackError);
         }
-        let signature = Signature::try_from(&key[0..64]).unwrap();
-        let slot = BigEndian::read_u64(&key[64..72]);
-        Ok((signature, slot))
+        Ok(convert_key_bytes!(key,
+             0..64 => Signature::from,
+            64..72 => Slot::from_be_bytes,
+        ))
     }
 
     fn convert_index(deprecated_index: Self::DeprecatedIndex) -> Self::Index {
@@ -1016,22 +1023,24 @@ impl ColumnIndexDeprecation for columns::AddressSignatures {
         if key.len() != std::mem::size_of::<Self::DeprecatedKey>() {
             return Err(IndexError::UnpackError);
         }
-        let primary_index = BigEndian::read_u64(&key[0..8]);
-        let pubkey = Pubkey::try_from(&key[8..40]).unwrap();
-        let slot = BigEndian::read_u64(&key[40..48]);
-        let signature = Signature::try_from(&key[48..112]).unwrap();
-        Ok((primary_index, pubkey, slot, signature))
+        Ok(convert_key_bytes!(key,
+             0..8   => u64::from_be_bytes,  // primary index
+             8..40  => Pubkey::from,
+            40..48  => Slot::from_be_bytes,
+            48..112 => Signature::from,
+        ))
     }
 
     fn try_current_index(key: &[u8]) -> std::result::Result<Self::Index, IndexError> {
         if key.len() != Self::CURRENT_INDEX_LEN {
             return Err(IndexError::UnpackError);
         }
-        let pubkey = Pubkey::try_from(&key[0..32]).unwrap();
-        let slot = BigEndian::read_u64(&key[32..40]);
-        let transaction_index = BigEndian::read_u32(&key[40..44]);
-        let signature = Signature::try_from(&key[44..108]).unwrap();
-        Ok((pubkey, slot, transaction_index, signature))
+        Ok(convert_key_bytes!(key,
+             0..32  => Pubkey::from,
+            32..40  => Slot::from_be_bytes,
+            40..44  => u32::from_be_bytes,  // transaction index
+            44..108 => Signature::from,
+        ))
     }
 
     fn convert_index(deprecated_index: Self::DeprecatedIndex) -> Self::Index {
@@ -1085,9 +1094,10 @@ impl ColumnIndexDeprecation for columns::TransactionMemos {
         if key.len() != Self::CURRENT_INDEX_LEN {
             return Err(IndexError::UnpackError);
         }
-        let signature = Signature::try_from(&key[0..64]).unwrap();
-        let slot = BigEndian::read_u64(&key[64..72]);
-        Ok((signature, slot))
+        Ok(convert_key_bytes!(key,
+             0..64 => Signature::from,
+            64..72 => Slot::from_be_bytes,
+        ))
     }
 
     fn convert_index(deprecated_index: Self::DeprecatedIndex) -> Self::Index {
@@ -1104,8 +1114,8 @@ impl Column for columns::TransactionStatusIndex {
         index.to_be_bytes()
     }
 
-    fn index(key: &[u8]) -> u64 {
-        BigEndian::read_u64(&key[..8])
+    fn index(key: &[u8]) -> Self::Index {
+        convert_key_bytes!(key, 0..8 => u64::from_be_bytes)
     }
 
     fn slot(_index: Self::Index) -> Slot {
@@ -1165,7 +1175,7 @@ impl Column for columns::ProgramCosts {
     }
 
     fn index(key: &[u8]) -> Self::Index {
-        Pubkey::try_from(&key[..32]).unwrap()
+        convert_key_bytes!(key, 0..32 => Pubkey::from)
     }
 
     fn slot(_index: Self::Index) -> Slot {
@@ -1187,7 +1197,7 @@ impl Column for columns::ShredCode {
         <columns::ShredData as Column>::key(index)
     }
 
-    fn index(key: &[u8]) -> (Slot, u64) {
+    fn index(key: &[u8]) -> Self::Index {
         columns::ShredData::index(key)
     }
 
@@ -1215,10 +1225,11 @@ impl Column for columns::ShredData {
         )
     }
 
-    fn index(key: &[u8]) -> (Slot, u64) {
-        let slot = BigEndian::read_u64(&key[..8]);
-        let index = BigEndian::read_u64(&key[8..16]);
-        (slot, index)
+    fn index(key: &[u8]) -> Self::Index {
+        convert_key_bytes!(key,
+            0..8  => Slot::from_be_bytes,
+            8..16 => u64::from_be_bytes,  // shred index
+        )
     }
 
     fn slot(index: Self::Index) -> Slot {
@@ -1312,7 +1323,7 @@ impl TypedColumn for columns::SlotMeta {
 }
 
 impl Column for columns::ErasureMeta {
-    type Index = (Slot, u64);
+    type Index = (Slot, /*fec_set_index:*/ u64);
     type Key = [u8; std::mem::size_of::<Slot>() + std::mem::size_of::<u64>()];
 
     #[inline]
@@ -1323,11 +1334,11 @@ impl Column for columns::ErasureMeta {
         )
     }
 
-    fn index(key: &[u8]) -> (Slot, u64) {
-        let slot = BigEndian::read_u64(&key[..8]);
-        let set_index = BigEndian::read_u64(&key[8..]);
-
-        (slot, set_index)
+    fn index(key: &[u8]) -> Self::Index {
+        convert_key_bytes!(key,
+            0..8  => Slot::from_be_bytes,
+            8..16 => u64::from_be_bytes,  // fec_set_index
+        )
     }
 
     fn slot(index: Self::Index) -> Slot {
@@ -1366,10 +1377,10 @@ impl Column for columns::MerkleRootMeta {
     }
 
     fn index(key: &[u8]) -> Self::Index {
-        let slot = BigEndian::read_u64(&key[..8]);
-        let fec_set_index = BigEndian::read_u32(&key[8..]);
-
-        (slot, fec_set_index)
+        convert_key_bytes!(key,
+            0..8  => Slot::from_be_bytes,
+            8..12 => u32::from_be_bytes,  // fec_set_index
+        )
     }
 
     fn slot((slot, _fec_set_index): Self::Index) -> Slot {
