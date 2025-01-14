@@ -3200,7 +3200,7 @@ impl Bank {
         let mut deduped_tx_results: Vec<_> = transaction_results.collect();
         let mut batch_signatures = AHashSet::with_capacity(transactions.len());
         for (i, tx) in transactions.iter().enumerate() {
-            if batch_signatures.insert(tx.signature()) && deduped_tx_results[i].is_ok() {
+            if !batch_signatures.insert(tx.signature()) && deduped_tx_results[i].is_ok() {
                 deduped_tx_results[i] = Err(TransactionError::AccountInUse);
             }
         }
