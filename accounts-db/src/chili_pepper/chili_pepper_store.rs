@@ -641,23 +641,47 @@ impl ChiliPepperStoreInnerV2 {
 
     pub fn insert(&self, key: PubkeySlot, value: u64) -> Result<(), Error> {
         //self.uncleaned_pubkeys.lock().unwrap().insert(*key.0);
-
+        let mut slot_list = self.get_all_for_pubkey(key.0)?;
+        let pubkey = DBPubkey(key.0);
+        let slot = key.1;
+        match slot_list.binary_search_by(|(slot_, _)| slot_.cmp(&slot)) {
+            Ok(pos) => {
+                slot_list[pos] = (slot, value);
+            }
+            Err(pos) => {
+                slot_list.insert(pos, (slot, value));
+            }
+        }
         let mut write_txn = self.db.begin_write()?;
         write_txn.set_durability(Durability::None); // don't persisted to disk for better performance
         {
             let mut table = write_txn.open_table::<DBPubkey, DBSlotList>(TABLE_V2)?;
-            todo!();
-            //table.insert(key, value)?;
+            table.insert(pubkey, DBSlotList { list: slot_list })?;
         }
         write_txn.commit().map_err(Error::from)
     }
 
     pub fn remove(&self, key: PubkeySlot) -> Result<(), Error> {
+        let mut slot_list = self.get_all_for_pubkey(key.0)?;
+        let pubkey = DBPubkey(key.0);
+        let slot = key.1;
+        match slot_list.binary_search_by(|(slot_, _)| slot_.cmp(&slot)) {
+            Ok(pos) => {
+                slot_list.remove(pos);
+            }
+            Err(pos) => {
+                return Ok(());
+            }
+        }
+
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table::<DBPubkey, DBSlotList>(TABLE_V2)?;
-            todo!();
-            //table.remove(key)?;
+            if slot_list.is_empty() {
+                table.remove(pubkey)?;
+            } else {
+                table.insert(pubkey, DBSlotList { list: slot_list })?;
+            }
         }
         write_txn.commit().map_err(Error::from)
     }
@@ -666,91 +690,87 @@ impl ChiliPepperStoreInnerV2 {
     where
         I: IntoIterator<Item = (PubkeySlot<'a>, u64)>,
     {
-        let mut write_txn = self.db.begin_write()?;
-        write_txn.set_durability(Durability::None); // don't persisted to disk for better performance
-        {
-            let mut table = write_txn.open_table::<DBPubkey, DBSlotList>(TABLE_V2)?;
-            for (key, value) in data {
-                todo!();
-                //self.uncleaned_pubkeys.lock().unwrap().insert(*key.0);
-                //table.insert(key, value.borrow())?;
-            }
+        // TODO: optimize this to hash_map to save keys
+        for (key, value) in data.into_iter() {
+            //self.uncleaned_pubkeys.lock().unwrap().insert(*key.0);
+            self.insert(key, value)?;
         }
-        write_txn.commit().map_err(Error::from)
+        Ok(())
     }
 
     pub fn bulk_remove<'a, I>(&self, keys: I) -> Result<(), Error>
     where
         I: IntoIterator<Item = PubkeySlot<'a>>,
     {
-        let write_txn = self.db.begin_write()?;
-        {
-            let mut table = write_txn.open_table::<DBPubkey, DBSlotList>(TABLE_V2)?;
-            for key in keys {
-                todo!();
-                //table.remove(key)?;
-            }
+        // TODO: optimize this to hash_map to save keys
+        for key in keys.into_iter() {
+            self.remove(key)?;
         }
-        write_txn.commit().map_err(Error::from)
+        Ok(())
     }
 
     pub fn clean(&self, clean_slot: Slot, threshold_slot: u64) -> Result<(), Error> {
         let read_txn = self.db.begin_read()?;
         let table = read_txn.open_table::<DBPubkey, DBSlotList>(TABLE_V2)?;
-        todo!();
 
-        // let mut lock = self.dead_slots.lock().unwrap();
-        // let dead_slots = std::mem::take(&mut *lock);
-        // drop(lock);
+        let mut lock = self.dead_slots.lock().unwrap();
+        let dead_slots = std::mem::take(&mut *lock);
+        drop(lock);
 
-        // let mut lock = self.uncleaned_pubkeys.lock().unwrap();
-        // let uncleaned_pubkeys = std::mem::take(&mut *lock);
-        // drop(lock);
+        let mut lock = self.uncleaned_pubkeys.lock().unwrap();
+        let uncleaned_pubkeys = std::mem::take(&mut *lock);
+        drop(lock);
 
-        // // TODO: optimize this to hash_map to save keys
-        // let mut to_remove = vec![];
+        let mut to_remove = vec![];
+        for pubkey in uncleaned_pubkeys.iter().sorted() {
+            let mut slot_list = match table.get(DBPubkey(pubkey))? {
+                Some(iter) => iter.value().list,
+                None => continue,
+            };
+            let len0 = slot_list.len();
+            slot_list.reverse();
 
-        // for pubkey in uncleaned_pubkeys.iter().sorted() {
-        //     let pubkey_slot = PubkeySlot(pubkey, 0);
-        //     let iter = table.range(pubkey_slot..PubkeySlot(pubkey, u64::MAX))?;
+            let mut found_one_before_clean_slot = false;
+            slot_list.retain(|(slot, _)| {
+                if dead_slots.contains(slot) {
+                    return false;
+                }
 
-        //     let mut found_one_before_clean_slot = false;
-        //     for iter in iter.rev() {
-        //         let (key, _) = iter?;
-        //         let pubkey = key.value().0;
-        //         let slot = key.value().1;
+                if *slot < threshold_slot {
+                    return false;
+                }
 
-        //         if dead_slots.contains(&slot) {
-        //             to_remove.push((*pubkey, slot));
-        //             continue;
-        //         }
-        //         if slot > clean_slot {
-        //             continue;
-        //         }
+                if *slot > clean_slot {
+                    return true;
+                } else {
+                    if found_one_before_clean_slot {
+                        return false;
+                    } else {
+                        found_one_before_clean_slot = true;
+                        return true;
+                    }
+                }
+            });
 
-        //         if slot < threshold_slot {
-        //             to_remove.push((*pubkey, slot));
-        //             continue;
-        //         }
+            let len1 = slot_list.len();
+            if len1 < len0 {
+                slot_list.reverse();
+                to_remove.push((*pubkey, slot_list));
+            }
+        }
 
-        //         if slot <= clean_slot {
-        //             if found_one_before_clean_slot {
-        //                 to_remove.push((*pubkey, slot));
-        //             } else {
-        //                 found_one_before_clean_slot = true;
-        //             }
-        //         }
-        //     }
-        // }
-
-        // let write_txn = self.db.begin_write()?;
-        // {
-        //     let mut table = write_txn.open_table::<PubkeySlot, u64>(TABLE)?;
-        //     for key in to_remove {
-        //         table.remove(PubkeySlot(&key.0, key.1))?;
-        //     }
-        // }
-        // write_txn.commit().map_err(Error::from)
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table::<DBPubkey, DBSlotList>(TABLE_V2)?;
+            for (pubkey, slot_list) in to_remove {
+                if slot_list.is_empty() {
+                    table.remove(DBPubkey(&pubkey))?;
+                } else {
+                    table.insert(DBPubkey(&&pubkey), DBSlotList { list: slot_list })?;
+                }
+            }
+        }
+        write_txn.commit().map_err(Error::from)
     }
 
     pub fn create_savepoint(&self) -> Result<u64, Error> {
