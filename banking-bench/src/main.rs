@@ -453,6 +453,13 @@ fn main() {
             BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
         )))
         .unwrap();
+    let prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
+    let cluster_info = {
+        let keypair = Arc::new(Keypair::new());
+        let node = Node::new_localhost_with_pubkey(&keypair.pubkey());
+        ClusterInfo::new(node.info, keypair, SocketAddrSpace::Unspecified)
+    };
+    let cluster_info = Arc::new(cluster_info);
     let Channels {
         non_vote_sender,
         non_vote_receiver,
@@ -461,12 +468,6 @@ fn main() {
         gossip_vote_sender,
         gossip_vote_receiver,
     } = banking_tracer.create_channels(false);
-    let cluster_info = {
-        let keypair = Arc::new(Keypair::new());
-        let node = Node::new_localhost_with_pubkey(&keypair.pubkey());
-        ClusterInfo::new(node.info, keypair, SocketAddrSpace::Unspecified)
-    };
-    let cluster_info = Arc::new(cluster_info);
     let tpu_disable_quic = matches.is_present("tpu_disable_quic");
     let connection_cache = if tpu_disable_quic {
         ConnectionCache::with_udp(
@@ -493,7 +494,7 @@ fn main() {
         None,
         Arc::new(connection_cache),
         bank_forks.clone(),
-        &Arc::new(PrioritizationFeeCache::new(0u64)),
+        &prioritization_fee_cache,
         false,
     );
 

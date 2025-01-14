@@ -759,6 +759,10 @@ impl BankingSimulator {
             BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
         );
 
+        // Create a partially-dummy ClusterInfo for the banking stage.
+        let cluster_info_for_banking = Arc::new(DummyClusterInfo {
+            id: simulated_leader.into(),
+        });
         let Channels {
             non_vote_sender,
             non_vote_receiver,
@@ -781,7 +785,7 @@ impl BankingSimulator {
         // We only need it to write shreds into the blockstore and it seems given ClusterInfo is
         // irrelevant for the neccesary minimum work for this simulation.
         let random_keypair = Arc::new(Keypair::new());
-        let cluster_info = Arc::new(ClusterInfo::new(
+        let cluster_info_for_broadcast = Arc::new(ClusterInfo::new(
             Node::new_localhost_with_pubkey(&random_keypair.pubkey()).info,
             random_keypair,
             SocketAddrSpace::Unspecified,
@@ -790,7 +794,7 @@ impl BankingSimulator {
         // inserting produced shreds into the blockstore.
         let broadcast_stage = BroadcastStageType::Standard.new_broadcast_stage(
             vec![bind_to_localhost().unwrap()],
-            cluster_info.clone(),
+            cluster_info_for_broadcast.clone(),
             entry_receiver,
             retransmit_slots_receiver,
             exit.clone(),
@@ -801,15 +805,11 @@ impl BankingSimulator {
         );
 
         info!("Start banking stage!...");
-        // Create a partially-dummy ClusterInfo for the banking stage.
-        let cluster_info = Arc::new(DummyClusterInfo {
-            id: simulated_leader.into(),
-        });
         let prioritization_fee_cache = &Arc::new(PrioritizationFeeCache::new(0u64));
         let banking_stage = BankingStage::new_num_threads(
             block_production_method.clone(),
             transaction_struct.clone(),
-            &cluster_info,
+            &cluster_info_for_banking,
             &poh_recorder,
             non_vote_receiver,
             tpu_vote_receiver,

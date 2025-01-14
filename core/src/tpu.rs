@@ -11,7 +11,7 @@ pub use solana_streamer::quic::DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER as MAX_QUIC
 use {
     crate::{
         banking_stage::BankingStage,
-        banking_trace::{BankingTracer, Channels, TracerThread},
+        banking_trace::{Channels, TracerThread},
         cluster_info_vote_listener::{
             ClusterInfoVoteListener, DuplicateConfirmedSlotsSender, GossipVerifiedVoteHashSender,
             VerifiedVoteSender, VoteTracker,
@@ -112,7 +112,7 @@ impl Tpu {
         log_messages_bytes_limit: Option<usize>,
         staked_nodes: &Arc<RwLock<StakedNodes>>,
         shared_staked_nodes_overrides: Arc<RwLock<HashMap<Pubkey, u64>>>,
-        banking_tracer: Arc<BankingTracer>,
+        banking_tracer_channels: Channels,
         tracer_thread_hdl: TracerThread,
         tpu_enable_udp: bool,
         tpu_quic_server_config: QuicServerParams,
@@ -166,7 +166,7 @@ impl Tpu {
             tpu_vote_receiver,
             gossip_vote_sender,
             gossip_vote_receiver,
-        } = banking_tracer.create_channels(false);
+        } = banking_tracer_channels;
 
         // Streamer for Votes:
         let SpawnServerResult {
