@@ -231,6 +231,13 @@ impl ChiliPepperStoreInner {
         //     .create_with_backend(InMemoryBackend::new())
         //     .unwrap();
 
+        let mut write_txn = db.begin_write()?;
+        write_txn.set_durability(Durability::None); // don't persisted to disk for better performance
+        {
+            let mut _table = write_txn.open_table::<PubkeySlot, u64>(TABLE)?;
+        }
+        write_txn.commit().map_err(Error::from)?;
+
         Ok(Self {
             db,
             path: path.as_ref().to_path_buf(),
@@ -532,6 +539,14 @@ impl ChiliPepperStoreInnerV2 {
         // let db = Database::builder()
         //     .create_with_backend(InMemoryBackend::new())
         //     .unwrap();
+
+        // Create the table table to make sure it exists
+        let mut write_txn = db.begin_write()?;
+        write_txn.set_durability(Durability::None); // don't persisted to disk for better performance
+        {
+            let _table = write_txn.open_table::<DBPubkey, DBSlotList>(TABLE_V2)?;
+        }
+        write_txn.commit().map_err(Error::from)?;
 
         Ok(Self {
             db,
@@ -1288,5 +1303,28 @@ pub mod tests {
         assert!(store2.get(some_key3).unwrap().is_none());
 
         std::fs::remove_file(snapshot_path).expect("delete snapshot file success");
+    }
+
+    mod v2 {
+        use super::*;
+
+        #[test]
+        fn test_with_path_v2() {
+            let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
+            let path = tmpfile.path().to_path_buf();
+            let store = ChiliPepperStoreInnerV2::new_with_path(&path).expect("create db success");
+
+            let pk = Pubkey::from([1_u8; 32]);
+            let some_key = PubkeySlot(&pk, 42);
+            let some_value = 163;
+            store.insert(some_key, some_value).unwrap();
+            assert_eq!(store.len().unwrap(), 1);
+
+            drop(store);
+
+            let store = ChiliPepperStoreInnerV2::open_with_path(&path).expect("open db success");
+            assert_eq!(store.len().unwrap(), 1);
+            assert_eq!(store.get(some_key).unwrap().unwrap(), some_value);
+        }
     }
 }
