@@ -1044,11 +1044,11 @@ dependencies = [
 
 [[package]]
 name = "borsh"
-version = "1.5.3"
+version = "1.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2506947f73ad44e344215ccd6403ac2ae18cd8e046e581a441bf8d199f257f03"
+checksum = "9fb65153674e51d3a42c8f27b05b9508cea85edfaade8aa46bc8fc18cecdfef3"
 dependencies = [
- "borsh-derive 1.5.3",
+ "borsh-derive 1.5.4",
  "cfg_aliases",
 ]
 
@@ -1067,9 +1067,9 @@ dependencies = [
 
 [[package]]
 name = "borsh-derive"
-version = "1.5.3"
+version = "1.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2593a3b8b938bd68373196c9832f516be11fa487ef4ae745eb282e6a56a7244"
+checksum = "a396e17ad94059c650db3d253bb6e25927f1eb462eede7e7a153bb6e75dce0a7"
 dependencies = [
  "once_cell",
  "proc-macro-crate 3.1.0",
@@ -6101,7 +6101,7 @@ dependencies = [
 name = "solana-banks-client"
 version = "2.2.0"
 dependencies = [
- "borsh 1.5.3",
+ "borsh 1.5.4",
  "futures 0.3.31",
  "solana-banks-interface",
  "solana-banks-server",
@@ -6273,7 +6273,7 @@ name = "solana-borsh"
 version = "2.2.0"
 dependencies = [
  "borsh 0.10.3",
- "borsh 1.5.3",
+ "borsh 1.5.4",
 ]
 
 [[package]]
@@ -6792,7 +6792,7 @@ dependencies = [
 name = "solana-compute-budget-interface"
 version = "2.2.0"
 dependencies = [
- "borsh 1.5.3",
+ "borsh 1.5.4",
  "serde",
  "serde_derive",
  "solana-frozen-abi",
@@ -7501,7 +7501,7 @@ dependencies = [
 name = "solana-hash"
 version = "2.2.0"
 dependencies = [
- "borsh 1.5.3",
+ "borsh 1.5.4",
  "bs58",
  "bytemuck",
  "bytemuck_derive",
@@ -7539,7 +7539,7 @@ name = "solana-instruction"
 version = "2.2.0"
 dependencies = [
  "bincode",
- "borsh 1.5.3",
+ "borsh 1.5.4",
  "getrandom 0.2.10",
  "js-sys",
  "num-traits",
@@ -7573,7 +7573,7 @@ dependencies = [
 name = "solana-keccak-hasher"
 version = "2.2.0"
 dependencies = [
- "borsh 1.5.3",
+ "borsh 1.5.4",
  "serde",
  "serde_derive",
  "sha3",
@@ -7867,7 +7867,7 @@ dependencies = [
  "bincode",
  "bitflags 2.7.0",
  "blake3",
- "borsh 1.5.3",
+ "borsh 1.5.4",
  "itertools 0.12.1",
  "lazy_static",
  "serde",
@@ -8205,7 +8205,7 @@ dependencies = [
  "bincode",
  "blake3",
  "borsh 0.10.3",
- "borsh 1.5.3",
+ "borsh 1.5.4",
  "bs58",
  "bytemuck",
  "console_error_panic_hook",
@@ -8286,7 +8286,7 @@ dependencies = [
 name = "solana-program-error"
 version = "2.2.0"
 dependencies = [
- "borsh 1.5.3",
+ "borsh 1.5.4",
  "num-traits",
  "serde",
  "serde_derive",
@@ -8403,7 +8403,7 @@ dependencies = [
  "anyhow",
  "arbitrary",
  "borsh 0.10.3",
- "borsh 1.5.3",
+ "borsh 1.5.4",
  "bs58",
  "bytemuck",
  "bytemuck_derive",
@@ -8941,7 +8941,7 @@ dependencies = [
  "assert_matches",
  "bincode",
  "bitflags 2.7.0",
- "borsh 1.5.3",
+ "borsh 1.5.4",
  "bs58",
  "bytemuck",
  "bytemuck_derive",
@@ -9087,7 +9087,7 @@ name = "solana-secp256k1-recover"
 version = "2.2.0"
 dependencies = [
  "anyhow",
- "borsh 1.5.3",
+ "borsh 1.5.4",
  "libsecp256k1",
  "solana-define-syscall",
  "solana-frozen-abi",
@@ -9173,7 +9173,7 @@ name = "solana-serialize-utils"
 version = "2.2.0"
 dependencies = [
  "bincode",
- "borsh 1.5.3",
+ "borsh 1.5.4",
  "rand 0.8.5",
  "serde",
  "solana-instruction",
@@ -9883,7 +9883,7 @@ version = "2.2.0"
 dependencies = [
  "anyhow",
  "bincode",
- "borsh 1.5.3",
+ "borsh 1.5.4",
  "serde",
  "serde_derive",
  "solana-bincode",
@@ -9999,7 +9999,7 @@ dependencies = [
  "Inflector",
  "base64 0.22.1",
  "bincode",
- "borsh 1.5.3",
+ "borsh 1.5.4",
  "bs58",
  "bytemuck",
  "lazy_static",
@@ -10509,7 +10509,7 @@ version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76fee7d65013667032d499adc3c895e286197a35a0d3a4643c80e7fd3e9969e3"
 dependencies = [
- "borsh 1.5.3",
+ "borsh 1.5.4",
  "num-derive",
  "num-traits",
  "solana-program",
@@ -10613,7 +10613,7 @@ version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "41a7d5950993e1ff2680bd989df298eeb169367fb2f9deeef1f132de6e4e8016"
 dependencies = [
- "borsh 1.5.3",
+ "borsh 1.5.4",
  "bytemuck",
  "bytemuck_derive",
  "num-derive",
@@ -10779,7 +10779,7 @@ version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfb9c89dbc877abd735f05547dcf9e6e12c00c11d6d74d8817506cab4c99fdbb"
 dependencies = [
- "borsh 1.5.3",
+ "borsh 1.5.4",
  "num-derive",
  "num-traits",
  "solana-borsh",
