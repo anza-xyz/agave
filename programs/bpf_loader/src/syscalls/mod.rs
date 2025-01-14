@@ -77,7 +77,7 @@ mod mem_ops;
 mod sysvar;
 
 /// Maximum signers
-pub const MAX_SIGNERS: usize = 16;
+const MAX_SIGNERS: usize = 16;
 
 /// Error definitions
 #[derive(Debug, ThisError, PartialEq, Eq)]
@@ -134,7 +134,7 @@ pub enum SyscallError {
 
 type Error = Box<dyn std::error::Error>;
 
-pub trait HasherImpl {
+trait HasherImpl {
     const NAME: &'static str;
     type Output: AsRef<[u8]>;
 
@@ -146,9 +146,9 @@ pub trait HasherImpl {
     fn get_max_slices(compute_budget: &ComputeBudget) -> u64;
 }
 
-pub struct Sha256Hasher(Hasher);
-pub struct Blake3Hasher(blake3::Hasher);
-pub struct Keccak256Hasher(keccak::Hasher);
+struct Sha256Hasher(Hasher);
+struct Blake3Hasher(blake3::Hasher);
+struct Keccak256Hasher(keccak::Hasher);
 
 impl HasherImpl for Sha256Hasher {
     const NAME: &'static str = "Sha256";
@@ -246,7 +246,7 @@ macro_rules! register_feature_gated_function {
     };
 }
 
-pub fn morph_into_deployment_environment_v1(
+pub(crate) fn morph_into_deployment_environment_v1(
     from: Arc<BuiltinProgram<InvokeContext>>,
 ) -> Result<BuiltinProgram<InvokeContext>, Error> {
     let mut config = from.get_config().clone();
@@ -2257,8 +2257,8 @@ mod tests {
 
     #[allow(dead_code)]
     struct MockSlice {
-        pub vm_addr: u64,
-        pub len: usize,
+        vm_addr: u64,
+        len: usize,
     }
 
     #[test]
@@ -5040,12 +5040,12 @@ mod tests {
         unsafe { slice::from_raw_parts_mut(slice::from_mut(val).as_mut_ptr().cast(), size) }
     }
 
-    pub fn bytes_of_slice<T>(val: &[T]) -> &[u8] {
+    fn bytes_of_slice<T>(val: &[T]) -> &[u8] {
         let size = val.len().wrapping_mul(mem::size_of::<T>());
         unsafe { slice::from_raw_parts(val.as_ptr().cast(), size) }
     }
 
-    pub fn bytes_of_slice_mut<T>(val: &mut [T]) -> &mut [u8] {
+    fn bytes_of_slice_mut<T>(val: &mut [T]) -> &mut [u8] {
         let size = val.len().wrapping_mul(mem::size_of::<T>());
         unsafe { slice::from_raw_parts_mut(val.as_mut_ptr().cast(), size) }
     }

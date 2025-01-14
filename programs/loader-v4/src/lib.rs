@@ -1,6 +1,8 @@
+#[cfg(feature = "svm-internal")]
+use qualifier_attr::qualifiers;
 use {
     solana_bincode::limited_deserialize,
-    solana_bpf_loader_program::{deploy_program, deploy_program_internal, execute},
+    solana_bpf_loader_program::{deploy_program, execute},
     solana_instruction::error::InstructionError,
     solana_log_collector::{ic_logger_msg, LogCollector},
     solana_measure::measure::Measure,
@@ -19,7 +21,8 @@ use {
     std::{cell::RefCell, rc::Rc},
 };
 
-pub const DEFAULT_COMPUTE_UNITS: u64 = 2_000;
+#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
+const DEFAULT_COMPUTE_UNITS: u64 = 2_000;
 
 pub fn get_state(data: &[u8]) -> Result<&LoaderV4State, InstructionError> {
     unsafe {

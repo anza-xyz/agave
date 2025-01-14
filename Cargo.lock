@@ -6285,12 +6285,14 @@ dependencies = [
  "byteorder",
  "criterion",
  "libsecp256k1",
+ "qualifier_attr",
  "rand 0.8.5",
  "scopeguard",
  "solana-account",
  "solana-account-info",
  "solana-bincode",
  "solana-bn254",
+ "solana-bpf-loader-program",
  "solana-clock",
  "solana-compute-budget",
  "solana-cpi",
@@ -6390,9 +6392,11 @@ dependencies = [
  "ahash 0.8.11",
  "lazy_static",
  "log",
+ "qualifier_attr",
  "rand 0.8.5",
  "solana-address-lookup-table-program",
  "solana-bpf-loader-program",
+ "solana-builtins-default-costs",
  "solana-compute-budget-program",
  "solana-config-program",
  "solana-feature-set",
@@ -6806,6 +6810,7 @@ dependencies = [
 name = "solana-compute-budget-program"
 version = "2.2.0"
 dependencies = [
+ "qualifier_attr",
  "solana-program-runtime",
 ]
 
@@ -7739,6 +7744,7 @@ version = "2.2.0"
 dependencies = [
  "bincode",
  "log",
+ "qualifier_attr",
  "solana-account",
  "solana-bincode",
  "solana-bpf-loader-program",

@@ -13,6 +13,7 @@ edition = { workspace = true }
 bincode = { workspace = true }
 byteorder = { workspace = true }
 libsecp256k1 = { workspace = true }
+qualifier_attr = { workspace = true }
 scopeguard = { workspace = true }
 solana-account = { workspace = true }
 solana-account-info = { workspace = true }
@@ -54,6 +55,7 @@ thiserror = { workspace = true }
 assert_matches = { workspace = true }
 criterion = { workspace = true }
 rand = { workspace = true }
+solana-bpf-loader-program = { path = ".", features = ["svm-internal"] }
 solana-epoch-rewards = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-fee-calculator = { workspace = true }
@@ -87,3 +89,4 @@ shuttle-test = [
     "solana-program-runtime/shuttle-test",
     "solana-sbpf/shuttle-test"
 ]
+svm-internal = []
