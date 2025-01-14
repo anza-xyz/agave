@@ -534,8 +534,8 @@ impl LocalCluster {
             let validator_balance = client
                 .rpc_client()
                 .get_balance_with_commitment(&validator_pubkey, CommitmentConfig::processed())
-                .map(|response| response.value)
-                .unwrap_or_default();
+                .expect("received response")
+                .value;
             info!(
                 "validator {} balance {}",
                 validator_pubkey, validator_balance
