@@ -9,7 +9,10 @@ edition = "2021"
 
 [workspace.lints.rust.unexpected_cfgs]
 level = "warn"
-check-cfg = ['cfg(target_os, values("solana"))']
+check-cfg = [
+    'cfg(target_os, values("solana"))',
+    'cfg(feature, values("custom-panic", "custom-heap"))'
+]
 
 [workspace.dependencies]
 array-bytes = "=1.4.1"
