@@ -69,14 +69,6 @@ pub struct BankStart {
 }
 
 impl BankStart {
-    fn get_working_bank_if_not_expired(&self) -> Option<&Bank> {
-        if self.should_working_bank_still_be_processing_txs() {
-            Some(&self.working_bank)
-        } else {
-            None
-        }
-    }
-
     pub fn should_working_bank_still_be_processing_txs(&self) -> bool {
         Bank::should_bank_still_be_processing_txs(
             &self.bank_creation_time,
@@ -1117,16 +1109,6 @@ impl PohRecorder {
         } else {
             PohRecorderBank::LastResetBank(self.start_bank.clone())
         }
-    }
-
-    // Filters the return result of PohRecorder::bank_start(), returns the bank
-    // if it's still processing transactions
-    pub fn get_working_bank_if_not_expired<'a>(
-        bank_start: &Option<&'a BankStart>,
-    ) -> Option<&'a Bank> {
-        bank_start
-            .as_ref()
-            .and_then(|bank_start| bank_start.get_working_bank_if_not_expired())
     }
 
     // Used in tests
