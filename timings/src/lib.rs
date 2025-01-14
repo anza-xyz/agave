@@ -209,7 +209,7 @@ eager_macro_rules! { $eager_1
             ),
             (
                 "num_chili_pepper_loads",
-                $self.metrics.index(ExecuteTimingType::NumCpLoads).0,
+                $self.metrics.index(ExecuteTimingType::NumChiliPepperLoads).0,
                 i64
             ),
             (
