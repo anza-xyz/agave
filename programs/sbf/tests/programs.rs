@@ -111,6 +111,95 @@ fn load_execute_and_commit_transaction(bank: &Bank, tx: Transaction) -> Transact
 }
 
 #[cfg(feature = "sbf_rust")]
+#[allow(unused)] // HANA
+fn execute_transactions(
+    bank: &Bank,
+    txs: Vec<Transaction>,
+) -> Vec<Result<ConfirmedTransactionWithStatusMeta, TransactionError>> {
+    let batch = bank.prepare_batch_for_tests(txs.clone());
+    let mut timings = ExecuteTimings::default();
+    let mut mint_decimals = HashMap::new();
+    let tx_pre_token_balances = collect_token_balances(&bank, &batch, &mut mint_decimals);
+    let (
+        commit_results,
+        TransactionBalancesSet {
+            pre_balances,
+            post_balances,
+            ..
+        },
+    ) = bank.load_execute_and_commit_transactions(
+        &batch,
+        usize::MAX,
+        true,
+        ExecutionRecordingConfig::new_single_setting(true),
+        &mut timings,
+        None,
+    );
+    let tx_post_token_balances = collect_token_balances(&bank, &batch, &mut mint_decimals);
+
+    izip!(
+        txs.iter(),
+        commit_results.into_iter(),
+        pre_balances.into_iter(),
+        post_balances.into_iter(),
+        tx_pre_token_balances.into_iter(),
+        tx_post_token_balances.into_iter(),
+    )
+    .map(
+        |(
+            tx,
+            commit_result,
+            pre_balances,
+            post_balances,
+            pre_token_balances,
+            post_token_balances,
+        )| {
+            commit_result.map(|committed_tx| {
+                let CommittedTransaction {
+                    status,
+                    log_messages,
+                    inner_instructions,
+                    return_data,
+                    executed_units,
+                    fee_details,
+                    ..
+                } = committed_tx;
+
+                let inner_instructions = inner_instructions
+                    .map(|inner_instructions| map_inner_instructions(inner_instructions).collect());
+
+                let tx_status_meta = TransactionStatusMeta {
+                    status,
+                    fee: fee_details.total_fee(),
+                    pre_balances,
+                    post_balances,
+                    pre_token_balances: Some(pre_token_balances),
+                    post_token_balances: Some(post_token_balances),
+                    inner_instructions,
+                    log_messages,
+                    rewards: None,
+                    loaded_addresses: LoadedAddresses::default(),
+                    return_data,
+                    compute_units_consumed: Some(executed_units),
+                };
+
+                ConfirmedTransactionWithStatusMeta {
+                    slot: bank.slot(),
+                    tx_with_meta: TransactionWithStatusMeta::Complete(
+                        VersionedTransactionWithStatusMeta {
+                            transaction: VersionedTransaction::from(tx.clone()),
+                            meta: tx_status_meta,
+                        },
+                    ),
+                    block_time: None,
+                }
+            })
+        },
+    )
+    .collect()
+}
+
+#[cfg(feature = "sbf_rust")]
 const LOADED_ACCOUNTS_DATA_SIZE_LIMIT_FOR_TEST: u32 = 64 * 1024 * 1024;
 
 #[test]
@@ -2218,6 +2307,230 @@ fn test_program_sbf_upgrade_via_cpi() {
         result.unwrap_err().unwrap(),
         TransactionError::InstructionError(0, InstructionError::UnsupportedProgramId)
     );
+
+    // Validate that the programdata was actually overwritten
+    let programdata = bank_client
+        .get_account_data(&programdata_address)
+        .unwrap()
+        .unwrap();
+    assert_ne!(programdata, original_programdata);
+}
+
+#[test]
+#[cfg(feature = "sbf_rust")]
+fn test_program_sbf_set_upgrade_authority_via_cpi() {
+    solana_logger::setup();
+
+    let GenesisConfigInfo {
+        genesis_config,
+        mint_keypair,
+        ..
+    } = create_genesis_config(50);
+
+    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let mut bank_client = BankClient::new_shared(bank);
+    let authority_keypair = Keypair::new();
+
+    // Deploy CPI invoker program
+    let invoke_and_return = load_upgradeable_program_wrapper(
+        &bank_client,
+        &mint_keypair,
+        &authority_keypair,
+        "solana_sbf_rust_invoke_and_return",
+    );
+
+    // Deploy upgradeable program
+    let program_id = load_upgradeable_program_wrapper(
+        &bank_client,
+        &mint_keypair,
+        &authority_keypair,
+        "solana_sbf_rust_upgradeable",
+    );
+
+    bank_client
+        .advance_slot(1, bank_forks.as_ref(), &Pubkey::default())
+        .expect("Failed to advance the slot");
+
+    // Set program upgrade authority instruction to invoke via CPI
+    let new_upgrade_authority_key = Keypair::new().pubkey();
+    let mut set_upgrade_authority_instruction = bpf_loader_upgradeable::set_upgrade_authority(
+        &program_id,
+        &authority_keypair.pubkey(),
+        Some(&new_upgrade_authority_key),
+    );
+
+    // Invoke set_upgrade_authority via CPI invoker program
+    set_upgrade_authority_instruction.program_id = invoke_and_return;
+    set_upgrade_authority_instruction
+        .accounts
+        .insert(0, AccountMeta::new(bpf_loader_upgradeable::id(), false));
+
+    let message = Message::new(
+        &[set_upgrade_authority_instruction],
+        Some(&mint_keypair.pubkey()),
+    );
+    bank_client
+        .send_and_confirm_message(&[&mint_keypair, &authority_keypair], message)
+        .unwrap();
+
+    // Assert upgrade authority was changed
+    let program_account_data = bank_client.get_account_data(&program_id).unwrap().unwrap();
+    let program_account = parse_bpf_upgradeable_loader(&program_account_data).unwrap();
+
+    let upgrade_authority_key = match program_account {
+        BpfUpgradeableLoaderAccountType::Program(ui_program) => {
+            let program_data_account_key = Pubkey::from_str(&ui_program.program_data).unwrap();
+            let program_data_account_data = bank_client
+                .get_account_data(&program_data_account_key)
+                .unwrap()
+                .unwrap();
+            let program_data_account =
+                parse_bpf_upgradeable_loader(&program_data_account_data).unwrap();
+
+            match program_data_account {
+                BpfUpgradeableLoaderAccountType::ProgramData(ui_program_data) => ui_program_data
+                    .authority
+                    .map(|a| Pubkey::from_str(&a).unwrap()),
+                _ => None,
+            }
+        }
+        _ => None,
+    };
+
+    assert_eq!(Some(new_upgrade_authority_key), upgrade_authority_key);
+}
+
+// HANA TODO this one is tricky
+// it expects lock exclusion to prevent an upgrade and invoke from going in the same entry
+// with simd83, upgrade -> invoke correctly prevents execution just like it would... ok no actually the behavior is fine
+// we preserve our essential invariant in both directions: same slot same entry is identical to same slot different entry
+// we might want to delete this test and just test (if it isnt tested already) that upgrade write locks the program id
+// create the upgrade and invoke tx, take locks for one, ensure the other fails, both directions
+// #[test]
+#[cfg(feature = "sbf_rust")]
+fn _test_program_upgradeable_locks() {
+    fn setup_program_upgradeable_locks(
+        payer_keypair: &Keypair,
+        buffer_keypair: &Keypair,
+        program_keypair: &Keypair,
+    ) -> (Arc<Bank>, Arc<RwLock<BankForks>>, Transaction, Transaction) {
+        solana_logger::setup();
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(2_000_000_000);
+        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let mut bank_client = BankClient::new_shared(bank.clone());
+
+        load_upgradeable_program(
+            &bank_client,
+            &mint_keypair,
+            buffer_keypair,
+            program_keypair,
+            payer_keypair,
+            "solana_sbf_rust_panic",
+        );
+
+        // Load the buffer account
+        load_upgradeable_buffer(
+            &bank_client,
+            &mint_keypair,
+            buffer_keypair,
+            &payer_keypair,
+            "solana_sbf_rust_noop",
+        );
+
+        let bank = bank_client
+            .advance_slot(1, bank_forks.as_ref(), &Pubkey::default())
+            .expect("Failed to advance the slot");
+
+        bank_client
+            .send_and_confirm_instruction(
+                &mint_keypair,
+                system_instruction::transfer(
+                    &mint_keypair.pubkey(),
+                    &payer_keypair.pubkey(),
+                    1_000_000_000,
+                ),
+            )
+            .unwrap();
+
+        let invoke_tx = Transaction::new(
+            &[payer_keypair],
+            Message::new(
+                &[Instruction::new_with_bytes(
+                    program_keypair.pubkey(),
+                    &[0; 0],
+                    vec![],
+                )],
+                Some(&payer_keypair.pubkey()),
+            ),
+            bank.last_blockhash(),
+        );
+        let upgrade_tx = Transaction::new(
+            &[payer_keypair],
+            Message::new(
+                &[bpf_loader_upgradeable::upgrade(
+                    &program_keypair.pubkey(),
+                    &buffer_keypair.pubkey(),
+                    &payer_keypair.pubkey(),
+                    &payer_keypair.pubkey(),
+                )],
+                Some(&payer_keypair.pubkey()),
+            ),
+            bank.last_blockhash(),
+        );
+
+        (bank, bank_forks, invoke_tx, upgrade_tx)
+    }
+
+    let payer_keypair = keypair_from_seed(&[56u8; 32]).unwrap();
+    let buffer_keypair = keypair_from_seed(&[11; 32]).unwrap();
+    let program_keypair = keypair_from_seed(&[77u8; 32]).unwrap();
+
+    let results1 = {
+        let (bank, _bank_forks, invoke_tx, upgrade_tx) =
+            setup_program_upgradeable_locks(&payer_keypair, &buffer_keypair, &program_keypair);
+        execute_transactions(&bank, vec![upgrade_tx, invoke_tx])
+    };
+
+    let results2 = {
+        let (bank, _bank_forks, invoke_tx, upgrade_tx) =
+            setup_program_upgradeable_locks(&payer_keypair, &buffer_keypair, &program_keypair);
+        execute_transactions(&bank, vec![invoke_tx, upgrade_tx])
+    };
+
+    assert!(matches!(
+        results1[0],
+        Ok(ConfirmedTransactionWithStatusMeta {
+            tx_with_meta: TransactionWithStatusMeta::Complete(VersionedTransactionWithStatusMeta {
+                meta: TransactionStatusMeta { status: Ok(()), .. },
+                ..
+            }),
+            ..
+        })
+    ));
+    assert_eq!(results1[1], Err(TransactionError::AccountInUse));
+
+    assert!(matches!(
+        results2[0],
+        Ok(ConfirmedTransactionWithStatusMeta {
+            tx_with_meta: TransactionWithStatusMeta::Complete(VersionedTransactionWithStatusMeta {
+                meta: TransactionStatusMeta {
+                    status: Err(TransactionError::InstructionError(
+                        0,
+                        InstructionError::ProgramFailedToComplete
+                    )),
+                    ..
+                },
+                ..
+            }),
+            ..
+        })
+    ));
+    assert_eq!(results2[1], Err(TransactionError::AccountInUse));
 }
 
 #[test]
