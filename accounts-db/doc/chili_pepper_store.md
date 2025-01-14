@@ -117,7 +117,7 @@ pub trait ChiliPepperStore {
 
     pub fn bulk_remove(&self, keys: Vec<PubkeySlot>) -> Result<(), Error>;
 
-    pub fn clean(&self, threshold: u64) -> Result<(), Error>;
+    pub fn clean(&self, clean_root: Slot, threshold_slot: Slot) -> Result<(), Error>;
 
     pub fn snapshot(&self, savepoint_id: u64, snapshot_path: imp AsRef<Path>) -> Result<(), Error>;
 }
@@ -132,15 +132,52 @@ The account's chili pepper are updated when the transaction are committed.
 
 When account's db clean runs, we will clean chili pepper store as well.
 
-We set the threshold to the max clean block's chili pepper offset by the chili
+[TODO]
+
+- [x] chili pepper clean
+Chili pepper store uses its own clean process. Note that chili pepper's clean
+process is separated from the regular accounts-db cleaning process. Regular
+accounts db cleaning process is driven by the accounts-index and write cache
+flush. In other words, regular accounts-db cleaning is driven by account's
+write. However, chili-pepper cleaning is driven by accounts read. Therefore, it
+has its own cleaning process.
+
+Since we are using an actual key-value db to store chili pepper. We don't need
+to have shrink or pack. DB will take care of it.
+
+We set the threshold slot to the max clean block's chili pepper offset by the chili
 pepper window size. And remove entry's with chili peppers below the threshold,
 to keep only the hot accounts.
+
+- [ ] chili pepper store
+    - [x] chili pepper clock on bank
+    - [x] store chili pepper on tx commit
+    - [ ] chili pepper load bytes update on store (svm: load_transaction_accounts)
+        - need expert in tx processing to check
+    - [ ] make store no blocking
+
+- [ ] Redesign the table to pubkey: ([slot, chilipepper])
+    - old design (pubkey, slot) -> chilipepper
+    - pros
+        - save pubkey space
+        - save number of load tx
+    - cons
+        - clean is more expensive (load all list and writes). The other one is just delete.
+
+- [ ] check chili pepper and fail block if chilipepper exceeds the limits
 
 ## Snapshot
 
 * Create savepoint at Snapshot time (SavePoint Manager)
 * Generate backup snapshot db file from the savepoints
 * Archive the snapshot db in the snapshot tar ball.
+
+We also use the checkpoint function in DB for taking snapshot.
+
+```
+pub fn snapshot(&self, savepoint_id: u64, snapshot_path: imp AsRef<Path>) -> Result<(), Error>;
+```
+
 
 ## On Restart
 
