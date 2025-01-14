@@ -6,7 +6,6 @@
 
 use {
     bincode::{deserialize, serialize, serialized_size},
-    byteorder::{ByteOrder, LittleEndian},
     crossbeam_channel::{unbounded, Sender},
     log::*,
     serde_derive::{Deserialize, Serialize},
@@ -252,8 +251,8 @@ impl Faucet {
                 };
                 let response_vec = bincode::serialize(&tx)?;
 
-                let mut response_vec_with_length = vec![0; 2];
-                LittleEndian::write_u16(&mut response_vec_with_length, response_vec.len() as u16);
+                let mut response_vec_with_length =
+                    (response_vec.len() as u16).to_le_bytes().to_vec();
                 response_vec_with_length.extend_from_slice(&response_vec);
 
                 Ok(response_vec_with_length)
@@ -302,7 +301,7 @@ pub fn request_airdrop_transaction(
         );
         err
     })?;
-    let transaction_length = LittleEndian::read_u16(&buffer) as usize;
+    let transaction_length = u16::from_le_bytes(buffer) as usize;
     if transaction_length > PACKET_DATA_SIZE {
         return Err(FaucetError::TransactionDataTooLarge(transaction_length));
     } else if transaction_length == 0 {
@@ -663,8 +662,7 @@ mod tests {
         let message = Message::new(&[expected_instruction], Some(&keypair.pubkey()));
         let expected_tx = Transaction::new(&[&keypair], message, blockhash);
         let expected_bytes = serialize(&expected_tx).unwrap();
-        let mut expected_vec_with_length = vec![0; 2];
-        LittleEndian::write_u16(&mut expected_vec_with_length, expected_bytes.len() as u16);
+        let mut expected_vec_with_length = (expected_bytes.len() as u16).to_le_bytes().to_vec();
         expected_vec_with_length.extend_from_slice(&expected_bytes);
 
         let mut faucet = Faucet::new(keypair, None, None, None);

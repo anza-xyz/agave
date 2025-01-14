@@ -10,7 +10,6 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
-byteorder = { workspace = true }
 solana-hard-forks = { workspace = true }
 solana-hash = { workspace = true }
 solana-sha256-hasher = { workspace = true }

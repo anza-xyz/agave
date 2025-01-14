@@ -21,7 +21,6 @@ default = [
     "full",  # functionality that is not compatible or needed for on-chain programs
 ]
 full = [
-    "byteorder",
     "rand",
     "rand0-7",
     "serde_json",
@@ -98,7 +97,6 @@ borsh = { workspace = true, optional = true }
 bs58 = { workspace = true }
 bytemuck = { workspace = true }
 bytemuck_derive = { workspace = true }
-byteorder = { workspace = true, optional = true }
 curve25519-dalek = { workspace = true, optional = true }
 digest = { workspace = true, optional = true }
 ed25519-dalek = { workspace = true, optional = true }

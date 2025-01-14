@@ -1,7 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
-    byteorder::{ByteOrder, LittleEndian},
     solana_instruction::error::InstructionError,
     solana_program_entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, NON_DUP_MARKER},
     solana_program_runtime::invoke_context::SerializedAccountMetadata,
@@ -379,11 +378,12 @@ fn deserialize_parameters_unaligned<I: IntoIterator<Item = usize>>(
             start += size_of::<u8>(); // is_signer
             start += size_of::<u8>(); // is_writable
             start += size_of::<Pubkey>(); // key
-            let lamports = LittleEndian::read_u64(
-                buffer
-                    .get(start..)
-                    .ok_or(InstructionError::InvalidArgument)?,
-            );
+            let lamports = buffer
+                .get(start..start.saturating_add(8))
+                .map(<[u8; 8]>::try_from)
+                .and_then(Result::ok)
+                .map(u64::from_le_bytes)
+                .ok_or(InstructionError::InvalidArgument)?;
             if borrowed_account.get_lamports() != lamports {
                 borrowed_account.set_lamports(lamports)?;
             }
@@ -527,20 +527,22 @@ fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
                 .get(start..start + size_of::<Pubkey>())
                 .ok_or(InstructionError::InvalidArgument)?;
             start += size_of::<Pubkey>(); // owner
-            let lamports = LittleEndian::read_u64(
-                buffer
-                    .get(start..)
-                    .ok_or(InstructionError::InvalidArgument)?,
-            );
+            let lamports = buffer
+                .get(start..start.saturating_add(8))
+                .map(<[u8; 8]>::try_from)
+                .and_then(Result::ok)
+                .map(u64::from_le_bytes)
+                .ok_or(InstructionError::InvalidArgument)?;
             if borrowed_account.get_lamports() != lamports {
                 borrowed_account.set_lamports(lamports)?;
             }
             start += size_of::<u64>(); // lamports
-            let post_len = LittleEndian::read_u64(
-                buffer
-                    .get(start..)
-                    .ok_or(InstructionError::InvalidArgument)?,
-            ) as usize;
+            let post_len = buffer
+                .get(start..start.saturating_add(8))
+                .map(<[u8; 8]>::try_from)
+                .and_then(Result::ok)
+                .map(u64::from_le_bytes)
+                .ok_or(InstructionError::InvalidArgument)? as usize;
             start += size_of::<u64>(); // data length
             if post_len.saturating_sub(pre_len) > MAX_PERMITTED_DATA_INCREASE
                 || post_len > MAX_PERMITTED_DATA_LENGTH as usize
