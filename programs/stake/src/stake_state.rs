@@ -14,11 +14,14 @@ use {
     solana_feature_set::FeatureSet,
     solana_instruction::error::InstructionError,
     solana_log_collector::ic_msg,
-    solana_program::stake::{
-        instruction::{LockupArgs, StakeError},
-        program::id,
-        stake_flags::StakeFlags,
-        tools::{acceptable_reference_epoch_credits, eligible_for_deactivate_delinquent},
+    solana_program::{
+        stake::{
+            instruction::{LockupArgs, StakeError},
+            program::id,
+            stake_flags::StakeFlags,
+            tools::{acceptable_reference_epoch_credits, eligible_for_deactivate_delinquent},
+        },
+        vote::state::{VoteState, VoteStateVersions},
     },
     solana_program_runtime::invoke_context::InvokeContext,
     solana_pubkey::Pubkey,
@@ -27,7 +30,6 @@ use {
     solana_transaction_context::{
         BorrowedAccount, IndexOfAccount, InstructionContext, TransactionContext,
     },
-    solana_vote_program::vote_state::{self, VoteState, VoteStateVersions},
     std::{collections::HashSet, convert::TryFrom},
 };
 
@@ -321,7 +323,7 @@ pub fn delegate(
 ) -> Result<(), InstructionError> {
     let vote_account = instruction_context
         .try_borrow_instruction_account(transaction_context, vote_account_index)?;
-    if *vote_account.get_owner() != solana_vote_program::id() {
+    if *vote_account.get_owner() != solana_sdk_ids::vote::id() {
         return Err(InstructionError::IncorrectProgramId);
     }
     let vote_pubkey = *vote_account.get_key();
@@ -915,7 +917,7 @@ pub(crate) fn deactivate_delinquent(
     )?;
     let delinquent_vote_account = instruction_context
         .try_borrow_instruction_account(transaction_context, delinquent_vote_account_index)?;
-    if *delinquent_vote_account.get_owner() != solana_vote_program::id() {
+    if *delinquent_vote_account.get_owner() != solana_sdk_ids::vote::id() {
         return Err(InstructionError::IncorrectProgramId);
     }
     let delinquent_vote_state = delinquent_vote_account
@@ -924,7 +926,7 @@ pub(crate) fn deactivate_delinquent(
 
     let reference_vote_account = instruction_context
         .try_borrow_instruction_account(transaction_context, reference_vote_account_index)?;
-    if *reference_vote_account.get_owner() != solana_vote_program::id() {
+    if *reference_vote_account.get_owner() != solana_sdk_ids::vote::id() {
         return Err(InstructionError::IncorrectProgramId);
     }
     let reference_vote_state = reference_vote_account
@@ -1419,7 +1421,7 @@ fn do_create_account(
 ) -> AccountSharedData {
     let mut stake_account = AccountSharedData::new(lamports, StakeStateV2::size_of(), &id());
 
-    let vote_state = vote_state::from(vote_account).expect("vote_state");
+    let vote_state = VoteState::deserialize(vote_account.data()).expect("vote_state");
 
     let rent_exempt_reserve = rent.minimum_balance(stake_account.data().len());
 

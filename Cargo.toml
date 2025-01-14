@@ -614,7 +614,7 @@ solana-short-vec = { path = "sdk/short-vec", version = "=2.2.0" }
 solana-shred-version = { path = "sdk/shred-version", version = "=2.2.0" }
 solana-stable-layout = { path = "sdk/stable-layout", version = "=2.2.0" }
 solana-stake-interface = { version = "1.2.1" }
-solana-stake-program = { path = "programs/stake", version = "=2.2.0", default-features = false }
+solana-stake-program = { path = "programs/stake", version = "=2.2.0" }
 solana-storage-bigtable = { path = "storage-bigtable", version = "=2.2.0" }
 solana-storage-proto = { path = "storage-proto", version = "=2.2.0" }
 solana-streamer = { path = "streamer", version = "=2.2.0" }

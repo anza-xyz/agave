@@ -30,7 +30,6 @@ solana-sdk-ids = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-type-overrides = { workspace = true }
-solana-vote-program = { workspace = true, default-features = false }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
@@ -41,11 +40,8 @@ solana-epoch-rewards = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-logger = { workspace = true }
 solana-sysvar-id = { workspace = true }
+solana-vote-program = { workspace = true, default-features = false }
 test-case = { workspace = true }
-
-[features]
-default = ["metrics"]
-metrics = ["solana-vote-program/metrics"]
 
 [lib]
 crate-type = ["lib"]
