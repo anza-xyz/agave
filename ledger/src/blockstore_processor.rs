@@ -187,6 +187,7 @@ pub fn execute_batch<'a>(
             None => {
                 get_first_error(batch, processing_results)?;
                 check_block_cost_limits_if_enabled(batch, bank, timings, processing_results)?;
+                // TODO: add chili-pepper block checker here!
                 Ok(None)
             }
             Some(extra_pre_commit_callback) => {

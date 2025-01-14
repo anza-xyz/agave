@@ -60,6 +60,8 @@ pub enum ExecuteTimingType {
     CheckBlockLimitsUs,
     FilterExecutableUs,
     CheckChiliPepperUs,
+    NumChiliPepperLoads,
+    UpdateChiliPeppersUs,
 }
 
 pub struct Metrics([Saturating<u64>; ExecuteTimingType::CARDINALITY]);
@@ -203,6 +205,16 @@ eager_macro_rules! { $eager_1
             (
                 "check_chili_pepper_us",
                 $self.metrics.index(ExecuteTimingType::CheckChiliPepperUs).0,
+                i64
+            ),
+            (
+                "num_chili_pepper_loads",
+                $self.metrics.index(ExecuteTimingType::NumCpLoads).0,
+                i64
+            ),
+            (
+                "update_chili_peppers_us",
+                $self.metrics.index(ExecuteTimingType::UpdateChiliPeppersUs).0,
                 i64
             ),
             (

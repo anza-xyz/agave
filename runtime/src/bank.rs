@@ -588,7 +588,7 @@ impl PartialEq for Bank {
             cache_for_accounts_lt_hash: _,
             stats_for_accounts_lt_hash: _,
             block_id,
-            loaded_account_chili_peppers: _,
+            chili_pepper_clock: _,
             bank_hash_stats: _,
             // Ignore new fields explicitly if they do not impact PartialEq.
             // Adding ".." will remove compile-time checks that if a new field
@@ -947,8 +947,8 @@ pub struct Bank {
     /// until bankless leader. Can be computed directly from shreds without needing to execute transactions.
     block_id: RwLock<Option<Hash>>,
 
-    /// The set of accounts that have been read during the current slot with corresponding chili peppers
-    loaded_account_chili_peppers: RwLock<HashMap<Pubkey, Option<u64>>>,
+    /// TODO: replace it with sysvar
+    chili_pepper_clock: AtomicU64,
 
     /// Accounts stats for computing the bank hash
     bank_hash_stats: AtomicBankHashStats,
@@ -1151,7 +1151,7 @@ impl Bank {
             cache_for_accounts_lt_hash: DashMap::default(),
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
-            loaded_account_chili_peppers: RwLock::new(HashMap::new()),
+            chili_pepper_clock: AtomicU64::default(),
             bank_hash_stats: AtomicBankHashStats::default(),
         };
 
@@ -1408,7 +1408,7 @@ impl Bank {
             cache_for_accounts_lt_hash: DashMap::default(),
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
-            loaded_account_chili_peppers: RwLock::new(HashMap::new()),
+            chili_pepper_clock: AtomicU64::new(parent.chili_pepper_clock.load(Relaxed)),
             bank_hash_stats: AtomicBankHashStats::default(),
         };
 
@@ -1808,7 +1808,7 @@ impl Bank {
             cache_for_accounts_lt_hash: DashMap::default(),
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
-            loaded_account_chili_peppers: RwLock::new(HashMap::new()),
+            chili_pepper_clock: AtomicU64::default(),
             bank_hash_stats: AtomicBankHashStats::new(&fields.bank_hash_stats),
         };
 
@@ -2645,11 +2645,6 @@ impl Bank {
             }
 
             *hash = self.hash_internal_state();
-
-            if self.is_accounts_chili_pepper_enabled() {
-                self.update_accounts_chili_pepper();
-            }
-
             self.rc.accounts.accounts_db.mark_slot_frozen(self.slot());
         }
     }
@@ -3369,32 +3364,41 @@ impl Bank {
         balances
     }
 
-    fn check_chili_pepper<T>(&self, txs: &[impl TransactionWithMeta], check_results: &[Result<T>]) {
+    fn check_chili_pepper<T>(
+        &self,
+        txs: &[impl TransactionWithMeta],
+        check_results: &[Result<T>],
+    ) -> u64 {
         // TODO: optimize this function
         // This function is very slow!!!
+        // TODO: move the check to tx precheck callback; fail the whole block if the check failed.
+        let mut num_cp_loads = 0_u64;
         if self.is_accounts_chili_pepper_enabled() {
             let slot = self.slot();
-            let mut result = HashMap::new();
+
             check_results.iter().zip(txs).for_each(|etx| {
                 if let (Ok(_), tx) = etx {
                     tx.account_keys().iter().for_each(|key| {
+                        num_cp_loads += 1;
                         let chili_pepper = self
                             .rc
                             .accounts
                             .accounts_db
                             .loaded_account_chili_peppers(&self.ancestors, key);
-                        // info!("load chili_pepper {} {} {:?}", slot, key, chili_pepper);
-                        result.insert(*key, chili_pepper);
+
+                        if num_cp_loads % 100 == 0 {
+                            info!(
+                                "sample load chili_pepper {} {} {:?}",
+                                slot, key, chili_pepper
+                            );
+                        }
                     });
                     // TODO: fail transaction if chili_pepper is below what is specified in the transaction.
                     // In the future, we will fail the whole block if we exceeded the chili_pepper limit.
                 }
             });
-            self.loaded_account_chili_peppers
-                .write()
-                .unwrap()
-                .extend(result.into_iter().map(|(k, v)| (k, v.map(|v| v.1))));
         }
+        num_cp_loads
     }
 
     pub fn load_and_execute_transactions(
@@ -3415,10 +3419,11 @@ impl Bank {
         ));
         timings.saturating_add_in_place(ExecuteTimingType::CheckUs, check_us);
 
-        let (_, check_chili_pepper_us) =
+        let (num_cp_loads, check_chili_pepper_us) =
             measure_us!(self.check_chili_pepper(sanitized_txs, &check_results[..]));
         timings
             .saturating_add_in_place(ExecuteTimingType::CheckChiliPepperUs, check_chili_pepper_us);
+        timings.saturating_add_in_place(ExecuteTimingType::NumChiliPepperLoads, num_cp_loads);
 
         let (blockhash, blockhash_lamports_per_signature) =
             self.last_blockhash_and_lamports_per_signature();
@@ -3763,8 +3768,6 @@ impl Bank {
                 &processing_results,
             );
 
-            // move the chili pepper update here??
-
             let to_store = (self.slot(), accounts_to_store.as_slice());
             self.update_bank_hash_stats(&to_store);
             self.rc
@@ -3818,6 +3821,20 @@ impl Bank {
         } else {
             self.filter_program_errors_and_collect_fee(&processing_results)
         };
+
+        if self.is_accounts_chili_pepper_enabled() {
+            let (_, update_chili_pepper_us) =
+                measure_us!(self.update_accounts_chili_pepper(&processing_results));
+
+            info!(
+                "Update chilipepper: {} {update_chili_pepper_us}us",
+                self.slot()
+            );
+            timings.saturating_add_in_place(
+                ExecuteTimingType::UpdateChiliPeppersUs,
+                update_chili_pepper_us,
+            );
+        }
 
         timings.saturating_add_in_place(ExecuteTimingType::StoreUs, store_accounts_us);
         timings.saturating_add_in_place(
@@ -6874,21 +6891,35 @@ impl Bank {
             .is_accounts_chili_pepper_enabled()
     }
 
-    pub fn update_accounts_chili_pepper(&self) {
+    pub fn update_accounts_chili_pepper(&self, processing_results: &[TransactionProcessingResult]) {
         debug_assert!(self.is_accounts_chili_pepper_enabled());
         let slot = self.slot();
+        let mut pubkeys: HashSet<Pubkey> = HashSet::new();
 
-        // Fake the current chili pepper clock for each pubkey for test
-        let current_chili_pepper_clock = slot * BLOCK_CHILI_PEPPER_LIMIT;
+        processing_results.iter().for_each(|processing_result| {
+            if let Ok(processed_tx) = processing_result {
+                match processed_tx {
+                    ProcessedTransaction::Executed(executed_tx) => {
+                        let LoadedTransaction {
+                            accounts: loaded_accounts,
+                            ..
+                        } = &executed_tx.loaded_transaction;
+                        for (pubkey, _) in loaded_accounts.iter() {
+                            pubkeys.insert(*pubkey);
+                        }
+                    }
+                    ProcessedTransaction::FeesOnly(_fees_only_tx) => {
+                        // TODO: ignore for now
+                    }
+                }
+            }
+        });
+
+        // Fake the current chili pepper clock for each pubkey for now
+        self.chili_pepper_clock
+            .fetch_add(BLOCK_CHILI_PEPPER_LIMIT, AcqRel);
+
         let (sender, receiver) = crossbeam_channel::bounded(1);
-
-        let pubkeys: Vec<_> = self
-            .loaded_account_chili_peppers
-            .write()
-            .unwrap()
-            .keys()
-            .cloned()
-            .collect();
 
         info!(
             "insert chili_pepper for slot: {}, pubkeys: {}",
@@ -6898,10 +6929,13 @@ impl Bank {
 
         self.rc.accounts.accounts_db.insert_chili_peppers(
             slot,
-            pubkeys,
-            current_chili_pepper_clock,
+            pubkeys.into_iter().collect(),
+            self.chili_pepper_clock.load(Acquire),
             sender,
         );
+
+        // TODO: blocking??? introduce write cache for this to avoid blocking?
+        // need to add logic for look up in write cache first when loading???
         receiver.recv().unwrap();
     }
 }
