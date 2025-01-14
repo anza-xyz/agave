@@ -1,5 +1,5 @@
 use {
-    super::chili_pepper_store::{ChiliPepperStoreInner, PubkeySlot},
+    super::chili_pepper_store::{ChiliPepperStoreWrapper, PubkeySlot},
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
     log::{debug, info},
     solana_measure::measure_us,
@@ -35,7 +35,7 @@ pub struct ChiliPepperStat {
 }
 
 impl ChiliPepperStat {
-    fn report(&mut self, store: &ChiliPepperStoreInner, channel_len: usize) {
+    fn report(&mut self, store: &ChiliPepperStoreWrapper, channel_len: usize) {
         if self.last_report.should_update(1000) {
             self.len = store.len().unwrap_or(0);
             self.bytes = match store.stat() {
@@ -72,7 +72,7 @@ pub(super) struct ChiliPepperMutatorThread {
 impl ChiliPepperMutatorThread {
     pub fn new(
         receiver: Receiver<ChiliPepperMutatorThreadCommand>,
-        store: Arc<ChiliPepperStoreInner>,
+        store: Arc<ChiliPepperStoreWrapper>,
         exit: Arc<AtomicBool>,
     ) -> Self {
         info!("ChiliPepperMutatorThread: started");
@@ -180,7 +180,7 @@ mod test {
         let (sender, receiver) = unbounded();
         let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
         let store = Arc::new(
-            ChiliPepperStoreInner::new_with_path(tmpfile.path()).expect("create db success"),
+            ChiliPepperStoreWrapper::new_with_path(tmpfile.path()).expect("create db success"),
         );
         let exit = Arc::new(AtomicBool::new(false));
         let mutator_thread = ChiliPepperMutatorThread::new(receiver, store.clone(), exit.clone());
@@ -243,7 +243,8 @@ mod test {
         sender.send(snapshot_cmd).unwrap();
         thread::sleep(Duration::from_millis(1000));
 
-        let store2 = Arc::new(ChiliPepperStoreInner::new_with_path(snapshot_path.clone()).unwrap());
+        let store2 =
+            Arc::new(ChiliPepperStoreWrapper::new_with_path(snapshot_path.clone()).unwrap());
         assert_eq!(store2.len().unwrap(), 10);
         std::fs::remove_file(&snapshot_path).unwrap();
 

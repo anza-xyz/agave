@@ -163,6 +163,9 @@ to keep only the hot accounts.
         - save number of load tx
     - cons
         - clean is more expensive (load all list and writes). The other one is just delete.
+        - serialization vec cost
+        - variable size cost
+        - insert is slower
 
 - [ ] check chili pepper and fail block if chilipepper exceeds the limits
 

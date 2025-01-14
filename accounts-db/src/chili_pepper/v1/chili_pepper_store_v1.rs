@@ -81,126 +81,15 @@ impl<'a> Key for PubkeySlot<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub struct DBPubkey<'a>(&'a Pubkey);
-
-impl<'a> Value for DBPubkey<'a> {
-    type SelfType<'b> = DBPubkey<'b>
-    where
-        Self: 'b;
-    type AsBytes<'b> = Vec<u8>
-    where
-        Self: 'b;
-
-    fn fixed_width() -> Option<usize> {
-        Some(32)
-    }
-
-    fn from_bytes<'b>(data: &'b [u8]) -> DBPubkey<'b>
-    where
-        Self: 'b,
-    {
-        let pubkey = bytemuck::from_bytes::<Pubkey>(data);
-        DBPubkey(&pubkey)
-    }
-
-    fn as_bytes<'b, 'c: 'b>(value: &'b Self::SelfType<'c>) -> Vec<u8>
-    where
-        Self: 'c,
-    {
-        let mut result = Vec::with_capacity(32);
-        result.extend_from_slice(value.0.as_ref());
-        result
-    }
-
-    fn type_name() -> TypeName {
-        TypeName::new(&format!("Pubkey"))
-    }
-}
-
-impl<'a> Key for DBPubkey<'a> {
-    fn compare(data1: &[u8], data2: &[u8]) -> Ordering {
-        data1.cmp(data2)
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct DBSlotList {
-    list: Vec<(Slot, u64)>,
-}
-
-impl Value for DBSlotList {
-    type SelfType<'b> = DBSlotList
-        where Self: 'b;
-    type AsBytes<'b> = Vec<u8>
-        where Self: 'b;
-
-    fn fixed_width() -> Option<usize> {
-        None
-    }
-
-    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
-    where
-        Self: 'a,
-    {
-        let mut list =
-            Vec::with_capacity(data.len() / (mem::size_of::<Slot>() + mem::size_of::<u64>()));
-        let mut data = data;
-        while !data.is_empty() {
-            let (slot_data, value_data) = data.split_at(mem::size_of::<Slot>());
-            let slot = u64::from_le_bytes(slot_data.try_into().unwrap());
-            let value = u64::from_le_bytes(value_data.try_into().unwrap());
-            list.push((slot, value));
-            data = &data[mem::size_of::<Slot>() + mem::size_of::<u64>()..];
-        }
-        DBSlotList { list }
-    }
-
-    fn as_bytes<'b, 'c: 'b>(value: &'b Self::SelfType<'c>) -> Vec<u8> {
-        let mut result =
-            Vec::with_capacity(value.list.len() * (mem::size_of::<Slot>() + mem::size_of::<u64>()));
-        for (slot, value) in value.list.iter() {
-            result.extend_from_slice(&slot.to_le_bytes());
-            result.extend_from_slice(&value.to_le_bytes());
-        }
-        result
-    }
-
-    fn type_name() -> TypeName {
-        TypeName::new(&format!("SlotList"))
-    }
-}
-
-trait ChiliPepperStoreTrait {
-    fn get(&self, key: PubkeySlot) -> Result<Option<u64>, Error>;
-    fn get_all_for_pubkey(&self, pubkey: &Pubkey) -> Result<Vec<(Slot, u64)>, Error>;
-    fn load_for_pubkey_with_ancestors(
-        &self,
-        pubkey: &Pubkey,
-        ancestors: Vec<Slot>,
-    ) -> Result<Option<(Slot, u64)>, Error>;
-    fn bulk_get_for_pubkeys<'a, I>(&self, pubkeys: I) -> Result<Vec<Vec<(Slot, u64)>>, Error>
-    where
-        I: IntoIterator<Item = &'a Pubkey>;
-    fn insert(&self, key: PubkeySlot, value: u64) -> Result<(), Error>;
-    fn remove(&self, key: PubkeySlot) -> Result<(), Error>;
-    fn bulk_insert<'a, I>(&self, data: I) -> Result<(), Error>
-    where
-        I: IntoIterator<Item = (PubkeySlot<'a>, u64)>;
-    fn bulk_remove<'a, I>(&self, keys: I) -> Result<(), Error>
-    where
-        I: IntoIterator<Item = PubkeySlot<'a>>;
-    fn clean(&self, clean_slot: Slot, threshold_slot: u64) -> Result<(), Error>;
-    fn create_savepoint(&self) -> Result<u64, Error>;
-    fn remove_savepoint(&self, savepoint_id: u64) -> Result<bool, Error>;
-    fn restore_savepoint(&self, savepoint_id: u64) -> Result<(), Error>;
-    fn snapshot(&self, savepoint_id: u64, snapshot_path: impl AsRef<Path>) -> Result<(), Error>;
-    fn add_dead_slot(&self, slot: Slot);
-    fn add_uncleaned_pubkey(&self, pubkey: Pubkey);
-}
-
 const TABLE: TableDefinition<PubkeySlot, u64> = TableDefinition::new("chili_pepper");
-const TABLE_V2: TableDefinition<DBPubkey, DBSlotList> = TableDefinition::new("chili_pepper_v2");
+
+#[derive(Debug)]
+pub struct ChiliPepperStoreWrapper {
+    db: Database,
+    path: PathBuf,
+    dead_slots: Mutex<HashSet<Slot>>,
+    uncleaned_pubkeys: Mutex<HashSet<Pubkey>>,
+}
 
 /// The amount of memory to use for the cache, in bytes.
 /// 90% is used for the read cache, and 10% is used for the write cache.
@@ -210,15 +99,7 @@ const DEFAULT_CACHE_SIZE: usize = 10 * 1024 * 1024 * 1024; // 10GB for validator
 #[cfg(test)]
 const DEFAULT_CACHE_SIZE: usize = 1024 * 1024; // 1MB for test
 
-#[derive(Debug)]
-pub struct ChiliPepperStoreInner {
-    db: Database,
-    path: PathBuf,
-    dead_slots: Mutex<HashSet<Slot>>,
-    uncleaned_pubkeys: Mutex<HashSet<Pubkey>>,
-}
-
-impl ChiliPepperStoreInner {
+impl ChiliPepperStoreWrapper {
     pub fn new_with_path(path: impl AsRef<Path>) -> Result<Self, Error> {
         let db = Database::builder()
             .set_cache_size(1024 * 1024)
@@ -361,6 +242,10 @@ impl ChiliPepperStoreInner {
         {
             let mut table = write_txn.open_table::<PubkeySlot, u64>(TABLE)?;
             table.insert(key, value)?;
+        }
+        {
+            let mut table = write_txn.open_table::<PubkeySlot, u64>(TABLE)?;
+            table.insert(key, value.borrow())?;
         }
         write_txn.commit().map_err(Error::from)
     }
@@ -516,304 +401,8 @@ impl ChiliPepperStoreInner {
 }
 
 #[derive(Debug)]
-pub struct ChiliPepperStoreInnerV2 {
-    db: Database,
-    path: PathBuf,
-    dead_slots: Mutex<HashSet<Slot>>,
-    uncleaned_pubkeys: Mutex<HashSet<Pubkey>>,
-}
-
-impl ChiliPepperStoreInnerV2 {
-    pub fn new_with_path(path: impl AsRef<Path>) -> Result<Self, Error> {
-        let db = Database::builder()
-            .set_cache_size(1024 * 1024)
-            .create(path.as_ref())
-            .unwrap();
-
-        // Only for testing. This doesn't support snapshots.
-        // let db = Database::builder()
-        //     .create_with_backend(InMemoryBackend::new())
-        //     .unwrap();
-
-        Ok(Self {
-            db,
-            path: path.as_ref().to_path_buf(),
-            dead_slots: Mutex::new(HashSet::new()),
-            uncleaned_pubkeys: Mutex::new(HashSet::new()),
-        })
-    }
-
-    pub fn open_with_path(path: impl AsRef<Path>) -> Result<Self, Error> {
-        let db = Database::open(path.as_ref())?;
-        Ok(Self {
-            db,
-            path: path.as_ref().to_path_buf(),
-            dead_slots: Mutex::new(HashSet::new()),
-            uncleaned_pubkeys: Mutex::new(HashSet::new()),
-        })
-    }
-
-    pub fn new(db: Database) -> Self {
-        Self {
-            db,
-            path: PathBuf::new(),
-            dead_slots: Mutex::new(HashSet::new()),
-            uncleaned_pubkeys: Mutex::new(HashSet::new()),
-        }
-    }
-
-    pub fn get_db(&self) -> &Database {
-        &self.db
-    }
-
-    pub fn stat(&self) -> Result<TableStats, Error> {
-        let read_txn = self.db.begin_read()?;
-        let table = read_txn.open_table(TABLE_V2)?;
-        table.stats().map_err(Error::from)
-    }
-
-    pub fn len(&self) -> Result<u64, Error> {
-        let read_txn = self.db.begin_read()?;
-        let table = read_txn.open_table::<DBPubkey, DBSlotList>(TABLE_V2)?;
-        table.len().map_err(Error::from)
-    }
-
-    pub fn get(&self, key: PubkeySlot) -> Result<Option<u64>, Error> {
-        let read_txn = self.db.begin_read()?;
-        let table = read_txn.open_table::<DBPubkey, DBSlotList>(TABLE_V2)?;
-        let iter = table.get(DBPubkey(key.0))?;
-        let result = iter
-            .map(|iter| {
-                let list = iter.value();
-                list.list
-                    .iter()
-                    .find(|(slot, _)| *slot == key.1)
-                    .map(|(_, value)| *value)
-            })
-            .flatten();
-        Ok(result)
-    }
-
-    /// Get all the (slot, chili_pepper_value) for a given pubkey.
-    /// The result is sorted by slot.
-    /// Returns an empty vector if the pubkey is not found.
-    pub fn get_all_for_pubkey(&self, pubkey: &Pubkey) -> Result<Vec<(Slot, u64)>, Error> {
-        let read_txn = self.db.begin_read()?;
-        let table = read_txn.open_table::<DBPubkey, DBSlotList>(TABLE_V2)?;
-        let list = table
-            .get(DBPubkey(pubkey))?
-            .map(|iter| {
-                let list = iter.value();
-                list.list
-                    .iter()
-                    .map(|(slot, value)| (*slot, *value))
-                    .collect()
-            })
-            .unwrap_or_else(|| vec![]);
-        Ok(list)
-    }
-
-    pub fn load_for_pubkey_with_ancestors(
-        &self,
-        pubkey: &Pubkey,
-        ancestors: Vec<Slot>,
-    ) -> Result<Option<(Slot, u64)>, Error> {
-        let read_txn = self.db.begin_read()?;
-        let table = read_txn.open_table::<DBPubkey, DBSlotList>(TABLE_V2)?;
-        let found = table
-            .get(DBPubkey(pubkey))?
-            .map(|iter| {
-                let list = iter.value();
-                let mut index = list.list.len() - 1;
-                for slot in ancestors.iter().rev() {
-                    while index > 0 && list.list[index].0 > *slot {
-                        index -= 1;
-                    }
-                    if list.list[index].0 == *slot {
-                        return Some((list.list[index].0, list.list[index].1));
-                    }
-                }
-                let min_slot = *ancestors.first().unwrap_or(&0);
-                if list.list[index].0 < min_slot {
-                    return Some((list.list[index].0, list.list[index].1));
-                }
-                return None;
-            })
-            .flatten();
-
-        Ok(found)
-    }
-
-    pub fn insert(&self, key: PubkeySlot, value: u64) -> Result<(), Error> {
-        //self.uncleaned_pubkeys.lock().unwrap().insert(*key.0);
-
-        let mut write_txn = self.db.begin_write()?;
-        write_txn.set_durability(Durability::None); // don't persisted to disk for better performance
-        {
-            let mut table = write_txn.open_table::<DBPubkey, DBSlotList>(TABLE_V2)?;
-            todo!();
-            //table.insert(key, value)?;
-        }
-        write_txn.commit().map_err(Error::from)
-    }
-
-    pub fn remove(&self, key: PubkeySlot) -> Result<(), Error> {
-        let write_txn = self.db.begin_write()?;
-        {
-            let mut table = write_txn.open_table::<DBPubkey, DBSlotList>(TABLE_V2)?;
-            todo!();
-            //table.remove(key)?;
-        }
-        write_txn.commit().map_err(Error::from)
-    }
-
-    pub fn bulk_insert<'a, I>(&self, data: I) -> Result<(), Error>
-    where
-        I: IntoIterator<Item = (PubkeySlot<'a>, u64)>,
-    {
-        let mut write_txn = self.db.begin_write()?;
-        write_txn.set_durability(Durability::None); // don't persisted to disk for better performance
-        {
-            let mut table = write_txn.open_table::<DBPubkey, DBSlotList>(TABLE_V2)?;
-            for (key, value) in data {
-                todo!();
-                //self.uncleaned_pubkeys.lock().unwrap().insert(*key.0);
-                //table.insert(key, value.borrow())?;
-            }
-        }
-        write_txn.commit().map_err(Error::from)
-    }
-
-    pub fn bulk_remove<'a, I>(&self, keys: I) -> Result<(), Error>
-    where
-        I: IntoIterator<Item = PubkeySlot<'a>>,
-    {
-        let write_txn = self.db.begin_write()?;
-        {
-            let mut table = write_txn.open_table::<DBPubkey, DBSlotList>(TABLE_V2)?;
-            for key in keys {
-                todo!();
-                //table.remove(key)?;
-            }
-        }
-        write_txn.commit().map_err(Error::from)
-    }
-
-    pub fn clean(&self, clean_slot: Slot, threshold_slot: u64) -> Result<(), Error> {
-        let read_txn = self.db.begin_read()?;
-        let table = read_txn.open_table::<DBPubkey, DBSlotList>(TABLE_V2)?;
-        todo!();
-
-        // let mut lock = self.dead_slots.lock().unwrap();
-        // let dead_slots = std::mem::take(&mut *lock);
-        // drop(lock);
-
-        // let mut lock = self.uncleaned_pubkeys.lock().unwrap();
-        // let uncleaned_pubkeys = std::mem::take(&mut *lock);
-        // drop(lock);
-
-        // // TODO: optimize this to hash_map to save keys
-        // let mut to_remove = vec![];
-
-        // for pubkey in uncleaned_pubkeys.iter().sorted() {
-        //     let pubkey_slot = PubkeySlot(pubkey, 0);
-        //     let iter = table.range(pubkey_slot..PubkeySlot(pubkey, u64::MAX))?;
-
-        //     let mut found_one_before_clean_slot = false;
-        //     for iter in iter.rev() {
-        //         let (key, _) = iter?;
-        //         let pubkey = key.value().0;
-        //         let slot = key.value().1;
-
-        //         if dead_slots.contains(&slot) {
-        //             to_remove.push((*pubkey, slot));
-        //             continue;
-        //         }
-        //         if slot > clean_slot {
-        //             continue;
-        //         }
-
-        //         if slot < threshold_slot {
-        //             to_remove.push((*pubkey, slot));
-        //             continue;
-        //         }
-
-        //         if slot <= clean_slot {
-        //             if found_one_before_clean_slot {
-        //                 to_remove.push((*pubkey, slot));
-        //             } else {
-        //                 found_one_before_clean_slot = true;
-        //             }
-        //         }
-        //     }
-        // }
-
-        // let write_txn = self.db.begin_write()?;
-        // {
-        //     let mut table = write_txn.open_table::<PubkeySlot, u64>(TABLE)?;
-        //     for key in to_remove {
-        //         table.remove(PubkeySlot(&key.0, key.1))?;
-        //     }
-        // }
-        // write_txn.commit().map_err(Error::from)
-    }
-
-    pub fn create_savepoint(&self) -> Result<u64, Error> {
-        let txn = self.db.begin_write()?;
-        let savepoint_id = txn.persistent_savepoint()?;
-        txn.commit()?;
-        Ok(savepoint_id)
-    }
-
-    pub fn remove_savepoint(&self, savepoint_id: u64) -> Result<bool, Error> {
-        let txn = self.db.begin_write()?;
-        let result = txn.delete_persistent_savepoint(savepoint_id)?;
-        txn.commit()?;
-        Ok(result)
-    }
-
-    pub fn restore_savepoint(&self, savepoint_id: u64) -> Result<(), Error> {
-        let mut txn = self.db.begin_write()?;
-        let savepoint = txn.get_persistent_savepoint(savepoint_id)?;
-        txn.restore_savepoint(&savepoint)?;
-        txn.commit()?;
-        Ok(())
-    }
-
-    pub fn snapshot(
-        &self,
-        savepoint_id: u64,
-        snapshot_path: impl AsRef<Path>,
-    ) -> Result<(), Error> {
-        assert!(self.path.exists(), "db file not exists");
-        std::fs::copy(&self.path, &snapshot_path).expect("copy db file success");
-        let db = Database::open(snapshot_path.as_ref()).expect("open db success");
-        let mut txn = db.begin_write()?;
-        let savepoint = txn.get_persistent_savepoint(savepoint_id)?;
-        txn.restore_savepoint(&savepoint)?;
-        txn.commit()?;
-
-        let txn = self.db.begin_write()?;
-        txn.delete_persistent_savepoint(savepoint_id)?;
-        txn.commit()?;
-
-        Ok(())
-    }
-
-    pub fn add_dead_slot(&self, slot: Slot) {
-        let mut dead_slots = self.dead_slots.lock().unwrap();
-        dead_slots.insert(slot);
-    }
-
-    pub fn add_uncleaned_pubkey(&self, pubkey: Pubkey) {
-        let mut uncleaned_pubkeys = self.uncleaned_pubkeys.lock().unwrap();
-        uncleaned_pubkeys.insert(pubkey);
-    }
-}
-
-#[derive(Debug)]
 pub struct ChiliPepperStore {
-    pub store: Arc<ChiliPepperStoreInner>,
+    pub store: Arc<ChiliPepperStoreWrapper>,
     sender: Sender<ChiliPepperMutatorThreadCommand>,
     thread: ChiliPepperMutatorThread,
 }
@@ -824,7 +413,7 @@ impl ChiliPepperStore {
         exit: Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<Self, Error> {
         let (sender, receiver) = unbounded();
-        let store = Arc::new(ChiliPepperStoreInner::new_with_path(path)?);
+        let store = Arc::new(ChiliPepperStoreWrapper::new_with_path(path)?);
         let thread = ChiliPepperMutatorThread::new(receiver, store.clone(), exit.clone());
 
         Ok(Self {
@@ -839,7 +428,7 @@ impl ChiliPepperStore {
         exit: Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<Self, Error> {
         let (sender, receiver) = unbounded();
-        let store = Arc::new(ChiliPepperStoreInner::open_with_path(path)?);
+        let store = Arc::new(ChiliPepperStoreWrapper::open_with_path(path)?);
         let thread = ChiliPepperMutatorThread::new(receiver, store.clone(), exit.clone());
 
         Ok(Self {
@@ -884,7 +473,7 @@ pub mod tests {
     fn test_with_path() {
         let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
         let path = tmpfile.path().to_path_buf();
-        let store = ChiliPepperStoreInner::new_with_path(&path).expect("create db success");
+        let store = ChiliPepperStoreWrapper::new_with_path(&path).expect("create db success");
 
         let pk = Pubkey::from([1_u8; 32]);
         let some_key = PubkeySlot(&pk, 42);
@@ -894,7 +483,7 @@ pub mod tests {
 
         drop(store);
 
-        let store = ChiliPepperStoreInner::open_with_path(&path).expect("open db success");
+        let store = ChiliPepperStoreWrapper::open_with_path(&path).expect("open db success");
         assert_eq!(store.len().unwrap(), 1);
         assert_eq!(store.get(some_key).unwrap().unwrap(), some_value);
     }
@@ -916,7 +505,7 @@ pub mod tests {
         let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
 
         let db = Database::create(tmpfile.path()).expect("create db success");
-        let store = ChiliPepperStoreInner::new(db);
+        let store = ChiliPepperStoreWrapper::new(db);
 
         for (key, value) in keys.iter().zip(vals.iter()) {
             store.insert(*key, *value).unwrap();
@@ -954,7 +543,7 @@ pub mod tests {
 
         let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
         let db = Database::create(tmpfile.path()).expect("create db success");
-        let store = ChiliPepperStoreInner::new(db);
+        let store = ChiliPepperStoreWrapper::new(db);
 
         store.insert(some_key, some_value).unwrap();
         store.insert(some_key2, some_value2).unwrap();
@@ -992,7 +581,7 @@ pub mod tests {
         let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
 
         let db = Database::create(tmpfile.path()).expect("create db success");
-        let store = ChiliPepperStoreInner::new(db);
+        let store = ChiliPepperStoreWrapper::new(db);
 
         store.bulk_insert(to_insert.into_iter()).unwrap();
 
@@ -1112,7 +701,7 @@ pub mod tests {
         let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
 
         let db = Database::create(tmpfile.path()).expect("create db success");
-        let store = ChiliPepperStoreInner::new(db);
+        let store = ChiliPepperStoreWrapper::new(db);
 
         store.insert(some_key, some_value).unwrap();
         store.insert(some_key2, some_value2).unwrap();
@@ -1143,7 +732,7 @@ pub mod tests {
         let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
 
         let db = Database::create(tmpfile.path()).expect("create db success");
-        let store = ChiliPepperStoreInner::new(db);
+        let store = ChiliPepperStoreWrapper::new(db);
 
         store.bulk_insert(data.into_iter()).unwrap();
         assert_eq!(store.len().unwrap(), 10);
@@ -1173,7 +762,7 @@ pub mod tests {
         let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
 
         let db = Database::create(tmpfile.path()).expect("create db success");
-        let store = ChiliPepperStoreInner::new(db);
+        let store = ChiliPepperStoreWrapper::new(db);
 
         store.insert(some_key, some_value).unwrap();
         let savepoint_id = store.create_savepoint().unwrap();
@@ -1206,7 +795,7 @@ pub mod tests {
         let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
 
         let store =
-            ChiliPepperStoreInner::new_with_path(tmpfile.path()).expect("create db success");
+            ChiliPepperStoreWrapper::new_with_path(tmpfile.path()).expect("create db success");
         store.insert(some_key, some_value).unwrap();
         let savepoint_id = store.create_savepoint().unwrap();
 
@@ -1218,7 +807,7 @@ pub mod tests {
         store.snapshot(savepoint_id, &snapshot_path).unwrap();
 
         let db2 = Database::open(&snapshot_path).expect("open db success");
-        let store2 = ChiliPepperStoreInner::new(db2);
+        let store2 = ChiliPepperStoreWrapper::new(db2);
 
         assert_eq!(store2.len().unwrap(), 1);
         assert_eq!(store2.get(some_key).unwrap().unwrap(), some_value);
