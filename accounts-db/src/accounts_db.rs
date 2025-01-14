@@ -5415,7 +5415,7 @@ impl AccountsDb {
         self.chili_pepper_store
             .as_ref()
             .unwrap()
-            .load_with_ancestors(pubkey, ancestors.keys())
+            .load_with_ancestors(pubkey, ancestors)
             .ok()?
     }
 

@@ -3,6 +3,7 @@ use {
     super::chili_pepper_mutator_thread::{
         ChiliPepperMutatorThread, ChiliPepperMutatorThreadCommand,
     },
+    crate::ancestors::Ancestors,
     crossbeam_channel::{unbounded, Sender},
     itertools::Itertools,
     redb::{
@@ -303,27 +304,24 @@ impl ChiliPepperStoreInner {
     pub fn load_for_pubkey_with_ancestors(
         &self,
         pubkey: &Pubkey,
-        ancestors: Vec<Slot>,
+        ancestors: &Ancestors,
     ) -> Result<Option<(Slot, u64)>, Error> {
         let read_txn = self.db.begin_read()?;
         let table = read_txn.open_table::<PubkeySlot, u64>(TABLE)?;
+        let result = table.range(PubkeySlot(pubkey, 0)..PubkeySlot(pubkey, u64::MAX))?;
 
-        for slot in ancestors.iter().rev() {
-            let key = PubkeySlot(pubkey, *slot);
-            let iter = table.get(&key)?;
-            if let Some(value) = iter {
-                return Ok(Some((*slot, value.value())));
-            }
-        }
-
-        let min_slot = *ancestors.first().unwrap_or(&1);
-        let range = table.range(PubkeySlot(pubkey, 0)..PubkeySlot(pubkey, min_slot))?;
-        range.last().map_or(Ok(None), |iter| {
+        for iter in result.rev() {
             let (key, value) = iter?;
             let slot = key.value().1;
-            let value = value.value();
-            Ok(Some((slot, value)))
-        })
+            if ancestors.contains_key(&slot) {
+                return Ok(Some((slot, value.value())));
+            }
+
+            if slot < ancestors.min_slot() {
+                return Ok(Some((slot, value.value())));
+            }
+        }
+        Ok(None)
     }
 
     /// Get all the (slot, chili_pepper_value) for a given list of pubkeys.
@@ -616,7 +614,7 @@ impl ChiliPepperStoreInnerV2 {
     pub fn load_for_pubkey_with_ancestors(
         &self,
         pubkey: &Pubkey,
-        ancestors: Vec<Slot>,
+        ancestors: &Ancestors,
     ) -> Result<Option<(Slot, u64)>, Error> {
         let read_txn = self.db.begin_read()?;
         let table = read_txn.open_table::<DBPubkey, DBSlotList>(TABLE_V2)?;
@@ -624,20 +622,17 @@ impl ChiliPepperStoreInnerV2 {
             .get(DBPubkey(pubkey))?
             .map(|iter| {
                 let list = iter.value();
-                let mut index = list.list.len() - 1;
-                for slot in ancestors.iter().rev() {
-                    while index > 0 && list.list[index].0 > *slot {
-                        index -= 1;
+
+                for (slot, value) in list.list.iter().rev() {
+                    if ancestors.contains_key(&slot) {
+                        return Some((*slot, *value));
                     }
-                    if list.list[index].0 == *slot {
-                        return Some((list.list[index].0, list.list[index].1));
+
+                    if *slot < ancestors.min_slot() {
+                        return Some((*slot, *value));
                     }
                 }
-                let min_slot = *ancestors.first().unwrap_or(&0);
-                if list.list[index].0 < min_slot {
-                    return Some((list.list[index].0, list.list[index].1));
-                }
-                return None;
+                None
             })
             .flatten();
 
@@ -862,7 +857,7 @@ impl ChiliPepperStore {
     pub fn load_with_ancestors(
         &self,
         pubkey: &Pubkey,
-        ancestors: Vec<Slot>,
+        ancestors: &Ancestors,
     ) -> Result<Option<(Slot, u64)>, Error> {
         self.store.load_for_pubkey_with_ancestors(pubkey, ancestors)
     }
@@ -967,6 +962,53 @@ pub mod tests {
         assert_eq!(result[0].0, 42);
         assert_eq!(result[1].0, 43);
         assert_eq!(result[2].0, 55);
+    }
+
+    #[test]
+    fn test_load_with_ancestor() {
+        let pk1 = Pubkey::from([1_u8; 32]);
+
+        let some_key = PubkeySlot(&pk1, 42);
+        let some_key2 = PubkeySlot(&pk1, 43);
+        let some_key3 = PubkeySlot(&pk1, 44);
+        let some_key4 = PubkeySlot(&pk1, 45);
+
+        let some_value = 163;
+        let some_value2 = 164;
+        let some_value3 = 165;
+        let some_value4 = 166;
+
+        let tmpfile = tempfile::NamedTempFile::new_in("/tmp").unwrap();
+        let db = Database::create(tmpfile.path()).expect("create db success");
+        let store = ChiliPepperStoreInner::new(db);
+
+        store.insert(some_key, some_value).unwrap();
+        store.insert(some_key2, some_value2).unwrap();
+        store.insert(some_key3, some_value3).unwrap();
+        store.insert(some_key4, some_value4).unwrap();
+        assert_eq!(store.len().unwrap(), 4);
+
+        let mut ancestors = Ancestors::default();
+        ancestors.insert(42, 0);
+
+        let result = store
+            .load_for_pubkey_with_ancestors(&pk1, &ancestors)
+            .unwrap();
+        assert_eq!(result.unwrap(), (42, some_value));
+
+        ancestors.insert(43, 0);
+        ancestors.insert(45, 0);
+        let result = store
+            .load_for_pubkey_with_ancestors(&pk1, &ancestors)
+            .unwrap();
+        assert_eq!(result.unwrap(), (45, some_value4));
+
+        let mut ancestors = Ancestors::default();
+        ancestors.insert(100, 0);
+        let result = store
+            .load_for_pubkey_with_ancestors(&pk1, &ancestors)
+            .unwrap();
+        assert_eq!(result.unwrap(), (45, some_value4));
     }
 
     #[test]
