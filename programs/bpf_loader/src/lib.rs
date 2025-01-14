@@ -109,8 +109,7 @@ pub fn load_program_from_bytes(
 /// Directly deploy a program using a provided invoke context.
 /// This function should only be invoked from the runtime, since it does not
 /// provide any account loads or checks.
-#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
-fn deploy_program_internal(
+pub fn deploy_program(
     log_collector: Option<Rc<RefCell<LogCollector>>>,
     program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
     program_runtime_environment: ProgramRuntimeEnvironment,
@@ -185,7 +184,7 @@ macro_rules! deploy_program {
                 // This will never fail since the epoch schedule is already configured.
                 InstructionError::ProgramEnvironmentSetupFailure
             })?;
-        let load_program_metrics = $crate::deploy_program_internal(
+        let load_program_metrics = $crate::deploy_program(
             $invoke_context.get_log_collector(),
             $invoke_context.program_cache_for_tx_batch,
             environments.program_runtime_v1.clone(),
@@ -197,27 +196,6 @@ macro_rules! deploy_program {
         )?;
         load_program_metrics.submit_datapoint(&mut $invoke_context.timings);
     };
-}
-
-// This function/wrapper is added specifically for non "svm-internal" users. It enables the reducing
-// of public visibility of some internal APIs.
-pub fn deploy_program(
-    invoke_context: &mut InvokeContext,
-    program_id: &Pubkey,
-    loader_key: &Pubkey,
-    account_size: usize,
-    programdata: &[u8],
-    deployment_slot: Slot,
-) -> Result<(), InstructionError> {
-    deploy_program!(
-        invoke_context,
-        program_id,
-        loader_key,
-        account_size,
-        programdata,
-        deployment_slot
-    );
-    Ok(())
 }
 
 fn write_program_data(
@@ -3868,14 +3846,15 @@ mod tests {
         let mut file = File::open("test_elfs/out/sbpfv3_return_ok.so").expect("file open failed");
         let mut elf = Vec::new();
         file.read_to_end(&mut elf).unwrap();
-        deploy_program(
+        deploy_program!(
             invoke_context,
             &program_id,
             &bpf_loader_upgradeable::id(),
             elf.len(),
             &elf,
             2_u64,
-        )
+        );
+        Ok(())
     }
 
     #[test]
