@@ -156,7 +156,7 @@ to keep only the hot accounts.
         - need expert in tx processing to check
     - [ ] make store no blocking
 
-- [ ] Redesign the table to pubkey: ([slot, chilipepper])
+- [ ] Redesign the table to pubkey V2: ([slot, chilipepper])
     - old design (pubkey, slot) -> chilipepper
     - pros
         - save pubkey space
@@ -166,6 +166,9 @@ to keep only the hot accounts.
         - serialization vec cost
         - variable size cost
         - insert is slower
+    - [x] implementation
+    - [ ] add tests
+    - [ ] hookup
 
 - [ ] check chili pepper and fail block if chilipepper exceeds the limits
 
