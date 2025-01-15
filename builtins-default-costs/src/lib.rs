@@ -102,11 +102,11 @@ lazy_static! {
 /// correctly furnishing `core_bpf_migration_feature`.
 ///
 #[allow(dead_code)]
-const TOTAL_COUNT_BUILTS: usize = 12;
+const TOTAL_COUNT_BUILTINS: usize = 12;
 #[cfg(test)]
 static_assertions::const_assert_eq!(
     MIGRATING_BUILTINS_COSTS.len() + NON_MIGRATING_BUILTINS_COSTS.len(),
-    TOTAL_COUNT_BUILTS
+    TOTAL_COUNT_BUILTINS
 );
 
 pub const MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[
