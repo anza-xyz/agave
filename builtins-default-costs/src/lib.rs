@@ -53,6 +53,7 @@ impl BuiltinCost {
         }
     }
 
+    #[cfg(feature = "svm-internal")]
     fn core_bpf_migration_feature(&self) -> Option<&Pubkey> {
         match self {
             BuiltinCost::Migrating(MigratingBuiltinCost {
@@ -63,6 +64,7 @@ impl BuiltinCost {
         }
     }
 
+    #[cfg(feature = "svm-internal")]
     fn position(&self) -> Option<usize> {
         match self {
             BuiltinCost::Migrating(MigratingBuiltinCost { position, .. }) => Some(*position),
