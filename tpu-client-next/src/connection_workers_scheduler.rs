@@ -70,7 +70,7 @@ pub struct ConnectionWorkersSchedulerConfig {
 
     /// Optional stake identity keypair used in the endpoint certificate for
     /// identifying the sender.
-    pub identity: Option<Keypair>,
+    pub stake_identity: Option<Keypair>,
 
     /// The number of connections to be maintained by the scheduler.
     pub num_connections: usize,
@@ -101,14 +101,17 @@ impl ConnectionWorkersScheduler {
     ///
     /// Runs the main loop that handles worker scheduling and management for
     /// connections. Returns the error quic statistics per connection address or
-    /// an error.
+    /// an error along with receiver for transactions. The receiver returned
+    /// back to the user because in some cases we need to re-utilize the same
+    /// receiver for the new scheduler. For example, this happens when the
+    /// identity for the validator is updated.
     ///
     /// Importantly, if some transactions were not delivered due to network
     /// problems, they will not be retried when the problem is resolved.
     pub async fn run(
         ConnectionWorkersSchedulerConfig {
             bind,
-            identity,
+            stake_identity,
             num_connections,
             skip_check_transaction_age,
             worker_channel_size,
@@ -119,7 +122,7 @@ impl ConnectionWorkersScheduler {
         mut transaction_receiver: mpsc::Receiver<TransactionBatch>,
         cancel: CancellationToken,
     ) -> Result<TransactionStatsAndReceiver, ConnectionWorkersSchedulerError> {
-        let endpoint = Self::setup_endpoint(bind, identity.as_ref())?;
+        let endpoint = Self::setup_endpoint(bind, stake_identity.as_ref())?;
         debug!("Client endpoint bind address: {:?}", endpoint.local_addr());
         let mut workers = WorkersCache::new(num_connections, cancel.clone());
         let mut send_stats_per_addr = SendTransactionStatsPerAddr::new();
@@ -195,9 +198,9 @@ impl ConnectionWorkersScheduler {
     /// Sets up the QUIC endpoint for the scheduler to handle connections.
     fn setup_endpoint(
         bind: SocketAddr,
-        identity: Option<&Keypair>,
+        stake_identity: Option<&Keypair>,
     ) -> Result<Endpoint, ConnectionWorkersSchedulerError> {
-        let client_certificate = QuicClientCertificate::new(identity);
+        let client_certificate = QuicClientCertificate::new(stake_identity);
         let client_config = create_client_config(client_certificate);
         let endpoint = create_client_endpoint(bind, client_config)?;
         Ok(endpoint)
