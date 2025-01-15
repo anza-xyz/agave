@@ -284,7 +284,7 @@ macro_rules! custom_panic_default {
     };
 }
 
-/// This is an efficient implementation fo custom panic. It contains two syscalls and has a size
+/// This is an efficient implementation of custom panic. It contains two syscalls and has a size
 /// of about 264 bytes. It depends on the unstable feature `panic_info_message`, which is going to
 /// be stabilized in Rust 1.84.
 ///
