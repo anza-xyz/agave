@@ -1622,17 +1622,23 @@ mod tests {
         Blockstore::destroy(ledger_path.path()).unwrap();
     }
 
-    // HANA TODO this should be changed to conflict on simd83
-    // it is testing retryable and some recorder stuff. just need to unpack the bam setup
-    // #[test]
-    fn _test_bank_process_and_record_transactions_account_in_use() {
+    #[test_case(false; "old")]
+    #[test_case(true; "simd83")]
+    fn test_bank_process_and_record_transactions_account_in_use(
+        relax_intrabatch_account_locks: bool,
+    ) {
         solana_logger::setup();
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
             ..
         } = create_slow_genesis_config(10_000);
-        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        if !relax_intrabatch_account_locks {
+            bank.deactivate_feature(&feature_set::relax_intrabatch_account_locks::id());
+        }
+        bank.ns_per_slot = u128::MAX;
+        let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let pubkey = solana_pubkey::new_rand();
         let pubkey1 = solana_pubkey::new_rand();
 
@@ -1674,8 +1680,14 @@ mod tests {
             );
             let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
+            let conflicting_transaction = SanitizedTransaction::from_transaction_for_tests(
+                system_transaction::transfer(&Keypair::new(), &pubkey1, 1, genesis_config.hash()),
+            );
+
+            bank.try_lock_accounts(&[conflicting_transaction.clone()]);
             let process_transactions_batch_output =
                 consumer.process_and_record_transactions(&bank, &transactions, 0);
+            bank.unlock_accounts([(&conflicting_transaction, &Ok(()))].into_iter());
 
             poh_recorder
                 .read()
@@ -1691,7 +1703,6 @@ mod tests {
                 ..
             } = process_transactions_batch_output.execute_and_commit_transactions_output;
 
-            // HANA here
             assert_eq!(
                 transaction_counts,
                 LeaderProcessedTransactionCounts {

@@ -3112,11 +3112,6 @@ fn test_filter_program_errors_and_collect_priority_fee() {
     );
 }
 
-// HANA NOTE the original version of this test means well but is unsound
-// it seems like the idea is that in an entry the second tx should be invalid because the txes are *not serialized*
-// but in reality the only reason it fails is because of locks. ie it would fail even if keypair had a balance
-// on the other hand it is a perfectly valid simd83 batch because the first transaction funds the second
-// i wanted to change rather than delete it tho since i dunno how much coverage the tx count functions have
 #[test]
 fn test_debits_before_credits() {
     let (genesis_config, mint_keypair) =
