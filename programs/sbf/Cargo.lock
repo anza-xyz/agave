@@ -669,7 +669,7 @@ version = "0.69.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a00dc851838a2120612785d195287475a3ac45514741da670b735818822129a0"
 dependencies = [
- "bitflags 2.7.0",
+ "bitflags 2.8.0",
  "cexpr",
  "clang-sys",
  "itertools 0.12.1",
@@ -706,9 +706,9 @@ checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
 name = "bitflags"
-version = "2.7.0"
+version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1be3f42a67d6d345ecd59f675f3f012d6974981560836e938c22b424b85ce1be"
+checksum = "8f68f53c83ab957f72c32642f3868eec03eb974d1fb82e453128456482613d36"
 dependencies = [
  "serde",
 ]
@@ -3270,7 +3270,7 @@ version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
 dependencies = [
- "bitflags 2.7.0",
+ "bitflags 2.8.0",
  "cfg-if 1.0.0",
  "cfg_aliases",
  "libc",
@@ -3481,7 +3481,7 @@ version = "0.10.68"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6174bc48f102d208783c2c84bf931bb75927a617866870de8a4ea85597f871f5"
 dependencies = [
- "bitflags 2.7.0",
+ "bitflags 2.8.0",
  "cfg-if 1.0.0",
  "foreign-types",
  "libc",
@@ -3907,7 +3907,7 @@ checksum = "14cae93065090804185d3b75f0bf93b8eeda30c7a9b4a33d3bdb3988d6229e50"
 dependencies = [
  "bit-set",
  "bit-vec",
- "bitflags 2.7.0",
+ "bitflags 2.8.0",
  "lazy_static",
  "num-traits",
  "rand 0.8.5",
@@ -4179,7 +4179,7 @@ version = "11.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb9ee317cfe3fbd54b36a511efc1edd42e216903c9cd575e686dd68a2ba90d8d"
 dependencies = [
- "bitflags 2.7.0",
+ "bitflags 2.8.0",
 ]
 
 [[package]]
@@ -4453,7 +4453,7 @@ version = "0.38.39"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "375116bee2be9ed569afe2154ea6a99dfdffd257f533f187498c2a8f5feaf4ee"
 dependencies = [
- "bitflags 2.7.0",
+ "bitflags 2.8.0",
  "errno",
  "libc",
  "linux-raw-sys",
@@ -6055,7 +6055,7 @@ dependencies = [
 name = "solana-instructions-sysvar"
 version = "2.2.0"
 dependencies = [
- "bitflags 2.7.0",
+ "bitflags 2.8.0",
  "solana-account-info",
  "solana-instruction",
  "solana-program-error",
@@ -6120,7 +6120,7 @@ version = "2.2.0"
 dependencies = [
  "assert_matches",
  "bincode",
- "bitflags 2.7.0",
+ "bitflags 2.8.0",
  "byteorder 1.5.0",
  "bzip2",
  "chrono",
@@ -6350,7 +6350,7 @@ name = "solana-packet"
 version = "2.2.0"
 dependencies = [
  "bincode",
- "bitflags 2.7.0",
+ "bitflags 2.8.0",
  "cfg_eval",
  "serde",
  "serde_derive",
@@ -7566,7 +7566,7 @@ name = "solana-sdk"
 version = "2.2.0"
 dependencies = [
  "bincode",
- "bitflags 2.7.0",
+ "bitflags 2.8.0",
  "borsh 1.5.4",
  "bs58",
  "bytemuck",
