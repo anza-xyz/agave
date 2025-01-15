@@ -2129,6 +2129,36 @@ fn main() {
                                 _ => Some(value_t_or_exit!(arg_matches, "hashes_per_tick", u64)),
                             });
                         }
+
+                        for address in feature_gates_to_deactivate {
+                            let mut account =
+                                child_bank.get_account(&address).unwrap_or_else(|| {
+                                    eprintln!(
+                                        "Error: Feature-gate account does not exist, unable to \
+                                         deactivate it: {address}"
+                                    );
+                                    exit(1);
+                                });
+
+                            match feature::from_account(&account) {
+                                Some(feature) => {
+                                    if feature.activated_at.is_none() {
+                                        warn!("Feature gate is not yet activated: {address}");
+                                    } else {
+                                        child_bank.deactivate_feature(&address);
+                                    }
+                                }
+                                None => {
+                                    eprintln!("Error: Account is not a `Feature`: {address}");
+                                    exit(1);
+                                }
+                            }
+
+                            account.set_lamports(0);
+                            child_bank.store_account(&address, &account);
+                            debug!("Feature gate deactivated: {address}");
+                        }
+
                         bank = Arc::new(child_bank);
                     }
 
@@ -2161,32 +2191,6 @@ fn main() {
                         account.set_lamports(0);
                         bank.store_account(&address, &account);
                         debug!("Account removed: {address}");
-                    }
-
-                    for address in feature_gates_to_deactivate {
-                        let mut account = bank.get_account(&address).unwrap_or_else(|| {
-                            eprintln!(
-                                "Error: Feature-gate account does not exist, unable to \
-                                     deactivate it: {address}"
-                            );
-                            exit(1);
-                        });
-
-                        match feature::from_account(&account) {
-                            Some(feature) => {
-                                if feature.activated_at.is_none() {
-                                    warn!("Feature gate is not yet activated: {address}");
-                                }
-                            }
-                            None => {
-                                eprintln!("Error: Account is not a `Feature`: {address}");
-                                exit(1);
-                            }
-                        }
-
-                        account.set_lamports(0);
-                        bank.store_account(&address, &account);
-                        debug!("Feature gate deactivated: {address}");
                     }
 
                     if !vote_accounts_to_destake.is_empty() {
