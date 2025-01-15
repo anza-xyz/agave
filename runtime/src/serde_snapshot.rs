@@ -835,7 +835,7 @@ impl Serialize for SerializableAccountsDb<'_> {
 }
 
 #[cfg(feature = "frozen-abi")]
-impl<'a> solana_frozen_abi::abi_example::TransparentAsHelper for SerializableAccountsDb<'a> {}
+impl solana_frozen_abi::abi_example::TransparentAsHelper for SerializableAccountsDb<'_> {}
 
 /// This struct contains side-info while reconstructing the bank from fields
 #[derive(Debug)]

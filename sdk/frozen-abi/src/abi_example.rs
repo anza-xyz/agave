@@ -237,10 +237,10 @@ impl<T: BlockType> EvenAsOpaque for BitVec<T> {
 }
 
 use serde_with::ser::SerializeAsWrap;
-impl<'a, T: ?Sized, U: ?Sized> TransparentAsHelper for SerializeAsWrap<'a, T, U> {}
+impl<T: ?Sized, U: ?Sized> TransparentAsHelper for SerializeAsWrap<'_, T, U> {}
 // This (EvenAsOpaque) marker trait is needed for serde_with's serde_as(...) because this struct is
 // basically a wrapper struct.
-impl<'a, T: ?Sized, U: ?Sized> EvenAsOpaque for SerializeAsWrap<'a, T, U> {
+impl<T: ?Sized, U: ?Sized> EvenAsOpaque for SerializeAsWrap<'_, T, U> {
     const TYPE_NAME_MATCHER: &'static str = "serde_with::ser::SerializeAsWrap<";
 }
 
