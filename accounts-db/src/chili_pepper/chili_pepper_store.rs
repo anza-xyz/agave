@@ -841,9 +841,12 @@ impl ChiliPepperStoreInnerV2 {
     }
 }
 
+//pub type ChiliPepperStoreInnerType = ChiliPepperStoreInner;
+pub type ChiliPepperStoreInnerType = ChiliPepperStoreInnerV2;
+
 #[derive(Debug)]
 pub struct ChiliPepperStore {
-    pub store: Arc<ChiliPepperStoreInner>,
+    pub store: Arc<ChiliPepperStoreInnerType>,
     sender: Sender<ChiliPepperMutatorThreadCommand>,
     thread: ChiliPepperMutatorThread,
 }
@@ -854,7 +857,7 @@ impl ChiliPepperStore {
         exit: Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<Self, Error> {
         let (sender, receiver) = unbounded();
-        let store = Arc::new(ChiliPepperStoreInner::new_with_path(path)?);
+        let store = Arc::new(ChiliPepperStoreInnerType::new_with_path(path)?);
         let thread = ChiliPepperMutatorThread::new(receiver, store.clone(), exit.clone());
 
         Ok(Self {
@@ -869,7 +872,7 @@ impl ChiliPepperStore {
         exit: Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<Self, Error> {
         let (sender, receiver) = unbounded();
-        let store = Arc::new(ChiliPepperStoreInner::open_with_path(path)?);
+        let store = Arc::new(ChiliPepperStoreInnerType::open_with_path(path)?);
         let thread = ChiliPepperMutatorThread::new(receiver, store.clone(), exit.clone());
 
         Ok(Self {
