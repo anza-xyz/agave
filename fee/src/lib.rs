@@ -28,10 +28,29 @@ pub fn calculate_fee_details(
     if zero_fees_for_test {
         return FeeDetails::default();
     }
-    let signature_fee = (message
-        .num_transaction_signatures()
-        .saturating_add(message.num_ed25519_signatures())
-        .saturating_add(message.num_secp256k1_signatures()))
+
+    calculate_fee_details_internal(
+        SignatureCounts::from(message),
+        lamports_per_signature,
+        prioritization_fee,
+        remove_rounding_in_fee_calculation,
+    )
+}
+
+/// This function has the actual fee calculation.
+fn calculate_fee_details_internal(
+    SignatureCounts {
+        num_transaction_signatures,
+        num_ed25519_signatures,
+        num_secp256k1_signatures,
+    }: SignatureCounts,
+    lamports_per_signature: u64,
+    prioritization_fee: u64,
+    remove_rounding_in_fee_calculation: bool,
+) -> FeeDetails {
+    let signature_fee = (num_transaction_signatures
+        .saturating_add(num_ed25519_signatures)
+        .saturating_add(num_secp256k1_signatures))
     .saturating_mul(lamports_per_signature);
 
     FeeDetails::new(
@@ -39,4 +58,20 @@ pub fn calculate_fee_details(
         prioritization_fee,
         remove_rounding_in_fee_calculation,
     )
+}
+
+struct SignatureCounts {
+    pub num_transaction_signatures: u64,
+    pub num_ed25519_signatures: u64,
+    pub num_secp256k1_signatures: u64,
+}
+
+impl<Tx: SVMMessage> From<&Tx> for SignatureCounts {
+    fn from(message: &Tx) -> Self {
+        Self {
+            num_transaction_signatures: message.num_transaction_signatures(),
+            num_ed25519_signatures: message.num_ed25519_signatures(),
+            num_secp256k1_signatures: message.num_secp256k1_signatures(),
+        }
+    }
 }
