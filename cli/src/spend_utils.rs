@@ -114,44 +114,38 @@ where
         )?;
         Ok((message, spend))
     } else {
-        let mut from_balance = rpc_client
-            .get_balance_with_commitment(from_pubkey, commitment)?
-            .value;
+        let account = rpc_client
+            .get_account_with_commitment(from_pubkey, commitment)?
+            .value
+            .unwrap_or_default();
+        let mut from_balance = account.lamports;
         let from_rent_exempt_minimum =
             if amount == SpendAmount::RentExempt || amount == SpendAmount::Available {
-                let data = rpc_client.get_account_data(from_pubkey)?;
-                rpc_client.get_minimum_balance_for_rent_exemption(data.len())?
+                rpc_client.get_minimum_balance_for_rent_exemption(account.data.len())?
             } else {
                 0
             };
-        if amount == SpendAmount::Available {
-            if let Some(account) = rpc_client
-                .get_account_with_commitment(from_pubkey, commitment)?
-                .value
-            {
-                if account.owner == solana_sdk::stake::program::id() {
-                    let state = stake::get_account_stake_state(
-                        rpc_client,
-                        from_pubkey,
-                        account,
-                        true,
-                        None,
-                        false,
-                        None,
-                    )?;
-                    let mut sub_rent_exempt = false;
-                    if let Some(active_stake) = state.active_stake {
-                        from_balance = from_balance.saturating_sub(active_stake);
-                        sub_rent_exempt = true;
-                    }
-                    if let Some(activating_stake) = state.activating_stake {
-                        from_balance = from_balance.saturating_sub(activating_stake);
-                        sub_rent_exempt = true;
-                    }
-                    if sub_rent_exempt {
-                        from_balance = from_balance.saturating_sub(from_rent_exempt_minimum);
-                    }
-                }
+        if amount == SpendAmount::Available && account.owner == solana_sdk::stake::program::id() {
+            let state = stake::get_account_stake_state(
+                rpc_client,
+                from_pubkey,
+                account,
+                true,
+                None,
+                false,
+                None,
+            )?;
+            let mut sub_rent_exempt = false;
+            if let Some(active_stake) = state.active_stake {
+                from_balance = from_balance.saturating_sub(active_stake);
+                sub_rent_exempt = true;
+            }
+            if let Some(activating_stake) = state.activating_stake {
+                from_balance = from_balance.saturating_sub(activating_stake);
+                sub_rent_exempt = true;
+            }
+            if sub_rent_exempt {
+                from_balance = from_balance.saturating_sub(from_rent_exempt_minimum);
             }
         }
         let (message, SpendAndFee { spend, fee }) = resolve_spend_message(
