@@ -53,7 +53,7 @@ use {
         system_instruction::MAX_PERMITTED_DATA_LENGTH,
         system_program,
         sysvar::{self, clock},
-        transaction::{Transaction, TransactionError},
+        transaction::{SanitizedTransaction, Transaction, TransactionError, VersionedTransaction},
     },
     solana_svm::{
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
@@ -63,7 +63,15 @@ use {
     solana_svm_transaction::svm_message::SVMMessage,
     solana_timings::ExecuteTimings,
     solana_type_overrides::rand,
-    std::{assert_eq, cell::RefCell, str::FromStr, sync::Arc, time::Duration},
+    std::{
+        assert_eq,
+        cell::RefCell,
+        collections::HashMap,
+        str::FromStr,
+        sync::{Arc, RwLock},
+        time::Duration,
+    },
+    test_case::test_case,
 };
 
 #[cfg(feature = "sbf_rust")]
@@ -111,7 +119,6 @@ fn load_execute_and_commit_transaction(bank: &Bank, tx: Transaction) -> Transact
 }
 
 #[cfg(feature = "sbf_rust")]
-#[allow(unused)] // HANA
 fn execute_transactions(
     bank: &Bank,
     txs: Vec<Transaction>,
@@ -2400,19 +2407,15 @@ fn test_program_sbf_set_upgrade_authority_via_cpi() {
     assert_eq!(Some(new_upgrade_authority_key), upgrade_authority_key);
 }
 
-// HANA TODO this one is tricky
-// it expects lock exclusion to prevent an upgrade and invoke from going in the same entry
-// with simd83, upgrade -> invoke correctly prevents execution just like it would... ok no actually the behavior is fine
-// we preserve our essential invariant in both directions: same slot same entry is identical to same slot different entry
-// we might want to delete this test and just test (if it isnt tested already) that upgrade write locks the program id
-// create the upgrade and invoke tx, take locks for one, ensure the other fails, both directions
-// #[test]
+#[test_case(false; "old")]
+#[test_case(true; "simd83")]
 #[cfg(feature = "sbf_rust")]
-fn _test_program_upgradeable_locks() {
+fn test_program_upgradeable_locks(relax_intrabatch_account_locks: bool) {
     fn setup_program_upgradeable_locks(
         payer_keypair: &Keypair,
         buffer_keypair: &Keypair,
         program_keypair: &Keypair,
+        relax_intrabatch_account_locks: bool,
     ) -> (Arc<Bank>, Arc<RwLock<BankForks>>, Transaction, Transaction) {
         solana_logger::setup();
 
@@ -2421,7 +2424,11 @@ fn _test_program_upgradeable_locks() {
             mint_keypair,
             ..
         } = create_genesis_config(2_000_000_000);
-        let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        if !relax_intrabatch_account_locks {
+            bank.deactivate_feature(&feature_set::relax_intrabatch_account_locks::id());
+        }
+        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let mut bank_client = BankClient::new_shared(bank.clone());
 
         load_upgradeable_program(
@@ -2490,47 +2497,92 @@ fn _test_program_upgradeable_locks() {
     let buffer_keypair = keypair_from_seed(&[11; 32]).unwrap();
     let program_keypair = keypair_from_seed(&[77u8; 32]).unwrap();
 
-    let results1 = {
-        let (bank, _bank_forks, invoke_tx, upgrade_tx) =
-            setup_program_upgradeable_locks(&payer_keypair, &buffer_keypair, &program_keypair);
-        execute_transactions(&bank, vec![upgrade_tx, invoke_tx])
-    };
+    for test_condition in 0..=2 {
+        let (bank, _bank_forks, invoke_tx, upgrade_tx) = setup_program_upgradeable_locks(
+            &payer_keypair,
+            &buffer_keypair,
+            &program_keypair,
+            relax_intrabatch_account_locks,
+        );
 
-    let results2 = {
-        let (bank, _bank_forks, invoke_tx, upgrade_tx) =
-            setup_program_upgradeable_locks(&payer_keypair, &buffer_keypair, &program_keypair);
-        execute_transactions(&bank, vec![invoke_tx, upgrade_tx])
-    };
+        let (their_entry, our_entry) = match test_condition {
+            // this behaves differently depending on simd83, but must always fail:
+            // * old: upgrade succeeds, invoke is non-processed retryable due to lock conflict
+            // * simd83: upgrade succeeds, invoke is processed failed as the program is hidden for the rest of the slot
+            // this ensures simd83 does not mistakenly allow a program to be invoked in the same entry it is upgraded in
+            0 => (vec![], vec![upgrade_tx, invoke_tx]),
+            // these behave the same regardless, both transactions must mutually lock each other out
+            // this effectively tests that upgrade takes a lock on the immutable program account
+            1 => (
+                vec![SanitizedTransaction::from_transaction_for_tests(upgrade_tx)],
+                vec![invoke_tx],
+            ),
+            2 => (
+                vec![SanitizedTransaction::from_transaction_for_tests(invoke_tx)],
+                vec![upgrade_tx],
+            ),
+            // there is no special behavior to test for vec![invoke_tx, upgrade_tx]
+            // upgrade succeeds with simd83 and fails without simd83 based on normal locking rules
+            _ => unreachable!(),
+        };
 
-    assert!(matches!(
-        results1[0],
-        Ok(ConfirmedTransactionWithStatusMeta {
-            tx_with_meta: TransactionWithStatusMeta::Complete(VersionedTransactionWithStatusMeta {
-                meta: TransactionStatusMeta { status: Ok(()), .. },
-                ..
-            }),
-            ..
-        })
-    ));
-    assert_eq!(results1[1], Err(TransactionError::AccountInUse));
+        bank.try_lock_accounts(&their_entry);
+        let results = execute_transactions(&bank, our_entry);
 
-    assert!(matches!(
-        results2[0],
-        Ok(ConfirmedTransactionWithStatusMeta {
-            tx_with_meta: TransactionWithStatusMeta::Complete(VersionedTransactionWithStatusMeta {
-                meta: TransactionStatusMeta {
-                    status: Err(TransactionError::InstructionError(
-                        0,
-                        InstructionError::ProgramFailedToComplete
-                    )),
-                    ..
-                },
-                ..
-            }),
-            ..
-        })
-    ));
-    assert_eq!(results2[1], Err(TransactionError::AccountInUse));
+        match (results.len(), relax_intrabatch_account_locks) {
+            (1, _) => assert_eq!(results[0], Err(TransactionError::AccountInUse)),
+            (2, true) => {
+                if relax_intrabatch_account_locks {
+                    assert!(matches!(
+                        results[0],
+                        Ok(ConfirmedTransactionWithStatusMeta {
+                            tx_with_meta: TransactionWithStatusMeta::Complete(
+                                VersionedTransactionWithStatusMeta {
+                                    meta: TransactionStatusMeta { status: Ok(()), .. },
+                                    ..
+                                }
+                            ),
+                            ..
+                        })
+                    ));
+                    assert!(matches!(
+                        results[1],
+                        Ok(ConfirmedTransactionWithStatusMeta {
+                            tx_with_meta: TransactionWithStatusMeta::Complete(
+                                VersionedTransactionWithStatusMeta {
+                                    meta: TransactionStatusMeta {
+                                        status: Err(TransactionError::InstructionError(
+                                            0,
+                                            InstructionError::UnsupportedProgramId
+                                        )),
+                                        ..
+                                    },
+                                    ..
+                                }
+                            ),
+                            ..
+                        })
+                    ));
+                }
+            }
+            (2, false) => {
+                assert!(matches!(
+                    results[0],
+                    Ok(ConfirmedTransactionWithStatusMeta {
+                        tx_with_meta: TransactionWithStatusMeta::Complete(
+                            VersionedTransactionWithStatusMeta {
+                                meta: TransactionStatusMeta { status: Ok(()), .. },
+                                ..
+                            }
+                        ),
+                        ..
+                    })
+                ));
+                assert_eq!(results[1], Err(TransactionError::AccountInUse));
+            }
+            _ => unreachable!(),
+        }
+    }
 }
 
 #[test]
