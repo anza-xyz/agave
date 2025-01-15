@@ -10390,6 +10390,7 @@ fn calculate_test_fee(
         fee_budget_limits.prioritization_fee,
         FeeFeatures {
             remove_rounding_in_fee_calculation: true,
+            enable_secp256r1_precompile: true,
         },
     )
 }
