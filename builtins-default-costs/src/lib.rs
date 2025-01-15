@@ -46,7 +46,6 @@ enum BuiltinCost {
 }
 
 impl BuiltinCost {
-    #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
     fn native_cost(&self) -> u64 {
         match self {
             BuiltinCost::Migrating(MigratingBuiltinCost { native_cost, .. }) => *native_cost,
@@ -54,8 +53,6 @@ impl BuiltinCost {
         }
     }
 
-    #[cfg(feature = "svm-internal")]
-    #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
     fn core_bpf_migration_feature(&self) -> Option<&Pubkey> {
         match self {
             BuiltinCost::Migrating(MigratingBuiltinCost {
@@ -66,8 +63,6 @@ impl BuiltinCost {
         }
     }
 
-    #[cfg(feature = "svm-internal")]
-    #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
     fn position(&self) -> Option<usize> {
         match self {
             BuiltinCost::Migrating(MigratingBuiltinCost { position, .. }) => Some(*position),
@@ -75,7 +70,6 @@ impl BuiltinCost {
         }
     }
 
-    #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
     fn has_migrated(&self, feature_set: &FeatureSet) -> bool {
         match self {
             BuiltinCost::Migrating(MigratingBuiltinCost {
