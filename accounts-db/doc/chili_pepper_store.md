@@ -168,6 +168,7 @@ to keep only the hot accounts.
         - insert is slower
     - [x] implementation
     - [ ] add tests
+    - [ ] add benchmark comparison
     - [ ] hookup
 
 - [ ] check chili pepper and fail block if chilipepper exceeds the limits
