@@ -734,7 +734,7 @@ fn make_merkle_proof(
 pub(super) fn recover(
     mut shreds: Vec<Shred>,
     reed_solomon_cache: &ReedSolomonCache,
-) -> Result<impl Iterator<Item = Shred>, Error> {
+) -> Result<impl Iterator<Item = Result<Shred, Error>>, Error> {
     // Sort shreds by their erasure shard index.
     // In particular this places all data shreds before coding shreds.
     let is_sorted = |(a, b)| cmp_shred_erasure_shard_index(a, b).is_le();
@@ -904,12 +904,13 @@ pub(super) fn recover(
     if tree.last() != Some(&merkle_root) {
         return Err(Error::InvalidMerkleRoot);
     }
-    for (index, (shred, mask)) in shreds.iter_mut().zip(&mask).enumerate() {
+    let set_merkle_proof = move |(index, (mut shred, mask)): (_, (Shred, _))| {
         let proof = make_merkle_proof(index, num_shards, &tree);
-        if *mask {
+        if mask {
             if shred.merkle_proof()?.map(Some).ne(proof.map(Result::ok)) {
                 return Err(Error::InvalidMerkleProof);
             }
+            Ok(None)
         } else {
             shred.set_merkle_proof(proof)?;
             // Already sanitized after reconstruct.
@@ -917,15 +918,17 @@ pub(super) fn recover(
             // Assert that shred payload is fully populated.
             debug_assert_eq!(shred, {
                 let shred = shred.payload().clone();
-                &Shred::from_payload(shred).unwrap()
+                Shred::from_payload(shred).unwrap()
             });
+            Ok(Some(shred))
         }
-    }
+    };
     Ok(shreds
         .into_iter()
         .zip(mask)
-        .filter(|(_, mask)| !mask)
-        .map(|(shred, _)| shred))
+        .enumerate()
+        .map(set_merkle_proof)
+        .filter_map(Result::transpose))
 }
 
 // Compares shreds of the same erasure batch by their erasure shard index
@@ -1698,7 +1701,10 @@ mod test {
                 );
                 continue;
             }
-            let recovered_shreds: Vec<_> = recover(shreds, reed_solomon_cache).unwrap().collect();
+            let recovered_shreds: Vec<_> = recover(shreds, reed_solomon_cache)
+                .unwrap()
+                .map(Result::unwrap)
+                .collect();
             assert_eq!(size + recovered_shreds.len(), num_shreds);
             assert_eq!(recovered_shreds.len(), removed_shreds.len());
             removed_shreds.sort_by(|a, b| {
@@ -2018,7 +2024,11 @@ mod test {
             })
             .group_by(|shred| shred.common_header().fec_set_index)
             .into_iter()
-            .flat_map(|(_, shreds)| recover(shreds.collect(), reed_solomon_cache).unwrap())
+            .flat_map(|(_, shreds)| {
+                recover(shreds.collect(), reed_solomon_cache)
+                    .unwrap()
+                    .map(Result::unwrap)
+            })
             .collect();
         assert_eq!(recovered_data_shreds.len(), data_shreds.len());
         for (shred, other) in recovered_data_shreds.into_iter().zip(data_shreds) {
