@@ -146,14 +146,6 @@ impl<D: TransactionData> ResolvedTransactionView<D> {
         is_writable_cache
     }
 
-    fn num_readonly_accounts(&self) -> usize {
-        usize::from(self.view.total_readonly_lookup_accounts())
-            .wrapping_add(usize::from(self.view.num_readonly_signed_static_accounts()))
-            .wrapping_add(usize::from(
-                self.view.num_readonly_unsigned_static_accounts(),
-            ))
-    }
-
     pub fn loaded_addresses(&self) -> Option<&LoadedAddresses> {
         self.resolved_addresses.as_ref()
     }
@@ -165,9 +157,7 @@ impl<D: TransactionData> SVMMessage for ResolvedTransactionView<D> {
     }
 
     fn num_write_locks(&self) -> u64 {
-        self.account_keys()
-            .len()
-            .wrapping_sub(self.num_readonly_accounts()) as u64
+        self.view.num_requested_write_locks()
     }
 
     fn recent_blockhash(&self) -> &Hash {
