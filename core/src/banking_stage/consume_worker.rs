@@ -825,18 +825,17 @@ mod tests {
             mint_keypair,
             ..
         } = create_slow_genesis_config(10_000);
-        let mut bank = Bank::new_for_tests(&genesis_config);
-        if !relax_intrabatch_account_locks {
-            bank.deactivate_feature(&feature_set::relax_intrabatch_account_locks::id());
-        }
-        bank.ns_per_slot = u128::MAX;
-        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+        let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         // Warp to next epoch for MaxAge tests.
-        let bank = Arc::new(Bank::new_from_parent(
+        let mut bank = Bank::new_from_parent(
             bank.clone(),
             &Pubkey::new_unique(),
             bank.get_epoch_info().slots_in_epoch,
-        ));
+        );
+        if !relax_intrabatch_account_locks {
+            bank.deactivate_feature(&feature_set::relax_intrabatch_account_locks::id());
+        }
+        let bank = Arc::new(bank);
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
@@ -1033,7 +1032,6 @@ mod tests {
         assert_eq!(consumed.work.ids, vec![id1, id2]);
         assert_eq!(consumed.work.max_ages, vec![max_age, max_age]);
 
-        // HANA here
         // id2 succeeds with simd83, or is retryable due to lock conflict without simd83
         assert_eq!(
             consumed.retryable_indexes,
