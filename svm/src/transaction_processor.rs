@@ -28,9 +28,9 @@ use {
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_feature_set::{
-        enable_transaction_loading_failure_fees, remove_accounts_executable_flag_checks,
-        remove_rounding_in_fee_calculation, FeatureSet,
+        enable_transaction_loading_failure_fees, remove_accounts_executable_flag_checks, FeatureSet,
     },
+    solana_fee::FeeFeatures,
     solana_fee_structure::{FeeBudgetLimits, FeeStructure},
     solana_hash::Hash,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
@@ -606,9 +606,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             lamports_per_signature == 0,
             fee_lamports_per_signature,
             fee_budget_limits.prioritization_fee,
-            account_loader
-                .feature_set
-                .is_active(&remove_rounding_in_fee_calculation::id()),
+            FeeFeatures::from(account_loader.feature_set.as_ref()),
         );
 
         let fee_payer_index = 0;

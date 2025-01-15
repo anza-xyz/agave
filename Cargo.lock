@@ -7311,6 +7311,7 @@ dependencies = [
 name = "solana-fee"
 version = "2.2.0"
 dependencies = [
+ "solana-feature-set",
  "solana-fee-structure",
  "solana-svm-transaction",
 ]

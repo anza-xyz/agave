@@ -1,4 +1,24 @@
-use {solana_fee_structure::FeeDetails, solana_svm_transaction::svm_message::SVMMessage};
+use {
+    solana_feature_set::{remove_rounding_in_fee_calculation, FeatureSet},
+    solana_fee_structure::FeeDetails,
+    solana_svm_transaction::svm_message::SVMMessage,
+};
+
+/// Bools indicating the activation of features relevant
+/// to the fee calculation.
+#[derive(Copy, Clone)]
+pub struct FeeFeatures {
+    pub remove_rounding_in_fee_calculation: bool,
+}
+
+impl From<&FeatureSet> for FeeFeatures {
+    fn from(feature_set: &FeatureSet) -> Self {
+        Self {
+            remove_rounding_in_fee_calculation: feature_set
+                .is_active(&remove_rounding_in_fee_calculation::ID),
+        }
+    }
+}
 
 /// Calculate fee for `SanitizedMessage`
 pub fn calculate_fee(
@@ -6,14 +26,14 @@ pub fn calculate_fee(
     zero_fees_for_test: bool,
     lamports_per_signature: u64,
     prioritization_fee: u64,
-    remove_rounding_in_fee_calculation: bool,
+    fee_features: FeeFeatures,
 ) -> u64 {
     calculate_fee_details(
         message,
         zero_fees_for_test,
         lamports_per_signature,
         prioritization_fee,
-        remove_rounding_in_fee_calculation,
+        fee_features,
     )
     .total_fee()
 }
@@ -23,7 +43,7 @@ pub fn calculate_fee_details(
     zero_fees_for_test: bool,
     lamports_per_signature: u64,
     prioritization_fee: u64,
-    remove_rounding_in_fee_calculation: bool,
+    fee_features: FeeFeatures,
 ) -> FeeDetails {
     if zero_fees_for_test {
         return FeeDetails::default();
@@ -32,7 +52,7 @@ pub fn calculate_fee_details(
     FeeDetails::new(
         calculate_signature_fee(SignatureCounts::from(message), lamports_per_signature),
         prioritization_fee,
-        remove_rounding_in_fee_calculation,
+        fee_features.remove_rounding_in_fee_calculation,
     )
 }
 
