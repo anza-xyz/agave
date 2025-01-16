@@ -34,7 +34,6 @@ use {
     solana_transaction_context::{IndexOfAccount, TransactionAccount},
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     std::{
-        collections::HashMap,
         num::{NonZeroU32, Saturating},
         sync::Arc,
     },
@@ -110,7 +109,6 @@ pub struct FeesOnlyTransaction {
 #[cfg_attr(feature = "dev-context-only-utils", derive(Clone))]
 pub(crate) struct AccountLoader<'a, CB: TransactionProcessingCallback> {
     pub(crate) program_cache: ProgramCacheForTxBatch,
-    program_accounts: HashMap<Pubkey, (&'a Pubkey, u64)>,
     account_cache: AHashMap<Pubkey, AccountSharedData>,
     callbacks: &'a CB,
     pub(crate) feature_set: Arc<FeatureSet>,
@@ -119,7 +117,6 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
     pub(crate) fn new_with_account_cache_capacity(
         account_overrides: Option<&'a AccountOverrides>,
         program_cache: ProgramCacheForTxBatch,
-        program_accounts: HashMap<Pubkey, (&'a Pubkey, u64)>,
         callbacks: &'a CB,
         feature_set: Arc<FeatureSet>,
         capacity: usize,
@@ -138,7 +135,6 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
             program_cache,
             account_cache,
             callbacks,
-            program_accounts,
             feature_set,
         }
     }
@@ -149,24 +145,6 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         usage_pattern: AccountUsagePattern,
     ) -> Option<LoadedTransactionAccount> {
         let is_writable = usage_pattern == AccountUsagePattern::Writable;
-        let is_invisible_read = usage_pattern == AccountUsagePattern::ReadOnlyInvisible;
-        let use_program_cache = !self
-            .feature_set
-            .is_active(&feature_set::disable_account_loader_special_case::id());
-
-        if let Some(program) = (use_program_cache && is_invisible_read)
-            .then_some(())
-            .and_then(|_| self.program_cache.find(account_key))
-        {
-            // Optimization to skip loading of accounts which are only used as
-            // programs in top-level instructions and not passed as instruction accounts.
-            return Some(LoadedTransactionAccount {
-                loaded_size: program.account_size,
-                account: account_shared_data_from_program(account_key, &self.program_accounts)
-                    .ok()?,
-                rent_collected: 0,
-            });
-        }
 
         let account = if let Some(account) = self.account_cache.get(account_key) {
             // If lamports is 0, a previous transaction deallocated this account.
@@ -625,22 +603,6 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
     loaded_account
 }
 
-fn account_shared_data_from_program(
-    key: &Pubkey,
-    program_accounts: &HashMap<Pubkey, (&Pubkey, u64)>,
-) -> Result<AccountSharedData> {
-    // It's an executable program account. The program is already loaded in the cache.
-    // So the account data is not needed. Return a dummy AccountSharedData with meta
-    // information.
-    let mut program_account = AccountSharedData::default();
-    let (program_owner, _count) = program_accounts
-        .get(key)
-        .ok_or(TransactionError::AccountNotFound)?;
-    program_account.set_owner(**program_owner);
-    program_account.set_executable(true);
-    Ok(program_account)
-}
-
 /// Accumulate loaded account data size into `accumulated_accounts_data_size`.
 /// Returns TransactionErr::MaxLoadedAccountsDataSizeExceeded if
 /// `accumulated_accounts_data_size` exceeds
@@ -780,7 +742,6 @@ mod tests {
             AccountLoader::new_with_account_cache_capacity(
                 None,
                 ProgramCacheForTxBatch::default(),
-                HashMap::default(),
                 callbacks,
                 Arc::<FeatureSet>::default(),
                 0,
@@ -1125,7 +1086,6 @@ mod tests {
         let mut account_loader = AccountLoader::new_with_account_cache_capacity(
             account_overrides,
             ProgramCacheForTxBatch::default(),
-            HashMap::default(),
             &callbacks,
             Arc::new(FeatureSet::all_enabled()),
             0,
@@ -1558,8 +1518,6 @@ mod tests {
                 Hash::default(),
             ));
 
-        let mut program_accounts = HashMap::new();
-        program_accounts.insert(program_keypair.pubkey(), (&loader_v2, 0));
         let mut loaded_programs = ProgramCacheForTxBatch::default();
         loaded_programs.replenish(
             program_keypair.pubkey(),
@@ -1573,7 +1531,6 @@ mod tests {
         let mut account_loader = AccountLoader::new_with_account_cache_capacity(
             None,
             loaded_programs,
-            program_accounts,
             &mock_bank,
             Arc::<FeatureSet>::default(),
             0,
@@ -2550,9 +2507,6 @@ mod tests {
 
         let (_program1_size, _) = make_account(program1, loader_v2, true);
 
-        let mut program_accounts = HashMap::new();
-        program_accounts.insert(program1, (&loader_v2, 0));
-        program_accounts.insert(program2, (&loader_v3, 0));
         let mut program_cache = ProgramCacheForTxBatch::default();
         let program1_entry = ProgramCacheEntry {
             account_size: 0,
@@ -2573,7 +2527,6 @@ mod tests {
             let mut account_loader = AccountLoader::new_with_account_cache_capacity(
                 None,
                 program_cache.clone(),
-                program_accounts.clone(),
                 &mock_bank,
                 Arc::<FeatureSet>::default(),
                 0,

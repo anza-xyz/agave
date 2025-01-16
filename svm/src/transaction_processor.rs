@@ -397,7 +397,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut account_loader = AccountLoader::new_with_account_cache_capacity(
             config.account_overrides,
             program_cache_for_tx_batch,
-            program_accounts_map,
             callbacks,
             environment.feature_set.clone(),
             account_keys_in_batch,
@@ -1312,7 +1311,6 @@ mod tests {
             AccountLoader::new_with_account_cache_capacity(
                 None,
                 ProgramCacheForTxBatch::default(),
-                HashMap::default(),
                 callbacks,
                 Arc::<FeatureSet>::default(),
                 0,
