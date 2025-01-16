@@ -6,7 +6,7 @@ use {
         distributions::uniform::{SampleUniform, UniformSampler},
         Rng,
     },
-    std::ops::{AddAssign, Sub, SubAssign},
+    std::ops::{AddAssign, SubAssign},
 };
 
 // Each internal tree node has FANOUT many child nodes with indices:
@@ -106,7 +106,7 @@ where
 
 impl<T> WeightedShuffle<T>
 where
-    T: Copy + ConstZero + PartialOrd + AddAssign + SubAssign + Sub<Output = T>,
+    T: Copy + ConstZero + PartialOrd + SubAssign,
 {
     // Removes given weight at index k.
     fn remove(&mut self, k: usize, weight: T) {
@@ -140,8 +140,6 @@ where
                     index = (index << BIT_SHIFT) + j + 1;
                     break;
                 } else {
-                    debug_assert!(weight >= node);
-                    weight -= node;
                     val -= node;
                 }
             }
@@ -153,10 +151,14 @@ where
         let index = self.num_nodes + k; // leaf node
         let offset = (index - 1) & BIT_MASK;
         let index = (index - 1) >> BIT_SHIFT; // parent node
-        if self.tree[index][offset] == Self::ZERO {
+        let Some(weight) = self.tree.get(index).map(|node| node[offset]) else {
+            error!("WeightedShuffle::remove_index: Invalid index {k}");
+            return;
+        };
+        if weight == Self::ZERO {
             self.remove_zero(k);
         } else {
-            self.remove(k, self.tree[index][offset]);
+            self.remove(k, weight);
         }
     }
 
@@ -169,7 +171,7 @@ where
 
 impl<T> WeightedShuffle<T>
 where
-    T: Copy + ConstZero + PartialOrd + AddAssign + SampleUniform + SubAssign + Sub<Output = T>,
+    T: Copy + ConstZero + PartialOrd + SampleUniform + SubAssign,
 {
     // Equivalent to weighted_shuffle.shuffle(&mut rng).next()
     pub fn first<R: Rng>(&self, rng: &mut R) -> Option<usize> {
@@ -188,7 +190,7 @@ where
 
 impl<'a, T: 'a> WeightedShuffle<T>
 where
-    T: Copy + ConstZero + PartialOrd + AddAssign + SampleUniform + SubAssign + Sub<Output = T>,
+    T: Copy + ConstZero + PartialOrd + SampleUniform + SubAssign,
 {
     pub fn shuffle<R: Rng>(mut self, rng: &'a mut R) -> impl Iterator<Item = usize> + 'a {
         std::iter::from_fn(move || {
