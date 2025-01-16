@@ -3886,7 +3886,7 @@ fn test_program_fees() {
     bank.set_fee_structure(&fee_structure);
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
     let feature_set = bank.feature_set.clone();
-    let mut bank_client = BankClient::new_shared(bank);
+    let mut bank_client = BankClient::new_shared(bank.clone());
     let authority_keypair = Keypair::new();
 
     let (_bank, program_id) = load_upgradeable_program_and_advance_slot(
@@ -3920,7 +3920,7 @@ fn test_program_fees() {
         congestion_multiplier == 0,
         fee_structure.lamports_per_signature,
         fee_budget_limits.prioritization_fee,
-        true,
+        bank.feature_set.as_ref().into(),
     );
     bank_client
         .send_and_confirm_message(&[&mint_keypair], message)
@@ -3953,7 +3953,7 @@ fn test_program_fees() {
         congestion_multiplier == 0,
         fee_structure.lamports_per_signature,
         fee_budget_limits.prioritization_fee,
-        true,
+        bank.feature_set.as_ref().into(),
     );
     assert!(expected_normal_fee < expected_prioritized_fee);
 
