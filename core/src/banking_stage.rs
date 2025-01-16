@@ -368,7 +368,6 @@ impl BankingStage {
         connection_cache: Arc<ConnectionCache>,
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
-        enable_forwarding: bool,
     ) -> Self {
         Self::new_num_threads(
             block_production_method,
@@ -385,7 +384,6 @@ impl BankingStage {
             connection_cache,
             bank_forks,
             prioritization_fee_cache,
-            enable_forwarding,
         )
     }
 
@@ -405,7 +403,6 @@ impl BankingStage {
         connection_cache: Arc<ConnectionCache>,
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
-        enable_forwarding: bool,
     ) -> Self {
         match block_production_method {
             BlockProductionMethod::CentralScheduler
@@ -429,7 +426,6 @@ impl BankingStage {
                     connection_cache,
                     bank_forks,
                     prioritization_fee_cache,
-                    enable_forwarding,
                 )
             }
         }
@@ -451,7 +447,6 @@ impl BankingStage {
         connection_cache: Arc<ConnectionCache>,
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
-        enable_forwarding: bool,
     ) -> Self {
         assert!(num_threads >= MIN_TOTAL_THREADS);
         // Single thread to generate entries from many banks.
@@ -501,22 +496,11 @@ impl BankingStage {
             ));
         }
 
-        let transaction_struct =
-            if enable_forwarding && !matches!(transaction_struct, TransactionStructure::Sdk) {
-                warn!(
-                "Forwarding only supported for `Sdk` transaction struct. Overriding to use `Sdk`."
-            );
-                TransactionStructure::Sdk
-            } else {
-                transaction_struct
-            };
-
         match transaction_struct {
             TransactionStructure::Sdk => {
                 let receive_and_buffer = SanitizedTransactionReceiveAndBuffer::new(
                     PacketDeserializer::new(non_vote_receiver),
                     bank_forks.clone(),
-                    enable_forwarding,
                 );
                 Self::spawn_scheduler_and_workers(
                     &mut bank_thread_hdls,
@@ -524,14 +508,10 @@ impl BankingStage {
                     use_greedy_scheduler,
                     decision_maker,
                     committer,
-                    cluster_info,
                     poh_recorder,
                     num_threads,
                     log_messages_bytes_limit,
-                    connection_cache,
                     bank_forks,
-                    enable_forwarding,
-                    data_budget,
                 );
             }
             TransactionStructure::View => {
@@ -545,14 +525,10 @@ impl BankingStage {
                     use_greedy_scheduler,
                     decision_maker,
                     committer,
-                    cluster_info,
                     poh_recorder,
                     num_threads,
                     log_messages_bytes_limit,
-                    connection_cache,
                     bank_forks,
-                    enable_forwarding,
-                    data_budget,
                 );
             }
         }
@@ -567,14 +543,10 @@ impl BankingStage {
         use_greedy_scheduler: bool,
         decision_maker: DecisionMaker,
         committer: Committer,
-        cluster_info: &impl LikeClusterInfo,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         num_threads: u32,
         log_messages_bytes_limit: Option<usize>,
-        connection_cache: Arc<ConnectionCache>,
         bank_forks: Arc<RwLock<BankForks>>,
-        enable_forwarding: bool,
-        data_budget: Arc<DataBudget>,
     ) {
         // Create channels for communication between scheduler and workers
         let num_workers = (num_threads).saturating_sub(NUM_VOTE_PROCESSING_THREADS);
@@ -610,16 +582,6 @@ impl BankingStage {
             )
         }
 
-        let forwarder = enable_forwarding.then(|| {
-            Forwarder::new(
-                poh_recorder.clone(),
-                bank_forks.clone(),
-                cluster_info.clone(),
-                connection_cache.clone(),
-                data_budget.clone(),
-            )
-        });
-
         // Spawn the central scheduler thread
         if use_greedy_scheduler {
             bank_thread_hdls.push(
@@ -637,7 +599,6 @@ impl BankingStage {
                             bank_forks,
                             scheduler,
                             worker_metrics,
-                            forwarder,
                         );
 
                         match scheduler_controller.run() {
@@ -666,7 +627,6 @@ impl BankingStage {
                             bank_forks,
                             scheduler,
                             worker_metrics,
-                            forwarder,
                         );
 
                         match scheduler_controller.run() {
@@ -952,7 +912,6 @@ mod tests {
             Arc::new(ConnectionCache::new("connection_cache_test")),
             bank_forks,
             &Arc::new(PrioritizationFeeCache::new(0u64)),
-            false,
         );
         drop(non_vote_sender);
         drop(tpu_vote_sender);
@@ -1011,7 +970,6 @@ mod tests {
             Arc::new(ConnectionCache::new("connection_cache_test")),
             bank_forks,
             &Arc::new(PrioritizationFeeCache::new(0u64)),
-            false,
         );
         trace!("sending bank");
         drop(non_vote_sender);
@@ -1096,7 +1054,6 @@ mod tests {
             Arc::new(ConnectionCache::new("connection_cache_test")),
             bank_forks.clone(), // keep a local-copy of bank-forks so worker threads do not lose weak access to bank-forks
             &Arc::new(PrioritizationFeeCache::new(0u64)),
-            false,
         );
 
         // fund another account so we can send 2 good transactions in a single batch.
@@ -1268,7 +1225,6 @@ mod tests {
                 Arc::new(ConnectionCache::new("connection_cache_test")),
                 bank_forks,
                 &Arc::new(PrioritizationFeeCache::new(0u64)),
-                false,
             );
 
             // wait for banking_stage to eat the packets
@@ -1458,7 +1414,6 @@ mod tests {
             Arc::new(ConnectionCache::new("connection_cache_test")),
             bank_forks,
             &Arc::new(PrioritizationFeeCache::new(0u64)),
-            false,
         );
 
         let keypairs = (0..100).map(|_| Keypair::new()).collect_vec();

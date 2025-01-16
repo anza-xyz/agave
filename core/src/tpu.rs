@@ -32,6 +32,7 @@ use {
         blockstore::Blockstore, blockstore_processor::TransactionStatusSender,
         entry_notifier_service::EntryNotifierSender,
     },
+    solana_perf::data_budget::DataBudget,
     solana_poh::poh_recorder::{PohRecorder, WorkingBankEntry},
     solana_rpc::{
         optimistically_confirmed_bank_tracker::BankNotificationSender,
@@ -273,7 +274,6 @@ impl Tpu {
             connection_cache.clone(),
             bank_forks.clone(),
             prioritization_fee_cache,
-            enable_block_production_forwarding,
         );
 
         let forwarding_stage = ForwardingStage::spawn(
@@ -281,6 +281,7 @@ impl Tpu {
             connection_cache.clone(),
             RootBankCache::new(bank_forks.clone()),
             (cluster_info.clone(), poh_recorder.clone()),
+            DataBudget::default(),
         );
 
         let (entry_receiver, tpu_entry_notifier) =

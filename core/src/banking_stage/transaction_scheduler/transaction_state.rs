@@ -93,40 +93,6 @@ impl<Tx> TransactionState<Tx> {
         }
     }
 
-    /// Return whether packet should be attempted to be forwarded.
-    pub(crate) fn should_forward(&self) -> bool {
-        match self {
-            Self::Unprocessed {
-                should_forward: forwarded,
-                ..
-            } => *forwarded,
-            Self::Pending {
-                should_forward: forwarded,
-                ..
-            } => *forwarded,
-            Self::Transitioning => unreachable!(),
-        }
-    }
-
-    /// Mark the packet as forwarded.
-    /// This is used to prevent the packet from being forwarded multiple times.
-    pub(crate) fn mark_forwarded(&mut self) {
-        match self {
-            Self::Unprocessed { should_forward, .. } => *should_forward = false,
-            Self::Pending { should_forward, .. } => *should_forward = false,
-            Self::Transitioning => unreachable!(),
-        }
-    }
-
-    /// Return the packet of the transaction.
-    pub(crate) fn packet(&self) -> Option<&Arc<ImmutableDeserializedPacket>> {
-        match self {
-            Self::Unprocessed { packet, .. } => packet.as_ref(),
-            Self::Pending { packet, .. } => packet.as_ref(),
-            Self::Transitioning => unreachable!(),
-        }
-    }
-
     /// Intended to be called when a transaction is scheduled. This method will
     /// transition the transaction from `Unprocessed` to `Pending` and return the
     /// `SanitizedTransactionTTL` for processing.

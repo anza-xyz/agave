@@ -319,7 +319,6 @@ fn bench_banking(
         Arc::new(ConnectionCache::new("connection_cache_test")),
         bank_forks,
         &Arc::new(PrioritizationFeeCache::new(0u64)),
-        false,
     );
 
     let chunk_len = verified.len() / CHUNKS;
