@@ -187,11 +187,10 @@ pub struct Channels {
 
 impl Channels {
     pub(crate) fn unified_receiver(&self) -> &BankingPacketReceiver {
-        assert!(self.non_vote_receiver.same_channel(&self.tpu_vote_receiver));
-        assert!(self
-            .non_vote_receiver
-            .same_channel(&self.gossip_vote_receiver));
-        &self.non_vote_receiver
+        let unified_receiver = &self.non_vote_receiver;
+        assert!(unified_receiver.same_channel(&self.tpu_vote_receiver));
+        assert!(unified_receiver.same_channel(&self.gossip_vote_receiver));
+        unified_receiver
     }
 }
 
