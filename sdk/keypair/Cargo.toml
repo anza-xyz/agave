@@ -11,9 +11,9 @@ edition = { workspace = true }
 
 [dependencies]
 bs58 = { workspace = true, features = ["std"] }
-ed25519-dalek = { workspace = true }
+ed25519-dalek = { workspace = true, features = ["rand_core"] }
 ed25519-dalek-bip32 = { workspace = true, optional = true }
-rand0-7 = { workspace = true }
+rand = { workspace = true }
 solana-derivation-path = { workspace = true, optional = true }
 solana-pubkey = { workspace = true }
 solana-seed-derivable = { workspace = true, optional = true }

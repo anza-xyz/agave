@@ -243,8 +243,8 @@ mod test {
         super::*,
         crate::crds_data::{LowestSlot, NodeInstance, Vote},
         bincode::deserialize,
-        rand0_7::{Rng, SeedableRng},
-        rand_chacha0_2::ChaChaRng,
+        rand::{Rng, SeedableRng},
+        rand_chacha::ChaChaRng,
         solana_perf::test_tx::new_test_vote_tx,
         solana_sdk::{
             signature::{Keypair, Signer},
