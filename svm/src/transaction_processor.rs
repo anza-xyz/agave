@@ -931,14 +931,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         fn transaction_accounts_lamports_sum(
             accounts: &[(Pubkey, AccountSharedData)],
-            message: &impl SVMMessage,
         ) -> Option<u128> {
-            let mut lamports_sum = 0u128;
-            for i in 0..message.account_keys().len() {
-                let (_, account) = accounts.get(i)?;
-                lamports_sum = lamports_sum.checked_add(u128::from(account.lamports()))?;
-            }
-            Some(lamports_sum)
+            accounts.iter().try_fold(0u128, |sum, (_, account)| {
+                sum.checked_add(u128::from(account.lamports()))
+            })
         }
 
         let default_rent_collector = RentCollector::default();
@@ -947,7 +943,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .unwrap_or(&default_rent_collector);
 
         let lamports_before_tx =
-            transaction_accounts_lamports_sum(&transaction_accounts, tx).unwrap_or(0);
+            transaction_accounts_lamports_sum(&transaction_accounts).unwrap_or(0);
 
         let compute_budget = config
             .compute_budget
@@ -1066,7 +1062,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         } = transaction_context.into();
 
         if status.is_ok()
-            && transaction_accounts_lamports_sum(&accounts, tx)
+            && transaction_accounts_lamports_sum(&accounts)
                 .filter(|lamports_after_tx| lamports_before_tx == *lamports_after_tx)
                 .is_none()
         {
