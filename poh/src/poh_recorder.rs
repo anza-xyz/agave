@@ -282,7 +282,7 @@ pub struct PohRecorder {
     start_tick_height: u64, // first tick_height this recorder will observe
     tick_cache: Vec<(Entry, u64)>, // cache of entry and its tick_height
     working_bank: Option<WorkingBank>,
-    sender: Sender<WorkingBankEntry>,
+    working_bank_sender: Sender<WorkingBankEntry>,
     poh_timing_point_sender: Option<PohTimingSender>,
     leader_first_tick_height_including_grace_ticks: Option<u64>,
     leader_last_tick_height: u64, // zero if none
@@ -776,7 +776,9 @@ impl PohRecorder {
 
             for tick in &self.tick_cache[..entry_count] {
                 working_bank.bank.register_tick(&tick.0.hash);
-                send_result = self.sender.send((working_bank.bank.clone(), tick.clone()));
+                send_result = self
+                    .working_bank_sender
+                    .send((working_bank.bank.clone(), tick.clone()));
                 if send_result.is_err() {
                     break;
                 }
@@ -988,7 +990,8 @@ impl PohRecorder {
                         transactions,
                     };
                     let bank_clone = working_bank.bank.clone();
-                    self.sender.send((bank_clone, (entry, self.tick_height)))
+                    self.working_bank_sender
+                        .send((bank_clone, (entry, self.tick_height)))
                 });
                 self.send_entry_us += send_entry_us;
                 send_entry_res?;
@@ -1034,7 +1037,7 @@ impl PohRecorder {
             ticks_per_slot,
             poh_config.target_tick_duration.as_nanos() as u64,
         );
-        let (sender, receiver) = unbounded();
+        let (working_bank_sender, working_bank_receiver) = unbounded();
         let (record_sender, record_receiver) = unbounded();
         let (leader_first_tick_height_including_grace_ticks, leader_last_tick_height, grace_ticks) =
             Self::compute_leader_slot_tick_heights(next_leader_slot, ticks_per_slot);
@@ -1044,7 +1047,7 @@ impl PohRecorder {
                 tick_height,
                 tick_cache: vec![],
                 working_bank: None,
-                sender,
+                working_bank_sender,
                 poh_timing_point_sender,
                 clear_bank_signal,
                 start_bank,
@@ -1073,7 +1076,7 @@ impl PohRecorder {
                 last_reported_slot_for_pending_fork: Arc::default(),
                 is_exited,
             },
-            receiver,
+            working_bank_receiver,
             record_receiver,
         )
     }
