@@ -37,6 +37,7 @@ solana-signer = { workspace = true }
 solana-time-utils = { workspace = true }
 
 [dev-dependencies]
+solana-genesis-config = { path = ".", features = ["serde"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 
 [features]
