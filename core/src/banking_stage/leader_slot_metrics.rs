@@ -1008,24 +1008,6 @@ impl LeaderSlotMetricsTracker {
         }
     }
 
-    pub(crate) fn increment_forward_us(&mut self, us: u64) {
-        if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            leader_slot_metrics
-                .timing_metrics
-                .process_buffered_packets_timings
-                .forward_us += us;
-        }
-    }
-
-    pub(crate) fn increment_forward_and_hold_us(&mut self, us: u64) {
-        if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
-            leader_slot_metrics
-                .timing_metrics
-                .process_buffered_packets_timings
-                .forward_and_hold_us += us;
-        }
-    }
-
     pub(crate) fn increment_process_packets_transactions_us(&mut self, us: u64) {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
             leader_slot_metrics

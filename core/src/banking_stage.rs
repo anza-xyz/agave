@@ -9,7 +9,6 @@ use {
         committer::Committer,
         consumer::Consumer,
         decision_maker::{BufferedPacketsDecision, DecisionMaker},
-        forwarder::Forwarder,
         latest_unprocessed_votes::{LatestUnprocessedVotes, VoteSource},
         leader_slot_metrics::LeaderSlotMetricsTracker,
         packet_receiver::PacketReceiver,
@@ -30,11 +29,10 @@ use {
     agave_banking_stage_ingress_types::BankingPacketReceiver,
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     histogram::Histogram,
-    solana_client::connection_cache::ConnectionCache,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfoQuery},
     solana_ledger::blockstore_processor::TransactionStatusSender,
     solana_measure::measure_us,
-    solana_perf::{data_budget::DataBudget, packet::PACKETS_PER_BATCH},
+    solana_perf::packet::PACKETS_PER_BATCH,
     solana_poh::poh_recorder::{PohRecorder, TransactionRecorder},
     solana_runtime::{
         bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
@@ -365,7 +363,6 @@ impl BankingStage {
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: ReplayVoteSender,
         log_messages_bytes_limit: Option<usize>,
-        connection_cache: Arc<ConnectionCache>,
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
     ) -> Self {
@@ -381,7 +378,6 @@ impl BankingStage {
             transaction_status_sender,
             replay_vote_sender,
             log_messages_bytes_limit,
-            connection_cache,
             bank_forks,
             prioritization_fee_cache,
         )
@@ -400,7 +396,6 @@ impl BankingStage {
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: ReplayVoteSender,
         log_messages_bytes_limit: Option<usize>,
-        connection_cache: Arc<ConnectionCache>,
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
     ) -> Self {
@@ -423,7 +418,6 @@ impl BankingStage {
                     transaction_status_sender,
                     replay_vote_sender,
                     log_messages_bytes_limit,
-                    connection_cache,
                     bank_forks,
                     prioritization_fee_cache,
                 )
@@ -444,15 +438,10 @@ impl BankingStage {
         transaction_status_sender: Option<TransactionStatusSender>,
         replay_vote_sender: ReplayVoteSender,
         log_messages_bytes_limit: Option<usize>,
-        connection_cache: Arc<ConnectionCache>,
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
     ) -> Self {
         assert!(num_threads >= MIN_TOTAL_THREADS);
-        // Single thread to generate entries from many banks.
-        // This thread talks to poh_service and broadcasts the entries once they have been recorded.
-        // Once an entry has been recorded, its blockhash is registered with the bank.
-        let data_budget = Arc::new(DataBudget::default());
         // Keeps track of extraneous vote transactions for the vote threads
         let latest_unprocessed_votes = {
             let bank = bank_forks.read().unwrap().working_bank();
@@ -482,13 +471,6 @@ impl BankingStage {
                 committer.clone(),
                 transaction_recorder.clone(),
                 log_messages_bytes_limit,
-                Forwarder::new(
-                    poh_recorder.clone(),
-                    bank_forks.clone(),
-                    cluster_info.clone(),
-                    connection_cache.clone(),
-                    data_budget.clone(),
-                ),
                 UnprocessedTransactionStorage::new_vote_storage(
                     latest_unprocessed_votes.clone(),
                     vote_source,
@@ -642,14 +624,13 @@ impl BankingStage {
         }
     }
 
-    fn spawn_thread_local_multi_iterator_thread<T: LikeClusterInfo>(
+    fn spawn_thread_local_multi_iterator_thread(
         id: u32,
         packet_receiver: BankingPacketReceiver,
         mut decision_maker: DecisionMaker,
         committer: Committer,
         transaction_recorder: TransactionRecorder,
         log_messages_bytes_limit: Option<usize>,
-        mut forwarder: Forwarder<T>,
         unprocessed_transaction_storage: UnprocessedTransactionStorage,
     ) -> JoinHandle<()> {
         let mut packet_receiver = PacketReceiver::new(id, packet_receiver);
@@ -666,7 +647,6 @@ impl BankingStage {
                 Self::process_loop(
                     &mut packet_receiver,
                     &mut decision_maker,
-                    &mut forwarder,
                     &consumer,
                     id,
                     unprocessed_transaction_storage,
@@ -676,9 +656,8 @@ impl BankingStage {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn process_buffered_packets<T: LikeClusterInfo>(
+    fn process_buffered_packets(
         decision_maker: &mut DecisionMaker,
-        forwarder: &mut Forwarder<T>,
         consumer: &Consumer,
         unprocessed_transaction_storage: &mut UnprocessedTransactionStorage,
         banking_stage_stats: &BankingStageStats,
@@ -695,54 +674,25 @@ impl BankingStage {
         );
         slot_metrics_tracker.increment_make_decision_us(make_decision_us);
 
-        match decision {
-            BufferedPacketsDecision::Consume(bank_start) => {
-                // Take metrics action before consume packets (potentially resetting the
-                // slot metrics tracker to the next slot) so that we don't count the
-                // packet processing metrics from the next slot towards the metrics
-                // of the previous slot
-                slot_metrics_tracker.apply_action(metrics_action);
-                let (_, consume_buffered_packets_us) = measure_us!(consumer
-                    .consume_buffered_packets(
-                        &bank_start,
-                        unprocessed_transaction_storage,
-                        banking_stage_stats,
-                        slot_metrics_tracker,
-                    ));
-                slot_metrics_tracker
-                    .increment_consume_buffered_packets_us(consume_buffered_packets_us);
-            }
-            BufferedPacketsDecision::Forward => {
-                let ((), forward_us) = measure_us!(forwarder.handle_forwarding(
-                    unprocessed_transaction_storage,
-                    false,
-                    slot_metrics_tracker,
-                    banking_stage_stats,
-                ));
-                slot_metrics_tracker.increment_forward_us(forward_us);
-                // Take metrics action after forwarding packets to include forwarded
-                // metrics into current slot
-                slot_metrics_tracker.apply_action(metrics_action);
-            }
-            BufferedPacketsDecision::ForwardAndHold => {
-                let ((), forward_and_hold_us) = measure_us!(forwarder.handle_forwarding(
-                    unprocessed_transaction_storage,
-                    true,
-                    slot_metrics_tracker,
-                    banking_stage_stats,
-                ));
-                slot_metrics_tracker.increment_forward_and_hold_us(forward_and_hold_us);
-                // Take metrics action after forwarding packets
-                slot_metrics_tracker.apply_action(metrics_action);
-            }
-            _ => (),
+        if let BufferedPacketsDecision::Consume(bank_start) = decision {
+            // Take metrics action before consume packets (potentially resetting the
+            // slot metrics tracker to the next slot) so that we don't count the
+            // packet processing metrics from the next slot towards the metrics
+            // of the previous slot
+            slot_metrics_tracker.apply_action(metrics_action);
+            let (_, consume_buffered_packets_us) = measure_us!(consumer.consume_buffered_packets(
+                &bank_start,
+                unprocessed_transaction_storage,
+                banking_stage_stats,
+                slot_metrics_tracker,
+            ));
+            slot_metrics_tracker.increment_consume_buffered_packets_us(consume_buffered_packets_us);
         }
     }
 
-    fn process_loop<T: LikeClusterInfo>(
+    fn process_loop(
         packet_receiver: &mut PacketReceiver,
         decision_maker: &mut DecisionMaker,
-        forwarder: &mut Forwarder<T>,
         consumer: &Consumer,
         id: u32,
         mut unprocessed_transaction_storage: UnprocessedTransactionStorage,
@@ -758,7 +708,6 @@ impl BankingStage {
             {
                 let (_, process_buffered_packets_us) = measure_us!(Self::process_buffered_packets(
                     decision_maker,
-                    forwarder,
                     consumer,
                     &mut unprocessed_transaction_storage,
                     &banking_stage_stats,
@@ -909,7 +858,6 @@ mod tests {
             None,
             replay_vote_sender,
             None,
-            Arc::new(ConnectionCache::new("connection_cache_test")),
             bank_forks,
             &Arc::new(PrioritizationFeeCache::new(0u64)),
         );
@@ -967,7 +915,6 @@ mod tests {
             None,
             replay_vote_sender,
             None,
-            Arc::new(ConnectionCache::new("connection_cache_test")),
             bank_forks,
             &Arc::new(PrioritizationFeeCache::new(0u64)),
         );
@@ -1051,7 +998,6 @@ mod tests {
             None,
             replay_vote_sender,
             None,
-            Arc::new(ConnectionCache::new("connection_cache_test")),
             bank_forks.clone(), // keep a local-copy of bank-forks so worker threads do not lose weak access to bank-forks
             &Arc::new(PrioritizationFeeCache::new(0u64)),
         );
@@ -1222,7 +1168,6 @@ mod tests {
                 None,
                 replay_vote_sender,
                 None,
-                Arc::new(ConnectionCache::new("connection_cache_test")),
                 bank_forks,
                 &Arc::new(PrioritizationFeeCache::new(0u64)),
             );
@@ -1411,7 +1356,6 @@ mod tests {
             None,
             replay_vote_sender,
             None,
-            Arc::new(ConnectionCache::new("connection_cache_test")),
             bank_forks,
             &Arc::new(PrioritizationFeeCache::new(0u64)),
         );

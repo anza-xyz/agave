@@ -271,7 +271,6 @@ impl Tpu {
             transaction_status_sender,
             replay_vote_sender,
             log_messages_bytes_limit,
-            connection_cache.clone(),
             bank_forks.clone(),
             prioritization_fee_cache,
         );
