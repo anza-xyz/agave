@@ -366,7 +366,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             program_accounts_map
         });
 
-        let (program_cache_for_tx_batch, program_cache_us) = measure_us!({
+        let (mut program_cache_for_tx_batch, program_cache_us) = measure_us!({
             let program_cache_for_tx_batch = self.replenish_program_cache(
                 callbacks,
                 &program_accounts_map,
@@ -396,8 +396,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // Create the account loader, which wraps all external account fetching.
         let mut account_loader = AccountLoader::new_with_account_cache_capacity(
             config.account_overrides,
-            program_cache_for_tx_batch,
-            program_accounts_map,
             callbacks,
             environment.feature_set.clone(),
             account_keys_in_batch,
@@ -461,7 +459,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         loaded_transaction,
                         &mut execute_timings,
                         &mut error_metrics,
-                        &mut account_loader.program_cache,
+                        &mut program_cache_for_tx_batch,
                         environment,
                         config,
                     );
@@ -470,6 +468,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     // Also update local program cache with modifications made by the transaction,
                     // if it executed successfully.
                     account_loader.update_accounts_for_executed_tx(tx, &executed_tx);
+                    if executed_tx.was_successful() {
+                        program_cache_for_tx_batch.merge(&executed_tx.programs_modified_by_tx);
+                    }
 
                     Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
                 }
@@ -483,9 +484,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // ProgramCache entries. Note that loaded_missing is deliberately defined, so that there's
         // still at least one other batch, which will evict the program cache, even after the
         // occurrences of cooperative loading.
-        if account_loader.program_cache.loaded_missing
-            || account_loader.program_cache.merged_modified
-        {
+        if program_cache_for_tx_batch.loaded_missing || program_cache_for_tx_batch.merged_modified {
             const SHRINK_LOADED_PROGRAMS_TO_PERCENTAGE: u8 = 90;
             self.program_cache
                 .write()
@@ -1311,8 +1310,6 @@ mod tests {
         fn from(callbacks: &'a MockBankCallback) -> AccountLoader<'a, MockBankCallback> {
             AccountLoader::new_with_account_cache_capacity(
                 None,
-                ProgramCacheForTxBatch::default(),
-                HashMap::default(),
                 callbacks,
                 Arc::<FeatureSet>::default(),
                 0,
