@@ -4,8 +4,8 @@
 use {
     crate::mock_bank::{
         create_custom_loader, deploy_program_with_upgrade_authority, program_address,
-        program_data_size, register_builtins, MockBankCallback, MockForkGraph, EXECUTION_EPOCH,
-        EXECUTION_SLOT, WALLCLOCK_TIME,
+        register_builtins, MockBankCallback, MockForkGraph, EXECUTION_EPOCH, EXECUTION_SLOT,
+        WALLCLOCK_TIME,
     },
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
@@ -15,6 +15,7 @@ use {
         feature_set::{self, FeatureSet},
         hash::Hash,
         instruction::{AccountMeta, Instruction},
+        native_loader,
         native_token::LAMPORTS_PER_SOL,
         nonce::{self, state::DurableNonce},
         pubkey::Pubkey,
@@ -2182,7 +2183,6 @@ fn simd83_account_reallocate(enable_fee_only_transactions: bool) -> Vec<SvmTestE
 
     let program_name = "write-to-account";
     let program_id = program_address(program_name);
-    let program_size = program_data_size(program_name);
 
     let mut common_test_entry = SvmTestEntry::default();
     common_test_entry.add_initial_program(program_name);
@@ -2217,11 +2217,7 @@ fn simd83_account_reallocate(enable_fee_only_transactions: bool) -> Vec<SvmTestE
         program_id,
         &fee_payer_keypair,
         target,
-        Some(
-            (program_size + MAX_PERMITTED_DATA_INCREASE)
-                .try_into()
-                .unwrap(),
-        ),
+        Some(MAX_PERMITTED_DATA_INCREASE.try_into().unwrap()),
     );
 
     common_test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
@@ -2342,6 +2338,23 @@ fn svm_inspect_account() {
         .or_default()
         .push((None, true));
 
+    // system, inspected twice due to owner checks
+    let system_account = AccountSharedData::create(
+        5000,
+        "system_program".as_bytes().to_vec(),
+        native_loader::id(),
+        true,
+        0,
+    );
+
+    {
+        let system_entry = expected_inspected_accounts
+            .entry(system_program::id())
+            .or_default();
+        system_entry.push((Some(system_account.clone()), false));
+        system_entry.push((Some(system_account.clone()), false));
+    }
+
     let transfer_amount = 1_000_000;
     let transaction = Transaction::new_signed_with_payer(
         &[system_instruction::transfer(
@@ -2398,6 +2411,15 @@ fn svm_inspect_account() {
         .or_default()
         .push((intermediate_recipient_account, true));
 
+    // system
+    {
+        let system_entry = expected_inspected_accounts
+            .entry(system_program::id())
+            .or_default();
+        system_entry.push((Some(system_account.clone()), false));
+        system_entry.push((Some(system_account.clone()), false));
+    }
+
     let mut final_test_entry = SvmTestEntry {
         initial_accounts: initial_test_entry.final_accounts.clone(),
         final_accounts: initial_test_entry.final_accounts.clone(),
@@ -2436,9 +2458,6 @@ fn svm_inspect_account() {
         );
     }
 
-    // The system program is retreived from the program cache, which does not
-    // inspect accounts, because they are necessarily read-only. Verify it has not made
-    // its way into the inspected accounts list.
     let num_expected_inspected_accounts: usize =
         expected_inspected_accounts.values().map(Vec::len).sum();
     let num_actual_inspected_accounts: usize =
