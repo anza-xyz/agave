@@ -8,7 +8,7 @@ description:
 The Solana protocol doesn’t wait for all validators to agree on a newly produced
 block before the next block is produced. Because of that, it’s quite common for
 two different blocks to be chained to the same parent block. In those
-situations, we call each conflicting chain a [“fork.”](./fork-generation.md)
+situations, we call each conflicting chain a ["fork."](./fork-generation.md)
 
 Solana validators need to vote on one of these forks and reach agreement on
 which one to use through a consensus algorithm (that is beyond the scope of this
@@ -34,11 +34,11 @@ only a single leader's transactions will be accepted.
 
 The table below illustrates what competing forks could look like. Time
 progresses from left to right and each slot is assigned to a validator that
-temporarily becomes the cluster “leader” and may produce a block for that slot.
+temporarily becomes the cluster "leader" and may produce a block for that slot.
 
-In this example, the leader for slot 3 chose to chain its “Block 3” directly to
-“Block 1” and in doing so skipped “Block 2”. Similarly, the leader for slot 5
-chose to chain “Block 5” directly to “Block 3” and skipped “Block 4”.
+In this example, the leader for slot 3 chose to chain its "Block 3" directly to
+"Block 1" and in doing so skipped "Block 2". Similarly, the leader for slot 5
+chose to chain "Block 5" directly to "Block 3" and skipped "Block 4".
 
 > Note that across different forks, the block produced for a given slot is
 > _always_ the same because producing two different blocks for the same slot is
