@@ -11,6 +11,7 @@ on:
       - v[0-9]+.[0-9]+
     paths:
       - "**.rs"
+      - "rust-toolchain.toml"
       - "Cargo.toml"
       - "Cargo.lock"
       - "cargo-build-sbf"
@@ -37,8 +38,7 @@ env:
 
 jobs:
   check:
-    #if: github.repository == 'anza-xyz/agave'
-    if: false
+    if: github.repository == 'anza-xyz/agave'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -75,8 +75,7 @@ jobs:
           cargo check
 
   test_cli:
-    #if: github.repository == 'anza-xyz/agave'
-    if: false
+    if: github.repository == 'anza-xyz/agave'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -105,8 +104,7 @@ jobs:
           cargo test --manifest-path clients/cli/Cargo.toml
 
   cargo-test-sbf:
-    #if: github.repository == 'anza-xyz/agave'
-    if: false
+    if: github.repository == 'anza-xyz/agave'
     runs-on: ubuntu-latest
     strategy:
       matrix:
