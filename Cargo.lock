@@ -7402,6 +7402,7 @@ dependencies = [
  "solana-fee-calculator",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
+ "solana-genesis-config",
  "solana-hash",
  "solana-inflation",
  "solana-keypair",
