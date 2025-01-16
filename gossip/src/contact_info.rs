@@ -637,7 +637,7 @@ fn sanitize_entries(addrs: &[IpAddr], sockets: &[SocketEntry]) -> Result<(), Err
 
 // Verifies that the other socket is at QUIC_PORT_OFFSET from the first one.
 #[cfg(test)]
-pub(crate) fn sanitize_quic_offset(
+fn sanitize_quic_offset(
     socket: &Option<SocketAddr>, // udp
     other: &Option<SocketAddr>,  // quic: udp + QUIC_PORT_OFFSET
 ) -> Result<(), Error> {
@@ -647,7 +647,7 @@ pub(crate) fn sanitize_quic_offset(
 }
 
 // Returns the socket at QUIC_PORT_OFFSET from the given one.
-pub(crate) fn get_quic_socket(socket: &SocketAddr) -> Result<SocketAddr, Error> {
+fn get_quic_socket(socket: &SocketAddr) -> Result<SocketAddr, Error> {
     Ok(SocketAddr::new(
         socket.ip(),
         socket
@@ -964,34 +964,23 @@ mod tests {
             old.serve_repair(Protocol::UDP).unwrap(),
             node.serve_repair(Protocol::UDP).unwrap()
         );
+        assert_eq!(old.tpu().unwrap(), node.tpu(Protocol::UDP).unwrap());
         assert_eq!(
-            old.tpu(Protocol::QUIC).unwrap(),
-            node.tpu(Protocol::QUIC).unwrap()
+            node.tpu(Protocol::QUIC).unwrap(),
+            SocketAddr::new(
+                old.tpu().unwrap().ip(),
+                old.tpu().unwrap().port() + QUIC_PORT_OFFSET
+            )
         );
         assert_eq!(
-            old.tpu(Protocol::UDP).unwrap(),
-            node.tpu(Protocol::UDP).unwrap()
-        );
-        assert_eq!(
-            old.tpu_forwards(Protocol::QUIC).unwrap(),
-            node.tpu_forwards(Protocol::QUIC).unwrap()
-        );
-        assert_eq!(
-            old.tpu_forwards(Protocol::UDP).unwrap(),
+            old.tpu_forwards().unwrap(),
             node.tpu_forwards(Protocol::UDP).unwrap()
         );
         assert_eq!(
             node.tpu_forwards(Protocol::QUIC).unwrap(),
             SocketAddr::new(
-                old.tpu_forwards(Protocol::UDP).unwrap().ip(),
-                old.tpu_forwards(Protocol::UDP).unwrap().port() + QUIC_PORT_OFFSET
-            )
-        );
-        assert_eq!(
-            node.tpu(Protocol::QUIC).unwrap(),
-            SocketAddr::new(
-                old.tpu(Protocol::UDP).unwrap().ip(),
-                old.tpu(Protocol::UDP).unwrap().port() + QUIC_PORT_OFFSET
+                old.tpu_forwards().unwrap().ip(),
+                old.tpu_forwards().unwrap().port() + QUIC_PORT_OFFSET
             )
         );
         assert_eq!(
