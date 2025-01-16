@@ -1989,6 +1989,7 @@ mod tests {
 
     #[test]
     fn window_index_request() {
+        use Protocol::{QUIC, UDP};
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
@@ -2022,15 +2023,15 @@ mod tests {
             0u16,        // shred_version
         );
         nxt.set_gossip((Ipv4Addr::LOCALHOST, 1234)).unwrap();
-        nxt.set_tvu((Ipv4Addr::LOCALHOST, 1235)).unwrap();
-        nxt.set_tvu_quic((Ipv4Addr::LOCALHOST, 1236)).unwrap();
+        nxt.set_tvu(UDP, (Ipv4Addr::LOCALHOST, 1235)).unwrap();
+        nxt.set_tvu(QUIC, (Ipv4Addr::LOCALHOST, 1236)).unwrap();
         nxt.set_tpu((Ipv4Addr::LOCALHOST, 1238)).unwrap();
         nxt.set_tpu_forwards((Ipv4Addr::LOCALHOST, 1239)).unwrap();
-        nxt.set_tpu_vote((Ipv4Addr::LOCALHOST, 1240)).unwrap();
+        nxt.set_tpu_vote(UDP, (Ipv4Addr::LOCALHOST, 1240)).unwrap();
         nxt.set_rpc((Ipv4Addr::LOCALHOST, 1241)).unwrap();
         nxt.set_rpc_pubsub((Ipv4Addr::LOCALHOST, 1242)).unwrap();
-        nxt.set_serve_repair(serve_repair_addr).unwrap();
-        nxt.set_serve_repair_quic((Ipv4Addr::LOCALHOST, 1237))
+        nxt.set_serve_repair(UDP, serve_repair_addr).unwrap();
+        nxt.set_serve_repair(QUIC, (Ipv4Addr::LOCALHOST, 1237))
             .unwrap();
         cluster_info.insert_info(nxt.clone());
         let rv = serve_repair
@@ -2057,15 +2058,15 @@ mod tests {
             0u16,        // shred_version
         );
         nxt.set_gossip((Ipv4Addr::LOCALHOST, 1234)).unwrap();
-        nxt.set_tvu((Ipv4Addr::LOCALHOST, 1235)).unwrap();
-        nxt.set_tvu_quic((Ipv4Addr::LOCALHOST, 1236)).unwrap();
+        nxt.set_tvu(UDP, (Ipv4Addr::LOCALHOST, 1235)).unwrap();
+        nxt.set_tvu(QUIC, (Ipv4Addr::LOCALHOST, 1236)).unwrap();
         nxt.set_tpu((Ipv4Addr::LOCALHOST, 1238)).unwrap();
         nxt.set_tpu_forwards((Ipv4Addr::LOCALHOST, 1239)).unwrap();
-        nxt.set_tpu_vote((Ipv4Addr::LOCALHOST, 1240)).unwrap();
+        nxt.set_tpu_vote(UDP, (Ipv4Addr::LOCALHOST, 1240)).unwrap();
         nxt.set_rpc((Ipv4Addr::LOCALHOST, 1241)).unwrap();
         nxt.set_rpc_pubsub((Ipv4Addr::LOCALHOST, 1242)).unwrap();
-        nxt.set_serve_repair(serve_repair_addr2).unwrap();
-        nxt.set_serve_repair_quic((Ipv4Addr::LOCALHOST, 1237))
+        nxt.set_serve_repair(UDP, serve_repair_addr2).unwrap();
+        nxt.set_serve_repair(QUIC, (Ipv4Addr::LOCALHOST, 1237))
             .unwrap();
         cluster_info.insert_info(nxt);
         let mut one = false;

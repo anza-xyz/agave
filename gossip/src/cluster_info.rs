@@ -2650,19 +2650,32 @@ impl Node {
                     $name
                 ))
             };
+            ($method:ident, $protocol:ident, $addr:expr, $name:literal) => {{
+                info.$method(contact_info::Protocol::$protocol, $addr)
+                    .expect(&format!(
+                        "Operator must spin up node with valid {} address",
+                        $name
+                    ))
+            }};
         }
         set_socket!(set_gossip, gossip_addr, "gossip");
-        set_socket!(set_tvu, tvu.local_addr().unwrap(), "TVU");
-        set_socket!(set_tvu_quic, tvu_quic.local_addr().unwrap(), "TVU QUIC");
+        set_socket!(set_tvu, UDP, tvu.local_addr().unwrap(), "TVU");
+        set_socket!(set_tvu, QUIC, tvu_quic.local_addr().unwrap(), "TVU QUIC");
         set_socket!(set_tpu, tpu.local_addr().unwrap(), "TPU");
         set_socket!(
             set_tpu_forwards,
             tpu_forwards.local_addr().unwrap(),
             "TPU-forwards"
         );
-        set_socket!(set_tpu_vote, tpu_vote.local_addr().unwrap(), "TPU-vote");
         set_socket!(
-            set_tpu_vote_quic,
+            set_tpu_vote,
+            UDP,
+            tpu_vote.local_addr().unwrap(),
+            "TPU-vote"
+        );
+        set_socket!(
+            set_tpu_vote,
+            QUIC,
             tpu_vote_quic[0].local_addr().unwrap(),
             "TPU-vote QUIC"
         );
@@ -2670,11 +2683,13 @@ impl Node {
         set_socket!(set_rpc_pubsub, rpc_pubsub_addr, "RPC-pubsub");
         set_socket!(
             set_serve_repair,
+            UDP,
             serve_repair.local_addr().unwrap(),
             "serve-repair"
         );
         set_socket!(
-            set_serve_repair_quic,
+            set_serve_repair,
+            QUIC,
             serve_repair_quic.local_addr().unwrap(),
             "serve-repair QUIC"
         );
@@ -2814,22 +2829,30 @@ impl Node {
                     $name
                 ))
             };
+            ($method:ident, $protocol:ident, $port:ident, $name:literal) => {{
+                info.$method(contact_info::Protocol::$protocol, (addr, $port))
+                    .expect(&format!(
+                        "Operator must spin up node with valid {} address",
+                        $name
+                    ))
+            }};
         }
         set_socket!(set_gossip, gossip_port, "gossip");
-        set_socket!(set_tvu, tvu_port, "TVU");
-        set_socket!(set_tvu_quic, tvu_quic_port, "TVU QUIC");
+        set_socket!(set_tvu, UDP, tvu_port, "TVU");
+        set_socket!(set_tvu, QUIC, tvu_quic_port, "TVU QUIC");
         set_socket!(set_tpu, tpu_port, "TPU");
         set_socket!(set_tpu_forwards, tpu_forwards_port, "TPU-forwards");
-        set_socket!(set_tpu_vote, tpu_vote_port, "TPU-vote");
+        set_socket!(set_tpu_vote, UDP, tpu_vote_port, "TPU-vote");
+        set_socket!(set_tpu_vote, QUIC, tpu_vote_quic_port, "TPU-vote QUIC");
         set_socket!(set_rpc, rpc_port, "RPC");
         set_socket!(set_rpc_pubsub, rpc_pubsub_port, "RPC-pubsub");
-        set_socket!(set_serve_repair, serve_repair_port, "serve-repair");
+        set_socket!(set_serve_repair, UDP, serve_repair_port, "serve-repair");
         set_socket!(
-            set_serve_repair_quic,
+            set_serve_repair,
+            QUIC,
             serve_repair_quic_port,
             "serve-repair QUIC"
         );
-        set_socket!(set_tpu_vote_quic, tpu_vote_quic_port, "TPU-vote QUIC");
 
         trace!("new ContactInfo: {:?}", info);
 
@@ -2959,20 +2982,22 @@ impl Node {
             0u16,        // shred_version
         );
         let addr = gossip_addr.ip();
+        use contact_info::Protocol::{QUIC, UDP};
         info.set_gossip((addr, gossip_port)).unwrap();
-        info.set_tvu((addr, tvu_port)).unwrap();
-        info.set_tvu_quic((addr, tvu_quic_port)).unwrap();
+        info.set_tvu(UDP, (addr, tvu_port)).unwrap();
+        info.set_tvu(QUIC, (addr, tvu_quic_port)).unwrap();
         info.set_tpu(public_tpu_addr.unwrap_or_else(|| SocketAddr::new(addr, tpu_port)))
             .unwrap();
         info.set_tpu_forwards(
             public_tpu_forwards_addr.unwrap_or_else(|| SocketAddr::new(addr, tpu_forwards_port)),
         )
         .unwrap();
-        info.set_tpu_vote((addr, tpu_vote_port)).unwrap();
-        info.set_serve_repair((addr, serve_repair_port)).unwrap();
-        info.set_serve_repair_quic((addr, serve_repair_quic_port))
+        info.set_tpu_vote(UDP, (addr, tpu_vote_port)).unwrap();
+        info.set_tpu_vote(QUIC, (addr, tpu_vote_quic_port)).unwrap();
+        info.set_serve_repair(UDP, (addr, serve_repair_port))
             .unwrap();
-        info.set_tpu_vote_quic((addr, tpu_vote_quic_port)).unwrap();
+        info.set_serve_repair(QUIC, (addr, serve_repair_quic_port))
+            .unwrap();
 
         trace!("new ContactInfo: {:?}", info);
 
