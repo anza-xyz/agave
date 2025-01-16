@@ -60,7 +60,7 @@ fn bench_read_only_accounts_cache(c: &mut Criterion) {
         let cache = Arc::new(ReadOnlyAccountsCache::new(
             AccountsDb::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_LO,
             AccountsDb::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI,
-            AccountsDb::READ_ONLY_CACHE_MS_TO_SKIP_LRU_UPDATE,
+            AccountsDb::DEFAULT_READ_ONLY_CACHE_EVICT_SAMPLE_SIZE,
         ));
 
         for (pubkey, account) in accounts.iter() {
@@ -180,7 +180,7 @@ fn bench_read_only_accounts_cache_eviction(
         let cache = Arc::new(ReadOnlyAccountsCache::new(
             max_data_size_lo,
             max_data_size_hi,
-            AccountsDb::READ_ONLY_CACHE_MS_TO_SKIP_LRU_UPDATE,
+            AccountsDb::DEFAULT_READ_ONLY_CACHE_EVICT_SAMPLE_SIZE,
         ));
 
         // Fill up the cache.
