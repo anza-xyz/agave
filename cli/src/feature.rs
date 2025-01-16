@@ -1068,11 +1068,7 @@ fn process_revoke(
     check_rpc_genesis_hash(&cluster, rpc_client)?;
 
     let fee_payer = config.signers[fee_payer];
-    let account = rpc_client
-        .get_multiple_accounts(&[feature_id])?
-        .into_iter()
-        .next()
-        .unwrap();
+    let account = rpc_client.get_account(&feature_id).ok();
 
     match account.and_then(status_from_account) {
         Some(CliFeatureStatus::Pending) => (),
