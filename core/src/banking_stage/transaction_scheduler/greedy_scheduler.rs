@@ -400,7 +400,6 @@ mod test {
     use {
         super::*,
         crate::banking_stage::{
-            immutable_deserialized_packet::ImmutableDeserializedPacket,
             scheduler_messages::{MaxAge, TransactionId},
             transaction_scheduler::{
                 transaction_state::SanitizedTransactionTTL,
@@ -409,7 +408,6 @@ mod test {
         },
         crossbeam_channel::unbounded,
         itertools::Itertools,
-        solana_perf::packet::Packet,
         solana_pubkey::Pubkey,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
@@ -421,7 +419,7 @@ mod test {
             system_instruction,
             transaction::{SanitizedTransaction, Transaction},
         },
-        std::{borrow::Borrow, sync::Arc},
+        std::borrow::Borrow,
     };
 
     #[allow(clippy::type_complexity)]
@@ -483,12 +481,6 @@ mod test {
                 lamports,
                 compute_unit_price,
             );
-            let packet = Arc::new(
-                ImmutableDeserializedPacket::new(
-                    Packet::from_data(None, transaction.to_versioned_transaction()).unwrap(),
-                )
-                .unwrap(),
-            );
             let transaction_ttl = SanitizedTransactionTTL {
                 transaction,
                 max_age: MaxAge::MAX,
@@ -496,7 +488,6 @@ mod test {
             const TEST_TRANSACTION_COST: u64 = 5000;
             container.insert_new_transaction(
                 transaction_ttl,
-                packet,
                 compute_unit_price,
                 TEST_TRANSACTION_COST,
             );

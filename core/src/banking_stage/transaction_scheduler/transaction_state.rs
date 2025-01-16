@@ -1,10 +1,4 @@
-use {
-    crate::banking_stage::{
-        immutable_deserialized_packet::ImmutableDeserializedPacket, scheduler_messages::MaxAge,
-    },
-    solana_sdk::packet::{self},
-    std::sync::Arc,
-};
+use crate::banking_stage::scheduler_messages::MaxAge;
 
 /// Simple wrapper type to tie a sanitized transaction to max age slot.
 pub(crate) struct SanitizedTransactionTTL<Tx> {
@@ -36,18 +30,11 @@ pub(crate) enum TransactionState<Tx> {
     /// The transaction is available for scheduling.
     Unprocessed {
         transaction_ttl: SanitizedTransactionTTL<Tx>,
-        packet: Option<Arc<ImmutableDeserializedPacket>>,
         priority: u64,
         cost: u64,
-        should_forward: bool,
     },
     /// The transaction is currently scheduled or being processed.
-    Pending {
-        packet: Option<Arc<ImmutableDeserializedPacket>>,
-        priority: u64,
-        cost: u64,
-        should_forward: bool,
-    },
+    Pending { priority: u64, cost: u64 },
     /// Only used during transition.
     Transitioning,
 }
@@ -56,20 +43,13 @@ impl<Tx> TransactionState<Tx> {
     /// Creates a new `TransactionState` in the `Unprocessed` state.
     pub(crate) fn new(
         transaction_ttl: SanitizedTransactionTTL<Tx>,
-        packet: Option<Arc<ImmutableDeserializedPacket>>,
         priority: u64,
         cost: u64,
     ) -> Self {
-        let should_forward = packet
-            .as_ref()
-            .map(|packet| should_forward_from_meta(packet.original_packet().meta()))
-            .unwrap_or_default();
         Self::Unprocessed {
             transaction_ttl,
-            packet,
             priority,
             cost,
-            should_forward,
         }
     }
 
@@ -104,17 +84,10 @@ impl<Tx> TransactionState<Tx> {
         match self.take() {
             TransactionState::Unprocessed {
                 transaction_ttl,
-                packet,
                 priority,
                 cost,
-                should_forward: forwarded,
             } => {
-                *self = TransactionState::Pending {
-                    packet,
-                    priority,
-                    cost,
-                    should_forward: forwarded,
-                };
+                *self = TransactionState::Pending { priority, cost };
                 transaction_ttl
             }
             TransactionState::Pending { .. } => {
@@ -136,18 +109,11 @@ impl<Tx> TransactionState<Tx> {
     ) {
         match self.take() {
             TransactionState::Unprocessed { .. } => panic!("already unprocessed"),
-            TransactionState::Pending {
-                packet,
-                priority,
-                cost,
-                should_forward: forwarded,
-            } => {
+            TransactionState::Pending { priority, cost } => {
                 *self = Self::Unprocessed {
                     transaction_ttl,
-                    packet,
                     priority,
                     cost,
-                    should_forward: forwarded,
                 }
             }
             Self::Transitioning => unreachable!(),
@@ -175,21 +141,15 @@ impl<Tx> TransactionState<Tx> {
     }
 }
 
-fn should_forward_from_meta(meta: &packet::Meta) -> bool {
-    !meta.forwarded() && meta.is_from_staked_node()
-}
-
 #[cfg(test)]
 mod tests {
     use {
         super::*,
-        packet::PacketFlags,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
             compute_budget::ComputeBudgetInstruction,
             hash::Hash,
             message::Message,
-            packet::Packet,
             signature::Keypair,
             signer::Signer,
             system_instruction,
@@ -208,20 +168,12 @@ mod tests {
         let message = Message::new(&ixs, Some(&from_keypair.pubkey()));
         let tx = Transaction::new(&[&from_keypair], message, Hash::default());
 
-        let packet = Arc::new(
-            ImmutableDeserializedPacket::new(Packet::from_data(None, tx.clone()).unwrap()).unwrap(),
-        );
         let transaction_ttl = SanitizedTransactionTTL {
             transaction: RuntimeTransaction::from_transaction_for_tests(tx),
             max_age: MaxAge::MAX,
         };
         const TEST_TRANSACTION_COST: u64 = 5000;
-        TransactionState::new(
-            transaction_ttl,
-            Some(packet),
-            compute_unit_price,
-            TEST_TRANSACTION_COST,
-        )
+        TransactionState::new(transaction_ttl, compute_unit_price, TEST_TRANSACTION_COST)
     }
 
     #[test]
@@ -338,24 +290,5 @@ mod tests {
             TransactionState::Unprocessed { .. }
         ));
         assert_eq!(transaction_ttl.max_age, MaxAge::MAX);
-    }
-
-    #[test]
-    fn test_initialize_should_forward() {
-        let meta = packet::Meta::default();
-        assert!(!should_forward_from_meta(&meta));
-
-        let mut meta = packet::Meta::default();
-        meta.flags.set(PacketFlags::FORWARDED, true);
-        assert!(!should_forward_from_meta(&meta));
-
-        let mut meta = packet::Meta::default();
-        meta.set_from_staked_node(true);
-        assert!(should_forward_from_meta(&meta));
-
-        let mut meta = packet::Meta::default();
-        meta.flags.set(PacketFlags::FORWARDED, true);
-        meta.set_from_staked_node(true);
-        assert!(!should_forward_from_meta(&meta));
     }
 }
