@@ -1,7 +1,7 @@
 //! The chain's genesis config.
 
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
-
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
 #[deprecated(
     since = "2.2.0",
     note = "Use `solana_cluster_type::ClusterType` instead."
