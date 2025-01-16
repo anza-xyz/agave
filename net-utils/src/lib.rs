@@ -62,7 +62,6 @@ async fn ip_echo_server_request(
         ip_echo_server_addr: SocketAddr,
         msg: IpEchoServerMessage,
     ) -> anyhow::Result<BytesMut> {
-        dbg!("Making request");
         let mut stream = socket.connect(ip_echo_server_addr).await?;
         // Start with HEADER_LENGTH null bytes to avoid looking like an HTTP GET/POST request
         let mut bytes = BytesMut::with_capacity(IP_ECHO_SERVER_RESPONSE_LENGTH);
@@ -76,11 +75,9 @@ async fn ip_echo_server_request(
         stream.flush().await?;
 
         bytes.clear();
-        //TODO: consider ready?
         let _n = stream.read_buf(&mut bytes).await?;
         stream.shutdown().await?;
 
-        dbg!("Making request done");
         Ok(bytes)
     }
 

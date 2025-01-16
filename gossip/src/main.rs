@@ -171,7 +171,7 @@ fn parse_gossip_host(matches: &ArgMatches, entrypoint_addr: Option<SocketAddr>) 
         })
         .unwrap_or_else(|| {
             if let Some(entrypoint_addr) = entrypoint_addr {
-                solana_net_utils::get_public_ip_addr(&entrypoint_addr).unwrap_or_else(|err| {
+                solana_net_utils::get_public_ip_addr(&entrypoint_addr, None).unwrap_or_else(|err| {
                     eprintln!("Failed to contact cluster entrypoint {entrypoint_addr}: {err}");
                     exit(1);
                 })
@@ -222,7 +222,7 @@ fn get_entrypoint_shred_version(entrypoint: &Option<SocketAddr>) -> Option<u16> 
         error!("cannot obtain shred-version without an entrypoint");
         return None;
     };
-    match solana_net_utils::get_cluster_shred_version(entrypoint) {
+    match solana_net_utils::get_cluster_shred_version(entrypoint, None) {
         Err(err) => {
             error!("get_cluster_shred_version failed: {entrypoint}, {err}");
             None

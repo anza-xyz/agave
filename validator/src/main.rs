@@ -1111,6 +1111,8 @@ pub fn main() {
         "--gossip-validator",
     );
 
+    let bind_address = solana_net_utils::parse_host(matches.value_of("bind_address").unwrap())
+        .expect("invalid bind_address");
     let rpc_bind_address = if matches.is_present("rpc_bind_address") {
         solana_net_utils::parse_host(matches.value_of("rpc_bind_address").unwrap())
             .expect("invalid rpc_bind_address")
@@ -1172,8 +1174,6 @@ pub fn main() {
             exit(1);
         }
     }
-    let bind_address = solana_net_utils::parse_host(matches.value_of("bind_address").unwrap())
-        .expect("invalid bind_address");
     // TODO: Once entrypoints are updated to return shred-version, this should
     // abort if it fails to obtain a shred-version, so that nodes always join
     // gossip with a valid shred-version. The code to adopt entrypoint shred
