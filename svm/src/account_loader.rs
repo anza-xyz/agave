@@ -138,10 +138,8 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
     pub(crate) fn load_account(
         &mut self,
         account_key: &Pubkey,
-        usage_pattern: AccountUsagePattern,
+        is_writable: bool,
     ) -> Option<LoadedTransactionAccount> {
-        let is_writable = usage_pattern == AccountUsagePattern::Writable;
-
         let account = if let Some(account) = self.account_cache.get(account_key) {
             // If lamports is 0, a previous transaction deallocated this account.
             // We return None instead of the account we found so it can be created fresh.
@@ -240,25 +238,6 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
             }
 
             self.account_cache.insert(*address, account.clone());
-        }
-    }
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub(crate) enum AccountUsagePattern {
-    Writable,
-    ReadOnlyInstruction,
-    ReadOnlyInvisible,
-}
-impl AccountUsagePattern {
-    fn new(message: &impl SVMMessage, account_index: usize) -> Self {
-        let is_writable = message.is_writable(account_index);
-        let is_instruction_account = message.is_instruction_account(account_index);
-
-        match (is_writable, is_instruction_account) {
-            (true, _) => Self::Writable,
-            (false, true) => Self::ReadOnlyInstruction,
-            (false, false) => Self::ReadOnlyInvisible,
         }
     }
 }
@@ -459,12 +438,11 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
             }
 
             let program_index = instruction.program_id_index as usize;
-            let program_usage_pattern = AccountUsagePattern::new(message, program_index);
 
             let Some(LoadedTransactionAccount {
                 account: program_account,
                 ..
-            }) = account_loader.load_account(program_id, program_usage_pattern)
+            }) = account_loader.load_account(program_id, false)
             else {
                 error_metrics.account_not_found += 1;
                 return Err(TransactionError::ProgramAccountNotFound);
@@ -486,17 +464,12 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
             }
 
             if !validated_loaders.contains(owner_id) {
-                // NOTE we load the program owner as `ReadOnlyInstruction` to bypass the program cache
-                // since the program cache would incorrectly mark a user-created native-owned account as executable
-                // this preserves consensus until `disable_account_loader_special_case` is active, after which it doesnt matter
-                //
-                // there are a panopoly of fetaure gate activations that affect this code, in generally benign ways:
-                // * `remove_accounts_executable_flag_checks`: incorrect executable flag from program cache no longer matters
-                //   we should still avoid program cache because it changes transaction size
-                //   albeit in a consensus-safe manner because it would result from feature activation
-                // * `disable_account_loader_special_case`: program cache codepath goes away entirely
-                //   at this point the instruction vs invisible distinction ceases to affect loading
-                //   keeping the distinction may be useful for SIMD-163 (cpi caller restriction), but maybe not
+                // NOTE there are several feature gate activations that affect this code:
+                // * `remove_accounts_executable_flag_checks`: this implicitly makes system, vote, stake, et al valid loaders
+                //   it is impossible to mark an account executable and also have it be owned by one of them
+                //   so, with the feature disabled, we always fail the executable check if they are a program id owner
+                //   however, with the feature enabled, any account owned by an account owned by native loader is a "program"
+                //   this is benign (any such transaction will fail at execution) but it affects which transactions pay fees
                 // * `enable_transaction_loading_failure_fees`: loading failures behave the same as execution failures
                 //   at this point we can restrict valid loaders to those contained in `PROGRAM_OWNERS`
                 //   since any other pseudo-loader owner is destined to fail at execution
@@ -511,8 +484,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
                     account: owner_account,
                     loaded_size: owner_size,
                     ..
-                }) =
-                    account_loader.load_account(owner_id, AccountUsagePattern::ReadOnlyInstruction)
+                }) = account_loader.load_account(owner_id, false)
                 {
                     if !native_loader::check_id(owner_account.owner())
                         || (!account_loader
@@ -555,8 +527,7 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
     account_index: usize,
     rent_collector: &dyn SVMRentCollector,
 ) -> LoadedTransactionAccount {
-    let usage_pattern = AccountUsagePattern::new(message, account_index);
-
+    let is_writable = message.is_writable(account_index);
     let loaded_account = if solana_sdk_ids::sysvar::instructions::check_id(account_key) {
         // Since the instructions sysvar is constructed by the SVM and modified
         // for each transaction instruction, it cannot be loaded.
@@ -565,9 +536,8 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
             account: construct_instructions_account(message),
             rent_collected: 0,
         }
-    } else if let Some(mut loaded_account) = account_loader.load_account(account_key, usage_pattern)
-    {
-        loaded_account.rent_collected = if usage_pattern == AccountUsagePattern::Writable {
+    } else if let Some(mut loaded_account) = account_loader.load_account(account_key, is_writable) {
+        loaded_account.rent_collected = if is_writable {
             collect_rent_from_account(
                 &account_loader.feature_set,
                 rent_collector,

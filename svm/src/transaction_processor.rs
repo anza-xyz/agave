@@ -4,8 +4,8 @@ use {
     crate::{
         account_loader::{
             collect_rent_from_account, load_transaction, validate_fee_payer, AccountLoader,
-            AccountUsagePattern, CheckedTransactionDetails, LoadedTransaction,
-            TransactionCheckResult, TransactionLoadResult, ValidatedTransactionDetails,
+            CheckedTransactionDetails, LoadedTransaction, TransactionCheckResult,
+            TransactionLoadResult, ValidatedTransactionDetails,
         },
         account_overrides::AccountOverrides,
         message_processor::process_message,
@@ -578,8 +578,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         let fee_payer_address = message.fee_payer();
 
-        let Some(mut loaded_fee_payer) =
-            account_loader.load_account(fee_payer_address, AccountUsagePattern::Writable)
+        let Some(mut loaded_fee_payer) = account_loader.load_account(fee_payer_address, true)
         else {
             error_counters.account_not_found += 1;
             return Err(TransactionError::AccountNotFound);
@@ -653,7 +652,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         //
         // Note these checks are *not* obviated by fee-only transactions.
         let nonce_is_valid = account_loader
-            .load_account(nonce_info.address(), AccountUsagePattern::Writable)
+            .load_account(nonce_info.address(), true)
             .and_then(|loaded_nonce| {
                 let current_nonce_account = &loaded_nonce.account;
                 system_program::check_id(current_nonce_account.owner()).then_some(())?;
