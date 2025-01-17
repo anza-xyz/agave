@@ -59,7 +59,6 @@ use {
     },
     accounts_lt_hash::{CacheValue as AccountsLtHashCacheValue, Stats as AccountsLtHashStats},
     ahash::AHashSet,
-    byteorder::{ByteOrder, LittleEndian},
     dashmap::{DashMap, DashSet},
     log::*,
     rayon::{
@@ -5237,13 +5236,10 @@ impl Bank {
                 )
         });
 
-        let mut signature_count_buf = [0u8; 8];
-        LittleEndian::write_u64(&mut signature_count_buf[..], self.signature_count());
-
         let mut hash = hashv(&[
             self.parent_hash.as_ref(),
             accounts_delta_hash.0.as_ref(),
-            &signature_count_buf,
+            &self.signature_count().to_le_bytes(),
             self.last_blockhash().as_ref(),
         ]);
 
