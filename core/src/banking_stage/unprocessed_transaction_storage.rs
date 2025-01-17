@@ -311,7 +311,7 @@ impl UnprocessedTransactionStorage {
     }
 
     pub fn should_not_process(&self) -> bool {
-        // The gossip vote thread does not need to process or forward any votes, that is
+        // The gossip vote thread does not need to process any votes, that is
         // handled by the tpu vote thread
         if let Self::VoteStorage(vote_storage) = self {
             return matches!(vote_storage.vote_source, VoteSource::Gossip);
