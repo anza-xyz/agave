@@ -1114,7 +1114,7 @@ lazy_static! {
         (accounts_lt_hash::id(), "enables lattice-based accounts hash #3333"),
         (enable_secp256r1_precompile::id(), "Enable secp256r1 precompile SIMD-0075"),
         (migrate_stake_program_to_core_bpf::id(), "Migrate Stake program to Core BPF SIMD-0196 #3655"),
-        (fix_alt_bn128_multiplication_input_length::id(), "fix alt_bn128 multiplication input length #3686"),
+        (fix_alt_bn128_multiplication_input_length::id(), "fix alt_bn128 multiplication input length SIMD-0222 #3686"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
