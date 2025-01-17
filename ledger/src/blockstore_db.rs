@@ -1188,7 +1188,7 @@ impl Column for columns::ProgramCosts {
 }
 
 impl Column for columns::ShredCode {
-    type Index = (Slot, u64);
+    type Index = (Slot, /*shred index:*/ u64);
     type Key = <columns::ShredData as Column>::Key;
 
     #[inline]
@@ -1214,7 +1214,7 @@ impl ColumnName for columns::ShredCode {
 }
 
 impl Column for columns::ShredData {
-    type Index = (Slot, u64);
+    type Index = (Slot, /*shred index:*/ u64);
     type Key = [u8; std::mem::size_of::<Slot>() + std::mem::size_of::<u64>()];
 
     #[inline]
