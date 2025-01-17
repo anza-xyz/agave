@@ -10,8 +10,8 @@ use {
             ancestor_hashes_service::AncestorHashesReplayUpdateReceiver,
             repair_response,
             repair_service::{
-                DumpedSlotsReceiver, OutstandingShredRepairs, PopularPrunedForksSender, RepairInfo,
-                RepairService,
+                DumpedSlotsReceiver, OutstandingShredRepairs, PopularPrunedForksSender,
+                RepairChannels, RepairInfo, RepairService,
             },
         },
         result::{Error, Result},
@@ -399,20 +399,24 @@ impl WindowService {
         // avoid new shreds make validator OOM before wen_restart is over.
         let accept_repairs_only = repair_info.wen_restart_repair_slots.is_some();
 
+        let repair_channels = RepairChannels {
+            repair_request_quic_sender,
+            verified_vote_receiver,
+            dumped_slots_receiver,
+            popular_pruned_forks_sender,
+        };
+
         let repair_service = RepairService::new(
             blockstore.clone(),
             exit.clone(),
             repair_socket,
             ancestor_hashes_socket,
-            repair_request_quic_sender,
             ancestor_hashes_request_quic_sender,
             ancestor_hashes_response_quic_receiver,
             repair_info,
-            verified_vote_receiver,
             outstanding_repair_requests.clone(),
             ancestor_hashes_replay_update_receiver,
-            dumped_slots_receiver,
-            popular_pruned_forks_sender,
+            repair_channels,
         );
 
         let (duplicate_sender, duplicate_receiver) = unbounded();

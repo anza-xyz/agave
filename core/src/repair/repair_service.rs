@@ -15,8 +15,8 @@ use {
             outstanding_requests::OutstandingRequests,
             repair_weight::RepairWeight,
             serve_repair::{
-                self, RepairProtocol, RepairRequestHeader, ServeRepair, ShredRepairType,
-                REPAIR_PEERS_CACHE_CAPACITY,
+                self, RepairPeers, RepairProtocol, RepairRequestHeader, ServeRepair,
+                ShredRepairType, REPAIR_PEERS_CACHE_CAPACITY,
             },
         },
     },
@@ -31,7 +31,7 @@ use {
         shred,
     },
     solana_measure::measure::Measure,
-    solana_runtime::{bank_forks::BankForks, root_bank_cache::RootBankCache},
+    solana_runtime::{bank::Bank, bank_forks::BankForks, root_bank_cache::RootBankCache},
     solana_sdk::{
         clock::{Slot, DEFAULT_TICKS_PER_SECOND, MS_PER_TICK},
         epoch_schedule::EpochSchedule,
@@ -42,7 +42,7 @@ use {
     },
     solana_streamer::sendmmsg::{batch_send, SendPktsError},
     std::{
-        collections::{HashMap, HashSet},
+        collections::{hash_map::Entry, HashMap, HashSet},
         iter::Iterator,
         net::{SocketAddr, UdpSocket},
         sync::{
@@ -58,6 +58,11 @@ use {
 // Time to defer repair requests to allow for turbine propagation
 const DEFER_REPAIR_THRESHOLD: Duration = Duration::from_millis(200);
 const DEFER_REPAIR_THRESHOLD_TICKS: u64 = DEFER_REPAIR_THRESHOLD.as_millis() as u64 / MS_PER_TICK;
+
+// This is the amount of time we will wait for a repair request to be fulfilled
+// before making another request. Value is based on reasonable upper bound of
+// expected network delays in requesting repairs and receiving shreds.
+const REPAIR_REQUEST_TIMEOUT_MS: u64 = 100;
 
 // When requesting repair for a specific shred through the admin RPC, we will
 // request up to NUM_PEERS_TO_SAMPLE_FOR_REPAIRS in the event a specific, valid
@@ -117,6 +122,36 @@ impl RepairStatsGroup {
     }
 }
 
+#[derive(Debug)]
+pub struct RepairMetrics {
+    pub stats: RepairStats,
+    pub best_repairs_stats: BestRepairsStats,
+    pub timing: RepairTiming,
+    pub last_report: Instant,
+}
+
+impl Default for RepairMetrics {
+    fn default() -> Self {
+        Self {
+            stats: RepairStats::default(),
+            best_repairs_stats: BestRepairsStats::default(),
+            timing: RepairTiming::default(),
+            last_report: Instant::now(),
+        }
+    }
+}
+
+impl RepairMetrics {
+    pub fn maybe_report(&mut self) {
+        if self.last_report.elapsed().as_secs() > 2 {
+            self.stats.report();
+            self.timing.report();
+            self.best_repairs_stats.report();
+            *self = Self::default();
+        }
+    }
+}
+
 #[derive(Default, Debug)]
 pub struct RepairStats {
     pub shred: RepairStatsGroup,
@@ -126,12 +161,47 @@ pub struct RepairStats {
     pub get_best_shreds_us: u64,
 }
 
+impl RepairStats {
+    fn report(&self) {
+        let repair_total = self.shred.count + self.highest_shred.count + self.orphan.count;
+        let slot_to_count: Vec<_> = self
+            .shred
+            .slot_pubkeys
+            .iter()
+            .chain(self.highest_shred.slot_pubkeys.iter())
+            .chain(self.orphan.slot_pubkeys.iter())
+            .map(|(slot, slot_repairs)| (slot, slot_repairs.pubkey_repairs.values().sum::<u64>()))
+            .collect();
+        info!("repair_stats: {:?}", slot_to_count);
+        if repair_total > 0 {
+            let nonzero_num = |x| if x == 0 { None } else { Some(x) };
+            datapoint_info!(
+                "repair_service-my_requests",
+                ("repair-total", repair_total, i64),
+                ("shred-count", self.shred.count, i64),
+                ("highest-shred-count", self.highest_shred.count, i64),
+                ("orphan-count", self.orphan.count, i64),
+                ("shred-slot-max", nonzero_num(self.shred.max), Option<i64>),
+                ("shred-slot-min", nonzero_num(self.shred.min), Option<i64>),
+                ("repair-highest-slot", self.highest_shred.max, i64), // deprecated
+                ("highest-shred-slot-max", nonzero_num(self.highest_shred.max), Option<i64>),
+                ("highest-shred-slot-min", nonzero_num(self.highest_shred.min), Option<i64>),
+                ("repair-orphan", self.orphan.max, i64), // deprecated
+                ("orphan-slot-max", nonzero_num(self.orphan.max), Option<i64>),
+                ("orphan-slot-min", nonzero_num(self.orphan.min), Option<i64>),
+            );
+        }
+    }
+}
+
 #[derive(Default, Debug)]
 pub struct RepairTiming {
     pub set_root_elapsed: u64,
     pub dump_slots_elapsed: u64,
     pub get_votes_elapsed: u64,
     pub add_votes_elapsed: u64,
+    pub purge_outstanding_repairs: u64,
+    pub handle_popular_pruned_forks: u64,
     pub get_best_orphans_elapsed: u64,
     pub get_best_shreds_elapsed: u64,
     pub get_unknown_last_index_elapsed: u64,
@@ -148,6 +218,8 @@ impl RepairTiming {
         dump_slots_elapsed: u64,
         get_votes_elapsed: u64,
         add_votes_elapsed: u64,
+        purge_outstanding_repairs: u64,
+        handle_popular_pruned_forks: u64,
         build_repairs_batch_elapsed: u64,
         batch_send_repairs_elapsed: u64,
     ) {
@@ -155,9 +227,58 @@ impl RepairTiming {
         self.dump_slots_elapsed += dump_slots_elapsed;
         self.get_votes_elapsed += get_votes_elapsed;
         self.add_votes_elapsed += add_votes_elapsed;
+        self.purge_outstanding_repairs += purge_outstanding_repairs;
+        self.handle_popular_pruned_forks += handle_popular_pruned_forks;
         self.build_repairs_batch_elapsed += build_repairs_batch_elapsed;
         self.batch_send_repairs_elapsed += batch_send_repairs_elapsed;
         self.send_repairs_elapsed += build_repairs_batch_elapsed + batch_send_repairs_elapsed;
+    }
+
+    fn report(&self) {
+        datapoint_info!(
+            "repair_service-repair_timing",
+            ("set-root-elapsed", self.set_root_elapsed, i64),
+            ("dump-slots-elapsed", self.dump_slots_elapsed, i64),
+            ("get-votes-elapsed", self.get_votes_elapsed, i64),
+            ("add-votes-elapsed", self.add_votes_elapsed, i64),
+            (
+                "purge-outstanding-repairs",
+                self.purge_outstanding_repairs,
+                i64
+            ),
+            (
+                "handle-popular-pruned-forks",
+                self.handle_popular_pruned_forks,
+                i64
+            ),
+            (
+                "get-best-orphans-elapsed",
+                self.get_best_orphans_elapsed,
+                i64
+            ),
+            ("get-best-shreds-elapsed", self.get_best_shreds_elapsed, i64),
+            (
+                "get-unknown-last-index-elapsed",
+                self.get_unknown_last_index_elapsed,
+                i64
+            ),
+            (
+                "get-closest-completion-elapsed",
+                self.get_closest_completion_elapsed,
+                i64
+            ),
+            ("send-repairs-elapsed", self.send_repairs_elapsed, i64),
+            (
+                "build-repairs-batch-elapsed",
+                self.build_repairs_batch_elapsed,
+                i64
+            ),
+            (
+                "batch-send-repairs-elapsed",
+                self.batch_send_repairs_elapsed,
+                i64
+            ),
+        );
     }
 }
 
@@ -203,12 +324,49 @@ impl BestRepairsStats {
         self.num_closest_completion_repairs += num_closest_completion_repairs;
         self.num_repair_trees += num_repair_trees;
     }
+
+    fn report(&self) {
+        datapoint_info!(
+            "serve_repair-best-repairs",
+            ("call-count", self.call_count, i64),
+            ("orphan-slots", self.num_orphan_slots, i64),
+            ("orphan-repairs", self.num_orphan_repairs, i64),
+            ("best-shreds-slots", self.num_best_shreds_slots, i64),
+            ("best-shreds-repairs", self.num_best_shreds_repairs, i64),
+            (
+                "unknown-last-index-slots",
+                self.num_unknown_last_index_slots,
+                i64
+            ),
+            (
+                "unknown-last-index-repairs",
+                self.num_unknown_last_index_repairs,
+                i64
+            ),
+            (
+                "closest-completion-slots",
+                self.num_closest_completion_slots,
+                i64
+            ),
+            (
+                "closest-completion-slots-path",
+                self.num_closest_completion_slots_path,
+                i64
+            ),
+            (
+                "closest-completion-repairs",
+                self.num_closest_completion_repairs,
+                i64
+            ),
+            ("repair-trees", self.num_repair_trees, i64),
+        );
+    }
 }
 
 pub const MAX_REPAIR_LENGTH: usize = 512;
 pub const MAX_REPAIR_PER_DUPLICATE: usize = 20;
 pub const MAX_DUPLICATE_WAIT_MS: usize = 10_000;
-pub const REPAIR_MS: u64 = 100;
+pub const REPAIR_MS: u64 = 1;
 pub const MAX_ORPHANS: usize = 5;
 pub const MAX_UNKNOWN_LAST_INDEX_REPAIRS: usize = 10;
 pub const MAX_CLOSEST_COMPLETION_REPAIRS: usize = 100;
@@ -242,6 +400,13 @@ impl Default for RepairSlotRange {
     }
 }
 
+pub struct RepairChannels {
+    pub repair_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
+    pub verified_vote_receiver: VerifiedVoteReceiver,
+    pub dumped_slots_receiver: DumpedSlotsReceiver,
+    pub popular_pruned_forks_sender: PopularPrunedForksSender,
+}
+
 pub struct RepairService {
     t_repair: JoinHandle<()>,
     ancestor_hashes_service: AncestorHashesService,
@@ -254,15 +419,12 @@ impl RepairService {
         exit: Arc<AtomicBool>,
         repair_socket: Arc<UdpSocket>,
         ancestor_hashes_socket: Arc<UdpSocket>,
-        repair_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
         ancestor_hashes_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
         ancestor_hashes_response_quic_receiver: CrossbeamReceiver<(Pubkey, SocketAddr, Bytes)>,
         repair_info: RepairInfo,
-        verified_vote_receiver: VerifiedVoteReceiver,
         outstanding_requests: Arc<RwLock<OutstandingShredRepairs>>,
         ancestor_hashes_replay_update_receiver: AncestorHashesReplayUpdateReceiver,
-        dumped_slots_receiver: DumpedSlotsReceiver,
-        popular_pruned_forks_sender: PopularPrunedForksSender,
+        repair_channels: RepairChannels,
     ) -> Self {
         let t_repair = {
             let blockstore = blockstore.clone();
@@ -275,12 +437,9 @@ impl RepairService {
                         &blockstore,
                         &exit,
                         &repair_socket,
-                        &repair_request_quic_sender,
-                        repair_info,
-                        verified_vote_receiver,
+                        &repair_channels,
+                        &repair_info,
                         &outstanding_requests,
-                        dumped_slots_receiver,
-                        popular_pruned_forks_sender,
                     )
                 })
                 .unwrap()
@@ -303,16 +462,284 @@ impl RepairService {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn batch_and_send_repairs(
+        repair_info: &RepairInfo,
+        outstanding_requests: &RwLock<OutstandingShredRepairs>,
+        repairs: Vec<ShredRepairType>,
+        peers_cache: &mut LruCache<Slot, RepairPeers>,
+        repair_socket: &UdpSocket,
+        serve_repair: &ServeRepair,
+        repair_stats: &mut RepairStats,
+        repair_request_quic_sender: &AsyncSender<(SocketAddr, Bytes)>,
+        repair_protocol: Protocol,
+        id: Pubkey,
+    ) -> (Measure, Measure) {
+        let identity_keypair: &Keypair = &repair_info.cluster_info.keypair().clone();
+
+        let mut build_repairs_batch_elapsed = Measure::start("build_repairs_batch_elapsed");
+        let batch: Vec<(Vec<u8>, SocketAddr)> = {
+            let mut outstanding_requests = outstanding_requests.write().unwrap();
+            repairs
+                .into_iter()
+                .filter_map(|repair_request| {
+                    let (to, req) = serve_repair
+                        .repair_request(
+                            &repair_info.cluster_slots,
+                            repair_request,
+                            peers_cache,
+                            repair_stats,
+                            &repair_info.repair_validators,
+                            &mut outstanding_requests,
+                            identity_keypair,
+                            repair_request_quic_sender,
+                            repair_protocol,
+                        )
+                        .ok()??;
+                    Some((req, to))
+                })
+                .collect()
+        };
+        build_repairs_batch_elapsed.stop();
+
+        let mut batch_send_repairs_elapsed = Measure::start("batch_send_repairs_elapsed");
+        if !batch.is_empty() {
+            match batch_send(repair_socket, &batch) {
+                Ok(()) => (),
+                Err(SendPktsError::IoError(err, num_failed)) => {
+                    error!(
+                        "{} batch_send failed to send {}/{} packets first error {:?}",
+                        id,
+                        num_failed,
+                        batch.len(),
+                        err
+                    );
+                }
+            }
+        }
+        batch_send_repairs_elapsed.stop();
+
+        (build_repairs_batch_elapsed, batch_send_repairs_elapsed)
+    }
+
+    fn remove_dumped_slots_from_weighting_heuristic(
+        repair_weight: &mut RepairWeight,
+        popular_pruned_forks_requests: &mut HashSet<Slot>,
+        dumped_slots_receiver: &DumpedSlotsReceiver,
+    ) {
+        dumped_slots_receiver
+            .try_iter()
+            .for_each(|slot_hash_keys_to_dump| {
+                // Currently we don't use the correct_hash in repair. Since this dumped
+                // slot is DuplicateConfirmed, we have a >= 52% chance on receiving the
+                // correct version.
+                for (slot, _correct_hash) in slot_hash_keys_to_dump {
+                    // `slot` is dumped in blockstore wanting to be repaired, we orphan it along with
+                    // descendants while copying the weighting heuristic so that it can be
+                    // repaired with correct ancestor information
+                    //
+                    // We still check to see if this slot is too old, as bank forks root
+                    // might have been updated in between the send and our receive. If that
+                    // is the case we can safely ignore this dump request as the slot in
+                    // question would have already been purged in `repair_weight.set_root`
+                    // and there is no chance of it being part of the rooted path.
+                    if slot >= repair_weight.root() {
+                        let dumped_slots = repair_weight.split_off(slot);
+                        // Remove from outstanding ancestor hashes requests. Also clean any
+                        // requests that might have been since fixed
+                        popular_pruned_forks_requests.retain(|slot| {
+                            !dumped_slots.contains(slot) && repair_weight.is_pruned(*slot)
+                        });
+                    }
+                }
+            });
+    }
+
+    fn add_votes_to_weighting_heuristic(
+        blockstore: &Blockstore,
+        root_bank: &Bank,
+        repair_weight: &mut RepairWeight,
+        verified_vote_receiver: &VerifiedVoteReceiver,
+    ) -> (Measure, Measure) {
+        let mut get_votes_elapsed = Measure::start("get_votes_elapsed");
+        let mut slot_to_vote_pubkeys: HashMap<Slot, Vec<Pubkey>> = HashMap::new();
+        verified_vote_receiver
+            .try_iter()
+            .for_each(|(vote_pubkey, vote_slots)| {
+                for slot in vote_slots {
+                    slot_to_vote_pubkeys
+                        .entry(slot)
+                        .or_default()
+                        .push(vote_pubkey);
+                }
+            });
+        get_votes_elapsed.stop();
+
+        let mut add_votes_elapsed = Measure::start("add_votes");
+        repair_weight.add_votes(
+            blockstore,
+            slot_to_vote_pubkeys.into_iter(),
+            root_bank.epoch_stakes_map(),
+            root_bank.epoch_schedule(),
+        );
+        add_votes_elapsed.stop();
+
+        (get_votes_elapsed, add_votes_elapsed)
+    }
+
+    fn handle_popular_pruned_forks(
+        repair_weight: &mut RepairWeight,
+        root_bank: Arc<Bank>,
+        popular_pruned_forks_sender: &PopularPrunedForksSender,
+        popular_pruned_forks_requests: &mut HashSet<Slot>,
+    ) {
+        let mut popular_pruned_forks = repair_weight
+            .get_popular_pruned_forks(root_bank.epoch_stakes_map(), root_bank.epoch_schedule());
+        // Check if we've already sent a request along this pruned fork
+        popular_pruned_forks.retain(|slot| {
+            if popular_pruned_forks_requests
+                .iter()
+                .any(|prev_req_slot| repair_weight.same_tree(*slot, *prev_req_slot))
+            {
+                false
+            } else {
+                popular_pruned_forks_requests.insert(*slot);
+                true
+            }
+        });
+        if !popular_pruned_forks.is_empty() {
+            warn!(
+                "Notifying repair of popular pruned forks {:?}",
+                popular_pruned_forks
+            );
+            popular_pruned_forks_sender
+                .send(popular_pruned_forks)
+                .unwrap_or_else(|err| error!("failed to send popular pruned forks {err}"));
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_repair_iteration(
+        blockstore: &Blockstore,
+        repair_socket: &UdpSocket,
+        repair_channels: &RepairChannels,
+        repair_info: &RepairInfo,
+        outstanding_requests: &RwLock<OutstandingShredRepairs>,
+        root_bank_cache: &mut RootBankCache,
+        repair_weight: &mut RepairWeight,
+        serve_repair: &ServeRepair,
+        id: Pubkey,
+        repair_metrics: &mut RepairMetrics,
+        peers_cache: &mut LruCache<Slot, RepairPeers>,
+        popular_pruned_forks_requests: &mut HashSet<Slot>,
+        outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
+    ) {
+        let mut set_root_elapsed;
+        let mut dump_slots_elapsed;
+        let get_votes_elapsed;
+        let add_votes_elapsed;
+        let mut purge_outstanding_repairs;
+        let mut handle_popular_pruned_forks_elapsed;
+
+        let root_bank = root_bank_cache.root_bank();
+        let repair_protocol = serve_repair::get_repair_protocol(root_bank.cluster_type());
+        let repairs = {
+            let new_root = root_bank.slot();
+
+            // Purge outdated slots from the weighting heuristic
+            set_root_elapsed = Measure::start("set_root_elapsed");
+            repair_weight.set_root(new_root);
+            set_root_elapsed.stop();
+
+            // Remove dumped slots from the weighting heuristic
+            dump_slots_elapsed = Measure::start("dump_slots_elapsed");
+            Self::remove_dumped_slots_from_weighting_heuristic(
+                repair_weight,
+                popular_pruned_forks_requests,
+                &repair_channels.dumped_slots_receiver,
+            );
+            dump_slots_elapsed.stop();
+
+            // Add new votes to the weighting heuristic
+            (get_votes_elapsed, add_votes_elapsed) = Self::add_votes_to_weighting_heuristic(
+                blockstore,
+                &root_bank,
+                repair_weight,
+                &repair_channels.verified_vote_receiver,
+            );
+
+            purge_outstanding_repairs = Measure::start("purge_outstanding_repairs");
+            // Purge old entries. They've either completed or need to be retried.
+            outstanding_repairs.retain(|_repair_request, time| {
+                timestamp().saturating_sub(*time) < REPAIR_REQUEST_TIMEOUT_MS
+            });
+            purge_outstanding_repairs.stop();
+
+            let repairs = match repair_info.wen_restart_repair_slots.clone() {
+                Some(slots_to_repair) => Self::generate_repairs_for_wen_restart(
+                    blockstore,
+                    MAX_REPAIR_LENGTH,
+                    &slots_to_repair.read().unwrap(),
+                    outstanding_repairs,
+                ),
+                None => repair_weight.get_best_weighted_repairs(
+                    blockstore,
+                    root_bank.epoch_stakes_map(),
+                    root_bank.epoch_schedule(),
+                    MAX_ORPHANS,
+                    MAX_REPAIR_LENGTH,
+                    MAX_UNKNOWN_LAST_INDEX_REPAIRS,
+                    MAX_CLOSEST_COMPLETION_REPAIRS,
+                    repair_metrics,
+                    outstanding_repairs,
+                ),
+            };
+
+            handle_popular_pruned_forks_elapsed = Measure::start("handle_popular_pruned_forks");
+            Self::handle_popular_pruned_forks(
+                repair_weight,
+                root_bank,
+                &repair_channels.popular_pruned_forks_sender,
+                popular_pruned_forks_requests,
+            );
+            handle_popular_pruned_forks_elapsed.stop();
+
+            repairs
+        };
+
+        let (build_repairs_batch_elapsed, batch_send_repairs_elapsed) =
+            Self::batch_and_send_repairs(
+                repair_info,
+                outstanding_requests,
+                repairs,
+                peers_cache,
+                repair_socket,
+                serve_repair,
+                &mut repair_metrics.stats,
+                &repair_channels.repair_request_quic_sender,
+                repair_protocol,
+                id,
+            );
+
+        repair_metrics.timing.update(
+            set_root_elapsed.as_us(),
+            dump_slots_elapsed.as_us(),
+            get_votes_elapsed.as_us(),
+            add_votes_elapsed.as_us(),
+            purge_outstanding_repairs.as_us(),
+            handle_popular_pruned_forks_elapsed.as_us(),
+            build_repairs_batch_elapsed.as_us(),
+            batch_send_repairs_elapsed.as_us(),
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn run(
         blockstore: &Blockstore,
         exit: &AtomicBool,
         repair_socket: &UdpSocket,
-        repair_request_quic_sender: &AsyncSender<(SocketAddr, Bytes)>,
-        repair_info: RepairInfo,
-        verified_vote_receiver: VerifiedVoteReceiver,
+        repair_channels: &RepairChannels,
+        repair_info: &RepairInfo,
         outstanding_requests: &RwLock<OutstandingShredRepairs>,
-        dumped_slots_receiver: DumpedSlotsReceiver,
-        popular_pruned_forks_sender: PopularPrunedForksSender,
     ) {
         let mut root_bank_cache = RootBankCache::new(repair_info.bank_forks.clone());
         let mut repair_weight = RepairWeight::new(root_bank_cache.root_bank().slot());
@@ -322,306 +749,30 @@ impl RepairService {
             repair_info.repair_whitelist.clone(),
         );
         let id = repair_info.cluster_info.id();
-        let mut repair_stats = RepairStats::default();
-        let mut repair_timing = RepairTiming::default();
-        let mut best_repairs_stats = BestRepairsStats::default();
-        let mut last_stats = Instant::now();
+        let mut repair_metrics = RepairMetrics::default();
+
         let mut peers_cache = LruCache::new(REPAIR_PEERS_CACHE_CAPACITY);
         let mut popular_pruned_forks_requests = HashSet::new();
+        // Maps a repair that may still be outstanding to the timestamp it was requested.
+        let mut outstanding_repairs = HashMap::new();
 
         while !exit.load(Ordering::Relaxed) {
-            let mut set_root_elapsed;
-            let mut dump_slots_elapsed;
-            let mut get_votes_elapsed;
-            let mut add_votes_elapsed;
-
-            let root_bank = root_bank_cache.root_bank();
-            let repair_protocol = serve_repair::get_repair_protocol(root_bank.cluster_type());
-            let repairs = {
-                let new_root = root_bank.slot();
-
-                // Purge outdated slots from the weighting heuristic
-                set_root_elapsed = Measure::start("set_root_elapsed");
-                repair_weight.set_root(new_root);
-                set_root_elapsed.stop();
-
-                // Remove dumped slots from the weighting heuristic
-                dump_slots_elapsed = Measure::start("dump_slots_elapsed");
-                dumped_slots_receiver
-                    .try_iter()
-                    .for_each(|slot_hash_keys_to_dump| {
-                        // Currently we don't use the correct_hash in repair. Since this dumped
-                        // slot is DuplicateConfirmed, we have a >= 52% chance on receiving the
-                        // correct version.
-                        for (slot, _correct_hash) in slot_hash_keys_to_dump {
-                            // `slot` is dumped in blockstore wanting to be repaired, we orphan it along with
-                            // descendants while copying the weighting heuristic so that it can be
-                            // repaired with correct ancestor information
-                            //
-                            // We still check to see if this slot is too old, as bank forks root
-                            // might have been updated in between the send and our receive. If that
-                            // is the case we can safely ignore this dump request as the slot in
-                            // question would have already been purged in `repair_weight.set_root`
-                            // and there is no chance of it being part of the rooted path.
-                            if slot >= repair_weight.root() {
-                                let dumped_slots = repair_weight.split_off(slot);
-                                // Remove from outstanding ancestor hashes requests. Also clean any
-                                // requests that might have been since fixed
-                                popular_pruned_forks_requests.retain(|slot| {
-                                    !dumped_slots.contains(slot) && repair_weight.is_pruned(*slot)
-                                });
-                            }
-                        }
-                    });
-                dump_slots_elapsed.stop();
-
-                // Add new votes to the weighting heuristic
-                get_votes_elapsed = Measure::start("get_votes_elapsed");
-                let mut slot_to_vote_pubkeys: HashMap<Slot, Vec<Pubkey>> = HashMap::new();
-                verified_vote_receiver
-                    .try_iter()
-                    .for_each(|(vote_pubkey, vote_slots)| {
-                        for slot in vote_slots {
-                            slot_to_vote_pubkeys
-                                .entry(slot)
-                                .or_default()
-                                .push(vote_pubkey);
-                        }
-                    });
-                get_votes_elapsed.stop();
-
-                add_votes_elapsed = Measure::start("add_votes");
-                repair_weight.add_votes(
-                    blockstore,
-                    slot_to_vote_pubkeys.into_iter(),
-                    root_bank.epoch_stakes_map(),
-                    root_bank.epoch_schedule(),
-                );
-                add_votes_elapsed.stop();
-
-                let repairs = match repair_info.wen_restart_repair_slots.clone() {
-                    Some(slots_to_repair) => Self::generate_repairs_for_wen_restart(
-                        blockstore,
-                        MAX_REPAIR_LENGTH,
-                        &slots_to_repair.read().unwrap(),
-                    ),
-                    None => repair_weight.get_best_weighted_repairs(
-                        blockstore,
-                        root_bank.epoch_stakes_map(),
-                        root_bank.epoch_schedule(),
-                        MAX_ORPHANS,
-                        MAX_REPAIR_LENGTH,
-                        MAX_UNKNOWN_LAST_INDEX_REPAIRS,
-                        MAX_CLOSEST_COMPLETION_REPAIRS,
-                        &mut repair_timing,
-                        &mut best_repairs_stats,
-                    ),
-                };
-
-                let mut popular_pruned_forks = repair_weight.get_popular_pruned_forks(
-                    root_bank.epoch_stakes_map(),
-                    root_bank.epoch_schedule(),
-                );
-                // Check if we've already sent a request along this pruned fork
-                popular_pruned_forks.retain(|slot| {
-                    if popular_pruned_forks_requests
-                        .iter()
-                        .any(|prev_req_slot| repair_weight.same_tree(*slot, *prev_req_slot))
-                    {
-                        false
-                    } else {
-                        popular_pruned_forks_requests.insert(*slot);
-                        true
-                    }
-                });
-                if !popular_pruned_forks.is_empty() {
-                    warn!(
-                        "Notifying repair of popular pruned forks {:?}",
-                        popular_pruned_forks
-                    );
-                    popular_pruned_forks_sender
-                        .send(popular_pruned_forks)
-                        .unwrap_or_else(|err| error!("failed to send popular pruned forks {err}"));
-                }
-
-                repairs
-            };
-
-            let identity_keypair: &Keypair = &repair_info.cluster_info.keypair().clone();
-
-            let mut build_repairs_batch_elapsed = Measure::start("build_repairs_batch_elapsed");
-            let batch: Vec<(Vec<u8>, SocketAddr)> = {
-                let mut outstanding_requests = outstanding_requests.write().unwrap();
-                repairs
-                    .into_iter()
-                    .filter_map(|repair_request| {
-                        let (to, req) = serve_repair
-                            .repair_request(
-                                &repair_info.cluster_slots,
-                                repair_request,
-                                &mut peers_cache,
-                                &mut repair_stats,
-                                &repair_info.repair_validators,
-                                &mut outstanding_requests,
-                                identity_keypair,
-                                repair_request_quic_sender,
-                                repair_protocol,
-                            )
-                            .ok()??;
-                        Some((req, to))
-                    })
-                    .collect()
-            };
-            build_repairs_batch_elapsed.stop();
-
-            let mut batch_send_repairs_elapsed = Measure::start("batch_send_repairs_elapsed");
-            if !batch.is_empty() {
-                match batch_send(repair_socket, &batch) {
-                    Ok(()) => (),
-                    Err(SendPktsError::IoError(err, num_failed)) => {
-                        error!(
-                            "{} batch_send failed to send {}/{} packets first error {:?}",
-                            id,
-                            num_failed,
-                            batch.len(),
-                            err
-                        );
-                    }
-                }
-            }
-            batch_send_repairs_elapsed.stop();
-
-            repair_timing.update(
-                set_root_elapsed.as_us(),
-                dump_slots_elapsed.as_us(),
-                get_votes_elapsed.as_us(),
-                add_votes_elapsed.as_us(),
-                build_repairs_batch_elapsed.as_us(),
-                batch_send_repairs_elapsed.as_us(),
+            Self::run_repair_iteration(
+                blockstore,
+                repair_socket,
+                repair_channels,
+                repair_info,
+                outstanding_requests,
+                &mut root_bank_cache,
+                &mut repair_weight,
+                &serve_repair,
+                id,
+                &mut repair_metrics,
+                &mut peers_cache,
+                &mut popular_pruned_forks_requests,
+                &mut outstanding_repairs,
             );
-
-            if last_stats.elapsed().as_secs() > 2 {
-                let repair_total = repair_stats.shred.count
-                    + repair_stats.highest_shred.count
-                    + repair_stats.orphan.count;
-                let slot_to_count: Vec<_> = repair_stats
-                    .shred
-                    .slot_pubkeys
-                    .iter()
-                    .chain(repair_stats.highest_shred.slot_pubkeys.iter())
-                    .chain(repair_stats.orphan.slot_pubkeys.iter())
-                    .map(|(slot, slot_repairs)| {
-                        (slot, slot_repairs.pubkey_repairs.values().sum::<u64>())
-                    })
-                    .collect();
-                info!("repair_stats: {:?}", slot_to_count);
-                if repair_total > 0 {
-                    let nonzero_num = |x| if x == 0 { None } else { Some(x) };
-                    datapoint_info!(
-                        "repair_service-my_requests",
-                        ("repair-total", repair_total, i64),
-                        ("shred-count", repair_stats.shred.count, i64),
-                        ("highest-shred-count", repair_stats.highest_shred.count, i64),
-                        ("orphan-count", repair_stats.orphan.count, i64),
-                        ("shred-slot-max", nonzero_num(repair_stats.shred.max), Option<i64>),
-                        ("shred-slot-min", nonzero_num(repair_stats.shred.min), Option<i64>),
-                        ("repair-highest-slot", repair_stats.highest_shred.max, i64), // deprecated
-                        ("highest-shred-slot-max", nonzero_num(repair_stats.highest_shred.max), Option<i64>),
-                        ("highest-shred-slot-min", nonzero_num(repair_stats.highest_shred.min), Option<i64>),
-                        ("repair-orphan", repair_stats.orphan.max, i64), // deprecated
-                        ("orphan-slot-max", nonzero_num(repair_stats.orphan.max), Option<i64>),
-                        ("orphan-slot-min", nonzero_num(repair_stats.orphan.min), Option<i64>),
-                    );
-                }
-                datapoint_info!(
-                    "repair_service-repair_timing",
-                    ("set-root-elapsed", repair_timing.set_root_elapsed, i64),
-                    ("dump-slots-elapsed", repair_timing.dump_slots_elapsed, i64),
-                    ("get-votes-elapsed", repair_timing.get_votes_elapsed, i64),
-                    ("add-votes-elapsed", repair_timing.add_votes_elapsed, i64),
-                    (
-                        "get-best-orphans-elapsed",
-                        repair_timing.get_best_orphans_elapsed,
-                        i64
-                    ),
-                    (
-                        "get-best-shreds-elapsed",
-                        repair_timing.get_best_shreds_elapsed,
-                        i64
-                    ),
-                    (
-                        "get-unknown-last-index-elapsed",
-                        repair_timing.get_unknown_last_index_elapsed,
-                        i64
-                    ),
-                    (
-                        "get-closest-completion-elapsed",
-                        repair_timing.get_closest_completion_elapsed,
-                        i64
-                    ),
-                    (
-                        "send-repairs-elapsed",
-                        repair_timing.send_repairs_elapsed,
-                        i64
-                    ),
-                    (
-                        "build-repairs-batch-elapsed",
-                        repair_timing.build_repairs_batch_elapsed,
-                        i64
-                    ),
-                    (
-                        "batch-send-repairs-elapsed",
-                        repair_timing.batch_send_repairs_elapsed,
-                        i64
-                    ),
-                );
-                datapoint_info!(
-                    "serve_repair-best-repairs",
-                    ("call-count", best_repairs_stats.call_count, i64),
-                    ("orphan-slots", best_repairs_stats.num_orphan_slots, i64),
-                    ("orphan-repairs", best_repairs_stats.num_orphan_repairs, i64),
-                    (
-                        "best-shreds-slots",
-                        best_repairs_stats.num_best_shreds_slots,
-                        i64
-                    ),
-                    (
-                        "best-shreds-repairs",
-                        best_repairs_stats.num_best_shreds_repairs,
-                        i64
-                    ),
-                    (
-                        "unknown-last-index-slots",
-                        best_repairs_stats.num_unknown_last_index_slots,
-                        i64
-                    ),
-                    (
-                        "unknown-last-index-repairs",
-                        best_repairs_stats.num_unknown_last_index_repairs,
-                        i64
-                    ),
-                    (
-                        "closest-completion-slots",
-                        best_repairs_stats.num_closest_completion_slots,
-                        i64
-                    ),
-                    (
-                        "closest-completion-slots-path",
-                        best_repairs_stats.num_closest_completion_slots_path,
-                        i64
-                    ),
-                    (
-                        "closest-completion-repairs",
-                        best_repairs_stats.num_closest_completion_repairs,
-                        i64
-                    ),
-                    ("repair-trees", best_repairs_stats.num_repair_trees, i64),
-                );
-                repair_stats = RepairStats::default();
-                repair_timing = RepairTiming::default();
-                best_repairs_stats = BestRepairsStats::default();
-                last_stats = Instant::now();
-            }
+            repair_metrics.maybe_report();
             sleep(Duration::from_millis(REPAIR_MS));
         }
     }
@@ -631,8 +782,16 @@ impl RepairService {
         slot: Slot,
         slot_meta: &SlotMeta,
         max_repairs: usize,
+        outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
     ) -> Vec<ShredRepairType> {
-        Self::generate_repairs_for_slot(blockstore, slot, slot_meta, max_repairs, true)
+        Self::generate_repairs_for_slot(
+            blockstore,
+            slot,
+            slot_meta,
+            max_repairs,
+            true,
+            outstanding_repairs,
+        )
     }
 
     pub fn generate_repairs_for_slot_not_throttled_by_tick(
@@ -640,8 +799,16 @@ impl RepairService {
         slot: Slot,
         slot_meta: &SlotMeta,
         max_repairs: usize,
+        outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
     ) -> Vec<ShredRepairType> {
-        Self::generate_repairs_for_slot(blockstore, slot, slot_meta, max_repairs, false)
+        Self::generate_repairs_for_slot(
+            blockstore,
+            slot,
+            slot_meta,
+            max_repairs,
+            false,
+            outstanding_repairs,
+        )
     }
 
     /// If this slot is missing shreds generate repairs
@@ -651,6 +818,7 @@ impl RepairService {
         slot_meta: &SlotMeta,
         max_repairs: usize,
         throttle_requests_by_shred_tick: bool,
+        outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
     ) -> Vec<ShredRepairType> {
         let defer_repair_threshold_ticks = if throttle_requests_by_shred_tick {
             DEFER_REPAIR_THRESHOLD_TICKS
@@ -680,7 +848,14 @@ impl RepairService {
                     }
                 }
             }
-            vec![ShredRepairType::HighestShred(slot, slot_meta.received)]
+
+            let repair_request = ShredRepairType::HighestShred(slot, slot_meta.received);
+            if let Entry::Vacant(entry) = outstanding_repairs.entry(repair_request) {
+                entry.insert(timestamp());
+                vec![repair_request]
+            } else {
+                vec![]
+            }
         } else {
             blockstore
                 .find_missing_data_indexes(
@@ -692,7 +867,15 @@ impl RepairService {
                     max_repairs,
                 )
                 .into_iter()
-                .map(|i| ShredRepairType::Shred(slot, i))
+                .filter_map(|i| {
+                    let repair_request = ShredRepairType::Shred(slot, i);
+                    if let Entry::Vacant(entry) = outstanding_repairs.entry(repair_request) {
+                        entry.insert(timestamp());
+                        Some(repair_request)
+                    } else {
+                        None
+                    }
+                })
                 .collect()
         }
     }
@@ -703,6 +886,7 @@ impl RepairService {
         repairs: &mut Vec<ShredRepairType>,
         max_repairs: usize,
         slot: Slot,
+        outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
     ) {
         let mut pending_slots = vec![slot];
         while repairs.len() < max_repairs && !pending_slots.is_empty() {
@@ -713,6 +897,7 @@ impl RepairService {
                     slot,
                     &slot_meta,
                     max_repairs - repairs.len(),
+                    outstanding_repairs,
                 );
                 repairs.extend(new_repairs);
                 let next_slots = slot_meta.next_slots;
@@ -727,6 +912,7 @@ impl RepairService {
         blockstore: &Blockstore,
         max_repairs: usize,
         slots: &Vec<Slot>,
+        outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
     ) -> Vec<ShredRepairType> {
         let mut repairs: Vec<ShredRepairType> = Vec::new();
         for slot in slots {
@@ -738,6 +924,7 @@ impl RepairService {
                     *slot,
                     &slot_meta,
                     max_repairs - repairs.len(),
+                    outstanding_repairs,
                 );
                 repairs.extend(new_repairs);
             } else {
@@ -911,6 +1098,7 @@ impl RepairService {
                 slot,
                 &meta,
                 max_repairs - repairs.len(),
+                &mut HashMap::default(),
             );
             repairs.extend(new_repairs);
         }
@@ -933,6 +1121,7 @@ impl RepairService {
                     slot,
                     &slot_meta,
                     MAX_REPAIR_PER_DUPLICATE,
+                    &mut HashMap::default(),
                 ))
             }
         } else {
@@ -1161,8 +1350,8 @@ mod test {
                 MAX_REPAIR_LENGTH,
                 MAX_UNKNOWN_LAST_INDEX_REPAIRS,
                 MAX_CLOSEST_COMPLETION_REPAIRS,
-                &mut RepairTiming::default(),
-                &mut BestRepairsStats::default(),
+                &mut RepairMetrics::default(),
+                &mut HashMap::default(),
             ),
             vec![
                 ShredRepairType::Orphan(2),
@@ -1193,8 +1382,8 @@ mod test {
                 MAX_REPAIR_LENGTH,
                 MAX_UNKNOWN_LAST_INDEX_REPAIRS,
                 MAX_CLOSEST_COMPLETION_REPAIRS,
-                &mut RepairTiming::default(),
-                &mut BestRepairsStats::default(),
+                &mut RepairMetrics::default(),
+                &mut HashMap::default(),
             ),
             vec![ShredRepairType::HighestShred(0, 0)]
         );
@@ -1250,8 +1439,8 @@ mod test {
                 MAX_REPAIR_LENGTH,
                 MAX_UNKNOWN_LAST_INDEX_REPAIRS,
                 MAX_CLOSEST_COMPLETION_REPAIRS,
-                &mut RepairTiming::default(),
-                &mut BestRepairsStats::default(),
+                &mut RepairMetrics::default(),
+                &mut HashMap::default(),
             ),
             expected
         );
@@ -1265,8 +1454,8 @@ mod test {
                 expected.len() - 2,
                 MAX_UNKNOWN_LAST_INDEX_REPAIRS,
                 MAX_CLOSEST_COMPLETION_REPAIRS,
-                &mut RepairTiming::default(),
-                &mut BestRepairsStats::default(),
+                &mut RepairMetrics::default(),
+                &mut HashMap::default(),
             )[..],
             expected[0..expected.len() - 2]
         );
@@ -1308,8 +1497,8 @@ mod test {
                 MAX_REPAIR_LENGTH,
                 MAX_UNKNOWN_LAST_INDEX_REPAIRS,
                 MAX_CLOSEST_COMPLETION_REPAIRS,
-                &mut RepairTiming::default(),
-                &mut BestRepairsStats::default(),
+                &mut RepairMetrics::default(),
+                &mut HashMap::default(),
             ),
             expected
         );
@@ -1627,6 +1816,7 @@ mod test {
             &blockstore,
             max_repairs,
             &slots_to_repair,
+            &mut HashMap::default(),
         );
         assert!(result.is_empty());
 
@@ -1636,6 +1826,7 @@ mod test {
             &blockstore,
             max_repairs,
             &slots_to_repair,
+            &mut HashMap::default(),
         );
         assert_eq!(
             result,
@@ -1651,6 +1842,7 @@ mod test {
             &blockstore,
             max_repairs,
             &slots_to_repair,
+            &mut HashMap::default(),
         );
         assert_eq!(result.len(), max_repairs);
         assert_eq!(
