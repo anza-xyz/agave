@@ -770,12 +770,12 @@ impl BankingSimulator {
         );
 
         // Create a partially-dummy ClusterInfo for the banking stage.
-        let cluster_info = Arc::new(DummyClusterInfo {
+        let cluster_info_for_banking = Arc::new(DummyClusterInfo {
             id: simulated_leader.into(),
         });
         let banking_tracer_channels = if let Some(pool) = unified_scheduler_pool {
             let channels = retracer.create_channels_for_scheduler_pool(&pool);
-            ensure_banking_stage_setup(&pool, &bank_forks, &channels, &cluster_info, &poh_recorder);
+            ensure_banking_stage_setup(&pool, &bank_forks, &channels, &cluster_info_for_banking, &poh_recorder);
             channels
         } else {
             retracer.create_channels(false)
@@ -802,7 +802,7 @@ impl BankingSimulator {
         // We only need it to write shreds into the blockstore and it seems given ClusterInfo is
         // irrelevant for the neccesary minimum work for this simulation.
         let random_keypair = Arc::new(Keypair::new());
-        let cluster_info = Arc::new(ClusterInfo::new(
+        let cluster_info_for_broadcast = Arc::new(ClusterInfo::new(
             Node::new_localhost_with_pubkey(&random_keypair.pubkey()).info,
             random_keypair,
             SocketAddrSpace::Unspecified,
@@ -811,7 +811,7 @@ impl BankingSimulator {
         // inserting produced shreds into the blockstore.
         let broadcast_stage = BroadcastStageType::Standard.new_broadcast_stage(
             vec![bind_to_localhost().unwrap()],
-            cluster_info.clone(),
+            cluster_info_for_broadcast.clone(),
             entry_receiver,
             retransmit_slots_receiver,
             exit.clone(),
@@ -826,7 +826,7 @@ impl BankingSimulator {
         let banking_stage = BankingStage::new_num_threads(
             block_production_method.clone(),
             transaction_struct.clone(),
-            &cluster_info,
+            &cluster_info_for_banking,
             &poh_recorder,
             non_vote_receiver,
             tpu_vote_receiver,

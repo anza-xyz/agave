@@ -1003,7 +1003,6 @@ impl Validator {
         } else {
             info!("Disabled banking trace");
         }
-
         let banking_tracer_channels = match (
             &config.block_verification_method,
             &config.block_production_method,
