@@ -729,6 +729,7 @@ impl TaskHandler for DefaultTaskHandler {
                 } = handler_context
                     .transaction_recorder
                     .record_transactions(bank.slot(), vec![transaction.to_versioned_transaction()]);
+                trace!("pre_commit_callback: poh: {result:?}");
                 match result {
                     Ok(()) => Ok(starting_transaction_index),
                     Err(_) => Err(TransactionError::CommitCancelled),
