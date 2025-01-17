@@ -6346,7 +6346,9 @@ version = "2.2.0"
 name = "solana-net-utils"
 version = "2.2.0"
 dependencies = [
+ "anyhow",
  "bincode",
+ "bytes",
  "crossbeam-channel",
  "log",
  "nix",

@@ -8055,7 +8055,9 @@ dependencies = [
 name = "solana-net-utils"
 version = "2.2.0"
 dependencies = [
+ "anyhow",
  "bincode",
+ "bytes",
  "clap 3.2.23",
  "crossbeam-channel",
  "log",
