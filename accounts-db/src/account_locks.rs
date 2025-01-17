@@ -39,15 +39,11 @@ impl AccountLocks {
     /// the only logic, and this note can be removed with the feature gate.
     pub fn try_lock_transaction_batch<'a>(
         &mut self,
-        validated_batch_keys: Vec<Result<impl Iterator<Item = (&'a Pubkey, bool)> + Clone>>,
+        validated_batch_keys: impl Iterator<
+            Item = Result<impl Iterator<Item = (&'a Pubkey, bool)> + Clone>,
+        >,
     ) -> Vec<Result<()>> {
-        // HANA TODO the vec allocation here is unfortunate but hard to avoid
-        // we cannot do this in one closure because of borrow rules
-        // play around with alternate strategies, according to benches this may be up to
-        // 50% slower for small batches and few locks, but for large batches and many locks
-        // it is around 20% faster. so it's not horrible but ideally we improve all-case perf
         let available_batch_keys: Vec<_> = validated_batch_keys
-            .into_iter()
             .map(|validated_keys| {
                 validated_keys
                     .clone()

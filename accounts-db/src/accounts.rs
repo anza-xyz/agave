@@ -565,12 +565,10 @@ impl Accounts {
         relax_intrabatch_account_locks: bool,
     ) -> Vec<Result<()>> {
         // Validate the account locks, then get iterator if successful validation.
-        let tx_account_locks_results: Vec<Result<_>> = txs
-            .map(|tx| {
-                validate_account_locks(tx.account_keys(), tx_account_lock_limit)
-                    .map(|_| TransactionAccountLocksIterator::new(tx))
-            })
-            .collect();
+        let tx_account_locks_results = txs.map(|tx| {
+            validate_account_locks(tx.account_keys(), tx_account_lock_limit)
+                .map(|_| TransactionAccountLocksIterator::new(tx))
+        });
         self.lock_accounts_inner(tx_account_locks_results, relax_intrabatch_account_locks)
     }
 
@@ -583,37 +581,32 @@ impl Accounts {
         relax_intrabatch_account_locks: bool,
     ) -> Vec<Result<()>> {
         // Validate the account locks, then get iterator if successful validation.
-        let tx_account_locks_results: Vec<Result<_>> = txs
-            .zip(results)
-            .map(|(tx, result)| match result {
-                Ok(()) => validate_account_locks(tx.account_keys(), tx_account_lock_limit)
-                    .map(|_| TransactionAccountLocksIterator::new(tx)),
-                Err(err) => Err(err),
-            })
-            .collect();
+        let tx_account_locks_results = txs.zip(results).map(|(tx, result)| match result {
+            Ok(()) => validate_account_locks(tx.account_keys(), tx_account_lock_limit)
+                .map(|_| TransactionAccountLocksIterator::new(tx)),
+            Err(err) => Err(err),
+        });
         self.lock_accounts_inner(tx_account_locks_results, relax_intrabatch_account_locks)
     }
 
     #[must_use]
-    fn lock_accounts_inner(
+    fn lock_accounts_inner<'a>(
         &self,
-        tx_account_locks_results: Vec<Result<TransactionAccountLocksIterator<impl SVMMessage>>>,
+        tx_account_locks_results: impl Iterator<
+            Item = Result<TransactionAccountLocksIterator<'a, impl SVMMessage + 'a>>,
+        >,
         relax_intrabatch_account_locks: bool,
     ) -> Vec<Result<()>> {
         let account_locks = &mut self.account_locks.lock().unwrap();
         if relax_intrabatch_account_locks {
-            let validated_batch_keys = tx_account_locks_results
-                .into_iter()
-                .map(|tx_account_locks_result| {
-                    tx_account_locks_result
-                        .map(|tx_account_locks| tx_account_locks.accounts_with_is_writable())
-                })
-                .collect();
+            let validated_batch_keys = tx_account_locks_results.map(|tx_account_locks_result| {
+                tx_account_locks_result
+                    .map(|tx_account_locks| tx_account_locks.accounts_with_is_writable())
+            });
 
             account_locks.try_lock_transaction_batch(validated_batch_keys)
         } else {
             tx_account_locks_results
-                .into_iter()
                 .map(|tx_account_locks_result| match tx_account_locks_result {
                     Ok(tx_account_locks) => account_locks
                         .try_lock_accounts(tx_account_locks.accounts_with_is_writable()),
