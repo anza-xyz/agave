@@ -3,7 +3,7 @@ use {
     solana_message::{
         compiled_instruction::CompiledInstruction, AccountKeys, Message, SanitizedMessage,
     },
-    solana_sdk::pubkey::Pubkey,
+    solana_pubkey::Pubkey,
 };
 
 // A helper function to convert spl_memo::v1::id() as spl_sdk::pubkey::Pubkey to

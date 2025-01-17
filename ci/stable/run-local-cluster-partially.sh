@@ -21,4 +21,5 @@ _ cargo nextest run \
   --package solana-local-cluster \
   --test local_cluster \
   --partition hash:"$((INDEX + 1))/$LIMIT" \
-  --test-threads=1
+  --test-threads=1 \
+  --no-tests=warn

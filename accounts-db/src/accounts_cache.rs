@@ -234,10 +234,7 @@ impl AccountsCache {
     }
 
     pub fn add_root(&self, root: Slot) {
-        let max_flushed_root = self.fetch_max_flush_root();
-        if root > max_flushed_root || (root == max_flushed_root && root == 0) {
-            self.maybe_unflushed_roots.write().unwrap().insert(root);
-        }
+        self.maybe_unflushed_roots.write().unwrap().insert(root);
     }
 
     pub fn clear_roots(&self, max_root: Option<Slot>) -> BTreeSet<Slot> {

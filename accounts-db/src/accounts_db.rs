@@ -511,7 +511,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     create_ancient_storage: CreateAncientStorage::Pack,
     partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
     test_skip_rewrites_but_include_in_bank_hash: false,
-    storage_access: StorageAccess::Mmap,
+    storage_access: StorageAccess::File,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormalWithVerify,
     enable_experimental_accumulator_hash: false,
     verify_experimental_accumulator_hash: false,
@@ -538,7 +538,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     create_ancient_storage: CreateAncientStorage::Pack,
     partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
     test_skip_rewrites_but_include_in_bank_hash: false,
-    storage_access: StorageAccess::Mmap,
+    storage_access: StorageAccess::File,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormalWithVerify,
     enable_experimental_accumulator_hash: false,
     verify_experimental_accumulator_hash: false,
@@ -6296,30 +6296,33 @@ impl AccountsDb {
         });
 
         // Always flush up to `requested_flush_root`, which is necessary for things like snapshotting.
-        let cached_roots: BTreeSet<Slot> = self.accounts_cache.clear_roots(requested_flush_root);
+        let flushed_roots: BTreeSet<Slot> = self.accounts_cache.clear_roots(requested_flush_root);
 
         // Iterate from highest to lowest so that we don't need to flush earlier
         // outdated updates in earlier roots
         let mut num_roots_flushed = 0;
         let mut flush_stats = FlushStats::default();
-        for &root in cached_roots.iter().rev() {
+        for &root in flushed_roots.iter().rev() {
             if let Some(stats) =
                 self.flush_slot_cache_with_clean(root, should_flush_f.as_mut(), max_clean_root)
             {
                 num_roots_flushed += 1;
                 flush_stats.accumulate(&stats);
             }
+        }
 
-            // Regardless of whether this slot was *just* flushed from the cache by the above
-            // `flush_slot_cache()`, we should update the `max_flush_root`.
-            // This is because some rooted slots may be flushed to storage *before* they are marked as root.
-            // This can occur for instance when
-            //  the cache is overwhelmed, we flushed some yet to be rooted frozen slots
-            // These slots may then *later* be marked as root, so we still need to handle updating the
-            // `max_flush_root` in the accounts cache.
+        // Note that self.flush_slot_cache_with_clean() can return None if the
+        // slot is already been flushed. This can happen if the cache is
+        // overwhelmed and we flushed some yet to be rooted frozen slots.
+        // However, independent of whether the last slot was actually flushed
+        // from the cache by the above loop, we should always update the
+        // `max_flush_root` to the max of the flushed roots, because that's
+        // max_flushed_root tracks the logical last root that was flushed to
+        // storage by snapshotting.
+        if let Some(&root) = flushed_roots.last() {
             self.accounts_cache.set_max_flush_root(root);
         }
-        let num_new_roots = cached_roots.len();
+        let num_new_roots = flushed_roots.len();
         (num_new_roots, num_roots_flushed, flush_stats)
     }
 

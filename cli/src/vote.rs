@@ -28,14 +28,14 @@ use {
         return_signers_with_config, CliEpochVotingHistory, CliLandedVote, CliVoteAccount,
         ReturnSignersConfig,
     },
+    solana_commitment_config::CommitmentConfig,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::config::RpcGetVoteAccountsConfig,
     solana_rpc_client_nonce_utils::blockhash_query::BlockhashQuery,
     solana_sdk::{
-        account::Account, commitment_config::CommitmentConfig, message::Message,
-        native_token::lamports_to_sol, pubkey::Pubkey, system_instruction::SystemError,
-        transaction::Transaction,
+        account::Account, message::Message, native_token::lamports_to_sol, pubkey::Pubkey,
+        system_instruction::SystemError, transaction::Transaction,
     },
     solana_vote_program::{
         vote_error::VoteError,

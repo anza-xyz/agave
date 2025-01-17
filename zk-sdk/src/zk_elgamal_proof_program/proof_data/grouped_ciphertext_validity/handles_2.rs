@@ -5,6 +5,10 @@
 //! decryption handles. To generate the proof, a prover must provide the Pedersen opening
 //! associated with the grouped ciphertext's commitment.
 
+#[cfg(target_arch = "wasm32")]
+use {
+    crate::encryption::grouped_elgamal::GroupedElGamalCiphertext2Handles, wasm_bindgen::prelude::*,
+};
 use {
     crate::{
         encryption::pod::{
@@ -34,6 +38,7 @@ use {
 ///
 /// It includes the cryptographic proof as well as the context data information needed to verify
 /// the proof.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub struct GroupedCiphertext2HandlesValidityProofData {
@@ -42,6 +47,7 @@ pub struct GroupedCiphertext2HandlesValidityProofData {
     pub proof: PodGroupedCiphertext2HandlesValidityProof,
 }
 
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub struct GroupedCiphertext2HandlesValidityProofContext {
@@ -53,6 +59,7 @@ pub struct GroupedCiphertext2HandlesValidityProofContext {
 }
 
 #[cfg(not(target_os = "solana"))]
+#[cfg(not(target_arch = "wasm32"))]
 impl GroupedCiphertext2HandlesValidityProofData {
     pub fn new(
         first_pubkey: &ElGamalPubkey,
@@ -83,6 +90,49 @@ impl GroupedCiphertext2HandlesValidityProofData {
         .into();
 
         Ok(Self { context, proof })
+    }
+}
+
+// Define a separate constructor for `wasm32` target since `wasm_bindgen` does
+// not yet support parameters with generic constants (i.e.
+// `GroupedElGamalCiphertext<2>`).
+#[cfg(target_arch = "wasm32")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+impl GroupedCiphertext2HandlesValidityProofData {
+    pub fn new(
+        first_pubkey: &ElGamalPubkey,
+        second_pubkey: &ElGamalPubkey,
+        grouped_ciphertext: &GroupedElGamalCiphertext2Handles,
+        amount: u64,
+        opening: &PedersenOpening,
+    ) -> Result<Self, ProofGenerationError> {
+        let pod_first_pubkey = PodElGamalPubkey(first_pubkey.into());
+        let pod_second_pubkey = PodElGamalPubkey(second_pubkey.into());
+        let pod_grouped_ciphertext = grouped_ciphertext.0.into();
+
+        let context = GroupedCiphertext2HandlesValidityProofContext {
+            first_pubkey: pod_first_pubkey,
+            second_pubkey: pod_second_pubkey,
+            grouped_ciphertext: pod_grouped_ciphertext,
+        };
+
+        let mut transcript = context.new_transcript();
+
+        let proof = GroupedCiphertext2HandlesValidityProof::new(
+            first_pubkey,
+            second_pubkey,
+            amount,
+            opening,
+            &mut transcript,
+        )
+        .into();
+
+        Ok(Self { context, proof })
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = toBytes))]
+    pub fn to_bytes(&self) -> Box<[u8]> {
+        bytes_of(self).into()
     }
 }
 

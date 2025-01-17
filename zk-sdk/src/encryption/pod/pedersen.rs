@@ -1,5 +1,7 @@
 //! Plain Old Data type for the Pedersen commitment scheme.
 
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
 #[cfg(not(target_os = "solana"))]
 use {
     crate::{encryption::pedersen::PedersenCommitment, errors::ElGamalError},
@@ -19,6 +21,7 @@ use {
 const PEDERSEN_COMMITMENT_MAX_BASE64_LEN: usize = 44;
 
 /// The `PedersenCommitment` type as a `Pod`.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Copy, Default, Pod, Zeroable, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct PodPedersenCommitment(pub(crate) [u8; PEDERSEN_COMMITMENT_LEN]);

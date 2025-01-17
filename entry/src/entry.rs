@@ -32,7 +32,7 @@ use {
         cmp,
         ffi::OsStr,
         iter::repeat_with,
-        sync::{Arc, Mutex, Once},
+        sync::{Arc, Mutex, Once, OnceLock},
         thread::{self, JoinHandle},
         time::Instant,
     },
@@ -41,7 +41,7 @@ use {
 pub type EntrySender = Sender<Vec<Entry>>;
 pub type EntryReceiver = Receiver<Vec<Entry>>;
 
-static mut API: Option<Container<Api>> = None;
+static API: OnceLock<Container<Api>> = OnceLock::new();
 
 pub fn init_poh() {
     init(OsStr::new("libpoh-simd.so"));
@@ -51,23 +51,23 @@ fn init(name: &OsStr) {
     static INIT_HOOK: Once = Once::new();
 
     info!("Loading {:?}", name);
-    unsafe {
-        INIT_HOOK.call_once(|| {
-            let path;
-            let lib_name = if let Some(perf_libs_path) = solana_perf::perf_libs::locate_perf_libs()
-            {
-                solana_perf::perf_libs::append_to_ld_library_path(
-                    perf_libs_path.to_str().unwrap_or("").to_string(),
-                );
-                path = perf_libs_path.join(name);
-                path.as_os_str()
-            } else {
-                name
-            };
+    INIT_HOOK.call_once(|| {
+        let path;
+        let lib_name = if let Some(perf_libs_path) = solana_perf::perf_libs::locate_perf_libs() {
+            solana_perf::perf_libs::append_to_ld_library_path(
+                perf_libs_path.to_str().unwrap_or("").to_string(),
+            );
+            path = perf_libs_path.join(name);
+            path.as_os_str()
+        } else {
+            name
+        };
 
-            API = Container::load(lib_name).ok();
-        })
-    }
+        match unsafe { Container::load(lib_name) } {
+            Ok(api) => _ = API.set(api),
+            Err(err) => error!("Unable to load {lib_name:?}: {err}"),
+        }
+    })
 }
 
 pub fn api() -> Option<&'static Container<Api<'static>>> {
@@ -77,10 +77,10 @@ pub fn api() -> Option<&'static Container<Api<'static>>> {
             if std::env::var("TEST_PERF_LIBS").is_ok() {
                 init_poh()
             }
-        })
+        });
     }
 
-    unsafe { API.as_ref() }
+    API.get()
 }
 
 #[derive(SymBorApi)]

@@ -5,6 +5,8 @@
 //! the proof, a prover must provide the decryption key for the first ciphertext and the randomness
 //! used to generate the second ciphertext.
 
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
 use {
     crate::{
         encryption::pod::elgamal::{PodElGamalCiphertext, PodElGamalPubkey},
@@ -33,6 +35,7 @@ use {
 ///
 /// It includes the cryptographic proof as well as the context data information needed to verify
 /// the proof.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub struct CiphertextCiphertextEqualityProofData {
@@ -42,6 +45,7 @@ pub struct CiphertextCiphertextEqualityProofData {
 }
 
 /// The context data needed to verify a ciphertext-ciphertext equality proof.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub struct CiphertextCiphertextEqualityProofContext {
@@ -55,6 +59,7 @@ pub struct CiphertextCiphertextEqualityProofContext {
 }
 
 #[cfg(not(target_os = "solana"))]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 impl CiphertextCiphertextEqualityProofData {
     pub fn new(
         first_keypair: &ElGamalKeypair,
@@ -89,6 +94,11 @@ impl CiphertextCiphertextEqualityProofData {
         .into();
 
         Ok(Self { context, proof })
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = toBytes))]
+    pub fn to_bytes(&self) -> Box<[u8]> {
+        bytes_of(self).into()
     }
 }
 

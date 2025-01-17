@@ -2,6 +2,12 @@
 //! multi-stage transaction processing pipeline in software.
 
 pub use solana_sdk::net::DEFAULT_TPU_COALESCE;
+// allow multiple connections for NAT and any open/close overlap
+#[deprecated(
+    since = "2.2.0",
+    note = "Use solana_streamer::quic::DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER instead"
+)]
+pub use solana_streamer::quic::DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER as MAX_QUIC_CONNECTIONS_PER_PEER;
 use {
     crate::{
         banking_stage::BankingStage,
@@ -15,7 +21,7 @@ use {
         sigverify_stage::SigVerifyStage,
         staked_nodes_updater_service::StakedNodesUpdaterService,
         tpu_entry_notifier::TpuEntryNotifier,
-        validator::{BlockProductionMethod, GeneratorConfig},
+        validator::{BlockProductionMethod, GeneratorConfig, TransactionStructure},
     },
     bytes::Bytes,
     crossbeam_channel::{unbounded, Receiver},
@@ -37,10 +43,7 @@ use {
     },
     solana_sdk::{clock::Slot, pubkey::Pubkey, quic::NotifyKeyUpdate, signature::Keypair},
     solana_streamer::{
-        quic::{
-            spawn_server_multi, QuicServerParams, SpawnServerResult, MAX_STAKED_CONNECTIONS,
-            MAX_UNSTAKED_CONNECTIONS,
-        },
+        quic::{spawn_server_multi, QuicServerParams, SpawnServerResult},
         streamer::StakedNodes,
     },
     solana_turbine::broadcast_stage::{BroadcastStage, BroadcastStageType},
@@ -53,9 +56,6 @@ use {
     },
     tokio::sync::mpsc::Sender as AsyncSender,
 };
-
-// allow multiple connections for NAT and any open/close overlap
-pub const MAX_QUIC_CONNECTIONS_PER_PEER: usize = 8;
 
 pub struct TpuSockets {
     pub transactions: Vec<UdpSocket>,
@@ -115,9 +115,12 @@ impl Tpu {
         banking_tracer_channels: Channels,
         tracer_thread_hdl: TracerThread,
         tpu_enable_udp: bool,
-        tpu_max_connections_per_ipaddr_per_minute: u64,
+        tpu_quic_server_config: QuicServerParams,
+        tpu_fwd_quic_server_config: QuicServerParams,
+        vote_quic_server_config: QuicServerParams,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
         block_production_method: BlockProductionMethod,
+        transaction_struct: TransactionStructure,
         enable_block_production_forwarding: bool,
         _generator_config: Option<GeneratorConfig>, /* vestigial code for replay invalidator */
     ) -> (Self, Vec<Arc<dyn NotifyKeyUpdate + Sync + Send>>) {
@@ -178,15 +181,7 @@ impl Tpu {
             vote_packet_sender.clone(),
             exit.clone(),
             staked_nodes.clone(),
-            QuicServerParams {
-                max_connections_per_peer: 1,
-                max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
-                coalesce: tpu_coalesce,
-                max_staked_connections: MAX_STAKED_CONNECTIONS
-                    .saturating_add(MAX_UNSTAKED_CONNECTIONS),
-                max_unstaked_connections: 0,
-                ..QuicServerParams::default()
-            },
+            vote_quic_server_config,
         )
         .unwrap();
 
@@ -203,12 +198,7 @@ impl Tpu {
             packet_sender,
             exit.clone(),
             staked_nodes.clone(),
-            QuicServerParams {
-                max_connections_per_peer: MAX_QUIC_CONNECTIONS_PER_PEER,
-                max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
-                coalesce: tpu_coalesce,
-                ..QuicServerParams::default()
-            },
+            tpu_quic_server_config,
         )
         .unwrap();
 
@@ -225,15 +215,7 @@ impl Tpu {
             forwarded_packet_sender,
             exit.clone(),
             staked_nodes.clone(),
-            QuicServerParams {
-                max_connections_per_peer: MAX_QUIC_CONNECTIONS_PER_PEER,
-                max_staked_connections: MAX_STAKED_CONNECTIONS
-                    .saturating_add(MAX_UNSTAKED_CONNECTIONS),
-                max_unstaked_connections: 0, // Prevent unstaked nodes from forwarding transactions
-                max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
-                coalesce: tpu_coalesce,
-                ..QuicServerParams::default()
-            },
+            tpu_fwd_quic_server_config,
         )
         .unwrap();
 
@@ -269,6 +251,7 @@ impl Tpu {
 
         let banking_stage = BankingStage::new(
             block_production_method,
+            transaction_struct,
             cluster_info,
             poh_recorder,
             non_vote_receiver,

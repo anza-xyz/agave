@@ -107,7 +107,7 @@ impl<C: LikeClusterInfo, R: ReceiveAndBuffer> SchedulerController<C, R> {
 
             self.process_transactions(&decision)?;
             self.receive_completed()?;
-            if !self.receive_and_buffer_packets(&decision) {
+            if self.receive_and_buffer_packets(&decision).is_err() {
                 break;
             }
             // Report metrics only if there is data.
@@ -282,13 +282,13 @@ impl<C: LikeClusterInfo, R: ReceiveAndBuffer> SchedulerController<C, R> {
                 ids_to_add_back.push(*id); // add back to the queue at end
                 let state = self.container.get_mut_transaction_state(id.id).unwrap();
                 let sanitized_transaction = &state.transaction_ttl().transaction;
-                let immutable_packet = state.packet().clone();
+                let immutable_packet = state.packet().expect("forwarding requires packet");
 
                 // If not already forwarded and can be forwarded, add to forwardable packets.
                 if state.should_forward()
                     && forwarder.try_add_packet(
                         sanitized_transaction,
-                        immutable_packet,
+                        immutable_packet.clone(),
                         feature_set,
                     )
                 {
@@ -421,7 +421,10 @@ impl<C: LikeClusterInfo, R: ReceiveAndBuffer> SchedulerController<C, R> {
     }
 
     /// Returns whether the packet receiver is still connected.
-    fn receive_and_buffer_packets(&mut self, decision: &BufferedPacketsDecision) -> bool {
+    fn receive_and_buffer_packets(
+        &mut self,
+        decision: &BufferedPacketsDecision,
+    ) -> Result<usize, ()> {
         self.receive_and_buffer.receive_and_buffer_packets(
             &mut self.container,
             &mut self.timing_metrics,
@@ -444,8 +447,9 @@ mod tests {
                 prio_graph_scheduler::PrioGraphSchedulerConfig,
                 receive_and_buffer::SanitizedTransactionReceiveAndBuffer,
             },
+            TransactionViewReceiveAndBuffer,
         },
-        agave_banking_stage_ingress_types::BankingPacketBatch,
+        agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
         crossbeam_channel::{unbounded, Receiver, Sender},
         itertools::Itertools,
         solana_gossip::cluster_info::ClusterInfo,
@@ -456,21 +460,15 @@ mod tests {
         solana_perf::packet::{to_packet_batches, PacketBatch, NUM_PACKETS},
         solana_poh::poh_recorder::{PohRecorder, Record, WorkingBankEntry},
         solana_runtime::bank::Bank,
-        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+        solana_runtime_transaction::transaction_meta::StaticMeta,
         solana_sdk::{
-            compute_budget::ComputeBudgetInstruction,
-            fee_calculator::FeeRateGovernor,
-            hash::Hash,
-            message::Message,
-            poh_config::PohConfig,
-            pubkey::Pubkey,
-            signature::Keypair,
-            signer::Signer,
-            system_instruction, system_transaction,
-            transaction::{SanitizedTransaction, Transaction},
+            compute_budget::ComputeBudgetInstruction, fee_calculator::FeeRateGovernor, hash::Hash,
+            message::Message, poh_config::PohConfig, pubkey::Pubkey, signature::Keypair,
+            signer::Signer, system_instruction, system_transaction, transaction::Transaction,
         },
         std::sync::{atomic::AtomicBool, Arc, RwLock},
         tempfile::TempDir,
+        test_case::test_case,
     };
 
     fn create_channels<T>(num: usize) -> (Vec<Sender<T>>, Vec<Receiver<T>>) {
@@ -479,7 +477,7 @@ mod tests {
 
     // Helper struct to create tests that hold channels, files, etc.
     // such that our tests can be more easily set up and run.
-    struct TestFrame {
+    struct TestFrame<Tx> {
         bank: Arc<Bank>,
         mint_keypair: Keypair,
         _ledger_path: TempDir,
@@ -488,18 +486,38 @@ mod tests {
         poh_recorder: Arc<RwLock<PohRecorder>>,
         banking_packet_sender: Sender<Arc<Vec<PacketBatch>>>,
 
-        consume_work_receivers:
-            Vec<Receiver<ConsumeWork<RuntimeTransaction<SanitizedTransaction>>>>,
-        finished_consume_work_sender:
-            Sender<FinishedConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
+        consume_work_receivers: Vec<Receiver<ConsumeWork<Tx>>>,
+        finished_consume_work_sender: Sender<FinishedConsumeWork<Tx>>,
+    }
+
+    fn test_create_sanitized_transaction_receive_and_buffer(
+        receiver: BankingPacketReceiver,
+        bank_forks: Arc<RwLock<BankForks>>,
+    ) -> SanitizedTransactionReceiveAndBuffer {
+        SanitizedTransactionReceiveAndBuffer::new(
+            PacketDeserializer::new(receiver),
+            bank_forks,
+            false,
+        )
+    }
+
+    fn test_create_transaction_view_receive_and_buffer(
+        receiver: BankingPacketReceiver,
+        bank_forks: Arc<RwLock<BankForks>>,
+    ) -> TransactionViewReceiveAndBuffer {
+        TransactionViewReceiveAndBuffer {
+            receiver,
+            bank_forks,
+        }
     }
 
     #[allow(clippy::type_complexity)]
-    fn create_test_frame(
+    fn create_test_frame<R: ReceiveAndBuffer>(
         num_threads: usize,
+        create_receive_and_buffer: impl FnOnce(BankingPacketReceiver, Arc<RwLock<BankForks>>) -> R,
     ) -> (
-        TestFrame,
-        SchedulerController<Arc<ClusterInfo>, SanitizedTransactionReceiveAndBuffer>,
+        TestFrame<R::Transaction>,
+        SchedulerController<Arc<ClusterInfo>, R>,
     ) {
         let GenesisConfigInfo {
             mut genesis_config,
@@ -527,7 +545,8 @@ mod tests {
         let decision_maker = DecisionMaker::new(Pubkey::new_unique(), poh_recorder.clone());
 
         let (banking_packet_sender, banking_packet_receiver) = unbounded();
-        let packet_deserializer = PacketDeserializer::new(banking_packet_receiver);
+        let receive_and_buffer =
+            create_receive_and_buffer(banking_packet_receiver, bank_forks.clone());
 
         let (consume_work_senders, consume_work_receivers) = create_channels(num_threads);
         let (finished_consume_work_sender, finished_consume_work_receiver) = unbounded();
@@ -543,12 +562,6 @@ mod tests {
             consume_work_receivers,
             finished_consume_work_sender,
         };
-
-        let receive_and_buffer = SanitizedTransactionReceiveAndBuffer::new(
-            packet_deserializer,
-            bank_forks.clone(),
-            false,
-        );
 
         let scheduler = PrioGraphScheduler::new(
             consume_work_senders,
@@ -605,24 +618,33 @@ mod tests {
     // In the tests, the decision will not become stale, so it is more convenient
     // to receive first and then schedule.
     fn test_receive_then_schedule(
-        scheduler_controller: &mut SchedulerController<
-            Arc<ClusterInfo>,
-            SanitizedTransactionReceiveAndBuffer,
-        >,
+        scheduler_controller: &mut SchedulerController<Arc<ClusterInfo>, impl ReceiveAndBuffer>,
     ) {
         let decision = scheduler_controller
             .decision_maker
             .make_consume_or_forward_decision();
         assert!(matches!(decision, BufferedPacketsDecision::Consume(_)));
         assert!(scheduler_controller.receive_completed().is_ok());
-        assert!(scheduler_controller.receive_and_buffer_packets(&decision));
+
+        // Time is not a reliable way for deterministic testing.
+        // Loop here until no more packets are received, this avoids parallel
+        // tests from inconsistently timing out and not receiving
+        // from the channel.
+        while scheduler_controller
+            .receive_and_buffer_packets(&decision)
+            .map(|n| n > 0)
+            .unwrap_or_default()
+        {}
         assert!(scheduler_controller.process_transactions(&decision).is_ok());
     }
 
-    #[test]
+    #[test_case(test_create_sanitized_transaction_receive_and_buffer; "Sdk")]
+    #[test_case(test_create_transaction_view_receive_and_buffer; "View")]
     #[should_panic(expected = "batch id 0 is not being tracked")]
-    fn test_unexpected_batch_id() {
-        let (test_frame, scheduler_controller) = create_test_frame(1);
+    fn test_unexpected_batch_id<R: ReceiveAndBuffer>(
+        create_receive_and_buffer: impl FnOnce(BankingPacketReceiver, Arc<RwLock<BankForks>>) -> R,
+    ) {
+        let (test_frame, scheduler_controller) = create_test_frame(1, create_receive_and_buffer);
         let TestFrame {
             finished_consume_work_sender,
             ..
@@ -643,9 +665,13 @@ mod tests {
         scheduler_controller.run().unwrap();
     }
 
-    #[test]
-    fn test_schedule_consume_single_threaded_no_conflicts() {
-        let (test_frame, mut scheduler_controller) = create_test_frame(1);
+    #[test_case(test_create_sanitized_transaction_receive_and_buffer; "Sdk")]
+    #[test_case(test_create_transaction_view_receive_and_buffer; "View")]
+    fn test_schedule_consume_single_threaded_no_conflicts<R: ReceiveAndBuffer>(
+        create_receive_and_buffer: impl FnOnce(BankingPacketReceiver, Arc<RwLock<BankForks>>) -> R,
+    ) {
+        let (test_frame, mut scheduler_controller) =
+            create_test_frame(1, create_receive_and_buffer);
         let TestFrame {
             bank,
             mint_keypair,
@@ -699,9 +725,13 @@ mod tests {
         assert_eq!(message_hashes, vec![&tx2_hash, &tx1_hash]);
     }
 
-    #[test]
-    fn test_schedule_consume_single_threaded_conflict() {
-        let (test_frame, mut scheduler_controller) = create_test_frame(1);
+    #[test_case(test_create_sanitized_transaction_receive_and_buffer; "Sdk")]
+    #[test_case(test_create_transaction_view_receive_and_buffer; "View")]
+    fn test_schedule_consume_single_threaded_conflict<R: ReceiveAndBuffer>(
+        create_receive_and_buffer: impl FnOnce(BankingPacketReceiver, Arc<RwLock<BankForks>>) -> R,
+    ) {
+        let (test_frame, mut scheduler_controller) =
+            create_test_frame(1, create_receive_and_buffer);
         let TestFrame {
             bank,
             mint_keypair,
@@ -758,9 +788,13 @@ mod tests {
         assert_eq!(message_hashes, vec![&tx2_hash, &tx1_hash]);
     }
 
-    #[test]
-    fn test_schedule_consume_single_threaded_multi_batch() {
-        let (test_frame, mut scheduler_controller) = create_test_frame(1);
+    #[test_case(test_create_sanitized_transaction_receive_and_buffer; "Sdk")]
+    #[test_case(test_create_transaction_view_receive_and_buffer; "View")]
+    fn test_schedule_consume_single_threaded_multi_batch<R: ReceiveAndBuffer>(
+        create_receive_and_buffer: impl FnOnce(BankingPacketReceiver, Arc<RwLock<BankForks>>) -> R,
+    ) {
+        let (test_frame, mut scheduler_controller) =
+            create_test_frame(1, create_receive_and_buffer);
         let TestFrame {
             bank,
             mint_keypair,
@@ -822,9 +856,13 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_schedule_consume_simple_thread_selection() {
-        let (test_frame, mut scheduler_controller) = create_test_frame(2);
+    #[test_case(test_create_sanitized_transaction_receive_and_buffer; "Sdk")]
+    #[test_case(test_create_transaction_view_receive_and_buffer; "View")]
+    fn test_schedule_consume_simple_thread_selection<R: ReceiveAndBuffer>(
+        create_receive_and_buffer: impl FnOnce(BankingPacketReceiver, Arc<RwLock<BankForks>>) -> R,
+    ) {
+        let (test_frame, mut scheduler_controller) =
+            create_test_frame(2, create_receive_and_buffer);
         let TestFrame {
             bank,
             mint_keypair,
@@ -889,9 +927,13 @@ mod tests {
         assert_eq!(t1_actual, t1_expected);
     }
 
-    #[test]
-    fn test_schedule_consume_retryable() {
-        let (test_frame, mut scheduler_controller) = create_test_frame(1);
+    #[test_case(test_create_sanitized_transaction_receive_and_buffer; "Sdk")]
+    #[test_case(test_create_transaction_view_receive_and_buffer; "View")]
+    fn test_schedule_consume_retryable<R: ReceiveAndBuffer>(
+        create_receive_and_buffer: impl FnOnce(BankingPacketReceiver, Arc<RwLock<BankForks>>) -> R,
+    ) {
+        let (test_frame, mut scheduler_controller) =
+            create_test_frame(1, create_receive_and_buffer);
         let TestFrame {
             bank,
             mint_keypair,

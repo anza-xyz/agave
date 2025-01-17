@@ -397,6 +397,7 @@ fn check_and_filter_proposed_vote_state(
             proposed_hash,
             slot_hashes[slot_hashes_index].1
         );
+        #[cfg(feature = "metrics")]
         inc_new_counter_info!("dropped-vote-hash", 1);
         return Err(VoteError::SlotHashMismatch);
     }
@@ -451,7 +452,7 @@ fn check_slots_are_valid(
         // where `s` >= `last_voted_slot`
         if vote_state
             .last_voted_slot()
-            .map_or(false, |last_voted_slot| vote_slots[i] <= last_voted_slot)
+            .is_some_and(|last_voted_slot| vote_slots[i] <= last_voted_slot)
         {
             i = i
                 .checked_add(1)

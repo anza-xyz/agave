@@ -57,7 +57,7 @@ fn make_shreds(num_shreds: usize) -> Vec<Shred> {
 fn bench_shredder_ticks(bencher: &mut Bencher) {
     let kp = Keypair::new();
     let shred_size = LEGACY_SHRED_DATA_CAPACITY;
-    let num_shreds = ((1000 * 1000) + (shred_size - 1)) / shred_size;
+    let num_shreds = 1_000_000_usize.div_ceil(shred_size);
     // ~1Mb
     let num_ticks = max_ticks_per_n_shreds(1, Some(LEGACY_SHRED_DATA_CAPACITY)) * num_shreds as u64;
     let entries = create_ticks(num_ticks, 0, Hash::default());
@@ -83,7 +83,7 @@ fn bench_shredder_ticks(bencher: &mut Bencher) {
 fn bench_shredder_large_entries(bencher: &mut Bencher) {
     let kp = Keypair::new();
     let shred_size = LEGACY_SHRED_DATA_CAPACITY;
-    let num_shreds = ((1000 * 1000) + (shred_size - 1)) / shred_size;
+    let num_shreds = 1_000_000_usize.div_ceil(shred_size);
     let txs_per_entry = 128;
     let num_entries = max_entries_per_n_shred(
         &make_test_entry(txs_per_entry),
@@ -115,7 +115,7 @@ fn bench_deshredder(bencher: &mut Bencher) {
     let kp = Keypair::new();
     let shred_size = LEGACY_SHRED_DATA_CAPACITY;
     // ~10Mb
-    let num_shreds = ((10000 * 1000) + (shred_size - 1)) / shred_size;
+    let num_shreds = 10_000_000_usize.div_ceil(shred_size);
     let num_ticks = max_ticks_per_n_shreds(1, Some(shred_size)) * num_shreds as u64;
     let entries = create_ticks(num_ticks, 0, Hash::default());
     let shredder = Shredder::new(1, 0, 0, 0).unwrap();

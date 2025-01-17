@@ -22,8 +22,6 @@ default = [
 ]
 full = [
     "byteorder",
-    "chrono",
-    "memmap2",
     "rand",
     "rand0-7",
     "serde_json",
@@ -39,6 +37,7 @@ full = [
     "dep:solana-cluster-type",
     "dep:solana-ed25519-program",
     "dep:solana-compute-budget-interface",
+    "dep:solana-genesis-config",
     "dep:solana-hard-forks",
     "dep:solana-keypair",
     "dep:solana-offchain-message",
@@ -76,6 +75,7 @@ frozen-abi = [
     "solana-fee-structure/frozen-abi",
     "solana-account/frozen-abi",
     "solana-cluster-type/frozen-abi",
+    "solana-genesis-config/frozen-abi",
     "solana-hard-forks/frozen-abi",
     "solana-inflation/frozen-abi",
     "solana-poh-config/frozen-abi",
@@ -97,7 +97,6 @@ bs58 = { workspace = true }
 bytemuck = { workspace = true }
 bytemuck_derive = { workspace = true }
 byteorder = { workspace = true, optional = true }
-chrono = { workspace = true, features = ["alloc"], optional = true }
 curve25519-dalek = { workspace = true, optional = true }
 digest = { workspace = true, optional = true }
 ed25519-dalek = { workspace = true, optional = true }
@@ -105,7 +104,6 @@ itertools = { workspace = true }
 lazy_static = { workspace = true }
 libsecp256k1 = { workspace = true, optional = true, features = ["hmac"] }
 log = { workspace = true }
-memmap2 = { workspace = true, optional = true }
 num-derive = { workspace = true }
 num-traits = { workspace = true }
 qualifier_attr = { workspace = true, optional = true }
@@ -143,6 +141,9 @@ solana-frozen-abi = { workspace = true, optional = true, features = [
 solana-frozen-abi-macro = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
+solana-genesis-config = { workspace = true, features = [
+    "serde"
+], optional = true }
 solana-hard-forks = { workspace = true, features = [
     "serde",
 ], optional = true }

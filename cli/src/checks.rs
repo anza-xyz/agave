@@ -1,11 +1,9 @@
 use {
     crate::cli::CliError,
+    solana_commitment_config::CommitmentConfig,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::client_error::{Error as ClientError, Result as ClientResult},
-    solana_sdk::{
-        commitment_config::CommitmentConfig, message::Message, native_token::lamports_to_sol,
-        pubkey::Pubkey,
-    },
+    solana_sdk::{message::Message, native_token::lamports_to_sol, pubkey::Pubkey},
 };
 
 pub fn check_account_for_fee(

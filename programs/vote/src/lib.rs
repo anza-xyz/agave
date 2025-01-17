@@ -4,7 +4,8 @@ pub mod vote_processor;
 pub mod vote_state;
 pub mod vote_transaction;
 
-#[macro_use]
+#[cfg_attr(feature = "metrics", macro_use)]
+#[cfg(feature = "metrics")]
 extern crate solana_metrics;
 
 #[cfg_attr(feature = "frozen-abi", macro_use)]

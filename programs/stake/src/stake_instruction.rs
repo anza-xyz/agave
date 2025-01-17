@@ -5,20 +5,18 @@ use {
         withdraw,
     },
     log::*,
+    solana_bincode::limited_deserialize,
+    solana_instruction::error::InstructionError,
+    solana_program::stake::{
+        instruction::{LockupArgs, StakeError, StakeInstruction},
+        program::id,
+        state::{Authorized, Lockup},
+    },
     solana_program_runtime::{
         declare_process_instruction, sysvar_cache::get_sysvar_with_account_check,
     },
     solana_pubkey::Pubkey,
-    solana_sdk::{
-        instruction::InstructionError,
-        program_utils::limited_deserialize,
-        stake::{
-            instruction::{LockupArgs, StakeError, StakeInstruction},
-            program::id,
-            state::{Authorized, Lockup},
-        },
-        transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
-    },
+    solana_transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
 };
 
 fn get_optional_pubkey<'a>(
@@ -75,7 +73,8 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
 
     let signers = instruction_context.get_signers(transaction_context)?;
 
-    let stake_instruction: StakeInstruction = limited_deserialize(data)?;
+    let stake_instruction: StakeInstruction =
+        limited_deserialize(data, solana_packet::PACKET_DATA_SIZE as u64)?;
     if epoch_rewards_active && !matches!(stake_instruction, StakeInstruction::GetMinimumDelegation)
     {
         return Err(StakeError::EpochRewardsActive.into());
@@ -390,37 +389,36 @@ mod tests {
         },
         assert_matches::assert_matches,
         bincode::serialize,
+        solana_account::{
+            create_account_shared_data_for_test, state_traits::StateMut, AccountSharedData,
+            ReadableAccount, WritableAccount,
+        },
+        solana_clock::{Clock, Epoch, UnixTimestamp},
+        solana_epoch_rewards::EpochRewards,
+        solana_epoch_schedule::EpochSchedule,
         solana_feature_set::FeatureSet,
+        solana_instruction::{AccountMeta, Instruction},
+        solana_program::stake::{
+            config as stake_config,
+            instruction::{
+                self, authorize_checked, authorize_checked_with_seed, initialize_checked,
+                set_lockup_checked, AuthorizeCheckedWithSeedArgs, AuthorizeWithSeedArgs,
+                LockupArgs, StakeError,
+            },
+            stake_flags::StakeFlags,
+            state::{warmup_cooldown_rate, Authorized, Lockup, StakeAuthorize},
+            MINIMUM_DELINQUENT_EPOCHS_FOR_DEACTIVATION,
+        },
         solana_program_runtime::invoke_context::mock_process_instruction,
         solana_pubkey::Pubkey,
-        solana_sdk::{
-            account::{
-                create_account_shared_data_for_test, AccountSharedData, ReadableAccount,
-                WritableAccount,
-            },
-            account_utils::StateMut,
-            clock::{Clock, Epoch, UnixTimestamp},
-            epoch_schedule::EpochSchedule,
-            instruction::{AccountMeta, Instruction},
-            rent::Rent,
-            stake::{
-                config as stake_config,
-                instruction::{
-                    self, authorize_checked, authorize_checked_with_seed, initialize_checked,
-                    set_lockup_checked, AuthorizeCheckedWithSeedArgs, AuthorizeWithSeedArgs,
-                    LockupArgs, StakeError,
-                },
-                stake_flags::StakeFlags,
-                state::{warmup_cooldown_rate, Authorized, Lockup, StakeAuthorize},
-                MINIMUM_DELINQUENT_EPOCHS_FOR_DEACTIVATION,
-            },
-            stake_history::{StakeHistory, StakeHistoryEntry},
+        solana_rent::Rent,
+        solana_sdk_ids::{
             system_program,
-            sysvar::{
-                clock,
-                epoch_rewards::{self, EpochRewards},
-                epoch_schedule, rent, rewards, stake_history,
-            },
+            sysvar::{clock, epoch_rewards, epoch_schedule, rent, rewards, stake_history},
+        },
+        solana_sysvar::{
+            rewards::Rewards,
+            stake_history::{StakeHistory, StakeHistoryEntry},
         },
         solana_vote_program::vote_state::{self, VoteState, VoteStateVersions},
         std::{collections::HashSet, str::FromStr, sync::Arc},
@@ -504,9 +502,9 @@ mod tests {
                 (
                     *pubkey,
                     if clock::check_id(pubkey) {
-                        create_account_shared_data_for_test(&clock::Clock::default())
+                        create_account_shared_data_for_test(&Clock::default())
                     } else if rewards::check_id(pubkey) {
-                        create_account_shared_data_for_test(&rewards::Rewards::new(0.0))
+                        create_account_shared_data_for_test(&Rewards::new(0.0))
                     } else if stake_history::check_id(pubkey) {
                         create_account_shared_data_for_test(&StakeHistory::default())
                     } else if stake_config::check_id(pubkey) {
@@ -842,13 +840,13 @@ mod tests {
         let rent = Rent::default();
         let rent_account = create_account_shared_data_for_test(&rent);
         let rewards_address = rewards::id();
-        let rewards_account = create_account_shared_data_for_test(&rewards::Rewards::new(0.0));
+        let rewards_account = create_account_shared_data_for_test(&Rewards::new(0.0));
         let stake_history_address = stake_history::id();
         let stake_history_account = create_account_shared_data_for_test(&StakeHistory::default());
         let vote_address = Pubkey::new_unique();
         let vote_account = AccountSharedData::new(0, 0, &solana_vote_program::id());
         let clock_address = clock::id();
-        let clock_account = create_account_shared_data_for_test(&clock::Clock::default());
+        let clock_account = create_account_shared_data_for_test(&Clock::default());
         #[allow(deprecated)]
         let config_address = stake_config::id();
         #[allow(deprecated)]
@@ -2416,7 +2414,7 @@ mod tests {
             &serialize(&StakeInstruction::DelegateStake).unwrap(),
             transaction_accounts.clone(),
             instruction_accounts.clone(),
-            Err(solana_sdk::instruction::InstructionError::IncorrectProgramId),
+            Err(solana_instruction::error::InstructionError::IncorrectProgramId),
         );
 
         // verify that non-stakes fail delegate()
@@ -2428,7 +2426,7 @@ mod tests {
             &serialize(&StakeInstruction::DelegateStake).unwrap(),
             transaction_accounts,
             instruction_accounts,
-            Err(solana_sdk::instruction::InstructionError::IncorrectProgramId),
+            Err(solana_instruction::error::InstructionError::IncorrectProgramId),
         );
     }
 

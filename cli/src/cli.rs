@@ -13,6 +13,7 @@ use {
         display::println_name_value, CliSignature, CliValidatorsSortOrder, OutputFormat,
     },
     solana_client::connection_cache::ConnectionCache,
+    solana_commitment_config::CommitmentConfig,
     solana_decode_error::DecodeError,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::rpc_client::RpcClient,
@@ -23,7 +24,6 @@ use {
     solana_rpc_client_nonce_utils::blockhash_query::BlockhashQuery,
     solana_sdk::{
         clock::{Epoch, Slot},
-        commitment_config::CommitmentConfig,
         hash::Hash,
         instruction::InstructionError,
         offchain_message::OffchainMessage,

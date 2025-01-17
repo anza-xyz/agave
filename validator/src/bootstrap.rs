@@ -189,7 +189,7 @@ fn get_rpc_peers(
             cluster_entrypoint
                 .gossip()
                 .and_then(|addr| cluster_info.lookup_contact_info_by_gossip_addr(&addr))
-                .map_or(false, |entrypoint| entrypoint.shred_version() == 0)
+                .is_some_and(|entrypoint| entrypoint.shred_version() == 0)
         });
 
         if all_zero_shred_versions {

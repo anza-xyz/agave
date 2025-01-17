@@ -14,6 +14,10 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::encryption::{discrete_log::DiscreteLog, elgamal::ElGamalSecretKey};
+#[cfg(target_arch = "wasm32")]
+pub use grouped_elgamal_wasm::*;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
 use {
     crate::{
         encryption::{
@@ -213,6 +217,51 @@ impl<const N: usize> GroupedElGamalCiphertext<N> {
         index: usize,
     ) -> Result<Option<u64>, GroupedElGamalError> {
         GroupedElGamal::decrypt_u32(self, secret, index)
+    }
+}
+
+// Define specific grouped ElGamal ciphertext types for 2 and 3 handles since
+// `wasm_bindgen` do not yet support the export of types that take on generic
+// type parameters.
+#[cfg(target_arch = "wasm32")]
+mod grouped_elgamal_wasm {
+    use super::*;
+
+    #[wasm_bindgen]
+    pub struct GroupedElGamalCiphertext2Handles(pub(crate) GroupedElGamalCiphertext<2>);
+
+    #[wasm_bindgen]
+    impl GroupedElGamalCiphertext2Handles {
+        #[wasm_bindgen(js_name = encryptU64)]
+        pub fn encrypt_u64(
+            first_pubkey: &ElGamalPubkey,
+            second_pubkey: &ElGamalPubkey,
+            amount: u64,
+        ) -> Self {
+            Self(GroupedElGamal::<2>::encrypt(
+                [first_pubkey, second_pubkey],
+                amount,
+            ))
+        }
+    }
+
+    #[wasm_bindgen]
+    pub struct GroupedElGamalCiphertext3Handles(pub(crate) GroupedElGamalCiphertext<3>);
+
+    #[wasm_bindgen]
+    impl GroupedElGamalCiphertext3Handles {
+        #[wasm_bindgen(js_name = encryptU64)]
+        pub fn encrypt_u64(
+            first_pubkey: &ElGamalPubkey,
+            second_pubkey: &ElGamalPubkey,
+            third_pubkey: &ElGamalPubkey,
+            amount: u64,
+        ) -> Self {
+            Self(GroupedElGamal::<3>::encrypt(
+                [first_pubkey, second_pubkey, third_pubkey],
+                amount,
+            ))
+        }
     }
 }
 

@@ -863,15 +863,15 @@ fn map_coption_pubkey(pubkey: COption<Pubkey>) -> Option<String> {
 #[cfg(test)]
 mod test {
     use {
-        super::*, solana_message::Message, solana_sdk::pubkey::Pubkey,
-        spl_token_2022::instruction::*, std::iter::repeat_with,
+        super::*, solana_message::Message, solana_pubkey::Pubkey, spl_token_2022::instruction::*,
+        std::iter::repeat_with,
     };
 
     fn test_parse_token(program_id: &Pubkey) {
         let mint_pubkey = Pubkey::new_unique();
         let mint_authority = Pubkey::new_unique();
         let freeze_authority = Pubkey::new_unique();
-        let rent_sysvar = solana_sdk::sysvar::rent::id();
+        let rent_sysvar = solana_sdk_ids::sysvar::rent::id();
 
         // Test InitializeMint variations
         let initialize_mint_ix = initialize_mint(
@@ -1773,7 +1773,7 @@ mod test {
                 info: json!({
                    "payer": payer.to_string(),
                    "nativeMint": spl_token_2022::native_mint::id().to_string(),
-                   "systemProgram": solana_sdk::system_program::id().to_string(),
+                   "systemProgram": solana_sdk_ids::system_program::id().to_string(),
                 })
             }
         );

@@ -41,14 +41,14 @@ pub enum BuiltinCost {
 }
 
 impl BuiltinCost {
-    pub fn native_cost(&self) -> u64 {
+    fn native_cost(&self) -> u64 {
         match self {
             BuiltinCost::Migrating(MigratingBuiltinCost { native_cost, .. }) => *native_cost,
             BuiltinCost::NotMigrating(NotMigratingBuiltinCost { native_cost }) => *native_cost,
         }
     }
 
-    pub fn core_bpf_migration_feature(&self) -> Option<&Pubkey> {
+    fn core_bpf_migration_feature(&self) -> Option<&Pubkey> {
         match self {
             BuiltinCost::Migrating(MigratingBuiltinCost {
                 core_bpf_migration_feature,
@@ -58,7 +58,7 @@ impl BuiltinCost {
         }
     }
 
-    pub fn position(&self) -> Option<usize> {
+    fn position(&self) -> Option<usize> {
         match self {
             BuiltinCost::Migrating(MigratingBuiltinCost { position, .. }) => Some(*position),
             BuiltinCost::NotMigrating(_) => None,
@@ -102,11 +102,11 @@ lazy_static! {
 /// correctly furnishing `core_bpf_migration_feature`.
 ///
 #[allow(dead_code)]
-const TOTAL_COUNT_BUILTS: usize = 12;
+const TOTAL_COUNT_BUILTINS: usize = 12;
 #[cfg(test)]
 static_assertions::const_assert_eq!(
     MIGRATING_BUILTINS_COSTS.len() + NON_MIGRATING_BUILTINS_COSTS.len(),
-    TOTAL_COUNT_BUILTS
+    TOTAL_COUNT_BUILTINS
 );
 
 pub const MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[
@@ -137,7 +137,7 @@ pub const MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[
     ),
 ];
 
-pub const NON_MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[
+const NON_MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[
     (
         vote::id(),
         BuiltinCost::NotMigrating(NotMigratingBuiltinCost {

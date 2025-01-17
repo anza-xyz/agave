@@ -1,38 +1,45 @@
 //! The chain's genesis config.
 
-#![cfg(feature = "full")]
-
+#![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
 #[deprecated(
     since = "2.2.0",
     note = "Use `solana_cluster_type::ClusterType` instead."
 )]
 pub use solana_cluster_type::ClusterType;
+#[cfg(feature = "frozen-abi")]
+use solana_frozen_abi_macro::{frozen_abi, AbiExample};
+#[cfg(feature = "serde")]
 use {
-    crate::{
-        clock::{UnixTimestamp, DEFAULT_TICKS_PER_SLOT},
-        epoch_schedule::EpochSchedule,
-        fee_calculator::FeeRateGovernor,
-        hash::{hash, Hash},
-        inflation::Inflation,
-        poh_config::PohConfig,
-        pubkey::Pubkey,
-        rent::Rent,
-        shred_version::compute_shred_version,
-        signature::{Keypair, Signer},
-        system_program,
-        timing::years_as_slots,
-    },
     bincode::{deserialize, serialize},
     chrono::{TimeZone, Utc},
     memmap2::Mmap,
-    solana_account::{Account, AccountSharedData},
+    solana_hash::Hash,
     solana_native_token::lamports_to_sol,
+    solana_sha256_hasher::hash,
+    solana_shred_version::compute_shred_version,
     std::{
-        collections::BTreeMap,
         fmt,
         fs::{File, OpenOptions},
         io::Write,
         path::{Path, PathBuf},
+    },
+};
+use {
+    solana_account::{Account, AccountSharedData},
+    solana_clock::{UnixTimestamp, DEFAULT_TICKS_PER_SLOT},
+    solana_epoch_schedule::EpochSchedule,
+    solana_fee_calculator::FeeRateGovernor,
+    solana_inflation::Inflation,
+    solana_keypair::Keypair,
+    solana_poh_config::PohConfig,
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
+    solana_sdk_ids::system_program,
+    solana_signer::Signer,
+    solana_time_utils::years_as_slots,
+    std::{
+        collections::BTreeMap,
         time::{SystemTime, UNIX_EPOCH},
     },
 };
@@ -49,7 +56,11 @@ pub const UNUSED_DEFAULT: u64 = 1024;
     derive(AbiExample),
     frozen_abi(digest = "D9VFRSj4fodCuKFC9omQY2zY2Uw8wo6SzJFLeMJaVigm")
 )]
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde_derive::Deserialize, serde_derive::Serialize)
+)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GenesisConfig {
     /// when the network (bootstrap validator) was started relative to the UNIX Epoch
     pub creation_time: UnixTimestamp,
@@ -132,15 +143,18 @@ impl GenesisConfig {
         }
     }
 
+    #[cfg(feature = "serde")]
     pub fn hash(&self) -> Hash {
         let serialized = serialize(&self).unwrap();
         hash(&serialized)
     }
 
+    #[cfg(feature = "serde")]
     fn genesis_filename(ledger_path: &Path) -> PathBuf {
         Path::new(ledger_path).join(DEFAULT_GENESIS_FILE)
     }
 
+    #[cfg(feature = "serde")]
     pub fn load(ledger_path: &Path) -> Result<Self, std::io::Error> {
         let filename = Self::genesis_filename(ledger_path);
         let file = OpenOptions::new()
@@ -170,6 +184,7 @@ impl GenesisConfig {
         Ok(genesis_config)
     }
 
+    #[cfg(feature = "serde")]
     pub fn write(&self, ledger_path: &Path) -> Result<(), std::io::Error> {
         let serialized = serialize(&self).map_err(|err| {
             std::io::Error::new(
@@ -216,6 +231,7 @@ impl GenesisConfig {
     }
 }
 
+#[cfg(feature = "serde")]
 impl fmt::Display for GenesisConfig {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
@@ -273,13 +289,9 @@ impl fmt::Display for GenesisConfig {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(feature = "serde", test))]
 mod tests {
-    use {
-        super::*,
-        crate::signature::{Keypair, Signer},
-        std::path::PathBuf,
-    };
+    use {super::*, solana_signer::Signer, std::path::PathBuf};
 
     fn make_tmp_path(name: &str) -> PathBuf {
         let out_dir = std::env::var("FARF_DIR").unwrap_or_else(|_| "farf".to_string());
@@ -310,10 +322,10 @@ mod tests {
             AccountSharedData::new(10_000, 0, &Pubkey::default()),
         );
         config.add_account(
-            solana_sdk::pubkey::new_rand(),
+            solana_pubkey::new_rand(),
             AccountSharedData::new(1, 0, &Pubkey::default()),
         );
-        config.add_native_instruction_processor("hi".to_string(), solana_sdk::pubkey::new_rand());
+        config.add_native_instruction_processor("hi".to_string(), solana_pubkey::new_rand());
 
         assert_eq!(config.accounts.len(), 2);
         assert!(config

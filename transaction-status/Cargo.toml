@@ -21,9 +21,19 @@ serde = { workspace = true }
 serde_derive = { workspace = true }
 serde_json = { workspace = true }
 solana-account-decoder = { workspace = true }
+solana-clock = { workspace = true }
+solana-hash = { workspace = true }
+solana-instruction = { workspace = true }
 solana-message = { workspace = true }
+solana-program = { workspace = true }
 solana-pubkey = { workspace = true }
-solana-sdk = { workspace = true }
+solana-reserved-account-keys = { workspace = true }
+solana-reward-info = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-signature = { workspace = true }
+solana-system-interface = { workspace = true }
+solana-transaction = { workspace = true }
+solana-transaction-error = { workspace = true }
 solana-transaction-status-client-types = { workspace = true }
 spl-associated-token-account = { workspace = true, features = ["no-entrypoint"] }
 spl-memo = { workspace = true, features = ["no-entrypoint"] }
@@ -35,6 +45,7 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 bytemuck = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
 spl-token-confidential-transfer-proof-extraction = { workspace = true }
 
 [package.metadata.docs.rs]

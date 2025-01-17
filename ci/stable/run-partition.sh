@@ -34,6 +34,7 @@ ARGS=(
   --partition hash:"$((INDEX + 1))/$LIMIT"
   --verbose
   --exclude solana-local-cluster
+  --no-tests=warn
 )
 
 _ cargo nextest run "${ARGS[@]}"

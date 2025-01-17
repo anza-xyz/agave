@@ -473,7 +473,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_split_messages_small() {
-        let value = CrdsValue::new_unsigned(CrdsData::ContactInfo(ContactInfo::default()));
+        let value = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::default()));
         test_split_messages(value);
     }
 

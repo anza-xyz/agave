@@ -7,28 +7,25 @@
     since = "1.8.0",
     note = "Please use `solana_sdk::stake::state` or `solana_program::stake::state` instead"
 )]
-pub use solana_sdk::stake::state::*;
+pub use solana_program::stake::state::*;
 use {
+    solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount},
+    solana_clock::{Clock, Epoch},
     solana_feature_set::FeatureSet,
+    solana_instruction::error::InstructionError,
     solana_log_collector::ic_msg,
+    solana_program::stake::{
+        instruction::{LockupArgs, StakeError},
+        program::id,
+        stake_flags::StakeFlags,
+        tools::{acceptable_reference_epoch_credits, eligible_for_deactivate_delinquent},
+    },
     solana_program_runtime::invoke_context::InvokeContext,
     solana_pubkey::Pubkey,
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        account_utils::StateMut,
-        clock::{Clock, Epoch},
-        instruction::{checked_add, InstructionError},
-        rent::Rent,
-        stake::{
-            instruction::{LockupArgs, StakeError},
-            program::id,
-            stake_flags::StakeFlags,
-            tools::{acceptable_reference_epoch_credits, eligible_for_deactivate_delinquent},
-        },
-        stake_history::{StakeHistory, StakeHistoryEntry},
-        transaction_context::{
-            BorrowedAccount, IndexOfAccount, InstructionContext, TransactionContext,
-        },
+    solana_rent::Rent,
+    solana_sysvar::stake_history::{StakeHistory, StakeHistoryEntry},
+    solana_transaction_context::{
+        BorrowedAccount, IndexOfAccount, InstructionContext, TransactionContext,
     },
     solana_vote_program::vote_state::{self, VoteState, VoteStateVersions},
     std::{collections::HashSet, convert::TryFrom},
@@ -67,6 +64,10 @@ pub(crate) fn new_warmup_cooldown_rate_epoch(invoke_context: &InvokeContext) -> 
     invoke_context
         .get_feature_set()
         .new_warmup_cooldown_rate_epoch(epoch_schedule.as_ref())
+}
+
+fn checked_add(a: u64, b: u64) -> Result<u64, InstructionError> {
+    a.checked_add(b).ok_or(InstructionError::InsufficientFunds)
 }
 
 fn get_stake_status(
@@ -1447,14 +1448,13 @@ mod tests {
     use {
         super::*,
         proptest::prelude::*,
+        solana_account::{create_account_shared_data_for_test, AccountSharedData},
+        solana_epoch_schedule::EpochSchedule,
+        solana_program::stake::state::warmup_cooldown_rate,
         solana_program_runtime::with_mock_invoke_context,
         solana_pubkey::Pubkey,
-        solana_sdk::{
-            account::{create_account_shared_data_for_test, AccountSharedData},
-            epoch_schedule::EpochSchedule,
-            stake::state::warmup_cooldown_rate,
-            sysvar::{epoch_schedule, SysvarId},
-        },
+        solana_sdk_ids::sysvar::epoch_schedule,
+        solana_sysvar_id::SysvarId,
         test_case::test_case,
     };
 
@@ -2235,7 +2235,7 @@ mod tests {
         panic!(
             "stake minimum_balance: {} lamports, {} SOL",
             minimum_balance,
-            minimum_balance as f64 / solana_sdk::native_token::LAMPORTS_PER_SOL as f64
+            minimum_balance as f64 / solana_native_token::LAMPORTS_PER_SOL as f64
         );
     }
 

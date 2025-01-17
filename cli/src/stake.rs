@@ -31,6 +31,7 @@ use {
         CliEpochReward, CliStakeHistory, CliStakeHistoryEntry, CliStakeState, CliStakeType,
         OutputFormat, ReturnSignersConfig,
     },
+    solana_commitment_config::CommitmentConfig,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::{
@@ -43,7 +44,6 @@ use {
         account::{from_account, Account},
         account_utils::StateMut,
         clock::{Clock, UnixTimestamp, SECONDS_PER_DAY},
-        commitment_config::CommitmentConfig,
         epoch_schedule::EpochSchedule,
         message::Message,
         native_token::Sol,

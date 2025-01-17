@@ -5,7 +5,7 @@ use {
     borsh::BorshDeserialize,
     serde_json::json,
     solana_message::{compiled_instruction::CompiledInstruction, AccountKeys},
-    solana_sdk::pubkey::Pubkey,
+    solana_pubkey::Pubkey,
     spl_associated_token_account::instruction::AssociatedTokenAccountInstruction,
 };
 
@@ -96,7 +96,7 @@ mod test {
     use {
         super::*,
         solana_message::Message,
-        solana_sdk::sysvar,
+        solana_sdk_ids::sysvar,
         spl_associated_token_account::{
             get_associated_token_address, get_associated_token_address_with_program_id,
             instruction::{
@@ -123,7 +123,7 @@ mod test {
                 "account": associated_account_address.to_string(),
                 "wallet": wallet_address.to_string(),
                 "mint": mint.to_string(),
-                "systemProgram": solana_sdk::system_program::id().to_string(),
+                "systemProgram": solana_sdk_ids::system_program::id().to_string(),
                 "tokenProgram": spl_token::id().to_string(),
             }),
         };
@@ -186,7 +186,7 @@ mod test {
                     "account": associated_account_address.to_string(),
                     "wallet": wallet_address.to_string(),
                     "mint": mint.to_string(),
-                    "systemProgram": solana_sdk::system_program::id().to_string(),
+                    "systemProgram": solana_sdk_ids::system_program::id().to_string(),
                     "tokenProgram": token_program_id.to_string(),
                 })
             }
@@ -228,7 +228,7 @@ mod test {
                     "account": associated_account_address.to_string(),
                     "wallet": wallet_address.to_string(),
                     "mint": mint.to_string(),
-                    "systemProgram": solana_sdk::system_program::id().to_string(),
+                    "systemProgram": solana_sdk_ids::system_program::id().to_string(),
                     "tokenProgram": token_program_id.to_string(),
                 })
             }

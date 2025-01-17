@@ -125,7 +125,10 @@ use {
         timing::timestamp,
     },
     solana_send_transaction_service::send_transaction_service,
-    solana_streamer::{socket::SocketAddrSpace, streamer::StakedNodes},
+    solana_streamer::{quic::QuicServerParams, socket::SocketAddrSpace, streamer::StakedNodes},
+    solana_tpu_client::tpu_client::{
+        DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_USE_QUIC, DEFAULT_VOTE_USE_QUIC,
+    },
     solana_turbine::{self, broadcast_stage::BroadcastStageType},
     solana_unified_scheduler_logic::SchedulingMode,
     solana_unified_scheduler_pool::{DefaultSchedulerPool, SupportedSchedulingMode},
@@ -205,6 +208,31 @@ impl BlockProductionMethod {
             static ref MESSAGE: String = format!(
                 "Switch transaction scheduling method for producing ledger entries [default: {}]",
                 BlockProductionMethod::default()
+            );
+        };
+
+        &MESSAGE
+    }
+}
+
+#[derive(Clone, EnumString, EnumVariantNames, Default, IntoStaticStr, Display)]
+#[strum(serialize_all = "kebab-case")]
+pub enum TransactionStructure {
+    #[default]
+    Sdk,
+    View,
+}
+
+impl TransactionStructure {
+    pub const fn cli_names() -> &'static [&'static str] {
+        Self::VARIANTS
+    }
+
+    pub fn cli_message() -> &'static str {
+        lazy_static! {
+            static ref MESSAGE: String = format!(
+                "Switch internal transaction structure/representation [default: {}]",
+                TransactionStructure::default()
             );
         };
 
@@ -295,6 +323,7 @@ pub struct ValidatorConfig {
     pub banking_trace_dir_byte_limit: banking_trace::DirByteLimit,
     pub block_verification_method: BlockVerificationMethod,
     pub block_production_method: BlockProductionMethod,
+    pub transaction_struct: TransactionStructure,
     pub enable_block_production_forwarding: bool,
     pub generator_config: Option<GeneratorConfig>,
     pub use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup,
@@ -367,6 +396,7 @@ impl Default for ValidatorConfig {
             banking_trace_dir_byte_limit: 0,
             block_verification_method: BlockVerificationMethod::default(),
             block_production_method: BlockProductionMethod::default(),
+            transaction_struct: TransactionStructure::default(),
             enable_block_production_forwarding: false,
             generator_config: None,
             use_snapshot_archives_at_startup: UseSnapshotArchivesAtStartup::default(),
@@ -505,8 +535,42 @@ pub struct ValidatorTpuConfig {
     pub tpu_connection_pool_size: usize,
     /// Controls if to enable UDP for TPU tansactions.
     pub tpu_enable_udp: bool,
-    /// Controls the new maximum connections per IpAddr per minute
-    pub tpu_max_connections_per_ipaddr_per_minute: u64,
+    /// QUIC server config for regular TPU
+    pub tpu_quic_server_config: QuicServerParams,
+    /// QUIC server config for TPU forward
+    pub tpu_fwd_quic_server_config: QuicServerParams,
+    /// QUIC server config for Vote
+    pub vote_quic_server_config: QuicServerParams,
+}
+
+impl ValidatorTpuConfig {
+    /// A convenient function to build a ValidatorTpuConfig for testing with good
+    /// default.
+    pub fn new_for_tests(tpu_enable_udp: bool) -> Self {
+        let tpu_quic_server_config = QuicServerParams {
+            max_connections_per_ipaddr_per_min: 32,
+            ..Default::default()
+        };
+
+        let tpu_fwd_quic_server_config = QuicServerParams {
+            max_connections_per_ipaddr_per_min: 32,
+            max_unstaked_connections: 0,
+            ..Default::default()
+        };
+
+        // vote and tpu_fwd share the same characteristics -- disallow non-staked connections:
+        let vote_quic_server_config = tpu_fwd_quic_server_config.clone();
+
+        ValidatorTpuConfig {
+            use_quic: DEFAULT_TPU_USE_QUIC,
+            vote_use_quic: DEFAULT_VOTE_USE_QUIC,
+            tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
+            tpu_enable_udp,
+            tpu_quic_server_config,
+            tpu_fwd_quic_server_config,
+            vote_quic_server_config,
+        }
+    }
 }
 
 pub struct Validator {
@@ -568,7 +632,9 @@ impl Validator {
             vote_use_quic,
             tpu_connection_pool_size,
             tpu_enable_udp,
-            tpu_max_connections_per_ipaddr_per_minute,
+            tpu_quic_server_config,
+            tpu_fwd_quic_server_config,
+            vote_quic_server_config,
         } = tpu_config;
 
         let start_time = Instant::now();
@@ -891,8 +957,8 @@ impl Validator {
             config.accounts_db_test_hash_calculation,
         );
         info!(
-            "Using: block-verification-method: {}, block-production-method: {}",
-            config.block_verification_method, config.block_production_method
+            "Using: block-verification-method: {}, block-production-method: {}, transaction-structure: {}",
+            config.block_verification_method, config.block_production_method, config.transaction_struct
         );
 
         let (replay_vote_sender, replay_vote_receiver) = unbounded();
@@ -1560,9 +1626,12 @@ impl Validator {
             banking_tracer_channels,
             tracer_thread,
             tpu_enable_udp,
-            tpu_max_connections_per_ipaddr_per_minute,
+            tpu_quic_server_config,
+            tpu_fwd_quic_server_config,
+            vote_quic_server_config,
             &prioritization_fee_cache,
             config.block_production_method.clone(),
+            config.transaction_struct.clone(),
             config.enable_block_production_forwarding,
             config.generator_config.clone(),
         );
@@ -2762,10 +2831,7 @@ mod tests {
             get_tmp_ledger_path_auto_delete,
         },
         solana_sdk::{genesis_config::create_genesis_config, poh_config::PohConfig},
-        solana_tpu_client::tpu_client::{
-            DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_ENABLE_UDP, DEFAULT_TPU_USE_QUIC,
-            DEFAULT_VOTE_USE_QUIC,
-        },
+        solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
         std::{fs::remove_dir_all, thread, time::Duration},
     };
 
@@ -2803,13 +2869,7 @@ mod tests {
             None, // rpc_to_plugin_manager_receiver
             start_progress.clone(),
             SocketAddrSpace::Unspecified,
-            ValidatorTpuConfig {
-                use_quic: DEFAULT_TPU_USE_QUIC,
-                vote_use_quic: DEFAULT_VOTE_USE_QUIC,
-                tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
-                tpu_enable_udp: DEFAULT_TPU_ENABLE_UDP,
-                tpu_max_connections_per_ipaddr_per_minute: 32, // max connections per IpAddr per minute for test
-            },
+            ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
             Arc::new(RwLock::new(None)),
         )
         .expect("assume successful validator start");
@@ -3025,13 +3085,7 @@ mod tests {
                     None, // rpc_to_plugin_manager_receiver
                     Arc::new(RwLock::new(ValidatorStartProgress::default())),
                     SocketAddrSpace::Unspecified,
-                    ValidatorTpuConfig {
-                        use_quic: DEFAULT_TPU_USE_QUIC,
-                        vote_use_quic: DEFAULT_VOTE_USE_QUIC,
-                        tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
-                        tpu_enable_udp: DEFAULT_TPU_ENABLE_UDP,
-                        tpu_max_connections_per_ipaddr_per_minute: 32, // max connections per IpAddr per minute for test
-                    },
+                    ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
                     Arc::new(RwLock::new(None)),
                 )
                 .expect("assume successful validator start")

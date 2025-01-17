@@ -9,7 +9,7 @@ use {
             BankingTracer, ChannelLabel, Channels, TimedTracedEvent, TracedEvent, TracedSender,
             TracerThread, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT, BASENAME,
         },
-        validator::BlockProductionMethod,
+        validator::{BlockProductionMethod, TransactionStructure},
     },
     agave_banking_stage_ingress_types::BankingPacketBatch,
     assert_matches::assert_matches,
@@ -20,7 +20,7 @@ use {
     solana_client::connection_cache::ConnectionCache,
     solana_gossip::{
         cluster_info::{ClusterInfo, Node},
-        contact_info::ContactInfo,
+        contact_info::ContactInfoQuery,
     },
     solana_ledger::{
         blockstore::{Blockstore, PurgeType},
@@ -250,10 +250,7 @@ impl LikeClusterInfo for Arc<DummyClusterInfo> {
         *self.id.read().unwrap()
     }
 
-    fn lookup_contact_info<F, Y>(&self, _id: &Pubkey, _map: F) -> Option<Y>
-    where
-        F: FnOnce(&ContactInfo) -> Y,
-    {
+    fn lookup_contact_info<R>(&self, _: &Pubkey, _: impl ContactInfoQuery<R>) -> Option<R> {
         None
     }
 }
@@ -681,6 +678,7 @@ impl BankingSimulator {
         bank_forks: Arc<RwLock<BankForks>>,
         blockstore: Arc<Blockstore>,
         block_production_method: BlockProductionMethod,
+        transaction_struct: TransactionStructure,
         unified_scheduler_pool: Option<Arc<DefaultSchedulerPool>>,
         new_poh_recorder: Option<NewPohRecorder>,
     ) -> (SenderLoop, SimulatorLoop, SimulatorThreads) {
@@ -827,6 +825,7 @@ impl BankingSimulator {
         let prioritization_fee_cache = &Arc::new(PrioritizationFeeCache::new(0u64));
         let banking_stage = BankingStage::new_num_threads(
             block_production_method.clone(),
+            transaction_struct.clone(),
             &cluster_info,
             &poh_recorder,
             non_vote_receiver,
@@ -913,6 +912,7 @@ impl BankingSimulator {
         bank_forks: Arc<RwLock<BankForks>>,
         blockstore: Arc<Blockstore>,
         block_production_method: BlockProductionMethod,
+        transaction_struct: TransactionStructure,
         unified_scheduler_pool: Option<Arc<DefaultSchedulerPool>>,
         new_poh_recorder: Option<NewPohRecorder>,
     ) -> Result<(), SimulateError> {
@@ -921,6 +921,7 @@ impl BankingSimulator {
             bank_forks,
             blockstore,
             block_production_method,
+            transaction_struct,
             unified_scheduler_pool,
             new_poh_recorder,
         );

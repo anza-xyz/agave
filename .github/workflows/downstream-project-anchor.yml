@@ -38,7 +38,8 @@ env:
 
 jobs:
   test:
-    if: github.repository == 'anza-xyz/agave'
+    #if: github.repository == 'anza-xyz/agave'
+    if: false # restore once all program-specific repos are ready
     runs-on: ubuntu-latest
     strategy:
       matrix:

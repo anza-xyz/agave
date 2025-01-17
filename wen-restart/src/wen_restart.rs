@@ -357,7 +357,7 @@ fn is_over_stake_threshold(
     epoch_info_vec
         .iter()
         .find(|info| info.epoch == epoch)
-        .map_or(false, |info| {
+        .is_some_and(|info| {
             let threshold = info
                 .actively_voting_stake
                 .checked_sub((info.total_stake as f64 * HEAVIEST_FORK_THRESHOLD_DELTA) as u64)
@@ -1488,7 +1488,7 @@ mod tests {
         )
         .unwrap();
         let entries = vec![
-            CrdsValue::new(CrdsData::ContactInfo(node.clone()), node_keypair),
+            CrdsValue::new(CrdsData::from(node), node_keypair),
             CrdsValue::new(CrdsData::RestartLastVotedForkSlots(slots), node_keypair),
         ];
         {

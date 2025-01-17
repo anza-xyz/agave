@@ -25,13 +25,13 @@ use {
                 scheduler_controller::SchedulerController, scheduler_error::SchedulerError,
             },
         },
-        validator::BlockProductionMethod,
+        validator::{BlockProductionMethod, TransactionStructure},
     },
     agave_banking_stage_ingress_types::BankingPacketReceiver,
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     histogram::Histogram,
     solana_client::connection_cache::ConnectionCache,
-    solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
+    solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfoQuery},
     solana_ledger::blockstore_processor::TransactionStatusSender,
     solana_measure::measure_us,
     solana_perf::{data_budget::DataBudget, packet::PACKETS_PER_BATCH},
@@ -54,7 +54,9 @@ use {
     },
     transaction_scheduler::{
         prio_graph_scheduler::PrioGraphSchedulerConfig,
-        receive_and_buffer::SanitizedTransactionReceiveAndBuffer,
+        receive_and_buffer::{
+            ReceiveAndBuffer, SanitizedTransactionReceiveAndBuffer, TransactionViewReceiveAndBuffer,
+        },
         transaction_state_container::TransactionStateContainer,
     },
 };
@@ -336,9 +338,7 @@ pub struct FilterForwardingResults {
 pub trait LikeClusterInfo: Send + Sync + 'static + Clone {
     fn id(&self) -> Pubkey;
 
-    fn lookup_contact_info<F, Y>(&self, id: &Pubkey, map: F) -> Option<Y>
-    where
-        F: FnOnce(&ContactInfo) -> Y;
+    fn lookup_contact_info<R>(&self, id: &Pubkey, query: impl ContactInfoQuery<R>) -> Option<R>;
 }
 
 impl LikeClusterInfo for Arc<ClusterInfo> {
@@ -346,11 +346,8 @@ impl LikeClusterInfo for Arc<ClusterInfo> {
         self.deref().id()
     }
 
-    fn lookup_contact_info<F, Y>(&self, id: &Pubkey, map: F) -> Option<Y>
-    where
-        F: FnOnce(&ContactInfo) -> Y,
-    {
-        self.deref().lookup_contact_info(id, map)
+    fn lookup_contact_info<R>(&self, id: &Pubkey, query: impl ContactInfoQuery<R>) -> Option<R> {
+        self.deref().lookup_contact_info(id, query)
     }
 }
 
@@ -359,6 +356,7 @@ impl BankingStage {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         block_production_method: BlockProductionMethod,
+        transaction_struct: TransactionStructure,
         cluster_info: &impl LikeClusterInfo,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         non_vote_receiver: BankingPacketReceiver,
@@ -374,6 +372,7 @@ impl BankingStage {
     ) -> Self {
         Self::new_num_threads(
             block_production_method,
+            transaction_struct,
             cluster_info,
             poh_recorder,
             non_vote_receiver,
@@ -393,6 +392,7 @@ impl BankingStage {
     #[allow(clippy::too_many_arguments)]
     pub fn new_num_threads(
         block_production_method: BlockProductionMethod,
+        transaction_struct: TransactionStructure,
         cluster_info: &impl LikeClusterInfo,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         non_vote_receiver: BankingPacketReceiver,
@@ -409,6 +409,7 @@ impl BankingStage {
     ) -> Self {
         match block_production_method {
             BlockProductionMethod::CentralScheduler => Self::new_central_scheduler(
+                transaction_struct,
                 cluster_info,
                 poh_recorder,
                 non_vote_receiver,
@@ -431,6 +432,7 @@ impl BankingStage {
 
     #[allow(clippy::too_many_arguments)]
     pub fn new_central_scheduler(
+        transaction_struct: TransactionStructure,
         cluster_info: &impl LikeClusterInfo,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         non_vote_receiver: BankingPacketReceiver,
@@ -493,6 +495,78 @@ impl BankingStage {
             ));
         }
 
+        let transaction_struct =
+            if enable_forwarding && !matches!(transaction_struct, TransactionStructure::Sdk) {
+                warn!(
+                "Forwarding only supported for `Sdk` transaction struct. Overriding to use `Sdk`."
+            );
+                TransactionStructure::Sdk
+            } else {
+                transaction_struct
+            };
+
+        match transaction_struct {
+            TransactionStructure::Sdk => {
+                let receive_and_buffer = SanitizedTransactionReceiveAndBuffer::new(
+                    PacketDeserializer::new(non_vote_receiver),
+                    bank_forks.clone(),
+                    enable_forwarding,
+                );
+                Self::spawn_scheduler_and_workers(
+                    &mut bank_thread_hdls,
+                    receive_and_buffer,
+                    decision_maker,
+                    committer,
+                    cluster_info,
+                    poh_recorder,
+                    num_threads,
+                    log_messages_bytes_limit,
+                    connection_cache,
+                    bank_forks,
+                    enable_forwarding,
+                    data_budget,
+                );
+            }
+            TransactionStructure::View => {
+                let receive_and_buffer = TransactionViewReceiveAndBuffer {
+                    receiver: non_vote_receiver,
+                    bank_forks: bank_forks.clone(),
+                };
+                Self::spawn_scheduler_and_workers(
+                    &mut bank_thread_hdls,
+                    receive_and_buffer,
+                    decision_maker,
+                    committer,
+                    cluster_info,
+                    poh_recorder,
+                    num_threads,
+                    log_messages_bytes_limit,
+                    connection_cache,
+                    bank_forks,
+                    enable_forwarding,
+                    data_budget,
+                );
+            }
+        }
+
+        Self { bank_thread_hdls }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn spawn_scheduler_and_workers<R: ReceiveAndBuffer + Send + Sync + 'static>(
+        bank_thread_hdls: &mut Vec<JoinHandle<()>>,
+        receive_and_buffer: R,
+        decision_maker: DecisionMaker,
+        committer: Committer,
+        cluster_info: &impl LikeClusterInfo,
+        poh_recorder: &Arc<RwLock<PohRecorder>>,
+        num_threads: u32,
+        log_messages_bytes_limit: Option<usize>,
+        connection_cache: Arc<ConnectionCache>,
+        bank_forks: Arc<RwLock<BankForks>>,
+        enable_forwarding: bool,
+        data_budget: Arc<DataBudget>,
+    ) {
         // Create channels for communication between scheduler and workers
         let num_workers = (num_threads).saturating_sub(NUM_VOTE_PROCESSING_THREADS);
         let (work_senders, work_receivers): (Vec<Sender<_>>, Vec<Receiver<_>>) =
@@ -538,39 +612,34 @@ impl BankingStage {
         });
 
         // Spawn the central scheduler thread
-        bank_thread_hdls.push({
-            let packet_deserializer = PacketDeserializer::new(non_vote_receiver);
-            let receive_and_buffer = SanitizedTransactionReceiveAndBuffer::new(
-                packet_deserializer,
-                bank_forks.clone(),
-                forwarder.is_some(),
-            );
-            let scheduler = PrioGraphScheduler::new(
-                work_senders,
-                finished_work_receiver,
-                PrioGraphSchedulerConfig::default(),
-            );
-            let scheduler_controller = SchedulerController::new(
-                decision_maker.clone(),
-                receive_and_buffer,
-                bank_forks,
-                scheduler,
-                worker_metrics,
-                forwarder,
-            );
+        bank_thread_hdls.push(
             Builder::new()
                 .name("solBnkTxSched".to_string())
-                .spawn(move || match scheduler_controller.run() {
-                    Ok(_) => {}
-                    Err(SchedulerError::DisconnectedRecvChannel(_)) => {}
-                    Err(SchedulerError::DisconnectedSendChannel(_)) => {
-                        warn!("Unexpected worker disconnect from scheduler")
+                .spawn(move || {
+                    let scheduler = PrioGraphScheduler::new(
+                        work_senders,
+                        finished_work_receiver,
+                        PrioGraphSchedulerConfig::default(),
+                    );
+                    let scheduler_controller = SchedulerController::new(
+                        decision_maker.clone(),
+                        receive_and_buffer,
+                        bank_forks,
+                        scheduler,
+                        worker_metrics,
+                        forwarder,
+                    );
+
+                    match scheduler_controller.run() {
+                        Ok(_) => {}
+                        Err(SchedulerError::DisconnectedRecvChannel(_)) => {}
+                        Err(SchedulerError::DisconnectedSendChannel(_)) => {
+                            warn!("Unexpected worker disconnect from scheduler")
+                        }
                     }
                 })
-                .unwrap()
-        });
-
-        Self { bank_thread_hdls }
+                .unwrap(),
+        );
     }
 
     fn spawn_thread_local_multi_iterator_thread<T: LikeClusterInfo>(
@@ -790,6 +859,7 @@ mod tests {
             sync::atomic::{AtomicBool, Ordering},
             thread::sleep,
         },
+        test_case::test_case,
     };
 
     pub(crate) fn new_test_cluster_info(keypair: Option<Arc<Keypair>>) -> (Node, ClusterInfo) {
@@ -808,8 +878,9 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn test_banking_stage_shutdown1() {
+    #[test_case(TransactionStructure::Sdk)]
+    #[test_case(TransactionStructure::View)]
+    fn test_banking_stage_shutdown1(transaction_struct: TransactionStructure) {
         let genesis_config = create_genesis_config(2).genesis_config;
         let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         let banking_tracer = BankingTracer::new_disabled();
@@ -835,6 +906,7 @@ mod tests {
 
             let banking_stage = BankingStage::new(
                 BlockProductionMethod::CentralScheduler,
+                transaction_struct,
                 &cluster_info,
                 &poh_recorder,
                 non_vote_receiver,
@@ -858,8 +930,9 @@ mod tests {
         Blockstore::destroy(ledger_path.path()).unwrap();
     }
 
-    #[test]
-    fn test_banking_stage_tick() {
+    #[test_case(TransactionStructure::Sdk)]
+    #[test_case(TransactionStructure::View)]
+    fn test_banking_stage_tick(transaction_struct: TransactionStructure) {
         solana_logger::setup();
         let GenesisConfigInfo {
             mut genesis_config, ..
@@ -895,6 +968,7 @@ mod tests {
 
             let banking_stage = BankingStage::new(
                 BlockProductionMethod::CentralScheduler,
+                transaction_struct,
                 &cluster_info,
                 &poh_recorder,
                 non_vote_receiver,
@@ -941,7 +1015,10 @@ mod tests {
         with_vers.into_iter().map(|(b, _)| b).collect()
     }
 
-    fn test_banking_stage_entries_only(block_production_method: BlockProductionMethod) {
+    fn test_banking_stage_entries_only(
+        block_production_method: BlockProductionMethod,
+        transaction_struct: TransactionStructure,
+    ) {
         solana_logger::setup();
         let GenesisConfigInfo {
             genesis_config,
@@ -979,6 +1056,7 @@ mod tests {
 
             let banking_stage = BankingStage::new(
                 block_production_method,
+                transaction_struct,
                 &cluster_info,
                 &poh_recorder,
                 non_vote_receiver,
@@ -1072,13 +1150,18 @@ mod tests {
         Blockstore::destroy(ledger_path.path()).unwrap();
     }
 
-    #[test]
-    fn test_banking_stage_entries_only_central_scheduler() {
-        test_banking_stage_entries_only(BlockProductionMethod::CentralScheduler);
+    #[test_case(TransactionStructure::Sdk)]
+    #[test_case(TransactionStructure::View)]
+    fn test_banking_stage_entries_only_central_scheduler(transaction_struct: TransactionStructure) {
+        test_banking_stage_entries_only(
+            BlockProductionMethod::CentralScheduler,
+            transaction_struct,
+        );
     }
 
-    #[test]
-    fn test_banking_stage_entryfication() {
+    #[test_case(TransactionStructure::Sdk)]
+    #[test_case(TransactionStructure::View)]
+    fn test_banking_stage_entryfication(transaction_struct: TransactionStructure) {
         solana_logger::setup();
         // In this attack we'll demonstrate that a verifier can interpret the ledger
         // differently if either the server doesn't signal the ledger to add an
@@ -1149,6 +1232,7 @@ mod tests {
                 let cluster_info = Arc::new(cluster_info);
                 let _banking_stage = BankingStage::new(
                     BlockProductionMethod::CentralScheduler,
+                    transaction_struct,
                     &cluster_info,
                     &poh_recorder,
                     non_vote_receiver,
@@ -1306,8 +1390,9 @@ mod tests {
         tick_producer.unwrap()
     }
 
-    #[test]
-    fn test_unprocessed_transaction_storage_full_send() {
+    #[test_case(TransactionStructure::Sdk)]
+    #[test_case(TransactionStructure::View)]
+    fn test_unprocessed_transaction_storage_full_send(transaction_struct: TransactionStructure) {
         solana_logger::setup();
         let GenesisConfigInfo {
             genesis_config,
@@ -1345,6 +1430,7 @@ mod tests {
 
             let banking_stage = BankingStage::new(
                 BlockProductionMethod::CentralScheduler,
+                transaction_struct,
                 &cluster_info,
                 &poh_recorder,
                 non_vote_receiver,

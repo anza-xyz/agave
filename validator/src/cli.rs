@@ -21,7 +21,7 @@ use {
     },
     solana_core::{
         banking_trace::{DirByteLimit, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT},
-        validator::{BlockProductionMethod, BlockVerificationMethod},
+        validator::{BlockProductionMethod, BlockVerificationMethod, TransactionStructure},
     },
     solana_faucet::faucet::{self, FAUCET_PORT},
     solana_ledger::use_snapshot_archives_at_startup,
@@ -47,17 +47,18 @@ use {
     solana_send_transaction_service::send_transaction_service::{
         self, MAX_BATCH_SEND_RATE_MS, MAX_TRANSACTION_BATCH_SIZE,
     },
-    solana_streamer::quic::DEFAULT_QUIC_ENDPOINTS,
+    solana_streamer::quic::{
+        DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER,
+        DEFAULT_MAX_STAKED_CONNECTIONS, DEFAULT_MAX_STREAMS_PER_MS,
+        DEFAULT_MAX_UNSTAKED_CONNECTIONS, DEFAULT_QUIC_ENDPOINTS,
+    },
     solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{path::PathBuf, str::FromStr},
 };
 
 pub mod thread_args;
-use {
-    solana_streamer::nonblocking::quic::DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
-    thread_args::{thread_args, DefaultThreadArgs},
-};
+use thread_args::{thread_args, DefaultThreadArgs};
 
 const EXCLUDE_KEY: &str = "account-index-exclude-key";
 const INCLUDE_KEY: &str = "account-index-include-key";
@@ -907,6 +908,60 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .help("Controls if to use QUIC to send votes."),
         )
         .arg(
+            Arg::with_name("tpu_max_connections_per_peer")
+                .long("tpu-max-connections-per-peer")
+                .takes_value(true)
+                .default_value(&default_args.tpu_max_connections_per_peer)
+                .validator(is_parsable::<u32>)
+                .hidden(hidden_unless_forced())
+                .help("Controls the max concurrent connections per IpAddr."),
+        )
+        .arg(
+            Arg::with_name("tpu_max_staked_connections")
+                .long("tpu-max-staked-connections")
+                .takes_value(true)
+                .default_value(&default_args.tpu_max_staked_connections)
+                .validator(is_parsable::<u32>)
+                .hidden(hidden_unless_forced())
+                .help("Controls the max concurrent connections for TPU from staked nodes."),
+        )
+        .arg(
+            Arg::with_name("tpu_max_unstaked_connections")
+                .long("tpu-max-unstaked-connections")
+                .takes_value(true)
+                .default_value(&default_args.tpu_max_unstaked_connections)
+                .validator(is_parsable::<u32>)
+                .hidden(hidden_unless_forced())
+                .help("Controls the max concurrent connections fort TPU from unstaked nodes."),
+        )
+        .arg(
+            Arg::with_name("tpu_max_fwd_staked_connections")
+                .long("tpu-max-fwd-staked-connections")
+                .takes_value(true)
+                .default_value(&default_args.tpu_max_fwd_staked_connections)
+                .validator(is_parsable::<u32>)
+                .hidden(hidden_unless_forced())
+                .help("Controls the max concurrent connections for TPU-forward from staked nodes."),
+        )
+        .arg(
+            Arg::with_name("tpu_max_fwd_unstaked_connections")
+                .long("tpu-max-fwd-unstaked-connections")
+                .takes_value(true)
+                .default_value(&default_args.tpu_max_fwd_unstaked_connections)
+                .validator(is_parsable::<u32>)
+                .hidden(hidden_unless_forced())
+                .help("Controls the max concurrent connections for TPU-forward from unstaked nodes."),
+        )
+        .arg(
+            Arg::with_name("tpu_max_streams_per_ms")
+                .long("tpu-max-streams-per-ms")
+                .takes_value(true)
+                .default_value(&default_args.tpu_max_streams_per_ms)
+                .validator(is_parsable::<usize>)
+                .hidden(hidden_unless_forced())
+                .help("Controls the max number of streams for a TPU service."),
+        )
+        .arg(
             Arg::with_name("num_quic_endpoints")
                 .long("num-quic-endpoints")
                 .takes_value(true)
@@ -1598,6 +1653,14 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .takes_value(true)
                 .possible_values(BlockProductionMethod::cli_names())
                 .help(BlockProductionMethod::cli_message()),
+        )
+        .arg(
+            Arg::with_name("transaction_struct")
+                .long("transaction-structure")
+                .value_name("STRUCT")
+                .takes_value(true)
+                .possible_values(TransactionStructure::cli_names())
+                .help(TransactionStructure::cli_message()),
         )
         .arg(
             Arg::with_name("unified_scheduler_handler_threads")
@@ -2314,7 +2377,15 @@ pub struct DefaultArgs {
     pub accounts_shrink_optimize_total_space: String,
     pub accounts_shrink_ratio: String,
     pub tpu_connection_pool_size: String,
+
+    pub tpu_max_connections_per_peer: String,
     pub tpu_max_connections_per_ipaddr_per_minute: String,
+    pub tpu_max_staked_connections: String,
+    pub tpu_max_unstaked_connections: String,
+    pub tpu_max_fwd_staked_connections: String,
+    pub tpu_max_fwd_unstaked_connections: String,
+    pub tpu_max_streams_per_ms: String,
+
     pub num_quic_endpoints: String,
     pub vote_use_quic: String,
 
@@ -2410,6 +2481,14 @@ impl DefaultArgs {
             tpu_max_connections_per_ipaddr_per_minute:
                 DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE.to_string(),
             vote_use_quic: DEFAULT_VOTE_USE_QUIC.to_string(),
+            tpu_max_connections_per_peer: DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER.to_string(),
+            tpu_max_staked_connections: DEFAULT_MAX_STAKED_CONNECTIONS.to_string(),
+            tpu_max_unstaked_connections: DEFAULT_MAX_UNSTAKED_CONNECTIONS.to_string(),
+            tpu_max_fwd_staked_connections: DEFAULT_MAX_STAKED_CONNECTIONS
+                .saturating_add(DEFAULT_MAX_UNSTAKED_CONNECTIONS)
+                .to_string(),
+            tpu_max_fwd_unstaked_connections: 0.to_string(),
+            tpu_max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS.to_string(),
             num_quic_endpoints: DEFAULT_QUIC_ENDPOINTS.to_string(),
             rpc_max_request_body_size: MAX_REQUEST_BODY_SIZE.to_string(),
             exit_min_idle_time: "10".to_string(),
@@ -2460,7 +2539,6 @@ fn hash_validator(hash: String) -> Result<(), String> {
 }
 
 /// Test validator
-
 pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<'a, 'a> {
     App::new("solana-test-validator")
         .about("Test Validator")

@@ -3,19 +3,16 @@ use {
         builtin_programs_filter::{BuiltinProgramsFilter, ProgramKind},
         compute_budget_program_id_filter::ComputeBudgetProgramIdFilter,
     },
+    solana_borsh::v1::try_from_slice_unchecked,
     solana_builtins_default_costs::{get_migration_feature_id, MIGRATING_BUILTINS_COSTS},
     solana_compute_budget::compute_budget_limits::*,
-    solana_sdk::{
-        borsh1::try_from_slice_unchecked,
-        compute_budget::ComputeBudgetInstruction,
-        feature_set::{self, FeatureSet},
-        instruction::InstructionError,
-        pubkey::Pubkey,
-        saturating_add_assign,
-        transaction::{Result, TransactionError},
-    },
+    solana_compute_budget_interface::ComputeBudgetInstruction,
+    solana_feature_set::{self as feature_set, FeatureSet},
+    solana_instruction::error::InstructionError,
+    solana_pubkey::Pubkey,
     solana_svm_transaction::instruction::SVMInstruction,
-    std::num::NonZeroU32,
+    solana_transaction_error::{TransactionError, TransactionResult as Result},
+    std::num::{NonZeroU32, Saturating},
 };
 
 #[cfg_attr(test, derive(Eq, PartialEq))]
@@ -25,13 +22,13 @@ struct MigrationBuiltinFeatureCounter {
     // The vector of counters, matching the size of the static vector MIGRATION_FEATURE_IDS,
     // each counter representing the number of times its corresponding feature ID is
     // referenced in this transaction.
-    migrating_builtin: [u16; MIGRATING_BUILTINS_COSTS.len()],
+    migrating_builtin: [Saturating<u16>; MIGRATING_BUILTINS_COSTS.len()],
 }
 
 impl Default for MigrationBuiltinFeatureCounter {
     fn default() -> Self {
         Self {
-            migrating_builtin: [0; MIGRATING_BUILTINS_COSTS.len()],
+            migrating_builtin: [Saturating(0); MIGRATING_BUILTINS_COSTS.len()],
         }
     }
 }
@@ -46,10 +43,10 @@ pub struct ComputeBudgetInstructionDetails {
     requested_compute_unit_price: Option<(u8, u64)>,
     requested_heap_size: Option<(u8, u32)>,
     requested_loaded_accounts_data_size_limit: Option<(u8, u32)>,
-    num_non_compute_budget_instructions: u16,
+    num_non_compute_budget_instructions: Saturating<u16>,
     // Additional builtin program counters
-    num_non_migratable_builtin_instructions: u16,
-    num_non_builtin_instructions: u16,
+    num_non_migratable_builtin_instructions: Saturating<u16>,
+    num_non_builtin_instructions: Saturating<u16>,
     migrating_builtin_feature_counters: MigrationBuiltinFeatureCounter,
 }
 
@@ -64,10 +61,7 @@ impl ComputeBudgetInstructionDetails {
             if filter.is_compute_budget_program(instruction.program_id_index as usize, program_id) {
                 compute_budget_instruction_details.process_instruction(i as u8, &instruction)?;
             } else {
-                saturating_add_assign!(
-                    compute_budget_instruction_details.num_non_compute_budget_instructions,
-                    1
-                );
+                compute_budget_instruction_details.num_non_compute_budget_instructions += 1;
             }
         }
 
@@ -80,31 +74,22 @@ impl ComputeBudgetInstructionDetails {
             for (program_id, instruction) in instructions {
                 match filter.get_program_kind(instruction.program_id_index as usize, program_id) {
                     ProgramKind::Builtin => {
-                        saturating_add_assign!(
-                            compute_budget_instruction_details
-                                .num_non_migratable_builtin_instructions,
-                            1
-                        );
+                        compute_budget_instruction_details
+                            .num_non_migratable_builtin_instructions += 1;
                     }
                     ProgramKind::NotBuiltin => {
-                        saturating_add_assign!(
-                            compute_budget_instruction_details.num_non_builtin_instructions,
-                            1
-                        );
+                        compute_budget_instruction_details.num_non_builtin_instructions += 1;
                     }
                     ProgramKind::MigratingBuiltin {
                         core_bpf_migration_feature_index,
                     } => {
-                        saturating_add_assign!(
-                            *compute_budget_instruction_details
-                                .migrating_builtin_feature_counters
-                                .migrating_builtin
-                                .get_mut(core_bpf_migration_feature_index)
-                                .expect(
-                                    "migrating feature index within range of MIGRATION_FEATURE_IDS"
-                                ),
-                            1
-                        );
+                        *compute_budget_instruction_details
+                            .migrating_builtin_feature_counters
+                            .migrating_builtin
+                            .get_mut(core_bpf_migration_feature_index)
+                            .expect(
+                                "migrating feature index within range of MIGRATION_FEATURE_IDS",
+                            ) += 1;
                     }
                 }
             }
@@ -217,23 +202,23 @@ impl ComputeBudgetInstructionDetails {
                 .iter()
                 .enumerate()
                 .fold((0, 0), |(migrated, not_migrated), (index, count)| {
-                    if *count > 0 && feature_set.is_active(get_migration_feature_id(index)) {
-                        (migrated + count, not_migrated)
+                    if count.0 > 0 && feature_set.is_active(get_migration_feature_id(index)) {
+                        (migrated + count.0, not_migrated)
                     } else {
-                        (migrated, not_migrated + count)
+                        (migrated, not_migrated + count.0)
                     }
                 });
 
-            u32::from(self.num_non_migratable_builtin_instructions)
+            u32::from(self.num_non_migratable_builtin_instructions.0)
                 .saturating_add(u32::from(num_not_migrated))
                 .saturating_mul(MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT)
                 .saturating_add(
-                    u32::from(self.num_non_builtin_instructions)
+                    u32::from(self.num_non_builtin_instructions.0)
                         .saturating_add(u32::from(num_migrated))
                         .saturating_mul(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT),
                 )
         } else {
-            u32::from(self.num_non_compute_budget_instructions)
+            u32::from(self.num_non_compute_budget_instructions.0)
                 .saturating_mul(DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT)
         }
     }
@@ -244,15 +229,13 @@ mod test {
     use {
         super::*,
         solana_builtins_default_costs::get_migration_feature_position,
-        solana_sdk::{
-            instruction::Instruction,
-            message::Message,
-            pubkey::Pubkey,
-            signature::Keypair,
-            signer::Signer,
-            transaction::{SanitizedTransaction, Transaction},
-        },
+        solana_instruction::Instruction,
+        solana_keypair::Keypair,
+        solana_message::Message,
+        solana_pubkey::Pubkey,
+        solana_signer::Signer,
         solana_svm_transaction::svm_message::SVMMessage,
+        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
     };
 
     fn build_sanitized_transaction(instructions: &[Instruction]) -> SanitizedTransaction {
@@ -272,9 +255,9 @@ mod test {
         ]);
         let expected_details = Ok(ComputeBudgetInstructionDetails {
             requested_heap_size: Some((1, 40 * 1024)),
-            num_non_compute_budget_instructions: 2,
-            num_non_migratable_builtin_instructions: 1,
-            num_non_builtin_instructions: 2,
+            num_non_compute_budget_instructions: Saturating(2),
+            num_non_migratable_builtin_instructions: Saturating(1),
+            num_non_builtin_instructions: Saturating(2),
             ..ComputeBudgetInstructionDetails::default()
         });
         assert_eq!(
@@ -302,7 +285,7 @@ mod test {
         ]);
         let expected_details = Ok(ComputeBudgetInstructionDetails {
             requested_compute_unit_limit: Some((1, u32::MAX)),
-            num_non_compute_budget_instructions: 2,
+            num_non_compute_budget_instructions: Saturating(2),
             ..ComputeBudgetInstructionDetails::default()
         });
         assert_eq!(
@@ -330,9 +313,9 @@ mod test {
         ]);
         let expected_details = Ok(ComputeBudgetInstructionDetails {
             requested_compute_unit_price: Some((1, u64::MAX)),
-            num_non_compute_budget_instructions: 2,
-            num_non_migratable_builtin_instructions: 1,
-            num_non_builtin_instructions: 2,
+            num_non_compute_budget_instructions: Saturating(2),
+            num_non_migratable_builtin_instructions: Saturating(1),
+            num_non_builtin_instructions: Saturating(2),
             ..ComputeBudgetInstructionDetails::default()
         });
         assert_eq!(
@@ -360,9 +343,9 @@ mod test {
         ]);
         let expected_details = Ok(ComputeBudgetInstructionDetails {
             requested_loaded_accounts_data_size_limit: Some((1, u32::MAX)),
-            num_non_compute_budget_instructions: 2,
-            num_non_migratable_builtin_instructions: 1,
-            num_non_builtin_instructions: 2,
+            num_non_compute_budget_instructions: Saturating(2),
+            num_non_migratable_builtin_instructions: Saturating(1),
+            num_non_builtin_instructions: Saturating(2),
             ..ComputeBudgetInstructionDetails::default()
         });
         assert_eq!(
@@ -397,11 +380,12 @@ mod test {
                 &feature_set::reserve_minimal_cus_for_builtin_instructions::id(),
                 0,
             );
-            u32::from(num_non_builtin_instructions) * DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
-                + u32::from(num_non_migratable_builtin_instructions)
+            u32::from(num_non_builtin_instructions.0) * DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
+                + u32::from(num_non_migratable_builtin_instructions.0)
                     * MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT
         } else {
-            u32::from(num_non_compute_budget_instructions) * DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
+            u32::from(num_non_compute_budget_instructions.0)
+                * DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
         };
 
         (feature_set, expected_cu_limit)
@@ -422,9 +406,9 @@ mod test {
 
         // no compute-budget instructions, all default ComputeBudgetLimits except cu-limit
         let instruction_details = ComputeBudgetInstructionDetails {
-            num_non_compute_budget_instructions: 4,
-            num_non_migratable_builtin_instructions: 1,
-            num_non_builtin_instructions: 3,
+            num_non_compute_budget_instructions: Saturating(4),
+            num_non_migratable_builtin_instructions: Saturating(1),
+            num_non_builtin_instructions: Saturating(3),
             ..ComputeBudgetInstructionDetails::default()
         };
         for is_active in [true, false] {
@@ -534,7 +518,7 @@ mod test {
             requested_compute_unit_price: Some((2, u64::MAX)),
             requested_heap_size: Some((3, MAX_HEAP_FRAME_BYTES)),
             requested_loaded_accounts_data_size_limit: Some((4, u32::MAX)),
-            num_non_compute_budget_instructions: 4,
+            num_non_compute_budget_instructions: Saturating(4),
             ..ComputeBudgetInstructionDetails::default()
         };
         for is_active in [true, false] {
@@ -579,7 +563,7 @@ mod test {
     fn test_builtin_program_migration() {
         let tx = build_sanitized_transaction(&[
             Instruction::new_with_bincode(Pubkey::new_unique(), &(), vec![]),
-            solana_sdk::stake::instruction::delegate_stake(
+            solana_program::stake::instruction::delegate_stake(
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
@@ -588,13 +572,13 @@ mod test {
         let feature_id_index =
             get_migration_feature_position(&feature_set::migrate_stake_program_to_core_bpf::id());
         let mut expected_details = ComputeBudgetInstructionDetails {
-            num_non_compute_budget_instructions: 2,
-            num_non_builtin_instructions: 1,
+            num_non_compute_budget_instructions: Saturating(2),
+            num_non_builtin_instructions: Saturating(1),
             ..ComputeBudgetInstructionDetails::default()
         };
         expected_details
             .migrating_builtin_feature_counters
-            .migrating_builtin[feature_id_index] = 1;
+            .migrating_builtin[feature_id_index] = Saturating(1);
         let expected_details = Ok(expected_details);
         let details =
             ComputeBudgetInstructionDetails::try_from(SVMMessage::program_instructions_iter(&tx));

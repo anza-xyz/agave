@@ -119,16 +119,13 @@ pub struct SignatureInfosForAddress {
 }
 
 #[derive(Error, Debug)]
-pub enum InsertDataShredError {
+enum InsertDataShredError {
+    #[error("Data shred already exists in Blockstore")]
     Exists,
+    #[error("Invalid data shred")]
     InvalidShred,
+    #[error(transparent)]
     BlockstoreError(#[from] BlockstoreError),
-}
-
-impl std::fmt::Display for InsertDataShredError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "insert data shred error")
-    }
 }
 
 #[derive(Eq, PartialEq, Debug, Clone)]
@@ -236,28 +233,27 @@ pub struct Blockstore {
     ledger_path: PathBuf,
     db: Arc<Rocks>,
     // Column families
-    address_signatures_cf: LedgerColumn<cf::AddressSignatures, { cf::AddressSignatures::KEY_LEN }>,
-    bank_hash_cf: LedgerColumn<cf::BankHash, { cf::BankHash::KEY_LEN }>,
-    block_height_cf: LedgerColumn<cf::BlockHeight, { cf::BlockHeight::KEY_LEN }>,
-    blocktime_cf: LedgerColumn<cf::Blocktime, { cf::Blocktime::KEY_LEN }>,
-    code_shred_cf: LedgerColumn<cf::ShredCode, { cf::ShredCode::KEY_LEN }>,
-    data_shred_cf: LedgerColumn<cf::ShredData, { cf::ShredData::KEY_LEN }>,
-    dead_slots_cf: LedgerColumn<cf::DeadSlots, { cf::DeadSlots::KEY_LEN }>,
-    duplicate_slots_cf: LedgerColumn<cf::DuplicateSlots, { cf::DuplicateSlots::KEY_LEN }>,
-    erasure_meta_cf: LedgerColumn<cf::ErasureMeta, { cf::ErasureMeta::KEY_LEN }>,
-    index_cf: LedgerColumn<cf::Index, { cf::Index::KEY_LEN }>,
-    merkle_root_meta_cf: LedgerColumn<cf::MerkleRootMeta, { cf::MerkleRootMeta::KEY_LEN }>,
-    meta_cf: LedgerColumn<cf::SlotMeta, { cf::SlotMeta::KEY_LEN }>,
-    optimistic_slots_cf: LedgerColumn<cf::OptimisticSlots, { cf::OptimisticSlots::KEY_LEN }>,
-    orphans_cf: LedgerColumn<cf::Orphans, { cf::Orphans::KEY_LEN }>,
-    perf_samples_cf: LedgerColumn<cf::PerfSamples, { cf::PerfSamples::KEY_LEN }>,
-    program_costs_cf: LedgerColumn<cf::ProgramCosts, { cf::ProgramCosts::KEY_LEN }>,
-    rewards_cf: LedgerColumn<cf::Rewards, { cf::Rewards::KEY_LEN }>,
-    roots_cf: LedgerColumn<cf::Root, { cf::Root::KEY_LEN }>,
-    transaction_memos_cf: LedgerColumn<cf::TransactionMemos, { cf::TransactionMemos::KEY_LEN }>,
-    transaction_status_cf: LedgerColumn<cf::TransactionStatus, { cf::TransactionStatus::KEY_LEN }>,
-    transaction_status_index_cf:
-        LedgerColumn<cf::TransactionStatusIndex, { cf::TransactionStatusIndex::KEY_LEN }>,
+    address_signatures_cf: LedgerColumn<cf::AddressSignatures>,
+    bank_hash_cf: LedgerColumn<cf::BankHash>,
+    block_height_cf: LedgerColumn<cf::BlockHeight>,
+    blocktime_cf: LedgerColumn<cf::Blocktime>,
+    code_shred_cf: LedgerColumn<cf::ShredCode>,
+    data_shred_cf: LedgerColumn<cf::ShredData>,
+    dead_slots_cf: LedgerColumn<cf::DeadSlots>,
+    duplicate_slots_cf: LedgerColumn<cf::DuplicateSlots>,
+    erasure_meta_cf: LedgerColumn<cf::ErasureMeta>,
+    index_cf: LedgerColumn<cf::Index>,
+    merkle_root_meta_cf: LedgerColumn<cf::MerkleRootMeta>,
+    meta_cf: LedgerColumn<cf::SlotMeta>,
+    optimistic_slots_cf: LedgerColumn<cf::OptimisticSlots>,
+    orphans_cf: LedgerColumn<cf::Orphans>,
+    perf_samples_cf: LedgerColumn<cf::PerfSamples>,
+    program_costs_cf: LedgerColumn<cf::ProgramCosts>,
+    rewards_cf: LedgerColumn<cf::Rewards>,
+    roots_cf: LedgerColumn<cf::Root>,
+    transaction_memos_cf: LedgerColumn<cf::TransactionMemos>,
+    transaction_status_cf: LedgerColumn<cf::TransactionStatus>,
+    transaction_status_index_cf: LedgerColumn<cf::TransactionStatusIndex>,
 
     highest_primary_index_slot: RwLock<Option<Slot>>,
     max_root: AtomicU64,
@@ -673,6 +669,7 @@ impl Blockstore {
     }
 
     #[cfg(feature = "dev-context-only-utils")]
+    #[allow(clippy::type_complexity)]
     pub fn iterator_cf(
         &self,
         cf_name: &str,
@@ -682,6 +679,7 @@ impl Blockstore {
         Ok(iterator.map(|pair| pair.unwrap()))
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn slot_data_iterator(
         &self,
         slot: Slot,
@@ -694,6 +692,7 @@ impl Blockstore {
         Ok(slot_iterator.take_while(move |((shred_slot, _), _)| *shred_slot == slot))
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn slot_coding_iterator(
         &self,
         slot: Slot,
@@ -938,14 +937,14 @@ impl Blockstore {
         metrics.insert_shreds_elapsed_us += start.as_us();
     }
 
-    fn try_shred_recovery(
-        &self,
-        erasure_metas: &BTreeMap<ErasureSetId, WorkingEntry<ErasureMeta>>,
-        index_working_set: &HashMap<u64, IndexMetaWorkingSetEntry>,
-        prev_inserted_shreds: &HashMap<ShredId, Shred>,
-        leader_schedule_cache: &LeaderScheduleCache,
-        reed_solomon_cache: &ReedSolomonCache,
-    ) -> Vec<Vec<Shred>> {
+    fn try_shred_recovery<'a>(
+        &'a self,
+        erasure_metas: &'a BTreeMap<ErasureSetId, WorkingEntry<ErasureMeta>>,
+        index_working_set: &'a HashMap<u64, IndexMetaWorkingSetEntry>,
+        prev_inserted_shreds: &'a HashMap<ShredId, Shred>,
+        leader_schedule_cache: &'a LeaderScheduleCache,
+        reed_solomon_cache: &'a ReedSolomonCache,
+    ) -> impl Iterator<Item = Vec<Shred>> + 'a {
         // Recovery rules:
         // 1. Only try recovery around indexes for which new data or coding shreds are received
         // 2. For new data shreds, check if an erasure set exists. If not, don't try recovery
@@ -968,11 +967,9 @@ impl Blockstore {
                             leader_schedule_cache,
                             reed_solomon_cache,
                         )
-                        .ok()
-                    })
-                    .flatten()
+                    })?
+                    .ok()
             })
-            .collect()
     }
 
     /// Attempts shred recovery and does the following for recovered data
@@ -991,7 +988,8 @@ impl Blockstore {
     ) {
         let mut start = Measure::start("Shred recovery");
         if let Some(leader_schedule_cache) = leader_schedule {
-            let recovered_shreds: Vec<_> = self
+            let mut recovered_shreds = Vec::new();
+            let recovered_data_shreds: Vec<_> = self
                 .try_shred_recovery(
                     &shred_insertion_tracker.erasure_metas,
                     &shred_insertion_tracker.index_working_set,
@@ -999,50 +997,40 @@ impl Blockstore {
                     leader_schedule_cache,
                     reed_solomon_cache,
                 )
-                .into_iter()
-                .flatten()
-                .filter_map(|shred| {
-                    // Since the data shreds are fully recovered from the
-                    // erasure batch, no need to store coding shreds in
-                    // blockstore.
-                    if shred.is_code() {
-                        return Some(shred.into_payload());
-                    }
-                    metrics.num_recovered += 1;
-                    let shred_payload = shred.payload().clone();
-                    match self.check_insert_data_shred(
-                        shred,
-                        shred_insertion_tracker,
-                        is_trusted,
-                        leader_schedule,
-                        ShredSource::Recovered,
-                    ) {
-                        Err(InsertDataShredError::Exists) => {
-                            metrics.num_recovered_exists += 1;
-                            None
-                        }
-                        Err(InsertDataShredError::InvalidShred) => {
-                            metrics.num_recovered_failed_invalid += 1;
-                            None
-                        }
-                        Err(InsertDataShredError::BlockstoreError(err)) => {
-                            metrics.num_recovered_blockstore_error += 1;
-                            error!("blockstore error: {}", err);
-                            None
-                        }
-                        Ok(()) => {
-                            metrics.num_recovered_inserted += 1;
-                            Some(shred_payload)
-                        }
-                    }
+                .map(|mut shreds| {
+                    // All shreds should be retransmitted, but because there
+                    // are no more missing data shreds in the erasure batch,
+                    // coding shreds are not stored in blockstore.
+                    recovered_shreds
+                        .extend(shred::drain_coding_shreds(&mut shreds).map(Shred::into_payload));
+                    recovered_shreds.extend(shreds.iter().map(Shred::payload).cloned());
+                    shreds
                 })
-                // Always collect recovered-shreds so that above insert code is
-                // executed even if retransmit-sender is None.
                 .collect();
             if !recovered_shreds.is_empty() {
                 if let Some(retransmit_sender) = retransmit_sender {
                     let _ = retransmit_sender.send(recovered_shreds);
                 }
+            }
+            for shred in recovered_data_shreds.into_iter().flatten() {
+                metrics.num_recovered += 1;
+                *match self.check_insert_data_shred(
+                    shred,
+                    shred_insertion_tracker,
+                    is_trusted,
+                    leader_schedule,
+                    ShredSource::Recovered,
+                ) {
+                    Err(InsertDataShredError::Exists) => &mut metrics.num_recovered_exists,
+                    Err(InsertDataShredError::InvalidShred) => {
+                        &mut metrics.num_recovered_failed_invalid
+                    }
+                    Err(InsertDataShredError::BlockstoreError(err)) => {
+                        error!("blockstore error: {err}");
+                        &mut metrics.num_recovered_blockstore_error
+                    }
+                    Ok(()) => &mut metrics.num_recovered_inserted,
+                } += 1;
             }
         }
         start.stop();
@@ -2504,7 +2492,7 @@ impl Blockstore {
             DEFAULT_TICKS_PER_SECOND * timestamp().saturating_sub(first_timestamp) / 1000;
 
         // Seek to the first shred with index >= start_index
-        db_iterator.seek(C::key((slot, start_index)));
+        db_iterator.seek(C::key(&(slot, start_index)));
 
         // The index of the first missing shred in the slot
         let mut prev_index = start_index;
@@ -3019,7 +3007,7 @@ impl Blockstore {
                 .is_some_and(|highest_slot| highest_slot >= slot)
         {
             self.transaction_memos_cf
-                .get_raw(&cf::TransactionMemos::deprecated_key(signature))
+                .get_raw(cf::TransactionMemos::deprecated_key(signature))
         } else {
             Ok(memos)
         }

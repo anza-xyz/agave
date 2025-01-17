@@ -40,12 +40,14 @@ macro_rules! impl_shred_common {
             &self.payload
         }
 
+        #[inline]
         fn into_payload(self) -> Vec<u8> {
             self.payload
         }
 
+        #[inline]
         fn set_signature(&mut self, signature: Signature) {
-            bincode::serialize_into(&mut self.payload[..], &signature).unwrap();
+            self.payload[..SIZE_OF_SIGNATURE].copy_from_slice(signature.as_ref());
             self.common_header.signature = signature;
         }
 

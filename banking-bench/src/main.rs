@@ -14,7 +14,7 @@ use {
             update_bank_forks_and_poh_recorder_for_new_tpu_bank, BankingStage,
         },
         banking_trace::{BankingTracer, Channels, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT},
-        validator::BlockProductionMethod,
+        validator::{BlockProductionMethod, TransactionStructure},
     },
     solana_gossip::cluster_info::{ClusterInfo, Node},
     solana_ledger::{
@@ -296,6 +296,14 @@ fn main() {
                 .help(BlockProductionMethod::cli_message()),
         )
         .arg(
+            Arg::with_name("transaction_struct")
+                .long("transaction-structure")
+                .value_name("STRUCT")
+                .takes_value(true)
+                .possible_values(TransactionStructure::cli_names())
+                .help(TransactionStructure::cli_message()),
+        )
+        .arg(
             Arg::new("num_banking_threads")
                 .long("num-banking-threads")
                 .takes_value(true)
@@ -324,6 +332,9 @@ fn main() {
 
     let block_production_method = matches
         .value_of_t::<BlockProductionMethod>("block_production_method")
+        .unwrap_or_default();
+    let transaction_struct = matches
+        .value_of_t::<TransactionStructure>("transaction_struct")
         .unwrap_or_default();
     let num_banking_threads = matches
         .value_of_t::<u32>("num_banking_threads")
@@ -496,6 +507,7 @@ fn main() {
     };
     let banking_stage = BankingStage::new_num_threads(
         block_production_method.clone(),
+        transaction_struct,
         &cluster_info,
         &poh_recorder,
         non_vote_receiver,

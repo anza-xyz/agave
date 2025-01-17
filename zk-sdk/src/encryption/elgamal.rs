@@ -163,6 +163,7 @@ impl ElGamalKeypair {
         ElGamal::keygen()
     }
 
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = pubkeyOwned))]
     pub fn pubkey_owned(&self) -> ElGamalPubkey {
         self.public
     }
@@ -368,6 +369,19 @@ impl ElGamalPubkey {
     /// opening.
     pub fn decrypt_handle(self, opening: &PedersenOpening) -> DecryptHandle {
         DecryptHandle::new(&self, opening)
+    }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+impl ElGamalPubkey {
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = encryptU64))]
+    pub fn encrypt_u64(&self, amount: u64) -> ElGamalCiphertext {
+        ElGamal::encrypt(self, amount)
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = encryptWithU64))]
+    pub fn encrypt_with_u64(&self, amount: u64, opening: &PedersenOpening) -> ElGamalCiphertext {
+        ElGamal::encrypt_with(amount, self, opening)
     }
 }
 

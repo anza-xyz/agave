@@ -1,7 +1,7 @@
 pub use solana_transaction_status_client_types::{ParsedAccount, ParsedAccountSource};
 use {
     solana_message::{v0::LoadedMessage, Message},
-    solana_sdk::reserved_account_keys::ReservedAccountKeys,
+    solana_reserved_account_keys::ReservedAccountKeys,
 };
 
 pub fn parse_legacy_message_accounts(message: &Message) -> Vec<ParsedAccount> {
@@ -41,7 +41,8 @@ mod test {
     use {
         super::*,
         solana_message::{v0, v0::LoadedAddresses, MessageHeader},
-        solana_sdk::{pubkey::Pubkey, reserved_account_keys::ReservedAccountKeys},
+        solana_pubkey::Pubkey,
+        solana_reserved_account_keys::ReservedAccountKeys,
     };
 
     #[test]

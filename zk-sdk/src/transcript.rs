@@ -1,8 +1,7 @@
-use merlin::Transcript;
-#[cfg(not(target_os = "solana"))]
 use {
     crate::errors::TranscriptError,
     curve25519_dalek::{ristretto::CompressedRistretto, scalar::Scalar, traits::IsIdentity},
+    merlin::Transcript,
 };
 
 pub trait TranscriptProtocol {
