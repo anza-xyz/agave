@@ -102,7 +102,7 @@ const OPTIMISTIC_SLOTS_CF: &str = "optimistic_slots";
 /// Column family for merkle roots
 const MERKLE_ROOT_META_CF: &str = "merkle_root_meta";
 
-macro_rules! concat_key_bytes {
+macro_rules! convert_column_index_to_key_bytes {
     ($key:ident, $($range:expr => $bytes:expr),* $(,)?) => {{
         let mut key = [0u8; std::mem::size_of::<Self::$key>()];
         debug_assert_eq!(0 $(+$bytes.len())*, key.len());
@@ -111,7 +111,7 @@ macro_rules! concat_key_bytes {
     }};
 }
 
-macro_rules! convert_key_bytes {
+macro_rules! convert_column_key_bytes_to_index {
     ($k:ident, $($a:literal..$b:literal => $f:expr),* $(,)?) => {{
         ($($f(<[u8; $b-$a]>::try_from(&$k[$a..$b]).unwrap())),*)
     }};
@@ -852,7 +852,7 @@ impl<T: SlotColumn> Column for T {
 
     /// Converts a RocksDB key to its u64 Index.
     fn index(key: &[u8]) -> Self::Index {
-        convert_key_bytes!(key, 0..8 => Slot::from_be_bytes)
+        convert_column_key_bytes_to_index!(key, 0..8 => Slot::from_be_bytes)
     }
 
     fn slot(index: Self::Index) -> Slot {
@@ -901,7 +901,7 @@ impl Column for columns::TransactionStatus {
 
     #[inline]
     fn key((signature, slot): &Self::Index) -> Self::Key {
-        concat_key_bytes!(Key,
+        convert_column_index_to_key_bytes!(Key,
             ..64 => signature.as_ref(),
             64.. => &slot.to_be_bytes(),
         )
@@ -934,7 +934,7 @@ impl ColumnIndexDeprecation for columns::TransactionStatus {
     type DeprecatedKey = [u8; 80];
 
     fn deprecated_key((index, signature, slot): Self::DeprecatedIndex) -> Self::DeprecatedKey {
-        concat_key_bytes!(DeprecatedKey,
+        convert_column_index_to_key_bytes!(DeprecatedKey,
               ..8  => &index.to_be_bytes(),
              8..72 => signature.as_ref(),
             72..   => &slot.to_be_bytes(),
@@ -945,7 +945,7 @@ impl ColumnIndexDeprecation for columns::TransactionStatus {
         if key.len() != std::mem::size_of::<Self::DeprecatedKey>() {
             return Err(IndexError::UnpackError);
         }
-        Ok(convert_key_bytes!(key,
+        Ok(convert_column_key_bytes_to_index!(key,
              0..8  => u64::from_be_bytes,  // primary index
              8..72 => Signature::from,
             72..80 => Slot::from_be_bytes,
@@ -956,7 +956,7 @@ impl ColumnIndexDeprecation for columns::TransactionStatus {
         if key.len() != Self::CURRENT_INDEX_LEN {
             return Err(IndexError::UnpackError);
         }
-        Ok(convert_key_bytes!(key,
+        Ok(convert_column_key_bytes_to_index!(key,
              0..64 => Signature::from,
             64..72 => Slot::from_be_bytes,
         ))
@@ -977,7 +977,7 @@ impl Column for columns::AddressSignatures {
 
     #[inline]
     fn key((pubkey, slot, transaction_index, signature): &Self::Index) -> Self::Key {
-        concat_key_bytes!(Key,
+        convert_column_index_to_key_bytes!(Key,
               ..32 => pubkey.as_ref(),
             32..40 => &slot.to_be_bytes(),
             40..44 => &transaction_index.to_be_bytes(),
@@ -1011,7 +1011,7 @@ impl ColumnIndexDeprecation for columns::AddressSignatures {
     fn deprecated_key(
         (primary_index, pubkey, slot, signature): Self::DeprecatedIndex,
     ) -> Self::DeprecatedKey {
-        concat_key_bytes!(DeprecatedKey,
+        convert_column_index_to_key_bytes!(DeprecatedKey,
               ..8  => &primary_index.to_be_bytes(),
              8..40 => pubkey.as_ref(),
             40..48 => &slot.to_be_bytes(),
@@ -1023,7 +1023,7 @@ impl ColumnIndexDeprecation for columns::AddressSignatures {
         if key.len() != std::mem::size_of::<Self::DeprecatedKey>() {
             return Err(IndexError::UnpackError);
         }
-        Ok(convert_key_bytes!(key,
+        Ok(convert_column_key_bytes_to_index!(key,
              0..8   => u64::from_be_bytes,  // primary index
              8..40  => Pubkey::from,
             40..48  => Slot::from_be_bytes,
@@ -1035,7 +1035,7 @@ impl ColumnIndexDeprecation for columns::AddressSignatures {
         if key.len() != Self::CURRENT_INDEX_LEN {
             return Err(IndexError::UnpackError);
         }
-        Ok(convert_key_bytes!(key,
+        Ok(convert_column_key_bytes_to_index!(key,
              0..32  => Pubkey::from,
             32..40  => Slot::from_be_bytes,
             40..44  => u32::from_be_bytes,  // transaction index
@@ -1055,7 +1055,7 @@ impl Column for columns::TransactionMemos {
 
     #[inline]
     fn key((signature, slot): &Self::Index) -> Self::Key {
-        concat_key_bytes!(Key,
+        convert_column_index_to_key_bytes!(Key,
             ..64 => signature.as_ref(),
             64.. => &slot.to_be_bytes(),
         )
@@ -1094,7 +1094,7 @@ impl ColumnIndexDeprecation for columns::TransactionMemos {
         if key.len() != Self::CURRENT_INDEX_LEN {
             return Err(IndexError::UnpackError);
         }
-        Ok(convert_key_bytes!(key,
+        Ok(convert_column_key_bytes_to_index!(key,
              0..64 => Signature::from,
             64..72 => Slot::from_be_bytes,
         ))
@@ -1115,7 +1115,7 @@ impl Column for columns::TransactionStatusIndex {
     }
 
     fn index(key: &[u8]) -> Self::Index {
-        convert_key_bytes!(key, 0..8 => u64::from_be_bytes)
+        convert_column_key_bytes_to_index!(key, 0..8 => u64::from_be_bytes)
     }
 
     fn slot(_index: Self::Index) -> Slot {
@@ -1175,7 +1175,7 @@ impl Column for columns::ProgramCosts {
     }
 
     fn index(key: &[u8]) -> Self::Index {
-        convert_key_bytes!(key, 0..32 => Pubkey::from)
+        convert_column_key_bytes_to_index!(key, 0..32 => Pubkey::from)
     }
 
     fn slot(_index: Self::Index) -> Slot {
@@ -1219,14 +1219,14 @@ impl Column for columns::ShredData {
 
     #[inline]
     fn key((slot, index): &Self::Index) -> Self::Key {
-        concat_key_bytes!(Key,
+        convert_column_index_to_key_bytes!(Key,
             ..8 => &slot.to_be_bytes(),
             8.. => &index.to_be_bytes(),
         )
     }
 
     fn index(key: &[u8]) -> Self::Index {
-        convert_key_bytes!(key,
+        convert_column_key_bytes_to_index!(key,
             0..8  => Slot::from_be_bytes,
             8..16 => u64::from_be_bytes,  // shred index
         )
@@ -1328,14 +1328,14 @@ impl Column for columns::ErasureMeta {
 
     #[inline]
     fn key((slot, fec_set_index): &Self::Index) -> Self::Key {
-        concat_key_bytes!(Key,
+        convert_column_index_to_key_bytes!(Key,
             ..8 => &slot.to_be_bytes(),
             8.. => &fec_set_index.to_be_bytes(),
         )
     }
 
     fn index(key: &[u8]) -> Self::Index {
-        convert_key_bytes!(key,
+        convert_column_key_bytes_to_index!(key,
             0..8  => Slot::from_be_bytes,
             8..16 => u64::from_be_bytes,  // fec_set_index
         )
@@ -1370,14 +1370,14 @@ impl Column for columns::MerkleRootMeta {
 
     #[inline]
     fn key((slot, fec_set_index): &Self::Index) -> Self::Key {
-        concat_key_bytes!(Key,
+        convert_column_index_to_key_bytes!(Key,
             ..8 => &slot.to_be_bytes(),
             8.. => &fec_set_index.to_be_bytes(),
         )
     }
 
     fn index(key: &[u8]) -> Self::Index {
-        convert_key_bytes!(key,
+        convert_column_key_bytes_to_index!(key,
             0..8  => Slot::from_be_bytes,
             8..12 => u32::from_be_bytes,  // fec_set_index
         )
