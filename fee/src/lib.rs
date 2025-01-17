@@ -8,6 +8,10 @@ use {
 
 /// Bools indicating the activation of features relevant
 /// to the fee calculation.
+// DEVELOPER NOTE:
+// This struct may become empty at some point. It is preferable to keep it
+// instead of removing, since fees will naturally be changed via feature-gates
+// in the future. Keeping this struct will help keep things organized.
 #[derive(Copy, Clone)]
 pub struct FeeFeatures {
     pub remove_rounding_in_fee_calculation: bool,
