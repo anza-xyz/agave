@@ -62,7 +62,6 @@ use {
 // Below modules are pub to allow use by banking_stage bench
 pub mod committer;
 pub mod consumer;
-pub mod forwarder;
 pub mod leader_slot_metrics;
 pub mod qos_service;
 pub mod unprocessed_packet_batches;
@@ -311,14 +310,6 @@ pub enum ForwardOption {
     ForwardTransaction,
 }
 
-#[derive(Debug, Default)]
-pub struct FilterForwardingResults {
-    pub(crate) total_forwardable_packets: usize,
-    pub(crate) total_dropped_packets: usize,
-    pub(crate) total_packet_conversion_us: u64,
-    pub(crate) total_filter_packets_us: u64,
-}
-
 pub trait LikeClusterInfo: Send + Sync + 'static + Clone {
     fn id(&self) -> Pubkey;
 
@@ -454,6 +445,7 @@ impl BankingStage {
                 id,
                 packet_receiver,
                 decision_maker.clone(),
+                bank_forks.clone(),
                 committer.clone(),
                 transaction_recorder.clone(),
                 log_messages_bytes_limit,
@@ -614,6 +606,7 @@ impl BankingStage {
         id: u32,
         packet_receiver: BankingPacketReceiver,
         mut decision_maker: DecisionMaker,
+        bank_forks: Arc<RwLock<BankForks>>,
         committer: Committer,
         transaction_recorder: TransactionRecorder,
         log_messages_bytes_limit: Option<usize>,
@@ -633,6 +626,7 @@ impl BankingStage {
                 Self::process_loop(
                     &mut packet_receiver,
                     &mut decision_maker,
+                    &bank_forks,
                     &consumer,
                     id,
                     unprocessed_transaction_storage,
@@ -644,6 +638,7 @@ impl BankingStage {
     #[allow(clippy::too_many_arguments)]
     fn process_buffered_packets(
         decision_maker: &mut DecisionMaker,
+        bank_forks: &RwLock<BankForks>,
         consumer: &Consumer,
         unprocessed_transaction_storage: &mut UnprocessedTransactionStorage,
         banking_stage_stats: &BankingStageStats,
@@ -660,25 +655,39 @@ impl BankingStage {
         );
         slot_metrics_tracker.increment_make_decision_us(make_decision_us);
 
-        if let BufferedPacketsDecision::Consume(bank_start) = decision {
-            // Take metrics action before consume packets (potentially resetting the
-            // slot metrics tracker to the next slot) so that we don't count the
-            // packet processing metrics from the next slot towards the metrics
-            // of the previous slot
-            slot_metrics_tracker.apply_action(metrics_action);
-            let (_, consume_buffered_packets_us) = measure_us!(consumer.consume_buffered_packets(
-                &bank_start,
-                unprocessed_transaction_storage,
-                banking_stage_stats,
-                slot_metrics_tracker,
-            ));
-            slot_metrics_tracker.increment_consume_buffered_packets_us(consume_buffered_packets_us);
+        match decision {
+            BufferedPacketsDecision::Consume(bank_start) => {
+                // Take metrics action before consume packets (potentially resetting the
+                // slot metrics tracker to the next slot) so that we don't count the
+                // packet processing metrics from the next slot towards the metrics
+                // of the previous slot
+                slot_metrics_tracker.apply_action(metrics_action);
+                let (_, consume_buffered_packets_us) = measure_us!(consumer
+                    .consume_buffered_packets(
+                        &bank_start,
+                        unprocessed_transaction_storage,
+                        banking_stage_stats,
+                        slot_metrics_tracker,
+                    ));
+                slot_metrics_tracker
+                    .increment_consume_buffered_packets_us(consume_buffered_packets_us);
+            }
+            BufferedPacketsDecision::Forward | BufferedPacketsDecision::ForwardAndHold => {
+                // get current working bank from bank_forks, use it to sanitize transaction and
+                // load all accounts from address loader;
+                let current_bank = bank_forks.read().unwrap().working_bank();
+
+                // if we have crossed an epoch boundary, recache any state
+                unprocessed_transaction_storage.cache_epoch_boundary_info(&current_bank);
+            }
+            BufferedPacketsDecision::Hold => {}
         }
     }
 
     fn process_loop(
         packet_receiver: &mut PacketReceiver,
         decision_maker: &mut DecisionMaker,
+        bank_forks: &RwLock<BankForks>,
         consumer: &Consumer,
         id: u32,
         mut unprocessed_transaction_storage: UnprocessedTransactionStorage,
@@ -694,6 +703,7 @@ impl BankingStage {
             {
                 let (_, process_buffered_packets_us) = measure_us!(Self::process_buffered_packets(
                     decision_maker,
+                    bank_forks,
                     consumer,
                     &mut unprocessed_transaction_storage,
                     &banking_stage_stats,
