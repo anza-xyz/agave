@@ -140,7 +140,6 @@ impl<T: LikeClusterInfo> Forwarder<T> {
                     .forward_buffered_packets(
                         &forward_option,
                         forward_batch.get_forwardable_packets(),
-                        banking_stage_stats,
                     );
 
                 let failed_forwarded_packets_count = batched_forwardable_packets_count
@@ -214,7 +213,6 @@ impl<T: LikeClusterInfo> Forwarder<T> {
         &self,
         forward_option: &ForwardOption,
         forwardable_packets: impl Iterator<Item = &'a Packet>,
-        banking_stage_stats: &BankingStageStats,
     ) -> (
         std::result::Result<(), TransportError>,
         usize,
@@ -224,18 +222,6 @@ impl<T: LikeClusterInfo> Forwarder<T> {
             self.forward_packets(forward_option, forwardable_packets);
         if let Err(ref err) = res {
             warn!("failed to forward packets: {err}");
-        }
-
-        if num_packets > 0 {
-            if let ForwardOption::ForwardTpuVote = forward_option {
-                banking_stage_stats
-                    .forwarded_vote_count
-                    .fetch_add(num_packets, Ordering::Relaxed);
-            } else {
-                banking_stage_stats
-                    .forwarded_transaction_count
-                    .fetch_add(num_packets, Ordering::Relaxed);
-            }
         }
 
         (res, num_packets, leader_pubkey)
