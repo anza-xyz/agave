@@ -302,13 +302,6 @@ pub struct BankingStage {
     bank_thread_hdls: Vec<JoinHandle<()>>,
 }
 
-#[derive(Debug, Clone)]
-pub enum ForwardOption {
-    NotForward,
-    ForwardTpuVote,
-    ForwardTransaction,
-}
-
 pub trait LikeClusterInfo: Send + Sync + 'static + Clone {
     fn id(&self) -> Pubkey;
 

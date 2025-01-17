@@ -12,7 +12,7 @@ use {
         unprocessed_packet_batches::{
             DeserializedPacket, PacketBatchInsertionMetrics, UnprocessedPacketBatches,
         },
-        BankingStageStats, ForwardOption,
+        BankingStageStats,
     },
     itertools::Itertools,
     min_max_heap::MinMaxHeap,
@@ -327,15 +327,6 @@ impl UnprocessedTransactionStorage {
         }
     }
 
-    pub fn forward_option(&self) -> ForwardOption {
-        match self {
-            Self::VoteStorage(vote_storage) => vote_storage.forward_option(),
-            Self::LocalTransactionStorage(transaction_storage) => {
-                transaction_storage.forward_option()
-            }
-        }
-    }
-
     pub(crate) fn insert_batch(
         &mut self,
         deserialized_packets: Vec<ImmutableDeserializedPacket>,
@@ -403,13 +394,6 @@ impl VoteStorage {
 
     fn max_receive_size(&self) -> usize {
         MAX_NUM_VOTES_RECEIVE
-    }
-
-    fn forward_option(&self) -> ForwardOption {
-        match self.vote_source {
-            VoteSource::Tpu => ForwardOption::ForwardTpuVote,
-            VoteSource::Gossip => ForwardOption::NotForward,
-        }
     }
 
     fn insert_batch(
@@ -549,14 +533,6 @@ impl ThreadLocalUnprocessedPackets {
 
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut DeserializedPacket> {
         self.unprocessed_packet_batches.iter_mut()
-    }
-
-    fn forward_option(&self) -> ForwardOption {
-        match self.thread_type {
-            ThreadType::Transactions => ForwardOption::ForwardTransaction,
-            ThreadType::Voting(VoteSource::Tpu) => ForwardOption::ForwardTpuVote,
-            ThreadType::Voting(VoteSource::Gossip) => ForwardOption::NotForward,
-        }
     }
 
     fn insert_batch(
