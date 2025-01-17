@@ -664,12 +664,17 @@ impl BankingStage {
                 slot_metrics_tracker
                     .increment_consume_buffered_packets_us(consume_buffered_packets_us);
             }
-            BufferedPacketsDecision::Forward | BufferedPacketsDecision::ForwardAndHold => {
+            BufferedPacketsDecision::Forward => {
                 // get current working bank from bank_forks, use it to sanitize transaction and
                 // load all accounts from address loader;
                 let current_bank = bank_forks.read().unwrap().working_bank();
-
-                // if we have crossed an epoch boundary, recache any state
+                unprocessed_transaction_storage.cache_epoch_boundary_info(&current_bank);
+                unprocessed_transaction_storage.clear();
+            }
+            BufferedPacketsDecision::ForwardAndHold => {
+                // get current working bank from bank_forks, use it to sanitize transaction and
+                // load all accounts from address loader;
+                let current_bank = bank_forks.read().unwrap().working_bank();
                 unprocessed_transaction_storage.cache_epoch_boundary_info(&current_bank);
             }
             BufferedPacketsDecision::Hold => {}

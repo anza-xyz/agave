@@ -375,6 +375,13 @@ impl UnprocessedTransactionStorage {
         }
     }
 
+    pub(crate) fn clear(&mut self) {
+        match self {
+            Self::LocalTransactionStorage(_) => {}
+            Self::VoteStorage(vote_storage) => vote_storage.clear(),
+        }
+    }
+
     pub(crate) fn cache_epoch_boundary_info(&mut self, bank: &Bank) {
         match self {
             Self::LocalTransactionStorage(_) => (),
@@ -490,6 +497,10 @@ impl VoteStorage {
         }
 
         scanner.finalize().payload.reached_end_of_slot
+    }
+
+    fn clear(&mut self) {
+        self.latest_unprocessed_votes.clear();
     }
 
     fn cache_epoch_boundary_info(&mut self, bank: &Bank) {

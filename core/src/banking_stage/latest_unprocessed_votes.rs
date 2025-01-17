@@ -441,17 +441,14 @@ impl LatestUnprocessedVotes {
             .unwrap_or(false)
     }
 
-    /// Sometimes we forward and hold the packets, sometimes we forward and clear.
-    /// This also clears all gossip votes since by definition they have been forwarded
-    pub fn clear_forwarded_packets(&self) {
+    pub fn clear(&self) {
         self.latest_vote_per_vote_pubkey
             .read()
             .unwrap()
             .values()
-            .filter(|lock| lock.read().unwrap().is_forwarded())
             .for_each(|lock| {
                 let mut vote = lock.write().unwrap();
-                if vote.is_forwarded() && vote.take_vote().is_some() {
+                if vote.take_vote().is_some() {
                     self.num_unprocessed_votes.fetch_sub(1, Ordering::Relaxed);
                 }
             });
@@ -911,7 +908,7 @@ mod tests {
     }
 
     #[test]
-    fn test_clear_forwarded_packets() {
+    fn test_clear() {
         let keypair_a = ValidatorVoteKeypairs::new_rand();
         let keypair_b = ValidatorVoteKeypairs::new_rand();
         let keypair_c = ValidatorVoteKeypairs::new_rand();
@@ -935,8 +932,8 @@ mod tests {
         latest_unprocessed_votes.update_latest_vote(vote_d, false /* should replenish */);
         assert_eq!(4, latest_unprocessed_votes.len());
 
-        latest_unprocessed_votes.clear_forwarded_packets();
-        assert_eq!(1, latest_unprocessed_votes.len());
+        latest_unprocessed_votes.clear();
+        assert_eq!(0, latest_unprocessed_votes.len());
 
         assert_eq!(
             Some(1),
