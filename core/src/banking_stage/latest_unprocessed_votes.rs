@@ -32,7 +32,7 @@ pub enum VoteSource {
     Tpu,
 }
 
-/// Holds deserialized vote messages as well as their source, forward status and slot
+/// Holds deserialized vote messages as well as their source, and slot
 #[derive(Debug, Clone)]
 pub struct LatestValidatorVotePacket {
     vote_source: VoteSource,
@@ -40,7 +40,6 @@ pub struct LatestValidatorVotePacket {
     vote: Option<Arc<ImmutableDeserializedPacket>>,
     slot: Slot,
     hash: Hash,
-    forwarded: bool,
     timestamp: Option<UnixTimestamp>,
 }
 
@@ -105,7 +104,6 @@ impl LatestValidatorVotePacket {
                     hash,
                     vote_pubkey,
                     vote_source,
-                    forwarded: false,
                     timestamp,
                 })
             }
@@ -131,11 +129,6 @@ impl LatestValidatorVotePacket {
 
     pub fn timestamp(&self) -> Option<UnixTimestamp> {
         self.timestamp
-    }
-
-    pub fn is_forwarded(&self) -> bool {
-        // By definition all gossip votes have been forwarded
-        self.forwarded || matches!(self.vote_source, VoteSource::Gossip)
     }
 
     pub fn is_vote_taken(&self) -> bool {
@@ -921,8 +914,7 @@ mod tests {
         ]);
 
         let vote_a = from_slots(vec![(1, 1)], VoteSource::Gossip, &keypair_a, None);
-        let mut vote_b = from_slots(vec![(2, 1)], VoteSource::Tpu, &keypair_b, None);
-        vote_b.forwarded = true;
+        let vote_b = from_slots(vec![(2, 1)], VoteSource::Tpu, &keypair_b, None);
         let vote_c = from_slots(vec![(3, 1)], VoteSource::Tpu, &keypair_c, None);
         let vote_d = from_slots(vec![(4, 1)], VoteSource::Gossip, &keypair_d, None);
 
