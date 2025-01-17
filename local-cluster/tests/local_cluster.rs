@@ -5861,11 +5861,8 @@ fn test_randomly_mixed_block_production_methods_between_bootstrap_and_not() {
     );
 
     let num_nodes = BlockVerificationMethod::COUNT;
-    let mut config = ClusterConfig::new_with_equal_stakes(
-        num_nodes,
-        DEFAULT_MINT_LAMPORTS,
-        DEFAULT_NODE_STAKE,
-    );
+    let mut config =
+        ClusterConfig::new_with_equal_stakes(num_nodes, DEFAULT_MINT_LAMPORTS, DEFAULT_NODE_STAKE);
 
     // Overwrite block_production_method with shuffled variants
     let mut methods = BlockProductionMethod::iter().collect::<Vec<_>>();

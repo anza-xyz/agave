@@ -775,7 +775,13 @@ impl BankingSimulator {
         });
         let banking_tracer_channels = if let Some(pool) = unified_scheduler_pool {
             let channels = retracer.create_channels_for_scheduler_pool(&pool);
-            ensure_banking_stage_setup(&pool, &bank_forks, &channels, &cluster_info_for_banking, &poh_recorder);
+            ensure_banking_stage_setup(
+                &pool,
+                &bank_forks,
+                &channels,
+                &cluster_info_for_banking,
+                &poh_recorder,
+            );
             channels
         } else {
             retracer.create_channels(false)
