@@ -113,8 +113,6 @@ pub struct BankingStageStats {
     current_buffered_packets_count: AtomicUsize,
     rebuffered_packets_count: AtomicUsize,
     consumed_buffered_packets_count: AtomicUsize,
-    forwarded_transaction_count: AtomicUsize,
-    forwarded_vote_count: AtomicUsize,
     batch_packet_indexes_len: Histogram,
 
     // Timing
@@ -159,8 +157,6 @@ impl BankingStageStats {
             + self.filter_pending_packets_elapsed.load(Ordering::Relaxed)
             + self.packet_conversion_elapsed.load(Ordering::Relaxed)
             + self.transaction_processing_elapsed.load(Ordering::Relaxed)
-            + self.forwarded_transaction_count.load(Ordering::Relaxed) as u64
-            + self.forwarded_vote_count.load(Ordering::Relaxed) as u64
             + self.batch_packet_indexes_len.entries()
     }
 
@@ -222,16 +218,6 @@ impl BankingStageStats {
                     "consumed_buffered_packets_count",
                     self.consumed_buffered_packets_count
                         .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "forwarded_transaction_count",
-                    self.forwarded_transaction_count.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "forwarded_vote_count",
-                    self.forwarded_vote_count.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
