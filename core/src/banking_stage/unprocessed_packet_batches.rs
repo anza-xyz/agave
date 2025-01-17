@@ -15,14 +15,12 @@ use {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeserializedPacket {
     immutable_section: Arc<ImmutableDeserializedPacket>,
-    pub forwarded: bool,
 }
 
 impl DeserializedPacket {
     pub fn from_immutable_section(immutable_section: ImmutableDeserializedPacket) -> Self {
         Self {
             immutable_section: Arc::new(immutable_section),
-            forwarded: false,
         }
     }
 
@@ -31,7 +29,6 @@ impl DeserializedPacket {
 
         Ok(Self {
             immutable_section: Arc::new(immutable_section),
-            forwarded: false,
         })
     }
 
@@ -264,30 +261,6 @@ impl UnprocessedPacketBatches {
 
     pub fn capacity(&self) -> usize {
         self.packet_priority_queue.capacity()
-    }
-
-    pub fn is_forwarded(&self, immutable_packet: &ImmutableDeserializedPacket) -> bool {
-        self.message_hash_to_transaction
-            .get(immutable_packet.message_hash())
-            .map_or(true, |p| p.forwarded)
-    }
-
-    pub fn mark_accepted_packets_as_forwarded(
-        &mut self,
-        packets_to_process: &[Arc<ImmutableDeserializedPacket>],
-        accepted_packet_indexes: &[usize],
-    ) {
-        accepted_packet_indexes
-            .iter()
-            .for_each(|accepted_packet_index| {
-                let accepted_packet = packets_to_process[*accepted_packet_index].clone();
-                if let Some(deserialized_packet) = self
-                    .message_hash_to_transaction
-                    .get_mut(accepted_packet.message_hash())
-                {
-                    deserialized_packet.forwarded = true;
-                }
-            });
     }
 }
 
