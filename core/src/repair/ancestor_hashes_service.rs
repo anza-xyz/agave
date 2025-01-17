@@ -15,7 +15,6 @@ use {
         replay_stage::DUPLICATE_THRESHOLD,
         shred_fetch_stage::receive_quic_datagrams,
     },
-    bincode::serialize,
     bytes::Bytes,
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     dashmap::{mapref::entry::Entry::Occupied, DashMap},
@@ -454,11 +453,9 @@ impl AncestorHashesService {
                     return None;
                 }
                 stats.ping_count += 1;
-                if let Ok(pong) = Pong::new(&ping, keypair) {
-                    let pong = RepairProtocol::Pong(pong);
-                    if let Ok(pong_bytes) = serialize(&pong) {
-                        let _ignore = ancestor_socket.send_to(&pong_bytes[..], from_addr);
-                    }
+                let pong = RepairProtocol::Pong(Pong::new(&ping, keypair));
+                if let Ok(pong) = bincode::serialize(&pong) {
+                    let _ = ancestor_socket.send_to(&pong, from_addr);
                 }
                 None
             }

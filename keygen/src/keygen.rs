@@ -26,16 +26,15 @@ use {
         DisplayError,
     },
     solana_cli_config::{Config, CONFIG_FILE},
-    solana_remote_wallet::remote_wallet::RemoteWalletManager,
-    solana_sdk::{
-        instruction::{AccountMeta, Instruction},
-        message::Message,
-        pubkey::Pubkey,
-        signature::{
-            keypair_from_seed, keypair_from_seed_and_derivation_path, write_keypair,
-            write_keypair_file, Keypair, Signer,
-        },
+    solana_instruction::{AccountMeta, Instruction},
+    solana_keypair::{
+        keypair_from_seed, seed_derivable::keypair_from_seed_and_derivation_path, write_keypair,
+        write_keypair_file, Keypair,
     },
+    solana_message::Message,
+    solana_pubkey::Pubkey,
+    solana_remote_wallet::remote_wallet::RemoteWalletManager,
+    solana_signer::Signer,
     std::{
         collections::HashSet,
         error,
@@ -50,7 +49,7 @@ use {
 };
 
 mod smallest_length_44_public_key {
-    use solana_sdk::pubkey::Pubkey;
+    use solana_pubkey::Pubkey;
 
     pub(super) static PUBKEY: Pubkey =
         Pubkey::from_str_const("21111111111111111111111111111111111111111111");
@@ -1156,7 +1155,7 @@ mod tests {
     #[test]
     fn test_read_write_pubkey() -> Result<(), std::boxed::Box<dyn std::error::Error>> {
         let filename = "test_pubkey.json";
-        let pubkey = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
         write_pubkey_file(filename, pubkey)?;
         let read = read_pubkey_file(filename)?;
         assert_eq!(read, pubkey);

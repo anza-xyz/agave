@@ -17,13 +17,14 @@ use {
     },
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
-    solana_net_utils::VALIDATOR_PORT_RANGE,
+    solana_net_utils::{SocketConfig, VALIDATOR_PORT_RANGE},
     solana_quic_definitions::{
         QUIC_CONNECTION_HANDSHAKE_TIMEOUT, QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT,
     },
     solana_rpc_client_api::client_error::ErrorKind as ClientErrorKind,
-    solana_streamer::{
-        nonblocking::quic::ALPN_TPU_PROTOCOL_ID, tls_certificates::new_dummy_x509_certificate,
+    solana_streamer::nonblocking::quic::ALPN_TPU_PROTOCOL_ID,
+    solana_tls_utils::{
+        new_dummy_x509_certificate, tls_client_config_builder, QuicClientCertificate,
     },
     solana_transaction_error::TransportResult,
     std::{
@@ -34,65 +35,6 @@ use {
     thiserror::Error,
     tokio::{sync::OnceCell, time::timeout},
 };
-
-#[derive(Debug)]
-pub struct SkipServerVerification(Arc<rustls::crypto::CryptoProvider>);
-
-impl SkipServerVerification {
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self(Arc::new(rustls::crypto::ring::default_provider())))
-    }
-}
-
-impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
-    fn verify_tls12_signature(
-        &self,
-        message: &[u8],
-        cert: &rustls::pki_types::CertificateDer<'_>,
-        dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls12_signature(
-            message,
-            cert,
-            dss,
-            &self.0.signature_verification_algorithms,
-        )
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        message: &[u8],
-        cert: &rustls::pki_types::CertificateDer<'_>,
-        dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls13_signature(
-            message,
-            cert,
-            dss,
-            &self.0.signature_verification_algorithms,
-        )
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        self.0.signature_verification_algorithms.supported_schemes()
-    }
-
-    fn verify_server_cert(
-        &self,
-        _end_entity: &rustls::pki_types::CertificateDer<'_>,
-        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
-        _server_name: &rustls::pki_types::ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: rustls::pki_types::UnixTime,
-    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
-    }
-}
-
-pub struct QuicClientCertificate {
-    pub certificate: rustls::pki_types::CertificateDer<'static>,
-    pub key: rustls::pki_types::PrivateKeyDer<'static>,
-}
 
 /// A lazy-initialized Quic Endpoint
 pub struct QuicLazyInitializedEndpoint {
@@ -135,19 +77,20 @@ impl QuicLazyInitializedEndpoint {
         let mut endpoint = if let Some(endpoint) = &self.client_endpoint {
             endpoint.clone()
         } else {
-            let client_socket = solana_net_utils::bind_in_range(
+            let config = SocketConfig::default();
+            let client_socket = solana_net_utils::bind_in_range_with_config(
                 IpAddr::V4(Ipv4Addr::UNSPECIFIED),
                 VALIDATOR_PORT_RANGE,
+                config,
             )
             .expect("QuicLazyInitializedEndpoint::create_endpoint bind_in_range")
             .1;
+            info!("Local endpoint is : {client_socket:?}");
 
             QuicNewConnection::create_endpoint(EndpointConfig::default(), client_socket)
         };
 
-        let mut crypto = rustls::ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(SkipServerVerification::new())
+        let mut crypto = tls_client_config_builder()
             .with_client_auth_cert(
                 vec![self.client_certificate.certificate.clone()],
                 self.client_certificate.key.clone_key(),

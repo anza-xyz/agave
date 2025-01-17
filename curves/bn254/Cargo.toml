@@ -22,9 +22,14 @@ ark-serialize = { workspace = true }
 
 [dev-dependencies]
 array-bytes = { workspace = true }
+criterion = { workspace = true }
 serde = { workspace = true }
 serde_derive = { workspace = true }
 serde_json = { workspace = true }
+
+[[bench]]
+name = "bn254"
+harness = false
 
 [lints]
 workspace = true

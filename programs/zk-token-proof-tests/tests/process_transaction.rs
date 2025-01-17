@@ -1,16 +1,15 @@
 use {
     bytemuck::{bytes_of, Pod},
     curve25519_dalek::scalar::Scalar,
+    solana_account::Account,
+    solana_instruction::error::InstructionError,
+    solana_keypair::Keypair,
     solana_program_test::*,
-    solana_sdk::{
-        account::Account,
-        instruction::InstructionError,
-        pubkey::Pubkey,
-        signature::Signer,
-        signer::keypair::Keypair,
-        system_instruction,
-        transaction::{Transaction, TransactionError},
-    },
+    solana_pubkey::Pubkey,
+    solana_signer::Signer,
+    solana_system_interface::instruction as system_instruction,
+    solana_transaction::Transaction,
+    solana_transaction_error::TransactionError,
     solana_zk_token_sdk::{
         encryption::{
             elgamal::{ElGamalKeypair, ElGamalSecretKey},
@@ -1713,10 +1712,10 @@ trait WithMaxComputeUnitLimit {
     fn with_max_compute_unit_limit(self) -> Self;
 }
 
-impl WithMaxComputeUnitLimit for Vec<solana_sdk::instruction::Instruction> {
+impl WithMaxComputeUnitLimit for Vec<solana_instruction::Instruction> {
     fn with_max_compute_unit_limit(mut self) -> Self {
         self.push(
-            solana_sdk::compute_budget::ComputeBudgetInstruction::set_compute_unit_limit(
+            solana_compute_budget_interface::ComputeBudgetInstruction::set_compute_unit_limit(
                 solana_compute_budget::compute_budget_limits::MAX_COMPUTE_UNIT_LIMIT,
             ),
         );

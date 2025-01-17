@@ -187,7 +187,7 @@ solana program show --buffers --buffer-authority <AUTHORITY_ADDRESS>
 To close a single account:
 
 ```bash
-solana program close <BADDRESS>
+solana program close <ADDRESS>
 ```
 
 To close a single account and specify a different authority than the default:

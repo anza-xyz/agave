@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::field_qualifiers;
 use {
     crate::{
         account_overrides::AccountOverrides,
@@ -8,41 +10,44 @@ use {
         transaction_processing_callback::{AccountState, TransactionProcessingCallback},
     },
     ahash::{AHashMap, AHashSet},
+    solana_account::{
+        Account, AccountSharedData, ReadableAccount, WritableAccount, PROGRAM_OWNERS,
+    },
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_feature_set::{self as feature_set, FeatureSet},
+    solana_fee_structure::FeeDetails,
+    solana_instruction::{BorrowedAccountMeta, BorrowedInstruction},
+    solana_instructions_sysvar::construct_instructions_data,
+    solana_nonce::state::State as NonceState,
     solana_program_runtime::loaded_programs::ProgramCacheForTxBatch,
-    solana_sdk::{
-        account::{Account, AccountSharedData, ReadableAccount, WritableAccount, PROGRAM_OWNERS},
-        fee::FeeDetails,
+    solana_pubkey::Pubkey,
+    solana_rent::RentDue,
+    solana_rent_debits::RentDebits,
+    solana_sdk::rent_collector::{CollectedInfo, RENT_EXEMPT_RENT_EPOCH},
+    solana_sdk_ids::{
         native_loader,
-        nonce::State as NonceState,
-        pubkey::Pubkey,
-        rent::RentDue,
-        rent_collector::{CollectedInfo, RENT_EXEMPT_RENT_EPOCH},
-        rent_debits::RentDebits,
-        saturating_add_assign,
-        sysvar::{
-            self,
-            instructions::{construct_instructions_data, BorrowedAccountMeta, BorrowedInstruction},
-            slot_history,
-        },
-        transaction::{Result, TransactionError},
-        transaction_context::{IndexOfAccount, TransactionAccount},
+        sysvar::{self, slot_history},
     },
     solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_system_program::{get_system_account_kind, SystemAccountKind},
-    std::{collections::HashMap, num::NonZeroU32, sync::Arc},
+    solana_transaction_context::{IndexOfAccount, TransactionAccount},
+    solana_transaction_error::{TransactionError, TransactionResult as Result},
+    std::{
+        collections::HashMap,
+        num::{NonZeroU32, Saturating},
+        sync::Arc,
+    },
 };
 
 // for the load instructions
 pub(crate) type TransactionRent = u64;
 pub(crate) type TransactionProgramIndices = Vec<Vec<IndexOfAccount>>;
 pub type TransactionCheckResult = Result<CheckedTransactionDetails>;
-pub type TransactionValidationResult = Result<ValidatedTransactionDetails>;
+type TransactionValidationResult = Result<ValidatedTransactionDetails>;
 
 #[derive(PartialEq, Eq, Debug)]
-pub enum TransactionLoadResult {
+pub(crate) enum TransactionLoadResult {
     /// All transaction accounts were loaded successfully
     Loaded(LoadedTransaction),
     /// Some transaction accounts needed for execution were unable to be loaded
@@ -63,16 +68,16 @@ pub struct CheckedTransactionDetails {
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 #[cfg_attr(feature = "dev-context-only-utils", derive(Default))]
-pub struct ValidatedTransactionDetails {
-    pub rollback_accounts: RollbackAccounts,
-    pub compute_budget_limits: ComputeBudgetLimits,
-    pub fee_details: FeeDetails,
-    pub loaded_fee_payer_account: LoadedTransactionAccount,
+pub(crate) struct ValidatedTransactionDetails {
+    pub(crate) rollback_accounts: RollbackAccounts,
+    pub(crate) compute_budget_limits: ComputeBudgetLimits,
+    pub(crate) fee_details: FeeDetails,
+    pub(crate) loaded_fee_payer_account: LoadedTransactionAccount,
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 #[cfg_attr(feature = "dev-context-only-utils", derive(Default))]
-pub struct LoadedTransactionAccount {
+pub(crate) struct LoadedTransactionAccount {
     pub(crate) account: AccountSharedData,
     pub(crate) loaded_size: usize,
     pub(crate) rent_collected: u64,
@@ -80,12 +85,16 @@ pub struct LoadedTransactionAccount {
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 #[cfg_attr(feature = "dev-context-only-utils", derive(Default))]
+#[cfg_attr(
+    feature = "dev-context-only-utils",
+    field_qualifiers(program_indices(pub), compute_budget_limits(pub))
+)]
 pub struct LoadedTransaction {
     pub accounts: Vec<TransactionAccount>,
-    pub program_indices: TransactionProgramIndices,
+    pub(crate) program_indices: TransactionProgramIndices,
     pub fee_details: FeeDetails,
     pub rollback_accounts: RollbackAccounts,
-    pub compute_budget_limits: ComputeBudgetLimits,
+    pub(crate) compute_budget_limits: ComputeBudgetLimits,
     pub rent: TransactionRent,
     pub rent_debits: RentDebits,
     pub loaded_accounts_data_size: u32,
@@ -107,7 +116,7 @@ pub(crate) struct AccountLoader<'a, CB: TransactionProcessingCallback> {
     pub(crate) feature_set: Arc<FeatureSet>,
 }
 impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
-    pub fn new_with_account_cache_capacity(
+    pub(crate) fn new_with_account_cache_capacity(
         account_overrides: Option<&'a AccountOverrides>,
         program_cache: ProgramCacheForTxBatch,
         program_accounts: HashMap<Pubkey, (&'a Pubkey, u64)>,
@@ -134,7 +143,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         }
     }
 
-    pub fn load_account(
+    pub(crate) fn load_account(
         &mut self,
         account_key: &Pubkey,
         usage_pattern: AccountUsagePattern,
@@ -193,7 +202,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         })
     }
 
-    pub fn update_accounts_for_executed_tx(
+    pub(crate) fn update_accounts_for_executed_tx(
         &mut self,
         message: &impl SVMMessage,
         executed_transaction: &ExecutedTransaction,
@@ -214,7 +223,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         }
     }
 
-    pub fn update_accounts_for_failed_tx(
+    pub(crate) fn update_accounts_for_failed_tx(
         &mut self,
         message: &impl SVMMessage,
         rollback_accounts: &RollbackAccounts,
@@ -271,7 +280,7 @@ pub(crate) enum AccountUsagePattern {
     ReadOnlyInvisible,
 }
 impl AccountUsagePattern {
-    pub fn new(message: &impl SVMMessage, account_index: usize) -> Self {
+    fn new(message: &impl SVMMessage, account_index: usize) -> Self {
         let is_writable = message.is_writable(account_index);
         let is_instruction_account = message.is_instruction_account(account_index);
 
@@ -411,11 +420,11 @@ pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 struct LoadedTransactionAccounts {
-    pub accounts: Vec<TransactionAccount>,
-    pub program_indices: TransactionProgramIndices,
-    pub rent: TransactionRent,
-    pub rent_debits: RentDebits,
-    pub loaded_accounts_data_size: u32,
+    pub(crate) accounts: Vec<TransactionAccount>,
+    pub(crate) program_indices: TransactionProgramIndices,
+    pub(crate) rent: TransactionRent,
+    pub(crate) rent_debits: RentDebits,
+    pub(crate) loaded_accounts_data_size: u32,
 }
 
 fn load_transaction_accounts<CB: TransactionProcessingCallback>(
@@ -431,7 +440,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     let mut accounts = Vec::with_capacity(account_keys.len());
     let mut validated_loaders = AHashSet::with_capacity(PROGRAM_OWNERS.len());
     let mut rent_debits = RentDebits::default();
-    let mut accumulated_accounts_data_size: u32 = 0;
+    let mut accumulated_accounts_data_size: Saturating<u32> = Saturating(0);
 
     let mut collect_loaded_account = |key, loaded_account| -> Result<()> {
         let LoadedTransactionAccount {
@@ -564,7 +573,7 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
         program_indices,
         rent: tx_rent,
         rent_debits,
-        loaded_accounts_data_size: accumulated_accounts_data_size,
+        loaded_accounts_data_size: accumulated_accounts_data_size.0,
     })
 }
 
@@ -577,7 +586,7 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
 ) -> LoadedTransactionAccount {
     let usage_pattern = AccountUsagePattern::new(message, account_index);
 
-    let loaded_account = if solana_sdk::sysvar::instructions::check_id(account_key) {
+    let loaded_account = if solana_sdk_ids::sysvar::instructions::check_id(account_key) {
         // Since the instructions sysvar is constructed by the SVM and modified
         // for each transaction instruction, it cannot be loaded.
         LoadedTransactionAccount {
@@ -637,7 +646,7 @@ fn account_shared_data_from_program(
 /// `accumulated_accounts_data_size` exceeds
 /// `requested_loaded_accounts_data_size_limit`.
 fn accumulate_and_check_loaded_account_data_size(
-    accumulated_loaded_accounts_data_size: &mut u32,
+    accumulated_loaded_accounts_data_size: &mut Saturating<u32>,
     account_data_size: usize,
     requested_loaded_accounts_data_size_limit: NonZeroU32,
     error_metrics: &mut TransactionErrorMetrics,
@@ -646,8 +655,8 @@ fn accumulate_and_check_loaded_account_data_size(
         error_metrics.max_loaded_accounts_data_size_exceeded += 1;
         return Err(TransactionError::MaxLoadedAccountsDataSizeExceeded);
     };
-    saturating_add_assign!(*accumulated_loaded_accounts_data_size, account_data_size);
-    if *accumulated_loaded_accounts_data_size > requested_loaded_accounts_data_size_limit.get() {
+    *accumulated_loaded_accounts_data_size += account_data_size;
+    if accumulated_loaded_accounts_data_size.0 > requested_loaded_accounts_data_size_limit.get() {
         error_metrics.max_loaded_accounts_data_size_exceeded += 1;
         Err(TransactionError::MaxLoadedAccountsDataSizeExceeded)
     } else {
@@ -694,38 +703,40 @@ mod tests {
             transaction_account_state_info::TransactionAccountStateInfo,
             transaction_processing_callback::TransactionProcessingCallback,
         },
-        nonce::state::Versions as NonceVersions,
+        solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
         solana_compute_budget::{compute_budget::ComputeBudget, compute_budget_limits},
+        solana_epoch_schedule::EpochSchedule,
         solana_feature_set::FeatureSet,
+        solana_hash::Hash,
+        solana_instruction::{AccountMeta, Instruction},
+        solana_keypair::Keypair,
+        solana_message::{
+            compiled_instruction::CompiledInstruction,
+            v0::{LoadedAddresses, LoadedMessage},
+            LegacyMessage, Message, MessageHeader, SanitizedMessage,
+        },
+        solana_native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
+        solana_nonce::{self as nonce, versions::Versions as NonceVersions},
+        solana_program::bpf_loader_upgradeable::UpgradeableLoaderState,
         solana_program_runtime::loaded_programs::{
             ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
             ProgramCacheForTxBatch,
         },
-        solana_rbpf::program::BuiltinProgram,
-        solana_sdk::{
-            account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
-            bpf_loader,
-            bpf_loader_upgradeable::{self, UpgradeableLoaderState},
-            epoch_schedule::EpochSchedule,
-            hash::Hash,
-            instruction::{AccountMeta, CompiledInstruction, Instruction},
-            message::{
-                v0::{LoadedAddresses, LoadedMessage},
-                LegacyMessage, Message, MessageHeader, SanitizedMessage,
-            },
-            native_loader,
-            native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
-            nonce,
-            pubkey::Pubkey,
-            rent::Rent,
-            rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
-            rent_debits::RentDebits,
-            reserved_account_keys::ReservedAccountKeys,
-            signature::{Keypair, Signature, Signer},
-            system_program, system_transaction, sysvar,
-            transaction::{Result, SanitizedTransaction, Transaction, TransactionError},
-            transaction_context::{TransactionAccount, TransactionContext},
+        solana_pubkey::Pubkey,
+        solana_rent::Rent,
+        solana_rent_debits::RentDebits,
+        solana_reserved_account_keys::ReservedAccountKeys,
+        solana_sbpf::program::BuiltinProgram,
+        solana_sdk::rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
+        solana_sdk_ids::{
+            bpf_loader, bpf_loader_upgradeable, native_loader, system_program, sysvar,
         },
+        solana_signature::Signature,
+        solana_signer::Signer,
+        solana_system_transaction::transfer,
+        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+        solana_transaction_context::{TransactionAccount, TransactionContext},
+        solana_transaction_error::{TransactionError, TransactionResult as Result},
         std::{borrow::Cow, cell::RefCell, collections::HashMap, fs::File, io::Read, sync::Arc},
     };
 
@@ -906,7 +917,7 @@ mod tests {
 
         let load_results = load_accounts_aux_test(tx, &accounts, &mut error_metrics);
 
-        assert_eq!(error_metrics.account_not_found, 1);
+        assert_eq!(error_metrics.account_not_found.0, 1);
         assert!(matches!(
             load_results,
             TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
@@ -945,7 +956,7 @@ mod tests {
         let loaded_accounts =
             load_accounts_with_excluded_features(tx, &accounts, &mut error_metrics, None);
 
-        assert_eq!(error_metrics.account_not_found, 0);
+        assert_eq!(error_metrics.account_not_found.0, 0);
         match &loaded_accounts {
             TransactionLoadResult::Loaded(loaded_transaction) => {
                 assert_eq!(loaded_transaction.accounts.len(), 3);
@@ -986,7 +997,7 @@ mod tests {
 
         let load_results = load_accounts_aux_test(tx, &accounts, &mut error_metrics);
 
-        assert_eq!(error_metrics.account_not_found, 1);
+        assert_eq!(error_metrics.account_not_found.0, 1);
         assert!(matches!(
             load_results,
             TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
@@ -1030,7 +1041,7 @@ mod tests {
             &mut feature_set,
         );
 
-        assert_eq!(error_metrics.invalid_program_for_execution, 1);
+        assert_eq!(error_metrics.invalid_program_for_execution.0, 1);
         assert!(matches!(
             load_results,
             TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
@@ -1081,7 +1092,7 @@ mod tests {
         let loaded_accounts =
             load_accounts_with_excluded_features(tx, &accounts, &mut error_metrics, None);
 
-        assert_eq!(error_metrics.account_not_found, 0);
+        assert_eq!(error_metrics.account_not_found.0, 0);
         match &loaded_accounts {
             TransactionLoadResult::Loaded(loaded_transaction) => {
                 assert_eq!(loaded_transaction.accounts.len(), 3);
@@ -1131,12 +1142,12 @@ mod tests {
     #[test]
     fn test_instructions() {
         solana_logger::setup();
-        let instructions_key = solana_sdk::sysvar::instructions::id();
+        let instructions_key = solana_sdk_ids::sysvar::instructions::id();
         let keypair = Keypair::new();
         let instructions = vec![CompiledInstruction::new(1, &(), vec![0, 1])];
         let tx = Transaction::new_with_compiled_instructions(
             &[&keypair],
-            &[solana_sdk::pubkey::new_rand(), instructions_key],
+            &[solana_pubkey::new_rand(), instructions_key],
             Hash::default(),
             vec![native_loader::id()],
             instructions,
@@ -1188,7 +1199,7 @@ mod tests {
     #[test]
     fn test_accumulate_and_check_loaded_account_data_size() {
         let mut error_metrics = TransactionErrorMetrics::default();
-        let mut accumulated_data_size: u32 = 0;
+        let mut accumulated_data_size: Saturating<u32> = Saturating(0);
         let data_size: usize = 123;
         let requested_data_size_limit = NonZeroU32::new(data_size as u32).unwrap();
 
@@ -1200,7 +1211,7 @@ mod tests {
             &mut error_metrics
         )
         .is_ok());
-        assert_eq!(data_size as u32, accumulated_data_size);
+        assert_eq!(data_size as u32, accumulated_data_size.0);
 
         // fail - loading more data that would exceed limit
         let another_byte: usize = 1;
@@ -1361,7 +1372,7 @@ mod tests {
     #[test]
     fn test_construct_instructions_account() {
         let loaded_message = LoadedMessage {
-            message: Cow::Owned(solana_sdk::message::v0::Message::default()),
+            message: Cow::Owned(solana_message::v0::Message::default()),
             loaded_addresses: Cow::Owned(LoadedAddresses::default()),
             is_writable_account_cache: vec![false],
         };
@@ -2092,7 +2103,7 @@ mod tests {
             .insert(recipient, AccountSharedData::default());
         let mut account_loader = (&bank).into();
 
-        let tx = system_transaction::transfer(
+        let tx = transfer(
             &mint_keypair,
             &recipient,
             sol_to_lamports(1.),
@@ -2468,7 +2479,7 @@ mod tests {
         let program1 = program1_keypair.pubkey();
         let program2 = Pubkey::new_unique();
         let programdata2 = Pubkey::new_unique();
-        use solana_sdk::account_utils::StateMut;
+        use solana_account::state_traits::StateMut;
 
         let program2_size = std::mem::size_of::<UpgradeableLoaderState>() as u32;
         let mut program2_account = AccountSharedData::default();

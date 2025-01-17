@@ -18,7 +18,7 @@ solana-derivation-path = { workspace = true, optional = true }
 solana-pubkey = { workspace = true }
 solana-seed-derivable = { workspace = true, optional = true }
 solana-seed-phrase = { workspace = true }
-solana-signature = { workspace = true }
+solana-signature = { workspace = true, features = ["verify"] }
 solana-signer = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -33,6 +33,6 @@ tiny-bip39 = { workspace = true }
 seed-derivable = ["dep:solana-derivation-path", "dep:solana-seed-derivable", "dep:ed25519-dalek-bip32"]
 
 [package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
+targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
 all-features = true
 rustdoc-args = ["--cfg=docsrs"]

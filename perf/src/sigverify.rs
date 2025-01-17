@@ -12,7 +12,7 @@ use {
     },
     rayon::{prelude::*, ThreadPool},
     solana_hash::Hash,
-    solana_program::message::{MESSAGE_HEADER_LENGTH, MESSAGE_VERSION_PREFIX},
+    solana_message::{MESSAGE_HEADER_LENGTH, MESSAGE_VERSION_PREFIX},
     solana_pubkey::Pubkey,
     solana_rayon_threadlimit::get_thread_count,
     solana_short_vec::decode_shortu16_len,
@@ -20,13 +20,6 @@ use {
     std::{convert::TryFrom, mem::size_of},
 };
 
-// Representing key tKeYE4wtowRb8yRroZShTipE18YVnqwXjsSAoNsFU6g
-const TRACER_KEY_BYTES: [u8; 32] = [
-    13, 37, 180, 170, 252, 137, 36, 194, 183, 143, 161, 193, 201, 207, 211, 23, 189, 93, 33, 110,
-    155, 90, 30, 39, 116, 115, 238, 38, 126, 21, 232, 133,
-];
-const TRACER_KEY: Pubkey = Pubkey::new_from_array(TRACER_KEY_BYTES);
-const TRACER_KEY_OFFSET_IN_TRANSACTION: usize = 69;
 // Empirically derived to constrain max verify latency to ~8ms at lower packet counts
 pub const VERIFY_PACKET_CHUNK_SIZE: usize = 128;
 
@@ -153,24 +146,10 @@ pub fn count_packets_in_batches(batches: &[PacketBatch]) -> usize {
     batches.iter().map(|batch| batch.len()).sum()
 }
 
-pub fn count_valid_packets(
-    batches: &[PacketBatch],
-    mut process_valid_packet: impl FnMut(&Packet),
-) -> usize {
+pub fn count_valid_packets(batches: &[PacketBatch]) -> usize {
     batches
         .iter()
-        .map(|batch| {
-            batch
-                .iter()
-                .filter(|p| {
-                    let should_keep = !p.meta().discard();
-                    if should_keep {
-                        process_valid_packet(p);
-                    }
-                    should_keep
-                })
-                .count()
-        })
+        .map(|batch| batch.iter().filter(|p| !p.meta().discard()).count())
         .sum()
 }
 
@@ -308,21 +287,6 @@ fn do_get_packet_offsets(
     ))
 }
 
-pub fn check_for_tracer_packet(packet: &mut Packet) -> bool {
-    let first_pubkey_start: usize = TRACER_KEY_OFFSET_IN_TRANSACTION;
-    let Some(first_pubkey_end) = first_pubkey_start.checked_add(size_of::<Pubkey>()) else {
-        return false;
-    };
-    // Check for tracer pubkey
-    match packet.data(first_pubkey_start..first_pubkey_end) {
-        Some(pubkey) if pubkey == TRACER_KEY.as_ref() => {
-            packet.meta_mut().set_tracer(true);
-            true
-        }
-        _ => false,
-    }
-}
-
 fn get_packet_offsets(
     packet: &mut Packet,
     current_offset: usize,
@@ -415,7 +379,7 @@ fn check_for_simple_vote_transaction(
     if packet
         .data(instruction_program_id_start..instruction_program_id_end)
         .ok_or(PacketError::InvalidLen)?
-        == solana_program::vote::program::id().as_ref()
+        == solana_sdk_ids::vote::id().as_ref()
     {
         packet.meta_mut().flags |= PacketFlags::SIMPLE_VOTE_TX;
     }
@@ -515,28 +479,21 @@ pub fn shrink_batches(batches: &mut Vec<PacketBatch>) {
 pub fn ed25519_verify_cpu(batches: &mut [PacketBatch], reject_non_vote: bool, packet_count: usize) {
     debug!("CPU ECDSA for {}", packet_count);
     PAR_THREAD_POOL.install(|| {
-        batches
-            .par_iter_mut()
-            .flatten()
-            .collect::<Vec<&mut Packet>>()
-            .par_chunks_mut(VERIFY_PACKET_CHUNK_SIZE)
-            .for_each(|packets| {
-                for packet in packets.iter_mut() {
-                    if !packet.meta().discard() && !verify_packet(packet, reject_non_vote) {
-                        packet.meta_mut().set_discard(true);
-                    }
-                }
-            });
+        batches.par_iter_mut().flatten().for_each(|packet| {
+            if !packet.meta().discard() && !verify_packet(packet, reject_non_vote) {
+                packet.meta_mut().set_discard(true);
+            }
+        });
     });
 }
 
 pub fn ed25519_verify_disabled(batches: &mut [PacketBatch]) {
     let packet_count = count_packets_in_batches(batches);
     debug!("disabled ECDSA for {}", packet_count);
-    batches.into_par_iter().for_each(|batch| {
-        batch
-            .par_iter_mut()
-            .for_each(|p| p.meta_mut().set_discard(false))
+    PAR_THREAD_POOL.install(|| {
+        batches.par_iter_mut().flatten().for_each(|packet| {
+            packet.meta_mut().set_discard(false);
+        });
     });
 }
 
@@ -682,15 +639,11 @@ mod tests {
         bincode::{deserialize, serialize},
         curve25519_dalek::{edwards::CompressedEdwardsY, scalar::Scalar},
         rand::{thread_rng, Rng},
-        solana_program::{
-            instruction::CompiledInstruction,
-            message::{Message, MessageHeader},
-        },
-        solana_sdk::{
-            signature::{Keypair, Signer},
-            transaction::Transaction,
-        },
+        solana_keypair::Keypair,
+        solana_message::{compiled_instruction::CompiledInstruction, Message, MessageHeader},
         solana_signature::Signature,
+        solana_signer::Signer,
+        solana_transaction::Transaction,
         std::{
             iter::repeat_with,
             sync::atomic::{AtomicU64, Ordering},
@@ -1495,7 +1448,7 @@ mod tests {
             });
             start.sort_by(|a, b| a.data(..).cmp(&b.data(..)));
 
-            let packet_count = count_valid_packets(&batches, |_| ());
+            let packet_count = count_valid_packets(&batches);
             shrink_batches(&mut batches);
 
             //make sure all the non discarded packets are the same
@@ -1506,7 +1459,7 @@ mod tests {
                     .for_each(|p| end.push(p.clone()))
             });
             end.sort_by(|a, b| a.data(..).cmp(&b.data(..)));
-            let packet_count2 = count_valid_packets(&batches, |_| ());
+            let packet_count2 = count_valid_packets(&batches);
             assert_eq!(packet_count, packet_count2);
             assert_eq!(start, end);
         }
@@ -1670,13 +1623,13 @@ mod tests {
                 PACKETS_PER_BATCH,
             );
             assert_eq!(batches.len(), BATCH_COUNT);
-            assert_eq!(count_valid_packets(&batches, |_| ()), PACKET_COUNT);
+            assert_eq!(count_valid_packets(&batches), PACKET_COUNT);
             batches.iter_mut().enumerate().for_each(|(i, b)| {
                 b.iter_mut()
                     .enumerate()
                     .for_each(|(j, p)| p.meta_mut().set_discard(set_discard(i, j)))
             });
-            assert_eq!(count_valid_packets(&batches, |_| ()), *expect_valid_packets);
+            assert_eq!(count_valid_packets(&batches), *expect_valid_packets);
             debug!("show valid packets for case {}", i);
             batches.iter_mut().enumerate().for_each(|(i, b)| {
                 b.iter_mut().enumerate().for_each(|(j, p)| {
@@ -1690,7 +1643,7 @@ mod tests {
             let shrunken_batch_count = batches.len();
             debug!("shrunk batch test {} count: {}", i, shrunken_batch_count);
             assert_eq!(shrunken_batch_count, *expect_batch_count);
-            assert_eq!(count_valid_packets(&batches, |_| ()), *expect_valid_packets);
+            assert_eq!(count_valid_packets(&batches), *expect_valid_packets);
         }
     }
 }

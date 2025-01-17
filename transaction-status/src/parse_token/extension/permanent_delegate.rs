@@ -19,7 +19,7 @@ pub(in crate::parse_token) fn parse_initialize_permanent_delegate_instruction(
 mod test {
     use {
         super::*,
-        solana_sdk::pubkey::Pubkey,
+        solana_pubkey::Pubkey,
         spl_token_2022::{instruction::*, solana_program::message::Message},
     };
 

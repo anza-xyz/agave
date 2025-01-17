@@ -1,14 +1,12 @@
 #[cfg(test)]
-use crate::contact_info::{get_quic_socket, sanitize_socket};
+use crate::contact_info::{
+    get_quic_socket, sanitize_quic_offset, sanitize_socket, ContactInfo, Error, Protocol,
+    SOCKET_ADDR_UNSPECIFIED,
+};
 use {
-    crate::{
-        contact_info::{
-            sanitize_quic_offset, ContactInfo, Error, Protocol, SOCKET_ADDR_UNSPECIFIED,
-        },
-        crds_data::MAX_WALLCLOCK,
-    },
+    crate::crds_data::MAX_WALLCLOCK,
+    solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
-    solana_sdk::pubkey::Pubkey,
     solana_streamer::socket::SocketAddrSpace,
     std::net::{IpAddr, SocketAddr},
 };
@@ -56,31 +54,31 @@ impl Sanitize for LegacyContactInfo {
 macro_rules! get_socket {
     ($name:ident) => {
         #[cfg(test)]
-        pub(crate) fn $name(&self) -> Result<SocketAddr, Error> {
-            let socket = &self.$name;
-            sanitize_socket(socket)?;
-            Ok(socket).copied()
+        pub(crate) fn $name(&self) -> Option<SocketAddr> {
+            let socket = self.$name;
+            sanitize_socket(&socket).ok()?;
+            Some(socket)
         }
     };
     ($name:ident, $quic:ident) => {
         #[cfg(test)]
-        pub(crate) fn $name(&self, protocol: Protocol) -> Result<SocketAddr, Error> {
+        pub(crate) fn $name(&self, protocol: Protocol) -> Option<SocketAddr> {
             let socket = match protocol {
-                Protocol::QUIC => &self.$quic,
-                Protocol::UDP => &self.$name,
+                Protocol::QUIC => self.$quic,
+                Protocol::UDP => self.$name,
             };
-            sanitize_socket(socket)?;
-            Ok(socket).copied()
+            sanitize_socket(&socket).ok()?;
+            Some(socket)
         }
     };
     (@quic $name:ident) => {
         #[cfg(test)]
-        pub(crate) fn $name(&self, protocol: Protocol) -> Result<SocketAddr, Error> {
-            let socket = &self.$name;
-            sanitize_socket(socket)?;
+        pub(crate) fn $name(&self, protocol: Protocol) -> Option<SocketAddr> {
+            let socket = self.$name;
+            sanitize_socket(&socket).ok()?;
             match protocol {
-                Protocol::QUIC => get_quic_socket(socket),
-                Protocol::UDP => Ok(socket).copied(),
+                Protocol::QUIC => get_quic_socket(&socket).ok(),
+                Protocol::UDP => Some(socket),
             }
         }
     };
@@ -140,10 +138,10 @@ impl LegacyContactInfo {
         self.shred_version
     }
 
-    pub(crate) fn gossip(&self) -> Result<SocketAddr, Error> {
-        let socket = &self.gossip;
-        crate::contact_info::sanitize_socket(socket)?;
-        Ok(socket).copied()
+    pub(crate) fn gossip(&self) -> Option<SocketAddr> {
+        let socket = self.gossip;
+        crate::contact_info::sanitize_socket(&socket).ok()?;
+        Some(socket)
     }
 
     get_socket!(tvu, tvu_quic);
@@ -169,27 +167,23 @@ impl LegacyContactInfo {
     }
 }
 
+#[cfg(test)]
 impl TryFrom<&ContactInfo> for LegacyContactInfo {
     type Error = Error;
 
     fn try_from(node: &ContactInfo) -> Result<Self, Self::Error> {
         macro_rules! unwrap_socket {
             ($name:ident) => {
-                node.$name().ok().unwrap_or(SOCKET_ADDR_UNSPECIFIED)
+                node.$name().unwrap_or(SOCKET_ADDR_UNSPECIFIED)
             };
             ($name:ident, $protocol:expr) => {
-                node.$name($protocol)
-                    .ok()
-                    .unwrap_or(SOCKET_ADDR_UNSPECIFIED)
+                node.$name($protocol).unwrap_or(SOCKET_ADDR_UNSPECIFIED)
             };
         }
+        sanitize_quic_offset(&node.tpu(Protocol::UDP), &node.tpu(Protocol::QUIC))?;
         sanitize_quic_offset(
-            &node.tpu(Protocol::UDP).ok(),
-            &node.tpu(Protocol::QUIC).ok(),
-        )?;
-        sanitize_quic_offset(
-            &node.tpu_forwards(Protocol::UDP).ok(),
-            &node.tpu_forwards(Protocol::QUIC).ok(),
+            &node.tpu_forwards(Protocol::UDP),
+            &node.tpu_forwards(Protocol::QUIC),
         )?;
         Ok(Self {
             id: *node.pubkey(),

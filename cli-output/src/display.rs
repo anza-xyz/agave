@@ -4,20 +4,18 @@ use {
     chrono::{DateTime, Local, SecondsFormat, TimeZone, Utc},
     console::style,
     indicatif::{ProgressBar, ProgressStyle},
+    solana_bincode::limited_deserialize,
     solana_cli_config::SettingType,
-    solana_sdk::{
-        clock::UnixTimestamp,
-        hash::Hash,
-        instruction::CompiledInstruction,
-        message::v0::MessageAddressTableLookup,
-        native_token::lamports_to_sol,
-        program_utils::limited_deserialize,
-        pubkey::Pubkey,
-        reserved_account_keys::ReservedAccountKeys,
-        signature::Signature,
-        stake,
-        transaction::{TransactionError, TransactionVersion, VersionedTransaction},
-    },
+    solana_clock::UnixTimestamp,
+    solana_hash::Hash,
+    solana_message::{compiled_instruction::CompiledInstruction, v0::MessageAddressTableLookup},
+    solana_native_token::lamports_to_sol,
+    solana_program::stake,
+    solana_pubkey::Pubkey,
+    solana_reserved_account_keys::ReservedAccountKeys,
+    solana_signature::Signature,
+    solana_transaction::versioned::{TransactionVersion, VersionedTransaction},
+    solana_transaction_error::TransactionError,
     solana_transaction_status::{
         Rewards, UiReturnDataEncoding, UiTransactionReturnData, UiTransactionStatusMeta,
     },
@@ -440,24 +438,29 @@ fn write_instruction<'a, W: io::Write>(
     let mut raw = true;
     if let AccountKeyType::Known(program_pubkey) = program_pubkey {
         if program_pubkey == &solana_vote_program::id() {
-            if let Ok(vote_instruction) = limited_deserialize::<
-                solana_vote_program::vote_instruction::VoteInstruction,
-            >(&instruction.data)
+            if let Ok(vote_instruction) =
+                limited_deserialize::<solana_vote_program::vote_instruction::VoteInstruction>(
+                    &instruction.data,
+                    solana_packet::PACKET_DATA_SIZE as u64,
+                )
             {
                 writeln!(w, "{prefix}  {vote_instruction:?}")?;
                 raw = false;
             }
         } else if program_pubkey == &stake::program::id() {
-            if let Ok(stake_instruction) =
-                limited_deserialize::<stake::instruction::StakeInstruction>(&instruction.data)
-            {
+            if let Ok(stake_instruction) = limited_deserialize::<stake::instruction::StakeInstruction>(
+                &instruction.data,
+                solana_packet::PACKET_DATA_SIZE as u64,
+            ) {
                 writeln!(w, "{prefix}  {stake_instruction:?}")?;
                 raw = false;
             }
-        } else if program_pubkey == &solana_sdk::system_program::id() {
-            if let Ok(system_instruction) = limited_deserialize::<
-                solana_sdk::system_instruction::SystemInstruction,
-            >(&instruction.data)
+        } else if program_pubkey == &solana_sdk_ids::system_program::id() {
+            if let Ok(system_instruction) =
+                limited_deserialize::<solana_system_interface::instruction::SystemInstruction>(
+                    &instruction.data,
+                    solana_packet::PACKET_DATA_SIZE as u64,
+                )
             {
                 writeln!(w, "{prefix}  {system_instruction:?}")?;
                 raw = false;
@@ -723,16 +726,15 @@ pub fn unix_timestamp_to_string(unix_timestamp: UnixTimestamp) -> String {
 mod test {
     use {
         super::*,
-        solana_sdk::{
-            message::{
-                v0::{self, LoadedAddresses},
-                Message as LegacyMessage, MessageHeader, VersionedMessage,
-            },
-            pubkey::Pubkey,
-            signature::{Keypair, Signer},
-            transaction::Transaction,
-            transaction_context::TransactionReturnData,
+        solana_keypair::Keypair,
+        solana_message::{
+            v0::{self, LoadedAddresses},
+            Message as LegacyMessage, MessageHeader, VersionedMessage,
         },
+        solana_pubkey::Pubkey,
+        solana_signer::Signer,
+        solana_transaction::Transaction,
+        solana_transaction_context::TransactionReturnData,
         solana_transaction_status::{Reward, RewardType, TransactionStatusMeta},
         std::io::BufWriter,
     };

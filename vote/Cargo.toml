@@ -15,14 +15,24 @@ log = { workspace = true }
 rand = { workspace = true, optional = true }
 serde = { workspace = true, features = ["rc"] }
 serde_derive = { workspace = true }
+solana-account = { workspace = true, features = ["bincode"] }
+solana-bincode = { workspace = true }
+solana-clock = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
 solana-frozen-abi-macro = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
-solana-sdk = { workspace = true }
+solana-hash = { workspace = true }
+solana-instruction = { workspace = true }
+solana-packet = { workspace = true }
+solana-program = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-signature = { workspace = true }
 solana-svm-transaction = { workspace = true }
+solana-transaction = { workspace = true }
 thiserror = { workspace = true }
 
 [lib]
@@ -32,17 +42,17 @@ name = "solana_vote"
 [dev-dependencies]
 bincode = { workspace = true }
 rand = { workspace = true }
+solana-keypair = { workspace = true }
+solana-sha256-hasher = { workspace = true }
+solana-signer = { workspace = true }
+solana-transaction = { workspace = true, features = ["bincode"] }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
 dev-context-only-utils = ["dep:rand"]
-frozen-abi = [
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
-    "solana-sdk/frozen-abi",
-]
+frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
 
 [lints]
 workspace = true

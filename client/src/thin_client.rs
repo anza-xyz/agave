@@ -5,24 +5,23 @@
 #[allow(deprecated)]
 use {
     crate::connection_cache::{dispatch, ConnectionCache},
+    solana_account::Account,
+    solana_client_traits::{AsyncClient, Client, SyncClient},
+    solana_commitment_config::CommitmentConfig,
+    solana_epoch_info::EpochInfo,
+    solana_hash::Hash,
+    solana_instruction::Instruction,
+    solana_keypair::Keypair,
+    solana_message::Message,
+    solana_pubkey::Pubkey,
     solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::config::RpcProgramAccountsConfig,
-    solana_sdk::{
-        account::Account,
-        client::{AsyncClient, Client, SyncClient},
-        commitment_config::CommitmentConfig,
-        epoch_info::EpochInfo,
-        hash::Hash,
-        instruction::Instruction,
-        message::Message,
-        pubkey::Pubkey,
-        signature::{Keypair, Signature},
-        signers::Signers,
-        transaction::{self, Transaction, VersionedTransaction},
-        transport::Result as TransportResult,
-    },
+    solana_signature::Signature,
+    solana_signer::signers::Signers,
     solana_thin_client::thin_client::ThinClient as BackendThinClient,
+    solana_transaction::{versioned::VersionedTransaction, Transaction},
+    solana_transaction_error::{TransactionResult, TransportResult},
     solana_udp_client::{UdpConfig, UdpConnectionManager, UdpPool},
     std::{net::SocketAddr, sync::Arc, time::Duration},
 };
@@ -214,13 +213,13 @@ impl SyncClient for ThinClient {
     dispatch!(fn get_signature_status(
         &self,
         signature: &Signature
-    ) -> TransportResult<Option<transaction::Result<()>>>);
+    ) -> TransportResult<Option<TransactionResult<()>>>);
 
     dispatch!(fn get_signature_status_with_commitment(
         &self,
         signature: &Signature,
         commitment_config: CommitmentConfig
-    ) -> TransportResult<Option<transaction::Result<()>>>);
+    ) -> TransportResult<Option<TransactionResult<()>>>);
 
     dispatch!(fn get_slot(&self) -> TransportResult<u64>);
 

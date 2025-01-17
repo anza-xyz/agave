@@ -1,10 +1,8 @@
 use {
-    crate::vote_transaction::VoteTransaction,
-    solana_sdk::{
-        hash::Hash, program_utils::limited_deserialize, pubkey::Pubkey, signature::Signature,
-        transaction::Transaction, vote::instruction::VoteInstruction,
-    },
-    solana_svm_transaction::svm_transaction::SVMTransaction,
+    crate::vote_transaction::VoteTransaction, solana_bincode::limited_deserialize,
+    solana_hash::Hash, solana_program::vote::instruction::VoteInstruction, solana_pubkey::Pubkey,
+    solana_signature::Signature, solana_svm_transaction::svm_transaction::SVMTransaction,
+    solana_transaction::Transaction,
 };
 
 pub type ParsedVote = (Pubkey, VoteTransaction, Option<Hash>, Signature);
@@ -13,7 +11,7 @@ pub type ParsedVote = (Pubkey, VoteTransaction, Option<Hash>, Signature);
 pub fn parse_sanitized_vote_transaction(tx: &impl SVMTransaction) -> Option<ParsedVote> {
     // Check first instruction for a vote
     let (program_id, first_instruction) = tx.program_instructions_iter().next()?;
-    if !solana_sdk::vote::program::check_id(program_id) {
+    if !solana_sdk_ids::vote::check_id(program_id) {
         return None;
     }
     let first_account = usize::from(*first_instruction.accounts.first()?);
@@ -30,7 +28,7 @@ pub fn parse_vote_transaction(tx: &Transaction) -> Option<ParsedVote> {
     let first_instruction = message.instructions.first()?;
     let program_id_index = usize::from(first_instruction.program_id_index);
     let program_id = message.account_keys.get(program_id_index)?;
-    if !solana_sdk::vote::program::check_id(program_id) {
+    if !solana_sdk_ids::vote::check_id(program_id) {
         return None;
     }
     let first_account = usize::from(*first_instruction.accounts.first()?);
@@ -43,7 +41,12 @@ pub fn parse_vote_transaction(tx: &Transaction) -> Option<ParsedVote> {
 fn parse_vote_instruction_data(
     vote_instruction_data: &[u8],
 ) -> Option<(VoteTransaction, Option<Hash>)> {
-    match limited_deserialize(vote_instruction_data).ok()? {
+    match limited_deserialize(
+        vote_instruction_data,
+        solana_packet::PACKET_DATA_SIZE as u64,
+    )
+    .ok()?
+    {
         VoteInstruction::Vote(vote) => Some((VoteTransaction::from(vote), None)),
         VoteInstruction::VoteSwitch(vote, hash) => Some((VoteTransaction::from(vote), Some(hash))),
         VoteInstruction::UpdateVoteState(vote_state_update) => {
@@ -77,12 +80,11 @@ fn parse_vote_instruction_data(
 mod test {
     use {
         super::*,
-        solana_sdk::{
-            clock::Slot,
-            hash::hash,
-            signature::{Keypair, Signer},
-            vote::{instruction as vote_instruction, state::Vote},
-        },
+        solana_clock::Slot,
+        solana_keypair::Keypair,
+        solana_program::vote::{instruction as vote_instruction, state::Vote},
+        solana_sha256_hasher::hash,
+        solana_signer::Signer,
     };
 
     // Reimplemented locally from Vote program.

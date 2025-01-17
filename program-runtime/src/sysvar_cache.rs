@@ -1,18 +1,20 @@
 #[allow(deprecated)]
-use solana_sdk::sysvar::{fees::Fees, recent_blockhashes::RecentBlockhashes};
+use solana_sysvar::{fees::Fees, recent_blockhashes::RecentBlockhashes};
 use {
     crate::invoke_context::InvokeContext,
     serde::de::DeserializeOwned,
-    solana_sdk::{
-        instruction::InstructionError,
-        pubkey::Pubkey,
-        sysvar::{
-            self, clock::Clock, epoch_rewards::EpochRewards, epoch_schedule::EpochSchedule,
-            last_restart_slot::LastRestartSlot, rent::Rent, slot_hashes::SlotHashes,
-            stake_history::StakeHistory, Sysvar, SysvarId,
-        },
-        transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
-    },
+    solana_clock::Clock,
+    solana_epoch_rewards::EpochRewards,
+    solana_epoch_schedule::EpochSchedule,
+    solana_instruction::error::InstructionError,
+    solana_last_restart_slot::LastRestartSlot,
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
+    solana_sdk_ids::sysvar,
+    solana_slot_hashes::SlotHashes,
+    solana_sysvar::{stake_history::StakeHistory, Sysvar},
+    solana_sysvar_id::SysvarId,
+    solana_transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
     solana_type_overrides::sync::Arc,
 };
 

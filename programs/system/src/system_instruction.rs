@@ -1,22 +1,25 @@
 use {
+    solana_instruction::error::InstructionError,
     solana_log_collector::ic_msg,
+    solana_nonce::{
+        self as nonce,
+        state::{DurableNonce, State},
+        versions::{AuthorizeNonceError, Versions},
+    },
     solana_program_runtime::invoke_context::InvokeContext,
-    solana_sdk::{
-        instruction::{checked_add, InstructionError},
-        nonce::{
-            self,
-            state::{AuthorizeNonceError, DurableNonce, Versions},
-            State,
-        },
-        pubkey::Pubkey,
-        system_instruction::SystemError,
-        sysvar::rent::Rent,
-        transaction_context::{
-            BorrowedAccount, IndexOfAccount, InstructionContext, TransactionContext,
-        },
+    solana_pubkey::Pubkey,
+    solana_system_interface::error::SystemError,
+    solana_sysvar::rent::Rent,
+    solana_transaction_context::{
+        BorrowedAccount, IndexOfAccount, InstructionContext, TransactionContext,
     },
     std::collections::HashSet,
 };
+
+/// Addition that returns [`InstructionError::InsufficientFunds`] on overflow.
+fn checked_add(a: u64, b: u64) -> Result<u64, InstructionError> {
+    a.checked_add(b).ok_or(InstructionError::InsufficientFunds)
+}
 
 pub fn advance_nonce_account(
     account: &mut BorrowedAccount,
@@ -73,7 +76,7 @@ pub fn advance_nonce_account(
     }
 }
 
-pub fn withdraw_nonce_account(
+pub(crate) fn withdraw_nonce_account(
     from_account_index: IndexOfAccount,
     lamports: u64,
     to_account_index: IndexOfAccount,
@@ -155,7 +158,7 @@ pub fn withdraw_nonce_account(
     Ok(())
 }
 
-pub fn initialize_nonce_account(
+pub(crate) fn initialize_nonce_account(
     account: &mut BorrowedAccount,
     nonce_authority: &Pubkey,
     rent: &Rent,
@@ -205,7 +208,7 @@ pub fn initialize_nonce_account(
     }
 }
 
-pub fn authorize_nonce_account(
+pub(crate) fn authorize_nonce_account(
     account: &mut BorrowedAccount,
     nonce_authority: &Pubkey,
     signers: &HashSet<Pubkey>,
@@ -248,15 +251,13 @@ mod test {
     use {
         super::*,
         assert_matches::assert_matches,
+        solana_account::AccountSharedData,
+        solana_nonce::{self as nonce, state::State},
         solana_program_runtime::with_mock_invoke_context,
-        solana_sdk::{
-            account::AccountSharedData,
-            hash::hash,
-            nonce::{self, State},
-            nonce_account::{create_account, verify_nonce_account},
-            system_program,
-            transaction_context::InstructionAccount,
-        },
+        solana_sdk::nonce_account::{create_account, verify_nonce_account},
+        solana_sdk_ids::system_program,
+        solana_sha256_hasher::hash,
+        solana_transaction_context::InstructionAccount,
     };
 
     pub const NONCE_ACCOUNT_INDEX: IndexOfAccount = 0;

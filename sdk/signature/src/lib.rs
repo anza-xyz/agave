@@ -167,7 +167,7 @@ mod tests {
     use {
         super::*,
         serde_derive::{Deserialize, Serialize},
-        solana_program::pubkey::Pubkey,
+        solana_pubkey::Pubkey,
     };
 
     #[test]

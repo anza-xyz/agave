@@ -65,8 +65,8 @@ pub enum UpgradeableLoaderInstruction {
     /// account.
     ///
     /// # Account references
-    ///   0. `[signer]` The payer account that will pay to create the ProgramData
-    ///      account.
+    ///   0. `[writable, signer]` The payer account that will pay to create the
+    ///      ProgramData account.
     ///   1. `[writable]` The uninitialized ProgramData account.
     ///   2. `[writable]` The uninitialized Program account.
     ///   3. `[writable]` The Buffer account where the program data has been
@@ -141,8 +141,8 @@ pub enum UpgradeableLoaderInstruction {
     ///   1. `[writable]` The ProgramData account's associated Program account.
     ///   2. `[]` System program (`solana_sdk::system_program::id()`), optional, used to transfer
     ///      lamports from the payer to the ProgramData account.
-    ///   3. `[signer]` The payer account, optional, that will pay necessary rent exemption costs
-    ///      for the increased storage size.
+    ///   3. `[writable, signer]` The payer account, optional, that will pay
+    ///       necessary rent exemption costs for the increased storage size.
     ExtendProgram {
         /// Number of bytes to extend the program data.
         additional_bytes: u32,

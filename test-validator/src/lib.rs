@@ -13,7 +13,7 @@ use {
     solana_core::{
         admin_rpc_post_init::AdminRpcRequestMetadataPostInit,
         consensus::tower_storage::TowerStorage,
-        validator::{Validator, ValidatorConfig, ValidatorStartProgress},
+        validator::{Validator, ValidatorConfig, ValidatorStartProgress, ValidatorTpuConfig},
     },
     solana_feature_set::FEATURE_NAMES,
     solana_geyser_plugin_manager::{
@@ -56,9 +56,7 @@ use {
         signature::{read_keypair_file, write_keypair_file, Keypair, Signer},
     },
     solana_streamer::socket::SocketAddrSpace,
-    solana_tpu_client::tpu_client::{
-        DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_ENABLE_UDP, DEFAULT_TPU_USE_QUIC,
-    },
+    solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     std::{
         collections::{HashMap, HashSet},
         ffi::OsStr,
@@ -1045,10 +1043,7 @@ impl TestValidator {
             rpc_to_plugin_manager_receiver,
             config.start_progress.clone(),
             socket_addr_space,
-            DEFAULT_TPU_USE_QUIC,
-            DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            config.tpu_enable_udp,
-            32, // max connections per IpAddr per minute for test
+            ValidatorTpuConfig::new_for_tests(config.tpu_enable_udp),
             config.admin_rpc_service_post_init.clone(),
         )?);
 

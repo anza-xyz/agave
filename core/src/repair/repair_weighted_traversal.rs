@@ -38,7 +38,7 @@ impl<'a> RepairWeightTraversal<'a> {
     }
 }
 
-impl<'a> Iterator for RepairWeightTraversal<'a> {
+impl Iterator for RepairWeightTraversal<'_> {
     type Item = Visit;
     fn next(&mut self) -> Option<Self::Item> {
         let next = self.pending.pop();

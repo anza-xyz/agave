@@ -24,6 +24,7 @@ pub mod errors;
 pub mod pod;
 mod range_proof;
 mod sigma_proofs;
+#[cfg(not(target_os = "solana"))]
 mod transcript;
 pub mod zk_elgamal_proof_program;
 

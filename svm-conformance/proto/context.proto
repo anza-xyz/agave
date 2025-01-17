@@ -1,8 +1,6 @@
 syntax = "proto3";
 package org.solana.sealevel.v1;
 
-import "sysvar.proto";
-
 // A set of feature flags.
 message FeatureSet {
   // Every item in this list marks an enabled feature.  The value of
@@ -55,14 +53,9 @@ message EpochContext {
   FeatureSet features = 1;
 }
 
-
 // SlotContext includes context scoped to a block.
 // On "real" ledgers, it is created during the slot boundary.
 message SlotContext {
-  repeated bytes recent_block_hashes = 1;
-  // public key for the leader
-  bytes leader = 2;
   // Slot number
-  fixed64 slot = 3;
-  SysvarCache sysvar_cache = 4;
+  fixed64 slot = 1;
 }

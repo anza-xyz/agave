@@ -261,7 +261,7 @@ pub struct CreateVoteAccountConfig<'a> {
     pub with_seed: Option<(&'a Pubkey, &'a str)>,
 }
 
-impl<'a> Default for CreateVoteAccountConfig<'a> {
+impl Default for CreateVoteAccountConfig<'_> {
     fn default() -> Self {
         Self {
             space: VoteStateVersions::vote_state_size_of(false) as u64,

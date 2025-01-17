@@ -1,5 +1,7 @@
 #[cfg(not(target_os = "solana"))]
 use crate::range_proof::errors::RangeProofGenerationError;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
 use {
     crate::{
         errors::ElGamalError, range_proof::errors::RangeProofVerificationError,
@@ -75,5 +77,12 @@ impl From<PercentageWithCapProofVerificationError> for ProofVerificationError {
 impl From<ValidityProofVerificationError> for ProofVerificationError {
     fn from(err: ValidityProofVerificationError) -> Self {
         Self::SigmaProof(SigmaProofType::ValidityProof, err.0)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl From<ProofGenerationError> for JsValue {
+    fn from(err: ProofGenerationError) -> Self {
+        js_sys::Error::new(&err.to_string()).into()
     }
 }

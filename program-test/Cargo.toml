@@ -30,11 +30,11 @@ solana-log-collector = { workspace = true }
 solana-logger = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-runtime = { workspace = true }
+solana-sbpf = { workspace = true }
 solana-sdk = { workspace = true }
 solana-svm = { workspace = true }
 solana-timings = { workspace = true }
 solana-vote-program = { workspace = true }
-solana_rbpf = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 

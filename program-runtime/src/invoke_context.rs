@@ -7,38 +7,33 @@ use {
         stable_log,
         sysvar_cache::SysvarCache,
     },
+    solana_account::{create_account_shared_data_for_test, AccountSharedData},
+    solana_clock::Slot,
     solana_compute_budget::compute_budget::ComputeBudget,
+    solana_epoch_schedule::EpochSchedule,
     solana_feature_set::{
         lift_cpi_caller_restriction, move_precompile_verification_to_svm,
         remove_accounts_executable_flag_checks, FeatureSet,
     },
+    solana_hash::Hash,
+    solana_instruction::{error::InstructionError, AccountMeta},
     solana_log_collector::{ic_msg, LogCollector},
     solana_measure::measure::Measure,
-    solana_rbpf::{
+    solana_precompiles::Precompile,
+    solana_pubkey::Pubkey,
+    solana_sbpf::{
         ebpf::MM_HEAP_START,
         error::{EbpfError, ProgramResult},
         memory_region::MemoryMapping,
         program::{BuiltinFunction, SBPFVersion},
         vm::{Config, ContextObject, EbpfVm},
     },
-    solana_sdk::{
-        account::{create_account_shared_data_for_test, AccountSharedData},
-        bpf_loader_deprecated,
-        clock::Slot,
-        epoch_schedule::EpochSchedule,
-        hash::Hash,
-        instruction::{AccountMeta, InstructionError},
-        native_loader,
-        precompiles::Precompile,
-        pubkey::Pubkey,
-        saturating_add_assign,
-        stable_layout::stable_instruction::StableInstruction,
-        sysvar,
-        transaction_context::{
-            IndexOfAccount, InstructionAccount, TransactionAccount, TransactionContext,
-        },
-    },
+    solana_sdk_ids::{bpf_loader_deprecated, native_loader, sysvar},
+    solana_stable_layout::stable_instruction::StableInstruction,
     solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
+    solana_transaction_context::{
+        IndexOfAccount, InstructionAccount, TransactionAccount, TransactionContext,
+    },
     solana_type_overrides::sync::{atomic::Ordering, Arc},
     std::{
         alloc::Layout,
@@ -54,7 +49,7 @@ pub type BuiltinFunctionWithContext = BuiltinFunction<InvokeContext<'static>>;
 #[macro_export]
 macro_rules! declare_process_instruction {
     ($process_instruction:ident, $cu_to_consume:expr, |$invoke_context:ident| $inner:tt) => {
-        $crate::solana_rbpf::declare_builtin_function!(
+        $crate::solana_sbpf::declare_builtin_function!(
             $process_instruction,
             fn rust(
                 invoke_context: &mut $crate::invoke_context::InvokeContext,
@@ -63,11 +58,11 @@ macro_rules! declare_process_instruction {
                 _arg2: u64,
                 _arg3: u64,
                 _arg4: u64,
-                _memory_mapping: &mut $crate::solana_rbpf::memory_region::MemoryMapping,
+                _memory_mapping: &mut $crate::solana_sbpf::memory_region::MemoryMapping,
             ) -> std::result::Result<u64, Box<dyn std::error::Error>> {
                 fn process_instruction_inner(
                     $invoke_context: &mut $crate::invoke_context::InvokeContext,
-                ) -> std::result::Result<(), solana_sdk::instruction::InstructionError>
+                ) -> std::result::Result<(), $crate::__private::InstructionError>
                     $inner
 
                 let consumption_result = if $cu_to_consume > 0
@@ -88,7 +83,7 @@ macro_rules! declare_process_instruction {
     };
 }
 
-impl<'a> ContextObject for InvokeContext<'a> {
+impl ContextObject for InvokeContext<'_> {
     fn trace(&mut self, state: [u64; 12]) {
         self.syscall_context
             .last_mut()
@@ -292,7 +287,7 @@ impl<'a> InvokeContext<'a> {
     }
 
     /// Pop a stack frame from the invocation stack
-    pub fn pop(&mut self) -> Result<(), InstructionError> {
+    fn pop(&mut self) -> Result<(), InstructionError> {
         if let Some(Some(syscall_context)) = self.syscall_context.pop() {
             self.traces.push(syscall_context.trace_log);
         }
@@ -300,7 +295,7 @@ impl<'a> InvokeContext<'a> {
     }
 
     /// Current height of the invocation stack, top level instructions are height
-    /// `solana_sdk::instruction::TRANSACTION_LEVEL_STACK_HEIGHT`
+    /// `solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT`
     pub fn get_stack_height(&self) -> usize {
         self.transaction_context
             .get_instruction_context_stack_height()
@@ -541,7 +536,7 @@ impl<'a> InvokeContext<'a> {
             .ok_or(InstructionError::UnsupportedProgramId)?;
         let function = match &entry.program {
             ProgramCacheEntryType::Builtin(program) => program
-                .get_function_registry()
+                .get_function_registry(SBPFVersion::V0)
                 .lookup_by_key(ENTRYPOINT_KEY)
                 .map(|(_name, function)| function),
             _ => None,
@@ -560,13 +555,13 @@ impl<'a> InvokeContext<'a> {
         // For now, only built-ins are invoked from here, so the VM and its Config are irrelevant.
         let mock_config = Config::default();
         let empty_memory_mapping =
-            MemoryMapping::new(Vec::new(), &mock_config, &SBPFVersion::V1).unwrap();
+            MemoryMapping::new(Vec::new(), &mock_config, SBPFVersion::V0).unwrap();
         let mut vm = EbpfVm::new(
             self.program_cache_for_tx_batch
                 .environments
                 .program_runtime_v2
                 .clone(),
-            &SBPFVersion::V1,
+            SBPFVersion::V0,
             // Removes lifetime tracking
             unsafe { std::mem::transmute::<&mut InvokeContext, &mut InvokeContext>(self) },
             empty_memory_mapping,
@@ -601,13 +596,10 @@ impl<'a> InvokeContext<'a> {
             return Err(InstructionError::BuiltinProgramsMustConsumeComputeUnits);
         }
 
-        saturating_add_assign!(
-            timings
-                .execute_accessories
-                .process_instructions
-                .process_executable_chain_us,
-            process_executable_chain_time.end_as_us()
-        );
+        timings
+            .execute_accessories
+            .process_instructions
+            .process_executable_chain_us += process_executable_chain_time.end_as_us();
         result
     }
 
@@ -727,12 +719,9 @@ macro_rules! with_mock_invoke_context {
             solana_compute_budget::compute_budget::ComputeBudget,
             solana_feature_set::FeatureSet,
             solana_log_collector::LogCollector,
-            solana_sdk::{
-                account::ReadableAccount, hash::Hash, sysvar::rent::Rent,
-                transaction_context::TransactionContext,
-            },
             solana_type_overrides::sync::Arc,
             $crate::{
+                __private::{Hash, ReadableAccount, Rent, TransactionContext},
                 invoke_context::{EnvironmentConfig, InvokeContext},
                 loaded_programs::ProgramCacheForTxBatch,
                 sysvar_cache::SysvarCache,
@@ -864,8 +853,10 @@ mod tests {
     use {
         super::*,
         serde::{Deserialize, Serialize},
+        solana_account::WritableAccount,
         solana_compute_budget::compute_budget_limits,
-        solana_sdk::{account::WritableAccount, instruction::Instruction, rent::Rent},
+        solana_instruction::Instruction,
+        solana_rent::Rent,
     };
 
     #[derive(Debug, Serialize, Deserialize)]
@@ -997,9 +988,9 @@ mod tests {
         let mut transaction_accounts = vec![];
         let mut instruction_accounts = vec![];
         for index in 0..one_more_than_max_depth {
-            invoke_stack.push(solana_sdk::pubkey::new_rand());
+            invoke_stack.push(solana_pubkey::new_rand());
             transaction_accounts.push((
-                solana_sdk::pubkey::new_rand(),
+                solana_pubkey::new_rand(),
                 AccountSharedData::new(index as u64, 1, invoke_stack.get(index).unwrap()),
             ));
             instruction_accounts.push(InstructionAccount {
@@ -1013,7 +1004,7 @@ mod tests {
         for (index, program_id) in invoke_stack.iter().enumerate() {
             transaction_accounts.push((
                 *program_id,
-                AccountSharedData::new(1, 1, &solana_sdk::pubkey::Pubkey::default()),
+                AccountSharedData::new(1, 1, &solana_pubkey::Pubkey::default()),
             ));
             instruction_accounts.push(InstructionAccount {
                 index_in_transaction: index as IndexOfAccount,
@@ -1063,19 +1054,19 @@ mod tests {
 
     #[test]
     fn test_process_instruction() {
-        let callee_program_id = solana_sdk::pubkey::new_rand();
+        let callee_program_id = solana_pubkey::new_rand();
         let owned_account = AccountSharedData::new(42, 1, &callee_program_id);
-        let not_owned_account = AccountSharedData::new(84, 1, &solana_sdk::pubkey::new_rand());
-        let readonly_account = AccountSharedData::new(168, 1, &solana_sdk::pubkey::new_rand());
+        let not_owned_account = AccountSharedData::new(84, 1, &solana_pubkey::new_rand());
+        let readonly_account = AccountSharedData::new(168, 1, &solana_pubkey::new_rand());
         let loader_account = AccountSharedData::new(0, 1, &native_loader::id());
         let mut program_account = AccountSharedData::new(1, 1, &native_loader::id());
         program_account.set_executable(true);
         let transaction_accounts = vec![
-            (solana_sdk::pubkey::new_rand(), owned_account),
-            (solana_sdk::pubkey::new_rand(), not_owned_account),
-            (solana_sdk::pubkey::new_rand(), readonly_account),
+            (solana_pubkey::new_rand(), owned_account),
+            (solana_pubkey::new_rand(), not_owned_account),
+            (solana_pubkey::new_rand(), readonly_account),
             (callee_program_id, program_account),
-            (solana_sdk::pubkey::new_rand(), loader_account),
+            (solana_pubkey::new_rand(), loader_account),
         ];
         let metas = vec![
             AccountMeta::new(transaction_accounts.first().unwrap().0, false),
@@ -1187,8 +1178,7 @@ mod tests {
 
     #[test]
     fn test_invoke_context_compute_budget() {
-        let transaction_accounts =
-            vec![(solana_sdk::pubkey::new_rand(), AccountSharedData::default())];
+        let transaction_accounts = vec![(solana_pubkey::new_rand(), AccountSharedData::default())];
 
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
         invoke_context.compute_budget = ComputeBudget::new(

@@ -23,7 +23,9 @@ pub use solana_account_decoder_client_types::{
 use {
     crate::parse_account_data::{parse_account_data_v2, AccountAdditionalDataV2},
     base64::{prelude::BASE64_STANDARD, Engine},
-    solana_sdk::{account::ReadableAccount, fee_calculator::FeeCalculator, pubkey::Pubkey},
+    solana_account::ReadableAccount,
+    solana_fee_calculator::FeeCalculator,
+    solana_pubkey::Pubkey,
     std::io::Write,
 };
 
@@ -141,7 +143,7 @@ mod test {
     use {
         super::*,
         assert_matches::assert_matches,
-        solana_sdk::account::{Account, AccountSharedData},
+        solana_account::{Account, AccountSharedData},
     };
 
     #[test]

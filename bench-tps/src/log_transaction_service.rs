@@ -476,7 +476,7 @@ impl TransactionLogWriter {
                     .latest()
                     .expect("valid timestamp")
             }),
-            successful: meta.as_ref().map_or(false, |m| m.status.is_ok()),
+            successful: meta.as_ref().is_some_and(|m| m.status.is_ok()),
             error: meta
                 .as_ref()
                 .and_then(|m| m.err.as_ref().map(|x| x.to_string())),

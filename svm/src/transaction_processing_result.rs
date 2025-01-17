@@ -3,10 +3,8 @@ use {
         account_loader::FeesOnlyTransaction,
         transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
     },
-    solana_sdk::{
-        fee::FeeDetails,
-        transaction::{Result as TransactionResult, TransactionError},
-    },
+    solana_fee_structure::FeeDetails,
+    solana_transaction_error::{TransactionError, TransactionResult},
 };
 
 pub type TransactionProcessingResult = TransactionResult<ProcessedTransaction>;
@@ -87,6 +85,19 @@ impl ProcessedTransaction {
         match self {
             Self::Executed(context) => Some(&context.execution_details),
             Self::FeesOnly { .. } => None,
+        }
+    }
+
+    pub fn executed_units(&self) -> u64 {
+        self.execution_details()
+            .map(|detail| detail.executed_units)
+            .unwrap_or_default()
+    }
+
+    pub fn loaded_accounts_data_size(&self) -> u32 {
+        match self {
+            Self::Executed(context) => context.loaded_transaction.loaded_accounts_data_size,
+            Self::FeesOnly(details) => details.rollback_accounts.data_size() as u32,
         }
     }
 }

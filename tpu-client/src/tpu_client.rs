@@ -2,6 +2,8 @@ pub use crate::nonblocking::tpu_client::TpuSenderError;
 use {
     crate::nonblocking::tpu_client::TpuClient as NonblockingTpuClient,
     rayon::iter::{IntoParallelIterator, ParallelIterator},
+    solana_client_traits::AsyncClient,
+    solana_clock::Slot,
     solana_connection_cache::{
         client_connection::ClientConnection,
         connection_cache::{
@@ -10,13 +12,9 @@ use {
     },
     solana_net_utils::bind_to_unspecified,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_sdk::{
-        client::AsyncClient,
-        clock::Slot,
-        signature::Signature,
-        transaction::{Transaction, VersionedTransaction},
-        transport::Result as TransportResult,
-    },
+    solana_signature::Signature,
+    solana_transaction::{versioned::VersionedTransaction, Transaction},
+    solana_transaction_error::TransportResult,
     std::{
         collections::VecDeque,
         net::UdpSocket,
@@ -25,12 +23,13 @@ use {
 };
 #[cfg(feature = "spinner")]
 use {
-    solana_sdk::{message::Message, signers::Signers, transaction::TransactionError},
-    tokio::time::Duration,
+    solana_message::Message, solana_signer::signers::Signers,
+    solana_transaction_error::TransactionError, tokio::time::Duration,
 };
 
 pub const DEFAULT_TPU_ENABLE_UDP: bool = false;
 pub const DEFAULT_TPU_USE_QUIC: bool = true;
+pub const DEFAULT_VOTE_USE_QUIC: bool = false;
 
 /// The default connection count is set to 1 -- it should
 /// be sufficient for most use cases. Validators can use

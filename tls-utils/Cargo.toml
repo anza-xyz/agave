@@ -1,0 +1,20 @@
+[package]
+name = "solana-tls-utils"
+description = "Solana TLS utilities"
+documentation = "https://docs.rs/solana-tls-utils"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+rustls = { workspace = true, features = ["ring"] }
+solana-keypair = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-signer = { workspace = true }
+x509-parser = { workspace = true }
+
+[lints]
+workspace = true

@@ -2,18 +2,17 @@
 use {
     super::quic::{
         spawn_server_multi, SpawnNonBlockingServerResult, ALPN_TPU_PROTOCOL_ID,
-        DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_STREAMS_PER_MS,
         DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
     },
     crate::{
         quic::{
-            QuicServerParams, StreamerStats, DEFAULT_TPU_COALESCE, MAX_STAKED_CONNECTIONS,
-            MAX_UNSTAKED_CONNECTIONS,
+            QuicServerParams, StreamerStats, DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
+            DEFAULT_MAX_STAKED_CONNECTIONS, DEFAULT_MAX_STREAMS_PER_MS,
+            DEFAULT_MAX_UNSTAKED_CONNECTIONS, DEFAULT_TPU_COALESCE,
         },
         streamer::StakedNodes,
-        tls_certificates::new_dummy_x509_certificate,
     },
-    crossbeam_channel::unbounded,
+    crossbeam_channel::{unbounded, Receiver},
     quinn::{
         crypto::rustls::QuicClientConfig, ClientConfig, Connection, EndpointConfig, IdleTimeout,
         TokioRuntime, TransportConfig,
@@ -22,73 +21,19 @@ use {
     solana_net_utils::bind_to_localhost,
     solana_perf::packet::PacketBatch,
     solana_quic_definitions::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT},
+    solana_tls_utils::{new_dummy_x509_certificate, tls_client_config_builder},
     std::{
         net::{SocketAddr, UdpSocket},
         sync::{atomic::AtomicBool, Arc, RwLock},
+        time::{Duration, Instant},
     },
-    tokio::task::JoinHandle,
+    tokio::{task::JoinHandle, time::sleep},
 };
-
-#[derive(Debug)]
-pub struct SkipServerVerification(Arc<rustls::crypto::CryptoProvider>);
-
-impl SkipServerVerification {
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self(Arc::new(rustls::crypto::ring::default_provider())))
-    }
-}
-
-impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
-    fn verify_tls12_signature(
-        &self,
-        message: &[u8],
-        cert: &rustls::pki_types::CertificateDer<'_>,
-        dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls12_signature(
-            message,
-            cert,
-            dss,
-            &self.0.signature_verification_algorithms,
-        )
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        message: &[u8],
-        cert: &rustls::pki_types::CertificateDer<'_>,
-        dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls13_signature(
-            message,
-            cert,
-            dss,
-            &self.0.signature_verification_algorithms,
-        )
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        self.0.signature_verification_algorithms.supported_schemes()
-    }
-
-    fn verify_server_cert(
-        &self,
-        _end_entity: &rustls::pki_types::CertificateDer<'_>,
-        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
-        _server_name: &rustls::pki_types::ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: rustls::pki_types::UnixTime,
-    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
-    }
-}
 
 pub fn get_client_config(keypair: &Keypair) -> ClientConfig {
     let (cert, key) = new_dummy_x509_certificate(keypair);
 
-    let mut crypto = rustls::ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(SkipServerVerification::new())
+    let mut crypto = tls_client_config_builder()
         .with_client_auth_cert(vec![cert], key)
         .expect("Failed to use client certificate");
 
@@ -119,8 +64,8 @@ impl Default for TestServerConfig {
     fn default() -> Self {
         Self {
             max_connections_per_peer: 1,
-            max_staked_connections: MAX_STAKED_CONNECTIONS,
-            max_unstaked_connections: MAX_UNSTAKED_CONNECTIONS,
+            max_staked_connections: DEFAULT_MAX_STAKED_CONNECTIONS,
+            max_unstaked_connections: DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS,
             max_connections_per_ipaddr_per_min: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
         }
@@ -135,33 +80,35 @@ pub struct SpawnTestServerResult {
     pub stats: Arc<StreamerStats>,
 }
 
+pub fn create_quic_server_sockets() -> Vec<UdpSocket> {
+    #[cfg(not(target_os = "windows"))]
+    {
+        use {
+            solana_net_utils::bind_to,
+            std::net::{IpAddr, Ipv4Addr},
+        };
+        (0..10)
+            .map(|_| {
+                bind_to(
+                    IpAddr::V4(Ipv4Addr::LOCALHOST),
+                    /*port*/ 0,
+                    /*reuseport:*/ true,
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>()
+    }
+    #[cfg(target_os = "windows")]
+    {
+        vec![bind_to_localhost().unwrap()]
+    }
+}
+
 pub fn setup_quic_server(
     option_staked_nodes: Option<StakedNodes>,
     config: TestServerConfig,
 ) -> SpawnTestServerResult {
-    let sockets = {
-        #[cfg(not(target_os = "windows"))]
-        {
-            use {
-                solana_net_utils::bind_to,
-                std::net::{IpAddr, Ipv4Addr},
-            };
-            (0..10)
-                .map(|_| {
-                    bind_to(
-                        IpAddr::V4(Ipv4Addr::LOCALHOST),
-                        /*port*/ 0,
-                        /*reuseport:*/ true,
-                    )
-                    .unwrap()
-                })
-                .collect::<Vec<_>>()
-        }
-        #[cfg(target_os = "windows")]
-        {
-            vec![bind_to_localhost().unwrap()]
-        }
-    };
+    let sockets = create_quic_server_sockets();
     setup_quic_server_with_sockets(sockets, option_staked_nodes, config)
 }
 
@@ -235,4 +182,47 @@ pub async fn make_client_endpoint(
         .expect("Endpoint configuration should be correct")
         .await
         .expect("Test server should be already listening on 'localhost'")
+}
+
+pub async fn check_multiple_streams(
+    receiver: Receiver<PacketBatch>,
+    server_address: SocketAddr,
+    client_keypair: Option<&Keypair>,
+) {
+    let conn1 = Arc::new(make_client_endpoint(&server_address, client_keypair).await);
+    let conn2 = Arc::new(make_client_endpoint(&server_address, client_keypair).await);
+    let mut num_expected_packets = 0;
+    for i in 0..10 {
+        info!("sending: {}", i);
+        let c1 = conn1.clone();
+        let c2 = conn2.clone();
+        let mut s1 = c1.open_uni().await.unwrap();
+        let mut s2 = c2.open_uni().await.unwrap();
+        s1.write_all(&[0u8]).await.unwrap();
+        s1.finish().unwrap();
+        s2.write_all(&[0u8]).await.unwrap();
+        s2.finish().unwrap();
+        num_expected_packets += 2;
+        sleep(Duration::from_millis(200)).await;
+    }
+    let mut all_packets = vec![];
+    let now = Instant::now();
+    let mut total_packets = 0;
+    while now.elapsed().as_secs() < 10 {
+        if let Ok(packets) = receiver.try_recv() {
+            total_packets += packets.len();
+            all_packets.push(packets)
+        } else {
+            sleep(Duration::from_secs(1)).await;
+        }
+        if total_packets == num_expected_packets {
+            break;
+        }
+    }
+    for batch in all_packets {
+        for p in batch.iter() {
+            assert_eq!(p.meta().size, 1);
+        }
+    }
+    assert_eq!(total_packets, num_expected_packets);
 }

@@ -1,6 +1,6 @@
 use {
     solana_inline_spl::{associated_token_account, token, token_2022},
-    solana_sdk::pubkey::Pubkey,
+    solana_pubkey::Pubkey,
 };
 
 lazy_static! {

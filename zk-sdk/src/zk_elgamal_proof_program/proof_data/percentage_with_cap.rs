@@ -6,6 +6,8 @@
 //! - the `percentage` amount is equal to a constant (referred to as the `max_value`)
 //! - the `delta` and `claimed` amounts are equal
 
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
 #[cfg(not(target_os = "solana"))]
 use {
     crate::{
@@ -32,6 +34,7 @@ use {
 ///
 /// It includes the cryptographic proof as well as the context data information needed to verify
 /// the proof.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub struct PercentageWithCapProofData {
@@ -46,6 +49,7 @@ pub struct PercentageWithCapProofData {
 /// computed.
 ///
 /// [`ZK ElGamal proof`]: https://docs.solanalabs.com/runtime/zk-token-proof
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub struct PercentageWithCapProofContext {
@@ -63,6 +67,7 @@ pub struct PercentageWithCapProofContext {
 }
 
 #[cfg(not(target_os = "solana"))]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 impl PercentageWithCapProofData {
     pub fn new(
         percentage_commitment: &PedersenCommitment,
@@ -104,6 +109,11 @@ impl PercentageWithCapProofData {
         .into();
 
         Ok(Self { context, proof })
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = toBytes))]
+    pub fn to_bytes(&self) -> Box<[u8]> {
+        bytes_of(self).into()
     }
 }
 

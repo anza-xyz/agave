@@ -21,8 +21,8 @@ use {
     solana_derivation_path::DerivationPath,
     solana_hash::Hash,
     solana_keypair::{read_keypair, read_keypair_file, Keypair},
+    solana_message::Message,
     solana_presigner::Presigner,
-    solana_program::message::Message,
     solana_pubkey::Pubkey,
     solana_remote_wallet::{
         remote_keypair::generate_remote_keypair,
@@ -1211,8 +1211,8 @@ mod tests {
         crate::offline::OfflineArgs,
         clap::{Arg, Command},
         solana_keypair::write_keypair_file,
-        solana_program::system_instruction,
         solana_remote_wallet::remote_wallet::initialize_wallet_manager,
+        solana_system_interface::instruction::transfer,
         tempfile::TempDir,
     };
 
@@ -1233,11 +1233,7 @@ mod tests {
         let nonsigner2 = Keypair::new();
         let recipient = Pubkey::new_unique();
         let message = Message::new(
-            &[system_instruction::transfer(
-                &source.pubkey(),
-                &recipient,
-                42,
-            )],
+            &[transfer(&source.pubkey(), &recipient, 42)],
             Some(&fee_payer.pubkey()),
         );
         let signers = vec![

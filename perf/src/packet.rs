@@ -248,19 +248,15 @@ where
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
-        solana_hash::Hash,
-        solana_sdk::{
-            signature::{Keypair, Signer},
-            system_transaction,
-        },
+        super::*, solana_hash::Hash, solana_keypair::Keypair, solana_signer::Signer,
+        solana_system_transaction::transfer,
     };
 
     #[test]
     fn test_to_packet_batches() {
         let keypair = Keypair::new();
         let hash = Hash::new_from_array([1; 32]);
-        let tx = system_transaction::transfer(&keypair, &keypair.pubkey(), 1, hash);
+        let tx = transfer(&keypair, &keypair.pubkey(), 1, hash);
         let rv = to_packet_batches_for_tests(&[tx.clone(); 1]);
         assert_eq!(rv.len(), 1);
         assert_eq!(rv[0].len(), 1);

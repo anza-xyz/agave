@@ -1,163 +1,147 @@
 use {
+    solana_account::WritableAccount,
+    solana_instructions_sysvar as instructions,
     solana_measure::measure_us,
+    solana_precompiles::get_precompile,
     solana_program_runtime::invoke_context::InvokeContext,
-    solana_sdk::{
-        account::WritableAccount,
-        precompiles::get_precompile,
-        saturating_add_assign,
-        sysvar::instructions,
-        transaction::TransactionError,
-        transaction_context::{IndexOfAccount, InstructionAccount},
-    },
     solana_svm_transaction::svm_message::SVMMessage,
     solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
+    solana_transaction_context::{IndexOfAccount, InstructionAccount},
+    solana_transaction_error::TransactionError,
 };
 
-#[derive(Debug, Default, Clone, serde_derive::Deserialize, serde_derive::Serialize)]
-pub struct MessageProcessor {}
-
-#[cfg(feature = "frozen-abi")]
-impl ::solana_frozen_abi::abi_example::AbiExample for MessageProcessor {
-    fn example() -> Self {
-        // MessageProcessor's fields are #[serde(skip)]-ed and not Serialize
-        // so, just rely on Default anyway.
-        MessageProcessor::default()
-    }
-}
-
-impl MessageProcessor {
-    /// Process a message.
-    /// This method calls each instruction in the message over the set of loaded accounts.
-    /// For each instruction it calls the program entrypoint method and verifies that the result of
-    /// the call does not violate the bank's accounting rules.
-    /// The accounts are committed back to the bank only if every instruction succeeds.
-    pub fn process_message(
-        message: &impl SVMMessage,
-        program_indices: &[Vec<IndexOfAccount>],
-        invoke_context: &mut InvokeContext,
-        execute_timings: &mut ExecuteTimings,
-        accumulated_consumed_units: &mut u64,
-    ) -> Result<(), TransactionError> {
-        debug_assert_eq!(program_indices.len(), message.num_instructions());
-        for (instruction_index, ((program_id, instruction), program_indices)) in message
-            .program_instructions_iter()
-            .zip(program_indices.iter())
-            .enumerate()
+/// Process a message.
+/// This method calls each instruction in the message over the set of loaded accounts.
+/// For each instruction it calls the program entrypoint method and verifies that the result of
+/// the call does not violate the bank's accounting rules.
+/// The accounts are committed back to the bank only if every instruction succeeds.
+pub(crate) fn process_message(
+    message: &impl SVMMessage,
+    program_indices: &[Vec<IndexOfAccount>],
+    invoke_context: &mut InvokeContext,
+    execute_timings: &mut ExecuteTimings,
+    accumulated_consumed_units: &mut u64,
+) -> Result<(), TransactionError> {
+    debug_assert_eq!(program_indices.len(), message.num_instructions());
+    for (instruction_index, ((program_id, instruction), program_indices)) in message
+        .program_instructions_iter()
+        .zip(program_indices.iter())
+        .enumerate()
+    {
+        // Fixup the special instructions key if present
+        // before the account pre-values are taken care of
+        if let Some(account_index) = invoke_context
+            .transaction_context
+            .find_index_of_account(&instructions::id())
         {
-            // Fixup the special instructions key if present
-            // before the account pre-values are taken care of
-            if let Some(account_index) = invoke_context
+            let mut mut_account_ref = invoke_context
                 .transaction_context
-                .find_index_of_account(&instructions::id())
-            {
-                let mut mut_account_ref = invoke_context
-                    .transaction_context
-                    .get_account_at_index(account_index)
-                    .map_err(|_| TransactionError::InvalidAccountIndex)?
-                    .borrow_mut();
-                instructions::store_current_index(
-                    mut_account_ref.data_as_mut_slice(),
-                    instruction_index as u16,
-                );
-            }
-
-            let mut instruction_accounts = Vec::with_capacity(instruction.accounts.len());
-            for (instruction_account_index, index_in_transaction) in
-                instruction.accounts.iter().enumerate()
-            {
-                let index_in_callee = instruction
-                    .accounts
-                    .get(0..instruction_account_index)
-                    .ok_or(TransactionError::InvalidAccountIndex)?
-                    .iter()
-                    .position(|account_index| account_index == index_in_transaction)
-                    .unwrap_or(instruction_account_index)
-                    as IndexOfAccount;
-                let index_in_transaction = *index_in_transaction as usize;
-                instruction_accounts.push(InstructionAccount {
-                    index_in_transaction: index_in_transaction as IndexOfAccount,
-                    index_in_caller: index_in_transaction as IndexOfAccount,
-                    index_in_callee,
-                    is_signer: message.is_signer(index_in_transaction),
-                    is_writable: message.is_writable(index_in_transaction),
-                });
-            }
-
-            let mut compute_units_consumed = 0;
-            let (result, process_instruction_us) = measure_us!({
-                if let Some(precompile) = get_precompile(program_id, |feature_id| {
-                    invoke_context.get_feature_set().is_active(feature_id)
-                }) {
-                    invoke_context.process_precompile(
-                        precompile,
-                        instruction.data,
-                        &instruction_accounts,
-                        program_indices,
-                        message.instructions_iter().map(|ix| ix.data),
-                    )
-                } else {
-                    invoke_context.process_instruction(
-                        instruction.data,
-                        &instruction_accounts,
-                        program_indices,
-                        &mut compute_units_consumed,
-                        execute_timings,
-                    )
-                }
-            });
-
-            *accumulated_consumed_units =
-                accumulated_consumed_units.saturating_add(compute_units_consumed);
-            execute_timings.details.accumulate_program(
-                program_id,
-                process_instruction_us,
-                compute_units_consumed,
-                result.is_err(),
+                .get_account_at_index(account_index)
+                .map_err(|_| TransactionError::InvalidAccountIndex)?
+                .borrow_mut();
+            instructions::store_current_index(
+                mut_account_ref.data_as_mut_slice(),
+                instruction_index as u16,
             );
-            invoke_context.timings = {
-                execute_timings.details.accumulate(&invoke_context.timings);
-                ExecuteDetailsTimings::default()
-            };
-            saturating_add_assign!(
-                execute_timings
-                    .execute_accessories
-                    .process_instructions
-                    .total_us,
-                process_instruction_us
-            );
-
-            result
-                .map_err(|err| TransactionError::InstructionError(instruction_index as u8, err))?;
         }
-        Ok(())
+
+        let mut instruction_accounts = Vec::with_capacity(instruction.accounts.len());
+        for (instruction_account_index, index_in_transaction) in
+            instruction.accounts.iter().enumerate()
+        {
+            let index_in_callee = instruction
+                .accounts
+                .get(0..instruction_account_index)
+                .ok_or(TransactionError::InvalidAccountIndex)?
+                .iter()
+                .position(|account_index| account_index == index_in_transaction)
+                .unwrap_or(instruction_account_index)
+                as IndexOfAccount;
+            let index_in_transaction = *index_in_transaction as usize;
+            instruction_accounts.push(InstructionAccount {
+                index_in_transaction: index_in_transaction as IndexOfAccount,
+                index_in_caller: index_in_transaction as IndexOfAccount,
+                index_in_callee,
+                is_signer: message.is_signer(index_in_transaction),
+                is_writable: message.is_writable(index_in_transaction),
+            });
+        }
+
+        let mut compute_units_consumed = 0;
+        let (result, process_instruction_us) = measure_us!({
+            if let Some(precompile) = get_precompile(program_id, |feature_id| {
+                invoke_context.get_feature_set().is_active(feature_id)
+            }) {
+                invoke_context.process_precompile(
+                    precompile,
+                    instruction.data,
+                    &instruction_accounts,
+                    program_indices,
+                    message.instructions_iter().map(|ix| ix.data),
+                )
+            } else {
+                invoke_context.process_instruction(
+                    instruction.data,
+                    &instruction_accounts,
+                    program_indices,
+                    &mut compute_units_consumed,
+                    execute_timings,
+                )
+            }
+        });
+
+        *accumulated_consumed_units =
+            accumulated_consumed_units.saturating_add(compute_units_consumed);
+        execute_timings.details.accumulate_program(
+            program_id,
+            process_instruction_us,
+            compute_units_consumed,
+            result.is_err(),
+        );
+        invoke_context.timings = {
+            execute_timings.details.accumulate(&invoke_context.timings);
+            ExecuteDetailsTimings::default()
+        };
+        execute_timings
+            .execute_accessories
+            .process_instructions
+            .total_us += process_instruction_us;
+
+        result.map_err(|err| TransactionError::InstructionError(instruction_index as u8, err))?;
     }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use {
         super::*,
+        openssl::{
+            ec::{EcGroup, EcKey},
+            nid::Nid,
+        },
+        rand0_7::thread_rng,
+        solana_account::{AccountSharedData, ReadableAccount},
         solana_compute_budget::compute_budget::ComputeBudget,
+        solana_ed25519_program::new_ed25519_instruction,
         solana_feature_set::FeatureSet,
+        solana_hash::Hash,
+        solana_instruction::{error::InstructionError, AccountMeta, Instruction},
+        solana_message::{AccountKeys, Message, SanitizedMessage},
         solana_program_runtime::{
             declare_process_instruction,
             invoke_context::EnvironmentConfig,
             loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
             sysvar_cache::SysvarCache,
         },
-        solana_sdk::{
-            account::{AccountSharedData, ReadableAccount},
-            hash::Hash,
-            instruction::{AccountMeta, Instruction, InstructionError},
-            message::{AccountKeys, Message, SanitizedMessage},
-            native_loader::{self, create_loadable_account_for_test},
-            pubkey::Pubkey,
-            rent::Rent,
-            reserved_account_keys::ReservedAccountKeys,
-            secp256k1_instruction::new_secp256k1_instruction,
-            secp256k1_program, system_program,
-            transaction_context::TransactionContext,
-        },
+        solana_pubkey::Pubkey,
+        solana_rent::Rent,
+        solana_reserved_account_keys::ReservedAccountKeys,
+        solana_sdk::native_loader::create_loadable_account_for_test,
+        solana_sdk_ids::{ed25519_program, native_loader, secp256k1_program, system_program},
+        solana_secp256k1_program::new_secp256k1_instruction,
+        solana_secp256r1_program::new_secp256r1_instruction,
+        solana_transaction_context::TransactionContext,
         std::sync::Arc,
     };
 
@@ -270,7 +254,7 @@ mod tests {
             None,
             ComputeBudget::default(),
         );
-        let result = MessageProcessor::process_message(
+        let result = process_message(
             &message,
             &program_indices,
             &mut invoke_context,
@@ -324,7 +308,7 @@ mod tests {
             None,
             ComputeBudget::default(),
         );
-        let result = MessageProcessor::process_message(
+        let result = process_message(
             &message,
             &program_indices,
             &mut invoke_context,
@@ -368,7 +352,7 @@ mod tests {
             None,
             ComputeBudget::default(),
         );
-        let result = MessageProcessor::process_message(
+        let result = process_message(
             &message,
             &program_indices,
             &mut invoke_context,
@@ -444,11 +428,11 @@ mod tests {
         let mock_program_id = Pubkey::from([2u8; 32]);
         let accounts = vec![
             (
-                solana_sdk::pubkey::new_rand(),
+                solana_pubkey::new_rand(),
                 AccountSharedData::new(100, 1, &mock_program_id),
             ),
             (
-                solana_sdk::pubkey::new_rand(),
+                solana_pubkey::new_rand(),
                 AccountSharedData::new(0, 1, &mock_program_id),
             ),
             (
@@ -503,7 +487,7 @@ mod tests {
             None,
             ComputeBudget::default(),
         );
-        let result = MessageProcessor::process_message(
+        let result = process_message(
             &message,
             &program_indices,
             &mut invoke_context,
@@ -542,7 +526,7 @@ mod tests {
             None,
             ComputeBudget::default(),
         );
-        let result = MessageProcessor::process_message(
+        let result = process_message(
             &message,
             &program_indices,
             &mut invoke_context,
@@ -578,7 +562,7 @@ mod tests {
             None,
             ComputeBudget::default(),
         );
-        let result = MessageProcessor::process_message(
+        let result = process_message(
             &message,
             &program_indices,
             &mut invoke_context,
@@ -612,6 +596,22 @@ mod tests {
         );
     }
 
+    fn secp256k1_instruction_for_test() -> Instruction {
+        let secret_key = libsecp256k1::SecretKey::random(&mut thread_rng());
+        new_secp256k1_instruction(&secret_key, b"hello")
+    }
+
+    fn ed25519_instruction_for_test() -> Instruction {
+        let secret_key = ed25519_dalek::Keypair::generate(&mut thread_rng());
+        new_ed25519_instruction(&secret_key, b"hello")
+    }
+
+    fn secp256r1_instruction_for_test() -> Instruction {
+        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+        let secret_key = EcKey::generate(&group).unwrap();
+        new_secp256r1_instruction(b"hello", secret_key).unwrap()
+    }
+
     #[test]
     fn test_precompile() {
         let mock_program_id = Pubkey::new_unique();
@@ -621,6 +621,10 @@ mod tests {
 
         let mut secp256k1_account = AccountSharedData::new(1, 0, &native_loader::id());
         secp256k1_account.set_executable(true);
+        let mut ed25519_account = AccountSharedData::new(1, 0, &native_loader::id());
+        ed25519_account.set_executable(true);
+        let mut secp256r1_account = AccountSharedData::new(1, 0, &native_loader::id());
+        secp256r1_account.set_executable(true);
         let mut mock_program_account = AccountSharedData::new(1, 0, &native_loader::id());
         mock_program_account.set_executable(true);
         let accounts = vec![
@@ -629,27 +633,17 @@ mod tests {
                 AccountSharedData::new(1, 0, &system_program::id()),
             ),
             (secp256k1_program::id(), secp256k1_account),
+            (ed25519_program::id(), ed25519_account),
+            (solana_secp256r1_program::id(), secp256r1_account),
             (mock_program_id, mock_program_account),
         ];
-        let mut transaction_context = TransactionContext::new(accounts, Rent::default(), 1, 2);
+        let mut transaction_context = TransactionContext::new(accounts, Rent::default(), 1, 4);
 
-        // Since libsecp256k1 is still using the old version of rand, this test
-        // copies the `random` implementation at:
-        // https://docs.rs/libsecp256k1/latest/src/libsecp256k1/lib.rs.html#430
-        let secret_key = {
-            use solana_type_overrides::rand::RngCore;
-            let mut rng = rand::thread_rng();
-            loop {
-                let mut ret = [0u8; libsecp256k1::util::SECRET_KEY_SIZE];
-                rng.fill_bytes(&mut ret);
-                if let Ok(key) = libsecp256k1::SecretKey::parse(&ret) {
-                    break key;
-                }
-            }
-        };
         let message = new_sanitized_message(Message::new(
             &[
-                new_secp256k1_instruction(&secret_key, b"hello"),
+                secp256k1_instruction_for_test(),
+                ed25519_instruction_for_test(),
+                secp256r1_instruction_for_test(),
                 Instruction::new_with_bytes(mock_program_id, &[], vec![]),
             ],
             Some(transaction_context.get_key_of_account_at_index(0).unwrap()),
@@ -675,9 +669,9 @@ mod tests {
             None,
             ComputeBudget::default(),
         );
-        let result = MessageProcessor::process_message(
+        let result = process_message(
             &message,
-            &[vec![1], vec![2]],
+            &[vec![1], vec![2], vec![3], vec![4]],
             &mut invoke_context,
             &mut ExecuteTimings::default(),
             &mut 0,
@@ -686,10 +680,10 @@ mod tests {
         assert_eq!(
             result,
             Err(TransactionError::InstructionError(
-                1,
+                3,
                 InstructionError::Custom(0xbabb1e)
             ))
         );
-        assert_eq!(transaction_context.get_instruction_trace_length(), 2);
+        assert_eq!(transaction_context.get_instruction_trace_length(), 4);
     }
 }

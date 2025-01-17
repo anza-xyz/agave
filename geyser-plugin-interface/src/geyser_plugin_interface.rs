@@ -3,11 +3,9 @@
 /// In addition, the dynamic library must export a "C" function _create_plugin which
 /// creates the implementation of the plugin.
 use {
-    solana_sdk::{
-        clock::{Slot, UnixTimestamp},
-        signature::Signature,
-        transaction::SanitizedTransaction,
-    },
+    solana_clock::{Slot, UnixTimestamp},
+    solana_signature::Signature,
+    solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_status::{Reward, RewardsAndNumPartitions, TransactionStatusMeta},
     std::{any::Any, error, io},
     thiserror::Error,
@@ -454,6 +452,14 @@ pub trait GeyserPlugin: Any + Send + Sync + std::fmt::Debug {
     /// Default is true -- if the plugin is not interested in
     /// account data, please return false.
     fn account_data_notifications_enabled(&self) -> bool {
+        true
+    }
+
+    /// Check if the plugin is interested in account data from snapshot
+    /// Default is true -- if the plugin is not interested in
+    /// account data snapshot, please return false because startup would be
+    /// improved significantly.
+    fn account_data_snapshot_notifications_enabled(&self) -> bool {
         true
     }
 

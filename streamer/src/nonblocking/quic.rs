@@ -9,7 +9,6 @@ use {
         },
         quic::{configure_server, QuicServerError, QuicServerParams, StreamerStats},
         streamer::StakedNodes,
-        tls_certificates::get_pubkey_from_tls_certificate,
     },
     async_channel::{
         unbounded as async_unbounded, Receiver as AsyncReceiver, Sender as AsyncSender,
@@ -26,7 +25,7 @@ use {
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
     solana_packet::{Meta, PACKET_DATA_SIZE},
-    solana_perf::packet::{PacketBatch, PACKETS_PER_BATCH},
+    solana_perf::packet::{PacketBatch, PacketBatchRecycler, PACKETS_PER_BATCH},
     solana_pubkey::Pubkey,
     solana_quic_definitions::{
         QUIC_CONNECTION_HANDSHAKE_TIMEOUT, QUIC_MAX_STAKED_CONCURRENT_STREAMS,
@@ -36,6 +35,7 @@ use {
     },
     solana_signature::Signature,
     solana_time_utils as timing,
+    solana_tls_utils::get_pubkey_from_tls_certificate,
     solana_transaction_metrics_tracker::signature_if_should_track_packet,
     std::{
         array,
@@ -87,13 +87,20 @@ const CONNECTION_CLOSE_REASON_TOO_MANY: &[u8] = b"too_many";
 const CONNECTION_CLOSE_CODE_INVALID_STREAM: u32 = 5;
 const CONNECTION_CLOSE_REASON_INVALID_STREAM: &[u8] = b"invalid_stream";
 
-/// Limit to 250K PPS
-pub const DEFAULT_MAX_STREAMS_PER_MS: u64 = 250;
-
 /// The new connections per minute from a particular IP address.
 /// Heuristically set to the default maximum concurrent connections
 /// per IP address. Might be adjusted later.
-pub const DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE: u64 = 8;
+#[deprecated(
+    since = "2.2.0",
+    note = "Use solana_streamer::quic::DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE"
+)]
+pub use crate::quic::DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE;
+/// Limit to 250K PPS
+#[deprecated(
+    since = "2.2.0",
+    note = "Use solana_streamer::quic::DEFAULT_MAX_STREAMS_PER_MS"
+)]
+pub use crate::quic::DEFAULT_MAX_STREAMS_PER_MS;
 
 /// Total new connection counts per second. Heuristically taken from
 /// the default staked and unstaked connection limits. Might be adjusted
@@ -230,7 +237,6 @@ pub fn spawn_server_multi(
 /// litter the code with open connection tracking. This is added into the
 /// connection table as part of the ConnectionEntry. The reference is auto
 /// reduced when it is dropped.
-
 struct ClientConnectionTracker {
     stats: Arc<StreamerStats>,
 }
@@ -880,7 +886,7 @@ fn handle_connection_error(e: quinn::ConnectionError, stats: &StreamerStats, fro
 }
 
 // Holder(s) of the AsyncSender<PacketAccumulator> on the other end should not
-// wait for this function to exit to exit
+// wait for this function to exit
 async fn packet_batch_sender(
     packet_sender: Sender<PacketBatch>,
     packet_receiver: AsyncReceiver<PacketAccumulator>,
@@ -889,10 +895,12 @@ async fn packet_batch_sender(
     coalesce: Duration,
 ) {
     trace!("enter packet_batch_sender");
+    let recycler = PacketBatchRecycler::default();
     let mut batch_start_time = Instant::now();
     loop {
         let mut packet_perf_measure: Vec<([u8; 64], Instant)> = Vec::default();
-        let mut packet_batch = PacketBatch::with_capacity(PACKETS_PER_BATCH);
+        let mut packet_batch =
+            PacketBatch::new_with_recycler(&recycler, PACKETS_PER_BATCH, "quic_packet_coalescer");
         let mut total_bytes: usize = 0;
 
         stats
@@ -1166,6 +1174,8 @@ async fn handle_connection(
                         CONNECTION_CLOSE_CODE_INVALID_STREAM.into(),
                         CONNECTION_CLOSE_REASON_INVALID_STREAM,
                     );
+                    stats.total_streams.fetch_sub(1, Ordering::Relaxed);
+                    stream_load_ema.update_ema_if_needed();
                     break 'conn;
                 }
             }
@@ -1503,7 +1513,7 @@ struct EndpointAccept<'a> {
     accept: Accept<'a>,
 }
 
-impl<'a> Future for EndpointAccept<'a> {
+impl Future for EndpointAccept<'_> {
     type Output = (Option<quinn::Incoming>, usize);
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context) -> Poll<Self::Output> {
@@ -1525,8 +1535,8 @@ pub mod test {
             nonblocking::{
                 quic::compute_max_allowed_uni_streams,
                 testing_utilities::{
-                    get_client_config, make_client_endpoint, setup_quic_server,
-                    SpawnTestServerResult, TestServerConfig,
+                    check_multiple_streams, get_client_config, make_client_endpoint,
+                    setup_quic_server, SpawnTestServerResult, TestServerConfig,
                 },
             },
             quic::DEFAULT_TPU_COALESCE,
@@ -1587,48 +1597,6 @@ pub mod test {
             // the stream -- expect it.
             assert_matches!(s2, Err(quinn::ConnectionError::ApplicationClosed(_)));
         }
-    }
-
-    pub async fn check_multiple_streams(
-        receiver: Receiver<PacketBatch>,
-        server_address: SocketAddr,
-    ) {
-        let conn1 = Arc::new(make_client_endpoint(&server_address, None).await);
-        let conn2 = Arc::new(make_client_endpoint(&server_address, None).await);
-        let mut num_expected_packets = 0;
-        for i in 0..10 {
-            info!("sending: {}", i);
-            let c1 = conn1.clone();
-            let c2 = conn2.clone();
-            let mut s1 = c1.open_uni().await.unwrap();
-            let mut s2 = c2.open_uni().await.unwrap();
-            s1.write_all(&[0u8]).await.unwrap();
-            s1.finish().unwrap();
-            s2.write_all(&[0u8]).await.unwrap();
-            s2.finish().unwrap();
-            num_expected_packets += 2;
-            sleep(Duration::from_millis(200)).await;
-        }
-        let mut all_packets = vec![];
-        let now = Instant::now();
-        let mut total_packets = 0;
-        while now.elapsed().as_secs() < 10 {
-            if let Ok(packets) = receiver.try_recv() {
-                total_packets += packets.len();
-                all_packets.push(packets)
-            } else {
-                sleep(Duration::from_secs(1)).await;
-            }
-            if total_packets == num_expected_packets {
-                break;
-            }
-        }
-        for batch in all_packets {
-            for p in batch.iter() {
-                assert_eq!(p.meta().size, 1);
-            }
-        }
-        assert_eq!(total_packets, num_expected_packets);
     }
 
     pub async fn check_multiple_writes(
@@ -2049,7 +2017,7 @@ pub mod test {
         )
         .unwrap();
 
-        check_multiple_streams(receiver, server_address).await;
+        check_multiple_streams(receiver, server_address, None).await;
         assert_eq!(stats.total_streams.load(Ordering::Relaxed), 0);
         assert_eq!(stats.total_new_streams.load(Ordering::Relaxed), 20);
         assert_eq!(stats.total_connections.load(Ordering::Relaxed), 2);

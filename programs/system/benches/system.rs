@@ -1,23 +1,22 @@
 #[allow(deprecated)]
 use {
     criterion::{criterion_group, criterion_main, Criterion},
-    solana_program_runtime::invoke_context::mock_process_instruction,
-    solana_sdk::{
-        account::{self, AccountSharedData, WritableAccount},
-        hash::Hash,
-        instruction::AccountMeta,
-        nonce::{
-            state::{DurableNonce, Versions},
-            State,
-        },
-        pubkey::Pubkey,
-        system_instruction::SystemInstruction,
-        system_program,
-        sysvar::{
-            recent_blockhashes::{self, IterItem, RecentBlockhashes, MAX_ENTRIES},
-            rent::{self, Rent},
-        },
+    solana_account::{self as account, AccountSharedData, WritableAccount},
+    solana_hash::Hash,
+    solana_instruction::AccountMeta,
+    solana_nonce::{
+        state::{DurableNonce, State},
+        versions::Versions,
     },
+    solana_program_runtime::invoke_context::mock_process_instruction,
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
+    solana_sdk_ids::{
+        system_program,
+        sysvar::{recent_blockhashes, rent},
+    },
+    solana_system_interface::instruction::SystemInstruction,
+    solana_sysvar::recent_blockhashes::{IterItem, RecentBlockhashes, MAX_ENTRIES},
 };
 
 const SEED: &str = "bench test";

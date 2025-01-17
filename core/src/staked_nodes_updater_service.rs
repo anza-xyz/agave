@@ -1,6 +1,6 @@
 use {
+    solana_pubkey::Pubkey,
     solana_runtime::bank_forks::BankForks,
-    solana_sdk::pubkey::Pubkey,
     solana_streamer::streamer::StakedNodes,
     std::{
         collections::HashMap,

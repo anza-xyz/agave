@@ -4,12 +4,10 @@ use {
         de::{MapAccess, Visitor},
         ser::{Serialize, Serializer},
     },
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        instruction::InstructionError,
-        pubkey::Pubkey,
-        vote::state::VoteState,
-    },
+    solana_account::{AccountSharedData, ReadableAccount},
+    solana_instruction::error::InstructionError,
+    solana_program::vote::state::VoteState,
+    solana_pubkey::Pubkey,
     std::{
         cmp::Ordering,
         collections::{hash_map::Entry, HashMap},
@@ -98,10 +96,8 @@ impl VoteAccount {
     pub fn new_random() -> VoteAccount {
         use {
             rand::Rng as _,
-            solana_sdk::{
-                clock::Clock,
-                vote::state::{VoteInit, VoteStateVersions},
-            },
+            solana_clock::Clock,
+            solana_program::vote::state::{VoteInit, VoteStateVersions},
         };
 
         let mut rng = rand::thread_rng();
@@ -123,7 +119,7 @@ impl VoteAccount {
         let account = AccountSharedData::new_data(
             rng.gen(), // lamports
             &VoteStateVersions::new_current(vote_state.clone()),
-            &solana_sdk::vote::program::id(), // owner
+            &solana_sdk_ids::vote::id(), // owner
         )
         .unwrap();
 
@@ -325,7 +321,7 @@ impl From<VoteAccount> for AccountSharedData {
 impl TryFrom<AccountSharedData> for VoteAccount {
     type Error = Error;
     fn try_from(account: AccountSharedData) -> Result<Self, Self::Error> {
-        if !solana_sdk::vote::program::check_id(account.owner()) {
+        if !solana_sdk_ids::vote::check_id(account.owner()) {
             return Err(Error::InvalidOwner(*account.owner()));
         }
 
@@ -485,12 +481,10 @@ mod tests {
         super::*,
         bincode::Options,
         rand::Rng,
-        solana_sdk::{
-            account::WritableAccount,
-            pubkey::Pubkey,
-            sysvar::clock::Clock,
-            vote::state::{VoteInit, VoteStateVersions},
-        },
+        solana_account::WritableAccount,
+        solana_clock::Clock,
+        solana_program::vote::state::{VoteInit, VoteStateVersions},
+        solana_pubkey::Pubkey,
         std::iter::repeat_with,
     };
 
@@ -515,7 +509,7 @@ mod tests {
         let account = AccountSharedData::new_data(
             rng.gen(), // lamports
             &VoteStateVersions::new_current(vote_state.clone()),
-            &solana_sdk::vote::program::id(), // owner
+            &solana_sdk_ids::vote::id(), // owner
         )
         .unwrap();
         (account, vote_state)
@@ -576,7 +570,7 @@ mod tests {
     #[should_panic(expected = "InvalidAccountData")]
     fn test_vote_account_try_from_invalid_account() {
         let mut account = AccountSharedData::default();
-        account.set_owner(solana_sdk::vote::program::id());
+        account.set_owner(solana_sdk_ids::vote::id());
         VoteAccount::try_from(account).unwrap();
     }
 
@@ -640,8 +634,7 @@ mod tests {
 
         // bad data
         let invalid_account_data =
-            AccountSharedData::new_data(42, &vec![0xFF; 42], &solana_sdk::vote::program::id())
-                .unwrap();
+            AccountSharedData::new_data(42, &vec![0xFF; 42], &solana_sdk_ids::vote::id()).unwrap();
         vote_accounts_hash_map.insert(Pubkey::new_unique(), (0xBB, invalid_account_data));
 
         // wrong owner

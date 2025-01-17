@@ -16,12 +16,16 @@ log = { workspace = true }
 prost = { workspace = true }
 prost-types = { workspace = true }
 rayon = { workspace = true }
+solana-clock = { workspace = true }
 solana-entry = { workspace = true }
 solana-gossip = { workspace = true }
+solana-hash = { workspace = true }
 solana-ledger = { workspace = true }
 solana-program = { workspace = true }
+solana-pubkey = { workspace = true }
 solana-runtime = { workspace = true }
-solana-sdk = { workspace = true }
+solana-shred-version = { workspace = true }
+solana-time-utils = { workspace = true }
 solana-timings = { workspace = true }
 solana-vote-program = { workspace = true }
 
@@ -31,8 +35,10 @@ rand = { workspace = true }
 serial_test = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-entry = { workspace = true }
+solana-keypair = { workspace = true }
 solana-logger = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-signer = { workspace = true }
 solana-streamer = { workspace = true }
 solana-vote = { workspace = true }
 tempfile = { workspace = true }

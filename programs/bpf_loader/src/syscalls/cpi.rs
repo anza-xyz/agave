@@ -4,19 +4,19 @@ use {
     scopeguard::defer,
     solana_feature_set::{self as feature_set, enable_bpf_loader_set_authority_checked_ix},
     solana_measure::measure::Measure,
-    solana_program_runtime::invoke_context::SerializedAccountMetadata,
-    solana_rbpf::{
-        ebpf,
-        memory_region::{MemoryRegion, MemoryState},
-    },
-    solana_sdk::{
-        saturating_add_assign,
-        stable_layout::stable_instruction::StableInstruction,
+    solana_program::{
+        bpf_loader_upgradeable,
         syscalls::{
             MAX_CPI_ACCOUNT_INFOS, MAX_CPI_INSTRUCTION_ACCOUNTS, MAX_CPI_INSTRUCTION_DATA_LEN,
         },
-        transaction_context::BorrowedAccount,
     },
+    solana_program_runtime::invoke_context::SerializedAccountMetadata,
+    solana_sbpf::{
+        ebpf,
+        memory_region::{MemoryRegion, MemoryState},
+    },
+    solana_stable_layout::stable_instruction::StableInstruction,
+    solana_transaction_context::BorrowedAccount,
     std::{mem, ptr},
 };
 
@@ -50,7 +50,7 @@ enum VmValue<'a, 'b, T> {
     Translated(&'a mut T),
 }
 
-impl<'a, 'b, T> VmValue<'a, 'b, T> {
+impl<T> VmValue<'_, '_, T> {
     fn get(&self) -> Result<&T, Error> {
         match self {
             VmValue::VmAddress {
@@ -1087,7 +1087,7 @@ fn cpi_common<S: SyscallInvokeSigned>(
     )?;
     if let Some(execute_time) = invoke_context.execute_time.as_mut() {
         execute_time.stop();
-        saturating_add_assign!(invoke_context.timings.execute_us, execute_time.as_us());
+        invoke_context.timings.execute_us += execute_time.as_us();
     }
 
     let instruction = S::translate_instruction(instruction_addr, memory_mapping, invoke_context)?;
@@ -1606,20 +1606,18 @@ mod tests {
         super::*,
         crate::mock_create_vm,
         assert_matches::assert_matches,
+        solana_account::{Account, AccountSharedData, ReadableAccount},
+        solana_clock::Epoch,
         solana_feature_set::bpf_account_data_direct_mapping,
+        solana_instruction::Instruction,
         solana_program_runtime::{
             invoke_context::SerializedAccountMetadata, with_mock_invoke_context,
         },
-        solana_rbpf::{
+        solana_sbpf::{
             ebpf::MM_INPUT_START, memory_region::MemoryRegion, program::SBPFVersion, vm::Config,
         },
-        solana_sdk::{
-            account::{Account, AccountSharedData, ReadableAccount},
-            clock::Epoch,
-            instruction::Instruction,
-            system_program,
-            transaction_context::TransactionAccount,
-        },
+        solana_sdk_ids::system_program,
+        solana_transaction_context::TransactionAccount,
         std::{
             cell::{Cell, RefCell},
             mem, ptr,
@@ -1711,7 +1709,7 @@ mod tests {
             aligned_memory_mapping: false,
             ..Config::default()
         };
-        let memory_mapping = MemoryMapping::new(vec![region], &config, &SBPFVersion::V2).unwrap();
+        let memory_mapping = MemoryMapping::new(vec![region], &config, SBPFVersion::V3).unwrap();
 
         let ins = SyscallInvokeSignedRust::translate_instruction(
             vm_addr,
@@ -1747,7 +1745,7 @@ mod tests {
             aligned_memory_mapping: false,
             ..Config::default()
         };
-        let memory_mapping = MemoryMapping::new(vec![region], &config, &SBPFVersion::V2).unwrap();
+        let memory_mapping = MemoryMapping::new(vec![region], &config, SBPFVersion::V3).unwrap();
 
         let signers = SyscallInvokeSignedRust::translate_signers(
             &program_id,
@@ -1783,7 +1781,7 @@ mod tests {
             aligned_memory_mapping: false,
             ..Config::default()
         };
-        let memory_mapping = MemoryMapping::new(vec![region], &config, &SBPFVersion::V2).unwrap();
+        let memory_mapping = MemoryMapping::new(vec![region], &config, SBPFVersion::V3).unwrap();
 
         let account_info = translate_type::<AccountInfo>(&memory_mapping, vm_addr, false).unwrap();
 
@@ -1833,7 +1831,7 @@ mod tests {
         let memory_mapping = MemoryMapping::new(
             mock_caller_account.regions.split_off(0),
             &config,
-            &SBPFVersion::V2,
+            SBPFVersion::V3,
         )
         .unwrap();
 
@@ -1891,7 +1889,7 @@ mod tests {
         let memory_mapping = MemoryMapping::new(
             mock_caller_account.regions.split_off(0),
             &config,
-            &SBPFVersion::V2,
+            SBPFVersion::V3,
         )
         .unwrap();
 
@@ -2019,7 +2017,7 @@ mod tests {
         let memory_mapping = MemoryMapping::new(
             mock_caller_account.regions.split_off(0),
             &config,
-            &SBPFVersion::V2,
+            SBPFVersion::V3,
         )
         .unwrap();
 
@@ -2194,7 +2192,7 @@ mod tests {
         let memory_mapping = MemoryMapping::new(
             mock_caller_account.regions.split_off(0),
             &config,
-            &SBPFVersion::V2,
+            SBPFVersion::V3,
         )
         .unwrap();
 
@@ -2264,7 +2262,7 @@ mod tests {
         let memory_mapping = MemoryMapping::new(
             mock_caller_account.regions.split_off(0),
             &config,
-            &SBPFVersion::V2,
+            SBPFVersion::V3,
         )
         .unwrap();
 
@@ -2320,7 +2318,7 @@ mod tests {
         let memory_mapping = MemoryMapping::new(
             mock_caller_account.regions.split_off(0),
             &config,
-            &SBPFVersion::V2,
+            SBPFVersion::V3,
         )
         .unwrap();
 
@@ -2393,7 +2391,7 @@ mod tests {
         let memory_mapping = MemoryMapping::new(
             mock_caller_account.regions.split_off(0),
             &config,
-            &SBPFVersion::V2,
+            SBPFVersion::V3,
         )
         .unwrap();
 
@@ -2481,7 +2479,7 @@ mod tests {
         let memory_mapping = MemoryMapping::new(
             mock_caller_account.regions.split_off(0),
             &config,
-            &SBPFVersion::V2,
+            SBPFVersion::V3,
         )
         .unwrap();
 
@@ -2559,7 +2557,7 @@ mod tests {
             aligned_memory_mapping: false,
             ..Config::default()
         };
-        let memory_mapping = MemoryMapping::new(vec![region], &config, &SBPFVersion::V2).unwrap();
+        let memory_mapping = MemoryMapping::new(vec![region], &config, SBPFVersion::V3).unwrap();
 
         mock_invoke_context!(
             invoke_context,
@@ -2604,7 +2602,7 @@ mod tests {
         assert_eq!(caller_account.original_data_len, original_data_len);
     }
 
-    pub type TestTransactionAccount = (Pubkey, AccountSharedData, bool);
+    type TestTransactionAccount = (Pubkey, AccountSharedData, bool);
     struct MockCallerAccount {
         lamports: u64,
         owner: Pubkey,
@@ -2869,7 +2867,7 @@ mod tests {
         rent_epoch: Epoch,
     }
 
-    impl<'a> MockAccountInfo<'a> {
+    impl MockAccountInfo<'_> {
         fn new(key: Pubkey, account: &AccountSharedData) -> MockAccountInfo {
             MockAccountInfo {
                 key,

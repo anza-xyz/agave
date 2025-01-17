@@ -31,9 +31,16 @@ serde_yaml = { workspace = true }
 serde_yaml_08 = { package = "serde_yaml", version = "0.8.26" }
 solana-clap-utils = { workspace = true }
 solana-config-program = { workspace = true }
+solana-hash = { workspace = true }
+solana-keypair = { workspace = true }
 solana-logger = { workspace = true }
+solana-message = { workspace = true }
+solana-pubkey = { workspace = true }
 solana-rpc-client = { workspace = true }
-solana-sdk = { workspace = true }
+solana-sha256-hasher = { workspace = true }
+solana-signature = { workspace = true }
+solana-signer = { workspace = true }
+solana-transaction = { workspace = true }
 solana-version = { workspace = true }
 tar = { workspace = true }
 tempfile = { workspace = true }

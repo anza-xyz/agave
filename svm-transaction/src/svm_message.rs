@@ -3,21 +3,38 @@ use {
         instruction::SVMInstruction, message_address_table_lookup::SVMMessageAddressTableLookup,
     },
     core::fmt::Debug,
-    solana_sdk::{
-        hash::Hash, message::AccountKeys, nonce::NONCED_TX_MARKER_IX_INDEX, pubkey::Pubkey,
-        system_program,
-    },
+    solana_hash::Hash,
+    solana_message::AccountKeys,
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::{ed25519_program, secp256k1_program, secp256r1_program, system_program},
 };
 
 mod sanitized_message;
 mod sanitized_transaction;
+// inlined to avoid solana-nonce dep
+#[cfg(test)]
+static_assertions::const_assert_eq!(
+    NONCED_TX_MARKER_IX_INDEX,
+    solana_nonce::NONCED_TX_MARKER_IX_INDEX
+);
+const NONCED_TX_MARKER_IX_INDEX: u8 = 0;
 
 // - Debug to support legacy logging
 pub trait SVMMessage: Debug {
-    /// Returns the total number of signatures in the message.
-    /// This includes required transaction signatures as well as any
-    /// pre-compile signatures that are attached in instructions.
-    fn num_total_signatures(&self) -> u64;
+    /// Return the number of transaction-level signatures in the message.
+    fn num_transaction_signatures(&self) -> u64;
+    /// Return the number of ed25519 precompile signatures in the message.
+    fn num_ed25519_signatures(&self) -> u64 {
+        default_precompile_signature_count(&ed25519_program::ID, self.program_instructions_iter())
+    }
+    /// Return the number of secp256k1 precompile signatures in the message.
+    fn num_secp256k1_signatures(&self) -> u64 {
+        default_precompile_signature_count(&secp256k1_program::ID, self.program_instructions_iter())
+    }
+    /// Return the number of secp256r1 precompile signatures in the message.
+    fn num_secp256r1_signatures(&self) -> u64 {
+        default_precompile_signature_count(&secp256r1_program::ID, self.program_instructions_iter())
+    }
 
     /// Returns the number of requested write-locks in this message.
     /// This does not consider if write-locks are demoted.
@@ -34,7 +51,7 @@ pub trait SVMMessage: Debug {
 
     /// Return an iterator over the instructions in the message, paired with
     /// the pubkey of the program.
-    fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)>;
+    fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> + Clone;
 
     /// Return the account keys.
     fn account_keys(&self) -> AccountKeys;
@@ -117,4 +134,14 @@ pub trait SVMMessage: Debug {
 
     /// Get message address table lookups used in the message
     fn message_address_table_lookups(&self) -> impl Iterator<Item = SVMMessageAddressTableLookup>;
+}
+
+fn default_precompile_signature_count<'a>(
+    precompile: &Pubkey,
+    instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)>,
+) -> u64 {
+    instructions
+        .filter(|(program_id, _)| *program_id == precompile)
+        .map(|(_, ix)| u64::from(ix.data.first().copied().unwrap_or(0)))
+        .sum()
 }

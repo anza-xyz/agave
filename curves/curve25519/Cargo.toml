@@ -12,6 +12,11 @@ edition = { workspace = true }
 [dependencies]
 bytemuck = { workspace = true }
 bytemuck_derive = { workspace = true }
+# this crate uses `subtle::CtOption<Scalar>::into_option` via curve25519-dalek,
+# which requires subtle v2.6.1, but curve25519-dalek only requires v2.3.0
+# The line below help users of this crate obtain correct subtle version.
+# (that is, the version specified by our workspace or greater minor version, not the version specified by curve25519-dalek)
+subtle = { workspace = true }
 thiserror = { workspace = true }
 
 [target.'cfg(target_os = "solana")'.dependencies]

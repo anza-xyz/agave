@@ -22,7 +22,7 @@ impl<'a> GenericTraversal<'a> {
     }
 }
 
-impl<'a> Iterator for GenericTraversal<'a> {
+impl Iterator for GenericTraversal<'_> {
     type Item = Slot;
     fn next(&mut self) -> Option<Self::Item> {
         let next = self.pending.pop();

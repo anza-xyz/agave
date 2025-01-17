@@ -9,11 +9,9 @@ use {
     },
     log::*,
     quinn::{ConnectError, Connection, Endpoint},
+    solana_clock::{DEFAULT_MS_PER_SLOT, MAX_PROCESSING_AGE, NUM_CONSECUTIVE_LEADER_SLOTS},
     solana_measure::measure::Measure,
-    solana_sdk::{
-        clock::{DEFAULT_MS_PER_SLOT, MAX_PROCESSING_AGE, NUM_CONSECUTIVE_LEADER_SLOTS},
-        timing::timestamp,
-    },
+    solana_time_utils::timestamp,
     std::{
         net::SocketAddr,
         sync::{atomic::Ordering, Arc},

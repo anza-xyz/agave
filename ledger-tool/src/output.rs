@@ -361,6 +361,7 @@ pub struct CliDuplicateShred {
     merkle_root: Option<Hash>,
     chained_merkle_root: Option<Hash>,
     last_in_slot: bool,
+    #[serde(with = "serde_bytes")]
     payload: Vec<u8>,
 }
 

@@ -42,7 +42,7 @@ rm -f "$BENCH_FILE"
 
 # Run sdk benches
 _ $cargoNightly bench --manifest-path sdk/Cargo.toml ${V:+--verbose} \
-  -- -Z unstable-options --format=json | tee -a "$BENCH_FILE"
+  --features openssl-vendored -- -Z unstable-options --format=json | tee -a "$BENCH_FILE"
 
 # Run runtime benches
 _ $cargoNightly bench --manifest-path runtime/Cargo.toml ${V:+--verbose} \

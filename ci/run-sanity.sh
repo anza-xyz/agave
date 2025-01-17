@@ -15,7 +15,7 @@ if [[ -z $CI ]]; then
   $solana_ledger_tool --version
 fi
 
-rm -rf config/run/init-completed config/ledger config/snapshot-ledger
+rm -rf config/run/init-completed config/ledger
 
 # Sanity-check that agave-validator can successfully terminate itself without relying on
 # process::exit() by extending the timeout...
@@ -56,14 +56,26 @@ $agave_validator --ledger config/ledger exit --force || true
 
 wait $pid
 
-$solana_ledger_tool create-snapshot --ledger config/ledger "$snapshot_slot" config/snapshot-ledger
-cp config/ledger/genesis.tar.bz2 config/snapshot-ledger
-$solana_ledger_tool copy --ledger config/ledger \
-  --target-db config/snapshot-ledger --starting-slot "$snapshot_slot" --ending-slot "$latest_slot"
-$solana_ledger_tool verify --abort-on-invalid-block \
-  --ledger config/snapshot-ledger --block-verification-method blockstore-processor
-$solana_ledger_tool verify --abort-on-invalid-block \
-  --ledger config/snapshot-ledger --block-verification-method unified-scheduler
+for method in blockstore-processor unified-scheduler
+do
+  rm -rf config/snapshot-ledger
+  $solana_ledger_tool create-snapshot --ledger config/ledger "$snapshot_slot" config/snapshot-ledger
+  cp config/ledger/genesis.tar.bz2 config/snapshot-ledger
+  $solana_ledger_tool copy --ledger config/ledger \
+    --target-db config/snapshot-ledger --starting-slot "$snapshot_slot" --ending-slot "$latest_slot"
+
+  set -x
+  $solana_ledger_tool --ledger config/snapshot-ledger slot "$latest_slot" --verbose --verbose \
+    |& grep -q "Log Messages:$" && exit 1
+
+  $solana_ledger_tool verify --abort-on-invalid-block \
+    --ledger config/snapshot-ledger --block-verification-method "$method" \
+    --enable-rpc-transaction-history --enable-extended-tx-metadata-storage
+
+  $solana_ledger_tool --ledger config/snapshot-ledger slot "$latest_slot" --verbose --verbose \
+    |& grep -q "Log Messages:$"
+  set +x
+done
 
 first_simulated_slot=$((latest_slot / 2))
 purge_slot=$((first_simulated_slot + latest_slot / 4))

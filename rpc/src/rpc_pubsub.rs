@@ -810,7 +810,7 @@ mod tests {
             mint_keypair: alice,
             ..
         } = create_genesis_config(10_000);
-        let bob_pubkey = solana_sdk::pubkey::new_rand();
+        let bob_pubkey = solana_pubkey::new_rand();
         let bank = Bank::new_for_tests(&genesis_config);
         let blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
@@ -864,7 +864,7 @@ mod tests {
         genesis_config.rent = Rent::default();
         activate_all_features(&mut genesis_config);
 
-        let new_stake_authority = solana_sdk::pubkey::new_rand();
+        let new_stake_authority = solana_pubkey::new_rand();
         let stake_authority = Keypair::new();
         let from = Keypair::new();
         let stake_account = Keypair::new();
@@ -1085,7 +1085,7 @@ mod tests {
     #[test]
     #[serial]
     fn test_account_unsubscribe() {
-        let bob_pubkey = solana_sdk::pubkey::new_rand();
+        let bob_pubkey = solana_pubkey::new_rand();
 
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));

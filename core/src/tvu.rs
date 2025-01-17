@@ -4,7 +4,6 @@
 use {
     crate::{
         banking_trace::BankingTracer,
-        cache_block_meta_service::CacheBlockMetaSender,
         cluster_info_vote_listener::{
             DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver, VerifiedVoteReceiver,
             VoteTracker,
@@ -16,7 +15,6 @@ use {
         drop_bank_service::DropBankService,
         repair::repair_service::{OutstandingShredRepairs, RepairInfo},
         replay_stage::{ReplayReceivers, ReplaySenders, ReplayStage, ReplayStageConfig},
-        rewards_recorder_service::RewardsRecorderSender,
         shred_fetch_stage::ShredFetchStage,
         voting_service::VotingService,
         warm_quic_cache_service::WarmQuicCacheService,
@@ -37,7 +35,8 @@ use {
     },
     solana_poh::poh_recorder::PohRecorder,
     solana_rpc::{
-        max_slots::MaxSlots, optimistically_confirmed_bank_tracker::BankNotificationSenderConfig,
+        cache_block_meta_service::CacheBlockMetaSender, max_slots::MaxSlots,
+        optimistically_confirmed_bank_tracker::BankNotificationSenderConfig,
         rpc_subscriptions::RpcSubscriptions, slot_status_notifier::SlotStatusNotifier,
     },
     solana_runtime::{
@@ -132,7 +131,6 @@ impl Tvu {
         block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
         turbine_disabled: Arc<AtomicBool>,
         transaction_status_sender: Option<TransactionStatusSender>,
-        rewards_recorder_sender: Option<RewardsRecorderSender>,
         cache_block_meta_sender: Option<CacheBlockMetaSender>,
         entry_notification_sender: Option<EntryNotifierSender>,
         vote_tracker: Arc<VoteTracker>,
@@ -162,6 +160,7 @@ impl Tvu {
         cluster_slots: Arc<ClusterSlots>,
         wen_restart_repair_slots: Option<Arc<RwLock<Vec<Slot>>>>,
         slot_status_notifier: Option<SlotStatusNotifier>,
+        vote_connection_cache: Arc<ConnectionCache>,
     ) -> Result<Self, String> {
         let in_wen_restart = wen_restart_repair_slots.is_some();
 
@@ -278,7 +277,6 @@ impl Tvu {
             slot_status_notifier,
             accounts_background_request_sender,
             transaction_status_sender,
-            rewards_recorder_sender,
             cache_block_meta_sender,
             entry_notification_sender,
             bank_notification_sender,
@@ -330,20 +328,16 @@ impl Tvu {
             cluster_info.clone(),
             poh_recorder.clone(),
             tower_storage,
+            vote_connection_cache.clone(),
         );
 
-        let warm_quic_cache_service = connection_cache.and_then(|connection_cache| {
-            if connection_cache.use_quic() {
-                Some(WarmQuicCacheService::new(
-                    connection_cache.clone(),
-                    cluster_info.clone(),
-                    poh_recorder.clone(),
-                    exit.clone(),
-                ))
-            } else {
-                None
-            }
-        });
+        let warm_quic_cache_service = create_cache_warmer_if_needed(
+            connection_cache,
+            vote_connection_cache,
+            cluster_info,
+            poh_recorder,
+            &exit,
+        );
 
         let cost_update_service = CostUpdateService::new(blockstore.clone(), cost_update_receiver);
 
@@ -414,6 +408,27 @@ impl Tvu {
     }
 }
 
+fn create_cache_warmer_if_needed(
+    connection_cache: Option<&Arc<ConnectionCache>>,
+    vote_connection_cache: Arc<ConnectionCache>,
+    cluster_info: &Arc<ClusterInfo>,
+    poh_recorder: &Arc<RwLock<PohRecorder>>,
+    exit: &Arc<AtomicBool>,
+) -> Option<WarmQuicCacheService> {
+    let tpu_connection_cache = connection_cache.filter(|cache| cache.use_quic()).cloned();
+    let vote_connection_cache = Some(vote_connection_cache).filter(|cache| cache.use_quic());
+
+    (tpu_connection_cache.is_some() || vote_connection_cache.is_some()).then(|| {
+        WarmQuicCacheService::new(
+            tpu_connection_cache,
+            vote_connection_cache,
+            cluster_info.clone(),
+            poh_recorder.clone(),
+            exit.clone(),
+        )
+    })
+}
+
 #[cfg(test)]
 pub mod tests {
     use {
@@ -435,6 +450,7 @@ pub mod tests {
         solana_runtime::bank::Bank,
         solana_sdk::signature::{Keypair, Signer},
         solana_streamer::socket::SocketAddrSpace,
+        solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
         std::sync::atomic::{AtomicU64, Ordering},
     };
 
@@ -493,6 +509,18 @@ pub mod tests {
         } else {
             None
         };
+        let connection_cache = if DEFAULT_VOTE_USE_QUIC {
+            ConnectionCache::new_quic(
+                "connection_cache_vote_quic",
+                DEFAULT_TPU_CONNECTION_POOL_SIZE,
+            )
+        } else {
+            ConnectionCache::with_udp(
+                "connection_cache_vote_udp",
+                DEFAULT_TPU_CONNECTION_POOL_SIZE,
+            )
+        };
+
         let tvu = Tvu::new(
             &vote_keypair.pubkey(),
             Arc::new(RwLock::new(vec![Arc::new(vote_keypair)])),
@@ -526,7 +554,6 @@ pub mod tests {
             None,
             None,
             None,
-            None,
             Arc::<VoteTracker>::default(),
             retransmit_slots_sender,
             gossip_verified_vote_hash_receiver,
@@ -554,6 +581,7 @@ pub mod tests {
             cluster_slots,
             wen_restart_repair_slots,
             None,
+            Arc::new(connection_cache),
         )
         .expect("assume success");
         if enable_wen_restart {

@@ -1,0 +1,55 @@
+[package]
+name = "solana-compute-budget-instruction"
+description = "Solana Compute Budget Instruction"
+documentation = "https://docs.rs/solana-compute-budget-instruction"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+log = { workspace = true }
+solana-borsh = { workspace = true }
+solana-builtins-default-costs = { workspace = true, features = ["svm-internal"] }
+solana-compute-budget = { workspace = true }
+solana-compute-budget-interface = { workspace = true }
+solana-feature-set = { workspace = true }
+solana-instruction = { workspace = true }
+solana-packet = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-svm-transaction = { workspace = true }
+solana-transaction-error = { workspace = true }
+thiserror = { workspace = true }
+
+[lib]
+crate-type = ["lib"]
+name = "solana_compute_budget_instruction"
+
+[dev-dependencies]
+bincode = { workspace = true }
+criterion = { workspace = true }
+rand = { workspace = true }
+solana-builtins-default-costs = { workspace = true, features = ["dev-context-only-utils", "svm-internal"] }
+solana-hash = { workspace = true }
+solana-keypair = { workspace = true }
+solana-message = { workspace = true }
+solana-program = { workspace = true }
+solana-signer = { workspace = true }
+solana-system-interface = { workspace = true }
+solana-transaction = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+dev-context-only-utils = []
+
+[[bench]]
+name = "process_compute_budget_instructions"
+harness = false
+
+[lints]
+workspace = true

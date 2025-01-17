@@ -63,7 +63,6 @@ use {
 pub const RUST_LOG_FILTER: &str =
     "error,solana_core::replay_stage=warn,solana_local_cluster=info,local_cluster=info";
 
-pub const DEFAULT_CLUSTER_LAMPORTS: u64 = 10_000_000 * LAMPORTS_PER_SOL;
 pub const DEFAULT_NODE_STAKE: u64 = 10 * LAMPORTS_PER_SOL;
 
 pub fn last_vote_in_tower(tower_path: &Path, node_pubkey: &Pubkey) -> Option<(Slot, Hash)> {
@@ -190,8 +189,7 @@ pub fn copy_blocks(end_slot: Slot, source: &Blockstore, dest: &Blockstore, is_tr
 /// Computes the numbr of milliseconds `num_blocks` blocks will take given
 /// each slot contains `ticks_per_slot`
 pub fn ms_for_n_slots(num_blocks: u64, ticks_per_slot: u64) -> u64 {
-    ((ticks_per_slot * DEFAULT_MS_PER_SLOT * num_blocks) + DEFAULT_TICKS_PER_SLOT - 1)
-        / DEFAULT_TICKS_PER_SLOT
+    (ticks_per_slot * DEFAULT_MS_PER_SLOT * num_blocks).div_ceil(DEFAULT_TICKS_PER_SLOT)
 }
 
 pub fn run_kill_partition_switch_threshold<C>(
@@ -320,7 +318,7 @@ pub fn run_cluster_partition<C>(
         .map(|stake_weight| 100 * *stake_weight as u64)
         .collect();
     assert_eq!(node_stakes.len(), num_nodes);
-    let cluster_lamports = node_stakes.iter().sum::<u64>() * 2;
+    let mint_lamports = node_stakes.iter().sum::<u64>() * 2;
     let turbine_disabled = Arc::new(AtomicBool::new(false));
     let mut validator_config = ValidatorConfig {
         turbine_disabled: turbine_disabled.clone(),
@@ -352,7 +350,7 @@ pub fn run_cluster_partition<C>(
 
     let slots_per_epoch = 2048;
     let mut config = ClusterConfig {
-        cluster_lamports,
+        mint_lamports,
         node_stakes,
         validator_configs: make_identical_validator_configs(&validator_config, num_nodes),
         validator_keys: Some(
@@ -491,7 +489,7 @@ pub fn test_faulty_node(
     }
 
     let mut cluster_config = ClusterConfig {
-        cluster_lamports: 10_000,
+        mint_lamports: 10_000,
         node_stakes,
         validator_configs,
         validator_keys: Some(validator_keys.clone()),

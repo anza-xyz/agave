@@ -103,10 +103,8 @@ pub mod syscalls;
 /// use solana_program_entrypoint::entrypoint;
 /// use solana_program_error::ProgramResult;
 /// use solana_pubkey::Pubkey;
-/// use solana_program::{
-///     system_instruction,
-///     system_program,
-/// };
+/// use solana_sdk_ids::system_program;
+/// use solana_system_interface::instruction as system_instruction;
 ///
 /// entrypoint!(process_instruction);
 ///
@@ -197,10 +195,8 @@ pub fn invoke_unchecked(instruction: &Instruction, account_infos: &[AccountInfo]
 /// use solana_program_entrypoint::entrypoint;
 /// use solana_program_error::ProgramResult;
 /// use solana_pubkey::Pubkey;
-/// use solana_program::{
-///     system_instruction,
-///     system_program,
-/// };
+/// use solana_sdk_ids::system_program;
+/// use solana_system_interface::instruction as system_instruction;
 ///
 /// entrypoint!(process_instruction);
 ///
@@ -276,8 +272,8 @@ pub fn invoke_signed(
     invoke_signed_unchecked(instruction, account_infos, signers_seeds)
 }
 
-/// Copied from `solana_program::entrypoint::SUCCESS`
-/// to avoid a `solana_program` dependency
+/// Copied from `solana_program_entrypoint::SUCCESS`
+/// to avoid a `solana_program_entrypoint` dependency
 const _SUCCESS: u64 = 0;
 #[cfg(test)]
 static_assertions::const_assert_eq!(_SUCCESS, solana_program_entrypoint::SUCCESS);

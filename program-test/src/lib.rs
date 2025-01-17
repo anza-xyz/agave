@@ -69,7 +69,7 @@ pub use {
     solana_banks_client::{BanksClient, BanksClientError},
     solana_banks_interface::BanksTransactionResultWithMetadata,
     solana_program_runtime::invoke_context::InvokeContext,
-    solana_rbpf::{
+    solana_sbpf::{
         error::EbpfError,
         vm::{get_runtime_environment_key, EbpfVm},
     },
@@ -497,7 +497,7 @@ impl Default for ProgramTest {
     ///
     fn default() -> Self {
         solana_logger::setup_with_default(
-            "solana_rbpf::vm=debug,\
+            "solana_sbpf::vm=debug,\
              solana_runtime::message_processor=debug,\
              solana_runtime::system_instruction_processor=trace,\
              solana_program_test=info",

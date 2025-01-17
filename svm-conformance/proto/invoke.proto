@@ -2,7 +2,7 @@ syntax = "proto3";
 package org.solana.sealevel.v1;
 
 import "context.proto";
-import "txn.proto";
+import "metadata.proto";
 
 message InstrAcct {
   // Selects an account in an external list
@@ -30,7 +30,6 @@ message InstrContext {
 
   uint64 cu_avail = 6;
 
-  TxnContext txn_context = 7;
   SlotContext slot_context = 8;
   EpochContext epoch_context = 9;
 }
@@ -60,6 +59,7 @@ message InstrEffects {
 
 // An instruction processing test fixture.
 message InstrFixture {
-  InstrContext input = 1;
-  InstrEffects output = 2;
+  FixtureMetadata metadata = 1;
+  InstrContext input = 2;
+  InstrEffects output = 3;
 }

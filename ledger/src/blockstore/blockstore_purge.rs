@@ -154,7 +154,7 @@ impl Blockstore {
         let Some(mut slot_meta) = self.meta(slot)? else {
             return Err(BlockstoreError::SlotUnavailable);
         };
-        let mut write_batch = self.db.batch()?;
+        let mut write_batch = self.get_write_batch()?;
 
         let columns_purged = self.purge_range(&mut write_batch, slot, slot, PurgeType::Exact)?;
 
@@ -182,7 +182,7 @@ impl Blockstore {
         self.meta_cf
             .put_in_batch(&mut write_batch, slot, &slot_meta)?;
 
-        self.db.write(write_batch).inspect_err(|e| {
+        self.write_batch(write_batch).inspect_err(|e| {
             error!(
                 "Error: {:?} while submitting write batch for slot {:?}",
                 e, slot
@@ -207,14 +207,14 @@ impl Blockstore {
         purge_type: PurgeType,
         purge_stats: &mut PurgeStats,
     ) -> Result<bool> {
-        let mut write_batch = self.db.batch()?;
+        let mut write_batch = self.get_write_batch()?;
 
         let mut delete_range_timer = Measure::start("delete_range");
         let columns_purged = self.purge_range(&mut write_batch, from_slot, to_slot, purge_type)?;
         delete_range_timer.stop();
 
         let mut write_timer = Measure::start("write_batch");
-        self.db.write(write_batch).inspect_err(|e| {
+        self.write_batch(write_batch).inspect_err(|e| {
             error!(
                 "Error: {:?} while submitting write batch for purge from_slot {} to_slot {}",
                 e, from_slot, to_slot
@@ -803,19 +803,23 @@ pub mod tests {
         assert_eq!(status_entry_iterator.next(), None);
     }
 
-    fn get_index_bounds(blockstore: &Blockstore) -> (Box<[u8]>, Box<[u8]>) {
-        let first_index = {
-            let mut status_entry_iterator = blockstore
-                .transaction_status_cf
-                .iterator_cf_raw_key(IteratorMode::Start);
-            status_entry_iterator.next().unwrap().unwrap().0
-        };
-        let last_index = {
-            let mut status_entry_iterator = blockstore
-                .transaction_status_cf
-                .iterator_cf_raw_key(IteratorMode::End);
-            status_entry_iterator.next().unwrap().unwrap().0
-        };
+    fn get_index_bounds(
+        blockstore: &Blockstore,
+    ) -> (
+        <cf::TransactionStatus as Column>::Key,
+        <cf::TransactionStatus as Column>::Key,
+    ) {
+        let (first_index, _value) = blockstore
+            .transaction_status_cf
+            .iterator_cf_raw_key(IteratorMode::Start)
+            .next()
+            .unwrap();
+        let (last_index, _value) = blockstore
+            .transaction_status_cf
+            .iterator_cf_raw_key(IteratorMode::End)
+            .next()
+            .unwrap();
+
         (first_index, last_index)
     }
 
@@ -829,8 +833,8 @@ pub mod tests {
         let (first_index, last_index) = get_index_bounds(blockstore);
         blockstore.db.set_oldest_slot(oldest_slot);
         blockstore
-            .db
-            .compact_range_cf::<cf::TransactionStatus>(&first_index, &last_index);
+            .transaction_status_cf
+            .compact_range_raw_key(&first_index, &last_index);
     }
 
     #[test_case(purge_exact; "exact")]
@@ -866,22 +870,22 @@ pub mod tests {
             .put(1, &index1)
             .unwrap();
 
-        let statuses: Vec<_> = blockstore
+        let num_statuses = blockstore
             .transaction_status_cf
-            .iterator_cf_raw_key(IteratorMode::Start)
-            .collect();
-        assert_eq!(statuses.len(), 15);
+            .iter(IteratorMode::Start)
+            .unwrap()
+            .count();
+        assert_eq!(num_statuses, 15);
 
         // Delete some of primary-index 0
         let oldest_slot = 3;
         purge(&blockstore, oldest_slot);
         let status_entry_iterator = blockstore
             .transaction_status_cf
-            .iterator_cf_raw_key(IteratorMode::Start);
+            .iter(IteratorMode::Start)
+            .unwrap();
         let mut count = 0;
-        for entry in status_entry_iterator {
-            let (key, _value) = entry.unwrap();
-            let (_signature, slot) = <cf::TransactionStatus as Column>::index(&key);
+        for ((_signature, slot), _value) in status_entry_iterator {
             assert!(slot >= oldest_slot);
             count += 1;
         }
@@ -892,11 +896,10 @@ pub mod tests {
         purge(&blockstore, oldest_slot);
         let status_entry_iterator = blockstore
             .transaction_status_cf
-            .iterator_cf_raw_key(IteratorMode::Start);
+            .iter(IteratorMode::Start)
+            .unwrap();
         let mut count = 0;
-        for entry in status_entry_iterator {
-            let (key, _value) = entry.unwrap();
-            let (_signature, slot) = <cf::TransactionStatus as Column>::index(&key);
+        for ((_signature, slot), _value) in status_entry_iterator {
             assert!(slot >= oldest_slot);
             count += 1;
         }
@@ -907,11 +910,10 @@ pub mod tests {
         purge(&blockstore, oldest_slot);
         let status_entry_iterator = blockstore
             .transaction_status_cf
-            .iterator_cf_raw_key(IteratorMode::Start);
+            .iter(IteratorMode::Start)
+            .unwrap();
         let mut count = 0;
-        for entry in status_entry_iterator {
-            let (key, _value) = entry.unwrap();
-            let (_signature, slot) = <cf::TransactionStatus as Column>::index(&key);
+        for ((_signature, slot), _value) in status_entry_iterator {
             assert!(slot >= oldest_slot);
             count += 1;
         }
@@ -922,11 +924,10 @@ pub mod tests {
         purge(&blockstore, oldest_slot);
         let status_entry_iterator = blockstore
             .transaction_status_cf
-            .iterator_cf_raw_key(IteratorMode::Start);
+            .iter(IteratorMode::Start)
+            .unwrap();
         let mut count = 0;
-        for entry in status_entry_iterator {
-            let (key, _value) = entry.unwrap();
-            let (_signature, slot) = <cf::TransactionStatus as Column>::index(&key);
+        for ((_signature, slot), _value) in status_entry_iterator {
             assert!(slot >= oldest_slot);
             count += 1;
         }
@@ -937,11 +938,10 @@ pub mod tests {
         purge(&blockstore, oldest_slot);
         let status_entry_iterator = blockstore
             .transaction_status_cf
-            .iterator_cf_raw_key(IteratorMode::Start);
+            .iter(IteratorMode::Start)
+            .unwrap();
         let mut count = 0;
-        for entry in status_entry_iterator {
-            let (key, _value) = entry.unwrap();
-            let (_signature, slot) = <cf::TransactionStatus as Column>::index(&key);
+        for ((_signature, slot), _value) in status_entry_iterator {
             assert!(slot >= oldest_slot);
             count += 1;
         }
@@ -952,7 +952,8 @@ pub mod tests {
         purge(&blockstore, oldest_slot);
         let mut status_entry_iterator = blockstore
             .transaction_status_cf
-            .iterator_cf_raw_key(IteratorMode::Start);
+            .iter(IteratorMode::Start)
+            .unwrap();
         assert!(status_entry_iterator.next().is_none());
     }
 
@@ -980,7 +981,7 @@ pub mod tests {
         );
         blockstore.insert_shreds(shreds, None, false).unwrap();
 
-        let mut write_batch = blockstore.db.batch().unwrap();
+        let mut write_batch = blockstore.get_write_batch().unwrap();
         blockstore
             .purge_special_columns_exact(&mut write_batch, slot, slot + 1)
             .unwrap();
@@ -993,27 +994,13 @@ pub mod tests {
         let max_slot = 19;
 
         clear_and_repopulate_transaction_statuses_for_test(&blockstore, max_slot);
-        let first_index = {
-            let mut status_entry_iterator = blockstore
-                .transaction_status_cf
-                .iter(IteratorMode::Start)
-                .unwrap();
-            status_entry_iterator.next().unwrap().0
-        };
-        let last_index = {
-            let mut status_entry_iterator = blockstore
-                .transaction_status_cf
-                .iter(IteratorMode::End)
-                .unwrap();
-            status_entry_iterator.next().unwrap().0
-        };
+        let (first_index, last_index) = get_index_bounds(&blockstore);
 
         let oldest_slot = 3;
         blockstore.db.set_oldest_slot(oldest_slot);
-        blockstore.db.compact_range_cf::<cf::TransactionStatus>(
-            &cf::TransactionStatus::key(first_index),
-            &cf::TransactionStatus::key(last_index),
-        );
+        blockstore
+            .transaction_status_cf
+            .compact_range_raw_key(&first_index, &last_index);
 
         let status_entry_iterator = blockstore
             .transaction_status_cf
@@ -1027,27 +1014,13 @@ pub mod tests {
         assert_eq!(count, max_slot - (oldest_slot - 1));
 
         clear_and_repopulate_transaction_statuses_for_test(&blockstore, max_slot);
-        let first_index = {
-            let mut status_entry_iterator = blockstore
-                .transaction_status_cf
-                .iter(IteratorMode::Start)
-                .unwrap();
-            status_entry_iterator.next().unwrap().0
-        };
-        let last_index = {
-            let mut status_entry_iterator = blockstore
-                .transaction_status_cf
-                .iter(IteratorMode::End)
-                .unwrap();
-            status_entry_iterator.next().unwrap().0
-        };
+        let (first_index, last_index) = get_index_bounds(&blockstore);
 
         let oldest_slot = 12;
         blockstore.db.set_oldest_slot(oldest_slot);
-        blockstore.db.compact_range_cf::<cf::TransactionStatus>(
-            &cf::TransactionStatus::key(first_index),
-            &cf::TransactionStatus::key(last_index),
-        );
+        blockstore
+            .transaction_status_cf
+            .compact_range_raw_key(&first_index, &last_index);
 
         let status_entry_iterator = blockstore
             .transaction_status_cf
@@ -1103,46 +1076,40 @@ pub mod tests {
             )
             .unwrap();
 
-        let first_index = {
-            let mut memos_iterator = blockstore
-                .transaction_memos_cf
-                .iterator_cf_raw_key(IteratorMode::Start);
-            memos_iterator.next().unwrap().unwrap().0
-        };
-        let last_index = {
-            let mut memos_iterator = blockstore
-                .transaction_memos_cf
-                .iterator_cf_raw_key(IteratorMode::End);
-            memos_iterator.next().unwrap().unwrap().0
-        };
+        let (first_index, _value) = blockstore
+            .transaction_memos_cf
+            .iterator_cf_raw_key(IteratorMode::Start)
+            .next()
+            .unwrap();
+        let (last_index, _value) = blockstore
+            .transaction_memos_cf
+            .iterator_cf_raw_key(IteratorMode::End)
+            .next()
+            .unwrap();
 
         // Purge at slot 0 should not affect any memos
         blockstore.db.set_oldest_slot(0);
         blockstore
-            .db
-            .compact_range_cf::<cf::TransactionMemos>(&first_index, &last_index);
-        let memos_iterator = blockstore
             .transaction_memos_cf
-            .iterator_cf_raw_key(IteratorMode::Start);
-        let mut count = 0;
-        for item in memos_iterator {
-            let _item = item.unwrap();
-            count += 1;
-        }
-        assert_eq!(count, 4);
+            .compact_range_raw_key(&first_index, &last_index);
+        let num_memos = blockstore
+            .transaction_memos_cf
+            .iter(IteratorMode::Start)
+            .unwrap()
+            .count();
+        assert_eq!(num_memos, 4);
 
         // Purge at oldest_slot without clean_slot_0 only purges the current memo at slot 4
         blockstore.db.set_oldest_slot(oldest_slot);
         blockstore
-            .db
-            .compact_range_cf::<cf::TransactionMemos>(&first_index, &last_index);
+            .transaction_memos_cf
+            .compact_range_raw_key(&first_index, &last_index);
         let memos_iterator = blockstore
             .transaction_memos_cf
-            .iterator_cf_raw_key(IteratorMode::Start);
+            .iter(IteratorMode::Start)
+            .unwrap();
         let mut count = 0;
-        for item in memos_iterator {
-            let (key, _value) = item.unwrap();
-            let slot = <cf::TransactionMemos as Column>::index(&key).1;
+        for ((_signature, slot), _value) in memos_iterator {
             assert!(slot == 0 || slot >= oldest_slot);
             count += 1;
         }
@@ -1151,15 +1118,14 @@ pub mod tests {
         // Purge at oldest_slot with clean_slot_0 purges deprecated memos
         blockstore.db.set_clean_slot_0(true);
         blockstore
-            .db
-            .compact_range_cf::<cf::TransactionMemos>(&first_index, &last_index);
+            .transaction_memos_cf
+            .compact_range_raw_key(&first_index, &last_index);
         let memos_iterator = blockstore
             .transaction_memos_cf
-            .iterator_cf_raw_key(IteratorMode::Start);
+            .iter(IteratorMode::Start)
+            .unwrap();
         let mut count = 0;
-        for item in memos_iterator {
-            let (key, _value) = item.unwrap();
-            let slot = <cf::TransactionMemos as Column>::index(&key).1;
+        for ((_signature, slot), _value) in memos_iterator {
             assert!(slot >= oldest_slot);
             count += 1;
         }

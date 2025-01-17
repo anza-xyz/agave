@@ -10,9 +10,11 @@ use {
     rand::{thread_rng, Rng},
     rayon::{prelude::*, ThreadPool},
     serde::{Deserialize, Serialize},
+    solana_hash::Hash,
     solana_measure::measure::Measure,
     solana_merkle_tree::MerkleTree,
     solana_metrics::*,
+    solana_packet::Meta,
     solana_perf::{
         cuda_runtime::PinnedVec,
         packet::{Packet, PacketBatch, PacketBatchRecycler, PACKETS_PER_BATCH},
@@ -22,19 +24,15 @@ use {
     },
     solana_rayon_threadlimit::get_max_thread_count,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
-    solana_sdk::{
-        hash::Hash,
-        packet::Meta,
-        transaction::{
-            Result, Transaction, TransactionError, TransactionVerificationMode,
-            VersionedTransaction,
-        },
+    solana_transaction::{
+        versioned::VersionedTransaction, Transaction, TransactionVerificationMode,
     },
+    solana_transaction_error::{TransactionError, TransactionResult as Result},
     std::{
         cmp,
         ffi::OsStr,
         iter::repeat_with,
-        sync::{Arc, Mutex, Once},
+        sync::{Arc, Mutex, Once, OnceLock},
         thread::{self, JoinHandle},
         time::Instant,
     },
@@ -43,7 +41,7 @@ use {
 pub type EntrySender = Sender<Vec<Entry>>;
 pub type EntryReceiver = Receiver<Vec<Entry>>;
 
-static mut API: Option<Container<Api>> = None;
+static API: OnceLock<Container<Api>> = OnceLock::new();
 
 pub fn init_poh() {
     init(OsStr::new("libpoh-simd.so"));
@@ -53,23 +51,23 @@ fn init(name: &OsStr) {
     static INIT_HOOK: Once = Once::new();
 
     info!("Loading {:?}", name);
-    unsafe {
-        INIT_HOOK.call_once(|| {
-            let path;
-            let lib_name = if let Some(perf_libs_path) = solana_perf::perf_libs::locate_perf_libs()
-            {
-                solana_perf::perf_libs::append_to_ld_library_path(
-                    perf_libs_path.to_str().unwrap_or("").to_string(),
-                );
-                path = perf_libs_path.join(name);
-                path.as_os_str()
-            } else {
-                name
-            };
+    INIT_HOOK.call_once(|| {
+        let path;
+        let lib_name = if let Some(perf_libs_path) = solana_perf::perf_libs::locate_perf_libs() {
+            solana_perf::perf_libs::append_to_ld_library_path(
+                perf_libs_path.to_str().unwrap_or("").to_string(),
+            );
+            path = perf_libs_path.join(name);
+            path.as_os_str()
+        } else {
+            name
+        };
 
-            API = Container::load(lib_name).ok();
-        })
-    }
+        match unsafe { Container::load(lib_name) } {
+            Ok(api) => _ = API.set(api),
+            Err(err) => error!("Unable to load {lib_name:?}: {err}"),
+        }
+    })
 }
 
 pub fn api() -> Option<&'static Container<Api<'static>>> {
@@ -79,10 +77,10 @@ pub fn api() -> Option<&'static Container<Api<'static>>> {
             if std::env::var("TEST_PERF_LIBS").is_ok() {
                 init_poh()
             }
-        })
+        });
     }
 
-    unsafe { API.as_ref() }
+    API.get()
 }
 
 #[derive(SymBorApi)]
@@ -684,7 +682,7 @@ impl EntrySlice for [Entry] {
         simd_len: usize,
         thread_pool: &ThreadPool,
     ) -> EntryVerificationState {
-        use solana_sdk::hash::HASH_BYTES;
+        use solana_hash::HASH_BYTES;
         let now = Instant::now();
         let genesis = [Entry {
             num_hashes: 0,
@@ -692,7 +690,7 @@ impl EntrySlice for [Entry] {
             transactions: vec![],
         }];
 
-        let aligned_len = ((self.len() + simd_len - 1) / simd_len) * simd_len;
+        let aligned_len = self.len().div_ceil(simd_len) * simd_len;
         let mut hashes_bytes = vec![0u8; HASH_BYTES * aligned_len];
         genesis
             .iter()
@@ -976,19 +974,21 @@ pub fn thread_pool_for_benches() -> ThreadPool {
 mod tests {
     use {
         super::*,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
+        solana_message::SimpleAddressLoader,
         solana_perf::test_tx::{test_invalid_tx, test_tx},
+        solana_pubkey::Pubkey,
+        solana_reserved_account_keys::ReservedAccountKeys,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-        solana_sdk::{
-            hash::{hash, Hash},
-            pubkey::Pubkey,
-            reserved_account_keys::ReservedAccountKeys,
-            signature::{Keypair, Signer},
-            system_transaction,
-            transaction::{
-                MessageHash, Result, SanitizedTransaction, SimpleAddressLoader,
-                VersionedTransaction,
-            },
+        solana_sha256_hasher::hash,
+        solana_signer::Signer,
+        solana_system_transaction as system_transaction,
+        solana_transaction::{
+            sanitized::{MessageHash, SanitizedTransaction},
+            versioned::VersionedTransaction,
         },
+        solana_transaction_error::TransactionResult as Result,
     };
 
     #[test]
@@ -1142,7 +1142,7 @@ mod tests {
     fn test_transaction_signing() {
         let thread_pool = thread_pool_for_tests();
 
-        use solana_sdk::signature::Signature;
+        use solana_signature::Signature;
         let zero = Hash::default();
 
         let keypair = Keypair::new();

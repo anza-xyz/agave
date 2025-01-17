@@ -1,6 +1,2 @@
-//! A designated address for burning lamports.
-//!
-//! Lamports credited to this address will be removed from the total supply
-//! (burned) at the end of the current block.
-
-crate::declare_id!("1nc1nerator11111111111111111111111111111111");
+#[deprecated(since = "2.2.0", note = "Use `solana_sdk_ids::incinerator` instead")]
+pub use solana_sdk_ids::incinerator::{check_id, id, ID};

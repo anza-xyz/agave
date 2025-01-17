@@ -14,6 +14,9 @@ use {
         input_validators::*, keypair::*,
     },
     solana_cli_output::{cli_version::CliVersion, QuietDisplay, VerboseDisplay},
+    solana_feature_gate_client::{
+        errors::SolanaFeatureGateError, instructions::RevokePendingActivation,
+    },
     solana_feature_set::FEATURE_NAMES,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::rpc_client::RpcClient,
@@ -27,10 +30,12 @@ use {
         epoch_schedule::EpochSchedule,
         feature::{self, Feature},
         genesis_config::ClusterType,
+        incinerator,
         message::Message,
         pubkey::Pubkey,
         stake_history::Epoch,
         system_instruction::SystemError,
+        system_program,
         transaction::Transaction,
     },
     std::{cmp::Ordering, collections::HashMap, fmt, rc::Rc, str::FromStr},
@@ -55,6 +60,11 @@ pub enum FeatureCliCommand {
         feature: Pubkey,
         cluster: ClusterType,
         force: ForceActivation,
+        fee_payer: SignerIndex,
+    },
+    Revoke {
+        feature: Pubkey,
+        cluster: ClusterType,
         fee_payer: SignerIndex,
     },
 }
@@ -481,6 +491,26 @@ impl FeatureSubCommands for App<'_, '_> {
                                 .help("Override activation sanity checks. Don't use this flag"),
                         )
                         .arg(fee_payer_arg()),
+                )
+                .subcommand(
+                    SubCommand::with_name("revoke")
+                        .about("Revoke a pending runtime feature")
+                        .arg(
+                            Arg::with_name("feature")
+                                .value_name("FEATURE_KEYPAIR")
+                                .validator(is_valid_signer)
+                                .index(1)
+                                .required(true)
+                                .help("The signer for the feature to revoke"),
+                        )
+                        .arg(
+                            Arg::with_name("cluster")
+                                .value_name("CLUSTER")
+                                .possible_values(&ClusterType::STRINGS)
+                                .required(true)
+                                .help("The cluster to revoke the feature on"),
+                        )
+                        .arg(fee_payer_arg()),
                 ),
         )
     }
@@ -534,6 +564,31 @@ pub fn parse_feature_subcommand(
                 signers: signer_info.signers,
             }
         }
+        ("revoke", Some(matches)) => {
+            let cluster = value_t_or_exit!(matches, "cluster", ClusterType);
+            let (feature_signer, feature) = signer_of(matches, "feature", wallet_manager)?;
+            let (fee_payer, fee_payer_pubkey) =
+                signer_of(matches, FEE_PAYER_ARG.name, wallet_manager)?;
+
+            let signer_info = default_signer.generate_unique_signers(
+                vec![fee_payer, feature_signer],
+                matches,
+                wallet_manager,
+            )?;
+
+            let feature = feature.unwrap();
+
+            known_feature(&feature)?;
+
+            CliCommandInfo {
+                command: CliCommand::Feature(FeatureCliCommand::Revoke {
+                    feature,
+                    cluster,
+                    fee_payer: signer_info.index_of(fee_payer_pubkey).unwrap(),
+                }),
+                signers: signer_info.signers,
+            }
+        }
         ("status", Some(matches)) => {
             let mut features = if let Some(features) = pubkeys_of(matches, "features") {
                 for feature in &features {
@@ -572,6 +627,11 @@ pub fn process_feature_subcommand(
             force,
             fee_payer,
         } => process_activate(rpc_client, config, *feature, *cluster, *force, *fee_payer),
+        FeatureCliCommand::Revoke {
+            feature,
+            cluster,
+            fee_payer,
+        } => process_revoke(rpc_client, config, *feature, *cluster, *fee_payer),
     }
 }
 
@@ -996,4 +1056,63 @@ fn process_activate(
         config.send_transaction_config,
     );
     log_instruction_custom_error::<SystemError>(result, config)
+}
+
+fn process_revoke(
+    rpc_client: &RpcClient,
+    config: &CliConfig,
+    feature_id: Pubkey,
+    cluster: ClusterType,
+    fee_payer: SignerIndex,
+) -> ProcessResult {
+    check_rpc_genesis_hash(&cluster, rpc_client)?;
+
+    let fee_payer = config.signers[fee_payer];
+    let account = rpc_client.get_account(&feature_id).ok();
+
+    match account.and_then(status_from_account) {
+        Some(CliFeatureStatus::Pending) => (),
+        Some(CliFeatureStatus::Active(..)) => {
+            return Err(format!("{feature_id} has already been fully activated").into());
+        }
+        Some(CliFeatureStatus::Inactive) | None => {
+            return Err(format!("{feature_id} has not been submitted for activation").into());
+        }
+    }
+
+    let blockhash = rpc_client.get_latest_blockhash()?;
+    let (message, _) = resolve_spend_tx_and_check_account_balance(
+        rpc_client,
+        false,
+        SpendAmount::Some(0),
+        &blockhash,
+        &fee_payer.pubkey(),
+        ComputeUnitLimit::Default,
+        |_lamports| {
+            Message::new(
+                &[RevokePendingActivation {
+                    feature: feature_id,
+                    incinerator: incinerator::id(),
+                    system_program: system_program::id(),
+                }
+                .instruction()],
+                Some(&fee_payer.pubkey()),
+            )
+        },
+        config.commitment,
+    )?;
+    let mut transaction = Transaction::new_unsigned(message);
+    transaction.try_sign(&config.signers, blockhash)?;
+
+    println!(
+        "Revoking {} ({})",
+        FEATURE_NAMES.get(&feature_id).unwrap(),
+        feature_id
+    );
+    let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
+        &transaction,
+        config.commitment,
+        config.send_transaction_config,
+    );
+    log_instruction_custom_error::<SolanaFeatureGateError>(result, config)
 }

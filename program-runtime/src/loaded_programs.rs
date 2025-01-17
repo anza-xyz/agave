@@ -2,21 +2,17 @@ use {
     crate::invoke_context::{BuiltinFunctionWithContext, InvokeContext},
     log::{debug, error, log_enabled, trace},
     percentage::PercentageInteger,
-    solana_measure::measure::Measure,
-    solana_rbpf::{
+    solana_clock::{Epoch, Slot},
+    solana_pubkey::Pubkey,
+    solana_sbpf::{
         elf::Executable,
         program::{BuiltinProgram, FunctionRegistry},
         verifier::RequisiteVerifier,
         vm::Config,
     },
-    solana_sdk::{
-        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
-        clock::{Epoch, Slot},
-        loader_v4, native_loader,
-        pubkey::Pubkey,
-        saturating_add_assign,
+    solana_sdk_ids::{
+        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
     },
-    solana_timings::ExecuteDetailsTimings,
     solana_type_overrides::{
         rand::{thread_rng, Rng},
         sync::{
@@ -31,6 +27,8 @@ use {
         sync::Weak,
     },
 };
+#[cfg(feature = "metrics")]
+use {solana_measure::measure::Measure, solana_timings::ExecuteDetailsTimings};
 
 pub type ProgramRuntimeEnvironment = Arc<BuiltinProgram<InvokeContext<'static>>>;
 pub const MAX_LOADED_ENTRY_COUNT: usize = 512;
@@ -272,6 +270,7 @@ impl ProgramCacheStats {
     }
 }
 
+#[cfg(feature = "metrics")]
 /// Time measurements for loading a single [ProgramCacheEntry].
 #[derive(Debug, Default)]
 pub struct LoadProgramMetrics {
@@ -287,15 +286,13 @@ pub struct LoadProgramMetrics {
     pub jit_compile_us: u64,
 }
 
+#[cfg(feature = "metrics")]
 impl LoadProgramMetrics {
     pub fn submit_datapoint(&self, timings: &mut ExecuteDetailsTimings) {
-        saturating_add_assign!(
-            timings.create_executor_register_syscalls_us,
-            self.register_syscalls_us
-        );
-        saturating_add_assign!(timings.create_executor_load_elf_us, self.load_elf_us);
-        saturating_add_assign!(timings.create_executor_verify_code_us, self.verify_code_us);
-        saturating_add_assign!(timings.create_executor_jit_compile_us, self.jit_compile_us);
+        timings.create_executor_register_syscalls_us += self.register_syscalls_us;
+        timings.create_executor_load_elf_us += self.load_elf_us;
+        timings.create_executor_verify_code_us += self.verify_code_us;
+        timings.create_executor_jit_compile_us += self.jit_compile_us;
         datapoint_trace!(
             "create_executor_trace",
             ("program_id", self.program_id, String),
@@ -324,7 +321,7 @@ impl ProgramCacheEntry {
         effective_slot: Slot,
         elf_bytes: &[u8],
         account_size: usize,
-        metrics: &mut LoadProgramMetrics,
+        #[cfg(feature = "metrics")] metrics: &mut LoadProgramMetrics,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         Self::new_internal(
             loader_key,
@@ -333,6 +330,7 @@ impl ProgramCacheEntry {
             effective_slot,
             elf_bytes,
             account_size,
+            #[cfg(feature = "metrics")]
             metrics,
             false, /* reloading */
         )
@@ -353,7 +351,7 @@ impl ProgramCacheEntry {
         effective_slot: Slot,
         elf_bytes: &[u8],
         account_size: usize,
-        metrics: &mut LoadProgramMetrics,
+        #[cfg(feature = "metrics")] metrics: &mut LoadProgramMetrics,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         Self::new_internal(
             loader_key,
@@ -362,6 +360,7 @@ impl ProgramCacheEntry {
             effective_slot,
             elf_bytes,
             account_size,
+            #[cfg(feature = "metrics")]
             metrics,
             true, /* reloading */
         )
@@ -374,27 +373,39 @@ impl ProgramCacheEntry {
         effective_slot: Slot,
         elf_bytes: &[u8],
         account_size: usize,
-        metrics: &mut LoadProgramMetrics,
+        #[cfg(feature = "metrics")] metrics: &mut LoadProgramMetrics,
         reloading: bool,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        #[cfg(feature = "metrics")]
         let load_elf_time = Measure::start("load_elf_time");
         // The following unused_mut exception is needed for architectures that do not
         // support JIT compilation.
         #[allow(unused_mut)]
         let mut executable = Executable::load(elf_bytes, program_runtime_environment.clone())?;
-        metrics.load_elf_us = load_elf_time.end_as_us();
+        #[cfg(feature = "metrics")]
+        {
+            metrics.load_elf_us = load_elf_time.end_as_us();
+        }
 
         if !reloading {
+            #[cfg(feature = "metrics")]
             let verify_code_time = Measure::start("verify_code_time");
             executable.verify::<RequisiteVerifier>()?;
-            metrics.verify_code_us = verify_code_time.end_as_us();
+            #[cfg(feature = "metrics")]
+            {
+                metrics.verify_code_us = verify_code_time.end_as_us();
+            }
         }
 
         #[cfg(all(not(target_os = "windows"), target_arch = "x86_64"))]
         {
+            #[cfg(feature = "metrics")]
             let jit_compile_time = Measure::start("jit_compile_time");
             executable.jit_compile()?;
-            metrics.jit_compile_us = jit_compile_time.end_as_us();
+            #[cfg(feature = "metrics")]
+            {
+                metrics.jit_compile_us = jit_compile_time.end_as_us();
+            }
         }
 
         Ok(Self {
@@ -1314,7 +1325,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                     self.stats
                         .evictions
                         .entry(*program)
-                        .and_modify(|c| saturating_add_assign!(*c, 1))
+                        .and_modify(|c| *c = c.saturating_add(1))
                         .or_insert(1);
                     *candidate = Arc::new(unloaded);
                 }
@@ -1373,8 +1384,9 @@ mod tests {
         },
         assert_matches::assert_matches,
         percentage::Percentage,
-        solana_rbpf::{elf::Executable, program::BuiltinProgram},
-        solana_sdk::{clock::Slot, pubkey::Pubkey},
+        solana_clock::Slot,
+        solana_pubkey::Pubkey,
+        solana_sbpf::{elf::Executable, program::BuiltinProgram},
         std::{
             fs::File,
             io::Read,

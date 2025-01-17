@@ -5,15 +5,13 @@ use {
         ConnectionCache as BackendConnectionCache, ConnectionManager, ConnectionPool,
         NewConnectionConfig,
     },
+    solana_message::Message,
     solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
-    solana_sdk::{
-        message::Message,
-        signers::Signers,
-        transaction::{Transaction, TransactionError},
-        transport::Result as TransportResult,
-    },
+    solana_signer::signers::Signers,
     solana_tpu_client::nonblocking::tpu_client::{Result, TpuClient as BackendTpuClient},
+    solana_transaction::Transaction,
+    solana_transaction_error::{TransactionError, TransportResult},
     std::sync::Arc,
 };
 

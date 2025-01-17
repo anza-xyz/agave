@@ -13,8 +13,6 @@ pub use solana_define_syscall::definitions::{
     sol_get_epoch_stake, sol_get_fees_sysvar, sol_get_last_restart_slot, sol_get_rent_sysvar,
     sol_get_sysvar, sol_keccak256, sol_remaining_compute_units,
 };
-#[cfg(target_feature = "static-syscalls")]
-pub use solana_define_syscall::sys_hash;
 #[deprecated(since = "2.1.0", note = "Use `solana_instruction::syscalls` instead")]
 pub use solana_instruction::syscalls::{
     sol_get_processed_sibling_instruction, sol_get_stack_height,

@@ -4,18 +4,18 @@ use {
         black_box, criterion_group, criterion_main, measurement::Measurement, BenchmarkGroup,
         Criterion, Throughput,
     },
-    solana_sdk::{
-        hash::Hash,
-        instruction::Instruction,
-        message::{
-            v0::{self, MessageAddressTableLookup},
-            Message, MessageHeader, VersionedMessage,
-        },
-        pubkey::Pubkey,
-        signature::Keypair,
-        signer::Signer,
-        system_instruction,
-        transaction::{SanitizedVersionedTransaction, VersionedTransaction},
+    solana_hash::Hash,
+    solana_instruction::Instruction,
+    solana_keypair::Keypair,
+    solana_message::{
+        v0::{self, MessageAddressTableLookup},
+        Message, MessageHeader, VersionedMessage,
+    },
+    solana_pubkey::Pubkey,
+    solana_signer::Signer,
+    solana_system_interface::instruction as system_instruction,
+    solana_transaction::versioned::{
+        sanitized::SanitizedVersionedTransaction, VersionedTransaction,
     },
 };
 

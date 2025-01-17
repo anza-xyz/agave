@@ -465,6 +465,7 @@
 
 #![allow(incomplete_features)]
 #![cfg_attr(feature = "frozen-abi", feature(specialization))]
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
 // Allows macro expansion of `use ::solana_program::*` to work within this crate
 extern crate self as solana_program;
@@ -480,7 +481,6 @@ pub mod ed25519_program;
 pub mod entrypoint_deprecated;
 pub mod epoch_schedule;
 pub mod epoch_stake;
-pub mod feature;
 pub mod hash;
 pub mod incinerator;
 pub mod instruction;
@@ -490,7 +490,6 @@ pub mod loader_upgradeable_instruction;
 pub mod loader_v4;
 pub mod loader_v4_instruction;
 pub mod log;
-pub mod message;
 pub mod nonce;
 pub mod program;
 pub mod program_error;
@@ -518,12 +517,19 @@ pub use solana_borsh::v0_10 as borsh0_10;
 pub use solana_borsh::v1 as borsh1;
 #[deprecated(since = "2.1.0", note = "Use `solana-epoch-rewards` crate instead")]
 pub use solana_epoch_rewards as epoch_rewards;
+#[deprecated(
+    since = "2.2.0",
+    note = "Use `solana-feature-gate-interface` crate instead"
+)]
+pub use solana_feature_gate_interface as feature;
 #[deprecated(since = "2.1.0", note = "Use `solana-fee-calculator` crate instead")]
 pub use solana_fee_calculator as fee_calculator;
 #[deprecated(since = "2.2.0", note = "Use `solana-keccak-hasher` crate instead")]
 pub use solana_keccak_hasher as keccak;
 #[deprecated(since = "2.1.0", note = "Use `solana-last-restart-slot` crate instead")]
 pub use solana_last_restart_slot as last_restart_slot;
+#[deprecated(since = "2.2.0", note = "Use `solana-message` crate instead")]
+pub use solana_message as message;
 #[deprecated(since = "2.1.0", note = "Use `solana-program-memory` crate instead")]
 pub use solana_program_memory as program_memory;
 #[deprecated(since = "2.1.0", note = "Use `solana-program-pack` crate instead")]

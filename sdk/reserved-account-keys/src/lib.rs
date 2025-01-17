@@ -185,10 +185,7 @@ lazy_static! {
 #[cfg(test)]
 mod tests {
     #![allow(deprecated)]
-    use {
-        super::*,
-        solana_program::{message::legacy::BUILTIN_PROGRAMS_KEYS, sysvar::ALL_IDS},
-    };
+    use {super::*, solana_message::legacy::BUILTIN_PROGRAMS_KEYS, solana_sysvar::ALL_IDS};
 
     #[test]
     fn test_is_reserved() {

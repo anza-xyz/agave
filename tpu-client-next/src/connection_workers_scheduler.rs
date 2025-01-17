@@ -14,7 +14,7 @@ use {
     },
     log::*,
     quinn::Endpoint,
-    solana_sdk::signature::Keypair,
+    solana_keypair::Keypair,
     std::{net::SocketAddr, sync::Arc},
     thiserror::Error,
     tokio::sync::mpsc,

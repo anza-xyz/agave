@@ -32,6 +32,14 @@ pub mod feature {
     solana_pubkey::declare_id!("Feature111111111111111111111111111111111111");
 }
 
+/// A designated address for burning lamports.
+///
+/// Lamports credited to this address will be removed from the total supply
+/// (burned) at the end of the current block.
+pub mod incinerator {
+    solana_pubkey::declare_id!("1nc1nerator11111111111111111111111111111111");
+}
+
 pub mod loader_v4 {
     solana_pubkey::declare_id!("LoaderV411111111111111111111111111111111111");
 }

@@ -1,19 +1,17 @@
 #![cfg(test)]
 use {
     crate::svm_message::SVMMessage,
-    solana_sdk::{
-        hash::Hash,
-        instruction::CompiledInstruction,
-        message::{
-            legacy,
-            v0::{self, LoadedAddresses, MessageAddressTableLookup},
-            MessageHeader, SanitizedMessage, SanitizedVersionedMessage, SimpleAddressLoader,
-            VersionedMessage,
-        },
-        pubkey::Pubkey,
-        system_instruction::SystemInstruction,
-        system_program,
+    solana_hash::Hash,
+    solana_message::{
+        compiled_instruction::CompiledInstruction,
+        legacy,
+        v0::{self, LoadedAddresses, MessageAddressTableLookup},
+        MessageHeader, SanitizedMessage, SanitizedVersionedMessage, SimpleAddressLoader,
+        VersionedMessage,
     },
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::system_program,
+    solana_system_interface::instruction::SystemInstruction,
     std::collections::HashSet,
 };
 

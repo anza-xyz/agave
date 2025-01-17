@@ -11,7 +11,7 @@ use {
     solana_client::connection_cache::ConnectionCache,
     solana_core::{
         consensus::tower_storage::FileTowerStorage,
-        validator::{Validator, ValidatorConfig, ValidatorStartProgress},
+        validator::{Validator, ValidatorConfig, ValidatorStartProgress, ValidatorTpuConfig},
     },
     solana_gossip::{
         cluster_info::Node,
@@ -35,6 +35,7 @@ use {
         epoch_schedule::EpochSchedule,
         genesis_config::{ClusterType, GenesisConfig},
         message::Message,
+        native_token::LAMPORTS_PER_SOL,
         poh_config::PohConfig,
         pubkey::Pubkey,
         signature::{Keypair, Signature, Signer},
@@ -51,7 +52,7 @@ use {
     solana_streamer::{socket::SocketAddrSpace, streamer::StakedNodes},
     solana_tpu_client::tpu_client::{
         TpuClient, TpuClientConfig, DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_ENABLE_UDP,
-        DEFAULT_TPU_USE_QUIC,
+        DEFAULT_TPU_USE_QUIC, DEFAULT_VOTE_USE_QUIC,
     },
     solana_vote_program::{
         vote_instruction,
@@ -61,13 +62,14 @@ use {
         collections::HashMap,
         io::{Error, ErrorKind, Result},
         iter,
-        net::{IpAddr, Ipv4Addr},
+        net::{IpAddr, Ipv4Addr, SocketAddr},
         path::{Path, PathBuf},
         sync::{Arc, RwLock},
         time::Instant,
     },
 };
 
+pub const DEFAULT_MINT_LAMPORTS: u64 = 10_000_000 * LAMPORTS_PER_SOL;
 const DUMMY_SNAPSHOT_CONFIG_PATH_MARKER: &str = "dummy";
 
 pub struct ClusterConfig {
@@ -85,8 +87,8 @@ pub struct ClusterConfig {
     pub node_stakes: Vec<u64>,
     /// Optional vote keypairs to use for each node
     pub node_vote_keys: Option<Vec<Arc<Keypair>>>,
-    /// The total lamports available to the cluster
-    pub cluster_lamports: u64,
+    /// The number of lamports in the mint account
+    pub mint_lamports: u64,
     pub ticks_per_slot: u64,
     pub slots_per_epoch: u64,
     pub stakers_slot_offset: u64,
@@ -97,17 +99,18 @@ pub struct ClusterConfig {
     pub additional_accounts: Vec<(Pubkey, AccountSharedData)>,
     pub tpu_use_quic: bool,
     pub tpu_connection_pool_size: usize,
+    pub vote_use_quic: bool,
 }
 
 impl ClusterConfig {
     pub fn new_with_equal_stakes(
         num_nodes: usize,
-        cluster_lamports: u64,
+        mint_lamports: u64,
         lamports_per_node: u64,
     ) -> Self {
         Self {
             node_stakes: vec![lamports_per_node; num_nodes],
-            cluster_lamports,
+            mint_lamports,
             validator_configs: make_identical_validator_configs(
                 &ValidatorConfig::default_for_test(),
                 num_nodes,
@@ -125,7 +128,7 @@ impl Default for ClusterConfig {
             validator_keys: None,
             node_stakes: vec![],
             node_vote_keys: None,
-            cluster_lamports: 0,
+            mint_lamports: DEFAULT_MINT_LAMPORTS,
             ticks_per_slot: DEFAULT_TICKS_PER_SLOT,
             slots_per_epoch: DEFAULT_DEV_SLOTS_PER_EPOCH,
             stakers_slot_offset: DEFAULT_DEV_SLOTS_PER_EPOCH,
@@ -136,6 +139,7 @@ impl Default for ClusterConfig {
             additional_accounts: vec![],
             tpu_use_quic: DEFAULT_TPU_USE_QUIC,
             tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
+            vote_use_quic: DEFAULT_VOTE_USE_QUIC,
         }
     }
 }
@@ -153,16 +157,12 @@ pub struct LocalCluster {
 impl LocalCluster {
     pub fn new_with_equal_stakes(
         num_nodes: usize,
-        cluster_lamports: u64,
+        mint_lamports: u64,
         lamports_per_node: u64,
         socket_addr_space: SocketAddrSpace,
     ) -> Self {
         Self::new(
-            &mut ClusterConfig::new_with_equal_stakes(
-                num_nodes,
-                cluster_lamports,
-                lamports_per_node,
-            ),
+            &mut ClusterConfig::new_with_equal_stakes(num_nodes, mint_lamports, lamports_per_node),
             socket_addr_space,
         )
     }
@@ -252,6 +252,10 @@ impl LocalCluster {
             }
         };
 
+        // Mint used to fund validator identities for non-genesis accounts.
+        // Verify we have enough lamports in the mint address to do those transfers.
+        let mut required_mint_lamports = 0;
+
         // Bootstrap leader should always be in genesis block
         validator_keys[0].1 = true;
         let (keys_in_genesis, stakes_in_genesis): (Vec<ValidatorVoteKeypairs>, Vec<u64>) =
@@ -276,10 +280,18 @@ impl LocalCluster {
                             stake,
                         ))
                     } else {
+                        required_mint_lamports += Self::required_validator_funding(*stake);
                         None
                     }
                 })
                 .unzip();
+
+        // Verify mint has enough lamports to fund all required validators.
+        assert!(
+            config.mint_lamports >= required_mint_lamports,
+            "mint requires additional lamports to fund validators"
+        );
+
         let leader_keypair = &keys_in_genesis[0].node_keypair;
         let leader_vote_keypair = &keys_in_genesis[0].vote_keypair;
         let leader_pubkey = leader_keypair.pubkey();
@@ -290,7 +302,7 @@ impl LocalCluster {
             mint_keypair,
             ..
         } = create_genesis_config_with_vote_accounts_and_cluster_type(
-            config.cluster_lamports,
+            config.mint_lamports,
             &keys_in_genesis,
             stakes_in_genesis,
             config.cluster_type,
@@ -339,12 +351,9 @@ impl LocalCluster {
             None, // rpc_to_plugin_manager_receiver
             Arc::new(RwLock::new(ValidatorStartProgress::default())),
             socket_addr_space,
-            DEFAULT_TPU_USE_QUIC,
-            DEFAULT_TPU_CONNECTION_POOL_SIZE,
             // We are turning tpu_enable_udp to true in order to prevent concurrent local cluster tests
             // to use the same QUIC ports due to SO_REUSEPORT.
-            true,
-            32, // max connections per IpAddr per minute
+            ValidatorTpuConfig::new_for_tests(true),
             Arc::new(RwLock::new(None)),
         )
         .expect("assume successful validator start");
@@ -488,7 +497,9 @@ impl LocalCluster {
         mut voting_keypair: Option<Arc<Keypair>>,
         socket_addr_space: SocketAddrSpace,
     ) -> Pubkey {
-        let client = self.build_tpu_quic_client().expect("tpu_client");
+        let client = self
+            .build_validator_tpu_quic_client(self.entry_point_info.pubkey())
+            .expect("tpu_client");
 
         // Must have enough tokens to fund vote account and set delegate
         let should_create_vote_pubkey = voting_keypair.is_none();
@@ -508,12 +519,17 @@ impl LocalCluster {
             // setup as a listener
             info!("listener {} ", validator_pubkey,);
         } else if should_create_vote_pubkey {
-            let validator_balance = Self::transfer_with_client(
+            Self::transfer_with_client(
                 &client,
                 &self.funding_keypair,
                 &validator_pubkey,
-                stake * 2 + 2,
+                Self::required_validator_funding(stake),
             );
+            let validator_balance = client
+                .rpc_client()
+                .get_balance_with_commitment(&validator_pubkey, CommitmentConfig::processed())
+                .expect("received response")
+                .value;
             info!(
                 "validator {} balance {}",
                 validator_pubkey, validator_balance
@@ -546,10 +562,7 @@ impl LocalCluster {
             None, // rpc_to_plugin_manager_receiver
             Arc::new(RwLock::new(ValidatorStartProgress::default())),
             socket_addr_space,
-            DEFAULT_TPU_USE_QUIC,
-            DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            DEFAULT_TPU_ENABLE_UDP,
-            32, // max connections per IpAddr per mintute
+            ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
             Arc::new(RwLock::new(None)),
         )
         .expect("assume successful validator start");
@@ -583,9 +596,11 @@ impl LocalCluster {
         self.close_preserve_ledgers();
     }
 
-    pub fn transfer(&self, source_keypair: &Keypair, dest_pubkey: &Pubkey, lamports: u64) -> u64 {
-        let client = self.build_tpu_quic_client().expect("new tpu quic client");
-        Self::transfer_with_client(&client, source_keypair, dest_pubkey, lamports)
+    pub fn transfer(&self, source_keypair: &Keypair, dest_pubkey: &Pubkey, lamports: u64) {
+        let client = self
+            .build_validator_tpu_quic_client(self.entry_point_info.pubkey())
+            .expect("new tpu quic client");
+        Self::transfer_with_client(&client, source_keypair, dest_pubkey, lamports);
     }
 
     fn discover_nodes(
@@ -729,7 +744,7 @@ impl LocalCluster {
         source_keypair: &Keypair,
         dest_pubkey: &Pubkey,
         lamports: u64,
-    ) -> u64 {
+    ) {
         trace!("getting leader blockhash");
         let (blockhash, _) = client
             .rpc_client()
@@ -745,14 +760,6 @@ impl LocalCluster {
 
         LocalCluster::send_transaction_with_retries(client, &[source_keypair], &mut tx, 10, 0)
             .expect("client transfer should succeed");
-        client
-            .rpc_client()
-            .wait_for_balance_with_commitment(
-                dest_pubkey,
-                Some(lamports),
-                CommitmentConfig::processed(),
-            )
-            .expect("get balance should succeed")
     }
 
     fn setup_vote_and_stake_accounts(
@@ -933,12 +940,12 @@ impl LocalCluster {
         }
     }
 
-    fn build_tpu_client<F>(&self, rpc_client_builder: F) -> Result<QuicTpuClient>
-    where
-        F: FnOnce(String) -> Arc<RpcClient>,
-    {
-        let rpc_pubsub_url = format!("ws://{}/", self.entry_point_info.rpc_pubsub().unwrap());
-        let rpc_url = format!("http://{}", self.entry_point_info.rpc().unwrap());
+    fn build_tpu_client(
+        &self,
+        rpc_client: Arc<RpcClient>,
+        rpc_pubsub_addr: SocketAddr,
+    ) -> Result<QuicTpuClient> {
+        let rpc_pubsub_url = format!("ws://{}/", rpc_pubsub_addr);
 
         let cache = match &*self.connection_cache {
             ConnectionCache::Quic(cache) => cache,
@@ -951,7 +958,7 @@ impl LocalCluster {
         };
 
         let tpu_client = TpuClient::new_with_connection_cache(
-            rpc_client_builder(rpc_url),
+            rpc_client,
             rpc_pubsub_url.as_str(),
             TpuClientConfig::default(),
             cache.clone(),
@@ -960,6 +967,10 @@ impl LocalCluster {
 
         Ok(tpu_client)
     }
+
+    fn required_validator_funding(stake: u64) -> u64 {
+        stake.saturating_mul(2).saturating_add(2)
+    }
 }
 
 impl Cluster for LocalCluster {
@@ -967,24 +978,22 @@ impl Cluster for LocalCluster {
         self.validators.keys().cloned().collect()
     }
 
-    fn get_validator_client(&self, pubkey: &Pubkey) -> Option<QuicTpuClient> {
-        self.validators.get(pubkey).map(|_| {
-            self.build_tpu_quic_client()
-                .expect("should build tpu quic client")
-        })
+    fn build_validator_tpu_quic_client(&self, pubkey: &Pubkey) -> Result<QuicTpuClient> {
+        let contact_info = self.get_contact_info(pubkey).unwrap();
+        let rpc_url: String = format!("http://{}", contact_info.rpc().unwrap());
+        let rpc_client = Arc::new(RpcClient::new(rpc_url));
+        self.build_tpu_client(rpc_client, contact_info.rpc_pubsub().unwrap())
     }
 
-    fn build_tpu_quic_client(&self) -> Result<QuicTpuClient> {
-        self.build_tpu_client(|rpc_url| Arc::new(RpcClient::new(rpc_url)))
-    }
-
-    fn build_tpu_quic_client_with_commitment(
+    fn build_validator_tpu_quic_client_with_commitment(
         &self,
+        pubkey: &Pubkey,
         commitment_config: CommitmentConfig,
     ) -> Result<QuicTpuClient> {
-        self.build_tpu_client(|rpc_url| {
-            Arc::new(RpcClient::new_with_commitment(rpc_url, commitment_config))
-        })
+        let contact_info = self.get_contact_info(pubkey).unwrap();
+        let rpc_url = format!("http://{}", contact_info.rpc().unwrap());
+        let rpc_client = Arc::new(RpcClient::new_with_commitment(rpc_url, commitment_config));
+        self.build_tpu_client(rpc_client, contact_info.rpc_pubsub().unwrap())
     }
 
     fn exit_node(&mut self, pubkey: &Pubkey) -> ClusterValidatorInfo {
@@ -1079,10 +1088,7 @@ impl Cluster for LocalCluster {
             None, // rpc_to_plugin_manager_receiver
             Arc::new(RwLock::new(ValidatorStartProgress::default())),
             socket_addr_space,
-            DEFAULT_TPU_USE_QUIC,
-            DEFAULT_TPU_CONNECTION_POOL_SIZE,
-            DEFAULT_TPU_ENABLE_UDP,
-            32, // max connections per IpAddr per minute, use higher value because of tests
+            ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
             Arc::new(RwLock::new(None)),
         )
         .expect("assume successful validator start");

@@ -7,6 +7,7 @@ use {
     crate::bank::Bank,
     error::CoreBpfMigrationError,
     num_traits::{CheckedAdd, CheckedSub},
+    solana_builtins::core_bpf_migration::CoreBpfMigrationConfig,
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::ProgramCacheForTxBatch,
@@ -25,45 +26,6 @@ use {
     target_builtin::TargetBuiltin,
     target_core_bpf::TargetCoreBpf,
 };
-
-/// Identifies the type of built-in program targeted for Core BPF migration.
-/// The type of target determines whether the program should have a program
-/// account or not, which is checked before migration.
-#[allow(dead_code)] // Remove after first migration is configured.
-#[derive(Debug, PartialEq)]
-pub(crate) enum CoreBpfMigrationTargetType {
-    /// A standard (stateful) builtin program must have a program account.
-    Builtin,
-    /// A stateless builtin must not have a program account.
-    Stateless,
-}
-
-/// Configuration for migrating a built-in program to Core BPF.
-#[derive(Debug, PartialEq)]
-pub(crate) struct CoreBpfMigrationConfig {
-    /// The address of the source buffer account to be used to replace the
-    /// builtin.
-    pub source_buffer_address: Pubkey,
-    /// The authority to be used as the BPF program's upgrade authority.
-    ///
-    /// Note: If this value is set to `None`, then the migration will ignore
-    /// the source buffer account's authority. If it's set to any `Some(..)`
-    /// value, then the migration will perform a sanity check to ensure the
-    /// source buffer account's authority matches the provided value.
-    pub upgrade_authority_address: Option<Pubkey>,
-    /// The feature gate to trigger the migration to Core BPF.
-    /// Note: This feature gate should never be the same as any builtin's
-    /// `enable_feature_id`. It should always be a feature gate that will be
-    /// activated after the builtin is already enabled.
-    pub feature_id: Pubkey,
-    /// The type of target to replace.
-    pub migration_target: CoreBpfMigrationTargetType,
-    /// Static message used to emit datapoint logging.
-    /// This is used to identify the migration in the logs.
-    /// Should be unique to the migration, ie:
-    /// "migrate_{builtin/stateless}_to_core_bpf_{program_name}".
-    pub datapoint_name: &'static str,
-}
 
 fn checked_add<T: CheckedAdd>(a: T, b: T) -> Result<T, CoreBpfMigrationError> {
     a.checked_add(&b)
@@ -211,15 +173,26 @@ impl Bank {
                 compute_budget,
             );
 
-            use solana_bpf_loader_program::deploy_program_internal;
-            solana_bpf_loader_program::deploy_program!(
-                dummy_invoke_context,
+            let environments = dummy_invoke_context
+                .get_environments_for_slot(self.slot.saturating_add(
+                    solana_program_runtime::loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
+                ))
+                .map_err(|_err| {
+                    // This will never fail since the epoch schedule is already configured.
+                    InstructionError::ProgramEnvironmentSetupFailure
+                })?;
+
+            let load_program_metrics = solana_bpf_loader_program::deploy_program(
+                dummy_invoke_context.get_log_collector(),
+                dummy_invoke_context.program_cache_for_tx_batch,
+                environments.program_runtime_v1.clone(),
                 program_id,
                 &bpf_loader_upgradeable::id(),
                 data_len,
                 elf,
                 self.slot,
-            );
+            )?;
+            load_program_metrics.submit_datapoint(&mut dummy_invoke_context.timings);
         }
 
         // Update the program cache by merging with `programs_modified`, which
@@ -411,6 +384,7 @@ pub(crate) mod tests {
         super::*,
         crate::bank::tests::create_simple_test_bank,
         assert_matches::assert_matches,
+        solana_builtins::core_bpf_migration::CoreBpfMigrationTargetType,
         solana_program_runtime::loaded_programs::{ProgramCacheEntry, ProgramCacheEntryType},
         solana_sdk::{
             account_utils::StateMut,

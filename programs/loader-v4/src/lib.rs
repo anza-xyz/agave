@@ -1,26 +1,28 @@
+#[cfg(feature = "svm-internal")]
+use qualifier_attr::qualifiers;
 use {
-    solana_bpf_loader_program::{deploy_program, deploy_program_internal, execute},
+    solana_bincode::limited_deserialize,
+    solana_bpf_loader_program::{deploy_program, execute},
+    solana_instruction::error::InstructionError,
     solana_log_collector::{ic_logger_msg, LogCollector},
     solana_measure::measure::Measure,
+    solana_program::{
+        loader_v4::{self, LoaderV4State, LoaderV4Status, DEPLOYMENT_COOLDOWN_IN_SLOTS},
+        loader_v4_instruction::LoaderV4Instruction,
+    },
     solana_program_runtime::{
         invoke_context::InvokeContext,
         loaded_programs::{ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType},
     },
-    solana_rbpf::{declare_builtin_function, memory_region::MemoryMapping},
-    solana_sdk::{
-        instruction::InstructionError,
-        loader_v4::{self, LoaderV4State, LoaderV4Status, DEPLOYMENT_COOLDOWN_IN_SLOTS},
-        loader_v4_instruction::LoaderV4Instruction,
-        program_utils::limited_deserialize,
-        pubkey::Pubkey,
-        saturating_add_assign,
-        transaction_context::{BorrowedAccount, InstructionContext},
-    },
+    solana_pubkey::Pubkey,
+    solana_sbpf::{declare_builtin_function, memory_region::MemoryMapping},
+    solana_transaction_context::{BorrowedAccount, InstructionContext},
     solana_type_overrides::sync::{atomic::Ordering, Arc},
     std::{cell::RefCell, rc::Rc},
 };
 
-pub const DEFAULT_COMPUTE_UNITS: u64 = 2_000;
+#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
+const DEFAULT_COMPUTE_UNITS: u64 = 2_000;
 
 pub fn get_state(data: &[u8]) -> Result<&LoaderV4State, InstructionError> {
     unsafe {
@@ -80,7 +82,7 @@ fn check_program_account(
     Ok(*state)
 }
 
-pub fn process_instruction_write(
+fn process_instruction_write(
     invoke_context: &mut InvokeContext,
     offset: u32,
     bytes: Vec<u8>,
@@ -117,7 +119,7 @@ pub fn process_instruction_write(
     Ok(())
 }
 
-pub fn process_instruction_truncate(
+fn process_instruction_truncate(
     invoke_context: &mut InvokeContext,
     new_size: u32,
 ) -> Result<(), InstructionError> {
@@ -205,9 +207,7 @@ pub fn process_instruction_truncate(
     Ok(())
 }
 
-pub fn process_instruction_deploy(
-    invoke_context: &mut InvokeContext,
-) -> Result<(), InstructionError> {
+fn process_instruction_deploy(invoke_context: &mut InvokeContext) -> Result<(), InstructionError> {
     let log_collector = invoke_context.get_log_collector();
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
@@ -284,9 +284,7 @@ pub fn process_instruction_deploy(
     Ok(())
 }
 
-pub fn process_instruction_retract(
-    invoke_context: &mut InvokeContext,
-) -> Result<(), InstructionError> {
+fn process_instruction_retract(invoke_context: &mut InvokeContext) -> Result<(), InstructionError> {
     let log_collector = invoke_context.get_log_collector();
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
@@ -328,7 +326,7 @@ pub fn process_instruction_retract(
     Ok(())
 }
 
-pub fn process_instruction_transfer_authority(
+fn process_instruction_transfer_authority(
     invoke_context: &mut InvokeContext,
 ) -> Result<(), InstructionError> {
     let log_collector = invoke_context.get_log_collector();
@@ -360,7 +358,7 @@ pub fn process_instruction_transfer_authority(
     Ok(())
 }
 
-pub fn process_instruction_finalize(
+fn process_instruction_finalize(
     invoke_context: &mut InvokeContext,
 ) -> Result<(), InstructionError> {
     let log_collector = invoke_context.get_log_collector();
@@ -420,7 +418,7 @@ declare_builtin_function!(
     }
 );
 
-pub fn process_instruction_inner(
+fn process_instruction_inner(
     invoke_context: &mut InvokeContext,
 ) -> Result<u64, Box<dyn std::error::Error>> {
     let log_collector = invoke_context.get_log_collector();
@@ -430,7 +428,7 @@ pub fn process_instruction_inner(
     let program_id = instruction_context.get_last_program_key(transaction_context)?;
     if loader_v4::check_id(program_id) {
         invoke_context.consume_checked(DEFAULT_COMPUTE_UNITS)?;
-        match limited_deserialize(instruction_data)? {
+        match limited_deserialize(instruction_data, solana_packet::PACKET_DATA_SIZE as u64)? {
             LoaderV4Instruction::Write { offset, bytes } => {
                 process_instruction_write(invoke_context, offset, bytes)
             }
@@ -456,10 +454,7 @@ pub fn process_instruction_inner(
                 InstructionError::UnsupportedProgramId
             })?;
         get_or_create_executor_time.stop();
-        saturating_add_assign!(
-            invoke_context.timings.get_or_create_executor_us,
-            get_or_create_executor_time.as_us()
-        );
+        invoke_context.timings.get_or_create_executor_us += get_or_create_executor_time.as_us();
         drop(program);
         loaded_program
             .ix_usage_counter
@@ -484,18 +479,16 @@ pub fn process_instruction_inner(
 mod tests {
     use {
         super::*,
-        solana_bpf_loader_program::test_utils,
-        solana_program_runtime::invoke_context::mock_process_instruction,
-        solana_sdk::{
-            account::{
-                create_account_shared_data_for_test, AccountSharedData, ReadableAccount,
-                WritableAccount,
-            },
-            instruction::AccountMeta,
-            slot_history::Slot,
-            sysvar::{clock, rent},
-            transaction_context::IndexOfAccount,
+        solana_account::{
+            create_account_shared_data_for_test, AccountSharedData, ReadableAccount,
+            WritableAccount,
         },
+        solana_bpf_loader_program::test_utils,
+        solana_clock::Slot,
+        solana_instruction::AccountMeta,
+        solana_program_runtime::invoke_context::mock_process_instruction,
+        solana_sysvar::{clock, rent},
+        solana_transaction_context::IndexOfAccount,
         std::{fs::File, io::Read, path::Path},
     };
 
@@ -576,7 +569,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Deployed,
-                    "noop_unaligned",
+                    "sbpfv3_return_err",
                 ),
             ),
             (
@@ -588,7 +581,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Finalized,
-                    "noop_unaligned",
+                    "sbpfv3_return_err",
                 ),
             ),
             (
@@ -674,7 +667,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Retracted,
-                    "noop_unaligned",
+                    "sbpfv3_return_err",
                 ),
             ),
             (
@@ -686,7 +679,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Deployed,
-                    "noop_unaligned",
+                    "sbpfv3_return_err",
                 ),
             ),
             (
@@ -771,7 +764,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Retracted,
-                    "noop_unaligned",
+                    "sbpfv3_return_err",
                 ),
             ),
             (
@@ -784,14 +777,14 @@ mod tests {
             ),
             (
                 Pubkey::new_unique(),
-                AccountSharedData::new(40000000, 0, &loader_v4::id()),
+                AccountSharedData::new(0, 0, &loader_v4::id()),
             ),
             (
                 Pubkey::new_unique(),
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Retracted,
-                    "noop_aligned",
+                    "sbpfv3_return_ok",
                 ),
             ),
             (
@@ -799,7 +792,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Deployed,
-                    "noop_unaligned",
+                    "sbpfv3_return_err",
                 ),
             ),
             (
@@ -811,6 +804,9 @@ mod tests {
                 create_account_shared_data_for_test(&rent::Rent::default()),
             ),
         ];
+        let smaller_program_lamports = transaction_accounts[0].1.lamports();
+        let larger_program_lamports = transaction_accounts[4].1.lamports();
+        assert_ne!(smaller_program_lamports, larger_program_lamports);
 
         // No change
         let accounts = process_instruction(
@@ -833,10 +829,11 @@ mod tests {
             transaction_accounts[0].1.data().len(),
         );
         assert_eq!(accounts[2].lamports(), transaction_accounts[2].1.lamports());
-        let lamports = transaction_accounts[4].1.lamports();
-        transaction_accounts[0].1.set_lamports(lamports);
 
         // Initialize program account
+        transaction_accounts[3]
+            .1
+            .set_lamports(smaller_program_lamports);
         let accounts = process_instruction(
             vec![],
             &bincode::serialize(&LoaderV4Instruction::Truncate {
@@ -858,6 +855,9 @@ mod tests {
         );
 
         // Increase program account size
+        transaction_accounts[0]
+            .1
+            .set_lamports(larger_program_lamports);
         let accounts = process_instruction(
             vec![],
             &bincode::serialize(&LoaderV4Instruction::Truncate {
@@ -1028,7 +1028,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Retracted,
-                    "noop_aligned",
+                    "sbpfv3_return_ok",
                 ),
             ),
             (
@@ -1040,7 +1040,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Retracted,
-                    "noop_unaligned",
+                    "sbpfv3_return_err",
                 ),
             ),
             (
@@ -1052,7 +1052,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Retracted,
-                    "callx-r10-sbfv1",
+                    "sbpfv0_verifier_err",
                 ),
             ),
             (clock::id(), clock(1000)),
@@ -1176,7 +1176,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Deployed,
-                    "noop_aligned",
+                    "sbpfv3_return_err",
                 ),
             ),
             (
@@ -1192,7 +1192,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Retracted,
-                    "noop_aligned",
+                    "sbpfv3_return_err",
                 ),
             ),
             (clock::id(), clock(1000)),
@@ -1256,7 +1256,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Deployed,
-                    "noop_aligned",
+                    "sbpfv3_return_err",
                 ),
             ),
             (
@@ -1264,7 +1264,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Retracted,
-                    "noop_aligned",
+                    "sbpfv3_return_err",
                 ),
             ),
             (
@@ -1351,7 +1351,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Deployed,
-                    "noop_aligned",
+                    "sbpfv3_return_err",
                 ),
             ),
             (
@@ -1359,7 +1359,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Retracted,
-                    "noop_aligned",
+                    "sbpfv3_return_err",
                 ),
             ),
             (
@@ -1367,7 +1367,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Finalized,
-                    "noop_aligned",
+                    "sbpfv3_return_err",
                 ),
             ),
             (
@@ -1375,7 +1375,7 @@ mod tests {
                 load_program_account_from_elf(
                     Pubkey::new_unique(),
                     LoaderV4Status::Retracted,
-                    "noop_aligned",
+                    "sbpfv3_return_err",
                 ),
             ),
             (
@@ -1491,7 +1491,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Finalized,
-                    "noop_aligned",
+                    "sbpfv3_return_ok",
                 ),
             ),
             (
@@ -1507,7 +1507,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Retracted,
-                    "noop_aligned",
+                    "sbpfv3_return_ok",
                 ),
             ),
             (
@@ -1515,7 +1515,7 @@ mod tests {
                 load_program_account_from_elf(
                     authority_address,
                     LoaderV4Status::Finalized,
-                    "callx-r10-sbfv1",
+                    "sbpfv0_verifier_err",
                 ),
             ),
         ];

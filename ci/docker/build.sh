@@ -16,13 +16,13 @@ fi
 echo "build image: ${CI_DOCKER_IMAGE:?}"
 docker build "${platform[@]}" \
   -f "$here/Dockerfile" \
-  --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
-  --build-arg "RUST_VERSION=${RUST_VERSION}" \
-  --build-arg "RUST_NIGHTLY_VERSION=${RUST_NIGHTLY_VERSION}" \
-  --build-arg "GOLANG_VERSION=${GOLANG_VERSION}" \
-  --build-arg "NODE_MAJOR=${NODE_MAJOR}" \
-  --build-arg "SCCACHE_VERSION=${SCCACHE_VERSION}" \
-  --build-arg "GRCOV_VERSION=${GRCOV_VERSION}" \
+  --build-arg "BASE_IMAGE=${CI_DOCKER_ARG_BASE_IMAGE}" \
+  --build-arg "RUST_VERSION=${CI_DOCKER_ARG_RUST_VERSION}" \
+  --build-arg "RUST_NIGHTLY_VERSION=${CI_DOCKER_ARG_RUST_NIGHTLY_VERSION}" \
+  --build-arg "GOLANG_VERSION=${CI_DOCKER_ARG_GOLANG_VERSION}" \
+  --build-arg "NODE_MAJOR=${CI_DOCKER_ARG_NODE_MAJOR}" \
+  --build-arg "SCCACHE_VERSION=${CI_DOCKER_ARG_SCCACHE_VERSION}" \
+  --build-arg "GRCOV_VERSION=${CI_DOCKER_ARG_GRCOV_VERSION}" \
   -t "$CI_DOCKER_IMAGE" .
 
 docker push "$CI_DOCKER_IMAGE"

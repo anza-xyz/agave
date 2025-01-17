@@ -5,26 +5,29 @@ use {
         ReplicaAccountInfoV3, ReplicaAccountInfoVersions,
     },
     log::*,
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
         account_storage::meta::StoredAccountMeta,
         accounts_update_notifier_interface::AccountsUpdateNotifierInterface,
     },
+    solana_clock::Slot,
     solana_measure::measure::Measure,
     solana_metrics::*,
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        clock::Slot,
-        pubkey::Pubkey,
-        transaction::SanitizedTransaction,
-    },
+    solana_pubkey::Pubkey,
+    solana_transaction::sanitized::SanitizedTransaction,
     std::sync::{Arc, RwLock},
 };
 #[derive(Debug)]
 pub(crate) struct AccountsUpdateNotifierImpl {
     plugin_manager: Arc<RwLock<GeyserPluginManager>>,
+    snapshot_notifications_enabled: bool,
 }
 
 impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
+    fn snapshot_notifications_enabled(&self) -> bool {
+        self.snapshot_notifications_enabled
+    }
+
     fn notify_account_update(
         &self,
         slot: Slot,
@@ -97,8 +100,14 @@ impl AccountsUpdateNotifierInterface for AccountsUpdateNotifierImpl {
 }
 
 impl AccountsUpdateNotifierImpl {
-    pub fn new(plugin_manager: Arc<RwLock<GeyserPluginManager>>) -> Self {
-        AccountsUpdateNotifierImpl { plugin_manager }
+    pub fn new(
+        plugin_manager: Arc<RwLock<GeyserPluginManager>>,
+        snapshot_notifications_enabled: bool,
+    ) -> Self {
+        AccountsUpdateNotifierImpl {
+            plugin_manager,
+            snapshot_notifications_enabled,
+        }
     }
 
     fn accountinfo_from_shared_account_data<'a>(

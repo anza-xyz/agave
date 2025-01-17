@@ -1,4 +1,4 @@
-use solana_sdk::{account::AccountSharedData, pubkey::Pubkey};
+use {solana_account::AccountSharedData, solana_pubkey::Pubkey};
 
 /// Runtime callbacks for transaction processing.
 pub trait TransactionProcessingCallback {

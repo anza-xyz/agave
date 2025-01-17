@@ -31,7 +31,7 @@ jobs:
         test:
           - {
               name: "solana-sdk",
-              commands: ["cargo +$rust_nightly bench -p solana-sdk"],
+              commands: ["cargo +$rust_nightly bench -p solana-sdk --features openssl-vendored"],
             }
           - {
               name: "solana-runtime",

@@ -8,7 +8,7 @@ use {
         fs,
         os::raw::{c_int, c_uint},
         path::{Path, PathBuf},
-        sync::Once,
+        sync::{Once, OnceLock},
     },
 };
 
@@ -81,20 +81,16 @@ pub struct Api<'a> {
         Symbol<'a, unsafe extern "C" fn(packed_ge: *const u8) -> c_int>,
 }
 
-static mut API: Option<Container<Api>> = None;
+static API: OnceLock<Container<Api>> = OnceLock::new();
 
 fn init(name: &OsStr) {
-    static INIT_HOOK: Once = Once::new();
-
     info!("Loading {:?}", name);
-    unsafe {
-        INIT_HOOK.call_once(|| {
-            API = Some(Container::load(name).unwrap_or_else(|err| {
-                error!("Unable to load {:?}: {}", name, err);
-                std::process::exit(1);
-            }));
+    API.get_or_init(|| {
+        unsafe { Container::load(name) }.unwrap_or_else(|err| {
+            error!("Unable to load {:?}: {}", name, err);
+            std::process::exit(1);
         })
-    }
+    });
 }
 
 pub fn locate_perf_libs() -> Option<PathBuf> {
@@ -181,8 +177,8 @@ pub fn api() -> Option<&'static Container<Api<'static>>> {
             if std::env::var("TEST_PERF_LIBS_CUDA").is_ok() {
                 init_cuda();
             }
-        })
+        });
     }
 
-    unsafe { API.as_ref() }
+    API.get()
 }

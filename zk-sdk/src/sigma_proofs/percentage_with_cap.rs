@@ -17,6 +17,8 @@
 //!
 //! [`ZK Token proof program`]: https://docs.solanalabs.com/runtime/zk-token-proof
 
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
 #[cfg(not(target_os = "solana"))]
 use {
     crate::{
@@ -52,6 +54,7 @@ const PERCENTAGE_WITH_CAP_PROOF_LEN: usize = UNIT_LEN * 8;
 /// then the `percentage_max_proof` is properly generated and `percentage_equality_proof` is
 /// simulated. If the encrypted amount is smaller than the maximum cap bound, the
 /// `percentage_equality_proof` is properly generated and `percentage_max_proof` is simulated.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone)]
 pub struct PercentageWithCapProof {
     /// Proof that the committed amount equals the maximum cap bound

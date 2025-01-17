@@ -4,14 +4,25 @@
 pub mod serialization;
 pub mod syscalls;
 
+#[cfg(feature = "svm-internal")]
+use qualifier_attr::qualifiers;
 use {
+    solana_account::WritableAccount,
+    solana_bincode::limited_deserialize,
+    solana_clock::Slot,
     solana_compute_budget::compute_budget::MAX_INSTRUCTION_STACK_DEPTH,
     solana_feature_set::{
         bpf_account_data_direct_mapping, enable_bpf_loader_set_authority_checked_ix,
         remove_accounts_executable_flag_checks,
     },
+    solana_instruction::{error::InstructionError, AccountMeta},
     solana_log_collector::{ic_logger_msg, ic_msg, LogCollector},
     solana_measure::measure::Measure,
+    solana_program::{
+        bpf_loader_upgradeable::UpgradeableLoaderState,
+        loader_upgradeable_instruction::UpgradeableLoaderInstruction,
+    },
+    solana_program_entrypoint::{MAX_PERMITTED_DATA_INCREASE, SUCCESS},
     solana_program_runtime::{
         invoke_context::{BpfAllocator, InvokeContext, SerializedAccountMetadata, SyscallContext},
         loaded_programs::{
@@ -22,7 +33,8 @@ use {
         stable_log,
         sysvar_cache::get_sysvar_with_account_check,
     },
-    solana_rbpf::{
+    solana_pubkey::Pubkey,
+    solana_sbpf::{
         declare_builtin_function,
         ebpf::{self, MM_HEAP_START},
         elf::Executable,
@@ -32,29 +44,20 @@ use {
         verifier::RequisiteVerifier,
         vm::{ContextObject, EbpfVm},
     },
-    solana_sdk::{
-        account::WritableAccount,
-        bpf_loader, bpf_loader_deprecated,
-        bpf_loader_upgradeable::{self, UpgradeableLoaderState},
-        clock::Slot,
-        entrypoint::{MAX_PERMITTED_DATA_INCREASE, SUCCESS},
-        instruction::{AccountMeta, InstructionError},
-        loader_upgradeable_instruction::UpgradeableLoaderInstruction,
-        loader_v4, native_loader,
-        program_utils::limited_deserialize,
-        pubkey::Pubkey,
-        saturating_add_assign,
-        system_instruction::{self, MAX_PERMITTED_DATA_LENGTH},
-        transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
-    },
+    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, native_loader},
+    solana_system_interface::{instruction as system_instruction, MAX_PERMITTED_DATA_LENGTH},
+    solana_transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
     solana_type_overrides::sync::{atomic::Ordering, Arc},
     std::{cell::RefCell, mem, rc::Rc},
-    syscalls::{create_program_runtime_environment_v1, morph_into_deployment_environment_v1},
+    syscalls::morph_into_deployment_environment_v1,
 };
 
-pub const DEFAULT_LOADER_COMPUTE_UNITS: u64 = 570;
-pub const DEPRECATED_LOADER_COMPUTE_UNITS: u64 = 1_140;
-pub const UPGRADEABLE_LOADER_COMPUTE_UNITS: u64 = 2_370;
+#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
+const DEFAULT_LOADER_COMPUTE_UNITS: u64 = 570;
+#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
+const DEPRECATED_LOADER_COMPUTE_UNITS: u64 = 1_140;
+#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
+const UPGRADEABLE_LOADER_COMPUTE_UNITS: u64 = 2_370;
 
 thread_local! {
     pub static MEMORY_POOL: RefCell<VmMemoryPool> = RefCell::new(VmMemoryPool::new());
@@ -106,7 +109,7 @@ pub fn load_program_from_bytes(
 /// Directly deploy a program using a provided invoke context.
 /// This function should only be invoked from the runtime, since it does not
 /// provide any account loads or checks.
-pub fn deploy_program_internal(
+pub fn deploy_program(
     log_collector: Option<Rc<RefCell<LogCollector>>>,
     program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
     program_runtime_environment: ProgramRuntimeEnvironment,
@@ -181,7 +184,7 @@ macro_rules! deploy_program {
                 // This will never fail since the epoch schedule is already configured.
                 InstructionError::ProgramEnvironmentSetupFailure
             })?;
-        let load_program_metrics = deploy_program_internal(
+        let load_program_metrics = $crate::deploy_program(
             $invoke_context.get_log_collector(),
             $invoke_context.program_cache_for_tx_batch,
             environments.program_runtime_v1.clone(),
@@ -220,13 +223,6 @@ fn write_program_data(
     Ok(())
 }
 
-pub fn check_loader_id(id: &Pubkey) -> bool {
-    bpf_loader::check_id(id)
-        || bpf_loader_deprecated::check_id(id)
-        || bpf_loader_upgradeable::check_id(id)
-        || loader_v4::check_id(id)
-}
-
 /// Only used in macro, do not use directly!
 pub fn calculate_heap_cost(heap_size: u32, heap_cost: u64) -> u64 {
     const KIBIBYTE: u64 = 1024;
@@ -242,7 +238,8 @@ pub fn calculate_heap_cost(heap_size: u32, heap_cost: u64) -> u64 {
 }
 
 /// Only used in macro, do not use directly!
-pub fn create_vm<'a, 'b>(
+#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
+fn create_vm<'a, 'b>(
     program: &'a Executable<InvokeContext<'b>>,
     regions: Vec<MemoryRegion>,
     accounts_metadata: Vec<SerializedAccountMetadata>,
@@ -327,16 +324,16 @@ macro_rules! create_vm {
 macro_rules! mock_create_vm {
     ($vm:ident, $additional_regions:expr, $accounts_metadata:expr, $invoke_context:expr $(,)?) => {
         let loader = solana_type_overrides::sync::Arc::new(BuiltinProgram::new_mock());
-        let function_registry = solana_rbpf::program::FunctionRegistry::default();
-        let executable = solana_rbpf::elf::Executable::<InvokeContext>::from_text_bytes(
-            &[0x95, 0, 0, 0, 0, 0, 0, 0],
+        let function_registry = solana_sbpf::program::FunctionRegistry::default();
+        let executable = solana_sbpf::elf::Executable::<InvokeContext>::from_text_bytes(
+            &[0x9D, 0, 0, 0, 0, 0, 0, 0],
             loader,
-            SBPFVersion::V2,
+            SBPFVersion::V3,
             function_registry,
         )
         .unwrap();
         executable
-            .verify::<solana_rbpf::verifier::RequisiteVerifier>()
+            .verify::<solana_sbpf::verifier::RequisiteVerifier>()
             .unwrap();
         $crate::create_vm!(
             $vm,
@@ -397,7 +394,8 @@ declare_builtin_function!(
     }
 );
 
-pub fn process_instruction_inner(
+#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
+pub(crate) fn process_instruction_inner(
     invoke_context: &mut InvokeContext,
 ) -> Result<u64, Box<dyn std::error::Error>> {
     let log_collector = invoke_context.get_log_collector();
@@ -469,10 +467,7 @@ pub fn process_instruction_inner(
         })?;
     drop(program_account);
     get_or_create_executor_time.stop();
-    saturating_add_assign!(
-        invoke_context.timings.get_or_create_executor_us,
-        get_or_create_executor_time.as_us()
-    );
+    invoke_context.timings.get_or_create_executor_us += get_or_create_executor_time.as_us();
 
     executor.ix_usage_counter.fetch_add(1, Ordering::Relaxed);
     match &executor.program {
@@ -515,7 +510,7 @@ fn process_loader_upgradeable_instruction(
     let instruction_data = instruction_context.get_instruction_data();
     let program_id = instruction_context.get_last_program_key(transaction_context)?;
 
-    match limited_deserialize(instruction_data)? {
+    match limited_deserialize(instruction_data, solana_packet::PACKET_DATA_SIZE as u64)? {
         UpgradeableLoaderInstruction::InitializeBuffer => {
             instruction_context.check_number_of_instruction_accounts(2)?;
             let mut buffer =
@@ -681,7 +676,7 @@ fn process_loader_upgradeable_instruction(
             let signers = [[new_program_id.as_ref(), &[bump_seed]]]
                 .iter()
                 .map(|seeds| Pubkey::create_program_address(seeds, caller_program_id))
-                .collect::<Result<Vec<Pubkey>, solana_sdk::pubkey::PubkeyError>>()?;
+                .collect::<Result<Vec<Pubkey>, solana_pubkey::PubkeyError>>()?;
             invoke_context.native_invoke(instruction.into(), signers.as_slice())?;
 
             // Load and verify the program bits
@@ -1373,7 +1368,8 @@ fn common_close_account(
     Ok(())
 }
 
-pub fn execute<'a, 'b: 'a>(
+#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
+fn execute<'a, 'b: 'a>(
     executable: &'a Executable<InvokeContext<'static>>,
     invoke_context: &'a mut InvokeContext<'b>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -1452,7 +1448,7 @@ pub fn execute<'a, 'b: 'a>(
         drop(vm);
         if let Some(execute_time) = invoke_context.execute_time.as_mut() {
             execute_time.stop();
-            saturating_add_assign!(invoke_context.timings.execute_us, execute_time.as_us());
+            invoke_context.timings.execute_us += execute_time.as_us();
         }
 
         ic_logger_msg!(
@@ -1473,6 +1469,24 @@ pub fn execute<'a, 'b: 'a>(
                 Err(Box::new(error) as Box<dyn std::error::Error>)
             }
             ProgramResult::Err(mut error) => {
+                if invoke_context
+                    .get_feature_set()
+                    .is_active(&solana_feature_set::deplete_cu_meter_on_vm_failure::id())
+                    && !matches!(error, EbpfError::SyscallError(_))
+                {
+                    // when an exception is thrown during the execution of a
+                    // Basic Block (e.g., a null memory dereference or other
+                    // faults), determining the exact number of CUs consumed
+                    // up to the point of failure requires additional effort
+                    // and is unnecessary since these cases are rare.
+                    //
+                    // In order to simplify CU tracking, simply consume all
+                    // remaining compute units so that the block cost
+                    // tracker uses the full requested compute unit cost for
+                    // this failed transaction.
+                    invoke_context.consume(invoke_context.get_remaining());
+                }
+
                 if direct_mapping {
                     if let EbpfError::AccessViolation(
                         AccessType::Store,
@@ -1549,24 +1563,34 @@ pub fn execute<'a, 'b: 'a>(
     deserialize_time.stop();
 
     // Update the timings
-    saturating_add_assign!(invoke_context.timings.serialize_us, serialize_time.as_us());
-    saturating_add_assign!(invoke_context.timings.create_vm_us, create_vm_time.as_us());
-    saturating_add_assign!(
-        invoke_context.timings.deserialize_us,
-        deserialize_time.as_us()
-    );
+    invoke_context.timings.serialize_us += serialize_time.as_us();
+    invoke_context.timings.create_vm_us += create_vm_time.as_us();
+    invoke_context.timings.deserialize_us += deserialize_time.as_us();
 
     execute_or_deserialize_result
 }
 
-pub mod test_utils {
+#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
+mod test_utils {
+    #[cfg(feature = "svm-internal")]
     use {
-        super::*,
+        super::*, crate::syscalls::create_program_runtime_environment_v1,
+        solana_account::ReadableAccount, solana_program::loader_v4,
+        solana_program::loader_v4::LoaderV4State,
         solana_program_runtime::loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
-        solana_sdk::{account::ReadableAccount, loader_v4::LoaderV4State},
     };
 
-    pub fn load_all_invoked_programs(invoke_context: &mut InvokeContext) {
+    #[cfg(feature = "svm-internal")]
+    fn check_loader_id(id: &Pubkey) -> bool {
+        bpf_loader::check_id(id)
+            || bpf_loader_deprecated::check_id(id)
+            || bpf_loader_upgradeable::check_id(id)
+            || loader_v4::check_id(id)
+    }
+
+    #[cfg(feature = "svm-internal")]
+    #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
+    fn load_all_invoked_programs(invoke_context: &mut InvokeContext) {
         let mut load_program_metrics = LoadProgramMetrics::default();
         let program_runtime_environment = create_program_runtime_environment_v1(
             invoke_context.get_feature_set(),
@@ -1626,22 +1650,19 @@ mod tests {
         super::*,
         assert_matches::assert_matches,
         rand::Rng,
+        solana_account::{
+            create_account_shared_data_for_test as create_account_for_test, state_traits::StateMut,
+            AccountSharedData, ReadableAccount, WritableAccount,
+        },
+        solana_clock::Clock,
+        solana_epoch_schedule::EpochSchedule,
+        solana_instruction::{error::InstructionError, AccountMeta},
         solana_program_runtime::{
             invoke_context::mock_process_instruction, with_mock_invoke_context,
         },
-        solana_sdk::{
-            account::{
-                create_account_shared_data_for_test as create_account_for_test, AccountSharedData,
-                ReadableAccount, WritableAccount,
-            },
-            account_utils::StateMut,
-            clock::Clock,
-            epoch_schedule::EpochSchedule,
-            instruction::{AccountMeta, InstructionError},
-            pubkey::Pubkey,
-            rent::Rent,
-            system_program, sysvar,
-        },
+        solana_pubkey::Pubkey,
+        solana_rent::Rent,
+        solana_sdk_ids::{system_program, sysvar},
         std::{fs::File, io::Read, ops::Range, sync::atomic::AtomicU64},
     };
 
@@ -1685,7 +1706,7 @@ mod tests {
         let loader_id = bpf_loader::id();
         let program_id = Pubkey::new_unique();
         let program_account =
-            load_program_account_from_elf(&loader_id, "test_elfs/out/noop_aligned.so");
+            load_program_account_from_elf(&loader_id, "test_elfs/out/sbpfv3_return_ok.so");
         let parameter_id = Pubkey::new_unique();
         let parameter_account = AccountSharedData::new(1, 0, &loader_id);
         let parameter_meta = AccountMeta {
@@ -2173,10 +2194,10 @@ mod tests {
 
     #[test]
     fn test_bpf_loader_upgradeable_upgrade() {
-        let mut file = File::open("test_elfs/out/noop_aligned.so").expect("file open failed");
+        let mut file = File::open("test_elfs/out/sbpfv3_return_ok.so").expect("file open failed");
         let mut elf_orig = Vec::new();
         file.read_to_end(&mut elf_orig).unwrap();
-        let mut file = File::open("test_elfs/out/noop_unaligned.so").expect("file open failed");
+        let mut file = File::open("test_elfs/out/sbpfv3_return_err.so").expect("file open failed");
         let mut elf_new = Vec::new();
         file.read_to_end(&mut elf_new).unwrap();
         assert_ne!(elf_orig.len(), elf_new.len());
@@ -3772,7 +3793,7 @@ mod tests {
         let program_id = Pubkey::new_unique();
 
         // Create program account
-        let mut file = File::open("test_elfs/out/noop_aligned.so").expect("file open failed");
+        let mut file = File::open("test_elfs/out/sbpfv3_return_ok.so").expect("file open failed");
         let mut elf = Vec::new();
         file.read_to_end(&mut elf).unwrap();
 
@@ -3822,7 +3843,7 @@ mod tests {
         invoke_context: &mut InvokeContext,
         program_id: Pubkey,
     ) -> Result<(), InstructionError> {
-        let mut file = File::open("test_elfs/out/noop_unaligned.so").expect("file open failed");
+        let mut file = File::open("test_elfs/out/sbpfv3_return_ok.so").expect("file open failed");
         let mut elf = Vec::new();
         file.read_to_end(&mut elf).unwrap();
         deploy_program!(

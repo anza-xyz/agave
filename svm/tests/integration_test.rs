@@ -2470,18 +2470,20 @@ fn svm_metrics_accumulation() {
             result
                 .execute_timings
                 .details
-                .create_executor_jit_compile_us,
+                .create_executor_jit_compile_us
+                .0,
             0
         );
         assert_ne!(
-            result.execute_timings.details.create_executor_load_elf_us,
+            result.execute_timings.details.create_executor_load_elf_us.0,
             0
         );
         assert_ne!(
             result
                 .execute_timings
                 .details
-                .create_executor_verify_code_us,
+                .create_executor_verify_code_us
+                .0,
             0
         );
     }

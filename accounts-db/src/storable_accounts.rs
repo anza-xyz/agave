@@ -32,7 +32,7 @@ impl<'a> From<&'a StoredAccountMeta<'a>> for AccountForStorage<'a> {
     }
 }
 
-impl<'a> ZeroLamport for AccountForStorage<'a> {
+impl ZeroLamport for AccountForStorage<'_> {
     fn is_zero_lamport(&self) -> bool {
         self.lamports() == 0
     }
@@ -47,7 +47,7 @@ impl<'a> AccountForStorage<'a> {
     }
 }
 
-impl<'a> ReadableAccount for AccountForStorage<'a> {
+impl ReadableAccount for AccountForStorage<'_> {
     fn lamports(&self) -> u64 {
         match self {
             AccountForStorage::AddressAndAccount((_pubkey, account)) => account.lamports(),
@@ -100,7 +100,8 @@ pub struct StorableAccountsCacher {
 
 /// abstract access to pubkey, account, slot, target_slot of either:
 /// a. (slot, &[&Pubkey, &ReadableAccount])
-/// b. (slot, &[&Pubkey, &ReadableAccount, Slot]) (we will use this later)
+/// b. (slot, &[Pubkey, ReadableAccount])
+/// c. (slot, &[&Pubkey, &ReadableAccount, Slot]) (we will use this later)
 /// This trait avoids having to allocate redundant data when there is a duplicated slot parameter.
 /// All legacy callers do not have a unique slot per account to store.
 pub trait StorableAccounts<'a>: Sync {
@@ -152,6 +153,26 @@ impl<'a: 'b, 'b> StorableAccounts<'a> for (Slot, &'b [(&'a Pubkey, &'a AccountSh
         mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
     ) -> Ret {
         callback((self.1[index].0, self.1[index].1).into())
+    }
+    fn slot(&self, _index: usize) -> Slot {
+        // per-index slot is not unique per slot when per-account slot is not included in the source data
+        self.target_slot()
+    }
+    fn target_slot(&self) -> Slot {
+        self.0
+    }
+    fn len(&self) -> usize {
+        self.1.len()
+    }
+}
+
+impl<'a: 'b, 'b> StorableAccounts<'a> for (Slot, &'b [(Pubkey, AccountSharedData)]) {
+    fn account<Ret>(
+        &self,
+        index: usize,
+        mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
+    ) -> Ret {
+        callback((&self.1[index].0, &self.1[index].1).into())
     }
     fn slot(&self, _index: usize) -> Slot {
         // per-index slot is not unique per slot when per-account slot is not included in the source data

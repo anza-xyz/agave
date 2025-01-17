@@ -1,20 +1,16 @@
 //! config for staking
 //!  carries variables that the stake program cares about
-#[allow(deprecated)]
-use solana_sdk::stake::config;
 #[deprecated(
     since = "1.8.0",
     note = "Please use `solana_sdk::stake::config` or `solana_program::stake::config` instead"
 )]
-pub use solana_sdk::stake::config::*;
+pub use solana_program::stake::config::*;
 use {
     bincode::deserialize,
+    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_config_program::{create_config_account, get_config_data},
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount, WritableAccount},
-        genesis_config::GenesisConfig,
-        transaction_context::BorrowedAccount,
-    },
+    solana_sdk::genesis_config::GenesisConfig,
+    solana_transaction_context::BorrowedAccount,
 };
 
 #[allow(deprecated)]
@@ -36,7 +32,7 @@ pub fn add_genesis_account(genesis_config: &mut GenesisConfig) -> u64 {
 
     account.set_lamports(lamports.max(1));
 
-    genesis_config.add_account(config::id(), account);
+    genesis_config.add_account(solana_sdk_ids::config::id(), account);
 
     lamports
 }

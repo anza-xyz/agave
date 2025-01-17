@@ -11,9 +11,9 @@
 use {
     async_trait::async_trait,
     log::*,
+    solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_connection_cache::connection_cache::Protocol,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
-    solana_sdk::clock::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_tpu_client::nonblocking::tpu_client::LeaderTpuService,
     std::{
         fmt,

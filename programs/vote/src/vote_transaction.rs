@@ -1,14 +1,13 @@
 use {
+    solana_clock::Slot,
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_program::vote::{
         self,
         state::{TowerSync, Vote, VoteStateUpdate},
     },
-    solana_sdk::{
-        clock::Slot,
-        hash::Hash,
-        signature::{Keypair, Signer},
-        transaction::Transaction,
-    },
+    solana_signer::Signer,
+    solana_transaction::Transaction,
 };
 
 pub fn new_vote_transaction(

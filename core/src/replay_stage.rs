@@ -2,8 +2,8 @@
 
 use {
     crate::{
+        banking_stage::update_bank_forks_and_poh_recorder_for_new_tpu_bank,
         banking_trace::BankingTracer,
-        cache_block_meta_service::CacheBlockMetaSender,
         cluster_info_vote_listener::{
             DuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver, VoteTracker,
         },
@@ -27,7 +27,6 @@ use {
                 AncestorDuplicateSlotsReceiver, DumpedSlotsSender, PopularPrunedForksReceiver,
             },
         },
-        rewards_recorder_service::{RewardsMessage, RewardsRecorderSender},
         unfrozen_gossip_verified_vote_hashes::UnfrozenGossipVerifiedVoteHashes,
         voting_service::VoteOp,
         window_service::DuplicateSlotReceiver,
@@ -52,6 +51,7 @@ use {
     solana_measure::measure::Measure,
     solana_poh::poh_recorder::{PohLeaderStatus, PohRecorder, GRACE_TICKS_FACTOR, MAX_GRACE_SLOTS},
     solana_rpc::{
+        cache_block_meta_service::CacheBlockMetaSender,
         optimistically_confirmed_bank_tracker::{BankNotification, BankNotificationSenderConfig},
         rpc_subscriptions::RpcSubscriptions,
         slot_status_notifier::SlotStatusNotifier,
@@ -277,7 +277,6 @@ pub struct ReplaySenders {
     pub slot_status_notifier: Option<SlotStatusNotifier>,
     pub accounts_background_request_sender: AbsRequestSender,
     pub transaction_status_sender: Option<TransactionStatusSender>,
-    pub rewards_recorder_sender: Option<RewardsRecorderSender>,
     pub cache_block_meta_sender: Option<CacheBlockMetaSender>,
     pub entry_notification_sender: Option<EntryNotifierSender>,
     pub bank_notification_sender: Option<BankNotificationSenderConfig>,
@@ -569,7 +568,6 @@ impl ReplayStage {
             slot_status_notifier,
             accounts_background_request_sender,
             transaction_status_sender,
-            rewards_recorder_sender,
             cache_block_meta_sender,
             entry_notification_sender,
             bank_notification_sender,
@@ -734,7 +732,6 @@ impl ReplayStage {
                     &mut heaviest_subtree_fork_choice,
                     &replay_vote_sender,
                     &bank_notification_sender,
-                    &rewards_recorder_sender,
                     &rpc_subscriptions,
                     &slot_status_notifier,
                     &mut duplicate_slots_tracker,
@@ -2221,11 +2218,12 @@ impl ReplayStage {
             // new()-ing of its child bank
             banking_tracer.hash_event(parent.slot(), &parent.last_blockhash(), &parent.hash());
 
-            let tpu_bank = bank_forks.write().unwrap().insert(tpu_bank);
-            poh_recorder
-                .write()
-                .unwrap()
-                .set_bank(tpu_bank, track_transaction_indexes);
+            update_bank_forks_and_poh_recorder_for_new_tpu_bank(
+                bank_forks,
+                poh_recorder,
+                tpu_bank,
+                track_transaction_indexes,
+            );
             true
         } else {
             error!("{} No next leader found", my_pubkey);
@@ -2430,7 +2428,7 @@ impl ReplayStage {
             // The following differs from  rooted_slots by including the parent slot of the oldest parent bank.
             let rooted_slots_with_parents = bank_notification_sender
                 .as_ref()
-                .map_or(false, |sender| sender.should_send_parents)
+                .is_some_and(|sender| sender.should_send_parents)
                 .then(|| {
                     let mut new_chain = rooted_slots.clone();
                     new_chain.push(oldest_parent.unwrap_or_else(|| bank.parent_slot()));
@@ -3041,7 +3039,6 @@ impl ReplayStage {
         cache_block_meta_sender: Option<&CacheBlockMetaSender>,
         heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
         bank_notification_sender: &Option<BankNotificationSenderConfig>,
-        rewards_recorder_sender: &Option<RewardsRecorderSender>,
         rpc_subscriptions: &Arc<RpcSubscriptions>,
         slot_status_notifier: &Option<SlotStatusNotifier>,
         duplicate_slots_tracker: &mut DuplicateSlotsTracker,
@@ -3220,6 +3217,7 @@ impl ReplayStage {
                     (bank.slot(), bank.hash()),
                     Some((bank.parent_slot(), bank.parent_hash())),
                 );
+                heaviest_subtree_fork_choice.maybe_print_state();
                 bank_progress.fork_stats.bank_hash = Some(bank.hash());
                 let bank_frozen_state = BankFrozenState::new_from_state(
                     bank.slot(),
@@ -3286,7 +3284,7 @@ impl ReplayStage {
                         );
                     }
                 }
-                Self::record_rewards(bank, rewards_recorder_sender);
+
                 if let Some(ref block_metadata_notifier) = block_metadata_notifier {
                     let parent_blockhash = bank
                         .parent()
@@ -3342,7 +3340,6 @@ impl ReplayStage {
         heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
         replay_vote_sender: &ReplayVoteSender,
         bank_notification_sender: &Option<BankNotificationSenderConfig>,
-        rewards_recorder_sender: &Option<RewardsRecorderSender>,
         rpc_subscriptions: &Arc<RpcSubscriptions>,
         slot_status_notifier: &Option<SlotStatusNotifier>,
         duplicate_slots_tracker: &mut DuplicateSlotsTracker,
@@ -3425,7 +3422,6 @@ impl ReplayStage {
             cache_block_meta_sender,
             heaviest_subtree_fork_choice,
             bank_notification_sender,
-            rewards_recorder_sender,
             rpc_subscriptions,
             slot_status_notifier,
             duplicate_slots_tracker,
@@ -4144,20 +4140,6 @@ impl ReplayStage {
         Bank::new_from_parent_with_options(parent, leader, slot, new_bank_options)
     }
 
-    fn record_rewards(bank: &Bank, rewards_recorder_sender: &Option<RewardsRecorderSender>) {
-        if let Some(rewards_recorder_sender) = rewards_recorder_sender {
-            let rewards = bank.get_rewards_and_num_partitions();
-            if rewards.should_record() {
-                rewards_recorder_sender
-                    .send(RewardsMessage::Batch((bank.slot(), rewards)))
-                    .unwrap_or_else(|err| warn!("rewards_recorder_sender failed: {:?}", err));
-            }
-            rewards_recorder_sender
-                .send(RewardsMessage::Complete(bank.slot()))
-                .unwrap_or_else(|err| warn!("rewards_recorder_sender failed: {:?}", err));
-        }
-    }
-
     fn log_heaviest_fork_failures(
         heaviest_fork_failures: &Vec<HeaviestForkFailures>,
         bank_forks: &Arc<RwLock<BankForks>>,
@@ -4244,6 +4226,7 @@ pub(crate) mod tests {
         },
         crossbeam_channel::unbounded,
         itertools::Itertools,
+        solana_client::connection_cache::ConnectionCache,
         solana_entry::entry::{self, Entry},
         solana_gossip::{cluster_info::Node, crds::Cursor},
         solana_ledger::{
@@ -4274,6 +4257,7 @@ pub(crate) mod tests {
             transaction::TransactionError,
         },
         solana_streamer::socket::SocketAddrSpace,
+        solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
         solana_transaction_status::VersionedTransactionWithStatusMeta,
         solana_vote_program::{
             vote_state::{self, TowerSync, VoteStateVersions},
@@ -5074,7 +5058,7 @@ pub(crate) mod tests {
             (*pubkey, vote_state)
         }
 
-        let leader_pubkey = solana_sdk::pubkey::new_rand();
+        let leader_pubkey = solana_pubkey::new_rand();
         let leader_lamports = 3;
         let genesis_config_info =
             create_genesis_config_with_leader(50, &leader_pubkey, leader_lamports);
@@ -5130,7 +5114,7 @@ pub(crate) mod tests {
             let _res = bank.transfer(
                 10,
                 &genesis_config_info.mint_keypair,
-                &solana_sdk::pubkey::new_rand(),
+                &solana_pubkey::new_rand(),
             );
             for _ in 0..genesis_config.ticks_per_slot {
                 bank.register_default_tick_for_test();
@@ -7558,11 +7542,25 @@ pub(crate) mod tests {
         let vote_info = voting_receiver
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
+
+        let connection_cache = if DEFAULT_VOTE_USE_QUIC {
+            ConnectionCache::new_quic(
+                "connection_cache_vote_quic",
+                DEFAULT_TPU_CONNECTION_POOL_SIZE,
+            )
+        } else {
+            ConnectionCache::with_udp(
+                "connection_cache_vote_udp",
+                DEFAULT_TPU_CONNECTION_POOL_SIZE,
+            )
+        };
+
         crate::voting_service::VotingService::handle_vote(
             &cluster_info,
             &poh_recorder,
             &tower_storage,
             vote_info,
+            Arc::new(connection_cache),
         );
 
         let mut cursor = Cursor::default();
@@ -7633,12 +7631,27 @@ pub(crate) mod tests {
         let vote_info = voting_receiver
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
+
+        let connection_cache = if DEFAULT_VOTE_USE_QUIC {
+            ConnectionCache::new_quic(
+                "connection_cache_vote_quic",
+                DEFAULT_TPU_CONNECTION_POOL_SIZE,
+            )
+        } else {
+            ConnectionCache::with_udp(
+                "connection_cache_vote_udp",
+                DEFAULT_TPU_CONNECTION_POOL_SIZE,
+            )
+        };
+
         crate::voting_service::VotingService::handle_vote(
             &cluster_info,
             &poh_recorder,
             &tower_storage,
             vote_info,
+            Arc::new(connection_cache),
         );
+
         let votes = cluster_info.get_votes(&mut cursor);
         assert_eq!(votes.len(), 1);
         let vote_tx = &votes[0];
@@ -7716,11 +7729,24 @@ pub(crate) mod tests {
         let vote_info = voting_receiver
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
+        let connection_cache = if DEFAULT_VOTE_USE_QUIC {
+            ConnectionCache::new_quic(
+                "connection_cache_vote_quic",
+                DEFAULT_TPU_CONNECTION_POOL_SIZE,
+            )
+        } else {
+            ConnectionCache::with_udp(
+                "connection_cache_vote_udp",
+                DEFAULT_TPU_CONNECTION_POOL_SIZE,
+            )
+        };
+
         crate::voting_service::VotingService::handle_vote(
             &cluster_info,
             &poh_recorder,
             &tower_storage,
             vote_info,
+            Arc::new(connection_cache),
         );
 
         assert!(last_vote_refresh_time.last_refresh_time > clone_refresh_time);
@@ -7831,11 +7857,24 @@ pub(crate) mod tests {
         let vote_info = voting_receiver
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
+        let connection_cache = if DEFAULT_VOTE_USE_QUIC {
+            ConnectionCache::new_quic(
+                "connection_cache_vote_quic",
+                DEFAULT_TPU_CONNECTION_POOL_SIZE,
+            )
+        } else {
+            ConnectionCache::with_udp(
+                "connection_cache_vote_udp",
+                DEFAULT_TPU_CONNECTION_POOL_SIZE,
+            )
+        };
+
         crate::voting_service::VotingService::handle_vote(
             cluster_info,
             poh_recorder,
             tower_storage,
             vote_info,
+            Arc::new(connection_cache),
         );
 
         let votes = cluster_info.get_votes(cursor);

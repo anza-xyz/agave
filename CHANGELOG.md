@@ -9,15 +9,17 @@ and follows a [Backwards Compatibility Policy](https://docs.solanalabs.com/backw
 
 Release channels have their own copy of this changelog:
 * [edge - v2.2](#edge-channel)
-* [beta - v2.1](https://github.com/solana-labs/solana/blob/v2.1/CHANGELOG.md)
-* [stable - v2.0](https://github.com/solana-labs/solana/blob/v2.0/CHANGELOG.md)
+* [beta - v2.1](https://github.com/anza-xyz/agave/blob/v2.1/CHANGELOG.md)
+* [stable - v2.0](https://github.com/anza-xyz/agave/blob/v2.0/CHANGELOG.md)
 
 <a name="edge-channel"></a>
 ## [2.2.0] - Unreleased
 * Changes
   * CLI:
     * Add global `--skip-preflight` option for skipping preflight checks on all transactions sent through RPC. This flag, along with `--use-rpc`, can improve success rate with program deployments using the public RPC nodes.
-  * Unhide `--accounts-db-access-storages-method` for agave-validator and agave-ledger-tool
+    * Add new command `solana feature revoke` for revoking pending feature activations. When a feature is activated, `solana feature revoke <feature-keypair> <cluster>` can be used to deallocate and reassign the account to the System program, undoing the operation. This can only be done before the feature becomes active.
+  * Unhide `--accounts-db-access-storages-method` for agave-validator and agave-ledger-tool and change default to `file`
+  * Remove tracer stats from banking-trace. `banking-trace` directory should be cleared when restarting on v2.2 for first time. It will not break if not cleared, but the file will be a mix of new/old format. (#4043)
 
 ## [2.1.0]
 * Breaking:

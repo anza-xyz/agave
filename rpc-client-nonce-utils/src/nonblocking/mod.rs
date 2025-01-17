@@ -3,19 +3,15 @@
 pub mod blockhash_query;
 
 use {
-    solana_rpc_client::nonblocking::rpc_client::RpcClient,
-    solana_sdk::{
-        account::{Account, ReadableAccount},
-        account_utils::StateMut,
-        commitment_config::CommitmentConfig,
-        hash::Hash,
-        nonce::{
-            state::{Data, Versions},
-            State,
-        },
-        pubkey::Pubkey,
-        system_program,
+    solana_account::{state_traits::StateMut, Account, ReadableAccount},
+    solana_commitment_config::CommitmentConfig,
+    solana_hash::Hash,
+    solana_nonce::{
+        state::{Data, State},
+        versions::Versions,
     },
+    solana_pubkey::Pubkey,
+    solana_rpc_client::nonblocking::rpc_client::RpcClient,
 };
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -78,7 +74,7 @@ pub async fn get_account_with_commitment(
 /// system program. Returns [`Error::UnexpectedDataSize`] if the account
 /// contains no data.
 pub fn account_identity_ok<T: ReadableAccount>(account: &T) -> Result<(), Error> {
-    if account.owner() != &system_program::id() {
+    if account.owner() != &solana_sdk_ids::system_program::ID {
         Err(Error::InvalidAccountOwner)
     } else if account.data().is_empty() {
         Err(Error::UnexpectedDataSize)
@@ -101,10 +97,8 @@ pub fn account_identity_ok<T: ReadableAccount>(account: &T) -> Result<(), Error>
 /// ```no_run
 /// use solana_rpc_client_nonce_utils::nonblocking;
 /// use solana_rpc_client::nonblocking::rpc_client::RpcClient;
-/// use solana_sdk::{
-///     nonce::State,
-///     pubkey::Pubkey,
-/// };
+/// use solana_nonce::state::State;
+/// use solana_pubkey::Pubkey;
 /// use anyhow::Result;
 ///
 /// futures::executor::block_on(async {
@@ -151,13 +145,12 @@ pub fn state_from_account<T: ReadableAccount + StateMut<Versions>>(
 /// ```no_run
 /// use solana_rpc_client_nonce_utils::nonblocking;
 /// use solana_rpc_client::nonblocking::rpc_client::RpcClient;
-/// use solana_sdk::{
-///     message::Message,
-///     pubkey::Pubkey,
-///     signature::{Keypair, Signer},
-///     system_instruction,
-///     transaction::Transaction,
-/// };
+/// use solana_keypair::Keypair;
+/// use solana_message::Message;
+/// use solana_system_interface::instruction as system_instruction;
+/// use solana_pubkey::Pubkey;
+/// use solana_signer::Signer;
+/// use solana_transaction::Transaction;
 /// use std::path::Path;
 /// use anyhow::Result;
 /// # use anyhow::anyhow;

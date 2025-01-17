@@ -6,6 +6,12 @@ use {
     base64::{prelude::BASE64_STANDARD, Engine},
     serde_json::{json, Number, Value},
     solana_account_decoder_client_types::{UiAccount, UiAccountData, UiAccountEncoding},
+    solana_clock::{Slot, UnixTimestamp},
+    solana_epoch_info::EpochInfo,
+    solana_epoch_schedule::EpochSchedule,
+    solana_instruction::error::InstructionError,
+    solana_message::MessageHeader,
+    solana_pubkey::Pubkey,
     solana_rpc_client_api::{
         client_error::Result,
         config::RpcBlockProductionConfig,
@@ -19,16 +25,9 @@ use {
             RpcVoteAccountStatus,
         },
     },
-    solana_sdk::{
-        clock::{Slot, UnixTimestamp},
-        epoch_info::EpochInfo,
-        instruction::InstructionError,
-        message::MessageHeader,
-        pubkey::Pubkey,
-        signature::Signature,
-        sysvar::epoch_schedule::EpochSchedule,
-        transaction::{self, Transaction, TransactionError, TransactionVersion},
-    },
+    solana_signature::Signature,
+    solana_transaction::{versioned::TransactionVersion, Transaction},
+    solana_transaction_error::{TransactionError, TransactionResult},
     solana_transaction_status_client_types::{
         option_serializer::OptionSerializer, EncodedConfirmedBlock,
         EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction,
@@ -124,7 +123,7 @@ impl RpcSender for MockSender {
                 transaction_count: Some(123),
             })?,
             "getSignatureStatuses" => {
-                let status: transaction::Result<()> = if self.url == "account_in_use" {
+                let status: TransactionResult<()> = if self.url == "account_in_use" {
                     Err(TransactionError::AccountInUse)
                 } else if self.url == "instruction_error" {
                     Err(TransactionError::InstructionError(
@@ -455,7 +454,7 @@ pub(crate) fn mock_encoded_account(pubkey: &Pubkey) -> UiAccount {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, solana_account_decoder::encode_ui_account, solana_sdk::account::Account};
+    use {super::*, solana_account::Account, solana_account_decoder::encode_ui_account};
 
     #[test]
     fn test_mock_encoded_account() {

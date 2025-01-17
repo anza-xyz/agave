@@ -15,8 +15,7 @@ use {
         crds_gossip_push::CrdsGossipPush,
         crds_value::CrdsValue,
         duplicate_shred::{self, DuplicateShredIndex, MAX_DUPLICATE_SHREDS},
-        ping_pong::PingCache,
-        protocol::Ping,
+        protocol::{Ping, PingCache},
     },
     itertools::Itertools,
     rand::{CryptoRng, Rng},
@@ -364,7 +363,7 @@ pub(crate) fn dedup_gossip_addresses(
 ) -> HashMap</*gossip:*/ SocketAddr, (/*stake:*/ u64, ContactInfo)> {
     nodes
         .into_iter()
-        .filter_map(|node| Some((node.gossip().ok()?, node)))
+        .filter_map(|node| Some((node.gossip()?, node)))
         .into_grouping_map()
         .aggregate(|acc, _node_gossip, node| {
             let stake = stakes.get(node.pubkey()).copied().unwrap_or_default();
@@ -386,17 +385,16 @@ pub(crate) fn maybe_ping_gossip_addresses<R: Rng + CryptoRng>(
     pings: &mut Vec<(SocketAddr, Ping)>,
 ) -> Vec<ContactInfo> {
     let mut ping_cache = ping_cache.lock().unwrap();
-    let mut pingf = move || Ping::new_rand(rng, keypair).ok();
     let now = Instant::now();
     nodes
         .into_iter()
         .filter(|node| {
-            let Ok(node_gossip) = node.gossip() else {
+            let Some(node_gossip) = node.gossip() else {
                 return false;
             };
             let (check, ping) = {
                 let node = (*node.pubkey(), node_gossip);
-                ping_cache.check(now, node, &mut pingf)
+                ping_cache.check(rng, keypair, now, node)
             };
             if let Some(ping) = ping {
                 pings.push((node_gossip, ping));
@@ -425,12 +423,14 @@ mod test {
             .write()
             .unwrap()
             .insert(
-                CrdsValue::new_unsigned(CrdsData::ContactInfo(ci.clone())),
+                CrdsValue::new_unsigned(CrdsData::from(&ci)),
                 0,
                 GossipRoute::LocalMessage,
             )
             .unwrap();
         let ping_cache = PingCache::new(
+            &mut rand::thread_rng(),
+            Instant::now(),
             Duration::from_secs(20 * 60),      // ttl
             Duration::from_secs(20 * 60) / 64, // rate_limit_delay
             128,                               // capacity

@@ -680,7 +680,7 @@ pub fn submit_vote_to_cluster_gossip(
         None,
     );
 
-    cluster_info::push_messages_to_peer(
+    cluster_info::push_messages_to_peer_for_tests(
         vec![CrdsValue::new(
             CrdsData::Vote(
                 0,

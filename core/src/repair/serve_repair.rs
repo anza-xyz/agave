@@ -21,7 +21,7 @@ use {
     solana_gossip::{
         cluster_info::{ClusterInfo, ClusterInfoError},
         contact_info::{ContactInfo, Protocol},
-        ping_pong::{self, PingCache, Pong},
+        ping_pong::{self, Pong},
         weighted_shuffle::WeightedShuffle,
     },
     solana_ledger::{
@@ -81,7 +81,7 @@ pub const MAX_ANCESTOR_BYTES_IN_PACKET: usize =
 pub const MAX_ANCESTOR_RESPONSES: usize =
     MAX_ANCESTOR_BYTES_IN_PACKET / std::mem::size_of::<(Slot, Hash)>();
 /// Number of bytes in the randomly generated token sent with ping messages.
-pub(crate) const REPAIR_PING_TOKEN_SIZE: usize = HASH_BYTES;
+const REPAIR_PING_TOKEN_SIZE: usize = HASH_BYTES;
 pub const REPAIR_PING_CACHE_CAPACITY: usize = 65536;
 pub const REPAIR_PING_CACHE_TTL: Duration = Duration::from_secs(1280);
 const REPAIR_PING_CACHE_RATE_LIMIT_DELAY: Duration = Duration::from_secs(2);
@@ -141,11 +141,6 @@ impl AncestorHashesRepairType {
     }
 }
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiEnumVisitor, AbiExample),
-    frozen_abi(digest = "GPS6e6pgUdbXLwXN6XHTqrUVMwAL2YKLPDawgMi5hHzi")
-)]
 #[derive(Debug, Deserialize, Serialize)]
 pub enum AncestorHashesResponse {
     Hashes(Vec<(Slot, Hash)>),
@@ -219,7 +214,8 @@ impl RepairRequestHeader {
     }
 }
 
-pub(crate) type Ping = ping_pong::Ping<[u8; REPAIR_PING_TOKEN_SIZE]>;
+type Ping = ping_pong::Ping<REPAIR_PING_TOKEN_SIZE>;
+type PingCache = ping_pong::PingCache<REPAIR_PING_TOKEN_SIZE>;
 
 /// Window protocol messages
 #[cfg_attr(
@@ -270,11 +266,6 @@ fn discard_malformed_repair_requests(
     requests.len()
 }
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiEnumVisitor, AbiExample),
-    frozen_abi(digest = "9A6ae44qpdT7PaxiDZbybMM2mewnSnPs3C4CxhpbbYuV")
-)]
 #[derive(Debug, Deserialize, Serialize)]
 pub(crate) enum RepairResponse {
     Ping(Ping),
@@ -367,8 +358,8 @@ impl RepairPeers {
             .filter_map(|(peer, &weight)| {
                 let node = Node {
                     pubkey: *peer.pubkey(),
-                    serve_repair: peer.serve_repair(Protocol::UDP).ok()?,
-                    serve_repair_quic: peer.serve_repair(Protocol::QUIC).ok()?,
+                    serve_repair: peer.serve_repair(Protocol::UDP)?,
+                    serve_repair_quic: peer.serve_repair(Protocol::QUIC)?,
                 };
                 Some((node, weight))
             })
@@ -824,6 +815,8 @@ impl ServeRepair {
         assert!(REPAIR_PING_CACHE_RATE_LIMIT_DELAY > Duration::from_millis(REPAIR_MS));
 
         let mut ping_cache = PingCache::new(
+            &mut rand::thread_rng(),
+            Instant::now(),
             REPAIR_PING_CACHE_TTL,
             REPAIR_PING_CACHE_RATE_LIMIT_DELAY,
             REPAIR_PING_CACHE_CAPACITY,
@@ -924,10 +917,16 @@ impl ServeRepair {
         identity_keypair: &Keypair,
     ) -> (bool, Option<Packet>) {
         let mut rng = rand::thread_rng();
-        let mut pingf = move || Ping::new_rand(&mut rng, identity_keypair).ok();
         let (check, ping) = request
             .sender()
-            .map(|&sender| ping_cache.check(Instant::now(), (sender, *from_addr), &mut pingf))
+            .map(|&sender| {
+                ping_cache.check(
+                    &mut rng,
+                    identity_keypair,
+                    Instant::now(),
+                    (sender, *from_addr),
+                )
+            })
             .unwrap_or_default();
         let ping_pkt = if let Some(ping) = ping {
             match request {
@@ -1128,7 +1127,7 @@ impl ServeRepair {
             .shuffle(&mut rand::thread_rng())
             .map(|i| index[i])
             .filter_map(|i| {
-                let addr = repair_peers[i].serve_repair(repair_protocol).ok()?;
+                let addr = repair_peers[i].serve_repair(repair_protocol)?;
                 Some((*repair_peers[i].pubkey(), addr))
             })
             .take(get_ancestor_hash_repair_sample_size())
@@ -1142,18 +1141,20 @@ impl ServeRepair {
         slot: Slot,
         cluster_slots: &ClusterSlots,
         repair_validators: &Option<HashSet<Pubkey>>,
-    ) -> Result<(Pubkey, SocketAddr)> {
+    ) -> Option<(Pubkey, SocketAddr)> {
         let repair_peers: Vec<_> = self.repair_peers(repair_validators, slot);
         if repair_peers.is_empty() {
-            return Err(ClusterInfoError::NoPeers.into());
+            return None;
         }
         let (weights, index): (Vec<_>, Vec<_>) = cluster_slots
             .compute_weights_exclude_nonfrozen(slot, &repair_peers)
             .into_iter()
             .unzip();
-        let k = WeightedIndex::new(weights)?.sample(&mut rand::thread_rng());
+        let k = WeightedIndex::new(weights)
+            .ok()?
+            .sample(&mut rand::thread_rng());
         let n = index[k];
-        Ok((
+        Some((
             *repair_peers[n].pubkey(),
             repair_peers[n].serve_repair(Protocol::UDP)?,
         ))
@@ -1232,12 +1233,10 @@ impl ServeRepair {
                 }
                 packet.meta_mut().set_discard(true);
                 stats.ping_count += 1;
-                if let Ok(pong) = Pong::new(&ping, keypair) {
-                    let pong = RepairProtocol::Pong(pong);
-                    if let Ok(pong_bytes) = serialize(&pong) {
-                        let from_addr = packet.meta().socket_addr();
-                        pending_pongs.push((pong_bytes, from_addr));
-                    }
+                let pong = RepairProtocol::Pong(Pong::new(&ping, keypair));
+                if let Ok(pong) = bincode::serialize(&pong) {
+                    let from_addr = packet.meta().socket_addr();
+                    pending_pongs.push((pong, from_addr));
                 }
             }
         }
@@ -1462,7 +1461,7 @@ mod tests {
     fn test_serialized_ping_size() {
         let mut rng = rand::thread_rng();
         let keypair = Keypair::new();
-        let ping = Ping::new_rand(&mut rng, &keypair).unwrap();
+        let ping = Ping::new(rng.gen(), &keypair);
         let ping = RepairResponse::Ping(ping);
         let pkt = Packet::from_data(None, ping).unwrap();
         assert_eq!(pkt.meta().size, REPAIR_RESPONSE_SERIALIZED_PING_BYTES);
@@ -1516,8 +1515,8 @@ mod tests {
     fn test_check_well_formed_repair_request() {
         let mut rng = rand::thread_rng();
         let keypair = Keypair::new();
-        let ping = ping_pong::Ping::<[u8; 32]>::new_rand(&mut rng, &keypair).unwrap();
-        let pong = Pong::new(&ping, &keypair).unwrap();
+        let ping = Ping::new(rng.gen(), &keypair);
+        let pong = Pong::new(&ping, &keypair);
         let request = RepairProtocol::Pong(pong);
         let mut pkt = Packet::from_data(None, request).unwrap();
         let mut batch = vec![make_remote_request(&pkt)];
@@ -1593,7 +1592,7 @@ mod tests {
             Arc::new(RwLock::new(HashSet::default())),
         );
         let keypair = cluster_info.keypair().clone();
-        let repair_peer_id = solana_sdk::pubkey::new_rand();
+        let repair_peer_id = solana_pubkey::new_rand();
         let repair_request = ShredRepairType::Orphan(123);
 
         let rsp = serve_repair
@@ -1629,7 +1628,7 @@ mod tests {
         let slot: Slot = 50;
         let nonce = 70;
         let cluster_info = Arc::new(new_test_cluster_info());
-        let repair_peer_id = solana_sdk::pubkey::new_rand();
+        let repair_peer_id = solana_pubkey::new_rand();
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
         let keypair = cluster_info.keypair().clone();
 
@@ -1679,7 +1678,7 @@ mod tests {
             Arc::new(RwLock::new(HashSet::default())),
         );
         let keypair = cluster_info.keypair().clone();
-        let repair_peer_id = solana_sdk::pubkey::new_rand();
+        let repair_peer_id = solana_pubkey::new_rand();
 
         let slot = 50;
         let shred_index = 60;
@@ -2018,7 +2017,7 @@ mod tests {
 
         let serve_repair_addr = socketaddr!(Ipv4Addr::LOCALHOST, 1243);
         let mut nxt = ContactInfo::new(
-            solana_sdk::pubkey::new_rand(),
+            solana_pubkey::new_rand(),
             timestamp(), // wallclock
             0u16,        // shred_version
         );
@@ -2053,7 +2052,7 @@ mod tests {
 
         let serve_repair_addr2 = socketaddr!([127, 0, 0, 2], 1243);
         let mut nxt = ContactInfo::new(
-            solana_sdk::pubkey::new_rand(),
+            solana_pubkey::new_rand(),
             timestamp(), // wallclock
             0u16,        // shred_version
         );
@@ -2323,10 +2322,8 @@ mod tests {
         let me = cluster_info.my_contact_info();
         let (repair_request_quic_sender, _) = tokio::sync::mpsc::channel(/*buffer:*/ 128);
         // Insert two peers on the network
-        let contact_info2 =
-            ContactInfo::new_localhost(&solana_sdk::pubkey::new_rand(), timestamp());
-        let contact_info3 =
-            ContactInfo::new_localhost(&solana_sdk::pubkey::new_rand(), timestamp());
+        let contact_info2 = ContactInfo::new_localhost(&solana_pubkey::new_rand(), timestamp());
+        let contact_info3 = ContactInfo::new_localhost(&solana_pubkey::new_rand(), timestamp());
         cluster_info.insert_info(contact_info2.clone());
         cluster_info.insert_info(contact_info3.clone());
         let identity_keypair = cluster_info.keypair().clone();
@@ -2340,7 +2337,7 @@ mod tests {
         // 1) repair validator set doesn't exist in gossip
         // 2) repair validator set only includes our own id
         // then no repairs should be generated
-        for pubkey in &[solana_sdk::pubkey::new_rand(), *me.pubkey()] {
+        for pubkey in &[solana_pubkey::new_rand(), *me.pubkey()] {
             let known_validators = Some(vec![*pubkey].into_iter().collect());
             assert!(serve_repair.repair_peers(&known_validators, 1).is_empty());
             assert_matches!(

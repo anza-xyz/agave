@@ -402,10 +402,10 @@ mod tests {
         super::*,
         crossbeam_channel::unbounded,
         solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
+        solana_pubkey::Pubkey,
         solana_runtime::{
             accounts_background_service::AbsRequestSender, commitment::BlockCommitmentCache,
         },
-        solana_sdk::pubkey::Pubkey,
         std::sync::atomic::AtomicU64,
     };
 

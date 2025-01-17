@@ -15,3 +15,6 @@ solana-program = { workspace = true }
 
 [lib]
 crate-type = ["cdylib"]
+
+[lints]
+workspace = true

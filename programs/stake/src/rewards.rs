@@ -6,17 +6,14 @@ use {
         calculate_stake_points_and_credits, CalculatedStakePoints, InflationPointCalculationEvent,
         PointValue, SkippedReason,
     },
-    solana_sdk::{
-        account::{AccountSharedData, WritableAccount},
-        account_utils::StateMut,
-        clock::Epoch,
-        instruction::InstructionError,
-        stake::{
-            instruction::StakeError,
-            state::{Stake, StakeStateV2},
-        },
-        stake_history::StakeHistory,
+    solana_account::{state_traits::StateMut, AccountSharedData, WritableAccount},
+    solana_clock::Epoch,
+    solana_instruction::error::InstructionError,
+    solana_program::stake::{
+        instruction::StakeError,
+        state::{Stake, StakeStateV2},
     },
+    solana_sysvar::stake_history::StakeHistory,
     solana_vote_program::vote_state::VoteState,
 };
 
@@ -183,13 +180,14 @@ fn calculate_stake_rewards(
         return None;
     }
 
+    // The final unwrap is safe, as points_value.points is guaranteed to be non zero above.
     let rewards = points
         .checked_mul(u128::from(point_value.rewards))
-        .unwrap()
+        .expect("Rewards intermediate calculation should fit within u128")
         .checked_div(point_value.points)
         .unwrap();
 
-    let rewards = u64::try_from(rewards).unwrap();
+    let rewards = u64::try_from(rewards).expect("Rewards should fit within u64");
 
     // don't bother trying to split if fractional lamports got truncated
     if rewards == 0 {
@@ -230,7 +228,9 @@ mod tests {
     use {
         super::*,
         crate::{points::null_tracer, stake_state::new_stake},
-        solana_sdk::{native_token, pubkey::Pubkey},
+        solana_native_token::sol_to_lamports,
+        solana_pubkey::Pubkey,
+        test_case::test_case,
     };
 
     #[test]
@@ -610,6 +610,26 @@ mod tests {
         );
     }
 
+    #[test_case(u64::MAX, 1_000, u64::MAX => panics "Rewards intermediate calculation should fit within u128")]
+    #[test_case(1, u64::MAX, u64::MAX => panics "Rewards should fit within u64")]
+    fn calculate_rewards_tests(stake: u64, rewards: u64, credits: u64) {
+        let mut vote_state = VoteState::default();
+
+        let stake = new_stake(stake, &Pubkey::default(), &vote_state, u64::MAX);
+
+        vote_state.increment_credits(0, credits);
+
+        calculate_stake_rewards(
+            0,
+            &stake,
+            &PointValue { rewards, points: 1 },
+            &vote_state,
+            &StakeHistory::default(),
+            null_tracer(),
+            None,
+        );
+    }
+
     #[test]
     fn test_stake_state_calculate_points_with_typical_values() {
         let vote_state = VoteState::default();
@@ -617,7 +637,7 @@ mod tests {
         // bootstrap means fully-vested stake at epoch 0 with
         //  10_000_000 SOL is a big but not unreasaonable stake
         let stake = new_stake(
-            native_token::sol_to_lamports(10_000_000f64),
+            sol_to_lamports(10_000_000f64),
             &Pubkey::default(),
             &vote_state,
             u64::MAX,

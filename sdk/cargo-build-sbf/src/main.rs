@@ -34,6 +34,7 @@ struct Config<'a> {
     features: Vec<String>,
     force_tools_install: bool,
     skip_tools_install: bool,
+    no_rustup_override: bool,
     generate_child_script_on_failure: bool,
     no_default_features: bool,
     offline: bool,
@@ -63,6 +64,7 @@ impl Default for Config<'_> {
             features: vec![],
             force_tools_install: false,
             skip_tools_install: false,
+            no_rustup_override: false,
             generate_child_script_on_failure: false,
             no_default_features: false,
             offline: false,
@@ -645,9 +647,6 @@ fn build_solana_package(
         }
     });
 
-    let platform_tools_version =
-        validate_platform_tools_version(platform_tools_version, DEFAULT_PLATFORM_TOOLS_VERSION);
-
     info!("Solana SDK: {}", config.sbf_sdk.display());
     if config.no_default_features {
         info!("No default features");
@@ -665,6 +664,9 @@ fn build_solana_package(
     };
 
     if !config.skip_tools_install {
+        let platform_tools_version =
+            validate_platform_tools_version(platform_tools_version, DEFAULT_PLATFORM_TOOLS_VERSION);
+
         let platform_tools_download_file_name = if cfg!(target_os = "windows") {
             format!("platform-tools-windows-{arch}.tar.bz2")
         } else if cfg!(target_os = "macos") {
@@ -700,7 +702,23 @@ fn build_solana_package(
             exit(1);
         });
     }
-    link_solana_toolchain(config);
+    let target = "sbf-solana-solana";
+
+    if config.no_rustup_override {
+        check_solana_target_installed(target);
+    } else {
+        link_solana_toolchain(config);
+        // RUSTC variable overrides cargo +<toolchain> mechanism of
+        // selecting the rust compiler and makes cargo run a rust compiler
+        // other than the one linked in Solana toolchain. We have to prevent
+        // this by removing RUSTC from the child process environment.
+        if env::var("RUSTC").is_ok() {
+            warn!(
+                "Removed RUSTC from cargo environment, because it overrides +solana cargo command line option."
+            );
+            env::remove_var("RUSTC")
+        }
+    }
 
     let llvm_bin = config
         .sbf_sdk
@@ -713,16 +731,6 @@ fn build_solana_package(
     env::set_var("OBJDUMP", llvm_bin.join("llvm-objdump"));
     env::set_var("OBJCOPY", llvm_bin.join("llvm-objcopy"));
 
-    // RUSTC variable overrides cargo +<toolchain> mechanism of
-    // selecting the rust compiler and makes cargo run a rust compiler
-    // other than the one linked in Solana toolchain. We have to prevent
-    // this by removing RUSTC from the child process environment.
-    if env::var("RUSTC").is_ok() {
-        warn!(
-            "Removed RUSTC from cargo environment, because it overrides +solana cargo command line option."
-        );
-        env::remove_var("RUSTC")
-    }
     let cargo_target = "CARGO_TARGET_SBF_SOLANA_SOLANA_RUSTFLAGS";
     let rustflags = env::var("RUSTFLAGS").ok().unwrap_or_default();
     if env::var("RUSTFLAGS").is_ok() {
@@ -757,13 +765,12 @@ fn build_solana_package(
     }
 
     let cargo_build = PathBuf::from("cargo");
-    let mut cargo_build_args = vec![
-        "+solana",
-        "build",
-        "--release",
-        "--target",
-        "sbf-solana-solana",
-    ];
+    let mut cargo_build_args = vec![];
+    if !config.no_rustup_override {
+        cargo_build_args.push("+solana");
+    };
+
+    cargo_build_args.append(&mut vec!["build", "--release", "--target", target]);
     if config.arch == "sbfv2" {
         cargo_build_args.push("-Zbuild-std=std,panic_abort");
     }
@@ -912,6 +919,17 @@ fn build_solana_package(
     }
 }
 
+// allow user to set proper `rustc` into RUSTC or into PATH
+fn check_solana_target_installed(target: &str) {
+    let rustc = env::var("RUSTC").unwrap_or("rustc".to_owned());
+    let rustc = PathBuf::from(rustc);
+    let output = spawn(&rustc, ["--print", "target-list"], false);
+    if !output.contains(target) {
+        error!("Provided {:?} does not have {} target. The Solana rustc must be available in $PATH or the $RUSTC environment variable for the build to succeed.", rustc, target);
+        exit(1);
+    }
+}
+
 fn build_solana(config: Config, manifest_path: Option<PathBuf>) {
     let mut metadata_command = cargo_metadata::MetadataCommand::new();
     if let Some(manifest_path) = manifest_path {
@@ -1048,6 +1066,13 @@ fn main() {
                 .takes_value(false)
                 .conflicts_with("force_tools_install")
                 .help("Skip downloading and installing platform-tools, assuming they are properly mounted"),
+            )
+            .arg(
+                Arg::new("no_rustup_override")
+                .long("no-rustup-override")
+                .takes_value(false)
+                .conflicts_with("force_tools_install")
+                .help("Do not use rustup to manage the toolchain. By default, cargo-build-sbf invokes rustup to find the Solana rustc using a `+solana` toolchain override. This flag disables that behavior."),
         )
         .arg(
             Arg::new("generate_child_script_on_failure")
@@ -1173,6 +1198,7 @@ fn main() {
         features: matches.values_of_t("features").ok().unwrap_or_default(),
         force_tools_install: matches.is_present("force_tools_install"),
         skip_tools_install: matches.is_present("skip_tools_install"),
+        no_rustup_override: matches.is_present("no_rustup_override"),
         generate_child_script_on_failure: matches.is_present("generate_child_script_on_failure"),
         no_default_features: matches.is_present("no_default_features"),
         remap_cwd: !matches.is_present("remap_cwd"),

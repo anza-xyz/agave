@@ -149,8 +149,8 @@ impl Debug for InstructionsIterator<'_> {
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
-        solana_sdk::{instruction::CompiledInstruction, short_vec::ShortVec},
+        super::*, solana_message::compiled_instruction::CompiledInstruction,
+        solana_short_vec::ShortVec,
     };
 
     #[test]

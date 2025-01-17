@@ -505,7 +505,7 @@ mod tests {
 
     #[test]
     fn test_verify_keybase_username_not_string() {
-        let pubkey = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
         let value = Value::Bool(true);
 
         assert_eq!(
@@ -570,7 +570,7 @@ mod tests {
 
     #[test]
     fn test_parse_validator_info() {
-        let pubkey = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
         let keys = vec![(validator_info::id(), false), (pubkey, true)];
         let config = ConfigKeys { keys };
 
@@ -599,7 +599,7 @@ mod tests {
         assert!(parse_validator_info(
             &Pubkey::default(),
             &Account {
-                owner: solana_sdk::pubkey::new_rand(),
+                owner: solana_pubkey::new_rand(),
                 ..Account::default()
             }
         )

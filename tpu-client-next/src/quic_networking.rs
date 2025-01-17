@@ -5,26 +5,22 @@ use {
         crypto::rustls::QuicClientConfig, ClientConfig, Connection, Endpoint, IdleTimeout,
         TransportConfig,
     },
-    skip_server_verification::SkipServerVerification,
-    solana_sdk::quic::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT},
+    solana_quic_definitions::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT},
     solana_streamer::nonblocking::quic::ALPN_TPU_PROTOCOL_ID,
+    solana_tls_utils::tls_client_config_builder,
     std::{net::SocketAddr, sync::Arc},
 };
 
 pub mod error;
-pub mod quic_client_certificate;
-pub mod skip_server_verification;
 
 pub use {
     error::{IoErrorWithPartialEq, QuicError},
-    quic_client_certificate::QuicClientCertificate,
+    solana_tls_utils::QuicClientCertificate,
 };
 
 pub(crate) fn create_client_config(client_certificate: Arc<QuicClientCertificate>) -> ClientConfig {
     // adapted from QuicLazyInitializedEndpoint::create_endpoint
-    let mut crypto = rustls::ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(SkipServerVerification::new())
+    let mut crypto = tls_client_config_builder()
         .with_client_auth_cert(
             vec![client_certificate.certificate.clone()],
             client_certificate.key.clone_key(),

@@ -1,12 +1,12 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
     log::*,
+    solana_commitment_config::CommitmentConfig,
     solana_measure::measure::Measure,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_sdk::{
-        commitment_config::CommitmentConfig, signature::Signature, timing::timestamp,
-        transaction::Transaction,
-    },
+    solana_signature::Signature,
+    solana_time_utils::timestamp,
+    solana_transaction::Transaction,
     std::{
         net::SocketAddr,
         sync::{

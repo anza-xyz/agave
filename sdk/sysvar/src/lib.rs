@@ -101,7 +101,6 @@ pub mod clock;
 pub mod epoch_rewards;
 pub mod epoch_schedule;
 pub mod fees;
-pub mod instructions;
 pub mod last_restart_slot;
 pub mod program_stubs;
 pub mod recent_blockhashes;
@@ -131,7 +130,7 @@ mod sysvar_ids {
             slot_hashes::id(),
             slot_history::id(),
             stake_history::id(),
-            instructions::id(),
+            solana_sdk_ids::sysvar::instructions::id(),
         ];
     }
 }

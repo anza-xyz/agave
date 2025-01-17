@@ -716,7 +716,7 @@ impl fmt::Display for ElGamalCiphertext {
     }
 }
 
-impl<'a, 'b> Add<&'b ElGamalCiphertext> for &'a ElGamalCiphertext {
+impl<'b> Add<&'b ElGamalCiphertext> for &ElGamalCiphertext {
     type Output = ElGamalCiphertext;
 
     fn add(self, ciphertext: &'b ElGamalCiphertext) -> ElGamalCiphertext {
@@ -733,7 +733,7 @@ define_add_variants!(
     Output = ElGamalCiphertext
 );
 
-impl<'a, 'b> Sub<&'b ElGamalCiphertext> for &'a ElGamalCiphertext {
+impl<'b> Sub<&'b ElGamalCiphertext> for &ElGamalCiphertext {
     type Output = ElGamalCiphertext;
 
     fn sub(self, ciphertext: &'b ElGamalCiphertext) -> ElGamalCiphertext {
@@ -750,7 +750,7 @@ define_sub_variants!(
     Output = ElGamalCiphertext
 );
 
-impl<'a, 'b> Mul<&'b Scalar> for &'a ElGamalCiphertext {
+impl<'b> Mul<&'b Scalar> for &ElGamalCiphertext {
     type Output = ElGamalCiphertext;
 
     fn mul(self, scalar: &'b Scalar) -> ElGamalCiphertext {
@@ -767,7 +767,7 @@ define_mul_variants!(
     Output = ElGamalCiphertext
 );
 
-impl<'a, 'b> Mul<&'b ElGamalCiphertext> for &'a Scalar {
+impl<'b> Mul<&'b ElGamalCiphertext> for &Scalar {
     type Output = ElGamalCiphertext;
 
     fn mul(self, ciphertext: &'b ElGamalCiphertext) -> ElGamalCiphertext {
@@ -813,7 +813,7 @@ impl DecryptHandle {
     }
 }
 
-impl<'a, 'b> Add<&'b DecryptHandle> for &'a DecryptHandle {
+impl<'b> Add<&'b DecryptHandle> for &DecryptHandle {
     type Output = DecryptHandle;
 
     fn add(self, handle: &'b DecryptHandle) -> DecryptHandle {
@@ -827,7 +827,7 @@ define_add_variants!(
     Output = DecryptHandle
 );
 
-impl<'a, 'b> Sub<&'b DecryptHandle> for &'a DecryptHandle {
+impl<'b> Sub<&'b DecryptHandle> for &DecryptHandle {
     type Output = DecryptHandle;
 
     fn sub(self, handle: &'b DecryptHandle) -> DecryptHandle {
@@ -841,7 +841,7 @@ define_sub_variants!(
     Output = DecryptHandle
 );
 
-impl<'a, 'b> Mul<&'b Scalar> for &'a DecryptHandle {
+impl<'b> Mul<&'b Scalar> for &DecryptHandle {
     type Output = DecryptHandle;
 
     fn mul(self, scalar: &'b Scalar) -> DecryptHandle {
@@ -851,7 +851,7 @@ impl<'a, 'b> Mul<&'b Scalar> for &'a DecryptHandle {
 
 define_mul_variants!(LHS = DecryptHandle, RHS = Scalar, Output = DecryptHandle);
 
-impl<'a, 'b> Mul<&'b DecryptHandle> for &'a Scalar {
+impl<'b> Mul<&'b DecryptHandle> for &Scalar {
     type Output = DecryptHandle;
 
     fn mul(self, handle: &'b DecryptHandle) -> DecryptHandle {

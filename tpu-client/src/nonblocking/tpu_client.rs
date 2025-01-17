@@ -4,6 +4,8 @@ use {
     bincode::serialize,
     futures_util::{future::join_all, stream::StreamExt},
     log::*,
+    solana_clock::{Slot, DEFAULT_MS_PER_SLOT, NUM_CONSECUTIVE_LEADER_SLOTS},
+    solana_commitment_config::CommitmentConfig,
     solana_connection_cache::{
         connection_cache::{
             ConnectionCache, ConnectionManager, ConnectionPool, NewConnectionConfig, Protocol,
@@ -11,23 +13,19 @@ use {
         },
         nonblocking::client_connection::ClientConnection,
     },
+    solana_epoch_info::EpochInfo,
+    solana_pubkey::Pubkey,
     solana_pubsub_client::nonblocking::pubsub_client::{PubsubClient, PubsubClientError},
+    solana_quic_definitions::QUIC_PORT_OFFSET,
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_rpc_client_api::{
         client_error::{Error as ClientError, ErrorKind, Result as ClientResult},
         request::RpcError,
         response::{RpcContactInfo, SlotUpdate},
     },
-    solana_sdk::{
-        clock::{Slot, DEFAULT_MS_PER_SLOT, NUM_CONSECUTIVE_LEADER_SLOTS},
-        commitment_config::CommitmentConfig,
-        epoch_info::EpochInfo,
-        pubkey::Pubkey,
-        quic::QUIC_PORT_OFFSET,
-        signature::SignerError,
-        transaction::Transaction,
-        transport::{Result as TransportResult, TransportError},
-    },
+    solana_signer::SignerError,
+    solana_transaction::Transaction,
+    solana_transaction_error::{TransportError, TransportResult},
     std::{
         collections::{HashMap, HashSet},
         net::SocketAddr,
@@ -48,9 +46,11 @@ use {
     crate::tpu_client::{SEND_TRANSACTION_INTERVAL, TRANSACTION_RESEND_INTERVAL},
     futures_util::FutureExt,
     indicatif::ProgressBar,
+    solana_message::Message,
     solana_rpc_client::spinner::{self, SendTransactionProgress},
     solana_rpc_client_api::request::MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS,
-    solana_sdk::{message::Message, signers::Signers, transaction::TransactionError},
+    solana_signer::signers::Signers,
+    solana_transaction_error::TransactionError,
     std::{future::Future, iter},
 };
 

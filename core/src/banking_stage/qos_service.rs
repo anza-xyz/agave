@@ -728,7 +728,7 @@ mod tests {
         let transaction = solana_sdk::transaction::Transaction::new_unsigned(solana_sdk::message::Message::new(
             &[
                 solana_sdk::compute_budget::ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(loaded_accounts_data_size),
-                solana_sdk::system_instruction::transfer(&keypair.pubkey(), &solana_sdk::pubkey::Pubkey::new_unique(), 1),
+                solana_sdk::system_instruction::transfer(&keypair.pubkey(), &solana_pubkey::Pubkey::new_unique(), 1),
             ],
             Some(&keypair.pubkey()),
         ));
@@ -852,7 +852,7 @@ mod tests {
         let transaction = solana_sdk::transaction::Transaction::new_unsigned(solana_sdk::message::Message::new(
             &[
                 solana_sdk::compute_budget::ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(loaded_accounts_data_size),
-                solana_sdk::system_instruction::transfer(&keypair.pubkey(), &solana_sdk::pubkey::Pubkey::new_unique(), 1),
+                solana_sdk::system_instruction::transfer(&keypair.pubkey(), &solana_pubkey::Pubkey::new_unique(), 1),
             ],
             Some(&keypair.pubkey()),
         ));

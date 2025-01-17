@@ -1,15 +1,14 @@
 use {
     super::packet_filter::PacketFilterFailure,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
+    solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_perf::packet::Packet,
     solana_runtime::bank::Bank,
-    solana_runtime_transaction::{
-        instructions_processor::process_compute_budget_instructions,
-        runtime_transaction::RuntimeTransaction,
-    },
+    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sanitize::SanitizeError,
     solana_sdk::{
         clock::Slot,
+        feature_set::FeatureSet,
         hash::Hash,
         message::{v0::LoadedAddresses, AddressLoaderError, Message, SimpleAddressLoader},
         pubkey::Pubkey,
@@ -45,6 +44,12 @@ pub enum DeserializedPacketError {
     FailedFilter(#[from] PacketFilterFailure),
 }
 
+lazy_static::lazy_static! {
+    // Make a dummy feature_set with all features enabled to
+    // fetch compute_unit_price and compute_unit_limit for legacy leader.
+    static ref FEATURE_SET: FeatureSet = FeatureSet::all_enabled();
+}
+
 #[derive(Debug)]
 pub struct ImmutableDeserializedPacket {
     original_packet: Packet,
@@ -73,6 +78,7 @@ impl ImmutableDeserializedPacket {
                 .get_message()
                 .program_instructions_iter()
                 .map(|(pubkey, ix)| (pubkey, SVMInstruction::from(ix))),
+            &FEATURE_SET,
         )
         .map_err(|_| DeserializedPacketError::PrioritizationFailure)?;
 
@@ -212,7 +218,7 @@ mod tests {
     fn simple_deserialized_packet() {
         let tx = system_transaction::transfer(
             &Keypair::new(),
-            &solana_sdk::pubkey::new_rand(),
+            &solana_pubkey::new_rand(),
             1,
             Hash::new_unique(),
         );

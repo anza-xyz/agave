@@ -1,4 +1,4 @@
-use {crate::svm_message::SVMMessage, solana_sdk::signature::Signature};
+use {crate::svm_message::SVMMessage, solana_signature::Signature};
 
 mod sanitized_transaction;
 

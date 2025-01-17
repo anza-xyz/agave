@@ -8,7 +8,7 @@ use {
             TransactionCheckResult, TransactionLoadResult, ValidatedTransactionDetails,
         },
         account_overrides::AccountOverrides,
-        message_processor::MessageProcessor,
+        message_processor::process_message,
         nonce_info::NonceInfo,
         program_loader::{get_program_modification_slot, load_program_with_pubkey},
         rollback_accounts::RollbackAccounts,
@@ -20,48 +20,50 @@ use {
     },
     log::debug,
     percentage::Percentage,
+    solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount, PROGRAM_OWNERS},
     solana_bpf_loader_program::syscalls::{
         create_program_runtime_environment_v1, create_program_runtime_environment_v2,
     },
+    solana_clock::{Epoch, Slot},
     solana_compute_budget::compute_budget::ComputeBudget,
+    solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_feature_set::{
         enable_transaction_loading_failure_fees, remove_accounts_executable_flag_checks,
         remove_rounding_in_fee_calculation, FeatureSet,
     },
+    solana_fee_structure::{FeeBudgetLimits, FeeStructure},
+    solana_hash::Hash,
+    solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
     solana_log_collector::LogCollector,
     solana_measure::{measure::Measure, measure_us},
+    solana_message::compiled_instruction::CompiledInstruction,
+    solana_nonce::{
+        state::{DurableNonce, State as NonceState},
+        versions::Versions as NonceVersions,
+    },
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
             ForkGraph, ProgramCache, ProgramCacheEntry, ProgramCacheForTxBatch,
             ProgramCacheMatchCriteria, ProgramRuntimeEnvironment,
         },
-        solana_rbpf::{
+        solana_sbpf::{
             program::{BuiltinProgram, FunctionRegistry},
             vm::Config as VmConfig,
         },
         sysvar_cache::SysvarCache,
     },
-    solana_runtime_transaction::instructions_processor::process_compute_budget_instructions,
+    solana_pubkey::Pubkey,
     solana_sdk::{
-        account::{AccountSharedData, ReadableAccount, PROGRAM_OWNERS},
-        account_utils::StateMut,
-        clock::{Epoch, Slot},
-        fee::{FeeBudgetLimits, FeeStructure},
-        hash::Hash,
         inner_instruction::{InnerInstruction, InnerInstructionsList},
-        instruction::{CompiledInstruction, TRANSACTION_LEVEL_STACK_HEIGHT},
-        native_loader,
-        nonce::state::{DurableNonce, State as NonceState, Versions as NonceVersions},
-        pubkey::Pubkey,
         rent_collector::RentCollector,
-        saturating_add_assign, system_program,
-        transaction::{self, TransactionError},
-        transaction_context::{ExecutionRecord, TransactionContext},
     },
+    solana_sdk_ids::{native_loader, system_program},
     solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
     solana_timings::{ExecuteTimingType, ExecuteTimings},
+    solana_transaction_context::{ExecutionRecord, TransactionContext},
+    solana_transaction_error::{TransactionError, TransactionResult},
     solana_type_overrides::sync::{atomic::Ordering, Arc, RwLock, RwLockReadGuard},
     std::{
         collections::{hash_map::Entry, HashMap, HashSet},
@@ -175,7 +177,7 @@ pub struct TransactionBatchProcessor<FG: ForkGraph> {
 
     /// SysvarCache is a collection of system variables that are
     /// accessible from on chain programs. It is passed to SVM from
-    /// client code (e.g. Bank) and forwarded to the MessageProcessor.
+    /// client code (e.g. Bank) and forwarded to process_message.
     sysvar_cache: RwLock<SysvarCache>,
 
     /// Programs required for transaction batch processing
@@ -525,7 +527,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         fee_lamports_per_signature: u64,
         rent_collector: &dyn SVMRentCollector,
         error_counters: &mut TransactionErrorMetrics,
-    ) -> transaction::Result<ValidatedTransactionDetails> {
+    ) -> TransactionResult<ValidatedTransactionDetails> {
         // If this is a nonce transaction, validate the nonce info.
         // This must be done for every transaction to support SIMD83 because
         // it may have changed due to use, authorization, or deallocation.
@@ -566,9 +568,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         fee_lamports_per_signature: u64,
         rent_collector: &dyn SVMRentCollector,
         error_counters: &mut TransactionErrorMetrics,
-    ) -> transaction::Result<ValidatedTransactionDetails> {
+    ) -> TransactionResult<ValidatedTransactionDetails> {
         let compute_budget_limits = process_compute_budget_instructions(
             message.program_instructions_iter(),
+            &account_loader.feature_set,
         )
         .inspect_err(|_err| {
             error_counters.invalid_compute_budget += 1;
@@ -642,7 +645,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         nonce_info: &NonceInfo,
         next_durable_nonce: &DurableNonce,
         error_counters: &mut TransactionErrorMetrics,
-    ) -> transaction::Result<()> {
+    ) -> TransactionResult<()> {
         // When SIMD83 is enabled, if the nonce has been used in this batch already, we must drop
         // the transaction. This is the same as if it was used in different batches in the same slot.
         // If the nonce account was closed in the batch, we error as if the blockhash didn't validate.
@@ -710,7 +713,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     .for_each(|key| match result.entry(*key) {
                         Entry::Occupied(mut entry) => {
                             let (_, count) = entry.get_mut();
-                            saturating_add_assign!(*count, 1);
+                            *count = count.saturating_add(1);
                         }
                         Entry::Vacant(entry) => {
                             if let Some(index) =
@@ -999,7 +1002,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         );
 
         let mut process_message_time = Measure::start("process_message_time");
-        let process_result = MessageProcessor::process_message(
+        let process_result = process_message(
             tx,
             &loaded_transaction.program_indices,
             &mut invoke_context,
@@ -1010,10 +1013,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         drop(invoke_context);
 
-        saturating_add_assign!(
-            execute_timings.execute_accessories.process_message_us,
-            process_message_time.as_us()
-        );
+        execute_timings.execute_accessories.process_message_us += process_message_time.as_us();
 
         let mut status = process_result
             .and_then(|info| {
@@ -1075,14 +1075,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let status = status.map(|_| ());
 
         loaded_transaction.accounts = accounts;
-        saturating_add_assign!(
-            execute_timings.details.total_account_count,
-            loaded_transaction.accounts.len() as u64
-        );
-        saturating_add_assign!(
-            execute_timings.details.changed_account_count,
-            touched_account_count
-        );
+        execute_timings.details.total_account_count += loaded_transaction.accounts.len() as u64;
+        execute_timings.details.changed_account_count += touched_account_count;
 
         let return_data = if config.recording_config.enable_return_data_recording
             && !return_data.data.is_empty()
@@ -1196,10 +1190,18 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .assign_program(program_id, Arc::new(builtin));
         debug!("Added program {} under {:?}", name, program_id);
     }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    fn writable_sysvar_cache(&self) -> &RwLock<SysvarCache> {
+        &self.sysvar_cache
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    #[allow(deprecated)]
+    use solana_sysvar::fees::Fees;
     use {
         super::*,
         crate::{
@@ -1208,28 +1210,28 @@ mod tests {
             rollback_accounts::RollbackAccounts,
             transaction_processing_callback::AccountState,
         },
+        solana_account::{create_account_shared_data_for_test, WritableAccount},
+        solana_clock::Clock,
         solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
+        solana_compute_budget_interface::ComputeBudgetInstruction,
+        solana_epoch_schedule::EpochSchedule,
         solana_feature_set::FeatureSet,
+        solana_fee_calculator::FeeCalculator,
+        solana_fee_structure::{FeeDetails, FeeStructure},
+        solana_hash::Hash,
+        solana_keypair::Keypair,
+        solana_message::{LegacyMessage, Message, MessageHeader, SanitizedMessage},
+        solana_nonce as nonce,
         solana_program_runtime::loaded_programs::{BlockRelation, ProgramCacheEntryType},
-        solana_sdk::{
-            account::{create_account_shared_data_for_test, WritableAccount},
-            bpf_loader,
-            compute_budget::ComputeBudgetInstruction,
-            epoch_schedule::EpochSchedule,
-            fee::{FeeDetails, FeeStructure},
-            fee_calculator::FeeCalculator,
-            hash::Hash,
-            message::{LegacyMessage, Message, MessageHeader, SanitizedMessage},
-            nonce,
-            rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
-            rent_debits::RentDebits,
-            reserved_account_keys::ReservedAccountKeys,
-            signature::{Keypair, Signature},
-            system_program,
-            sysvar::{self, rent::Rent},
-            transaction::{SanitizedTransaction, Transaction, TransactionError},
-            transaction_context::TransactionContext,
-        },
+        solana_rent::Rent,
+        solana_rent_debits::RentDebits,
+        solana_reserved_account_keys::ReservedAccountKeys,
+        solana_sdk::rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
+        solana_sdk_ids::{bpf_loader, system_program, sysvar},
+        solana_signature::Signature,
+        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+        solana_transaction_context::TransactionContext,
+        solana_transaction_error::TransactionError,
         test_case::test_case,
     };
 
@@ -1249,10 +1251,10 @@ mod tests {
     }
 
     #[derive(Default, Clone)]
-    pub struct MockBankCallback {
-        pub account_shared_data: Arc<RwLock<HashMap<Pubkey, AccountSharedData>>>,
+    struct MockBankCallback {
+        account_shared_data: Arc<RwLock<HashMap<Pubkey, AccountSharedData>>>,
         #[allow(clippy::type_complexity)]
-        pub inspected_accounts:
+        inspected_accounts:
             Arc<RwLock<HashMap<Pubkey, Vec<(Option<AccountSharedData>, /* is_writable */ bool)>>>>,
     }
 
@@ -1563,7 +1565,7 @@ mod tests {
             &processing_config,
         );
 
-        assert_eq!(error_metrics.instruction_error, 1);
+        assert_eq!(error_metrics.instruction_error.0, 1);
     }
 
     #[test]
@@ -1913,7 +1915,7 @@ mod tests {
     fn test_sysvar_cache_initialization1() {
         let mock_bank = MockBankCallback::default();
 
-        let clock = sysvar::clock::Clock {
+        let clock = Clock {
             slot: 1,
             epoch_start_timestamp: 2,
             epoch: 3,
@@ -1935,7 +1937,7 @@ mod tests {
             .unwrap()
             .insert(sysvar::epoch_schedule::id(), epoch_schedule_account);
 
-        let fees = sysvar::fees::Fees {
+        let fees = Fees {
             fee_calculator: FeeCalculator {
                 lamports_per_signature: 123,
             },
@@ -1989,7 +1991,7 @@ mod tests {
     fn test_reset_and_fill_sysvar_cache() {
         let mock_bank = MockBankCallback::default();
 
-        let clock = sysvar::clock::Clock {
+        let clock = Clock {
             slot: 1,
             epoch_start_timestamp: 2,
             epoch: 3,
@@ -2011,7 +2013,7 @@ mod tests {
             .unwrap()
             .insert(sysvar::epoch_schedule::id(), epoch_schedule_account);
 
-        let fees = sysvar::fees::Fees {
+        let fees = Fees {
             fee_calculator: FeeCalculator {
                 lamports_per_signature: 123,
             },
@@ -2131,16 +2133,20 @@ mod tests {
             Some(&Pubkey::new_unique()),
             &Hash::new_unique(),
         ));
-        let compute_budget_limits =
-            process_compute_budget_instructions(SVMMessage::program_instructions_iter(&message))
-                .unwrap();
+        let compute_budget_limits = process_compute_budget_instructions(
+            SVMMessage::program_instructions_iter(&message),
+            &FeatureSet::default(),
+        )
+        .unwrap();
         let fee_payer_address = message.fee_payer();
         let current_epoch = 42;
         let rent_collector = RentCollector {
             epoch: current_epoch,
             ..RentCollector::default()
         };
-        let min_balance = rent_collector.rent.minimum_balance(nonce::State::size());
+        let min_balance = rent_collector
+            .rent
+            .minimum_balance(nonce::state::State::size());
         let transaction_fee = lamports_per_signature;
         let priority_fee = 2_000_000u64;
         let starting_balance = transaction_fee + priority_fee;
@@ -2217,9 +2223,11 @@ mod tests {
             Some(&Pubkey::new_unique()),
             &Hash::new_unique(),
         ));
-        let compute_budget_limits =
-            process_compute_budget_instructions(SVMMessage::program_instructions_iter(&message))
-                .unwrap();
+        let compute_budget_limits = process_compute_budget_instructions(
+            SVMMessage::program_instructions_iter(&message),
+            &FeatureSet::default(),
+        )
+        .unwrap();
         let fee_payer_address = message.fee_payer();
         let mut rent_collector = RentCollector::default();
         rent_collector.rent.lamports_per_byte_year = 1_000_000;
@@ -2310,7 +2318,7 @@ mod tests {
                 &mut error_counters,
             );
 
-        assert_eq!(error_counters.account_not_found, 1);
+        assert_eq!(error_counters.account_not_found.0, 1);
         assert_eq!(result, Err(TransactionError::AccountNotFound));
     }
 
@@ -2344,7 +2352,7 @@ mod tests {
                 &mut error_counters,
             );
 
-        assert_eq!(error_counters.insufficient_funds, 1);
+        assert_eq!(error_counters.insufficient_funds.0, 1);
         assert_eq!(result, Err(TransactionError::InsufficientFundsForFee));
     }
 
@@ -2418,7 +2426,7 @@ mod tests {
                 &mut error_counters,
             );
 
-        assert_eq!(error_counters.invalid_account_for_fee, 1);
+        assert_eq!(error_counters.invalid_account_for_fee.0, 1);
         assert_eq!(result, Err(TransactionError::InvalidAccountForFee));
     }
 
@@ -2450,7 +2458,7 @@ mod tests {
                 &mut error_counters,
             );
 
-        assert_eq!(error_counters.invalid_compute_budget, 1);
+        assert_eq!(error_counters.invalid_compute_budget.0, 1);
         assert_eq!(result, Err(TransactionError::DuplicateInstruction(1u8)));
     }
 
@@ -2468,11 +2476,13 @@ mod tests {
             Some(&Pubkey::new_unique()),
             &last_blockhash,
         ));
-        let compute_budget_limits =
-            process_compute_budget_instructions(SVMMessage::program_instructions_iter(&message))
-                .unwrap();
+        let compute_budget_limits = process_compute_budget_instructions(
+            SVMMessage::program_instructions_iter(&message),
+            &FeatureSet::default(),
+        )
+        .unwrap();
         let fee_payer_address = message.fee_payer();
-        let min_balance = Rent::default().minimum_balance(nonce::State::size());
+        let min_balance = Rent::default().minimum_balance(nonce::state::State::size());
         let transaction_fee = lamports_per_signature;
         let priority_fee = compute_unit_limit;
 
@@ -2480,11 +2490,13 @@ mod tests {
         {
             let fee_payer_account = AccountSharedData::new_data(
                 min_balance + transaction_fee + priority_fee,
-                &nonce::state::Versions::new(nonce::State::Initialized(nonce::state::Data::new(
-                    *fee_payer_address,
-                    DurableNonce::default(),
-                    lamports_per_signature,
-                ))),
+                &nonce::versions::Versions::new(nonce::state::State::Initialized(
+                    nonce::state::Data::new(
+                        *fee_payer_address,
+                        DurableNonce::default(),
+                        lamports_per_signature,
+                    ),
+                )),
                 &system_program::id(),
             )
             .unwrap();
@@ -2553,7 +2565,7 @@ mod tests {
         {
             let fee_payer_account = AccountSharedData::new_data(
                 transaction_fee + priority_fee, // no min_balance this time
-                &nonce::state::Versions::new(nonce::State::Initialized(
+                &nonce::versions::Versions::new(nonce::state::State::Initialized(
                     nonce::state::Data::default(),
                 )),
                 &system_program::id(),
@@ -2582,7 +2594,7 @@ mod tests {
                 &mut error_counters,
             );
 
-            assert_eq!(error_counters.insufficient_funds, 1);
+            assert_eq!(error_counters.insufficient_funds.0, 1);
             assert_eq!(result, Err(TransactionError::InsufficientFundsForFee));
         }
     }
