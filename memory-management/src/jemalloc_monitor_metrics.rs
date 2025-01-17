@@ -84,7 +84,6 @@ pub fn setup_watch_memory_usage() {
         "solQuicTpu",
         "solQuicTpuFwd",
         "solRepairQuic",
-        "solGossipQuic",
         "solTurbineQuic",
     ] {
         mps.add(thread);

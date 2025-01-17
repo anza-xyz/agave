@@ -120,6 +120,9 @@ impl MemPoolStats {
             .unwrap_or_else(|_| panic!("Prefix can not be over {} bytes long", NAME_LEN));
 
         self.data.push((key, Counters::default()));
+        // keep data sorted with longest prefixes first (this avoids short-circuiting)
+        // no need for this to be efficient since we do not run time in a tight loop and vec is typically short
+        self.data.sort_unstable_by(|a, b| b.0.len().cmp(&a.0.len()));
     }
 }
 
