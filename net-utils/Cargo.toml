@@ -10,7 +10,9 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+anyhow = { workspace = true }
 bincode = { workspace = true }
+bytes = { workspace = true }
 clap = { version = "3.1.5", features = ["cargo"], optional = true }
 crossbeam-channel = { workspace = true }
 log = { workspace = true }
