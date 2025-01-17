@@ -385,7 +385,7 @@ impl TransactionViewReceiveAndBuffer {
         working_bank: &Bank,
         packet_batch_message: BankingPacketBatch,
     ) -> usize {
-        // Do not support forwarding - only add support for this if we really need it.
+        // If not holding packets, just drop them immediately without parsing.
         if matches!(decision, BufferedPacketsDecision::Forward) {
             return 0;
         }
