@@ -178,7 +178,7 @@ impl WorkersCache {
         let body = async move {
             let current_worker = workers.get(peer).expect(
                 "Failed to fetch worker for peer {peer}.\n\
-             Peer existence must be checked before this call using `contains` method.",
+                 Peer existence must be checked before this call using `contains` method.",
             );
             let send_res = current_worker.send_transactions(txs_batch).await;
             if let Err(WorkersCacheError::ReceiverDropped) = send_res {
