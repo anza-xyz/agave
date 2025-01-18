@@ -198,6 +198,19 @@ impl PacketDeserializer {
             }
         })
     }
+
+    #[allow(dead_code)]
+    pub(crate) fn deserialize_packets_with_indexes(
+        packet_batch: &PacketBatch,
+    ) -> impl Iterator<Item = (ImmutableDeserializedPacket, usize)> + '_ {
+        let packet_indexes = PacketDeserializer::generate_packet_indexes(packet_batch);
+        packet_indexes.into_iter().filter_map(move |packet_index| {
+            let packet = packet_batch[packet_index].clone();
+            ImmutableDeserializedPacket::new(packet)
+                .ok()
+                .map(|packet| (packet, packet_index))
+        })
+    }
 }
 
 #[cfg(test)]
