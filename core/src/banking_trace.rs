@@ -184,6 +184,28 @@ pub struct Channels {
     pub gossip_vote_receiver: BankingPacketReceiver,
 }
 
+#[allow(dead_code)]
+impl Channels {
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn unified_sender(&self) -> &BankingPacketSender {
+        let unified_sender = &self.non_vote_sender;
+        assert!(unified_sender
+            .sender
+            .same_channel(&self.tpu_vote_sender.sender));
+        assert!(unified_sender
+            .sender
+            .same_channel(&self.gossip_vote_sender.sender));
+        unified_sender
+    }
+
+    pub(crate) fn unified_receiver(&self) -> &BankingPacketReceiver {
+        let unified_receiver = &self.non_vote_receiver;
+        assert!(unified_receiver.same_channel(&self.tpu_vote_receiver));
+        assert!(unified_receiver.same_channel(&self.gossip_vote_receiver));
+        unified_receiver
+    }
+}
+
 impl BankingTracer {
     pub fn new(
         maybe_config: Option<(&PathBuf, Arc<AtomicBool>, DirByteLimit)>,

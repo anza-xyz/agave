@@ -83,6 +83,13 @@ mod read_write_account_set;
 mod scheduler_messages;
 mod transaction_scheduler;
 
+// proc_macro_hygiene needs to be stabilzied to use qualifier_attr...
+// error[E0658]: non-inline modules in proc macro input are unstable
+#[cfg(not(feature = "dev-context-only-utils"))]
+pub(crate) mod unified_scheduler;
+#[cfg(feature = "dev-context-only-utils")]
+pub mod unified_scheduler;
+
 // Fixed thread size seems to be fastest on GCP setup
 pub const NUM_THREADS: u32 = 6;
 
