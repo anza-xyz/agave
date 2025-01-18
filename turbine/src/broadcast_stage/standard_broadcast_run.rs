@@ -294,7 +294,7 @@ impl StandardBroadcastRun {
             if shred.index() == 0 {
                 blockstore
                     .insert_shreds(
-                        vec![shred.clone()],
+                        [shred.clone()],
                         None, // leader_schedule
                         true, // is_trusted
                     )

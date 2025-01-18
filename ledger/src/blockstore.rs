@@ -868,8 +868,7 @@ impl Blockstore {
     /// based on the results, split out by shred source (tubine vs. repair).
     fn attempt_shred_insertion(
         &self,
-        shreds: Vec<Shred>,
-        is_repaired: Vec<bool>,
+        shreds: impl ExactSizeIterator<Item = (Shred, /*is_repaired:*/ bool)>,
         is_trusted: bool,
         leader_schedule: Option<&LeaderScheduleCache>,
         shred_insertion_tracker: &mut ShredInsertionTracker,
@@ -877,7 +876,7 @@ impl Blockstore {
     ) {
         metrics.num_shreds += shreds.len();
         let mut start = Measure::start("Shred insertion");
-        for (shred, is_repaired) in shreds.into_iter().zip(is_repaired) {
+        for (shred, is_repaired) in shreds {
             let shred_source = if is_repaired {
                 ShredSource::Repaired
             } else {
@@ -1200,8 +1199,7 @@ impl Blockstore {
     /// input `shreds` vector.
     fn do_insert_shreds(
         &self,
-        shreds: Vec<Shred>,
-        is_repaired: Vec<bool>,
+        shreds: impl ExactSizeIterator<Item = (Shred, /*is_repaired:*/ bool)>,
         leader_schedule: Option<&LeaderScheduleCache>,
         is_trusted: bool,
         // When inserting own shreds during leader slots, we shouldn't try to
@@ -1215,7 +1213,6 @@ impl Blockstore {
         )>,
         metrics: &mut BlockstoreInsertionMetrics,
     ) -> Result<InsertResults> {
-        assert_eq!(shreds.len(), is_repaired.len());
         let mut total_start = Measure::start("Total elapsed");
 
         // Acquire the insertion lock
@@ -1229,7 +1226,6 @@ impl Blockstore {
 
         self.attempt_shred_insertion(
             shreds,
-            is_repaired,
             is_trusted,
             leader_schedule,
             &mut shred_insertion_tracker,
@@ -1287,8 +1283,7 @@ impl Blockstore {
     // Blockstore::insert_shreds when inserting own shreds during leader slots.
     pub fn insert_shreds_handle_duplicate<F>(
         &self,
-        shreds: Vec<Shred>,
-        is_repaired: Vec<bool>,
+        shreds: impl ExactSizeIterator<Item = (Shred, /*is_repaired:*/ bool)>,
         leader_schedule: Option<&LeaderScheduleCache>,
         is_trusted: bool,
         retransmit_sender: &Sender<Vec</*shred:*/ Vec<u8>>>,
@@ -1304,7 +1299,6 @@ impl Blockstore {
             duplicate_shreds,
         } = self.do_insert_shreds(
             shreds,
-            is_repaired,
             leader_schedule,
             is_trusted,
             Some((reed_solomon_cache, retransmit_sender)),
@@ -1368,14 +1362,15 @@ impl Blockstore {
     // when inserting own shreds during leader slots.
     pub fn insert_shreds(
         &self,
-        shreds: Vec<Shred>,
+        shreds: impl IntoIterator<Item = Shred, IntoIter: ExactSizeIterator>,
         leader_schedule: Option<&LeaderScheduleCache>,
         is_trusted: bool,
     ) -> Result<Vec<CompletedDataSetInfo>> {
-        let shreds_len = shreds.len();
+        let shreds = shreds
+            .into_iter()
+            .map(|shred| (shred, /*is_repaired:*/ false));
         let insert_results = self.do_insert_shreds(
             shreds,
-            vec![false; shreds_len],
             leader_schedule,
             is_trusted,
             None, // (reed_solomon_cache, retransmit_sender)
@@ -1392,8 +1387,7 @@ impl Blockstore {
     ) -> Vec<PossibleDuplicateShred> {
         let insert_results = self
             .do_insert_shreds(
-                vec![shred],
-                vec![false],
+                [(shred, /*is_repaired:*/ false)].into_iter(),
                 Some(leader_schedule),
                 false,
                 None, // (reed_solomon_cache, retransmit_sender)
@@ -6649,7 +6643,7 @@ pub mod tests {
         let (shreds, _) = make_many_slot_entries(start_slot, num_slots, entries_per_slot);
         // Insert all shreds except for the shreds with index > 0 from non_full_slot
         let non_full_slot = start_slot + num_slots / 2;
-        let (shreds, missing_shreds) = shreds
+        let (shreds, missing_shreds): (Vec<_>, Vec<_>) = shreds
             .into_iter()
             .partition(|shred| shred.slot() != non_full_slot || shred.index() == 0);
         blockstore.insert_shreds(shreds, None, false).unwrap();
@@ -10227,11 +10221,11 @@ pub mod tests {
             setup_erasure_shreds(slot, 0, 100);
 
         let (dummy_retransmit_sender, _) = crossbeam_channel::bounded(0);
-        let is_repaired = vec![false; coding_shreds.len()];
         blockstore
             .do_insert_shreds(
-                coding_shreds,
-                is_repaired,
+                coding_shreds
+                    .into_iter()
+                    .map(|shred| (shred, /*is_repaired:*/ false)),
                 Some(&leader_schedule_cache),
                 false, // is_trusted
                 Some((&ReedSolomonCache::default(), &dummy_retransmit_sender)),
