@@ -6408,6 +6408,7 @@ dependencies = [
  "solana-slot-hashes",
  "solana-slot-history",
  "solana-stable-layout",
+ "solana-stake-interface",
  "solana-system-interface",
  "solana-sysvar",
  "solana-sysvar-id",
@@ -7232,6 +7233,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-stake-interface"
+version = "2.2.0"
+dependencies = [
+ "borsh 0.10.4",
+ "borsh 1.5.4",
+ "num-traits",
+ "serde",
+ "serde_derive",
+ "solana-clock",
+ "solana-cpi",
+ "solana-decode-error",
+ "solana-instruction",
+ "solana-program-error",
+ "solana-pubkey",
+ "solana-sdk-ids",
+ "solana-system-interface",
+ "solana-sysvar-id",
+]
+
+[[package]]
 name = "solana-stake-program"
 version = "2.2.0"
 dependencies = [
@@ -7530,6 +7551,7 @@ dependencies = [
  "solana-sdk-macro",
  "solana-slot-hashes",
  "solana-slot-history",
+ "solana-stake-interface",
  "solana-sysvar-id",
 ]
 
