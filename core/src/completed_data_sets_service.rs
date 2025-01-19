@@ -67,9 +67,7 @@ impl CompletedDataSetsService {
         const RECV_TIMEOUT: Duration = Duration::from_secs(1);
         let handle_completed_data_set_info = |completed_data_set_info| {
             let CompletedDataSetInfo { slot, indices } = completed_data_set_info;
-            let start_index = indices.start;
-            let end_index = indices.end - 1;
-            match blockstore.get_entries_in_data_block(slot, start_index, end_index, None) {
+            match blockstore.get_entries_in_data_block(slot, indices, /*slot_meta:*/ None) {
                 Ok(entries) => {
                     let transactions = Self::get_transaction_signatures(entries);
                     if !transactions.is_empty() {
