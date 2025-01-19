@@ -61,9 +61,26 @@ impl<T> Deref for RuntimeTransaction<T> {
 }
 
 impl<T: SVMMessage> SVMMessage for RuntimeTransaction<T> {
+    fn num_transaction_signatures(&self) -> u64 {
+        self.transaction.num_transaction_signatures()
+    }
     // override to access from the cached meta instead of re-calculating
-    fn num_total_signatures(&self) -> u64 {
-        self.meta.signature_details.total_signatures()
+    fn num_ed25519_signatures(&self) -> u64 {
+        self.meta
+            .signature_details
+            .num_ed25519_instruction_signatures()
+    }
+    // override to access from the cached meta instead of re-calculating
+    fn num_secp256k1_signatures(&self) -> u64 {
+        self.meta
+            .signature_details
+            .num_secp256k1_instruction_signatures()
+    }
+    // override to access form the cached meta instead of re-calculating
+    fn num_secp256r1_signatures(&self) -> u64 {
+        self.meta
+            .signature_details
+            .num_secp256r1_instruction_signatures()
     }
 
     fn num_write_locks(&self) -> u64 {

@@ -30,7 +30,7 @@ enum SerializeAccount<'a> {
 }
 
 struct Serializer {
-    pub buffer: AlignedMemory<HOST_ALIGN>,
+    buffer: AlignedMemory<HOST_ALIGN>,
     regions: Vec<MemoryRegion>,
     vaddr: u64,
     region_start: usize,
@@ -54,7 +54,7 @@ impl Serializer {
         self.buffer.fill_write(num, value)
     }
 
-    pub fn write<T: Pod>(&mut self, value: T) -> u64 {
+    fn write<T: Pod>(&mut self, value: T) -> u64 {
         self.debug_assert_alignment::<T>();
         let vaddr = self
             .vaddr
@@ -249,7 +249,7 @@ pub fn serialize_parameters(
     }
 }
 
-pub fn deserialize_parameters(
+pub(crate) fn deserialize_parameters(
     transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     copy_account_data: bool,
@@ -358,7 +358,7 @@ fn serialize_parameters_unaligned(
     Ok((mem, regions, accounts_metadata))
 }
 
-pub fn deserialize_parameters_unaligned<I: IntoIterator<Item = usize>>(
+fn deserialize_parameters_unaligned<I: IntoIterator<Item = usize>>(
     transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     copy_account_data: bool,
@@ -498,7 +498,7 @@ fn serialize_parameters_aligned(
     Ok((mem, regions, accounts_metadata))
 }
 
-pub fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
+fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
     transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     copy_account_data: bool,
@@ -1029,7 +1029,7 @@ mod tests {
 
     // the old bpf_loader in-program deserializer bpf_loader::id()
     #[deny(unsafe_op_in_unsafe_fn)]
-    pub unsafe fn deserialize_unaligned<'a>(
+    unsafe fn deserialize_unaligned<'a>(
         input: *mut u8,
     ) -> (&'a Pubkey, Vec<AccountInfo<'a>>, &'a [u8]) {
         // this boring boilerplate struct is needed until inline const...

@@ -12,7 +12,7 @@ edition = { workspace = true }
 [dependencies]
 log = { workspace = true }
 solana-borsh = { workspace = true }
-solana-builtins-default-costs = { workspace = true }
+solana-builtins-default-costs = { workspace = true, features = ["svm-internal"] }
 solana-compute-budget = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
 solana-feature-set = { workspace = true }
@@ -32,7 +32,7 @@ name = "solana_compute_budget_instruction"
 bincode = { workspace = true }
 criterion = { workspace = true }
 rand = { workspace = true }
-solana-builtins-default-costs = { workspace = true, features = ["dev-context-only-utils"] }
+solana-builtins-default-costs = { workspace = true, features = ["dev-context-only-utils", "svm-internal"] }
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
 solana-message = { workspace = true }

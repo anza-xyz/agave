@@ -1441,7 +1441,7 @@ pub(crate) mod tests {
         caller: &CrdsValue,
         num_items: usize,
     ) {
-        let packet_data_size_range = (PACKET_DATA_SIZE - 5)..=PACKET_DATA_SIZE;
+        let packet_data_size_range = (PACKET_DATA_SIZE - 7)..=PACKET_DATA_SIZE;
         let max_bytes = get_max_bloom_filter_bytes(caller);
         let filters = CrdsFilterSet::new(rng, num_items, max_bytes);
         let request_bytes = caller.bincode_serialized_size() as u64;
@@ -1467,7 +1467,7 @@ pub(crate) mod tests {
         let keypair = Keypair::new();
         let node = {
             let mut node =
-                ContactInfo::new_localhost(&keypair.pubkey(), /*wallclock:*/ rng.gen());
+                ContactInfo::new_localhost(&keypair.pubkey(), /*wallclock:*/ timestamp());
             node.set_shred_version(rng.gen());
             node
         };
@@ -1491,7 +1491,7 @@ pub(crate) mod tests {
         };
         {
             let caller = CrdsValue::new(CrdsData::from(&node), &keypair);
-            assert_eq!(get_max_bloom_filter_bytes(&caller), 1165);
+            assert_eq!(get_max_bloom_filter_bytes(&caller), 1155);
             verify_get_max_bloom_filter_bytes(&mut rng, &caller, num_items);
         }
         let node = LegacyContactInfo::try_from(&node).unwrap();

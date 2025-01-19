@@ -6325,12 +6325,14 @@ dependencies = [
  "byteorder",
  "criterion",
  "libsecp256k1",
+ "qualifier_attr",
  "rand 0.8.5",
  "scopeguard",
  "solana-account",
  "solana-account-info",
  "solana-bincode",
  "solana-bn254",
+ "solana-bpf-loader-program",
  "solana-clock",
  "solana-compute-budget",
  "solana-cpi",
@@ -6430,9 +6432,11 @@ dependencies = [
  "ahash 0.8.11",
  "lazy_static",
  "log",
+ "qualifier_attr",
  "rand 0.8.5",
  "solana-address-lookup-table-program",
  "solana-bpf-loader-program",
+ "solana-builtins-default-costs",
  "solana-compute-budget-program",
  "solana-config-program",
  "solana-feature-set",
@@ -6575,6 +6579,7 @@ dependencies = [
  "solana-connection-cache",
  "solana-decode-error",
  "solana-faucet",
+ "solana-feature-gate-client",
  "solana-feature-set",
  "solana-loader-v4-program",
  "solana-logger",
@@ -6846,6 +6851,7 @@ dependencies = [
 name = "solana-compute-budget-program"
 version = "2.2.0"
 dependencies = [
+ "qualifier_attr",
  "solana-program-runtime",
 ]
 
@@ -7299,6 +7305,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-feature-gate-client"
+version = "0.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1056507c534839b5cd1b1010ffedb9e8c92313269786fb5066ff53b30326dc3"
+dependencies = [
+ "borsh 0.10.3",
+ "num-derive",
+ "num-traits",
+ "solana-program",
+ "thiserror 2.0.11",
+]
+
+[[package]]
 name = "solana-feature-gate-interface"
 version = "2.2.0"
 dependencies = [
@@ -7734,7 +7753,6 @@ dependencies = [
  "bincode",
  "bitflags 2.8.0",
  "bs58",
- "byteorder",
  "bzip2",
  "chrono",
  "chrono-humanize",
@@ -7812,6 +7830,7 @@ version = "2.2.0"
 dependencies = [
  "bincode",
  "log",
+ "qualifier_attr",
  "solana-account",
  "solana-bincode",
  "solana-bpf-loader-program",

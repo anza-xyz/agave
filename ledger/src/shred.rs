@@ -1140,15 +1140,15 @@ pub(crate) fn recover(
             // The same signature also verifies for recovered shreds because
             // when reconstructing the Merkle tree for the erasure batch, we
             // will obtain the same Merkle root.
-            Ok(merkle::recover(shreds, reed_solomon_cache)?
+            merkle::recover(shreds, reed_solomon_cache)?
                 .map(|shred| {
-                    let shred = Shred::from(shred);
+                    let shred = Shred::from(shred?);
                     debug_assert!(get_slot_leader(shred.slot())
                         .map(|pubkey| shred.verify(&pubkey))
                         .unwrap_or_default());
-                    shred
+                    Ok(shred)
                 })
-                .collect())
+                .collect()
         }
     }
 }

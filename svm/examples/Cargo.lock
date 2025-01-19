@@ -5102,6 +5102,7 @@ dependencies = [
  "bincode",
  "byteorder",
  "libsecp256k1",
+ "qualifier_attr",
  "scopeguard",
  "solana-account",
  "solana-account-info",
@@ -5185,6 +5186,7 @@ dependencies = [
  "ahash 0.8.11",
  "lazy_static",
  "log",
+ "qualifier_attr",
  "solana-address-lookup-table-program",
  "solana-bpf-loader-program",
  "solana-compute-budget-program",
@@ -5413,6 +5415,7 @@ dependencies = [
 name = "solana-compute-budget-program"
 version = "2.2.0"
 dependencies = [
+ "qualifier_attr",
  "solana-program-runtime",
 ]
 
@@ -6019,7 +6022,6 @@ dependencies = [
  "assert_matches",
  "bincode",
  "bitflags 2.8.0",
- "byteorder",
  "bzip2",
  "chrono",
  "chrono-humanize",
@@ -6091,6 +6093,7 @@ name = "solana-loader-v4-program"
 version = "2.2.0"
 dependencies = [
  "log",
+ "qualifier_attr",
  "solana-account",
  "solana-bincode",
  "solana-bpf-loader-program",

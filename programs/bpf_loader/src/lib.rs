@@ -4,6 +4,8 @@
 pub mod serialization;
 pub mod syscalls;
 
+#[cfg(feature = "svm-internal")]
+use qualifier_attr::qualifiers;
 use {
     solana_account::WritableAccount,
     solana_bincode::limited_deserialize,
@@ -42,19 +44,20 @@ use {
         verifier::RequisiteVerifier,
         vm::{ContextObject, EbpfVm},
     },
-    solana_sdk_ids::{
-        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
-    },
+    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, native_loader},
     solana_system_interface::{instruction as system_instruction, MAX_PERMITTED_DATA_LENGTH},
     solana_transaction_context::{IndexOfAccount, InstructionContext, TransactionContext},
     solana_type_overrides::sync::{atomic::Ordering, Arc},
     std::{cell::RefCell, mem, rc::Rc},
-    syscalls::{create_program_runtime_environment_v1, morph_into_deployment_environment_v1},
+    syscalls::morph_into_deployment_environment_v1,
 };
 
-pub const DEFAULT_LOADER_COMPUTE_UNITS: u64 = 570;
-pub const DEPRECATED_LOADER_COMPUTE_UNITS: u64 = 1_140;
-pub const UPGRADEABLE_LOADER_COMPUTE_UNITS: u64 = 2_370;
+#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
+const DEFAULT_LOADER_COMPUTE_UNITS: u64 = 570;
+#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
+const DEPRECATED_LOADER_COMPUTE_UNITS: u64 = 1_140;
+#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
+const UPGRADEABLE_LOADER_COMPUTE_UNITS: u64 = 2_370;
 
 thread_local! {
     pub static MEMORY_POOL: RefCell<VmMemoryPool> = RefCell::new(VmMemoryPool::new());
@@ -106,7 +109,7 @@ pub fn load_program_from_bytes(
 /// Directly deploy a program using a provided invoke context.
 /// This function should only be invoked from the runtime, since it does not
 /// provide any account loads or checks.
-pub fn deploy_program_internal(
+pub fn deploy_program(
     log_collector: Option<Rc<RefCell<LogCollector>>>,
     program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
     program_runtime_environment: ProgramRuntimeEnvironment,
@@ -181,7 +184,7 @@ macro_rules! deploy_program {
                 // This will never fail since the epoch schedule is already configured.
                 InstructionError::ProgramEnvironmentSetupFailure
             })?;
-        let load_program_metrics = deploy_program_internal(
+        let load_program_metrics = $crate::deploy_program(
             $invoke_context.get_log_collector(),
             $invoke_context.program_cache_for_tx_batch,
             environments.program_runtime_v1.clone(),
@@ -220,13 +223,6 @@ fn write_program_data(
     Ok(())
 }
 
-pub fn check_loader_id(id: &Pubkey) -> bool {
-    bpf_loader::check_id(id)
-        || bpf_loader_deprecated::check_id(id)
-        || bpf_loader_upgradeable::check_id(id)
-        || loader_v4::check_id(id)
-}
-
 /// Only used in macro, do not use directly!
 pub fn calculate_heap_cost(heap_size: u32, heap_cost: u64) -> u64 {
     const KIBIBYTE: u64 = 1024;
@@ -242,7 +238,8 @@ pub fn calculate_heap_cost(heap_size: u32, heap_cost: u64) -> u64 {
 }
 
 /// Only used in macro, do not use directly!
-pub fn create_vm<'a, 'b>(
+#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
+fn create_vm<'a, 'b>(
     program: &'a Executable<InvokeContext<'b>>,
     regions: Vec<MemoryRegion>,
     accounts_metadata: Vec<SerializedAccountMetadata>,
@@ -397,7 +394,8 @@ declare_builtin_function!(
     }
 );
 
-pub fn process_instruction_inner(
+#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
+pub(crate) fn process_instruction_inner(
     invoke_context: &mut InvokeContext,
 ) -> Result<u64, Box<dyn std::error::Error>> {
     let log_collector = invoke_context.get_log_collector();
@@ -1370,7 +1368,8 @@ fn common_close_account(
     Ok(())
 }
 
-pub fn execute<'a, 'b: 'a>(
+#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
+fn execute<'a, 'b: 'a>(
     executable: &'a Executable<InvokeContext<'static>>,
     invoke_context: &'a mut InvokeContext<'b>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -1571,13 +1570,27 @@ pub fn execute<'a, 'b: 'a>(
     execute_or_deserialize_result
 }
 
-pub mod test_utils {
+#[cfg_attr(feature = "svm-internal", qualifiers(pub))]
+mod test_utils {
+    #[cfg(feature = "svm-internal")]
     use {
-        super::*, solana_account::ReadableAccount, solana_program::loader_v4::LoaderV4State,
+        super::*, crate::syscalls::create_program_runtime_environment_v1,
+        solana_account::ReadableAccount, solana_program::loader_v4,
+        solana_program::loader_v4::LoaderV4State,
         solana_program_runtime::loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
     };
 
-    pub fn load_all_invoked_programs(invoke_context: &mut InvokeContext) {
+    #[cfg(feature = "svm-internal")]
+    fn check_loader_id(id: &Pubkey) -> bool {
+        bpf_loader::check_id(id)
+            || bpf_loader_deprecated::check_id(id)
+            || bpf_loader_upgradeable::check_id(id)
+            || loader_v4::check_id(id)
+    }
+
+    #[cfg(feature = "svm-internal")]
+    #[cfg_attr(feature = "svm-internal", qualifiers(pub))]
+    fn load_all_invoked_programs(invoke_context: &mut InvokeContext) {
         let mut load_program_metrics = LoadProgramMetrics::default();
         let program_runtime_environment = create_program_runtime_environment_v1(
             invoke_context.get_feature_set(),

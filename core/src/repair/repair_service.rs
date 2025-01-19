@@ -42,7 +42,7 @@ use {
     },
     solana_streamer::sendmmsg::{batch_send, SendPktsError},
     std::{
-        collections::{HashMap, HashSet},
+        collections::{hash_map::Entry, HashMap, HashSet},
         iter::Iterator,
         net::{SocketAddr, UdpSocket},
         sync::{
@@ -58,6 +58,11 @@ use {
 // Time to defer repair requests to allow for turbine propagation
 const DEFER_REPAIR_THRESHOLD: Duration = Duration::from_millis(200);
 const DEFER_REPAIR_THRESHOLD_TICKS: u64 = DEFER_REPAIR_THRESHOLD.as_millis() as u64 / MS_PER_TICK;
+
+// This is the amount of time we will wait for a repair request to be fulfilled
+// before making another request. Value is based on reasonable upper bound of
+// expected network delays in requesting repairs and receiving shreds.
+const REPAIR_REQUEST_TIMEOUT_MS: u64 = 100;
 
 // When requesting repair for a specific shred through the admin RPC, we will
 // request up to NUM_PEERS_TO_SAMPLE_FOR_REPAIRS in the event a specific, valid
@@ -208,7 +213,7 @@ impl BestRepairsStats {
 pub const MAX_REPAIR_LENGTH: usize = 512;
 pub const MAX_REPAIR_PER_DUPLICATE: usize = 20;
 pub const MAX_DUPLICATE_WAIT_MS: usize = 10_000;
-pub const REPAIR_MS: u64 = 100;
+pub const REPAIR_MS: u64 = 1;
 pub const MAX_ORPHANS: usize = 5;
 pub const MAX_UNKNOWN_LAST_INDEX_REPAIRS: usize = 10;
 pub const MAX_CLOSEST_COMPLETION_REPAIRS: usize = 100;
@@ -328,6 +333,8 @@ impl RepairService {
         let mut last_stats = Instant::now();
         let mut peers_cache = LruCache::new(REPAIR_PEERS_CACHE_CAPACITY);
         let mut popular_pruned_forks_requests = HashSet::new();
+        // Maps a repair that may still be outstanding to the timestamp it was requested.
+        let mut outstanding_repairs = HashMap::new();
 
         while !exit.load(Ordering::Relaxed) {
             let mut set_root_elapsed;
@@ -399,11 +406,17 @@ impl RepairService {
                 );
                 add_votes_elapsed.stop();
 
+                // Purge old entries. They've either completed or need to be retried.
+                outstanding_repairs.retain(|_repair_request, time| {
+                    timestamp().saturating_sub(*time) < REPAIR_REQUEST_TIMEOUT_MS
+                });
+
                 let repairs = match repair_info.wen_restart_repair_slots.clone() {
                     Some(slots_to_repair) => Self::generate_repairs_for_wen_restart(
                         blockstore,
                         MAX_REPAIR_LENGTH,
                         &slots_to_repair.read().unwrap(),
+                        &mut outstanding_repairs,
                     ),
                     None => repair_weight.get_best_weighted_repairs(
                         blockstore,
@@ -415,6 +428,7 @@ impl RepairService {
                         MAX_CLOSEST_COMPLETION_REPAIRS,
                         &mut repair_timing,
                         &mut best_repairs_stats,
+                        &mut outstanding_repairs,
                     ),
                 };
 
@@ -631,8 +645,16 @@ impl RepairService {
         slot: Slot,
         slot_meta: &SlotMeta,
         max_repairs: usize,
+        outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
     ) -> Vec<ShredRepairType> {
-        Self::generate_repairs_for_slot(blockstore, slot, slot_meta, max_repairs, true)
+        Self::generate_repairs_for_slot(
+            blockstore,
+            slot,
+            slot_meta,
+            max_repairs,
+            true,
+            outstanding_repairs,
+        )
     }
 
     pub fn generate_repairs_for_slot_not_throttled_by_tick(
@@ -640,8 +662,16 @@ impl RepairService {
         slot: Slot,
         slot_meta: &SlotMeta,
         max_repairs: usize,
+        outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
     ) -> Vec<ShredRepairType> {
-        Self::generate_repairs_for_slot(blockstore, slot, slot_meta, max_repairs, false)
+        Self::generate_repairs_for_slot(
+            blockstore,
+            slot,
+            slot_meta,
+            max_repairs,
+            false,
+            outstanding_repairs,
+        )
     }
 
     /// If this slot is missing shreds generate repairs
@@ -651,6 +681,7 @@ impl RepairService {
         slot_meta: &SlotMeta,
         max_repairs: usize,
         throttle_requests_by_shred_tick: bool,
+        outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
     ) -> Vec<ShredRepairType> {
         let defer_repair_threshold_ticks = if throttle_requests_by_shred_tick {
             DEFER_REPAIR_THRESHOLD_TICKS
@@ -680,7 +711,14 @@ impl RepairService {
                     }
                 }
             }
-            vec![ShredRepairType::HighestShred(slot, slot_meta.received)]
+
+            match RepairService::request_repair_if_needed(
+                outstanding_repairs,
+                ShredRepairType::HighestShred(slot, slot_meta.received),
+            ) {
+                Some(repair_request) => vec![repair_request],
+                None => vec![],
+            }
         } else {
             blockstore
                 .find_missing_data_indexes(
@@ -692,7 +730,12 @@ impl RepairService {
                     max_repairs,
                 )
                 .into_iter()
-                .map(|i| ShredRepairType::Shred(slot, i))
+                .filter_map(|i| {
+                    RepairService::request_repair_if_needed(
+                        outstanding_repairs,
+                        ShredRepairType::Shred(slot, i),
+                    )
+                })
                 .collect()
         }
     }
@@ -703,6 +746,7 @@ impl RepairService {
         repairs: &mut Vec<ShredRepairType>,
         max_repairs: usize,
         slot: Slot,
+        outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
     ) {
         let mut pending_slots = vec![slot];
         while repairs.len() < max_repairs && !pending_slots.is_empty() {
@@ -713,6 +757,7 @@ impl RepairService {
                     slot,
                     &slot_meta,
                     max_repairs - repairs.len(),
+                    outstanding_repairs,
                 );
                 repairs.extend(new_repairs);
                 let next_slots = slot_meta.next_slots;
@@ -727,6 +772,7 @@ impl RepairService {
         blockstore: &Blockstore,
         max_repairs: usize,
         slots: &Vec<Slot>,
+        outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
     ) -> Vec<ShredRepairType> {
         let mut repairs: Vec<ShredRepairType> = Vec::new();
         for slot in slots {
@@ -738,6 +784,7 @@ impl RepairService {
                     *slot,
                     &slot_meta,
                     max_repairs - repairs.len(),
+                    outstanding_repairs,
                 );
                 repairs.extend(new_repairs);
             } else {
@@ -884,6 +931,18 @@ impl RepairService {
         }
     }
 
+    pub fn request_repair_if_needed(
+        outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
+        repair_request: ShredRepairType,
+    ) -> Option<ShredRepairType> {
+        if let Entry::Vacant(entry) = outstanding_repairs.entry(repair_request) {
+            entry.insert(timestamp());
+            Some(repair_request)
+        } else {
+            None
+        }
+    }
+
     /// Generate repairs for all slots `x` in the repair_range.start <= x <= repair_range.end
     #[cfg(test)]
     pub fn generate_repairs_in_range(
@@ -911,6 +970,7 @@ impl RepairService {
                 slot,
                 &meta,
                 max_repairs - repairs.len(),
+                &mut HashMap::default(),
             );
             repairs.extend(new_repairs);
         }
@@ -933,6 +993,7 @@ impl RepairService {
                     slot,
                     &slot_meta,
                     MAX_REPAIR_PER_DUPLICATE,
+                    &mut HashMap::default(),
                 ))
             }
         } else {
@@ -1163,6 +1224,7 @@ mod test {
                 MAX_CLOSEST_COMPLETION_REPAIRS,
                 &mut RepairTiming::default(),
                 &mut BestRepairsStats::default(),
+                &mut HashMap::default(),
             ),
             vec![
                 ShredRepairType::Orphan(2),
@@ -1195,6 +1257,7 @@ mod test {
                 MAX_CLOSEST_COMPLETION_REPAIRS,
                 &mut RepairTiming::default(),
                 &mut BestRepairsStats::default(),
+                &mut HashMap::default(),
             ),
             vec![ShredRepairType::HighestShred(0, 0)]
         );
@@ -1252,6 +1315,7 @@ mod test {
                 MAX_CLOSEST_COMPLETION_REPAIRS,
                 &mut RepairTiming::default(),
                 &mut BestRepairsStats::default(),
+                &mut HashMap::default(),
             ),
             expected
         );
@@ -1267,6 +1331,7 @@ mod test {
                 MAX_CLOSEST_COMPLETION_REPAIRS,
                 &mut RepairTiming::default(),
                 &mut BestRepairsStats::default(),
+                &mut HashMap::default(),
             )[..],
             expected[0..expected.len() - 2]
         );
@@ -1310,6 +1375,7 @@ mod test {
                 MAX_CLOSEST_COMPLETION_REPAIRS,
                 &mut RepairTiming::default(),
                 &mut BestRepairsStats::default(),
+                &mut HashMap::default(),
             ),
             expected
         );
@@ -1627,6 +1693,7 @@ mod test {
             &blockstore,
             max_repairs,
             &slots_to_repair,
+            &mut HashMap::default(),
         );
         assert!(result.is_empty());
 
@@ -1636,6 +1703,7 @@ mod test {
             &blockstore,
             max_repairs,
             &slots_to_repair,
+            &mut HashMap::default(),
         );
         assert_eq!(
             result,
@@ -1651,6 +1719,7 @@ mod test {
             &blockstore,
             max_repairs,
             &slots_to_repair,
+            &mut HashMap::default(),
         );
         assert_eq!(result.len(), max_repairs);
         assert_eq!(
