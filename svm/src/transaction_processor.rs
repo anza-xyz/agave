@@ -57,7 +57,6 @@ use {
     solana_sdk::{
         inner_instruction::{InnerInstruction, InnerInstructionsList},
         rent_collector::RentCollector,
-        saturating_add_assign,
     },
     solana_sdk_ids::system_program,
     solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
@@ -466,9 +465,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     // we only really seem to need it to set merged_modified to true
                     // but this is the same as checking if executed_tx.programs_modified_by_tx is nonempty
                     // that is, it doesnt seem like merge updates the global cache in any way
+                    //
                     // currently i presume it happens during execution, as a side effect
                     // if it doesnt happen until the batch is *over* tho, we have a problem
-                    // i dont believe thats true tho bc otherwise why would we evict *first*
+                    // because it would mean the next local cache we build could be stale
+                    // i dont believe thats true tho bc otherwise why would we evict from global *first*?
+                    //
                     // incidentally i dont like the eviction logic, its like perpetual 2 steps fwd 1 step back
                     // feel liek we should have a soft size ceiling and evict lru...
                     if executed_tx.was_successful() {
@@ -511,9 +513,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         execute_timings
             .saturating_add_in_place(ExecuteTimingType::ValidateFeesUs, validate_fees_us);
-        // HANA rmove from the struct, useless now
-        //execute_timings
-        //    .saturating_add_in_place(ExecuteTimingType::FilterExecutableUs, filter_executable_us);
         execute_timings
             .saturating_add_in_place(ExecuteTimingType::ProgramCacheUs, program_cache_us);
         execute_timings.saturating_add_in_place(ExecuteTimingType::LoadUs, load_us);
@@ -717,12 +716,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .map(|pubkey| (*pubkey, 0))
             .collect();
 
+        // HANA i assume here that tx sanitization never allows duplicates in account_keys
+        // test_fuzz_instructions violates this assumption but i believe it is impossible in any real flow
         tx.account_keys()
             .iter()
             .for_each(|key| match result.entry(*key) {
                 Entry::Occupied(mut entry) => {
-                    let count = entry.get_mut();
-                    saturating_add_assign!(*count, 1);
+                    entry.insert(1);
                 }
                 Entry::Vacant(entry) => {
                     if let Some(ref loaded_account) = account_loader.load_account(key, false) {
