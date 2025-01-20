@@ -64,7 +64,6 @@ pub fn setup_watch_memory_usage() {
         "solGossipWork",
         "solGossip",
         "solRepair",
-        "FetchStage",
         "solShredFetch",
         "solReplayTx",
         "solReplayFork",
