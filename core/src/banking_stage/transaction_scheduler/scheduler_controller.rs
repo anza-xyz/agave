@@ -435,7 +435,7 @@ impl SchedulerController {
 
     /// Returns whether the packet receiver is still connected.
     fn receive_and_buffer_packets(&mut self, decision: &BufferedPacketsDecision) -> bool {
-        let remaining_queue_capacity = self.container.remaining_queue_capacity();
+        const MAX_RECEIVE_PACKETS: usize = 5_000;
 
         const MAX_PACKET_RECEIVE_TIME: Duration = Duration::from_millis(100);
         let (recv_timeout, should_buffer) = match decision {
@@ -453,7 +453,7 @@ impl SchedulerController {
 
         let (received_packet_results, receive_time_us) = measure_us!(self
             .packet_receiver
-            .receive_packets(recv_timeout, remaining_queue_capacity, |packet| {
+            .receive_packets(recv_timeout, MAX_RECEIVE_PACKETS, |packet| {
                 packet.check_excessive_precompiles()?;
                 Ok(packet)
             }));
