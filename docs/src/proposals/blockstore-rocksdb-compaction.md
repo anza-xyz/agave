@@ -201,7 +201,7 @@ two different formats and panic.
 ## Single Node Benchmark Results
 To verify the effectiveness, I ran both 1m slots and 100m slots shred insertion
 benchmarks on my n2-standard-32 GC instance (32 cores 2800MHz cpu, 128GB memory,
-2048GB SSD).  Each slot contains 25 shreds, and the shreds are inserted with with
+2048GB SSD).  Each slot contains 25 shreds, and the shreds are inserted with
 8 writers.  Here are the summary of the result:
 
 * FIFO based validator: Shred insertion took 13450.8s, 185.8k shreds/s
