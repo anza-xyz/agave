@@ -1578,10 +1578,9 @@ mod tests {
         let batch_processor =
             TransactionBatchProcessor::new(0, 0, Arc::downgrade(&fork_graph), None, None);
         let key = Pubkey::new_unique();
-        let owner = Pubkey::new_unique();
 
-        let mut account_maps: HashMap<Pubkey, (&Pubkey, u64)> = HashMap::new();
-        account_maps.insert(key, (&owner, 4));
+        let mut account_maps: HashMap<Pubkey, u64> = HashMap::new();
+        account_maps.insert(key, 4);
 
         batch_processor.replenish_program_cache(
             &mock_bank,
@@ -1599,7 +1598,6 @@ mod tests {
         let batch_processor =
             TransactionBatchProcessor::new(0, 0, Arc::downgrade(&fork_graph), None, None);
         let key = Pubkey::new_unique();
-        let owner = Pubkey::new_unique();
 
         let mut account_data = AccountSharedData::default();
         account_data.set_owner(bpf_loader::id());
@@ -1609,8 +1607,8 @@ mod tests {
             .unwrap()
             .insert(key, account_data);
 
-        let mut account_maps: HashMap<Pubkey, (&Pubkey, u64)> = HashMap::new();
-        account_maps.insert(key, (&owner, 4));
+        let mut account_maps: HashMap<Pubkey, u64> = HashMap::new();
+        account_maps.insert(key, 4);
         let mut loaded_missing = 0;
 
         for limit_to_load_programs in [false, true] {
@@ -1640,46 +1638,27 @@ mod tests {
         let mock_bank = MockBankCallback::default();
         let key1 = Pubkey::new_unique();
         let owner1 = Pubkey::new_unique();
-
-        let mut data = AccountSharedData::default();
-        data.set_owner(owner1);
-        data.set_lamports(93);
-        mock_bank
-            .account_shared_data
-            .write()
-            .unwrap()
-            .insert(key1, data);
-
-        let message = Message {
-            account_keys: vec![key1],
-            header: MessageHeader::default(),
-            instructions: vec![CompiledInstruction {
-                program_id_index: 0,
-                accounts: vec![],
-                data: vec![],
-            }],
-            recent_blockhash: Hash::default(),
-        };
-
-        let sanitized_message = new_unchecked_sanitized_message(message);
-
-        let sanitized_transaction_1 = SanitizedTransaction::new_for_tests(
-            sanitized_message,
-            vec![Signature::new_unique()],
-            false,
-        );
-
         let key2 = Pubkey::new_unique();
         let owner2 = Pubkey::new_unique();
 
-        let mut account_data = AccountSharedData::default();
-        account_data.set_owner(owner2);
-        account_data.set_lamports(90);
+        let mut data1 = AccountSharedData::default();
+        data1.set_owner(owner1);
+        data1.set_lamports(93);
         mock_bank
             .account_shared_data
             .write()
             .unwrap()
-            .insert(key2, account_data);
+            .insert(key1, data1);
+
+        let mut data2 = AccountSharedData::default();
+        data2.set_owner(owner2);
+        data2.set_lamports(90);
+        mock_bank
+            .account_shared_data
+            .write()
+            .unwrap()
+            .insert(key2, data2);
+        let mut account_loader = (&mock_bank).into();
 
         let message = Message {
             account_keys: vec![key1, key2],
@@ -1694,34 +1673,24 @@ mod tests {
 
         let sanitized_message = new_unchecked_sanitized_message(message);
 
-        let sanitized_transaction_2 = SanitizedTransaction::new_for_tests(
+        let sanitized_transaction = SanitizedTransaction::new_for_tests(
             sanitized_message,
             vec![Signature::new_unique()],
             false,
         );
 
-        let transactions = vec![
-            sanitized_transaction_1.clone(),
-            sanitized_transaction_2.clone(),
-            sanitized_transaction_1,
-        ];
-        let check_results = vec![
-            Ok(CheckedTransactionDetails::default()),
-            Ok(CheckedTransactionDetails::default()),
-            Err(TransactionError::ProgramAccountNotFound),
-        ];
+        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
         let owners = vec![owner1, owner2];
 
-        let result = TransactionBatchProcessor::<TestForkGraph>::filter_executable_program_accounts(
-            &mock_bank,
-            &transactions,
-            &check_results,
+        let result = batch_processor.filter_executable_program_accounts(
+            &mut account_loader,
+            &sanitized_transaction,
             &owners,
         );
 
         assert_eq!(result.len(), 2);
-        assert_eq!(result[&key1], (&owner1, 2));
-        assert_eq!(result[&key2], (&owner2, 1));
+        assert_eq!(result[&key1], 1);
+        assert_eq!(result[&key2], 1);
     }
 
     #[test]
@@ -1773,6 +1742,7 @@ mod tests {
             account4_pubkey,
             AccountSharedData::new(40, 1, &program2_pubkey),
         );
+        let mut account_loader = (&bank).into();
 
         let tx1 = Transaction::new_with_compiled_instructions(
             &[&keypair1],
@@ -1792,123 +1762,41 @@ mod tests {
         );
         let sanitized_tx2 = SanitizedTransaction::from_transaction_for_tests(tx2);
 
+        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
         let owners = &[program1_pubkey, program2_pubkey];
-        let programs =
-            TransactionBatchProcessor::<TestForkGraph>::filter_executable_program_accounts(
-                &bank,
-                &[sanitized_tx1, sanitized_tx2],
-                &[
-                    Ok(CheckedTransactionDetails::default()),
-                    Ok(CheckedTransactionDetails::default()),
-                ],
-                owners,
-            );
 
-        // The result should contain only account3_pubkey, and account4_pubkey as the program accounts
-        assert_eq!(programs.len(), 2);
+        let tx1_programs = batch_processor.filter_executable_program_accounts(
+            &mut account_loader,
+            &sanitized_tx1,
+            owners,
+        );
+
+        assert_eq!(tx1_programs.len(), 1);
         assert_eq!(
-            programs
+            tx1_programs
                 .get(&account3_pubkey)
                 .expect("failed to find the program account"),
-            &(&program1_pubkey, 2)
+            &1,
+        );
+
+        let tx2_programs = batch_processor.filter_executable_program_accounts(
+            &mut account_loader,
+            &sanitized_tx2,
+            owners,
+        );
+
+        assert_eq!(tx2_programs.len(), 2);
+        assert_eq!(
+            tx2_programs
+                .get(&account3_pubkey)
+                .expect("failed to find the program account"),
+            &1,
         );
         assert_eq!(
-            programs
+            tx2_programs
                 .get(&account4_pubkey)
                 .expect("failed to find the program account"),
-            &(&program2_pubkey, 1)
-        );
-    }
-
-    #[test]
-    fn test_filter_executable_program_accounts_invalid_blockhash() {
-        let keypair1 = Keypair::new();
-        let keypair2 = Keypair::new();
-
-        let non_program_pubkey1 = Pubkey::new_unique();
-        let non_program_pubkey2 = Pubkey::new_unique();
-        let program1_pubkey = Pubkey::new_unique();
-        let program2_pubkey = Pubkey::new_unique();
-        let account1_pubkey = Pubkey::new_unique();
-        let account2_pubkey = Pubkey::new_unique();
-        let account3_pubkey = Pubkey::new_unique();
-        let account4_pubkey = Pubkey::new_unique();
-
-        let account5_pubkey = Pubkey::new_unique();
-
-        let bank = MockBankCallback::default();
-        bank.account_shared_data.write().unwrap().insert(
-            non_program_pubkey1,
-            AccountSharedData::new(1, 10, &account5_pubkey),
-        );
-        bank.account_shared_data.write().unwrap().insert(
-            non_program_pubkey2,
-            AccountSharedData::new(1, 10, &account5_pubkey),
-        );
-        bank.account_shared_data.write().unwrap().insert(
-            program1_pubkey,
-            AccountSharedData::new(40, 1, &account5_pubkey),
-        );
-        bank.account_shared_data.write().unwrap().insert(
-            program2_pubkey,
-            AccountSharedData::new(40, 1, &account5_pubkey),
-        );
-        bank.account_shared_data.write().unwrap().insert(
-            account1_pubkey,
-            AccountSharedData::new(1, 10, &non_program_pubkey1),
-        );
-        bank.account_shared_data.write().unwrap().insert(
-            account2_pubkey,
-            AccountSharedData::new(1, 10, &non_program_pubkey2),
-        );
-        bank.account_shared_data.write().unwrap().insert(
-            account3_pubkey,
-            AccountSharedData::new(40, 1, &program1_pubkey),
-        );
-        bank.account_shared_data.write().unwrap().insert(
-            account4_pubkey,
-            AccountSharedData::new(40, 1, &program2_pubkey),
-        );
-
-        let tx1 = Transaction::new_with_compiled_instructions(
-            &[&keypair1],
-            &[non_program_pubkey1],
-            Hash::new_unique(),
-            vec![account1_pubkey, account2_pubkey, account3_pubkey],
-            vec![CompiledInstruction::new(1, &(), vec![0])],
-        );
-        let sanitized_tx1 = SanitizedTransaction::from_transaction_for_tests(tx1);
-
-        let tx2 = Transaction::new_with_compiled_instructions(
-            &[&keypair2],
-            &[non_program_pubkey2],
-            Hash::new_unique(),
-            vec![account4_pubkey, account3_pubkey, account2_pubkey],
-            vec![CompiledInstruction::new(1, &(), vec![0])],
-        );
-        // Let's not register blockhash from tx2. This should cause the tx2 to fail
-        let sanitized_tx2 = SanitizedTransaction::from_transaction_for_tests(tx2);
-
-        let owners = &[program1_pubkey, program2_pubkey];
-        let check_results = vec![
-            Ok(CheckedTransactionDetails::default()),
-            Err(TransactionError::BlockhashNotFound),
-        ];
-        let programs =
-            TransactionBatchProcessor::<TestForkGraph>::filter_executable_program_accounts(
-                &bank,
-                &[sanitized_tx1, sanitized_tx2],
-                &check_results,
-                owners,
-            );
-
-        // The result should contain only account3_pubkey as the program accounts
-        assert_eq!(programs.len(), 1);
-        assert_eq!(
-            programs
-                .get(&account3_pubkey)
-                .expect("failed to find the program account"),
-            &(&program1_pubkey, 1)
+            &1,
         );
     }
 
