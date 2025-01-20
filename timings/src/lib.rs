@@ -58,7 +58,6 @@ pub enum ExecuteTimingType {
     UpdateTransactionStatuses,
     ProgramCacheUs,
     CheckBlockLimitsUs,
-    FilterExecutableUs,
 }
 
 pub struct Metrics([Saturating<u64>; ExecuteTimingType::CARDINALITY]);
@@ -107,13 +106,6 @@ eager_macro_rules! { $eager_1
                 $self
                     .metrics
                     .index(ExecuteTimingType::ValidateFeesUs).0,
-                i64
-            ),
-            (
-                "filter_executable_us",
-                $self
-                    .metrics
-                    .index(ExecuteTimingType::FilterExecutableUs).0,
                 i64
             ),
             (
