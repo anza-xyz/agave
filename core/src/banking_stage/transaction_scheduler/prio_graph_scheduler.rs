@@ -59,7 +59,7 @@ impl PrioGraphScheduler {
             account_locks: ThreadAwareAccountLocks::new(num_threads),
             consume_work_senders,
             finished_consume_work_receiver,
-            look_ahead_window_size: 2048,
+            look_ahead_window_size: 256,
             prio_graph: PrioGraph::new(passthrough_priority),
         }
     }
@@ -170,7 +170,7 @@ impl PrioGraphScheduler {
 
         let mut unblock_this_batch =
             Vec::with_capacity(self.consume_work_senders.len() * TARGET_NUM_TRANSACTIONS_PER_BATCH);
-        const MAX_TRANSACTIONS_PER_SCHEDULING_PASS: usize = 100_000;
+        const MAX_TRANSACTIONS_PER_SCHEDULING_PASS: usize = 1_000;
         let mut num_scheduled: usize = 0;
         let mut num_sent: usize = 0;
         let mut num_unschedulable: usize = 0;
