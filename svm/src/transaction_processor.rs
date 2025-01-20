@@ -457,27 +457,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     );
 
                     // Update loaded accounts cache with account states which might have changed.
-                    // Also update local program cache with modifications made by the transaction,
-                    // if it executed successfully.
                     account_loader.update_accounts_for_executed_tx(tx, &executed_tx);
 
-                    // HANA it isnt clear to me this is needed at all anymore?
-                    // we only really seem to need it to set merged_modified to true
-                    // but this is the same as checking if executed_tx.programs_modified_by_tx is nonempty
-                    // that is, it doesnt seem like merge updates the global cache in any way
-                    //
-                    // currently i presume it happens during execution, as a side effect
-                    // if it doesnt happen until the batch is *over* tho, we have a problem
-                    // because it would mean the next local cache we build could be stale
-                    // i dont believe thats true tho bc otherwise why would we evict from global *first*?
-                    //
-                    // incidentally i dont like the eviction logic, its like perpetual 2 steps fwd 1 step back
-                    // feel liek we should have a soft size ceiling and evict lru...
-                    if executed_tx.was_successful() {
-                        program_cache_for_tx.merge(&executed_tx.programs_modified_by_tx);
-                    }
-
-                    if program_cache_for_tx.loaded_missing || program_cache_for_tx.merged_modified {
+                    if program_cache_for_tx.loaded_missing
+                        || (executed_tx.was_successful()
+                            && !executed_tx.programs_modified_by_tx.is_empty())
+                    {
                         evict_from_global_cache = true;
                     }
 
@@ -716,8 +701,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .map(|pubkey| (*pubkey, 0))
             .collect();
 
-        // HANA i assume here that tx sanitization never allows duplicates in account_keys
-        // test_fuzz_instructions violates this assumption but i believe it is impossible in any real flow
         tx.account_keys()
             .iter()
             .for_each(|key| match result.entry(*key) {
