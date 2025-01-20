@@ -122,7 +122,7 @@ pub enum BlockstoreError {
     #[error("shred for index exists")]
     ShredForIndexExists,
     #[error("invalid shred data")]
-    InvalidShredData(Box<bincode::ErrorKind>),
+    InvalidShredData(bincode::Error),
     #[error("RocksDB error: {0}")]
     RocksDb(#[from] rocksdb::Error),
     #[error("slot is not rooted")]
@@ -132,7 +132,7 @@ pub enum BlockstoreError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("serialization error: {0}")]
-    Serialize(#[from] Box<bincode::ErrorKind>),
+    Serialize(#[from] bincode::Error),
     #[error("fs extra error: {0}")]
     FsExtraError(#[from] fs_extra::error::Error),
     #[error("slot cleaned up")]

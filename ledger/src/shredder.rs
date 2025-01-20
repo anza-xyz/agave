@@ -391,18 +391,35 @@ impl Shredder {
     }
 
     /// Combines all shreds to recreate the original buffer
-    pub fn deshred(shreds: &[Shred]) -> Result<Vec<u8>, Error> {
-        let index = shreds.first().ok_or(TooFewDataShards)?.index();
-        let aligned = shreds.iter().zip(index..).all(|(s, i)| s.index() == i);
-        let data_complete = {
-            let shred = shreds.last().unwrap();
-            shred.data_complete() || shred.last_in_slot()
-        };
-        if !data_complete || !aligned {
+    pub fn deshred<I, T: Borrow<Shred>>(shreds: I) -> Result<Vec<u8>, Error>
+    where
+        I: IntoIterator<Item = T>,
+    {
+        let (data, _, data_complete) = shreds.into_iter().try_fold(
+            <(Vec<u8>, Option<u32>, bool)>::default(),
+            |(mut data, prev, data_complete), shred| {
+                // No trailing shreds if we have already observed
+                // DATA_COMPLETE_SHRED or LAST_SHRED_IN_SLOT.
+                if data_complete {
+                    return Err(Error::InvalidDeshredSet);
+                }
+                let shred = shred.borrow();
+                // Shreds' indices should be consecutive.
+                let index = Some(shred.index());
+                if let Some(prev) = prev {
+                    if prev.checked_add(1) != index {
+                        return Err(Error::from(TooFewDataShards));
+                    }
+                }
+                data.extend_from_slice(shred.data()?);
+                let data_complete = shred.data_complete() || shred.last_in_slot();
+                Ok((data, index, data_complete))
+            },
+        )?;
+        // The last shred should be DATA_COMPLETE_SHRED or LAST_SHRED_IN_SLOT.
+        if !data_complete {
             return Err(Error::from(TooFewDataShards));
         }
-        let data: Vec<_> = shreds.iter().map(Shred::data).collect::<Result<_, _>>()?;
-        let data: Vec<_> = data.into_iter().flatten().copied().collect();
         if data.is_empty() {
             // For backward compatibility. This is needed when the data shred
             // payload is None, so that deserializing to Vec<Entry> results in
