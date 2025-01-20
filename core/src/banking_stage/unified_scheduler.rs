@@ -9,9 +9,7 @@ use {
     crate::banking_trace::Channels,
     solana_poh::poh_recorder::PohRecorder,
     solana_runtime::bank_forks::BankForks,
-    solana_unified_scheduler_pool::{
-        BankingStageAdapter, BatchConverterCreator, DefaultSchedulerPool,
-    },
+    solana_unified_scheduler_pool::{BatchConverterCreator, DefaultSchedulerPool},
     std::sync::{Arc, RwLock},
 };
 
@@ -20,11 +18,11 @@ pub(crate) fn batch_converter_creator(
     decision_maker: DecisionMaker,
     bank_forks: Arc<RwLock<BankForks>>,
 ) -> BatchConverterCreator {
-    Box::new(move |adapter: Arc<BankingStageAdapter>| {
+    Box::new(move |adapter| {
         let decision_maker = decision_maker.clone();
         let bank_forks = bank_forks.clone();
 
-        Box::new(move |batches, task_submitter| {
+        Box::new(move |batches| {
             let decision = decision_maker.make_consume_or_forward_decision();
             if matches!(decision, BufferedPacketsDecision::Forward) {
                 return;
@@ -49,7 +47,7 @@ pub(crate) fn batch_converter_creator(
                     let index = task_id_base + packet_index;
 
                     let task = adapter.create_new_task(transaction, index);
-                    task_submitter(task);
+                    adapter.send_new_task(task);
                 }
             }
         })

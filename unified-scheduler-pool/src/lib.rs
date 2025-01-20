@@ -155,8 +155,7 @@ const DEFAULT_TIMEOUT_DURATION: Duration = Duration::from_secs(12);
 const DEFAULT_MAX_USAGE_QUEUE_COUNT: usize = 262_144;
 
 trait_set! {
-    pub trait BatchConverter =
-        DynClone + (for<'a> Fn(BankingPacketBatch, &'a dyn Fn(Task))) + Send + 'static;
+    pub trait BatchConverter = DynClone + Fn(BankingPacketBatch) + Send + 'static;
 }
 
 clone_trait_object!(BatchConverter);
@@ -1312,10 +1311,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         };
 
         let handler_main_loop = || {
-            let (banking_stage_context, new_task_sender) = banking_stage_context
-                .clone()
-                .map(|b| (b, self.new_task_sender.clone()))
-                .unzip();
+            let banking_stage_context = banking_stage_context.clone();
 
             let pool = self.pool.clone();
             let mut runnable_task_receiver = runnable_task_receiver.clone();
@@ -1362,13 +1358,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 info!("disconnected banking_packet_receiver");
                                 break;
                             };
-                            (banking_stage_context.as_ref().unwrap().on_banking_packet_receive)(banking_packet, &|task| {
-                                new_task_sender
-                                    .as_ref()
-                                    .unwrap()
-                                    .send(NewTaskPayload::Payload(task))
-                                    .unwrap();
-                            });
+                            (banking_stage_context.as_ref().unwrap().on_banking_packet_receive)(banking_packet);
                             continue;
                         },
                     };
@@ -1594,6 +1584,10 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
     ) -> Self {
+        let mut inner = Self::Inner {
+            thread_manager: ThreadManager::new(pool.clone()),
+            usage_queue_loader: UsageQueueLoader::default(),
+        };
         let banking_stage_context = match context.mode() {
             BlockVerification => None,
             BlockProduction => {
@@ -1603,17 +1597,14 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
                     on_spawn_block_production_scheduler,
                 } = &mut *respawner_write.as_mut().unwrap();
 
-                let adapter = Arc::new(BankingStageAdapter::default());
+                let new_task_sender = inner.thread_manager.new_task_sender.clone();
+                let adapter = Arc::new(BankingStageAdapter::new(new_task_sender));
 
                 Some(BankingStageContext {
                     banking_packet_receiver: banking_packet_receiver.clone(),
                     on_banking_packet_receive: on_spawn_block_production_scheduler(adapter),
                 })
             }
-        };
-        let mut inner = Self::Inner {
-            thread_manager: ThreadManager::new(pool),
-            usage_queue_loader: UsageQueueLoader::default(),
         };
         inner.thread_manager.start_threads(
             context.clone(),
@@ -1624,13 +1615,22 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct BankingStageAdapter {
     usage_queue_loader: UsageQueueLoader,
     next_task_id: AtomicUsize,
+    new_task_sender: Sender<NewTaskPayload>,
 }
 
 impl BankingStageAdapter {
+    fn new(new_task_sender: Sender<NewTaskPayload>) -> Self {
+        Self {
+            usage_queue_loader: UsageQueueLoader::default(),
+            next_task_id: AtomicUsize::default(),
+            new_task_sender,
+        }
+    }
+
     pub fn generate_task_ids(&self, count: usize) -> usize {
         self.next_task_id.fetch_add(count, Relaxed)
     }
@@ -1643,6 +1643,12 @@ impl BankingStageAdapter {
         SchedulingStateMachine::create_task(transaction, index, &mut |pubkey| {
             self.usage_queue_loader.load(pubkey)
         })
+    }
+
+    pub fn send_new_task(&self, task: Task) {
+        self.new_task_sender
+            .send(NewTaskPayload::Payload(task))
+            .unwrap();
     }
 }
 
