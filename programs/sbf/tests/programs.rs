@@ -5644,7 +5644,7 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
         let account = AccountSharedData::new(42, 1024, &program_id);
         bank.store_account(&account_keypair.pubkey(), &account);
 
-        for instr in 0..=13 {
+        for instr in 0..=15 {
             println!("Testing direct_mapping:{direct_mapping} instruction:{instr}");
             let instruction =
                 Instruction::new_with_bytes(program_id, &[instr], account_metas.clone());
