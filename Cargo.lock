@@ -10876,16 +10876,16 @@ dependencies = [
 
 [[package]]
 name = "spl-token-confidential-transfer-proof-extraction"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "383937e637ccbe546f736d5115344351ebd4d2a076907582335261da58236816"
+checksum = "eff2d6a445a147c9d6dd77b8301b1e116c8299601794b558eafa409b342faf96"
 dependencies = [
  "bytemuck",
  "solana-curve25519",
  "solana-program",
  "solana-zk-sdk",
  "spl-pod",
- "thiserror 1.0.69",
+ "thiserror 2.0.11",
 ]
 
 [[package]]
