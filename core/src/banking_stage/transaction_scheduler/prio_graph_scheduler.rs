@@ -154,17 +154,19 @@ impl PrioGraphScheduler {
 
         let mut unblock_this_batch =
             Vec::with_capacity(self.consume_work_senders.len() * TARGET_NUM_TRANSACTIONS_PER_BATCH);
-        const MAX_TRANSACTIONS_PER_SCHEDULING_PASS: usize = 1_000;
+        const MAX_TRANSACTIONS_SCANNED_PER_SCHEDULING_PASS: usize = 1_000;
+        let mut num_scanned: usize = 0;
         let mut num_scheduled: usize = 0;
         let mut num_sent: usize = 0;
         let mut num_unschedulable: usize = 0;
-        while num_scheduled < MAX_TRANSACTIONS_PER_SCHEDULING_PASS {
+        while num_scheduled < MAX_TRANSACTIONS_SCANNED_PER_SCHEDULING_PASS {
             // If nothing is in the main-queue of the `PrioGraph` then there's nothing left to schedule.
             if prio_graph.is_empty() {
                 break;
             }
 
             while let Some(id) = prio_graph.pop() {
+                num_scanned += 1;
                 unblock_this_batch.push(id);
 
                 // Should always be in the container, during initial testing phase panic.
@@ -229,11 +231,11 @@ impl PrioGraphScheduler {
                                 break;
                             }
                         }
-
-                        if num_scheduled >= MAX_TRANSACTIONS_PER_SCHEDULING_PASS {
-                            break;
-                        }
                     }
+                }
+
+                if num_scanned >= MAX_TRANSACTIONS_SCANNED_PER_SCHEDULING_PASS {
+                    break;
                 }
             }
 
