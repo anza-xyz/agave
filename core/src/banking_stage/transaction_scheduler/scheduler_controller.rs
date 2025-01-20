@@ -119,8 +119,8 @@ impl SchedulerController {
             self.timing_metrics
                 .maybe_report_and_reset_slot(new_leader_slot);
 
-            self.process_transactions(&decision)?;
             self.receive_completed()?;
+            self.process_transactions(&decision)?;
             if !self.receive_and_buffer_packets(&decision) {
                 break;
             }
