@@ -116,19 +116,25 @@ async fn ip_echo_server_request(
 /// Determine the public IP address of this machine by asking an ip_echo_server at the given
 /// address
 pub fn get_public_ip_addr(ip_echo_server_addr: &SocketAddr) -> Result<IpAddr, String> {
-    get_public_ip_addr_with_binding(ip_echo_server_addr, None).map_err(|e| e.to_string())
+    let fut = ip_echo_server_request(*ip_echo_server_addr, IpEchoServerMessage::default(), None);
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = rt.block_on(fut).map_err(|e| e.to_string())?;
+    Ok(resp.address)
 }
 
 /// Determine the public IP address of this machine by asking an ip_echo_server at the given
-/// address
+/// address. This function will bind to the provided bind_addreess.
 pub fn get_public_ip_addr_with_binding(
     ip_echo_server_addr: &SocketAddr,
-    bind_address: Option<IpAddr>,
+    bind_address: IpAddr,
 ) -> anyhow::Result<IpAddr> {
     let fut = ip_echo_server_request(
         *ip_echo_server_addr,
         IpEchoServerMessage::default(),
-        bind_address,
+        Some(bind_address),
     );
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -138,18 +144,24 @@ pub fn get_public_ip_addr_with_binding(
 }
 
 pub fn get_cluster_shred_version(ip_echo_server_addr: &SocketAddr) -> Result<u16, String> {
-    get_cluster_shred_version_with_binding(ip_echo_server_addr, None)
-        .map_err(|_| String::from("IP echo server does not return a shred-version"))
+    let fut = ip_echo_server_request(*ip_echo_server_addr, IpEchoServerMessage::default(), None);
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = rt.block_on(fut).map_err(|e| e.to_string())?;
+    resp.shred_version
+        .ok_or_else(|| "IP echo server does not return a shred-version".to_owned())
 }
 
 pub fn get_cluster_shred_version_with_binding(
     ip_echo_server_addr: &SocketAddr,
-    bind_address: Option<IpAddr>,
+    bind_address: IpAddr,
 ) -> anyhow::Result<u16> {
     let fut = ip_echo_server_request(
         *ip_echo_server_addr,
         IpEchoServerMessage::default(),
-        bind_address,
+        Some(bind_address),
     );
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -596,7 +608,7 @@ pub fn bind_with_any_port(ip_addr: IpAddr) -> io::Result<UdpSocket> {
     bind_with_any_port_with_config(ip_addr, SocketConfig::default())
 }
 
-// binds many sockets to the same port in a range with config
+/// binds num sockets to the same port in a range with config
 pub fn multi_bind_in_range_with_config(
     ip_addr: IpAddr,
     range: PortRange,
@@ -743,13 +755,13 @@ pub fn bind_to_with_config_non_blocking(
     Ok(sock.into())
 }
 
-// binds both a UdpSocket and a TcpListener
+/// binds both a UdpSocket and a TcpListener
 pub fn bind_common(ip_addr: IpAddr, port: u16) -> io::Result<(UdpSocket, TcpListener)> {
     let config = SocketConfig::default();
     bind_common_with_config(ip_addr, port, config)
 }
 
-// binds both a UdpSocket and a TcpListener
+/// binds both a UdpSocket and a TcpListener on the same port
 pub fn bind_common_with_config(
     ip_addr: IpAddr,
     port: u16,
@@ -806,6 +818,10 @@ pub fn bind_two_in_range_with_offset_and_config(
     ))
 }
 
+/// Searches for an open port on a given binding ip_addr in the provided range.
+///
+/// This will start at a random point in the range provided, and search sequenctially.
+/// If it can not find anything, an Error is returned.
 pub fn find_available_port_in_range(ip_addr: IpAddr, range: PortRange) -> io::Result<u16> {
     let (start, end) = range;
     let mut tries_left = end - start;
@@ -1027,13 +1043,10 @@ mod tests {
 
         let server_ip_echo_addr = server_udp_socket.local_addr().unwrap();
         assert_eq!(
-            get_public_ip_addr_with_binding(&server_ip_echo_addr, None).unwrap(),
+            get_public_ip_addr(&server_ip_echo_addr).unwrap(),
             parse_host("127.0.0.1").unwrap(),
         );
-        assert_eq!(
-            get_cluster_shred_version_with_binding(&server_ip_echo_addr, None).unwrap(),
-            42
-        );
+        assert_eq!(get_cluster_shred_version(&server_ip_echo_addr).unwrap(), 42);
         assert!(verify_reachable_ports(&server_ip_echo_addr, vec![], &[],));
     }
 
@@ -1055,11 +1068,11 @@ mod tests {
 
         let ip_echo_server_addr = server_udp_socket.local_addr().unwrap();
         assert_eq!(
-            get_public_ip_addr_with_binding(&ip_echo_server_addr, None).unwrap(),
+            get_public_ip_addr(&ip_echo_server_addr).unwrap(),
             parse_host("127.0.0.1").unwrap(),
         );
         assert_eq!(
-            get_cluster_shred_version_with_binding(&ip_echo_server_addr, None).unwrap(),
+            get_cluster_shred_version(&ip_echo_server_addr).unwrap(),
             65535
         );
         assert!(verify_reachable_ports(
