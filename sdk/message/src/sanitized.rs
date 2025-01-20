@@ -472,7 +472,7 @@ impl TransactionSignatureDetails {
         self.num_ed25519_instruction_signatures
     }
 
-    /// return the number of secp256k1 instruction signatures
+    /// return the number of secp256r1 instruction signatures
     pub fn num_secp256r1_instruction_signatures(&self) -> u64 {
         self.num_secp256r1_instruction_signatures
     }
