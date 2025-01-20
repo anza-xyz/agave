@@ -442,7 +442,7 @@ impl<T: LikeClusterInfo> SchedulerController<T> {
 
         const MAX_PACKET_RECEIVE_TIME: Duration = Duration::from_millis(10);
         let (recv_timeout, should_buffer) = match decision {
-            BufferedPacketsDecision::Consume(_) => (
+            BufferedPacketsDecision::Consume(_) | BufferedPacketsDecision::Hold => (
                 if self.container.is_empty() {
                     MAX_PACKET_RECEIVE_TIME
                 } else {
@@ -451,9 +451,7 @@ impl<T: LikeClusterInfo> SchedulerController<T> {
                 true,
             ),
             BufferedPacketsDecision::Forward => (MAX_PACKET_RECEIVE_TIME, self.forwarder.is_some()),
-            BufferedPacketsDecision::ForwardAndHold | BufferedPacketsDecision::Hold => {
-                (MAX_PACKET_RECEIVE_TIME, true)
-            }
+            BufferedPacketsDecision::ForwardAndHold => (MAX_PACKET_RECEIVE_TIME, true),
         };
 
         let (received_packet_results, receive_time_us) = measure_us!(self
