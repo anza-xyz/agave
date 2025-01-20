@@ -818,6 +818,7 @@ pub fn serialize_and_archive_snapshot_package(
         &bank_snapshot_info.snapshot_dir,
         snapshot_archive_path,
         snapshot_config.archive_format,
+        snapshot_config.zstd_compression_level,
     )?;
 
     Ok(snapshot_archive_info)
@@ -975,6 +976,7 @@ fn archive_snapshot(
     bank_snapshot_dir: impl AsRef<Path>,
     archive_path: impl AsRef<Path>,
     archive_format: ArchiveFormat,
+    zstd_compression_level: i32,
 ) -> Result<SnapshotArchiveInfo> {
     use ArchiveSnapshotPackageError as E;
     const SNAPSHOTS_DIR: &str = "snapshots";
@@ -1087,9 +1089,8 @@ fn archive_snapshot(
                 encoder.finish().map_err(E::FinishEncoder)?;
             }
             ArchiveFormat::TarZstd => {
-                // Compression level of 1 is optimized for speed.
-                let mut encoder =
-                    zstd::stream::Encoder::new(archive_file, 1).map_err(E::CreateEncoder)?;
+                let mut encoder = zstd::stream::Encoder::new(archive_file, zstd_compression_level)
+                    .map_err(E::CreateEncoder)?;
                 do_archive_files(&mut encoder)?;
                 encoder.finish().map_err(E::FinishEncoder)?;
             }

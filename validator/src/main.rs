@@ -1798,6 +1798,7 @@ pub fn main() {
         maximum_incremental_snapshot_archives_to_retain,
         accounts_hash_debug_verify: validator_config.accounts_db_test_hash_calculation,
         packager_thread_niceness_adj: snapshot_packager_niceness_adj,
+        zstd_compression_level: 1, // level 1 is optimized for speed
     };
 
     // The accounts hash interval shall match the snapshot interval

@@ -46,6 +46,9 @@ pub struct SnapshotConfig {
 
     // Thread niceness adjustment for snapshot packager service
     pub packager_thread_niceness_adj: i8,
+
+    /// The compression level to use when archiving with zstd
+    pub zstd_compression_level: i32,
 }
 
 impl Default for SnapshotConfig {
@@ -67,6 +70,7 @@ impl Default for SnapshotConfig {
                 snapshot_utils::DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
             accounts_hash_debug_verify: false,
             packager_thread_niceness_adj: 0,
+            zstd_compression_level: 0, // a level of 0 uses zstd's default
         }
     }
 }
