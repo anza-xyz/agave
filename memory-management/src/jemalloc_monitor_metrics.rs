@@ -56,7 +56,7 @@ pub fn setup_watch_memory_usage() {
     // So solGossip will match solGossipConsume as well
     for thread in [
         "solPohTickProd",
-        "solSigVerTpuVote",
+        "solSigVerTpuVot",
         "solRcvrGossip",
         "solSigVerTpu",
         "solClusterInfo",
