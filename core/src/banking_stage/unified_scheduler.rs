@@ -1,11 +1,12 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
-    super::decision_maker::{BufferedPacketsDecision, DecisionMaker},
-    crate::{
-        banking_stage::{packet_deserializer::PacketDeserializer, LikeClusterInfo},
-        banking_trace::Channels,
+    super::{
+        decision_maker::{BufferedPacketsDecision, DecisionMaker},
+        packet_deserializer::PacketDeserializer,
+        LikeClusterInfo,
     },
+    crate::banking_trace::Channels,
     solana_poh::poh_recorder::PohRecorder,
     solana_runtime::bank_forks::BankForks,
     solana_unified_scheduler_pool::{
