@@ -36,7 +36,7 @@ pub struct LegacyMessage<'a> {
     pub is_writable_account_cache: Vec<bool>,
 }
 
-impl<'a> LegacyMessage<'a> {
+impl LegacyMessage<'_> {
     pub fn new(message: legacy::Message, reserved_account_keys: &HashSet<Pubkey>) -> Self {
         let is_writable_account_cache = message
             .account_keys
@@ -455,7 +455,6 @@ impl TransactionSignatureDetails {
         self.num_transaction_signatures
             .saturating_add(self.num_secp256k1_instruction_signatures)
             .saturating_add(self.num_ed25519_instruction_signatures)
-            .saturating_add(self.num_secp256r1_instruction_signatures)
     }
 
     /// return the number of transaction signatures

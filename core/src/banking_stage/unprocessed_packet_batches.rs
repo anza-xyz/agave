@@ -311,7 +311,7 @@ mod tests {
     fn simple_deserialized_packet() -> DeserializedPacket {
         let tx = system_transaction::transfer(
             &Keypair::new(),
-            &solana_sdk::pubkey::new_rand(),
+            &solana_pubkey::new_rand(),
             1,
             Hash::new_unique(),
         );
@@ -323,12 +323,12 @@ mod tests {
         compute_unit_price: u64,
         compute_unit_limit: u64,
     ) -> DeserializedPacket {
-        let from_account = solana_sdk::pubkey::new_rand();
+        let from_account = solana_pubkey::new_rand();
         let tx = Transaction::new_unsigned(Message::new(
             &[
                 ComputeBudgetInstruction::set_compute_unit_limit(compute_unit_limit as u32),
                 ComputeBudgetInstruction::set_compute_unit_price(compute_unit_price),
-                system_instruction::transfer(&from_account, &solana_sdk::pubkey::new_rand(), 1),
+                system_instruction::transfer(&from_account, &solana_pubkey::new_rand(), 1),
             ],
             Some(&from_account),
         ));

@@ -13,20 +13,33 @@ edition = { workspace = true }
 ahash = { workspace = true }
 lazy_static = { workspace = true }
 log = { workspace = true }
+solana-bincode = { workspace = true }
+solana-borsh = { workspace = true }
 solana-builtins-default-costs = { workspace = true }
+solana-clock = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-compute-budget-instruction = { workspace = true }
+solana-compute-budget-interface = { workspace = true }
 solana-feature-set = { workspace = true }
+solana-fee-structure = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
 solana-frozen-abi-macro = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
+solana-hash = { workspace = true, optional = true }
+solana-message = { workspace = true, optional = true }
 solana-metrics = { workspace = true }
+solana-packet = { workspace = true }
+solana-pubkey = { workspace = true }
 solana-runtime-transaction = { workspace = true }
-solana-sdk = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-signature = { workspace = true, optional = true }
 solana-svm-transaction = { workspace = true }
+solana-system-interface = { workspace = true }
+solana-transaction = { workspace = true, optional = true }
+solana-transaction-error = { workspace = true }
 solana-vote-program = { workspace = true }
 
 [lib]
@@ -37,15 +50,22 @@ name = "solana_cost_model"
 itertools = { workspace = true }
 rand = "0.8.5"
 # See order-crates-for-publishing.py for using this unusual `path = "."`
-solana-compute-budget-instruction = { workspace = true, features = ["dev-context-only-utils"] }
+solana-compute-budget-instruction = { workspace = true, features = [
+    "dev-context-only-utils",
+] }
+solana-compute-budget-interface = { workspace = true }
 solana-compute-budget-program = { workspace = true }
 solana-cost-model = { path = ".", features = ["dev-context-only-utils"] }
+solana-instruction = { workspace = true }
+solana-keypair = { workspace = true }
 solana-logger = { workspace = true }
+solana-reserved-account-keys = { workspace = true }
 solana-runtime-transaction = { workspace = true, features = [
     "dev-context-only-utils",
 ] }
-solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
+solana-signer = { workspace = true }
 solana-system-program = { workspace = true }
+solana-system-transaction = { workspace = true }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
 
@@ -53,13 +73,19 @@ test-case = { workspace = true }
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-dev-context-only-utils = []
+dev-context-only-utils = [
+    "dep:solana-hash",
+    "dep:solana-message",
+    "dep:solana-signature",
+    "dep:solana-transaction",
+    "solana-compute-budget-interface/dev-context-only-utils"
+]
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-compute-budget/frozen-abi",
-    "solana-sdk/frozen-abi",
-    "solana-vote-program/frozen-abi",
+    "solana-pubkey/frozen-abi",
+    "solana-vote-program/frozen-abi"
 ]
 
 [[bench]]

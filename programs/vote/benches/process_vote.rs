@@ -3,17 +3,15 @@
 extern crate test;
 
 use {
+    solana_account::{create_account_for_test, Account, AccountSharedData},
+    solana_clock::{Clock, Slot},
+    solana_hash::Hash,
+    solana_instruction::AccountMeta,
     solana_program_runtime::invoke_context::mock_process_instruction,
-    solana_sdk::{
-        account::{create_account_for_test, Account, AccountSharedData},
-        clock::{Clock, Slot},
-        hash::Hash,
-        instruction::AccountMeta,
-        pubkey::Pubkey,
-        slot_hashes::{SlotHashes, MAX_ENTRIES},
-        sysvar,
-        transaction_context::TransactionAccount,
-    },
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::sysvar,
+    solana_slot_hashes::{SlotHashes, MAX_ENTRIES},
+    solana_transaction_context::TransactionAccount,
     solana_vote_program::{
         vote_instruction::VoteInstruction,
         vote_state::{

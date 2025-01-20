@@ -271,11 +271,9 @@ pub struct CleanAccountsStats {
     // stats held here and reported by clean_accounts
     pub clean_old_root_us: AtomicU64,
     pub clean_old_root_reclaim_us: AtomicU64,
-    pub reset_uncleaned_roots_us: AtomicU64,
     pub remove_dead_accounts_remove_us: AtomicU64,
     pub remove_dead_accounts_shrink_us: AtomicU64,
     pub clean_stored_dead_slots_us: AtomicU64,
-    pub uncleaned_roots_slot_list_1: AtomicU64,
     pub get_account_sizes_us: AtomicU64,
     pub slots_cleaned: AtomicU64,
 }

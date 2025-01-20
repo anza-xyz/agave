@@ -1,20 +1,19 @@
 use {
     crate::{parse_instruction::parse_memo_data, VersionedTransactionWithStatusMeta},
-    solana_sdk::{
-        instruction::CompiledInstruction,
-        message::{AccountKeys, Message, SanitizedMessage},
-        pubkey::Pubkey,
+    solana_message::{
+        compiled_instruction::CompiledInstruction, AccountKeys, Message, SanitizedMessage,
     },
+    solana_pubkey::Pubkey,
 };
 
 // A helper function to convert spl_memo::v1::id() as spl_sdk::pubkey::Pubkey to
-// solana_sdk::pubkey::Pubkey
+// solana_pubkey::Pubkey
 pub fn spl_memo_id_v1() -> Pubkey {
     *MEMO_PROGRAM_ID_V1
 }
 
 // A helper function to convert spl_memo::id() as spl_sdk::pubkey::Pubkey to
-// solana_sdk::pubkey::Pubkey
+// solana_pubkey::Pubkey
 pub fn spl_memo_id_v3() -> Pubkey {
     *MEMO_PROGRAM_ID_V3
 }

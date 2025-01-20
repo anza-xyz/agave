@@ -5,16 +5,15 @@ use {
         transaction_meta::{StaticMeta, TransactionMeta},
         transaction_with_meta::TransactionWithMeta,
     },
+    solana_message::{AddressLoader, TransactionSignatureDetails},
     solana_pubkey::Pubkey,
-    solana_sdk::{
-        message::{AddressLoader, TransactionSignatureDetails},
-        simple_vote_transaction_checker::is_simple_vote_transaction,
-        transaction::{
-            MessageHash, Result, SanitizedTransaction, SanitizedVersionedTransaction,
-            VersionedTransaction,
-        },
-    },
     solana_svm_transaction::instruction::SVMInstruction,
+    solana_transaction::{
+        sanitized::{MessageHash, SanitizedTransaction},
+        simple_vote_transaction_checker::is_simple_vote_transaction,
+        versioned::{sanitized::SanitizedVersionedTransaction, VersionedTransaction},
+    },
+    solana_transaction_error::TransactionResult as Result,
     std::{borrow::Cow, collections::HashSet},
 };
 
@@ -137,13 +136,13 @@ impl TransactionWithMeta for RuntimeTransaction<SanitizedTransaction> {
 
 #[cfg(feature = "dev-context-only-utils")]
 impl RuntimeTransaction<SanitizedTransaction> {
-    pub fn from_transaction_for_tests(transaction: solana_sdk::transaction::Transaction) -> Self {
+    pub fn from_transaction_for_tests(transaction: solana_transaction::Transaction) -> Self {
         let versioned_transaction = VersionedTransaction::from(transaction);
         Self::try_create(
             versioned_transaction,
             MessageHash::Compute,
             None,
-            solana_sdk::message::SimpleAddressLoader::Disabled,
+            solana_message::SimpleAddressLoader::Disabled,
             &HashSet::new(),
         )
         .expect("failed to create RuntimeTransaction from Transaction")
@@ -154,20 +153,17 @@ impl RuntimeTransaction<SanitizedTransaction> {
 mod tests {
     use {
         super::*,
-        solana_program::{
-            system_instruction,
-            vote::{self, state::Vote},
-        },
-        solana_sdk::{
-            compute_budget::ComputeBudgetInstruction,
-            feature_set::FeatureSet,
-            hash::Hash,
-            instruction::Instruction,
-            message::Message,
-            reserved_account_keys::ReservedAccountKeys,
-            signer::{keypair::Keypair, Signer},
-            transaction::{SimpleAddressLoader, Transaction, VersionedTransaction},
-        },
+        solana_compute_budget_interface::ComputeBudgetInstruction,
+        solana_feature_set::FeatureSet,
+        solana_hash::Hash,
+        solana_instruction::Instruction,
+        solana_keypair::Keypair,
+        solana_message::{Message, SimpleAddressLoader},
+        solana_program::vote::{self, state::Vote},
+        solana_reserved_account_keys::ReservedAccountKeys,
+        solana_signer::Signer,
+        solana_system_interface::instruction as system_instruction,
+        solana_transaction::{versioned::VersionedTransaction, Transaction},
     };
 
     fn vote_sanitized_versioned_transaction() -> SanitizedVersionedTransaction {
@@ -203,7 +199,7 @@ mod tests {
             let from_keypair = Keypair::new();
             let instructions = vec![system_instruction::transfer(
                 &from_keypair.pubkey(),
-                &solana_sdk::pubkey::new_rand(),
+                &solana_pubkey::new_rand(),
                 1,
             )];
             TestTransaction {

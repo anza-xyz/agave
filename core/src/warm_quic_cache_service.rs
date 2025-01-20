@@ -5,12 +5,9 @@ use {
     rand::{thread_rng, Rng},
     solana_client::connection_cache::{ConnectionCache, Protocol},
     solana_connection_cache::client_connection::ClientConnection as TpuConnection,
-    solana_gossip::{
-        cluster_info::ClusterInfo,
-        contact_info::{ContactInfo, Error},
-    },
+    solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfoQuery},
     solana_poh::poh_recorder::PohRecorder,
-    solana_sdk::pubkey::Pubkey,
+    solana_pubkey::Pubkey,
     std::{
         net::SocketAddr,
         sync::{
@@ -35,11 +32,11 @@ impl WarmQuicCacheService {
         cache: Option<&ConnectionCache>,
         cluster_info: &ClusterInfo,
         leader_pubkey: &Pubkey,
-        contact_info_selector: impl Fn(&ContactInfo) -> Result<SocketAddr, Error>,
+        contact_info_selector: impl ContactInfoQuery<Option<SocketAddr>>,
         log_context: &str,
     ) {
         if let Some(connection_cache) = cache {
-            if let Some(Ok(addr)) =
+            if let Some(Some(addr)) =
                 cluster_info.lookup_contact_info(leader_pubkey, contact_info_selector)
             {
                 let conn = connection_cache.get_connection(&addr);
@@ -79,9 +76,7 @@ impl WarmQuicCacheService {
                         .unwrap()
                         .leader_after_n_slots((CACHE_OFFSET_SLOT + slot_jitter) as u64);
                     if let Some(leader_pubkey) = leader_pubkey {
-                        if maybe_last_leader
-                            .map_or(true, |last_leader| last_leader != leader_pubkey)
-                        {
+                        if maybe_last_leader != Some(leader_pubkey) {
                             maybe_last_leader = Some(leader_pubkey);
                             // Warm cache for regular transactions
                             Self::warmup_connection(

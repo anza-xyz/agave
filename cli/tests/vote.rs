@@ -6,12 +6,12 @@ use {
         spend_utils::SpendAmount,
     },
     solana_cli_output::{parse_sign_only_reply_string, OutputFormat},
+    solana_commitment_config::CommitmentConfig,
     solana_faucet::faucet::run_local_faucet,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_nonce_utils::blockhash_query::{self, BlockhashQuery},
     solana_sdk::{
         account_utils::StateMut,
-        commitment_config::CommitmentConfig,
         signature::{Keypair, NullSigner, Signer},
     },
     solana_streamer::socket::SocketAddrSpace,
@@ -170,7 +170,7 @@ fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
     assert_eq!(authorized_withdrawer, withdraw_authority.pubkey());
 
     // Withdraw from vote account
-    let destination_account = solana_sdk::pubkey::new_rand(); // Send withdrawal to new account to make balance check easy
+    let destination_account = solana_pubkey::new_rand(); // Send withdrawal to new account to make balance check easy
     config.signers = vec![&default_signer, &withdraw_authority];
     config.command = CliCommand::WithdrawFromVoteAccount {
         vote_account_pubkey,
@@ -210,7 +210,7 @@ fn test_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
     process_command(&config).unwrap();
 
     // Close vote account
-    let destination_account = solana_sdk::pubkey::new_rand(); // Send withdrawal to new account to make balance check easy
+    let destination_account = solana_pubkey::new_rand(); // Send withdrawal to new account to make balance check easy
     config.signers = vec![&default_signer, &withdraw_authority];
     config.command = CliCommand::CloseVoteAccount {
         vote_account_pubkey,
@@ -374,7 +374,7 @@ fn test_offline_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
     assert_eq!(authorized_withdrawer, withdraw_authority.pubkey());
 
     // Withdraw from vote account offline
-    let destination_account = solana_sdk::pubkey::new_rand(); // Send withdrawal to new account to make balance check easy
+    let destination_account = solana_pubkey::new_rand(); // Send withdrawal to new account to make balance check easy
     let blockhash = rpc_client.get_latest_blockhash().unwrap();
     let fee_payer_null_signer = NullSigner::new(&default_signer.pubkey());
     config_offline.signers = vec![&fee_payer_null_signer, &withdraw_authority];
@@ -465,7 +465,7 @@ fn test_offline_vote_authorize_and_withdraw(compute_unit_price: Option<u64>) {
 
     // Close vote account offline. Must use WithdrawFromVoteAccount and specify amount, since
     // CloseVoteAccount requires RpcClient
-    let destination_account = solana_sdk::pubkey::new_rand(); // Send withdrawal to new account to make balance check easy
+    let destination_account = solana_pubkey::new_rand(); // Send withdrawal to new account to make balance check easy
     config_offline.signers = vec![&fee_payer_null_signer, &withdraw_authority];
     config_offline.command = CliCommand::WithdrawFromVoteAccount {
         vote_account_pubkey,

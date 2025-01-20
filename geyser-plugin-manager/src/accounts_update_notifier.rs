@@ -5,18 +5,16 @@ use {
         ReplicaAccountInfoV3, ReplicaAccountInfoVersions,
     },
     log::*,
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
         account_storage::meta::StoredAccountMeta,
         accounts_update_notifier_interface::AccountsUpdateNotifierInterface,
     },
+    solana_clock::Slot,
     solana_measure::measure::Measure,
     solana_metrics::*,
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        clock::Slot,
-        pubkey::Pubkey,
-        transaction::SanitizedTransaction,
-    },
+    solana_pubkey::Pubkey,
+    solana_transaction::sanitized::SanitizedTransaction,
     std::sync::{Arc, RwLock},
 };
 #[derive(Debug)]

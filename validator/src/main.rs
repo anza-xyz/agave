@@ -23,7 +23,6 @@ use {
             AccountIndex, AccountSecondaryIndexes, AccountSecondaryIndexesIncludeExclude,
             AccountsIndexConfig, IndexLimitMb, ScanFilter,
         },
-        partitioned_rewards::TestPartitionedEpochRewards,
         utils::{
             create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories,
             create_and_canonicalize_directory,
@@ -36,8 +35,9 @@ use {
         system_monitor_service::SystemMonitorService,
         tpu::DEFAULT_TPU_COALESCE,
         validator::{
-            is_snapshot_config_valid, BlockProductionMethod, BlockVerificationMethod, Validator,
-            ValidatorConfig, ValidatorError, ValidatorStartProgress, ValidatorTpuConfig,
+            is_snapshot_config_valid, BlockProductionMethod, BlockVerificationMethod,
+            TransactionStructure, Validator, ValidatorConfig, ValidatorError,
+            ValidatorStartProgress, ValidatorTpuConfig,
         },
     },
     solana_gossip::{
@@ -67,14 +67,14 @@ use {
         snapshot_utils::{self, ArchiveFormat, SnapshotVersion},
     },
     solana_sdk::{
-        clock::{Slot, DEFAULT_S_PER_SLOT},
+        clock::{Slot, DEFAULT_SLOTS_PER_EPOCH, DEFAULT_S_PER_SLOT},
         commitment_config::CommitmentConfig,
         hash::Hash,
         pubkey::Pubkey,
         signature::{read_keypair, Keypair, Signer},
     },
     solana_send_transaction_service::send_transaction_service,
-    solana_streamer::socket::SocketAddrSpace,
+    solana_streamer::{quic::QuicServerParams, socket::SocketAddrSpace},
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     std::{
         collections::{HashSet, VecDeque},
@@ -907,6 +907,8 @@ pub fn main() {
         rayon_global_threads,
         replay_forks_threads,
         replay_transactions_threads,
+        rocksdb_compaction_threads,
+        rocksdb_flush_threads,
         tvu_receive_threads,
         tvu_sigverify_threads,
     } = cli::thread_args::parse_num_threads_args(&matches);
@@ -1055,6 +1057,8 @@ pub fn main() {
         enforce_ulimit_nofile: true,
         // The validator needs primary (read/write)
         access_type: AccessType::Primary,
+        num_rocksdb_compaction_threads: rocksdb_compaction_threads,
+        num_rocksdb_flush_threads: rocksdb_flush_threads,
     };
 
     let accounts_hash_cache_path = matches
@@ -1136,8 +1140,6 @@ pub fn main() {
     };
 
     let tpu_connection_pool_size = value_t_or_exit!(matches, "tpu_connection_pool_size", usize);
-    let tpu_max_connections_per_ipaddr_per_minute =
-        value_t_or_exit!(matches, "tpu_max_connections_per_ipaddr_per_minute", u64);
 
     let shrink_ratio = value_t_or_exit!(matches, "accounts_shrink_ratio", f64);
     if !(0.0..=1.0).contains(&shrink_ratio) {
@@ -1228,15 +1230,6 @@ pub fn main() {
     if let Ok(bins) = value_t!(matches, "accounts_index_bins", usize) {
         accounts_index_config.bins = Some(bins);
     }
-
-    let test_partitioned_epoch_rewards =
-        if matches.is_present("partitioned_epoch_rewards_compare_calculation") {
-            TestPartitionedEpochRewards::CompareResults
-        } else if matches.is_present("partitioned_epoch_rewards_force_enable_single_slot") {
-            TestPartitionedEpochRewards::ForcePartitionedEpochRewardsInOneBlock
-        } else {
-            TestPartitionedEpochRewards::None
-        };
 
     accounts_index_config.index_limit_mb = if matches.is_present("disable_accounts_disk_index") {
         IndexLimitMb::InMemOnly
@@ -1362,7 +1355,6 @@ pub fn main() {
         .ok(),
         exhaustively_verify_refcounts: matches.is_present("accounts_db_verify_refcounts"),
         create_ancient_storage,
-        test_partitioned_epoch_rewards,
         test_skip_rewrites_but_include_in_bank_hash: matches
             .is_present("accounts_db_test_skip_rewrites"),
         storage_access,
@@ -1371,6 +1363,8 @@ pub fn main() {
             .is_present("accounts_db_experimental_accumulator_hash"),
         verify_experimental_accumulator_hash: matches
             .is_present("accounts_db_verify_experimental_accumulator_hash"),
+        snapshots_use_experimental_accumulator_hash: matches
+            .is_present("accounts_db_snapshots_use_experimental_accumulator_hash"),
         num_clean_threads: Some(accounts_db_clean_threads),
         num_foreground_threads: Some(accounts_db_foreground_threads),
         num_hash_threads: Some(accounts_db_hash_threads),
@@ -1826,6 +1820,18 @@ pub fn main() {
         },
     );
 
+    // It is unlikely that a full snapshot interval greater than an epoch is a good idea.
+    // Minimally we should warn the user in case this was a mistake.
+    if full_snapshot_archive_interval_slots > DEFAULT_SLOTS_PER_EPOCH
+        && full_snapshot_archive_interval_slots != DISABLED_SNAPSHOT_ARCHIVE_INTERVAL
+    {
+        warn!(
+            "The full snapshot interval is excessively large: {}! This will negatively \
+            impact the background cleanup tasks in accounts-db. Consider a smaller value.",
+            full_snapshot_archive_interval_slots,
+        );
+    }
+
     if !is_snapshot_config_valid(
         &validator_config.snapshot_config,
         validator_config.accounts_hash_interval_slots,
@@ -1851,6 +1857,12 @@ pub fn main() {
         matches, // comment to align formatting...
         "block_production_method",
         BlockProductionMethod
+    )
+    .unwrap_or_default();
+    validator_config.transaction_struct = value_t!(
+        matches, // comment to align formatting...
+        "transaction_struct",
+        TransactionStructure
     )
     .unwrap_or_default();
     validator_config.enable_block_production_forwarding = staked_nodes_overrides_path.is_some();
@@ -1969,6 +1981,22 @@ pub fn main() {
             });
 
     let num_quic_endpoints = value_t_or_exit!(matches, "num_quic_endpoints", NonZeroUsize);
+
+    let tpu_max_connections_per_peer =
+        value_t_or_exit!(matches, "tpu_max_connections_per_peer", u64);
+    let tpu_max_staked_connections = value_t_or_exit!(matches, "tpu_max_staked_connections", u64);
+    let tpu_max_unstaked_connections =
+        value_t_or_exit!(matches, "tpu_max_unstaked_connections", u64);
+
+    let tpu_max_fwd_staked_connections =
+        value_t_or_exit!(matches, "tpu_max_fwd_staked_connections", u64);
+    let tpu_max_fwd_unstaked_connections =
+        value_t_or_exit!(matches, "tpu_max_fwd_unstaked_connections", u64);
+
+    let tpu_max_connections_per_ipaddr_per_minute: u64 =
+        value_t_or_exit!(matches, "tpu_max_connections_per_ipaddr_per_minute", u64);
+    let max_streams_per_ms = value_t_or_exit!(matches, "tpu_max_streams_per_ms", u64);
+
     let node_config = NodeConfig {
         gossip_addr,
         port_range: dynamic_port_range,
@@ -2072,6 +2100,32 @@ pub fn main() {
     // the one pushed by bootstrap.
     node.info.hot_swap_pubkey(identity_keypair.pubkey());
 
+    let tpu_quic_server_config = QuicServerParams {
+        max_connections_per_peer: tpu_max_connections_per_peer.try_into().unwrap(),
+        max_staked_connections: tpu_max_staked_connections.try_into().unwrap(),
+        max_unstaked_connections: tpu_max_unstaked_connections.try_into().unwrap(),
+        max_streams_per_ms,
+        max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
+        coalesce: tpu_coalesce,
+        ..Default::default()
+    };
+
+    let tpu_fwd_quic_server_config = QuicServerParams {
+        max_connections_per_peer: tpu_max_connections_per_peer.try_into().unwrap(),
+        max_staked_connections: tpu_max_fwd_staked_connections.try_into().unwrap(),
+        max_unstaked_connections: tpu_max_fwd_unstaked_connections.try_into().unwrap(),
+        max_streams_per_ms,
+        max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
+        coalesce: tpu_coalesce,
+        ..Default::default()
+    };
+
+    // Vote shares TPU forward's characteristics, except that we accept 1 connection
+    // per peer and no unstaked connections are accepted.
+    let mut vote_quic_server_config = tpu_fwd_quic_server_config.clone();
+    vote_quic_server_config.max_connections_per_peer = 1;
+    vote_quic_server_config.max_unstaked_connections = 0;
+
     let validator = match Validator::new(
         node,
         identity_keypair,
@@ -2089,7 +2143,9 @@ pub fn main() {
             vote_use_quic,
             tpu_connection_pool_size,
             tpu_enable_udp,
-            tpu_max_connections_per_ipaddr_per_minute,
+            tpu_quic_server_config,
+            tpu_fwd_quic_server_config,
+            vote_quic_server_config,
         },
         admin_service_post_init,
     ) {

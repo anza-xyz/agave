@@ -1,21 +1,19 @@
 use {
+    solana_bincode::limited_deserialize,
+    solana_clock::Slot,
+    solana_instruction::error::InstructionError,
     solana_log_collector::ic_msg,
-    solana_program_runtime::{declare_process_instruction, invoke_context::InvokeContext},
-    solana_sdk::{
-        address_lookup_table::{
-            instruction::ProgramInstruction,
-            program::{check_id, id},
-            state::{
-                AddressLookupTable, LookupTableMeta, LookupTableStatus, ProgramState,
-                LOOKUP_TABLE_MAX_ADDRESSES, LOOKUP_TABLE_META_SIZE,
-            },
+    solana_program::address_lookup_table::{
+        instruction::ProgramInstruction,
+        program::{check_id, id},
+        state::{
+            AddressLookupTable, LookupTableMeta, LookupTableStatus, ProgramState,
+            LOOKUP_TABLE_MAX_ADDRESSES, LOOKUP_TABLE_META_SIZE,
         },
-        clock::Slot,
-        instruction::InstructionError,
-        program_utils::limited_deserialize,
-        pubkey::{Pubkey, PUBKEY_BYTES},
-        system_instruction,
     },
+    solana_program_runtime::{declare_process_instruction, invoke_context::InvokeContext},
+    solana_pubkey::{Pubkey, PUBKEY_BYTES},
+    solana_system_interface::instruction as system_instruction,
     std::convert::TryFrom,
 };
 
@@ -25,7 +23,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let instruction_data = instruction_context.get_instruction_data();
-    match limited_deserialize(instruction_data)? {
+    match limited_deserialize(instruction_data, solana_packet::PACKET_DATA_SIZE as u64)? {
         ProgramInstruction::CreateLookupTable {
             recent_slot,
             bump_seed,

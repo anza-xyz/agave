@@ -1,32 +1,27 @@
 use {
     bincode::serialize,
     criterion::{black_box, criterion_group, criterion_main, Criterion},
+    solana_account::{create_account_shared_data_for_test, AccountSharedData, WritableAccount},
+    solana_clock::{Clock, Epoch},
     solana_feature_set::FeatureSet,
-    solana_program_runtime::invoke_context::mock_process_instruction,
-    solana_sdk::{
-        account::{create_account_shared_data_for_test, AccountSharedData, WritableAccount},
-        clock::{Clock, Epoch},
-        instruction::AccountMeta,
-        pubkey::Pubkey,
-        stake::{
-            instruction::{
-                self, AuthorizeCheckedWithSeedArgs, AuthorizeWithSeedArgs, LockupArgs,
-                LockupCheckedArgs, StakeInstruction,
-            },
-            stake_flags::StakeFlags,
-            state::{Authorized, Lockup, StakeAuthorize, StakeStateV2},
+    solana_instruction::AccountMeta,
+    solana_program::stake::{
+        instruction::{
+            self, AuthorizeCheckedWithSeedArgs, AuthorizeWithSeedArgs, LockupArgs,
+            LockupCheckedArgs, StakeInstruction,
         },
-        stake_history::StakeHistory,
-        sysvar::{
-            clock,
-            rent::{self, Rent},
-            stake_history,
-        },
+        stake_flags::StakeFlags,
+        state::{Authorized, Lockup, StakeAuthorize, StakeStateV2},
     },
+    solana_program_runtime::invoke_context::mock_process_instruction,
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
+    solana_sdk_ids::sysvar::{clock, rent, stake_history},
     solana_stake_program::{
         stake_instruction,
         stake_state::{Delegation, Meta, Stake},
     },
+    solana_sysvar::stake_history::StakeHistory,
     solana_vote_program::vote_state::{self, VoteState, VoteStateVersions},
     std::sync::Arc,
 };
@@ -48,7 +43,7 @@ impl TestSetup {
             StakeStateV2::size_of(),
             &solana_stake_program::id(),
         );
-        let stake_address = solana_sdk::pubkey::Pubkey::new_unique();
+        let stake_address = solana_pubkey::Pubkey::new_unique();
         Self {
             // some stake instructions are behind feature gate, enable all
             // feature gates to bench all instructions
@@ -207,7 +202,7 @@ impl TestSetup {
 fn bench_initialize(c: &mut Criterion) {
     let mut test_setup = TestSetup::new();
     test_setup.add_account(
-        solana_sdk::sysvar::rent::id(),
+        solana_sdk_ids::sysvar::rent::id(),
         create_account_shared_data_for_test(&Rent::default()),
     );
 
@@ -224,7 +219,7 @@ fn bench_initialize(c: &mut Criterion) {
 fn bench_initialize_checked(c: &mut Criterion) {
     let mut test_setup = TestSetup::new();
     test_setup.add_account(
-        solana_sdk::sysvar::rent::id(),
+        solana_sdk_ids::sysvar::rent::id(),
         create_account_shared_data_for_test(&Rent::default()),
     );
     // add staker account
@@ -626,7 +621,7 @@ fn bench_deactivate_delinquent(c: &mut Criterion) {
 
     // reference vote account has been consistently voting
     let mut vote_state = VoteState::default();
-    for epoch in 0..=solana_sdk::stake::MINIMUM_DELINQUENT_EPOCHS_FOR_DEACTIVATION {
+    for epoch in 0..=solana_program::stake::MINIMUM_DELINQUENT_EPOCHS_FOR_DEACTIVATION {
         vote_state.increment_credits(epoch as Epoch, 1);
     }
     let reference_vote_address = Pubkey::new_unique();
@@ -662,7 +657,7 @@ fn bench_deactivate_delinquent(c: &mut Criterion) {
     test_setup.add_account(
         clock::id(),
         create_account_shared_data_for_test(&Clock {
-            epoch: solana_sdk::stake::MINIMUM_DELINQUENT_EPOCHS_FOR_DEACTIVATION as u64,
+            epoch: solana_program::stake::MINIMUM_DELINQUENT_EPOCHS_FOR_DEACTIVATION as u64,
             ..Clock::default()
         }),
     );

@@ -760,7 +760,7 @@ pub struct BorrowedAccount<'a> {
     account: RefMut<'a, AccountSharedData>,
 }
 
-impl<'a> BorrowedAccount<'a> {
+impl BorrowedAccount<'_> {
     /// Returns the transaction context
     pub fn transaction_context(&self) -> &TransactionContext {
         self.transaction_context

@@ -347,7 +347,7 @@ where
         repairs,
         Some(leader_schedule_cache),
         false, // is_trusted
-        Some(retransmit_sender),
+        retransmit_sender,
         &handle_duplicate,
         reed_solomon_cache,
         metrics,
@@ -708,6 +708,7 @@ mod test {
             let _ = duplicate_shred_sender.send(shred);
         };
         let num_trials = 100;
+        let (dummy_retransmit_sender, _) = crossbeam_channel::bounded(0);
         for slot in 0..num_trials {
             let (shreds, _) = make_many_slot_entries(slot, 1, 10);
             let duplicate_index = 0;
@@ -724,7 +725,7 @@ mod test {
                     vec![false, false],
                     None,
                     false, // is_trusted
-                    None,
+                    &dummy_retransmit_sender,
                     &handle_duplicate,
                     &ReedSolomonCache::default(),
                     &mut BlockstoreInsertionMetrics::default(),

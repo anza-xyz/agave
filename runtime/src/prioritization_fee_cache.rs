@@ -568,7 +568,7 @@ mod tests {
         let bank0 = Bank::new_for_benches(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank0);
         let bank = bank_forks.read().unwrap().working_bank();
-        let collector = solana_sdk::pubkey::new_rand();
+        let collector = solana_pubkey::new_rand();
 
         let bank1 = Arc::new(Bank::new_from_parent(bank.clone(), &collector, 1));
         sync_update(
@@ -620,7 +620,7 @@ mod tests {
         let bank0 = Bank::new_for_benches(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank0);
         let bank = bank_forks.read().unwrap().working_bank();
-        let collector = solana_sdk::pubkey::new_rand();
+        let collector = solana_pubkey::new_rand();
         let bank1 = Arc::new(Bank::new_from_parent(bank.clone(), &collector, 1));
         let bank2 = Arc::new(Bank::new_from_parent(bank.clone(), &collector, 2));
         let bank3 = Arc::new(Bank::new_from_parent(bank, &collector, 3));
@@ -872,7 +872,7 @@ mod tests {
         let bank0 = Bank::new_for_benches(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank0);
         let bank = bank_forks.read().unwrap().working_bank();
-        let collector = solana_sdk::pubkey::new_rand();
+        let collector = solana_pubkey::new_rand();
         let slot: Slot = 999;
         let bank1 = Arc::new(Bank::new_from_parent(bank.clone(), &collector, slot));
         let bank2 = Arc::new(Bank::new_from_parent(bank, &collector, slot + 1));

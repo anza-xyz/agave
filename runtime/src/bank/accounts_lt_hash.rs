@@ -29,6 +29,19 @@ impl Bank {
                 .is_active(&feature_set::accounts_lt_hash::id())
     }
 
+    /// Returns if snapshots use the accounts lt hash
+    pub fn is_snapshots_lt_hash_enabled(&self) -> bool {
+        self.is_accounts_lt_hash_enabled()
+            && (self
+                .rc
+                .accounts
+                .accounts_db
+                .snapshots_use_experimental_accumulator_hash()
+                || self
+                    .feature_set
+                    .is_active(&feature_set::snapshots_lt_hash::id()))
+    }
+
     /// Updates the accounts lt hash
     ///
     /// When freezing a bank, we compute and update the accounts lt hash.
@@ -93,7 +106,7 @@ impl Bank {
             // And since `strictly_ancestors` is empty, loading the previous version of the account
             // from accounts db will return `None` (aka Dead), which is the correct behavior.
             assert!(strictly_ancestors.is_empty());
-            self.cache_for_accounts_lt_hash.write().unwrap().clear();
+            self.cache_for_accounts_lt_hash.clear();
         }
 
         // Get all the accounts stored in this slot.
@@ -133,7 +146,6 @@ impl Bank {
             // And a single page is likely the smallest size a disk read will actually read.
             // This can be tuned larger, but likely not smaller.
             const CHUNK_SIZE: usize = 128;
-            let cache_for_accounts_lt_hash = self.cache_for_accounts_lt_hash.read().unwrap();
             accounts_curr
                 .par_iter()
                 .fold_chunks(
@@ -142,9 +154,13 @@ impl Bank {
                     |mut accum, (pubkey, curr_account)| {
                         // load the initial state of the account
                         let (initial_state_of_account, measure_load) = meas_dur!({
-                            match cache_for_accounts_lt_hash.get(pubkey) {
+                            let cache_value = self
+                                .cache_for_accounts_lt_hash
+                                .get(pubkey)
+                                .map(|entry| entry.value().clone());
+                            match cache_value {
                                 Some(CacheValue::InspectAccount(initial_state_of_account)) => {
-                                    initial_state_of_account.clone()
+                                    initial_state_of_account
                                 }
                                 Some(CacheValue::BankNew) | None => {
                                     accum.1.num_cache_misses += 1;
@@ -313,17 +329,11 @@ impl Bank {
 
         // Only insert the account the *first* time we see it.
         // We want to capture the value of the account *before* any modifications during this slot.
-        let (is_in_cache, lookup_time) = meas_dur!({
-            self.cache_for_accounts_lt_hash
-                .read()
-                .unwrap()
-                .contains_key(address)
-        });
+        let (is_in_cache, lookup_time) =
+            meas_dur!(self.cache_for_accounts_lt_hash.contains_key(address));
         if !is_in_cache {
             let (_, insert_time) = meas_dur!({
                 self.cache_for_accounts_lt_hash
-                    .write()
-                    .unwrap()
                     .entry(*address)
                     .or_insert_with(|| {
                         let initial_state_of_account = match account_state {
@@ -680,7 +690,7 @@ mod tests {
         assert!(bank.is_accounts_lt_hash_enabled());
 
         // the cache should start off empty
-        assert_eq!(bank.cache_for_accounts_lt_hash.read().unwrap().len(), 0);
+        assert_eq!(bank.cache_for_accounts_lt_hash.len(), 0);
 
         // ensure non-writable accounts are *not* added to the cache
         bank.inspect_account_for_accounts_lt_hash(
@@ -693,30 +703,25 @@ mod tests {
             &AccountState::Alive(&AccountSharedData::default()),
             false,
         );
-        assert_eq!(bank.cache_for_accounts_lt_hash.read().unwrap().len(), 0);
+        assert_eq!(bank.cache_for_accounts_lt_hash.len(), 0);
 
         // ensure *new* accounts are added to the cache
         let address = Pubkey::new_unique();
         bank.inspect_account_for_accounts_lt_hash(&address, &AccountState::Dead, true);
-        assert_eq!(bank.cache_for_accounts_lt_hash.read().unwrap().len(), 1);
-        assert!(bank
-            .cache_for_accounts_lt_hash
-            .read()
-            .unwrap()
-            .contains_key(&address));
+        assert_eq!(bank.cache_for_accounts_lt_hash.len(), 1);
+        assert!(bank.cache_for_accounts_lt_hash.contains_key(&address));
 
         // ensure *existing* accounts are added to the cache
         let address = Pubkey::new_unique();
         let initial_lamports = 123;
         let mut account = AccountSharedData::new(initial_lamports, 0, &Pubkey::default());
         bank.inspect_account_for_accounts_lt_hash(&address, &AccountState::Alive(&account), true);
-        assert_eq!(bank.cache_for_accounts_lt_hash.read().unwrap().len(), 2);
+        assert_eq!(bank.cache_for_accounts_lt_hash.len(), 2);
         if let CacheValue::InspectAccount(InitialStateOfAccount::Alive(cached_account)) = bank
             .cache_for_accounts_lt_hash
-            .read()
-            .unwrap()
             .get(&address)
             .unwrap()
+            .value()
         {
             assert_eq!(*cached_account, account);
         } else {
@@ -727,13 +732,12 @@ mod tests {
         let updated_lamports = account.lamports() + 1;
         account.set_lamports(updated_lamports);
         bank.inspect_account_for_accounts_lt_hash(&address, &AccountState::Alive(&account), true);
-        assert_eq!(bank.cache_for_accounts_lt_hash.read().unwrap().len(), 2);
+        assert_eq!(bank.cache_for_accounts_lt_hash.len(), 2);
         if let CacheValue::InspectAccount(InitialStateOfAccount::Alive(cached_account)) = bank
             .cache_for_accounts_lt_hash
-            .read()
-            .unwrap()
             .get(&address)
             .unwrap()
+            .value()
         {
             assert_eq!(cached_account.lamports(), initial_lamports);
         } else {
@@ -744,13 +748,12 @@ mod tests {
         {
             let address = Pubkey::new_unique();
             bank.inspect_account_for_accounts_lt_hash(&address, &AccountState::Dead, true);
-            assert_eq!(bank.cache_for_accounts_lt_hash.read().unwrap().len(), 3);
+            assert_eq!(bank.cache_for_accounts_lt_hash.len(), 3);
             match bank
                 .cache_for_accounts_lt_hash
-                .read()
-                .unwrap()
                 .get(&address)
                 .unwrap()
+                .value()
             {
                 CacheValue::InspectAccount(InitialStateOfAccount::Dead) => {
                     // this is expected, nothing to do here
@@ -763,13 +766,12 @@ mod tests {
                 &AccountState::Alive(&AccountSharedData::default()),
                 true,
             );
-            assert_eq!(bank.cache_for_accounts_lt_hash.read().unwrap().len(), 3);
+            assert_eq!(bank.cache_for_accounts_lt_hash.len(), 3);
             match bank
                 .cache_for_accounts_lt_hash
-                .read()
-                .unwrap()
                 .get(&address)
                 .unwrap()
+                .value()
             {
                 CacheValue::InspectAccount(InitialStateOfAccount::Dead) => {
                     // this is expected, nothing to do here
@@ -1049,10 +1051,8 @@ mod tests {
         ];
         let mut actual_cache: Vec<_> = bank
             .cache_for_accounts_lt_hash
-            .read()
-            .unwrap()
             .iter()
-            .map(|(k, v)| (*k, v.clone()))
+            .map(|entry| (*entry.key(), entry.value().clone()))
             .collect();
         actual_cache.sort_unstable_by(|a, b| a.0.cmp(&b.0));
         assert_eq!(expected_cache, actual_cache.as_slice());
@@ -1159,6 +1159,95 @@ mod tests {
         let (_accounts_tempdir, accounts_dir) = snapshot_utils::create_tmp_accounts_dir_for_tests();
         let accounts_db_config = AccountsDbConfig {
             enable_experimental_accumulator_hash: match verify_cli {
+                Cli::Off => false,
+                Cli::On => true,
+            },
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        };
+        let (roundtrip_bank, _) = snapshot_bank_utils::bank_from_snapshot_archives(
+            &[accounts_dir],
+            &bank_snapshots_dir,
+            &snapshot,
+            None,
+            &genesis_config,
+            &RuntimeConfig::default(),
+            None,
+            None,
+            None,
+            false,
+            false,
+            false,
+            false,
+            Some(accounts_db_config),
+            None,
+            Arc::default(),
+        )
+        .unwrap();
+
+        // Wait for the startup verification to complete.  If we don't panic, then we're good!
+        roundtrip_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
+        assert_eq!(roundtrip_bank, *bank);
+    }
+
+    /// Ensure that the snapshot hash is correct when snapshots_lt_hash is enabled
+    #[test_matrix(
+        [Features::None, Features::All],
+        [Cli::Off, Cli::On],
+        [Cli::Off, Cli::On]
+    )]
+    fn test_snapshots_lt_hash(features: Features, cli: Cli, verify_cli: Cli) {
+        let (genesis_config, mint_keypair) = genesis_config_with(features);
+        let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        bank.rc
+            .accounts
+            .accounts_db
+            .set_is_experimental_accumulator_hash_enabled(features == Features::None);
+        // ensure the accounts lt hash is enabled, otherwise the snapshot lt hash is disabled
+        assert!(bank.is_accounts_lt_hash_enabled());
+
+        bank.rc
+            .accounts
+            .accounts_db
+            .set_snapshots_use_experimental_accumulator_hash(match cli {
+                Cli::Off => false,
+                Cli::On => true,
+            });
+
+        let amount = cmp::max(
+            bank.get_minimum_balance_for_rent_exemption(0),
+            LAMPORTS_PER_SOL,
+        );
+
+        // create some banks with some modified accounts so that there are stored accounts
+        // (note: the number of banks is arbitrary)
+        for _ in 0..3 {
+            let slot = bank.slot() + 1;
+            bank =
+                new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot);
+            bank.register_unique_recent_blockhash_for_test();
+            bank.transfer(amount, &mint_keypair, &pubkey::new_rand())
+                .unwrap();
+            bank.fill_bank_with_ticks_for_tests();
+            bank.squash();
+            bank.force_flush_accounts_cache();
+        }
+
+        let snapshot_config = SnapshotConfig::default();
+        let bank_snapshots_dir = TempDir::new().unwrap();
+        let snapshot_archives_dir = TempDir::new().unwrap();
+        let snapshot = snapshot_bank_utils::bank_to_full_snapshot_archive(
+            &bank_snapshots_dir,
+            &bank,
+            Some(snapshot_config.snapshot_version),
+            &snapshot_archives_dir,
+            &snapshot_archives_dir,
+            snapshot_config.archive_format,
+        )
+        .unwrap();
+        let (_accounts_tempdir, accounts_dir) = snapshot_utils::create_tmp_accounts_dir_for_tests();
+        let accounts_db_config = AccountsDbConfig {
+            enable_experimental_accumulator_hash: features == Features::None,
+            snapshots_use_experimental_accumulator_hash: match verify_cli {
                 Cli::Off => false,
                 Cli::On => true,
             },

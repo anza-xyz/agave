@@ -1,8 +1,7 @@
 pub use rocksdb::Direction as IteratorDirection;
 use {
     crate::{
-        blockstore_meta,
-        blockstore_meta::MerkleRootMeta,
+        blockstore_meta::{self, MerkleRootMeta},
         blockstore_metrics::{
             maybe_enable_rocksdb_perf, report_rocksdb_read_perf, report_rocksdb_write_perf,
             BlockstoreRocksDbColumnFamilyMetrics, PerfSamplingStatus, PERF_METRIC_OP_NAME_GET,
@@ -11,8 +10,7 @@ use {
         },
         blockstore_options::{AccessType, BlockstoreOptions, LedgerColumnOptions},
     },
-    bincode::{deserialize, serialize},
-    byteorder::{BigEndian, ByteOrder},
+    bincode::{deserialize, Options as BincodeOptions},
     log::*,
     prost::Message,
     rocksdb::{
@@ -27,8 +25,8 @@ use {
     solana_accounts_db::hardened_unpack::UnpackError,
     solana_sdk::{
         clock::{Slot, UnixTimestamp},
-        pubkey::Pubkey,
-        signature::Signature,
+        pubkey::{Pubkey, PUBKEY_BYTES},
+        signature::{Signature, SIGNATURE_BYTES},
     },
     solana_storage_proto::convert::generated,
     std::{
@@ -36,7 +34,7 @@ use {
         ffi::{CStr, CString},
         fs,
         marker::PhantomData,
-        mem,
+        num::NonZeroUsize,
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
@@ -103,6 +101,21 @@ const PROGRAM_COSTS_CF: &str = "program_costs";
 const OPTIMISTIC_SLOTS_CF: &str = "optimistic_slots";
 /// Column family for merkle roots
 const MERKLE_ROOT_META_CF: &str = "merkle_root_meta";
+
+macro_rules! convert_column_index_to_key_bytes {
+    ($key:ident, $($range:expr => $bytes:expr),* $(,)?) => {{
+        let mut key = [0u8; std::mem::size_of::<Self::$key>()];
+        debug_assert_eq!(0 $(+$bytes.len())*, key.len());
+        $(key[$range].copy_from_slice($bytes);)*
+        key
+    }};
+}
+
+macro_rules! convert_column_key_bytes_to_index {
+    ($k:ident, $($a:literal..$b:literal => $f:expr),* $(,)?) => {{
+        ($($f(<[u8; $b-$a]>::try_from(&$k[$a..$b]).unwrap())),*)
+    }};
+}
 
 #[derive(Error, Debug)]
 pub enum BlockstoreError {
@@ -415,13 +428,12 @@ pub(crate) struct Rocks {
 
 impl Rocks {
     pub(crate) fn open(path: PathBuf, options: BlockstoreOptions) -> Result<Rocks> {
-        let access_type = options.access_type.clone();
         let recovery_mode = options.recovery_mode.clone();
 
         fs::create_dir_all(&path)?;
 
         // Use default database options
-        let mut db_options = get_db_options(&access_type);
+        let mut db_options = get_db_options(&options);
         if let Some(recovery_mode) = recovery_mode {
             db_options.set_wal_recovery_mode(recovery_mode.into());
         }
@@ -430,7 +442,7 @@ impl Rocks {
         let column_options = Arc::from(options.column_options);
 
         // Open the database
-        let db = match access_type {
+        let db = match options.access_type {
             AccessType::Primary | AccessType::PrimaryForMaintenance => {
                 DB::open_cf_descriptors(&db_options, &path, cf_descriptors)?
             }
@@ -452,7 +464,7 @@ impl Rocks {
         let rocks = Rocks {
             db,
             path,
-            access_type,
+            access_type: options.access_type,
             oldest_slot,
             column_options,
             write_batch_perf_status: PerfSamplingStatus::default(),
@@ -549,10 +561,9 @@ impl Rocks {
         cf_descriptors
     }
 
-    fn columns() -> Vec<&'static str> {
+    const fn columns() -> [&'static str; 21] {
         use columns::*;
-
-        vec![
+        [
             ErasureMeta::NAME,
             DeadSlots::NAME,
             DuplicateSlots::NAME,
@@ -624,7 +635,7 @@ impl Rocks {
         }
     }
 
-    pub(crate) fn column<C, const K: usize>(self: &Arc<Self>) -> LedgerColumn<C, K>
+    pub(crate) fn column<C>(self: &Arc<Self>) -> LedgerColumn<C>
     where
         C: Column + ColumnName,
     {
@@ -650,17 +661,21 @@ impl Rocks {
             .expect("should never get an unknown column")
     }
 
-    fn get_cf(&self, cf: &ColumnFamily, key: &[u8]) -> Result<Option<Vec<u8>>> {
+    fn get_cf<K: AsRef<[u8]>>(&self, cf: &ColumnFamily, key: K) -> Result<Option<Vec<u8>>> {
         let opt = self.db.get_cf(cf, key)?;
         Ok(opt)
     }
 
-    fn get_pinned_cf(&self, cf: &ColumnFamily, key: &[u8]) -> Result<Option<DBPinnableSlice>> {
+    fn get_pinned_cf(
+        &self,
+        cf: &ColumnFamily,
+        key: impl AsRef<[u8]>,
+    ) -> Result<Option<DBPinnableSlice>> {
         let opt = self.db.get_pinned_cf(cf, key)?;
         Ok(opt)
     }
 
-    fn put_cf(&self, cf: &ColumnFamily, key: &[u8], value: &[u8]) -> Result<()> {
+    fn put_cf<K: AsRef<[u8]>>(&self, cf: &ColumnFamily, key: K, value: &[u8]) -> Result<()> {
         self.db.put_cf(cf, key, value)?;
         Ok(())
     }
@@ -680,17 +695,17 @@ impl Rocks {
             .map(|out| out.map_err(BlockstoreError::RocksDb))
     }
 
-    fn delete_cf(&self, cf: &ColumnFamily, key: &[u8]) -> Result<()> {
+    fn delete_cf<K: AsRef<[u8]>>(&self, cf: &ColumnFamily, key: K) -> Result<()> {
         self.db.delete_cf(cf, key)?;
         Ok(())
     }
 
     /// Delete files whose slot range is within \[`from`, `to`\].
-    fn delete_file_in_range_cf(
+    fn delete_file_in_range_cf<K: AsRef<[u8]>>(
         &self,
         cf: &ColumnFamily,
-        from_key: &[u8],
-        to_key: &[u8],
+        from_key: K,
+        to_key: K,
     ) -> Result<()> {
         self.db.delete_file_in_range_cf(cf, from_key, to_key)?;
         Ok(())
@@ -774,14 +789,9 @@ impl Rocks {
 
 pub trait Column {
     type Index;
-    const KEY_LEN: usize;
+    type Key: AsRef<[u8]>;
 
-    fn serialize_index(key: &mut [u8], index: Self::Index);
-    fn key(index: Self::Index) -> Vec<u8> {
-        let mut key = vec![0; Self::KEY_LEN];
-        Self::serialize_index(&mut key, index);
-        key
-    }
+    fn key(index: &Self::Index) -> Self::Key;
     fn index(key: &[u8]) -> Self::Index;
     // This trait method is primarily used by `Database::delete_range_cf()`, and is therefore only
     // relevant for columns keyed by Slot: ie. SlotColumns and columns that feature a Slot as the
@@ -796,6 +806,14 @@ pub trait ColumnName {
 
 pub trait TypedColumn: Column {
     type Type: Serialize + DeserializeOwned;
+
+    fn deserialize(data: &[u8]) -> Result<Self::Type> {
+        Ok(bincode::deserialize(data)?)
+    }
+
+    fn serialize(data: &Self::Type) -> Result<Vec<u8>> {
+        Ok(bincode::serialize(data)?)
+    }
 }
 
 impl TypedColumn for columns::AddressSignatures {
@@ -825,15 +843,16 @@ pub trait SlotColumn<Index = Slot> {}
 
 impl<T: SlotColumn> Column for T {
     type Index = Slot;
-    const KEY_LEN: usize = mem::size_of::<Slot>();
+    type Key = [u8; std::mem::size_of::<Slot>()];
 
-    fn serialize_index(key: &mut [u8], slot: Self::Index) {
-        BigEndian::write_u64(&mut key[..], slot);
+    #[inline]
+    fn key(slot: &Self::Index) -> Self::Key {
+        slot.to_be_bytes()
     }
 
     /// Converts a RocksDB key to its u64 Index.
-    fn index(key: &[u8]) -> u64 {
-        BigEndian::read_u64(&key[..8])
+    fn index(key: &[u8]) -> Self::Index {
+        convert_column_key_bytes_to_index!(key, 0..8 => Slot::from_be_bytes)
     }
 
     fn slot(index: Self::Index) -> Slot {
@@ -852,11 +871,11 @@ pub enum IndexError {
 
 /// Helper trait to transition primary indexes out from the columns that are using them.
 pub trait ColumnIndexDeprecation: Column {
-    const DEPRECATED_INDEX_LEN: usize;
     const CURRENT_INDEX_LEN: usize;
     type DeprecatedIndex;
+    type DeprecatedKey: AsRef<[u8]>;
 
-    fn deprecated_key(index: Self::DeprecatedIndex) -> Vec<u8>;
+    fn deprecated_key(index: Self::DeprecatedIndex) -> Self::DeprecatedKey;
     fn try_deprecated_index(key: &[u8]) -> std::result::Result<Self::DeprecatedIndex, IndexError>;
 
     fn try_current_index(key: &[u8]) -> std::result::Result<Self::Index, IndexError>;
@@ -878,11 +897,14 @@ pub trait ColumnIndexDeprecation: Column {
 
 impl Column for columns::TransactionStatus {
     type Index = (Signature, Slot);
-    const KEY_LEN: usize = mem::size_of::<Signature>() + mem::size_of::<Slot>();
+    type Key = [u8; SIGNATURE_BYTES + std::mem::size_of::<Slot>()];
 
-    fn serialize_index(key: &mut [u8], (signature, slot): Self::Index) {
-        key[0..64].copy_from_slice(&signature.as_ref()[0..64]);
-        BigEndian::write_u64(&mut key[64..72], slot);
+    #[inline]
+    fn key((signature, slot): &Self::Index) -> Self::Key {
+        convert_column_index_to_key_bytes!(Key,
+            ..64 => signature.as_ref(),
+            64.. => &slot.to_be_bytes(),
+        )
     }
 
     fn index(key: &[u8]) -> (Signature, Slot) {
@@ -907,35 +929,37 @@ impl ProtobufColumn for columns::TransactionStatus {
 }
 
 impl ColumnIndexDeprecation for columns::TransactionStatus {
-    const DEPRECATED_INDEX_LEN: usize = 80;
     const CURRENT_INDEX_LEN: usize = 72;
     type DeprecatedIndex = (u64, Signature, Slot);
+    type DeprecatedKey = [u8; 80];
 
-    fn deprecated_key((index, signature, slot): Self::DeprecatedIndex) -> Vec<u8> {
-        let mut key = vec![0; Self::DEPRECATED_INDEX_LEN];
-        BigEndian::write_u64(&mut key[0..8], index);
-        key[8..72].copy_from_slice(&signature.as_ref()[0..64]);
-        BigEndian::write_u64(&mut key[72..80], slot);
-        key
+    fn deprecated_key((index, signature, slot): Self::DeprecatedIndex) -> Self::DeprecatedKey {
+        convert_column_index_to_key_bytes!(DeprecatedKey,
+              ..8  => &index.to_be_bytes(),
+             8..72 => signature.as_ref(),
+            72..   => &slot.to_be_bytes(),
+        )
     }
 
     fn try_deprecated_index(key: &[u8]) -> std::result::Result<Self::DeprecatedIndex, IndexError> {
-        if key.len() != Self::DEPRECATED_INDEX_LEN {
+        if key.len() != std::mem::size_of::<Self::DeprecatedKey>() {
             return Err(IndexError::UnpackError);
         }
-        let primary_index = BigEndian::read_u64(&key[0..8]);
-        let signature = Signature::try_from(&key[8..72]).unwrap();
-        let slot = BigEndian::read_u64(&key[72..80]);
-        Ok((primary_index, signature, slot))
+        Ok(convert_column_key_bytes_to_index!(key,
+             0..8  => u64::from_be_bytes,  // primary index
+             8..72 => Signature::from,
+            72..80 => Slot::from_be_bytes,
+        ))
     }
 
     fn try_current_index(key: &[u8]) -> std::result::Result<Self::Index, IndexError> {
         if key.len() != Self::CURRENT_INDEX_LEN {
             return Err(IndexError::UnpackError);
         }
-        let signature = Signature::try_from(&key[0..64]).unwrap();
-        let slot = BigEndian::read_u64(&key[64..72]);
-        Ok((signature, slot))
+        Ok(convert_column_key_bytes_to_index!(key,
+             0..64 => Signature::from,
+            64..72 => Slot::from_be_bytes,
+        ))
     }
 
     fn convert_index(deprecated_index: Self::DeprecatedIndex) -> Self::Index {
@@ -945,17 +969,20 @@ impl ColumnIndexDeprecation for columns::TransactionStatus {
 }
 
 impl Column for columns::AddressSignatures {
-    type Index = (Pubkey, Slot, u32, Signature);
-    const KEY_LEN: usize = mem::size_of::<Pubkey>()
-        + mem::size_of::<Slot>()
-        + mem::size_of::<u32>()
-        + mem::size_of::<Signature>();
+    type Index = (Pubkey, Slot, /*transaction index:*/ u32, Signature);
+    type Key = [u8; PUBKEY_BYTES
+        + std::mem::size_of::<Slot>()
+        + std::mem::size_of::<u32>()
+        + SIGNATURE_BYTES];
 
-    fn serialize_index(key: &mut [u8], (pubkey, slot, transaction_index, signature): Self::Index) {
-        key[0..32].copy_from_slice(&pubkey.as_ref()[0..32]);
-        BigEndian::write_u64(&mut key[32..40], slot);
-        BigEndian::write_u32(&mut key[40..44], transaction_index);
-        key[44..108].copy_from_slice(&signature.as_ref()[0..64]);
+    #[inline]
+    fn key((pubkey, slot, transaction_index, signature): &Self::Index) -> Self::Key {
+        convert_column_index_to_key_bytes!(Key,
+              ..32 => pubkey.as_ref(),
+            32..40 => &slot.to_be_bytes(),
+            40..44 => &transaction_index.to_be_bytes(),
+            44..   => signature.as_ref(),
+        )
     }
 
     fn index(key: &[u8]) -> Self::Index {
@@ -977,39 +1004,43 @@ impl ColumnName for columns::AddressSignatures {
 }
 
 impl ColumnIndexDeprecation for columns::AddressSignatures {
-    const DEPRECATED_INDEX_LEN: usize = 112;
     const CURRENT_INDEX_LEN: usize = 108;
     type DeprecatedIndex = (u64, Pubkey, Slot, Signature);
+    type DeprecatedKey = [u8; 112];
 
-    fn deprecated_key((primary_index, pubkey, slot, signature): Self::DeprecatedIndex) -> Vec<u8> {
-        let mut key = vec![0; Self::DEPRECATED_INDEX_LEN];
-        BigEndian::write_u64(&mut key[0..8], primary_index);
-        key[8..40].clone_from_slice(&pubkey.as_ref()[0..32]);
-        BigEndian::write_u64(&mut key[40..48], slot);
-        key[48..112].clone_from_slice(&signature.as_ref()[0..64]);
-        key
+    fn deprecated_key(
+        (primary_index, pubkey, slot, signature): Self::DeprecatedIndex,
+    ) -> Self::DeprecatedKey {
+        convert_column_index_to_key_bytes!(DeprecatedKey,
+              ..8  => &primary_index.to_be_bytes(),
+             8..40 => pubkey.as_ref(),
+            40..48 => &slot.to_be_bytes(),
+            48..   => signature.as_ref(),
+        )
     }
 
     fn try_deprecated_index(key: &[u8]) -> std::result::Result<Self::DeprecatedIndex, IndexError> {
-        if key.len() != Self::DEPRECATED_INDEX_LEN {
+        if key.len() != std::mem::size_of::<Self::DeprecatedKey>() {
             return Err(IndexError::UnpackError);
         }
-        let primary_index = BigEndian::read_u64(&key[0..8]);
-        let pubkey = Pubkey::try_from(&key[8..40]).unwrap();
-        let slot = BigEndian::read_u64(&key[40..48]);
-        let signature = Signature::try_from(&key[48..112]).unwrap();
-        Ok((primary_index, pubkey, slot, signature))
+        Ok(convert_column_key_bytes_to_index!(key,
+             0..8   => u64::from_be_bytes,  // primary index
+             8..40  => Pubkey::from,
+            40..48  => Slot::from_be_bytes,
+            48..112 => Signature::from,
+        ))
     }
 
     fn try_current_index(key: &[u8]) -> std::result::Result<Self::Index, IndexError> {
         if key.len() != Self::CURRENT_INDEX_LEN {
             return Err(IndexError::UnpackError);
         }
-        let pubkey = Pubkey::try_from(&key[0..32]).unwrap();
-        let slot = BigEndian::read_u64(&key[32..40]);
-        let transaction_index = BigEndian::read_u32(&key[40..44]);
-        let signature = Signature::try_from(&key[44..108]).unwrap();
-        Ok((pubkey, slot, transaction_index, signature))
+        Ok(convert_column_key_bytes_to_index!(key,
+             0..32  => Pubkey::from,
+            32..40  => Slot::from_be_bytes,
+            40..44  => u32::from_be_bytes,  // transaction index
+            44..108 => Signature::from,
+        ))
     }
 
     fn convert_index(deprecated_index: Self::DeprecatedIndex) -> Self::Index {
@@ -1020,11 +1051,14 @@ impl ColumnIndexDeprecation for columns::AddressSignatures {
 
 impl Column for columns::TransactionMemos {
     type Index = (Signature, Slot);
-    const KEY_LEN: usize = mem::size_of::<Signature>() + mem::size_of::<Slot>();
+    type Key = [u8; SIGNATURE_BYTES + std::mem::size_of::<Slot>()];
 
-    fn serialize_index(key: &mut [u8], (signature, slot): Self::Index) {
-        key[0..64].copy_from_slice(&signature.as_ref()[0..64]);
-        BigEndian::write_u64(&mut key[64..72], slot);
+    #[inline]
+    fn key((signature, slot): &Self::Index) -> Self::Key {
+        convert_column_index_to_key_bytes!(Key,
+            ..64 => signature.as_ref(),
+            64.. => &slot.to_be_bytes(),
+        )
     }
 
     fn index(key: &[u8]) -> Self::Index {
@@ -1044,14 +1078,12 @@ impl ColumnName for columns::TransactionMemos {
 }
 
 impl ColumnIndexDeprecation for columns::TransactionMemos {
-    const DEPRECATED_INDEX_LEN: usize = 64;
     const CURRENT_INDEX_LEN: usize = 72;
     type DeprecatedIndex = Signature;
+    type DeprecatedKey = [u8; 64];
 
-    fn deprecated_key(signature: Self::DeprecatedIndex) -> Vec<u8> {
-        let mut key = vec![0; Self::DEPRECATED_INDEX_LEN];
-        key[0..64].copy_from_slice(&signature.as_ref()[0..64]);
-        key
+    fn deprecated_key(signature: Self::DeprecatedIndex) -> Self::DeprecatedKey {
+        Self::DeprecatedKey::from(signature)
     }
 
     fn try_deprecated_index(key: &[u8]) -> std::result::Result<Self::DeprecatedIndex, IndexError> {
@@ -1062,9 +1094,10 @@ impl ColumnIndexDeprecation for columns::TransactionMemos {
         if key.len() != Self::CURRENT_INDEX_LEN {
             return Err(IndexError::UnpackError);
         }
-        let signature = Signature::try_from(&key[0..64]).unwrap();
-        let slot = BigEndian::read_u64(&key[64..72]);
-        Ok((signature, slot))
+        Ok(convert_column_key_bytes_to_index!(key,
+             0..64 => Signature::from,
+            64..72 => Slot::from_be_bytes,
+        ))
     }
 
     fn convert_index(deprecated_index: Self::DeprecatedIndex) -> Self::Index {
@@ -1074,14 +1107,15 @@ impl ColumnIndexDeprecation for columns::TransactionMemos {
 
 impl Column for columns::TransactionStatusIndex {
     type Index = u64;
-    const KEY_LEN: usize = mem::size_of::<u64>();
+    type Key = [u8; std::mem::size_of::<u64>()];
 
-    fn serialize_index(key: &mut [u8], index: Self::Index) {
-        BigEndian::write_u64(&mut key[..], index);
+    #[inline]
+    fn key(index: &Self::Index) -> Self::Key {
+        index.to_be_bytes()
     }
 
-    fn index(key: &[u8]) -> u64 {
-        BigEndian::read_u64(&key[..8])
+    fn index(key: &[u8]) -> Self::Index {
+        convert_column_key_bytes_to_index!(key, 0..8 => u64::from_be_bytes)
     }
 
     fn slot(_index: Self::Index) -> Slot {
@@ -1133,14 +1167,15 @@ impl TypedColumn for columns::ProgramCosts {
 }
 impl Column for columns::ProgramCosts {
     type Index = Pubkey;
-    const KEY_LEN: usize = mem::size_of::<Pubkey>();
+    type Key = [u8; PUBKEY_BYTES];
 
-    fn serialize_index(key: &mut [u8], pubkey: Self::Index) {
-        key[0..32].copy_from_slice(&pubkey.as_ref()[0..32]);
+    #[inline]
+    fn key(pubkey: &Self::Index) -> Self::Key {
+        pubkey.to_bytes()
     }
 
     fn index(key: &[u8]) -> Self::Index {
-        Pubkey::try_from(&key[..32]).unwrap()
+        convert_column_key_bytes_to_index!(key, 0..32 => Pubkey::from)
     }
 
     fn slot(_index: Self::Index) -> Slot {
@@ -1153,15 +1188,16 @@ impl Column for columns::ProgramCosts {
 }
 
 impl Column for columns::ShredCode {
-    type Index = (Slot, u64);
-    const KEY_LEN: usize = mem::size_of::<Slot>() + mem::size_of::<u64>();
+    type Index = (Slot, /*shred index:*/ u64);
+    type Key = <columns::ShredData as Column>::Key;
 
-    fn serialize_index(key: &mut [u8], index: Self::Index) {
+    #[inline]
+    fn key(index: &Self::Index) -> Self::Key {
         // ShredCode and ShredData have the same key format
-        columns::ShredData::serialize_index(key, index);
+        <columns::ShredData as Column>::key(index)
     }
 
-    fn index(key: &[u8]) -> (Slot, u64) {
+    fn index(key: &[u8]) -> Self::Index {
         columns::ShredData::index(key)
     }
 
@@ -1178,18 +1214,22 @@ impl ColumnName for columns::ShredCode {
 }
 
 impl Column for columns::ShredData {
-    type Index = (Slot, u64);
-    const KEY_LEN: usize = mem::size_of::<Slot>() + mem::size_of::<u64>();
+    type Index = (Slot, /*shred index:*/ u64);
+    type Key = [u8; std::mem::size_of::<Slot>() + std::mem::size_of::<u64>()];
 
-    fn serialize_index(key: &mut [u8], (slot, index): Self::Index) {
-        BigEndian::write_u64(&mut key[..8], slot);
-        BigEndian::write_u64(&mut key[8..16], index);
+    #[inline]
+    fn key((slot, index): &Self::Index) -> Self::Key {
+        convert_column_index_to_key_bytes!(Key,
+            ..8 => &slot.to_be_bytes(),
+            8.. => &index.to_be_bytes(),
+        )
     }
 
-    fn index(key: &[u8]) -> (Slot, u64) {
-        let slot = BigEndian::read_u64(&key[..8]);
-        let index = BigEndian::read_u64(&key[8..16]);
-        (slot, index)
+    fn index(key: &[u8]) -> Self::Index {
+        convert_column_key_bytes_to_index!(key,
+            0..8  => Slot::from_be_bytes,
+            8..16 => u64::from_be_bytes,  // shred index
+        )
     }
 
     fn slot(index: Self::Index) -> Slot {
@@ -1210,6 +1250,28 @@ impl ColumnName for columns::Index {
 }
 impl TypedColumn for columns::Index {
     type Type = blockstore_meta::Index;
+
+    fn deserialize(data: &[u8]) -> Result<Self::Type> {
+        let config = bincode::DefaultOptions::new()
+            // `bincode::serialize` uses fixint encoding by default, so we need to use the same here
+            .with_fixint_encoding()
+            .reject_trailing_bytes();
+
+        // Migration strategy for new column format:
+        // 1. Release 1: Add ability to read new format as fallback, keep writing old format
+        // 2. Release 2: Switch to writing new format, keep reading old format as fallback
+        // 3. Release 3: Remove old format support once stable
+        // This allows safe downgrade to Release 1 since it can read both formats
+        // https://github.com/anza-xyz/agave/issues/3570
+        let index: bincode::Result<blockstore_meta::Index> = config.deserialize(data);
+        match index {
+            Ok(index) => Ok(index),
+            Err(_) => {
+                let index: blockstore_meta::IndexV2 = config.deserialize(data)?;
+                Ok(index.into())
+            }
+        }
+    }
 }
 
 impl SlotColumn for columns::DeadSlots {}
@@ -1261,19 +1323,22 @@ impl TypedColumn for columns::SlotMeta {
 }
 
 impl Column for columns::ErasureMeta {
-    type Index = (Slot, u64);
-    const KEY_LEN: usize = mem::size_of::<Slot>() + mem::size_of::<u64>();
+    type Index = (Slot, /*fec_set_index:*/ u64);
+    type Key = [u8; std::mem::size_of::<Slot>() + std::mem::size_of::<u64>()];
 
-    fn serialize_index(key: &mut [u8], (slot, set_index): Self::Index) {
-        BigEndian::write_u64(&mut key[..8], slot);
-        BigEndian::write_u64(&mut key[8..16], set_index);
+    #[inline]
+    fn key((slot, fec_set_index): &Self::Index) -> Self::Key {
+        convert_column_index_to_key_bytes!(Key,
+            ..8 => &slot.to_be_bytes(),
+            8.. => &fec_set_index.to_be_bytes(),
+        )
     }
 
-    fn index(key: &[u8]) -> (Slot, u64) {
-        let slot = BigEndian::read_u64(&key[..8]);
-        let set_index = BigEndian::read_u64(&key[8..]);
-
-        (slot, set_index)
+    fn index(key: &[u8]) -> Self::Index {
+        convert_column_key_bytes_to_index!(key,
+            0..8  => Slot::from_be_bytes,
+            8..16 => u64::from_be_bytes,  // fec_set_index
+        )
     }
 
     fn slot(index: Self::Index) -> Slot {
@@ -1301,18 +1366,21 @@ impl TypedColumn for columns::OptimisticSlots {
 
 impl Column for columns::MerkleRootMeta {
     type Index = (Slot, /*fec_set_index:*/ u32);
-    const KEY_LEN: usize = mem::size_of::<Slot>() + mem::size_of::<u32>();
+    type Key = [u8; std::mem::size_of::<Slot>() + std::mem::size_of::<u32>()];
 
-    fn serialize_index(key: &mut [u8], (slot, fec_set_index): Self::Index) {
-        BigEndian::write_u64(&mut key[..8], slot);
-        BigEndian::write_u32(&mut key[8..], fec_set_index);
+    #[inline]
+    fn key((slot, fec_set_index): &Self::Index) -> Self::Key {
+        convert_column_index_to_key_bytes!(Key,
+            ..8 => &slot.to_be_bytes(),
+            8.. => &fec_set_index.to_be_bytes(),
+        )
     }
 
     fn index(key: &[u8]) -> Self::Index {
-        let slot = BigEndian::read_u64(&key[..8]);
-        let fec_set_index = BigEndian::read_u32(&key[8..]);
-
-        (slot, fec_set_index)
+        convert_column_key_bytes_to_index!(key,
+            0..8  => Slot::from_be_bytes,
+            8..12 => u32::from_be_bytes,  // fec_set_index
+        )
     }
 
     fn slot((slot, _fec_set_index): Self::Index) -> Slot {
@@ -1332,10 +1400,7 @@ impl TypedColumn for columns::MerkleRootMeta {
 }
 
 #[derive(Debug)]
-pub struct LedgerColumn<C, const K: usize>
-where
-    C: Column + ColumnName,
-{
+pub struct LedgerColumn<C: Column + ColumnName> {
     backend: Arc<Rocks>,
     column: PhantomData<C>,
     pub column_options: Arc<LedgerColumnOptions>,
@@ -1343,7 +1408,7 @@ where
     write_perf_status: PerfSamplingStatus,
 }
 
-impl<C: Column + ColumnName, const K: usize> LedgerColumn<C, K> {
+impl<C: Column + ColumnName> LedgerColumn<C> {
     pub fn submit_rocksdb_cf_metrics(&self) {
         let cf_rocksdb_metrics = BlockstoreRocksDbColumnFamilyMetrics {
             total_sst_files_size: self
@@ -1404,41 +1469,34 @@ pub struct WriteBatch {
 }
 
 impl WriteBatch {
-    fn put_cf(&mut self, cf: &ColumnFamily, key: &[u8], value: &[u8]) -> Result<()> {
+    fn put_cf<K: AsRef<[u8]>>(&mut self, cf: &ColumnFamily, key: K, value: &[u8]) -> Result<()> {
         self.write_batch.put_cf(cf, key, value);
         Ok(())
     }
 
-    fn delete_cf(&mut self, cf: &ColumnFamily, key: &[u8]) -> Result<()> {
+    fn delete_cf<K: AsRef<[u8]>>(&mut self, cf: &ColumnFamily, key: K) -> Result<()> {
         self.write_batch.delete_cf(cf, key);
         Ok(())
     }
 
-    fn delete_range_cf(&mut self, cf: &ColumnFamily, from: &[u8], to: &[u8]) -> Result<()> {
+    fn delete_range_cf<K: AsRef<[u8]>>(&mut self, cf: &ColumnFamily, from: K, to: K) -> Result<()> {
         self.write_batch.delete_range_cf(cf, from, to);
         Ok(())
     }
 }
 
-impl<C, const K: usize> LedgerColumn<C, K>
+impl<C> LedgerColumn<C>
 where
     C: Column + ColumnName,
 {
-    #[inline]
-    fn key_from_index(index: C::Index) -> [u8; K] {
-        let mut key = [0u8; K];
-        C::serialize_index(&mut key, index);
-        key
-    }
-
     pub fn get_bytes(&self, index: C::Index) -> Result<Option<Vec<u8>>> {
         let is_perf_enabled = maybe_enable_rocksdb_perf(
             self.column_options.rocks_perf_sample_interval,
             &self.read_perf_status,
         );
 
-        let key = Self::key_from_index(index);
-        let result = self.backend.get_cf(self.handle(), &key);
+        let key = <C as Column>::key(&index);
+        let result = self.backend.get_cf(self.handle(), key);
 
         if let Some(op_start_instant) = is_perf_enabled {
             report_rocksdb_read_perf(
@@ -1451,46 +1509,57 @@ where
         result
     }
 
-    pub(crate) fn multi_get_bytes<I>(&self, keys: I) -> Vec<Result<Option<Vec<u8>>>>
+    /// Create a key type suitable for use with multi_get_bytes() and
+    /// multi_get(). Those functions return iterators, so the keys must be
+    /// created with a separate function in order to live long enough
+    pub(crate) fn multi_get_keys<I>(&self, keys: I) -> Vec<<C as Column>::Key>
     where
         I: IntoIterator<Item = C::Index>,
     {
-        let keys: Vec<_> = keys.into_iter().map(C::key).collect();
-        {
-            let is_perf_enabled = maybe_enable_rocksdb_perf(
-                self.column_options.rocks_perf_sample_interval,
-                &self.read_perf_status,
-            );
-            let result = self
-                .backend
-                .multi_get_cf(self.handle(), &keys)
-                .map(|out| Ok(out?.as_deref().map(<[u8]>::to_vec)))
-                .collect::<Vec<Result<Option<_>>>>();
-            if let Some(op_start_instant) = is_perf_enabled {
-                // use multi-get instead
-                report_rocksdb_read_perf(
-                    C::NAME,
-                    PERF_METRIC_OP_NAME_MULTI_GET,
-                    &op_start_instant.elapsed(),
-                    &self.column_options,
-                );
-            }
+        keys.into_iter().map(|index| C::key(&index)).collect()
+    }
 
-            result
+    pub(crate) fn multi_get_bytes<'a, K>(
+        &'a self,
+        keys: impl IntoIterator<Item = &'a K> + 'a,
+    ) -> impl Iterator<Item = Result<Option<Vec<u8>>>> + 'a
+    where
+        K: AsRef<[u8]> + 'a + ?Sized,
+    {
+        let is_perf_enabled = maybe_enable_rocksdb_perf(
+            self.column_options.rocks_perf_sample_interval,
+            &self.read_perf_status,
+        );
+
+        let result = self
+            .backend
+            .multi_get_cf(self.handle(), keys)
+            .map(|out| Ok(out?.as_deref().map(<[u8]>::to_vec)));
+
+        if let Some(op_start_instant) = is_perf_enabled {
+            // use multi-get instead
+            report_rocksdb_read_perf(
+                C::NAME,
+                PERF_METRIC_OP_NAME_MULTI_GET,
+                &op_start_instant.elapsed(),
+                &self.column_options,
+            );
         }
+
+        result
     }
 
     pub fn iter(
         &self,
         iterator_mode: IteratorMode<C::Index>,
     ) -> Result<impl Iterator<Item = (C::Index, Box<[u8]>)> + '_> {
-        let mut start_key = [0u8; K];
+        let start_key: <C as Column>::Key;
         let iterator_mode = match iterator_mode {
             IteratorMode::Start => RocksIteratorMode::Start,
             IteratorMode::End => RocksIteratorMode::End,
             IteratorMode::From(start, direction) => {
-                C::serialize_index(&mut start_key, start);
-                RocksIteratorMode::From(&start_key, direction)
+                start_key = <C as Column>::key(&start);
+                RocksIteratorMode::From(start_key.as_ref(), direction)
             }
         };
 
@@ -1499,19 +1568,6 @@ where
             let (key, value) = pair.unwrap();
             (C::index(&key), value)
         }))
-    }
-
-    pub fn compact_range(&self, from: Slot, to: Slot) -> Result<bool>
-    where
-        C::Index: PartialOrd + Copy,
-    {
-        let from_key = Self::key_from_index(C::as_index(from));
-        let to_key = Self::key_from_index(C::as_index(to));
-
-        self.backend
-            .db
-            .compact_range_cf(self.handle(), Some(&from_key), Some(&to_key));
-        Ok(true)
     }
 
     #[cfg(test)]
@@ -1539,8 +1595,8 @@ where
             &self.write_perf_status,
         );
 
-        let key = Self::key_from_index(index);
-        let result = self.backend.put_cf(self.handle(), &key, value);
+        let key = <C as Column>::key(&index);
+        let result = self.backend.put_cf(self.handle(), key, value);
 
         if let Some(op_start_instant) = is_perf_enabled {
             report_rocksdb_write_perf(
@@ -1559,8 +1615,8 @@ where
         index: C::Index,
         value: &[u8],
     ) -> Result<()> {
-        let key = Self::key_from_index(index);
-        batch.put_cf(self.handle(), &key, value)
+        let key = <C as Column>::key(&index);
+        batch.put_cf(self.handle(), key, value)
     }
 
     /// Retrieves the specified RocksDB integer property of the current
@@ -1578,8 +1634,8 @@ where
             &self.write_perf_status,
         );
 
-        let key = Self::key_from_index(index);
-        let result = self.backend.delete_cf(self.handle(), &key);
+        let key = <C as Column>::key(&index);
+        let result = self.backend.delete_cf(self.handle(), key);
 
         if let Some(op_start_instant) = is_perf_enabled {
             report_rocksdb_write_perf(
@@ -1593,8 +1649,8 @@ where
     }
 
     pub fn delete_in_batch(&self, batch: &mut WriteBatch, index: C::Index) -> Result<()> {
-        let key = Self::key_from_index(index);
-        batch.delete_cf(self.handle(), &key)
+        let key = <C as Column>::key(&index);
+        batch.delete_cf(self.handle(), key)
     }
 
     /// Adds a \[`from`, `to`\] range that deletes all entries between the `from` slot
@@ -1609,11 +1665,9 @@ where
         //
         // For consistency, we make our delete_range_cf works for [from, to] by
         // adjusting the `to` slot range by 1.
-        let mut from_key = [0u8; K];
-        C::serialize_index(&mut from_key, C::as_index(from));
-        let mut to_key = [0u8; K];
-        C::serialize_index(&mut to_key, C::as_index(to.saturating_add(1)));
-        batch.delete_range_cf(self.handle(), &from_key, &to_key)
+        let from_key = <C as Column>::key(&C::as_index(from));
+        let to_key = <C as Column>::key(&C::as_index(to.saturating_add(1)));
+        batch.delete_range_cf(self.handle(), from_key, to_key)
     }
 
     /// Delete files whose slot range is within \[`from`, `to`\].
@@ -1621,61 +1675,60 @@ where
     where
         C: Column + ColumnName,
     {
-        let mut from_key = [0u8; K];
-        C::serialize_index(&mut from_key, C::as_index(from));
-        let mut to_key = [0u8; K];
-        C::serialize_index(&mut to_key, C::as_index(to));
+        let from_key = <C as Column>::key(&C::as_index(from));
+        let to_key = <C as Column>::key(&C::as_index(to));
         self.backend
-            .delete_file_in_range_cf(self.handle(), &from_key, &to_key)
+            .delete_file_in_range_cf(self.handle(), from_key, to_key)
     }
 }
 
-impl<C, const K: usize> LedgerColumn<C, K>
+impl<C> LedgerColumn<C>
 where
     C: TypedColumn + ColumnName,
 {
-    pub(crate) fn multi_get<I>(&self, keys: I) -> Vec<Result<Option<C::Type>>>
+    pub(crate) fn multi_get<'a, K>(
+        &'a self,
+        keys: impl IntoIterator<Item = &'a K> + 'a,
+    ) -> impl Iterator<Item = Result<Option<C::Type>>> + 'a
     where
-        I: IntoIterator<Item = C::Index>,
+        K: AsRef<[u8]> + 'a + ?Sized,
     {
-        let keys: Vec<_> = keys.into_iter().map(C::key).collect();
-        {
-            let is_perf_enabled = maybe_enable_rocksdb_perf(
-                self.column_options.rocks_perf_sample_interval,
-                &self.read_perf_status,
-            );
-            let result = self
-                .backend
-                .multi_get_cf(self.handle(), &keys)
-                .map(|out| Ok(out?.as_deref().map(deserialize).transpose()?))
-                .collect::<Vec<Result<Option<_>>>>();
-            if let Some(op_start_instant) = is_perf_enabled {
-                // use multi-get instead
-                report_rocksdb_read_perf(
-                    C::NAME,
-                    PERF_METRIC_OP_NAME_MULTI_GET,
-                    &op_start_instant.elapsed(),
-                    &self.column_options,
-                );
-            }
+        let is_perf_enabled = maybe_enable_rocksdb_perf(
+            self.column_options.rocks_perf_sample_interval,
+            &self.read_perf_status,
+        );
 
-            result
+        let result = self
+            .backend
+            .multi_get_cf(self.handle(), keys)
+            .map(|out| out?.as_deref().map(C::deserialize).transpose());
+
+        if let Some(op_start_instant) = is_perf_enabled {
+            // use multi-get instead
+            report_rocksdb_read_perf(
+                C::NAME,
+                PERF_METRIC_OP_NAME_MULTI_GET,
+                &op_start_instant.elapsed(),
+                &self.column_options,
+            );
         }
+
+        result
     }
 
     pub fn get(&self, index: C::Index) -> Result<Option<C::Type>> {
-        let key = Self::key_from_index(index);
-        self.get_raw(&key)
+        let key = <C as Column>::key(&index);
+        self.get_raw(key)
     }
 
-    pub fn get_raw(&self, key: &[u8]) -> Result<Option<C::Type>> {
+    pub fn get_raw<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<C::Type>> {
         let mut result = Ok(None);
         let is_perf_enabled = maybe_enable_rocksdb_perf(
             self.column_options.rocks_perf_sample_interval,
             &self.read_perf_status,
         );
         if let Some(pinnable_slice) = self.backend.get_pinned_cf(self.handle(), key)? {
-            let value = deserialize(pinnable_slice.as_ref())?;
+            let value = C::deserialize(pinnable_slice.as_ref())?;
             result = Ok(Some(value))
         }
 
@@ -1695,10 +1748,10 @@ where
             self.column_options.rocks_perf_sample_interval,
             &self.write_perf_status,
         );
-        let serialized_value = serialize(value)?;
+        let serialized_value = C::serialize(value)?;
 
-        let key = Self::key_from_index(index);
-        let result = self.backend.put_cf(self.handle(), &key, &serialized_value);
+        let key = <C as Column>::key(&index);
+        let result = self.backend.put_cf(self.handle(), key, &serialized_value);
 
         if let Some(op_start_instant) = is_perf_enabled {
             report_rocksdb_write_perf(
@@ -1717,13 +1770,13 @@ where
         index: C::Index,
         value: &C::Type,
     ) -> Result<()> {
-        let key = Self::key_from_index(index);
-        let serialized_value = serialize(value)?;
-        batch.put_cf(self.handle(), &key, &serialized_value)
+        let key = <C as Column>::key(&index);
+        let serialized_value = C::serialize(value)?;
+        batch.put_cf(self.handle(), key, &serialized_value)
     }
 }
 
-impl<C, const K: usize> LedgerColumn<C, K>
+impl<C> LedgerColumn<C>
 where
     C: ProtobufColumn + ColumnName,
 {
@@ -1731,13 +1784,13 @@ where
         &self,
         index: C::Index,
     ) -> Result<Option<C::Type>> {
-        let key = Self::key_from_index(index);
-        self.get_raw_protobuf_or_bincode::<T>(&key)
+        let key = <C as Column>::key(&index);
+        self.get_raw_protobuf_or_bincode::<T>(key)
     }
 
     pub(crate) fn get_raw_protobuf_or_bincode<T: DeserializeOwned + Into<C::Type>>(
         &self,
-        key: &[u8],
+        key: impl AsRef<[u8]>,
     ) -> Result<Option<C::Type>> {
         let is_perf_enabled = maybe_enable_rocksdb_perf(
             self.column_options.rocks_perf_sample_interval,
@@ -1770,8 +1823,8 @@ where
             &self.read_perf_status,
         );
 
-        let key = Self::key_from_index(index);
-        let result = self.backend.get_pinned_cf(self.handle(), &key);
+        let key = <C as Column>::key(&index);
+        let result = self.backend.get_pinned_cf(self.handle(), key);
 
         if let Some(op_start_instant) = is_perf_enabled {
             report_rocksdb_read_perf(
@@ -1798,8 +1851,8 @@ where
             &self.write_perf_status,
         );
 
-        let key = Self::key_from_index(index);
-        let result = self.backend.put_cf(self.handle(), &key, &buf);
+        let key = <C as Column>::key(&index);
+        let result = self.backend.put_cf(self.handle(), key, &buf);
 
         if let Some(op_start_instant) = is_perf_enabled {
             report_rocksdb_write_perf(
@@ -1814,7 +1867,7 @@ where
     }
 }
 
-impl<C, const K: usize> LedgerColumn<C, K>
+impl<C> LedgerColumn<C>
 where
     C: ColumnIndexDeprecation + ColumnName,
 {
@@ -1822,13 +1875,13 @@ where
         &self,
         iterator_mode: IteratorMode<C::Index>,
     ) -> Result<impl Iterator<Item = (C::Index, Box<[u8]>)> + '_> {
-        let mut start_key = [0u8; K];
+        let start_key: <C as Column>::Key;
         let iterator_mode = match iterator_mode {
             IteratorMode::Start => RocksIteratorMode::Start,
             IteratorMode::End => RocksIteratorMode::End,
             IteratorMode::From(start, direction) => {
-                C::serialize_index(&mut start_key, start);
-                RocksIteratorMode::From(&start_key, direction)
+                start_key = <C as Column>::key(&start);
+                RocksIteratorMode::From(start_key.as_ref(), direction)
             }
         };
 
@@ -1843,13 +1896,13 @@ where
         &self,
         iterator_mode: IteratorMode<C::DeprecatedIndex>,
     ) -> Result<impl Iterator<Item = (C::DeprecatedIndex, Box<[u8]>)> + '_> {
-        let start_key;
+        let start_key: <C as ColumnIndexDeprecation>::DeprecatedKey;
         let iterator_mode = match iterator_mode {
             IteratorMode::Start => RocksIteratorMode::Start,
             IteratorMode::End => RocksIteratorMode::End,
             IteratorMode::From(start_from, direction) => {
                 start_key = C::deprecated_key(start_from);
-                RocksIteratorMode::From(&start_key, direction)
+                RocksIteratorMode::From(start_key.as_ref(), direction)
             }
         };
 
@@ -1991,28 +2044,39 @@ fn process_cf_options_advanced<C: 'static + Column + ColumnName>(
     }
 }
 
-fn get_db_options(access_type: &AccessType) -> Options {
+fn get_db_options(blockstore_options: &BlockstoreOptions) -> Options {
     let mut options = Options::default();
 
     // Create missing items to support a clean start
     options.create_if_missing(true);
     options.create_missing_column_families(true);
 
-    // Per the docs, a good value for this is the number of cores on the machine
-    options.increase_parallelism(num_cpus::get() as i32);
-
+    // rocksdb builds two threadpools: low and high priority. The low priority
+    // pool is used for compactions whereas the high priority pool is used for
+    // memtable flushes. Separate pools are created so that compactions are
+    // unable to stall memtable flushes (which could stall memtable writes).
     let mut env = rocksdb::Env::new().unwrap();
-    // While a compaction is ongoing, all the background threads
-    // could be used by the compaction. This can stall writes which
-    // need to flush the memtable. Add some high-priority background threads
-    // which can service these writes.
-    env.set_high_priority_background_threads(4);
+    env.set_low_priority_background_threads(
+        blockstore_options.num_rocksdb_compaction_threads.get() as i32,
+    );
+    env.set_high_priority_background_threads(
+        blockstore_options.num_rocksdb_flush_threads.get() as i32
+    );
     options.set_env(&env);
+    // rocksdb will try to scale threadpool sizes automatically based on the
+    // value set for max_background_jobs. The automatic scaling can increase,
+    // but not decrease the number of threads in each pool. But, we already
+    // set desired threadpool sizes with set_low_priority_background_threads()
+    // and set_high_priority_background_threads(). So, set max_background_jobs
+    // to a small number (2) so that rocksdb will leave the previously
+    // configured threadpool sizes as-is. The value (2) would result in one
+    // low priority and one high priority thread which is the minimum for each.
+    options.set_max_background_jobs(2);
 
     // Set max total wal size to 4G.
     options.set_max_total_wal_size(4 * 1024 * 1024 * 1024);
 
-    if should_disable_auto_compactions(access_type) {
+    if should_disable_auto_compactions(&blockstore_options.access_type) {
         options.set_disable_auto_compactions(true);
     }
 
@@ -2022,6 +2086,18 @@ fn get_db_options(access_type: &AccessType) -> Options {
     options.set_max_open_files(-1);
 
     options
+}
+
+/// The default number of threads to use for rocksdb compaction in the rocksdb
+/// low priority threadpool
+pub fn default_num_compaction_threads() -> NonZeroUsize {
+    NonZeroUsize::new(num_cpus::get()).expect("thread count is non-zero")
+}
+
+/// The default number of threads to use for rocksdb memtable flushes in the
+/// rocksdb high priority threadpool
+pub fn default_num_flush_threads() -> NonZeroUsize {
+    NonZeroUsize::new((num_cpus::get() / 4).max(1)).expect("thread count is non-zero")
 }
 
 // Returns whether automatic compactions should be disabled for the entire
@@ -2087,7 +2163,7 @@ pub mod tests {
         let mut compaction_filter = factory.create(dummy_compaction_filter_context());
 
         let dummy_level = 0;
-        let key = ShredData::key(ShredData::as_index(0));
+        let key = ShredData::key(&ShredData::as_index(0));
         let dummy_value = vec![];
 
         // we can't use assert_matches! because CompactionDecision doesn't implement Debug
@@ -2111,7 +2187,7 @@ pub mod tests {
         ));
 
         // newer key shouldn't be removed
-        let key = ShredData::key(ShredData::as_index(1));
+        let key = ShredData::key(&ShredData::as_index(1));
         matches!(
             compaction_filter.filter(dummy_level, &key, &dummy_value),
             CompactionDecision::Keep
@@ -2196,7 +2272,7 @@ pub mod tests {
         }
     }
 
-    impl<C, const K: usize> LedgerColumn<C, K>
+    impl<C> LedgerColumn<C>
     where
         C: ColumnIndexDeprecation + ProtobufColumn + ColumnName,
     {
@@ -2208,35 +2284,35 @@ pub mod tests {
             let mut buf = Vec::with_capacity(value.encoded_len());
             value.encode(&mut buf)?;
             self.backend
-                .put_cf(self.handle(), &C::deprecated_key(index), &buf)
+                .put_cf(self.handle(), C::deprecated_key(index), &buf)
         }
     }
 
-    impl<C, const K: usize> LedgerColumn<C, K>
+    impl<C> LedgerColumn<C>
     where
         C: ColumnIndexDeprecation + TypedColumn + ColumnName,
     {
         pub fn put_deprecated(&self, index: C::DeprecatedIndex, value: &C::Type) -> Result<()> {
-            let serialized_value = serialize(value)?;
+            let serialized_value = C::serialize(value)?;
             self.backend
-                .put_cf(self.handle(), &C::deprecated_key(index), &serialized_value)
+                .put_cf(self.handle(), C::deprecated_key(index), &serialized_value)
         }
     }
 
-    impl<C, const K: usize> LedgerColumn<C, K>
+    impl<C> LedgerColumn<C>
     where
         C: ColumnIndexDeprecation + ColumnName,
     {
         pub(crate) fn iterator_cf_raw_key(
             &self,
             iterator_mode: IteratorMode<C::Index>,
-        ) -> impl Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_ {
+        ) -> impl Iterator<Item = (C::Key, Box<[u8]>)> + '_ {
             // The conversion of key back into Box<[u8]> incurs an extra
             // allocation. However, this is test code and the goal is to
             // maximize code reuse over efficiency
             self.iter(iterator_mode)
                 .unwrap()
-                .map(|(key, value)| (Box::from(C::key(key)), value))
+                .map(|(key, value)| (C::key(&key), value))
         }
     }
 }

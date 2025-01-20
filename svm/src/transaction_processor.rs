@@ -4,11 +4,11 @@ use {
     crate::{
         account_loader::{
             collect_rent_from_account, load_transaction, validate_fee_payer, AccountLoader,
-            AccountUsagePattern, CheckedTransactionDetails, LoadedTransaction,
-            TransactionCheckResult, TransactionLoadResult, ValidatedTransactionDetails,
+            CheckedTransactionDetails, LoadedTransaction, TransactionCheckResult,
+            TransactionLoadResult, ValidatedTransactionDetails,
         },
         account_overrides::AccountOverrides,
-        message_processor::MessageProcessor,
+        message_processor::process_message,
         nonce_info::NonceInfo,
         program_loader::{get_program_modification_slot, load_program_with_pubkey},
         rollback_accounts::RollbackAccounts,
@@ -177,7 +177,7 @@ pub struct TransactionBatchProcessor<FG: ForkGraph> {
 
     /// SysvarCache is a collection of system variables that are
     /// accessible from on chain programs. It is passed to SVM from
-    /// client code (e.g. Bank) and forwarded to the MessageProcessor.
+    /// client code (e.g. Bank) and forwarded to process_message.
     sysvar_cache: RwLock<SysvarCache>,
 
     /// Programs required for transaction batch processing
@@ -366,7 +366,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             program_accounts_map
         });
 
-        let (program_cache_for_tx_batch, program_cache_us) = measure_us!({
+        let (mut program_cache_for_tx_batch, program_cache_us) = measure_us!({
             let program_cache_for_tx_batch = self.replenish_program_cache(
                 callbacks,
                 &program_accounts_map,
@@ -396,8 +396,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // Create the account loader, which wraps all external account fetching.
         let mut account_loader = AccountLoader::new_with_account_cache_capacity(
             config.account_overrides,
-            program_cache_for_tx_batch,
-            program_accounts_map,
             callbacks,
             environment.feature_set.clone(),
             account_keys_in_batch,
@@ -461,7 +459,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         loaded_transaction,
                         &mut execute_timings,
                         &mut error_metrics,
-                        &mut account_loader.program_cache,
+                        &mut program_cache_for_tx_batch,
                         environment,
                         config,
                     );
@@ -470,6 +468,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     // Also update local program cache with modifications made by the transaction,
                     // if it executed successfully.
                     account_loader.update_accounts_for_executed_tx(tx, &executed_tx);
+                    if executed_tx.was_successful() {
+                        program_cache_for_tx_batch.merge(&executed_tx.programs_modified_by_tx);
+                    }
 
                     Ok(ProcessedTransaction::Executed(Box::new(executed_tx)))
                 }
@@ -483,9 +484,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // ProgramCache entries. Note that loaded_missing is deliberately defined, so that there's
         // still at least one other batch, which will evict the program cache, even after the
         // occurrences of cooperative loading.
-        if account_loader.program_cache.loaded_missing
-            || account_loader.program_cache.merged_modified
-        {
+        if program_cache_for_tx_batch.loaded_missing || program_cache_for_tx_batch.merged_modified {
             const SHRINK_LOADED_PROGRAMS_TO_PERCENTAGE: u8 = 90;
             self.program_cache
                 .write()
@@ -579,8 +578,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         let fee_payer_address = message.fee_payer();
 
-        let Some(mut loaded_fee_payer) =
-            account_loader.load_account(fee_payer_address, AccountUsagePattern::Writable)
+        let Some(mut loaded_fee_payer) = account_loader.load_account(fee_payer_address, true)
         else {
             error_counters.account_not_found += 1;
             return Err(TransactionError::AccountNotFound);
@@ -654,7 +652,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         //
         // Note these checks are *not* obviated by fee-only transactions.
         let nonce_is_valid = account_loader
-            .load_account(nonce_info.address(), AccountUsagePattern::Writable)
+            .load_account(nonce_info.address(), true)
             .and_then(|loaded_nonce| {
                 let current_nonce_account = &loaded_nonce.account;
                 system_program::check_id(current_nonce_account.owner()).then_some(())?;
@@ -1002,7 +1000,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         );
 
         let mut process_message_time = Measure::start("process_message_time");
-        let process_result = MessageProcessor::process_message(
+        let process_result = process_message(
             tx,
             &loaded_transaction.program_indices,
             &mut invoke_context,
@@ -1192,7 +1190,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     }
 
     #[cfg(feature = "dev-context-only-utils")]
-    pub fn writable_sysvar_cache(&self) -> &RwLock<SysvarCache> {
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    fn writable_sysvar_cache(&self) -> &RwLock<SysvarCache> {
         &self.sysvar_cache
     }
 }
@@ -1250,10 +1249,10 @@ mod tests {
     }
 
     #[derive(Default, Clone)]
-    pub struct MockBankCallback {
-        pub account_shared_data: Arc<RwLock<HashMap<Pubkey, AccountSharedData>>>,
+    struct MockBankCallback {
+        account_shared_data: Arc<RwLock<HashMap<Pubkey, AccountSharedData>>>,
         #[allow(clippy::type_complexity)]
-        pub inspected_accounts:
+        inspected_accounts:
             Arc<RwLock<HashMap<Pubkey, Vec<(Option<AccountSharedData>, /* is_writable */ bool)>>>>,
     }
 
@@ -1310,8 +1309,6 @@ mod tests {
         fn from(callbacks: &'a MockBankCallback) -> AccountLoader<'a, MockBankCallback> {
             AccountLoader::new_with_account_cache_capacity(
                 None,
-                ProgramCacheForTxBatch::default(),
-                HashMap::default(),
                 callbacks,
                 Arc::<FeatureSet>::default(),
                 0,

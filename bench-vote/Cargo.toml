@@ -10,10 +10,12 @@ edition = { workspace = true }
 
 [dependencies]
 bincode = { workspace = true }
-clap = { version = "3.1.5", features = ["cargo"] }
+clap = { workspace = true }
 crossbeam-channel = { workspace = true }
+solana-clap-utils = { workspace = true }
 solana-client = { workspace = true }
 solana-connection-cache = { workspace = true }
+solana-logger = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-sdk = { workspace = true }
 solana-streamer = { workspace = true }

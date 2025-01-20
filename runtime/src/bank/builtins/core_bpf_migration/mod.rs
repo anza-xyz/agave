@@ -173,15 +173,26 @@ impl Bank {
                 compute_budget,
             );
 
-            use solana_bpf_loader_program::deploy_program_internal;
-            solana_bpf_loader_program::deploy_program!(
-                dummy_invoke_context,
+            let environments = dummy_invoke_context
+                .get_environments_for_slot(self.slot.saturating_add(
+                    solana_program_runtime::loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
+                ))
+                .map_err(|_err| {
+                    // This will never fail since the epoch schedule is already configured.
+                    InstructionError::ProgramEnvironmentSetupFailure
+                })?;
+
+            let load_program_metrics = solana_bpf_loader_program::deploy_program(
+                dummy_invoke_context.get_log_collector(),
+                dummy_invoke_context.program_cache_for_tx_batch,
+                environments.program_runtime_v1.clone(),
                 program_id,
                 &bpf_loader_upgradeable::id(),
                 data_len,
                 elf,
                 self.slot,
-            );
+            )?;
+            load_program_metrics.submit_datapoint(&mut dummy_invoke_context.timings);
         }
 
         // Update the program cache by merging with `programs_modified`, which

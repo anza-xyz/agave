@@ -41,7 +41,7 @@ solana-message = { workspace = true }
 solana-nonce = { workspace = true }
 solana-precompiles = { workspace = true }
 solana-program = { workspace = true, default-features = false }
-solana-program-runtime = { workspace = true }
+solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-rent-debits = { workspace = true }
@@ -71,6 +71,7 @@ prost = { workspace = true }
 rand0-7 = { workspace = true }
 shuttle = { workspace = true }
 solana-clock = { workspace = true }
+solana-compute-budget = { workspace = true, features = ["dev-context-only-utils"] }
 solana-compute-budget-interface = { workspace = true }
 solana-compute-budget-program = { workspace = true }
 solana-ed25519-program = { workspace = true }

@@ -114,7 +114,7 @@ impl FromStr for SnapshotVersion {
         // Remove leading 'v' or 'V' from slice
         let version_string = if version_string
             .get(..1)
-            .map_or(false, |s| s.eq_ignore_ascii_case("v"))
+            .is_some_and(|s| s.eq_ignore_ascii_case("v"))
         {
             &version_string[1..]
         } else {
@@ -339,8 +339,11 @@ pub enum SnapshotError {
     #[error("no snapshot archives to load from '{0}'")]
     NoSnapshotArchives(PathBuf),
 
-    #[error("snapshot has mismatch: deserialized bank: {0:?}, snapshot archive info: {1:?}")]
-    MismatchedSlotHash((Slot, SnapshotHash), (Slot, SnapshotHash)),
+    #[error("snapshot slot mismatch: deserialized bank: {0}, snapshot archive: {1}")]
+    MismatchedSlot(Slot, Slot),
+
+    #[error("snapshot hash mismatch: deserialized bank: {0:?}, snapshot archive: {1:?}")]
+    MismatchedHash(SnapshotHash, SnapshotHash),
 
     #[error("snapshot slot deltas are invalid: {0}")]
     VerifySlotDeltas(#[from] VerifySlotDeltasError),

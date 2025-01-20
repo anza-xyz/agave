@@ -1,18 +1,27 @@
 use {
     super::{
         scheduler_metrics::{SchedulerCountMetrics, SchedulerTimingMetrics},
-        transaction_state_container::StateContainer,
+        transaction_state::TransactionState,
+        transaction_state_container::{
+            SharedBytes, StateContainer, TransactionViewState, TransactionViewStateContainer,
+        },
     },
     crate::banking_stage::{
         decision_maker::BufferedPacketsDecision,
         immutable_deserialized_packet::ImmutableDeserializedPacket,
-        packet_deserializer::PacketDeserializer, scheduler_messages::MaxAge,
+        packet_deserializer::PacketDeserializer, packet_filter::MAX_ALLOWED_PRECOMPILE_SIGNATURES,
+        scheduler_messages::MaxAge,
         transaction_scheduler::transaction_state::SanitizedTransactionTTL,
         TransactionStateContainer,
     },
+    agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
+    agave_transaction_view::{
+        resolved_transaction_view::ResolvedTransactionView,
+        transaction_version::TransactionVersion, transaction_view::SanitizedTransactionView,
+    },
     arrayvec::ArrayVec,
     core::time::Duration,
-    crossbeam_channel::RecvTimeoutError,
+    crossbeam_channel::{RecvTimeoutError, TryRecvError},
     solana_accounts_db::account_locks::validate_account_locks,
     solana_cost_model::cost_model::CostModel,
     solana_measure::measure_us,
@@ -26,24 +35,29 @@ use {
         clock::{Epoch, Slot, MAX_PROCESSING_AGE},
         fee::FeeBudgetLimits,
         saturating_add_assign,
-        transaction::SanitizedTransaction,
+        transaction::{MessageHash, SanitizedTransaction},
     },
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
-    std::sync::{Arc, RwLock},
+    solana_svm_transaction::svm_message::SVMMessage,
+    std::{
+        sync::{Arc, RwLock},
+        time::Instant,
+    },
 };
 
 pub(crate) trait ReceiveAndBuffer {
-    type Transaction: TransactionWithMeta;
-    type Container: StateContainer<Self::Transaction>;
+    type Transaction: TransactionWithMeta + Send + Sync;
+    type Container: StateContainer<Self::Transaction> + Send + Sync;
 
-    /// Returns whether the packet receiver is still connected.
+    /// Return Err if the receiver is disconnected AND no packets were
+    /// received. Otherwise return Ok(num_received).
     fn receive_and_buffer_packets(
         &mut self,
         container: &mut Self::Container,
         timing_metrics: &mut SchedulerTimingMetrics,
         count_metrics: &mut SchedulerCountMetrics,
         decision: &BufferedPacketsDecision,
-    ) -> bool;
+    ) -> Result<usize, ()>;
 }
 
 pub(crate) struct SanitizedTransactionReceiveAndBuffer {
@@ -65,7 +79,7 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
         timing_metrics: &mut SchedulerTimingMetrics,
         count_metrics: &mut SchedulerCountMetrics,
         decision: &BufferedPacketsDecision,
-    ) -> bool {
+    ) -> Result<usize, ()> {
         let remaining_queue_capacity = container.remaining_capacity();
 
         const MAX_PACKET_RECEIVE_TIME: Duration = Duration::from_millis(10);
@@ -95,7 +109,7 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
             saturating_add_assign!(timing_metrics.receive_time_us, receive_time_us);
         });
 
-        match received_packet_results {
+        let num_received = match received_packet_results {
             Ok(receive_packet_results) => {
                 let num_received_packets = receive_packet_results.deserialized_packets.len();
 
@@ -121,12 +135,13 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
                         );
                     });
                 }
+                num_received_packets
             }
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => return false,
-        }
+            Err(RecvTimeoutError::Timeout) => 0,
+            Err(RecvTimeoutError::Disconnected) => return Err(()),
+        };
 
-        true
+        Ok(num_received)
     }
 }
 
@@ -278,6 +293,254 @@ impl SanitizedTransactionReceiveAndBuffer {
     }
 }
 
+pub(crate) struct TransactionViewReceiveAndBuffer {
+    pub receiver: BankingPacketReceiver,
+    pub bank_forks: Arc<RwLock<BankForks>>,
+}
+
+impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
+    type Transaction = RuntimeTransaction<ResolvedTransactionView<SharedBytes>>;
+    type Container = TransactionViewStateContainer;
+
+    fn receive_and_buffer_packets(
+        &mut self,
+        container: &mut Self::Container,
+        timing_metrics: &mut SchedulerTimingMetrics,
+        count_metrics: &mut SchedulerCountMetrics,
+        decision: &BufferedPacketsDecision,
+    ) -> Result<usize, ()> {
+        let (root_bank, working_bank) = {
+            let bank_forks = self.bank_forks.read().unwrap();
+            let root_bank = bank_forks.root_bank();
+            let working_bank = bank_forks.working_bank();
+            (root_bank, working_bank)
+        };
+
+        // Receive packet batches.
+        const TIMEOUT: Duration = Duration::from_millis(10);
+        let start = Instant::now();
+        let mut num_received = 0;
+        let mut received_message = false;
+
+        // If not leader/unknown, do a blocking-receive initially. This lets
+        // the thread sleep until a message is received, or until the timeout.
+        // Additionally, only sleep if the container is empty.
+        if container.is_empty()
+            && matches!(
+                decision,
+                BufferedPacketsDecision::Forward | BufferedPacketsDecision::ForwardAndHold
+            )
+        {
+            // TODO: Is it better to manually sleep instead, avoiding the locking
+            //       overhead for wakers? But then risk not waking up when message
+            //       received - as long as sleep is somewhat short, this should be
+            //       fine.
+            match self.receiver.recv_timeout(TIMEOUT) {
+                Ok(packet_batch_message) => {
+                    received_message = true;
+                    num_received += self.handle_packet_batch_message(
+                        container,
+                        timing_metrics,
+                        count_metrics,
+                        decision,
+                        &root_bank,
+                        &working_bank,
+                        packet_batch_message,
+                    );
+                }
+                Err(RecvTimeoutError::Timeout) => return Ok(num_received),
+                Err(RecvTimeoutError::Disconnected) => {
+                    return received_message.then_some(num_received).ok_or(());
+                }
+            }
+        }
+
+        while start.elapsed() < TIMEOUT {
+            match self.receiver.try_recv() {
+                Ok(packet_batch_message) => {
+                    received_message = true;
+                    num_received += self.handle_packet_batch_message(
+                        container,
+                        timing_metrics,
+                        count_metrics,
+                        decision,
+                        &root_bank,
+                        &working_bank,
+                        packet_batch_message,
+                    );
+                }
+                Err(TryRecvError::Empty) => return Ok(num_received),
+                Err(TryRecvError::Disconnected) => {
+                    return received_message.then_some(num_received).ok_or(());
+                }
+            }
+        }
+
+        Ok(num_received)
+    }
+}
+
+impl TransactionViewReceiveAndBuffer {
+    /// Return number of received packets.
+    fn handle_packet_batch_message(
+        &mut self,
+        container: &mut TransactionViewStateContainer,
+        timing_metrics: &mut SchedulerTimingMetrics,
+        count_metrics: &mut SchedulerCountMetrics,
+        decision: &BufferedPacketsDecision,
+        root_bank: &Bank,
+        working_bank: &Bank,
+        packet_batch_message: BankingPacketBatch,
+    ) -> usize {
+        // Do not support forwarding - only add support for this if we really need it.
+        if matches!(decision, BufferedPacketsDecision::Forward) {
+            return 0;
+        }
+
+        let start = Instant::now();
+        // Sanitize packets, generate IDs, and insert into the container.
+        let alt_resolved_slot = root_bank.slot();
+        let sanitized_epoch = root_bank.epoch();
+        let transaction_account_lock_limit = working_bank.get_transaction_account_lock_limit();
+
+        let mut num_received = 0usize;
+        let mut num_buffered = 0usize;
+        let mut num_dropped_on_capacity = 0usize;
+        let mut num_dropped_on_receive = 0usize;
+        for packet_batch in packet_batch_message.iter() {
+            for packet in packet_batch.iter() {
+                let Some(packet_data) = packet.data(..) else {
+                    continue;
+                };
+
+                num_received += 1;
+
+                // Reserve free-space to copy packet into, run sanitization checks, and insert.
+                if container.try_insert_with_data(
+                    packet_data,
+                    |bytes| match Self::try_handle_packet(
+                        bytes,
+                        root_bank,
+                        working_bank,
+                        alt_resolved_slot,
+                        sanitized_epoch,
+                        transaction_account_lock_limit,
+                    ) {
+                        Ok(state) => {
+                            num_buffered += 1;
+                            Ok(state)
+                        }
+                        Err(()) => {
+                            num_dropped_on_receive += 1;
+                            Err(())
+                        }
+                    },
+                ) {
+                    num_dropped_on_capacity += 1;
+                };
+            }
+        }
+
+        let buffer_time_us = start.elapsed().as_micros() as u64;
+        timing_metrics.update(|timing_metrics| {
+            saturating_add_assign!(timing_metrics.buffer_time_us, buffer_time_us);
+        });
+        count_metrics.update(|count_metrics| {
+            saturating_add_assign!(count_metrics.num_received, num_received);
+            saturating_add_assign!(count_metrics.num_buffered, num_buffered);
+            saturating_add_assign!(
+                count_metrics.num_dropped_on_capacity,
+                num_dropped_on_capacity
+            );
+            saturating_add_assign!(count_metrics.num_dropped_on_receive, num_dropped_on_receive);
+        });
+
+        num_received
+    }
+
+    fn try_handle_packet(
+        bytes: SharedBytes,
+        root_bank: &Bank,
+        working_bank: &Bank,
+        alt_resolved_slot: Slot,
+        sanitized_epoch: Epoch,
+        transaction_account_lock_limit: usize,
+    ) -> Result<TransactionViewState, ()> {
+        // Parsing and basic sanitization checks
+        let Ok(view) = SanitizedTransactionView::try_new_sanitized(bytes) else {
+            return Err(());
+        };
+
+        let Ok(view) = RuntimeTransaction::<SanitizedTransactionView<_>>::try_from(
+            view,
+            MessageHash::Compute,
+            None,
+        ) else {
+            return Err(());
+        };
+
+        // Discard non-vote packets if in vote-only mode.
+        if root_bank.vote_only_bank() && !view.is_simple_vote_transaction() {
+            return Err(());
+        }
+
+        // Check excessive pre-compiles.
+        let signature_details = view.signature_details();
+        let num_precompiles = signature_details.num_ed25519_instruction_signatures()
+            + signature_details.num_secp256k1_instruction_signatures()
+            + signature_details.num_secp256r1_instruction_signatures();
+        if num_precompiles > MAX_ALLOWED_PRECOMPILE_SIGNATURES {
+            return Err(());
+        }
+
+        // Load addresses for transaction.
+        let load_addresses_result = match view.version() {
+            TransactionVersion::Legacy => Ok((None, u64::MAX)),
+            TransactionVersion::V0 => root_bank
+                .load_addresses_from_ref(view.address_table_lookup_iter())
+                .map(|(loaded_addresses, deactivation_slot)| {
+                    (Some(loaded_addresses), deactivation_slot)
+                }),
+        };
+        let Ok((loaded_addresses, deactivation_slot)) = load_addresses_result else {
+            return Err(());
+        };
+
+        let Ok(view) = RuntimeTransaction::<ResolvedTransactionView<_>>::try_from(
+            view,
+            loaded_addresses,
+            root_bank.get_reserved_account_keys(),
+        ) else {
+            return Err(());
+        };
+
+        if validate_account_locks(view.account_keys(), transaction_account_lock_limit).is_err() {
+            return Err(());
+        }
+
+        let Ok(compute_budget_limits) = view
+            .compute_budget_instruction_details()
+            .sanitize_and_convert_to_compute_budget_limits(&working_bank.feature_set)
+        else {
+            return Err(());
+        };
+
+        let max_age = calculate_max_age(sanitized_epoch, deactivation_slot, alt_resolved_slot);
+        let fee_budget_limits = FeeBudgetLimits::from(compute_budget_limits);
+        let (priority, cost) = calculate_priority_and_cost(&view, &fee_budget_limits, working_bank);
+
+        Ok(TransactionState::new(
+            SanitizedTransactionTTL {
+                transaction: view,
+                max_age,
+            },
+            None,
+            priority,
+            cost,
+        ))
+    }
+}
+
 /// Calculate priority and cost for a transaction:
 ///
 /// Cost is calculated through the `CostModel`,
@@ -297,7 +560,7 @@ impl SanitizedTransactionReceiveAndBuffer {
 /// Any difference in the prioritization is negligible for
 /// the current transaction costs.
 fn calculate_priority_and_cost(
-    transaction: &RuntimeTransaction<SanitizedTransaction>,
+    transaction: &impl TransactionWithMeta,
     fee_budget_limits: &FeeBudgetLimits,
     bank: &Bank,
 ) -> (u64, u64) {

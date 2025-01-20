@@ -1,6 +1,5 @@
 use {
     crate::{
-        cluster_info_metrics::GossipStats,
         crds_data::MAX_WALLCLOCK,
         crds_gossip_pull::CrdsFilter,
         crds_value::CrdsValue,
@@ -86,68 +85,16 @@ impl Protocol {
             .unwrap()
     }
 
-    pub(crate) fn par_verify(self, stats: &GossipStats) -> Option<Self> {
+    // Returns true if all signatures verify.
+    #[must_use]
+    pub(crate) fn par_verify(&self) -> bool {
         match self {
-            Protocol::PullRequest(_, ref caller) => {
-                if caller.verify() {
-                    Some(self)
-                } else {
-                    stats.gossip_pull_request_verify_fail.add_relaxed(1);
-                    None
-                }
-            }
-            Protocol::PullResponse(from, data) => {
-                let size = data.len();
-                let data: Vec<_> = data.into_par_iter().filter(Signable::verify).collect();
-                if size != data.len() {
-                    stats
-                        .gossip_pull_response_verify_fail
-                        .add_relaxed((size - data.len()) as u64);
-                }
-                if data.is_empty() {
-                    None
-                } else {
-                    Some(Protocol::PullResponse(from, data))
-                }
-            }
-            Protocol::PushMessage(from, data) => {
-                let size = data.len();
-                let data: Vec<_> = data.into_par_iter().filter(Signable::verify).collect();
-                if size != data.len() {
-                    stats
-                        .gossip_push_msg_verify_fail
-                        .add_relaxed((size - data.len()) as u64);
-                }
-                if data.is_empty() {
-                    None
-                } else {
-                    Some(Protocol::PushMessage(from, data))
-                }
-            }
-            Protocol::PruneMessage(_, ref data) => {
-                if data.verify() {
-                    Some(self)
-                } else {
-                    stats.gossip_prune_msg_verify_fail.add_relaxed(1);
-                    None
-                }
-            }
-            Protocol::PingMessage(ref ping) => {
-                if ping.verify() {
-                    Some(self)
-                } else {
-                    stats.gossip_ping_msg_verify_fail.add_relaxed(1);
-                    None
-                }
-            }
-            Protocol::PongMessage(ref pong) => {
-                if pong.verify() {
-                    Some(self)
-                } else {
-                    stats.gossip_pong_msg_verify_fail.add_relaxed(1);
-                    None
-                }
-            }
+            Self::PullRequest(_, caller) => caller.verify(),
+            Self::PullResponse(_, data) => data.par_iter().all(CrdsValue::verify),
+            Self::PushMessage(_, data) => data.par_iter().all(CrdsValue::verify),
+            Self::PruneMessage(_, data) => data.verify(),
+            Self::PingMessage(ping) => ping.verify(),
+            Self::PongMessage(pong) => pong.verify(),
         }
     }
 }
@@ -526,7 +473,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_split_messages_small() {
-        let value = CrdsValue::new_unsigned(CrdsData::ContactInfo(ContactInfo::default()));
+        let value = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::default()));
         test_split_messages(value);
     }
 
@@ -548,7 +495,7 @@ pub(crate) mod tests {
             .collect();
         let splits: Vec<_> =
             split_gossip_messages(PUSH_MESSAGE_MAX_PAYLOAD_SIZE, values.clone()).collect();
-        let self_pubkey = solana_sdk::pubkey::new_rand();
+        let self_pubkey = solana_pubkey::new_rand();
         assert!(splits.len() * 2 < NUM_CRDS_VALUES);
         // Assert that all messages are included in the splits.
         assert_eq!(NUM_CRDS_VALUES, splits.iter().map(Vec::len).sum::<usize>());
@@ -606,7 +553,7 @@ pub(crate) mod tests {
         let num_values_per_payload = (PUSH_MESSAGE_MAX_PAYLOAD_SIZE / value_size).max(1);
 
         // Expected len is the ceiling of the division
-        let expected_len = (NUM_VALUES + num_values_per_payload - 1) / num_values_per_payload;
+        let expected_len = NUM_VALUES.div_ceil(num_values_per_payload);
         let msgs = vec![value; NUM_VALUES];
 
         assert!(split_gossip_messages(PUSH_MESSAGE_MAX_PAYLOAD_SIZE, msgs).count() <= expected_len);

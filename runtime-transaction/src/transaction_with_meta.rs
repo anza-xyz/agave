@@ -1,7 +1,7 @@
 use {
     crate::transaction_meta::StaticMeta,
-    solana_sdk::transaction::{SanitizedTransaction, VersionedTransaction},
     solana_svm_transaction::svm_transaction::SVMTransaction,
+    solana_transaction::{sanitized::SanitizedTransaction, versioned::VersionedTransaction},
     std::borrow::Cow,
 };
 

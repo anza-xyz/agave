@@ -50,10 +50,11 @@ pub enum MatchAccountOwnerError {
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum StorageAccess {
-    #[default]
     /// storages should be accessed by Mmap
     Mmap,
+    /// storages should be accessed by File I/O
     /// ancient storages are created by 1-shot write to pack multiple accounts together more efficiently with new formats
+    #[default]
     File,
 }
 

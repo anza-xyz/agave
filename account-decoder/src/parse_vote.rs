@@ -1,10 +1,8 @@
 use {
     crate::{parse_account_data::ParseAccountError, StringAmount},
-    solana_sdk::{
-        clock::{Epoch, Slot},
-        pubkey::Pubkey,
-        vote::state::{BlockTimestamp, Lockout, VoteState},
-    },
+    solana_clock::{Epoch, Slot},
+    solana_program::vote::state::{BlockTimestamp, Lockout, VoteState},
+    solana_pubkey::Pubkey,
 };
 
 pub fn parse_vote(data: &[u8]) -> Result<VoteAccountType, ParseAccountError> {
@@ -123,7 +121,7 @@ struct UiEpochCredits {
 
 #[cfg(test)]
 mod test {
-    use {super::*, solana_sdk::vote::state::VoteStateVersions};
+    use {super::*, solana_program::vote::state::VoteStateVersions};
 
     #[test]
     fn test_parse_vote() {

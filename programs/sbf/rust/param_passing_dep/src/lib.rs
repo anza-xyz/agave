@@ -18,8 +18,8 @@ pub struct Data<'a> {
 pub struct TestDep {
     pub thirty: u32,
 }
-impl<'a> TestDep {
-    pub fn new(data: &Data<'a>, _one: u64, _two: u64, _three: u64, _four: u64, five: u64) -> Self {
+impl TestDep {
+    pub fn new(data: &Data<'_>, _one: u64, _two: u64, _three: u64, _four: u64, five: u64) -> Self {
         Self {
             thirty: data.twentyfive + five as u32,
         }

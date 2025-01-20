@@ -1,0 +1,61 @@
+[package]
+name = "solana-vortexor"
+description = "Solana TPU Vortexor"
+documentation = "https://docs.rs/solana-vortexor"
+default-run = "solana-vortexor"
+publish = false
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+async-channel = { workspace = true }
+bytes = { workspace = true }
+clap = { workspace = true }
+crossbeam-channel = { workspace = true }
+dashmap = { workspace = true }
+futures  = { workspace = true }
+futures-util = { workspace = true }
+governor = { workspace = true }
+histogram = { workspace = true }
+indexmap = { workspace = true }
+itertools = { workspace = true }
+libc = { workspace = true }
+log = { workspace = true }
+nix = { workspace = true, features = ["net"] }
+pem = { workspace = true }
+percentage = { workspace = true }
+quinn = { workspace = true }
+quinn-proto = { workspace = true }
+rand = { workspace = true }
+rustls = { workspace = true }
+smallvec = { workspace = true }
+socket2 = { workspace = true }
+solana-clap-utils = { workspace = true }
+solana-measure = { workspace = true }
+solana-metrics = { workspace = true }
+solana-net-utils = { workspace = true }
+solana-perf = { workspace = true }
+solana-sdk = { workspace = true }
+solana-streamer = { workspace = true }
+solana-transaction-metrics-tracker = { workspace = true }
+solana-version = { workspace = true }
+
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+x509-parser = { workspace = true }
+
+[dev-dependencies]
+assert_matches = { workspace = true }
+solana-logger = { workspace = true }
+solana-streamer = { workspace = true, features = ["dev-context-only-utils"] }
+
+[lib]
+crate-type = ["lib"]
+name = "solana_vortexor"
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]

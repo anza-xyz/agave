@@ -442,7 +442,7 @@ fn get_target(
         info!("ADDR = {}", entrypoint_addr);
 
         for node in nodes {
-            if node.gossip().ok() == Some(entrypoint_addr) {
+            if node.gossip() == Some(entrypoint_addr) {
                 info!("{:?}", node.gossip());
                 target = match mode {
                     Mode::Gossip => Some((*node.pubkey(), node.gossip().unwrap())),
@@ -475,7 +475,7 @@ fn get_rpc_client(
 
     // find target node
     for node in nodes {
-        if node.gossip().ok() == Some(entrypoint_addr) {
+        if node.gossip() == Some(entrypoint_addr) {
             info!("{:?}", node.gossip());
             return Ok(RpcClient::new_socket(node.rpc().unwrap()));
         }
@@ -1079,7 +1079,7 @@ pub mod test {
         let cluster = LocalCluster::new(
             &mut ClusterConfig {
                 node_stakes: vec![999_990; num_nodes],
-                cluster_lamports: 200_000_000,
+                mint_lamports: 200_000_000,
                 validator_configs: make_identical_validator_configs(
                     &ValidatorConfig {
                         rpc_config: JsonRpcConfig {

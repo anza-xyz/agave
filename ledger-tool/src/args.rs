@@ -5,7 +5,6 @@ use {
         accounts_db::{AccountsDb, AccountsDbConfig, CreateAncientStorage},
         accounts_file::StorageAccess,
         accounts_index::{AccountsIndexConfig, IndexLimitMb, ScanFilter},
-        partitioned_rewards::TestPartitionedEpochRewards,
         utils::create_and_canonicalize_directories,
     },
     solana_clap_utils::{
@@ -134,6 +133,10 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
         Arg::with_name("accounts_db_verify_experimental_accumulator_hash")
             .long("accounts-db-verify-experimental-accumulator-hash")
             .help("Verifies the experimental accumulator hash")
+            .hidden(hidden_unless_forced()),
+        Arg::with_name("accounts_db_snapshots_use_experimental_accumulator_hash")
+            .long("accounts-db-snapshots-use-experimental-accumulator-hash")
+            .help("Snapshots use the experimental accumulator hash")
             .hidden(hidden_unless_forced()),
         Arg::with_name("accounts_db_hash_threads")
             .long("accounts-db-hash-threads")
@@ -301,15 +304,6 @@ pub fn get_accounts_db_config(
         ..AccountsIndexConfig::default()
     };
 
-    let test_partitioned_epoch_rewards =
-        if arg_matches.is_present("partitioned_epoch_rewards_compare_calculation") {
-            TestPartitionedEpochRewards::CompareResults
-        } else if arg_matches.is_present("partitioned_epoch_rewards_force_enable_single_slot") {
-            TestPartitionedEpochRewards::ForcePartitionedEpochRewardsInOneBlock
-        } else {
-            TestPartitionedEpochRewards::None
-        };
-
     let accounts_hash_cache_path = arg_matches
         .value_of("accounts_hash_cache_path")
         .map(Into::into)
@@ -388,7 +382,6 @@ pub fn get_accounts_db_config(
         .ok(),
         exhaustively_verify_refcounts: arg_matches.is_present("accounts_db_verify_refcounts"),
         skip_initial_hash_calc: arg_matches.is_present("accounts_db_skip_initial_hash_calculation"),
-        test_partitioned_epoch_rewards,
         test_skip_rewrites_but_include_in_bank_hash: arg_matches
             .is_present("accounts_db_test_skip_rewrites"),
         create_ancient_storage,
@@ -398,6 +391,8 @@ pub fn get_accounts_db_config(
             .is_present("accounts_db_experimental_accumulator_hash"),
         verify_experimental_accumulator_hash: arg_matches
             .is_present("accounts_db_verify_experimental_accumulator_hash"),
+        snapshots_use_experimental_accumulator_hash: arg_matches
+            .is_present("accounts_db_snapshots_use_experimental_accumulator_hash"),
         num_hash_threads,
         ..AccountsDbConfig::default()
     }

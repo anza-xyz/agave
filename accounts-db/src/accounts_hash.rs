@@ -519,7 +519,7 @@ struct ItemLocation<'a> {
     pointer: SlotGroupPointer,
 }
 
-impl<'a> AccountsHasher<'a> {
+impl AccountsHasher<'_> {
     pub fn calculate_hash(hashes: Vec<Vec<Hash>>) -> (Hash, usize) {
         let cumulative_offsets = CumulativeOffsets::from_raw(&hashes);
 
@@ -1280,6 +1280,15 @@ pub const ZERO_LAMPORT_ACCOUNT_LT_HASH: AccountLtHash = AccountLtHash(LtHash::id
 pub struct AccountsLtHash(pub LtHash);
 
 /// Hash of accounts
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum MerkleOrLatticeAccountsHash {
+    /// Merkle-based hash of accounts
+    Merkle(AccountsHashKind),
+    /// Lattice-based hash of accounts
+    Lattice,
+}
+
+/// Hash of accounts
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum AccountsHashKind {
     Full(AccountsHash),
@@ -1375,7 +1384,7 @@ mod tests {
         static ref ACTIVE_STATS: ActiveStats = ActiveStats::default();
     }
 
-    impl<'a> AccountsHasher<'a> {
+    impl AccountsHasher<'_> {
         fn new(dir_for_temp_cache_files: PathBuf) -> Self {
             Self {
                 zero_lamport_accounts: ZeroLamportAccounts::Excluded,

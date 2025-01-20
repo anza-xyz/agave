@@ -2,6 +2,7 @@ use {
     crate::{accounts_db::AccountsDb, accounts_hash::AccountHash},
     dashmap::DashMap,
     seqlock::SeqLock,
+    solana_nohash_hasher::BuildNoHashHasher,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount},
         clock::Slot,
@@ -104,11 +105,11 @@ impl SlotCacheInner {
     }
 
     pub fn mark_slot_frozen(&self) {
-        self.is_frozen.store(true, Ordering::SeqCst);
+        self.is_frozen.store(true, Ordering::Release);
     }
 
     pub fn is_frozen(&self) -> bool {
-        self.is_frozen.load(Ordering::SeqCst)
+        self.is_frozen.load(Ordering::Acquire)
     }
 
     pub fn total_bytes(&self) -> u64 {
@@ -152,7 +153,7 @@ impl CachedAccountInner {
 
 #[derive(Debug, Default)]
 pub struct AccountsCache {
-    cache: DashMap<Slot, SlotCache>,
+    cache: DashMap<Slot, SlotCache, BuildNoHashHasher<Slot>>,
     // Queue of potentially unflushed roots. Random eviction + cache too large
     // could have triggered a flush of this slot already
     maybe_unflushed_roots: RwLock<BTreeSet<Slot>>,
@@ -233,10 +234,7 @@ impl AccountsCache {
     }
 
     pub fn add_root(&self, root: Slot) {
-        let max_flushed_root = self.fetch_max_flush_root();
-        if root > max_flushed_root || (root == max_flushed_root && root == 0) {
-            self.maybe_unflushed_roots.write().unwrap().insert(root);
-        }
+        self.maybe_unflushed_roots.write().unwrap().insert(root);
     }
 
     pub fn clear_roots(&self, max_root: Option<Slot>) -> BTreeSet<Slot> {

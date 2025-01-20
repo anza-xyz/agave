@@ -3,7 +3,7 @@ use {
         blockstore::Blockstore,
         blockstore_processor::{
             self, BlockstoreProcessorError, CacheBlockMetaSender, ProcessOptions,
-            RewardsRecorderSender, TransactionStatusSender,
+            TransactionStatusSender,
         },
         entry_notifier_service::EntryNotifierSender,
         leader_schedule_cache::LeaderScheduleCache,
@@ -84,7 +84,6 @@ pub fn load(
     process_options: ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
     cache_block_meta_sender: Option<&CacheBlockMetaSender>,
-    rewards_recorder_sender: Option<&RewardsRecorderSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
@@ -107,7 +106,6 @@ pub fn load(
         &process_options,
         transaction_status_sender,
         cache_block_meta_sender,
-        rewards_recorder_sender,
         entry_notification_sender,
         &AbsRequestSender::default(),
     )

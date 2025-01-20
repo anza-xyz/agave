@@ -13,6 +13,8 @@ use crate::encryption::{
     elgamal::{DecryptHandle, ElGamalPubkey},
     pedersen::{PedersenCommitment, PedersenOpening},
 };
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
 use {
     crate::{
         sigma_proofs::{
@@ -34,6 +36,7 @@ use {
 /// first_handle_0, second_handle_0)` and `(commitment_1, first_handle_1,
 /// second_handle_1)`. The proof certifies the analogous decryptable properties for each one of
 /// these pairs of commitment and decryption handles.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[allow(non_snake_case)]
 #[derive(Clone)]
 pub struct BatchedGroupedCiphertext2HandlesValidityProof(GroupedCiphertext2HandlesValidityProof);

@@ -7,28 +7,26 @@
 
 use {
     crate::{block_cost_limits::*, transaction_cost::*},
+    solana_bincode::limited_deserialize,
+    solana_borsh::v1::try_from_slice_unchecked,
     solana_builtins_default_costs::get_builtin_instruction_cost,
     solana_compute_budget::compute_budget_limits::{
         DEFAULT_HEAP_COST, DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_COMPUTE_UNIT_LIMIT,
     },
+    solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_feature_set::{self as feature_set, FeatureSet},
+    solana_fee_structure::FeeStructure,
+    solana_pubkey::Pubkey,
     solana_runtime_transaction::{
         transaction_meta::StaticMeta, transaction_with_meta::TransactionWithMeta,
     },
-    solana_sdk::{
-        borsh1::try_from_slice_unchecked,
-        compute_budget::{self, ComputeBudgetInstruction},
-        fee::FeeStructure,
-        program_utils::limited_deserialize,
-        pubkey::Pubkey,
-        saturating_add_assign,
-        system_instruction::{
-            SystemInstruction, MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
-            MAX_PERMITTED_DATA_LENGTH,
-        },
-        system_program,
+    solana_sdk_ids::{compute_budget, system_program},
+    solana_svm_transaction::instruction::SVMInstruction,
+    solana_system_interface::{
+        instruction::SystemInstruction, MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
+        MAX_PERMITTED_DATA_LENGTH,
     },
-    solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMMessage},
+    std::num::Saturating,
 };
 
 pub struct CostModel;
@@ -48,7 +46,6 @@ impl CostModel {
         if transaction.is_simple_vote_transaction() {
             TransactionCost::SimpleVote { transaction }
         } else {
-            let num_write_locks = Self::num_write_locks(transaction, feature_set);
             let (programs_execution_cost, loaded_accounts_data_size_cost, data_bytes_cost) =
                 Self::get_transaction_cost(
                     transaction,
@@ -58,7 +55,7 @@ impl CostModel {
             Self::calculate_non_vote_transaction_cost(
                 transaction,
                 transaction.program_instructions_iter(),
-                num_write_locks,
+                transaction.num_write_locks(),
                 programs_execution_cost,
                 loaded_accounts_data_size_cost,
                 data_bytes_cost,
@@ -78,7 +75,6 @@ impl CostModel {
         if transaction.is_simple_vote_transaction() {
             TransactionCost::SimpleVote { transaction }
         } else {
-            let num_write_locks = Self::num_write_locks(transaction, feature_set);
             let loaded_accounts_data_size_cost = Self::calculate_loaded_accounts_data_size_cost(
                 actual_loaded_accounts_data_size_bytes,
                 feature_set,
@@ -89,7 +85,7 @@ impl CostModel {
             Self::calculate_non_vote_transaction_cost(
                 transaction,
                 transaction.program_instructions_iter(),
-                num_write_locks,
+                transaction.num_write_locks(),
                 actual_programs_execution_cost,
                 loaded_accounts_data_size_cost,
                 instructions_data_cost,
@@ -188,23 +184,6 @@ impl CostModel {
                     .num_secp256r1_instruction_signatures()
                     .saturating_mul(secp256r1_verify_cost),
             )
-    }
-
-    fn get_writable_accounts(message: &impl SVMMessage) -> impl Iterator<Item = &Pubkey> {
-        message
-            .account_keys()
-            .iter()
-            .enumerate()
-            .filter_map(|(i, k)| message.is_writable(i).then_some(k))
-    }
-
-    /// Return the number of write-locks for a transaction.
-    fn num_write_locks(transaction: &impl SVMMessage, feature_set: &FeatureSet) -> u64 {
-        if feature_set.is_active(&feature_set::cost_model_requested_write_lock_cost::id()) {
-            transaction.num_write_locks()
-        } else {
-            Self::get_writable_accounts(transaction).count() as u64
-        }
     }
 
     /// Returns the total write-lock cost.
@@ -371,7 +350,9 @@ impl CostModel {
         instruction: SVMInstruction,
     ) -> SystemProgramAccountAllocation {
         if program_id == &system_program::id() {
-            if let Ok(instruction) = limited_deserialize(instruction.data) {
+            if let Ok(instruction) =
+                limited_deserialize(instruction.data, solana_packet::PACKET_DATA_SIZE as u64)
+            {
                 Self::calculate_account_data_size_on_deserialized_system_instruction(instruction)
             } else {
                 SystemProgramAccountAllocation::Failed
@@ -386,7 +367,7 @@ impl CostModel {
     fn calculate_allocated_accounts_data_size<'a>(
         instructions: impl Iterator<Item = (&'a Pubkey, SVMInstruction<'a>)>,
     ) -> u64 {
-        let mut tx_attempted_allocation_size: u64 = 0;
+        let mut tx_attempted_allocation_size = Saturating(0u64);
         for (program_id, instruction) in instructions {
             match Self::calculate_account_data_size_on_instruction(program_id, instruction) {
                 SystemProgramAccountAllocation::Failed => {
@@ -399,10 +380,7 @@ impl CostModel {
                 }
                 SystemProgramAccountAllocation::None => continue,
                 SystemProgramAccountAllocation::Some(ix_attempted_allocation_size) => {
-                    saturating_add_assign!(
-                        tx_attempted_allocation_size,
-                        ix_attempted_allocation_size
-                    );
+                    tx_attempted_allocation_size += ix_attempted_allocation_size;
                 }
             }
         }
@@ -416,7 +394,7 @@ impl CostModel {
         // shouldn't assume that a large sum of allocations will necessarily
         // lead to transaction failure.
         (MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION as u64)
-            .min(tx_attempted_allocation_size)
+            .min(tx_attempted_allocation_size.0)
     }
 }
 
@@ -425,21 +403,25 @@ mod tests {
     use {
         super::*,
         itertools::Itertools,
-        solana_compute_budget::compute_budget_limits::{
-            DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT,
+        solana_compute_budget::{
+            self,
+            compute_budget_limits::{
+                DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT,
+            },
         },
+        solana_compute_budget_interface::ComputeBudgetInstruction,
+        solana_fee_structure::ACCOUNT_DATA_COST_PAGE_SIZE,
+        solana_hash::Hash,
+        solana_instruction::Instruction,
+        solana_keypair::Keypair,
+        solana_message::{compiled_instruction::CompiledInstruction, Message},
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-        solana_sdk::{
-            compute_budget::{self, ComputeBudgetInstruction},
-            fee::ACCOUNT_DATA_COST_PAGE_SIZE,
-            hash::Hash,
-            instruction::{CompiledInstruction, Instruction},
-            message::Message,
-            signature::{Keypair, Signer},
-            system_instruction::{self},
-            system_program, system_transaction,
-            transaction::Transaction,
-        },
+        solana_sdk_ids::system_program,
+        solana_signer::Signer,
+        solana_svm_transaction::svm_message::SVMMessage,
+        solana_system_interface::instruction::{self as system_instruction},
+        solana_system_transaction as system_transaction,
+        solana_transaction::Transaction,
     };
 
     fn test_setup() -> (Keypair, Hash) {
@@ -665,10 +647,7 @@ mod tests {
         let instructions = vec![CompiledInstruction::new(3, &(), vec![1, 2, 0])];
         let tx = Transaction::new_with_compiled_instructions(
             &[&mint_keypair],
-            &[
-                solana_sdk::pubkey::new_rand(),
-                solana_sdk::pubkey::new_rand(),
-            ],
+            &[solana_pubkey::new_rand(), solana_pubkey::new_rand()],
             start_hash,
             vec![Pubkey::new_unique()],
             instructions,
@@ -707,20 +686,10 @@ mod tests {
             system_transaction::transfer(&mint_keypair, &system_program::id(), 2, start_hash),
         );
 
-        // Feature not enabled - write lock is demoted and does not count towards cost
-        {
-            let tx_cost = CostModel::calculate_cost(&simple_transaction, &FeatureSet::default());
-            assert_eq!(WRITE_LOCK_UNITS, tx_cost.write_lock_cost());
-            assert_eq!(1, tx_cost.writable_accounts().count());
-        }
-
-        // Feature enabled - write lock is demoted but still counts towards cost
-        {
-            let tx_cost =
-                CostModel::calculate_cost(&simple_transaction, &FeatureSet::all_enabled());
-            assert_eq!(2 * WRITE_LOCK_UNITS, tx_cost.write_lock_cost());
-            assert_eq!(1, tx_cost.writable_accounts().count());
-        }
+        // write-lock counts towards cost, even if it is demoted.
+        let tx_cost = CostModel::calculate_cost(&simple_transaction, &FeatureSet::default());
+        assert_eq!(2 * WRITE_LOCK_UNITS, tx_cost.write_lock_cost());
+        assert_eq!(1, tx_cost.writable_accounts().count());
     }
 
     #[test]
@@ -740,10 +709,7 @@ mod tests {
         ];
         let tx = Transaction::new_with_compiled_instructions(
             &[&mint_keypair],
-            &[
-                solana_sdk::pubkey::new_rand(),
-                solana_sdk::pubkey::new_rand(),
-            ],
+            &[solana_pubkey::new_rand(), solana_pubkey::new_rand()],
             start_hash,
             vec![Pubkey::new_unique(), compute_budget::id()],
             instructions,
@@ -791,10 +757,7 @@ mod tests {
         ];
         let tx = Transaction::new_with_compiled_instructions(
             &[&mint_keypair],
-            &[
-                solana_sdk::pubkey::new_rand(),
-                solana_sdk::pubkey::new_rand(),
-            ],
+            &[solana_pubkey::new_rand(), solana_pubkey::new_rand()],
             start_hash,
             vec![Pubkey::new_unique(), compute_budget::id()],
             instructions,
@@ -816,8 +779,8 @@ mod tests {
     fn test_cost_model_transaction_many_transfer_instructions() {
         let (mint_keypair, start_hash) = test_setup();
 
-        let key1 = solana_sdk::pubkey::new_rand();
-        let key2 = solana_sdk::pubkey::new_rand();
+        let key1 = solana_pubkey::new_rand();
+        let key2 = solana_pubkey::new_rand();
         let instructions =
             system_instruction::transfer_many(&mint_keypair.pubkey(), &[(key1, 1), (key2, 1)]);
         let message = Message::new(&instructions, Some(&mint_keypair.pubkey()));
@@ -850,10 +813,10 @@ mod tests {
         let (mint_keypair, start_hash) = test_setup();
 
         // construct a transaction with multiple random instructions
-        let key1 = solana_sdk::pubkey::new_rand();
-        let key2 = solana_sdk::pubkey::new_rand();
-        let prog1 = solana_sdk::pubkey::new_rand();
-        let prog2 = solana_sdk::pubkey::new_rand();
+        let key1 = solana_pubkey::new_rand();
+        let key2 = solana_pubkey::new_rand();
+        let prog1 = solana_pubkey::new_rand();
+        let prog2 = solana_pubkey::new_rand();
         let instructions = vec![
             CompiledInstruction::new(3, &(), vec![0, 1]),
             CompiledInstruction::new(4, &(), vec![0, 2]),

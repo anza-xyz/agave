@@ -7,7 +7,10 @@ use {
         result::{Result, TransactionViewError},
     },
     core::fmt::{Debug, Formatter},
-    solana_sdk::{hash::Hash, packet::PACKET_DATA_SIZE, pubkey::Pubkey, signature::Signature},
+    solana_hash::Hash,
+    solana_packet::PACKET_DATA_SIZE,
+    solana_pubkey::Pubkey,
+    solana_signature::Signature,
     solana_svm_transaction::message_address_table_lookup::SVMMessageAddressTableLookup,
 };
 
@@ -211,10 +214,7 @@ impl Debug for AddressTableLookupIterator<'_> {
 
 #[cfg(test)]
 mod tests {
-    use {
-        super::*,
-        solana_sdk::{message::v0::MessageAddressTableLookup, short_vec::ShortVec},
-    };
+    use {super::*, solana_message::v0::MessageAddressTableLookup, solana_short_vec::ShortVec};
 
     #[test]
     fn test_zero_atls() {

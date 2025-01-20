@@ -278,7 +278,7 @@ Steps of `load_and_execute_sanitized_transactions`
       the clone of environments of `programs_loaded_for_tx_batch`
          - `programs_loaded_for_tx_batch` contains a reference to all the `ProgramCacheEntry`s
             necessary for the transaction. It maintains an `Arc` to the programs in the global
-            `ProgramCacheEntrys` data structure.
+            `ProgramCacheEntry` data structure.
       6. Call `MessageProcessor::process_message` to execute the
       transaction. `MessageProcessor` is contained in
       solana-program-runtime crate. The result of processing message

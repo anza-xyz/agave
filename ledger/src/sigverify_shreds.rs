@@ -203,7 +203,7 @@ fn resize_buffer(buffer: &mut PinnedVec<u8>, size: usize) {
     //HACK: Pubkeys vector is passed along as a `PacketBatch` buffer to the GPU
     //TODO: GPU needs a more opaque interface, which can handle variable sized structures for data
     //Pad the Pubkeys buffer such that it is bigger than a buffer of Packet sized elems
-    let num_packets = (size + std::mem::size_of::<Packet>() - 1) / std::mem::size_of::<Packet>();
+    let num_packets = size.div_ceil(std::mem::size_of::<Packet>());
     let size = num_packets * std::mem::size_of::<Packet>();
     buffer.resize(size, 0u8);
 }

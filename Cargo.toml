@@ -2,7 +2,7 @@
 inherits = "release"
 debug = true
 split-debuginfo = "packed"
-lto = false # Preserve the 'thin local LTO' for this build.
+lto = false                # Preserve the 'thin local LTO' for this build.
 
 [profile.release]
 split-debuginfo = "unpacked"
@@ -19,6 +19,7 @@ members = [
     "accounts-db/store-histogram",
     "accounts-db/store-tool",
     "banking-bench",
+    "banking-stage-ingress-types",
     "banks-client",
     "banks-interface",
     "banks-server",
@@ -108,7 +109,9 @@ members = [
     "sdk",
     "sdk/account",
     "sdk/account-info",
+    "sdk/address-lookup-table-interface",
     "sdk/atomic-u64",
+    "sdk/big-mod-exp",
     "sdk/bincode",
     "sdk/borsh",
     "sdk/cargo-build-sbf",
@@ -135,6 +138,7 @@ members = [
     "sdk/frozen-abi",
     "sdk/frozen-abi/macro",
     "sdk/gen-headers",
+    "sdk/genesis-config",
     "sdk/hard-forks",
     "sdk/hash",
     "sdk/inflation",
@@ -194,6 +198,7 @@ members = [
     "sdk/transaction-context",
     "sdk/transaction-error",
     "sdk/validator-exit",
+    "sdk/vote-interface",
     "send-transaction-service",
     "stake-accounts",
     "storage-bigtable",
@@ -225,6 +230,7 @@ members = [
     "upload-perf",
     "validator",
     "version",
+    "vortexor",
     "vote",
     "watchtower",
     "wen-restart",
@@ -254,11 +260,12 @@ check-cfg = [
 
 [workspace.dependencies]
 Inflector = "0.11.4"
+agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", version = "=2.2.0" }
 agave-transaction-view = { path = "transaction-view", version = "=2.2.0" }
 aquamarine = "0.3.3"
 aes-gcm-siv = "0.11.1"
 ahash = "0.8.11"
-anyhow = "1.0.94"
+anyhow = "1.0.95"
 arbitrary = "1.4.1"
 ark-bn254 = "0.4.0"
 ark-ec = "0.4.0"
@@ -271,21 +278,21 @@ assert_cmd = "2.0"
 assert_matches = "1.5.0"
 async-channel = "1.9.0"
 async-lock = "3.4.0"
-async-trait = "0.1.83"
+async-trait = "0.1.85"
 atty = "0.2.11"
 backoff = "0.4.0"
 base64 = "0.22.1"
 bincode = "1.3.3"
-bitflags = { version = "2.6.0" }
+bitflags = { version = "2.8.0" }
 blake3 = "1.5.5"
-borsh = { version = "1.5.3", features = ["derive", "unstable__schema"] }
+borsh = { version = "1.5.4", features = ["derive", "unstable__schema"] }
 borsh0-10 = { package = "borsh", version = "0.10.3" }
 bs58 = { version = "0.5.1", default-features = false }
 bv = "0.11.1"
 byte-unit = "4.0.19"
 bytecount = "0.6.8"
-bytemuck = "1.20.0"
-bytemuck_derive = "1.8.0"
+bytemuck = "1.21.0"
+bytemuck_derive = "1.8.1"
 byteorder = "1.5.0"
 bytes = "1.9"
 bzip2 = "0.4.4"
@@ -349,7 +356,7 @@ itertools = "0.12.1"
 jemallocator = { package = "tikv-jemallocator", version = "0.6.0", features = [
     "unprefixed_malloc_on_supported_platforms",
 ] }
-js-sys = "0.3.76"
+js-sys = "0.3.77"
 json5 = "0.4.1"
 jsonrpc-core = "18.0.0"
 jsonrpc-core-client = "18.0.0"
@@ -366,12 +373,12 @@ libsecp256k1 = { version = "0.6.0", default-features = false, features = [
     "static-context",
 ] }
 light-poseidon = "0.2.0"
-log = "0.4.22"
+log = "0.4.25"
 lru = "0.7.7"
-lz4 = "1.28.0"
+lz4 = "1.28.1"
 memmap2 = "0.5.10"
 memoffset = "0.9"
-merlin = "3"
+merlin = { version = "3", default-features = false }
 min-max-heap = "1.3.0"
 mockall = "0.11.4"
 modular-bitfield = "0.11.2"
@@ -390,7 +397,7 @@ pickledb = { version = "0.5.1", default-features = false }
 predicates = "2.1"
 pretty-hex = "0.3.0"
 prio-graph = "0.3.0"
-proc-macro2 = "1.0.92"
+proc-macro2 = "1.0.93"
 proptest = "1.6"
 prost = "0.11.9"
 prost-build = "0.11.9"
@@ -412,16 +419,16 @@ reqwest = { version = "0.11.27", default-features = false }
 reqwest-middleware = "0.2.5"
 rolling-file = "0.2.0"
 rpassword = "7.3"
-rustls = { version = "0.23.20", features = ["std"], default-features = false }
+rustls = { version = "0.23.21", features = ["std"], default-features = false }
 scopeguard = "1.2.0"
 semver = "1.0.24"
 seqlock = "0.2.0"
-serde = "1.0.216" # must match the serde_derive version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
+serde = "1.0.217" # must match the serde_derive version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
 serde-big-array = "0.5.1"
 serde_bytes = "0.11.15"
-serde_derive = "1.0.215" # must match the serde version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
-serde_json = "1.0.133"
-serde_with = { version = "3.11.0", default-features = false }
+serde_derive = "1.0.217" # must match the serde version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
+serde_json = "1.0.135"
+serde_with = { version = "3.12.0", default-features = false }
 serde_yaml = "0.9.34"
 serial_test = "2.0.0"
 sha2 = "0.10.8"
@@ -439,12 +446,14 @@ solana-account-decoder = { path = "account-decoder", version = "=2.2.0" }
 solana-account-decoder-client-types = { path = "account-decoder-client-types", version = "=2.2.0" }
 solana-account-info = { path = "sdk/account-info", version = "=2.2.0" }
 solana-accounts-db = { path = "accounts-db", version = "=2.2.0" }
+solana-address-lookup-table-interface = { path = "sdk/address-lookup-table-interface", version = "=2.2.0" }
 solana-address-lookup-table-program = { path = "programs/address-lookup-table", version = "=2.2.0" }
 solana-atomic-u64 = { path = "sdk/atomic-u64", version = "=2.2.0" }
 solana-banks-client = { path = "banks-client", version = "=2.2.0" }
 solana-banks-interface = { path = "banks-interface", version = "=2.2.0" }
 solana-banks-server = { path = "banks-server", version = "=2.2.0" }
 solana-bench-tps = { path = "bench-tps", version = "=2.2.0" }
+solana-big-mod-exp = { path = "sdk/big-mod-exp", version = "=2.2.0" }
 solana-bincode = { path = "sdk/bincode", version = "=2.2.0" }
 solana-bloom = { path = "bloom", version = "=2.2.0" }
 solana-bn254 = { path = "curves/bn254", version = "=2.2.0" }
@@ -486,6 +495,7 @@ solana-epoch-rewards = { path = "sdk/epoch-rewards", version = "=2.2.0" }
 solana-epoch-rewards-hasher = { path = "sdk/epoch-rewards-hasher", version = "=2.2.0" }
 solana-epoch-schedule = { path = "sdk/epoch-schedule", version = "=2.2.0" }
 solana-faucet = { path = "faucet", version = "=2.2.0" }
+solana-feature-gate-client = "0.0.2"
 solana-feature-gate-interface = { path = "sdk/feature-gate-interface", version = "=2.2.0" }
 solana-feature-set = { path = "sdk/feature-set", version = "=2.2.0" }
 solana-fee-calculator = { path = "sdk/fee-calculator", version = "=2.2.0" }
@@ -496,6 +506,7 @@ solana-frozen-abi-macro = { path = "sdk/frozen-abi/macro", version = "=2.2.0" }
 solana-tps-client = { path = "tps-client", version = "=2.2.0" }
 solana-file-download = { path = "sdk/file-download", version = "=2.2.0" }
 solana-genesis = { path = "genesis", version = "=2.2.0" }
+solana-genesis-config = { path = "sdk/genesis-config", version = "=2.2.0" }
 solana-genesis-utils = { path = "genesis-utils", version = "=2.2.0" }
 agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=2.2.0" }
 solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=2.2.0" }
@@ -587,7 +598,7 @@ solana-send-transaction-service = { path = "send-transaction-service", version =
 solana-short-vec = { path = "sdk/short-vec", version = "=2.2.0" }
 solana-shred-version = { path = "sdk/shred-version", version = "=2.2.0" }
 solana-stable-layout = { path = "sdk/stable-layout", version = "=2.2.0" }
-solana-stake-program = { path = "programs/stake", version = "=2.2.0" }
+solana-stake-program = { path = "programs/stake", version = "=2.2.0", default-features = false }
 solana-storage-bigtable = { path = "storage-bigtable", version = "=2.2.0" }
 solana-storage-proto = { path = "storage-proto", version = "=2.2.0" }
 solana-streamer = { path = "streamer", version = "=2.2.0" }
@@ -616,7 +627,8 @@ solana-udp-client = { path = "udp-client", version = "=2.2.0" }
 solana-validator-exit = { path = "sdk/validator-exit", version = "=2.2.0" }
 solana-version = { path = "version", version = "=2.2.0" }
 solana-vote = { path = "vote", version = "=2.2.0" }
-solana-vote-program = { path = "programs/vote", version = "=2.2.0" }
+solana-vote-interface = { path = "sdk/vote-interface", version = "=2.2.0" }
+solana-vote-program = { path = "programs/vote", version = "=2.2.0", default-features = false }
 solana-wen-restart = { path = "wen-restart", version = "=2.2.0" }
 solana-zk-elgamal-proof-program = { path = "programs/zk-elgamal-proof", version = "=2.2.0" }
 solana-zk-keygen = { path = "zk-keygen", version = "=2.2.0" }
@@ -646,10 +658,10 @@ tar = "0.4.43"
 tarpc = "0.29.0"
 tempfile = "3.14.0"
 test-case = "3.3.1"
-thiserror = "2.0.8"
+thiserror = "2.0.11"
 tiny-bip39 = "0.8.2"
 # Update solana-tokio patch below when updating this version
-tokio = "1.29.1"
+tokio = "1.43.0"
 tokio-serde = "0.8"
 tokio-stream = "0.1.17"
 tokio-tungstenite = "0.20.1"
@@ -733,21 +745,3 @@ solana-zk-sdk = { path = "zk-sdk" }
 # we override the opt-level to 3 for the crate.
 [profile.dev.package.curve25519-dalek]
 opt-level = 3
-
-# Solana RPC nodes experience stalls when running with `tokio` containing this
-# commit:
-# https://github.com/tokio-rs/tokio/commit/4eed411519783ef6f58cbf74f886f91142b5cfa6
-#
-# Tokio maintainers believe performance degradation is due to application bugs:
-# https://github.com/tokio-rs/tokio/issues/4873#issuecomment-1198277677
-#
-# This may indeed be true of the code in this monorepo, but we haven't yet
-# identified the bug or a way to fix. As a stopgap, this patches `tokio` to the
-# tagged version specified above with commit `4eed411` reverted.
-#
-# Comparison:
-# https://github.com/tokio-rs/tokio/compare/tokio-1.29.1...solana-labs:solana-tokio:tokio-1.29.1-revert-4eed411
-#
-[patch.crates-io.tokio]
-git = "https://github.com/anza-xyz/solana-tokio.git"
-rev = "7cf47705faacf7bf0e43e4131a5377b3291fce21"

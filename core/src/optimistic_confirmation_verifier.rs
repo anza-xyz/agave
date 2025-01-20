@@ -148,8 +148,8 @@ impl OptimisticConfirmationVerifier {
 mod test {
     use {
         super::*, crate::vote_simulator::VoteSimulator,
-        solana_ledger::get_tmp_ledger_path_auto_delete, solana_runtime::bank::Bank,
-        solana_sdk::pubkey::Pubkey, std::collections::HashMap, trees::tr,
+        solana_ledger::get_tmp_ledger_path_auto_delete, solana_pubkey::Pubkey,
+        solana_runtime::bank::Bank, std::collections::HashMap, trees::tr,
     };
 
     #[test]

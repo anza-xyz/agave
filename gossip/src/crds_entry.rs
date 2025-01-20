@@ -6,7 +6,7 @@ use {
         crds_value::{CrdsValue, CrdsValueLabel},
     },
     indexmap::IndexMap,
-    solana_sdk::pubkey::Pubkey,
+    solana_pubkey::Pubkey,
 };
 
 type CrdsTable = IndexMap<CrdsValueLabel, VersionedCrdsValue>;

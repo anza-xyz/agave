@@ -199,6 +199,7 @@ impl fmt::Display for RpcResponseErrorData {
 }
 
 #[derive(Debug, Error)]
+#[allow(clippy::large_enum_variant)]
 pub enum RpcError {
     #[error("RPC request error: {0}")]
     RpcRequestError(String),

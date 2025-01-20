@@ -1,4 +1,4 @@
-use solana_sdk::pubkey::Pubkey;
+use solana_pubkey::Pubkey;
 
 #[derive(Debug)]
 pub struct PubkeyBinCalculator24 {

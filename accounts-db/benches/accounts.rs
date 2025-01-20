@@ -111,7 +111,7 @@ fn bench_delete_dependencies(bencher: &mut Bencher) {
     let mut old_pubkey = Pubkey::default();
     let zero_account = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
     for i in 0..1000 {
-        let pubkey = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
         let account = AccountSharedData::new(i + 1, 0, AccountSharedData::default().owner());
         accounts.store_slow_uncached(i, &pubkey, &account);
         accounts.store_slow_uncached(i, &old_pubkey, &zero_account);
@@ -136,7 +136,7 @@ where
     let num_keys = 1000;
     let slot = 0;
 
-    let pubkeys: Vec<_> = std::iter::repeat_with(solana_sdk::pubkey::new_rand)
+    let pubkeys: Vec<_> = std::iter::repeat_with(solana_pubkey::new_rand)
         .take(num_keys)
         .collect();
     let accounts_data: Vec<_> = std::iter::repeat(
@@ -169,7 +169,7 @@ where
 
     let num_new_keys = 1000;
     bencher.iter(|| {
-        let new_pubkeys: Vec<_> = std::iter::repeat_with(solana_sdk::pubkey::new_rand)
+        let new_pubkeys: Vec<_> = std::iter::repeat_with(solana_pubkey::new_rand)
             .take(num_new_keys)
             .collect();
         let new_storable_accounts: Vec<_> = new_pubkeys.iter().zip(accounts_data.iter()).collect();

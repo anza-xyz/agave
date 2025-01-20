@@ -239,7 +239,7 @@ pub(crate) enum BlockhashStatus {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "9ziHa1vA7WG5RCvXiE3g1f2qjSTNa47FB7e2czo7en7a")
+    frozen_abi(digest = "FcHteDgmzjrtyFD9D6EQ2hY9FRz42gs2S7eJ1DyHWP7s")
 )]
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct Tower {
@@ -1830,7 +1830,7 @@ pub mod test {
                 )
                 .expect("serialize state");
                 (
-                    solana_sdk::pubkey::new_rand(),
+                    solana_pubkey::new_rand(),
                     (*lamports, VoteAccount::try_from(account).unwrap()),
                 )
             })

@@ -1,19 +1,17 @@
 use {
     crate::{TpsClient, TpsClientError, TpsClientResult},
+    solana_account::Account,
+    solana_client_traits::{AsyncClient, SyncClient},
+    solana_commitment_config::CommitmentConfig,
+    solana_epoch_info::EpochInfo,
+    solana_hash::Hash,
+    solana_message::Message,
+    solana_pubkey::Pubkey,
     solana_rpc_client_api::config::RpcBlockConfig,
     solana_runtime::bank_client::BankClient,
-    solana_sdk::{
-        account::Account,
-        client::{AsyncClient, SyncClient},
-        commitment_config::CommitmentConfig,
-        epoch_info::EpochInfo,
-        hash::Hash,
-        message::Message,
-        pubkey::Pubkey,
-        signature::Signature,
-        slot_history::Slot,
-        transaction::{Result, Transaction},
-    },
+    solana_signature::Signature,
+    solana_transaction::Transaction,
+    solana_transaction_error::TransactionResult as Result,
     solana_transaction_status::UiConfirmedBlock,
 };
 
@@ -122,22 +120,22 @@ impl TpsClient for BankClient {
     fn get_slot_with_commitment(
         &self,
         commitment_config: CommitmentConfig,
-    ) -> TpsClientResult<Slot> {
+    ) -> TpsClientResult<u64> {
         SyncClient::get_slot_with_commitment(self, commitment_config).map_err(|err| err.into())
     }
 
     fn get_blocks_with_commitment(
         &self,
-        _start_slot: Slot,
-        _end_slot: Option<Slot>,
+        _start_slot: u64,
+        _end_slot: Option<u64>,
         _commitment_config: CommitmentConfig,
-    ) -> TpsClientResult<Vec<Slot>> {
+    ) -> TpsClientResult<Vec<u64>> {
         unimplemented!("BankClient doesn't support get_blocks");
     }
 
     fn get_block_with_config(
         &self,
-        _slot: Slot,
+        _slot: u64,
         _rpc_block_config: RpcBlockConfig,
     ) -> TpsClientResult<UiConfirmedBlock> {
         unimplemented!("BankClient doesn't support get_block_with_config");

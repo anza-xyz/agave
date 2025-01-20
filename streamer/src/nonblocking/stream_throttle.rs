@@ -236,10 +236,8 @@ pub mod test {
     use {
         super::*,
         crate::{
-            nonblocking::{
-                quic::DEFAULT_MAX_STREAMS_PER_MS, stream_throttle::STREAM_LOAD_EMA_INTERVAL_MS,
-            },
-            quic::{StreamerStats, MAX_UNSTAKED_CONNECTIONS},
+            nonblocking::stream_throttle::STREAM_LOAD_EMA_INTERVAL_MS,
+            quic::{StreamerStats, DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS},
         },
         std::{
             sync::{atomic::Ordering, Arc},
@@ -251,7 +249,7 @@ pub mod test {
     fn test_max_streams_for_unstaked_connection() {
         let load_ema = Arc::new(StakedStreamLoadEMA::new(
             Arc::new(StreamerStats::default()),
-            MAX_UNSTAKED_CONNECTIONS,
+            DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             DEFAULT_MAX_STREAMS_PER_MS,
         ));
         // 25K packets per ms * 20% / 500 max unstaked connections
@@ -268,7 +266,7 @@ pub mod test {
     fn test_max_streams_for_staked_connection() {
         let load_ema = Arc::new(StakedStreamLoadEMA::new(
             Arc::new(StreamerStats::default()),
-            MAX_UNSTAKED_CONNECTIONS,
+            DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             DEFAULT_MAX_STREAMS_PER_MS,
         ));
 
@@ -448,7 +446,7 @@ pub mod test {
     fn test_update_ema() {
         let stream_load_ema = Arc::new(StakedStreamLoadEMA::new(
             Arc::new(StreamerStats::default()),
-            MAX_UNSTAKED_CONNECTIONS,
+            DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             DEFAULT_MAX_STREAMS_PER_MS,
         ));
         stream_load_ema
@@ -477,7 +475,7 @@ pub mod test {
     fn test_update_ema_missing_interval() {
         let stream_load_ema = Arc::new(StakedStreamLoadEMA::new(
             Arc::new(StreamerStats::default()),
-            MAX_UNSTAKED_CONNECTIONS,
+            DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             DEFAULT_MAX_STREAMS_PER_MS,
         ));
         stream_load_ema
@@ -497,7 +495,7 @@ pub mod test {
     fn test_update_ema_if_needed() {
         let stream_load_ema = Arc::new(StakedStreamLoadEMA::new(
             Arc::new(StreamerStats::default()),
-            MAX_UNSTAKED_CONNECTIONS,
+            DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             DEFAULT_MAX_STREAMS_PER_MS,
         ));
         stream_load_ema

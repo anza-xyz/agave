@@ -1,9 +1,6 @@
 use {
     crate::{
-        nonblocking::quic::{
-            ALPN_TPU_PROTOCOL_ID, DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
-            DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
-        },
+        nonblocking::quic::{ALPN_TPU_PROTOCOL_ID, DEFAULT_WAIT_FOR_CHUNK_TIMEOUT},
         streamer::StakedNodes,
     },
     crossbeam_channel::Sender,
@@ -32,8 +29,32 @@ use {
     tokio::runtime::Runtime,
 };
 
+// allow multiple connections for NAT and any open/close overlap
+pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER: usize = 8;
+
+#[deprecated(
+    since = "2.2.0",
+    note = "Use solana_streamer::quic::DEFAULT_MAX_STAKED_CONNECTIONS"
+)]
 pub const MAX_STAKED_CONNECTIONS: usize = 2000;
+
+pub const DEFAULT_MAX_STAKED_CONNECTIONS: usize = 2000;
+
+#[deprecated(
+    since = "2.2.0",
+    note = "Use solana_streamer::quic::DEFAULT_MAX_UNSTAKED_CONNECTIONS"
+)]
 pub const MAX_UNSTAKED_CONNECTIONS: usize = 500;
+
+pub const DEFAULT_MAX_UNSTAKED_CONNECTIONS: usize = 500;
+
+/// Limit to 250K PPS
+pub const DEFAULT_MAX_STREAMS_PER_MS: u64 = 250;
+
+/// The new connections per minute from a particular IP address.
+/// Heuristically set to the default maximum concurrent connections
+/// per IP address. Might be adjusted later.
+pub const DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE: u64 = 8;
 
 // This will be adjusted and parameterized in follow-on PRs.
 pub const DEFAULT_QUIC_ENDPOINTS: usize = 1;
@@ -564,6 +585,7 @@ pub fn spawn_server(
     )
 }
 
+#[derive(Clone)]
 pub struct QuicServerParams {
     pub max_connections_per_peer: usize,
     pub max_staked_connections: usize,
@@ -578,8 +600,8 @@ impl Default for QuicServerParams {
     fn default() -> Self {
         QuicServerParams {
             max_connections_per_peer: 1,
-            max_staked_connections: MAX_STAKED_CONNECTIONS,
-            max_unstaked_connections: MAX_UNSTAKED_CONNECTIONS,
+            max_staked_connections: DEFAULT_MAX_STAKED_CONNECTIONS,
+            max_unstaked_connections: DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS,
             max_connections_per_ipaddr_per_min: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
             wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
@@ -632,8 +654,11 @@ pub fn spawn_server_multi(
 #[cfg(test)]
 mod test {
     use {
-        super::*, crate::nonblocking::quic::test::*, crossbeam_channel::unbounded,
-        solana_net_utils::bind_to_localhost, std::net::SocketAddr,
+        super::*,
+        crate::nonblocking::{quic::test::*, testing_utilities::check_multiple_streams},
+        crossbeam_channel::unbounded,
+        solana_net_utils::bind_to_localhost,
+        std::net::SocketAddr,
     };
 
     fn setup_quic_server() -> (
@@ -723,7 +748,7 @@ mod test {
         .unwrap();
 
         let runtime = rt("solQuicTestRt".to_string());
-        runtime.block_on(check_multiple_streams(receiver, server_address));
+        runtime.block_on(check_multiple_streams(receiver, server_address, None));
         exit.store(true, Ordering::Relaxed);
         t.join().unwrap();
     }

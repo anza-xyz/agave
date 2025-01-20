@@ -1,5 +1,5 @@
 #[allow(deprecated)]
-use solana_sdk::sysvar::{fees::Fees, recent_blockhashes::RecentBlockhashes};
+use solana_sysvar::{fees::Fees, recent_blockhashes::RecentBlockhashes};
 use {
     crate::{
         parse_account_data::{ParsableAccount, ParseAccountError},
@@ -7,17 +7,18 @@ use {
     },
     bincode::deserialize,
     bv::BitVec,
-    solana_sdk::{
-        clock::{Clock, Epoch, Slot, UnixTimestamp},
-        epoch_schedule::EpochSchedule,
-        pubkey::Pubkey,
-        rent::Rent,
-        slot_hashes::SlotHashes,
-        slot_history::{self, SlotHistory},
+    solana_clock::{Clock, Epoch, Slot, UnixTimestamp},
+    solana_epoch_schedule::EpochSchedule,
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
+    solana_sdk_ids::sysvar,
+    solana_slot_hashes::SlotHashes,
+    solana_slot_history::{self as slot_history, SlotHistory},
+    solana_sysvar::{
+        epoch_rewards::EpochRewards,
+        last_restart_slot::LastRestartSlot,
+        rewards::Rewards,
         stake_history::{StakeHistory, StakeHistoryEntry},
-        sysvar::{
-            self, epoch_rewards::EpochRewards, last_restart_slot::LastRestartSlot, rewards::Rewards,
-        },
     },
 };
 
@@ -268,10 +269,10 @@ impl From<EpochRewards> for UiEpochRewards {
 #[cfg(test)]
 mod test {
     #[allow(deprecated)]
-    use solana_sdk::sysvar::recent_blockhashes::IterItem;
+    use solana_sysvar::recent_blockhashes::IterItem;
     use {
-        super::*,
-        solana_sdk::{account::create_account_for_test, fee_calculator::FeeCalculator, hash::Hash},
+        super::*, solana_account::create_account_for_test, solana_fee_calculator::FeeCalculator,
+        solana_hash::Hash,
     };
 
     #[test]
@@ -376,7 +377,7 @@ mod test {
             }]),
         );
 
-        let bad_pubkey = solana_sdk::pubkey::new_rand();
+        let bad_pubkey = solana_pubkey::new_rand();
         assert!(parse_sysvar(&stake_history_sysvar.data, &bad_pubkey).is_err());
 
         let bad_data = vec![0; 4];

@@ -48,7 +48,6 @@ impl Bank {
         rewards_metrics: &mut RewardsMetrics,
     ) {
         let CalculateRewardsAndDistributeVoteRewardsResult {
-            total_rewards,
             distributed_rewards,
             point_value,
             stake_rewards_by_partition,
@@ -61,12 +60,7 @@ impl Bank {
 
         let slot = self.slot();
         let distribution_starting_block_height =
-            // For live-cluster testing pre-activation
-            if self.force_partition_rewards_in_first_block_of_epoch() {
-                self.block_height()
-            } else {
-                self.block_height() + REWARD_CALCULATION_NUM_BLOCKS
-            };
+            self.block_height() + REWARD_CALCULATION_NUM_BLOCKS;
 
         let num_partitions = stake_rewards_by_partition.len() as u64;
 
@@ -76,7 +70,6 @@ impl Bank {
         );
 
         self.create_epoch_rewards_sysvar(
-            total_rewards,
             distributed_rewards,
             distribution_starting_block_height,
             num_partitions,
@@ -176,7 +169,6 @@ impl Bank {
         );
 
         CalculateRewardsAndDistributeVoteRewardsResult {
-            total_rewards: validator_rewards_paid + total_stake_rewards_lamports,
             distributed_rewards: validator_rewards_paid,
             point_value,
             stake_rewards_by_partition,

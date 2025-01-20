@@ -103,7 +103,7 @@ fn bench_process_transactions_multiple_slots(bencher: &mut Bencher) {
     let bank0 = Bank::new_for_benches(&genesis_config);
     let bank_forks = BankForks::new_rw_arc(bank0);
     let bank = bank_forks.read().unwrap().working_bank();
-    let collector = solana_sdk::pubkey::new_rand();
+    let collector = solana_pubkey::new_rand();
     let banks = (1..=NUM_SLOTS)
         .map(|n| Arc::new(Bank::new_from_parent(bank.clone(), &collector, n as u64)))
         .collect::<Vec<_>>();

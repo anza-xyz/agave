@@ -12,51 +12,55 @@ pub use self::{
 };
 #[allow(deprecated)]
 use {
+    solana_account_info::AccountInfo,
     solana_bn254::prelude::{
         alt_bn128_addition, alt_bn128_multiplication, alt_bn128_pairing, AltBn128Error,
         ALT_BN128_ADDITION_OUTPUT_LEN, ALT_BN128_MULTIPLICATION_OUTPUT_LEN,
         ALT_BN128_PAIRING_ELEMENT_LEN, ALT_BN128_PAIRING_OUTPUT_LEN,
     },
     solana_compute_budget::compute_budget::ComputeBudget,
+    solana_cpi::MAX_RETURN_DATA,
+    solana_define_syscall::codes,
     solana_feature_set::{
         self as feature_set, abort_on_invalid_curve, blake3_syscall_enabled,
         bpf_account_data_direct_mapping, curve25519_syscall_enabled,
         disable_deploy_of_alloc_free_syscall, disable_fees_sysvar, disable_sbpf_v0_execution,
         enable_alt_bn128_compression_syscall, enable_alt_bn128_syscall, enable_big_mod_exp_syscall,
-        enable_get_epoch_stake_syscall, enable_partitioned_epoch_reward, enable_poseidon_syscall,
+        enable_get_epoch_stake_syscall, enable_poseidon_syscall,
         enable_sbpf_v1_deployment_and_execution, enable_sbpf_v2_deployment_and_execution,
         enable_sbpf_v3_deployment_and_execution, get_sysvar_syscall_enabled,
-        last_restart_slot_sysvar, partitioned_epoch_rewards_superfeature,
-        reenable_sbpf_v0_execution, remaining_compute_units_syscall_enabled, FeatureSet,
+        last_restart_slot_sysvar, reenable_sbpf_v0_execution,
+        remaining_compute_units_syscall_enabled, FeatureSet,
     },
+    solana_hash::Hash,
+    solana_instruction::{error::InstructionError, AccountMeta, ProcessedSiblingInstruction},
+    solana_keccak_hasher as keccak,
     solana_log_collector::{ic_logger_msg, ic_msg},
     solana_poseidon as poseidon,
+    solana_precompiles::is_precompile,
+    solana_program::{
+        big_mod_exp::{big_mod_exp, BigModExpParams},
+        blake3,
+    },
+    solana_program_entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, SUCCESS},
     solana_program_memory::is_nonoverlapping,
     solana_program_runtime::{invoke_context::InvokeContext, stable_log},
+    solana_pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN, PUBKEY_BYTES},
     solana_sbpf::{
         declare_builtin_function,
         memory_region::{AccessType, MemoryMapping},
         program::{BuiltinProgram, FunctionRegistry, SBPFVersion},
         vm::Config,
     },
-    solana_sdk::{
-        account_info::AccountInfo,
-        big_mod_exp::{big_mod_exp, BigModExpParams},
-        blake3, bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
-        entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, SUCCESS},
-        hash::{Hash, Hasher},
-        instruction::{AccountMeta, InstructionError, ProcessedSiblingInstruction},
-        keccak, native_loader,
-        precompiles::is_precompile,
-        program::MAX_RETURN_DATA,
-        pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN, PUBKEY_BYTES},
-        secp256k1_recover::{
-            Secp256k1RecoverError, SECP256K1_PUBLIC_KEY_LENGTH, SECP256K1_SIGNATURE_LENGTH,
-        },
-        sysvar::{Sysvar, SysvarId},
-        transaction_context::{IndexOfAccount, InstructionAccount},
+    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, native_loader},
+    solana_secp256k1_recover::{
+        Secp256k1RecoverError, SECP256K1_PUBLIC_KEY_LENGTH, SECP256K1_SIGNATURE_LENGTH,
     },
+    solana_sha256_hasher::Hasher,
+    solana_sysvar::Sysvar,
+    solana_sysvar_id::SysvarId,
     solana_timings::ExecuteTimings,
+    solana_transaction_context::{IndexOfAccount, InstructionAccount},
     solana_type_overrides::sync::Arc,
     std::{
         alloc::Layout,
@@ -73,7 +77,7 @@ mod mem_ops;
 mod sysvar;
 
 /// Maximum signers
-pub const MAX_SIGNERS: usize = 16;
+const MAX_SIGNERS: usize = 16;
 
 /// Error definitions
 #[derive(Debug, ThisError, PartialEq, Eq)]
@@ -130,7 +134,7 @@ pub enum SyscallError {
 
 type Error = Box<dyn std::error::Error>;
 
-pub trait HasherImpl {
+trait HasherImpl {
     const NAME: &'static str;
     type Output: AsRef<[u8]>;
 
@@ -142,9 +146,9 @@ pub trait HasherImpl {
     fn get_max_slices(compute_budget: &ComputeBudget) -> u64;
 }
 
-pub struct Sha256Hasher(Hasher);
-pub struct Blake3Hasher(blake3::Hasher);
-pub struct Keccak256Hasher(keccak::Hasher);
+struct Sha256Hasher(Hasher);
+struct Blake3Hasher(blake3::Hasher);
+struct Keccak256Hasher(keccak::Hasher);
 
 impl HasherImpl for Sha256Hasher {
     const NAME: &'static str = "Sha256";
@@ -242,7 +246,7 @@ macro_rules! register_feature_gated_function {
     };
 }
 
-pub fn morph_into_deployment_environment_v1(
+pub(crate) fn morph_into_deployment_environment_v1(
     from: Arc<BuiltinProgram<InvokeContext>>,
 ) -> Result<BuiltinProgram<InvokeContext>, Error> {
     let mut config = from.get_config().clone();
@@ -277,9 +281,6 @@ pub fn create_program_runtime_environment_v1<'a>(
     let blake3_syscall_enabled = feature_set.is_active(&blake3_syscall_enabled::id());
     let curve25519_syscall_enabled = feature_set.is_active(&curve25519_syscall_enabled::id());
     let disable_fees_sysvar = feature_set.is_active(&disable_fees_sysvar::id());
-    let epoch_rewards_syscall_enabled = feature_set
-        .is_active(&enable_partitioned_epoch_reward::id())
-        || feature_set.is_active(&partitioned_epoch_rewards_superfeature::id());
     let disable_deploy_of_alloc_free_syscall = reject_deployment_of_broken_elfs
         && feature_set.is_active(&disable_deploy_of_alloc_free_syscall::id());
     let last_restart_slot_syscall_enabled = feature_set.is_active(&last_restart_slot_sysvar::id());
@@ -328,44 +329,64 @@ pub fn create_program_runtime_environment_v1<'a>(
     let mut result = BuiltinProgram::new_loader_with_dense_registration(config);
 
     // Abort
-    result.register_function("abort", 1, SyscallAbort::vm)?;
+    result.register_function("abort", codes::ABORT, SyscallAbort::vm)?;
 
     // Panic
-    result.register_function("sol_panic_", 2, SyscallPanic::vm)?;
+    result.register_function("sol_panic_", codes::SOL_PANIC, SyscallPanic::vm)?;
 
     // Logging
-    result.register_function("sol_log_", 7, SyscallLog::vm)?;
-    result.register_function("sol_log_64_", 8, SyscallLogU64::vm)?;
-    result.register_function("sol_log_pubkey", 9, SyscallLogPubkey::vm)?;
-    result.register_function("sol_log_compute_units_", 10, SyscallLogBpfComputeUnits::vm)?;
+    result.register_function("sol_log_", codes::SOL_LOG_, SyscallLog::vm)?;
+    result.register_function("sol_log_64_", codes::SOL_LOG_64_, SyscallLogU64::vm)?;
+    result.register_function(
+        "sol_log_pubkey",
+        codes::SOL_LOG_PUBKEY,
+        SyscallLogPubkey::vm,
+    )?;
+    result.register_function(
+        "sol_log_compute_units_",
+        codes::SOL_LOG_COMPUTE_UNITS_,
+        SyscallLogBpfComputeUnits::vm,
+    )?;
 
     // Program defined addresses (PDA)
     result.register_function(
         "sol_create_program_address",
-        32,
+        codes::SOL_CREATE_PROGRAM_ADDRESS,
         SyscallCreateProgramAddress::vm,
     )?;
     result.register_function(
         "sol_try_find_program_address",
-        33,
+        codes::SOL_TRY_FIND_PROGRAM_ADDRESS,
         SyscallTryFindProgramAddress::vm,
     )?;
 
     // Sha256
-    result.register_function("sol_sha256", 17, SyscallHash::vm::<Sha256Hasher>)?;
+    result.register_function(
+        "sol_sha256",
+        codes::SOL_SHA256,
+        SyscallHash::vm::<Sha256Hasher>,
+    )?;
 
     // Keccak256
-    result.register_function("sol_keccak256", 18, SyscallHash::vm::<Keccak256Hasher>)?;
+    result.register_function(
+        "sol_keccak256",
+        codes::SOL_KECCAK256,
+        SyscallHash::vm::<Keccak256Hasher>,
+    )?;
 
     // Secp256k1 Recover
-    result.register_function("sol_secp256k1_recover", 19, SyscallSecp256k1Recover::vm)?;
+    result.register_function(
+        "sol_secp256k1_recover",
+        codes::SOL_SECP256K1_RECOVER,
+        SyscallSecp256k1Recover::vm,
+    )?;
 
     // Blake3
     register_feature_gated_function!(
         result,
         blake3_syscall_enabled,
         "sol_blake3",
-        20,
+        codes::SOL_BLAKE3,
         SyscallHash::vm::<Blake3Hasher>,
     )?;
 
@@ -374,86 +395,112 @@ pub fn create_program_runtime_environment_v1<'a>(
         result,
         curve25519_syscall_enabled,
         "sol_curve_validate_point",
-        24,
+        codes::SOL_CURVE_VALIDATE_POINT,
         SyscallCurvePointValidation::vm,
     )?;
     register_feature_gated_function!(
         result,
         curve25519_syscall_enabled,
         "sol_curve_group_op",
-        25,
+        codes::SOL_CURVE_GROUP_OP,
         SyscallCurveGroupOps::vm,
     )?;
     register_feature_gated_function!(
         result,
         curve25519_syscall_enabled,
         "sol_curve_multiscalar_mul",
-        26,
+        codes::SOL_CURVE_MULTISCALAR_MUL,
         SyscallCurveMultiscalarMultiplication::vm,
     )?;
 
     // Sysvars
-    result.register_function("sol_get_clock_sysvar", 36, SyscallGetClockSysvar::vm)?;
+    result.register_function(
+        "sol_get_clock_sysvar",
+        codes::SOL_GET_CLOCK_SYSVAR,
+        SyscallGetClockSysvar::vm,
+    )?;
     result.register_function(
         "sol_get_epoch_schedule_sysvar",
-        37,
+        codes::SOL_GET_EPOCH_SCHEDULE_SYSVAR,
         SyscallGetEpochScheduleSysvar::vm,
     )?;
     register_feature_gated_function!(
         result,
         !disable_fees_sysvar,
         "sol_get_fees_sysvar",
-        40,
+        codes::SOL_GET_FEES_SYSVAR,
         SyscallGetFeesSysvar::vm,
     )?;
-    result.register_function("sol_get_rent_sysvar", 41, SyscallGetRentSysvar::vm)?;
+    result.register_function(
+        "sol_get_rent_sysvar",
+        codes::SOL_GET_RENT_SYSVAR,
+        SyscallGetRentSysvar::vm,
+    )?;
 
     register_feature_gated_function!(
         result,
         last_restart_slot_syscall_enabled,
         "sol_get_last_restart_slot",
-        38,
+        codes::SOL_GET_LAST_RESTART_SLOT,
         SyscallGetLastRestartSlotSysvar::vm,
     )?;
 
-    register_feature_gated_function!(
-        result,
-        epoch_rewards_syscall_enabled,
+    result.register_function(
         "sol_get_epoch_rewards_sysvar",
-        39,
+        codes::SOL_GET_EPOCH_REWARDS_SYSVAR,
         SyscallGetEpochRewardsSysvar::vm,
     )?;
 
     // Memory ops
-    result.register_function("sol_memcpy_", 3, SyscallMemcpy::vm)?;
-    result.register_function("sol_memmove_", 4, SyscallMemmove::vm)?;
-    result.register_function("sol_memset_", 5, SyscallMemset::vm)?;
-    result.register_function("sol_memcmp_", 6, SyscallMemcmp::vm)?;
+    result.register_function("sol_memcpy_", codes::SOL_MEMCPY_, SyscallMemcpy::vm)?;
+    result.register_function("sol_memmove_", codes::SOL_MEMMOVE_, SyscallMemmove::vm)?;
+    result.register_function("sol_memset_", codes::SOL_MEMSET_, SyscallMemset::vm)?;
+    result.register_function("sol_memcmp_", codes::SOL_MEMCMP_, SyscallMemcmp::vm)?;
 
     // Processed sibling instructions
     result.register_function(
         "sol_get_processed_sibling_instruction",
-        22,
+        codes::SOL_GET_PROCESSED_SIBLING_INSTRUCTION,
         SyscallGetProcessedSiblingInstruction::vm,
     )?;
 
     // Stack height
-    result.register_function("sol_get_stack_height", 23, SyscallGetStackHeight::vm)?;
+    result.register_function(
+        "sol_get_stack_height",
+        codes::SOL_GET_STACK_HEIGHT,
+        SyscallGetStackHeight::vm,
+    )?;
 
     // Return data
-    result.register_function("sol_set_return_data", 14, SyscallSetReturnData::vm)?;
-    result.register_function("sol_get_return_data", 15, SyscallGetReturnData::vm)?;
+    result.register_function(
+        "sol_set_return_data",
+        codes::SOL_SET_RETURN_DATA,
+        SyscallSetReturnData::vm,
+    )?;
+    result.register_function(
+        "sol_get_return_data",
+        codes::SOL_GET_RETURN_DATA,
+        SyscallGetReturnData::vm,
+    )?;
 
     // Cross-program invocation
-    result.register_function("sol_invoke_signed_c", 12, SyscallInvokeSignedC::vm)?;
-    result.register_function("sol_invoke_signed_rust", 13, SyscallInvokeSignedRust::vm)?;
+    result.register_function(
+        "sol_invoke_signed_c",
+        codes::SOL_INVOKE_SIGNED_C,
+        SyscallInvokeSignedC::vm,
+    )?;
+    result.register_function(
+        "sol_invoke_signed_rust",
+        codes::SOL_INVOKE_SIGNED_RUST,
+        SyscallInvokeSignedRust::vm,
+    )?;
 
     // Memory allocator
     register_feature_gated_function!(
         result,
         !disable_deploy_of_alloc_free_syscall,
         "sol_alloc_free_",
-        11,
+        codes::SOL_ALLOC_FREE_,
         SyscallAllocFree::vm,
     )?;
 
@@ -462,7 +509,7 @@ pub fn create_program_runtime_environment_v1<'a>(
         result,
         enable_alt_bn128_syscall,
         "sol_alt_bn128_group_op",
-        28,
+        codes::SOL_ALT_BN128_GROUP_OP,
         SyscallAltBn128::vm,
     )?;
 
@@ -471,7 +518,7 @@ pub fn create_program_runtime_environment_v1<'a>(
         result,
         enable_big_mod_exp_syscall,
         "sol_big_mod_exp",
-        30,
+        codes::SOL_BIG_MOD_EXP,
         SyscallBigModExp::vm,
     )?;
 
@@ -480,7 +527,7 @@ pub fn create_program_runtime_environment_v1<'a>(
         result,
         enable_poseidon_syscall,
         "sol_poseidon",
-        21,
+        codes::SOL_POSEIDON,
         SyscallPoseidon::vm,
     )?;
 
@@ -489,7 +536,7 @@ pub fn create_program_runtime_environment_v1<'a>(
         result,
         remaining_compute_units_syscall_enabled,
         "sol_remaining_compute_units",
-        31,
+        codes::SOL_REMAINING_COMPUTE_UNITS,
         SyscallRemainingComputeUnits::vm
     )?;
 
@@ -498,7 +545,7 @@ pub fn create_program_runtime_environment_v1<'a>(
         result,
         enable_alt_bn128_compression_syscall,
         "sol_alt_bn128_compression",
-        29,
+        codes::SOL_ALT_BN128_COMPRESSION,
         SyscallAltBn128Compression::vm,
     )?;
 
@@ -507,7 +554,7 @@ pub fn create_program_runtime_environment_v1<'a>(
         result,
         get_sysvar_syscall_enabled,
         "sol_get_sysvar",
-        34,
+        codes::SOL_GET_SYSVAR,
         SyscallGetSysvar::vm,
     )?;
 
@@ -516,12 +563,12 @@ pub fn create_program_runtime_environment_v1<'a>(
         result,
         enable_get_epoch_stake_syscall,
         "sol_get_epoch_stake",
-        35,
+        codes::SOL_GET_EPOCH_STAKE,
         SyscallGetEpochStake::vm,
     )?;
 
     // Log data
-    result.register_function("sol_log_data", 16, SyscallLogData::vm)?;
+    result.register_function("sol_log_data", codes::SOL_LOG_DATA, SyscallLogData::vm)?;
 
     Ok(result)
 }
@@ -2148,31 +2195,30 @@ declare_builtin_function!(
 #[allow(clippy::indexing_slicing)]
 mod tests {
     #[allow(deprecated)]
-    use solana_sdk::sysvar::fees::Fees;
+    use solana_sysvar::fees::Fees;
     use {
         super::*,
         crate::mock_create_vm,
         assert_matches::assert_matches,
         core::slice,
+        solana_account::{create_account_shared_data_for_test, AccountSharedData},
+        solana_clock::Clock,
+        solana_epoch_rewards::EpochRewards,
+        solana_epoch_schedule::EpochSchedule,
+        solana_fee_calculator::FeeCalculator,
+        solana_hash::HASH_BYTES,
+        solana_instruction::Instruction,
+        solana_last_restart_slot::LastRestartSlot,
+        solana_program::program::check_type_assumptions,
         solana_program_runtime::{invoke_context::InvokeContext, with_mock_invoke_context},
         solana_sbpf::{
             error::EbpfError, memory_region::MemoryRegion, program::SBPFVersion, vm::Config,
         },
-        solana_sdk::{
-            account::{create_account_shared_data_for_test, AccountSharedData},
-            bpf_loader,
-            fee_calculator::FeeCalculator,
-            hash::{hashv, HASH_BYTES},
-            instruction::Instruction,
-            program::check_type_assumptions,
-            slot_hashes::{self, SlotHashes},
-            stable_layout::stable_instruction::StableInstruction,
-            stake_history::{self, StakeHistory, StakeHistoryEntry},
-            sysvar::{
-                self, clock::Clock, epoch_rewards::EpochRewards, epoch_schedule::EpochSchedule,
-                last_restart_slot::LastRestartSlot,
-            },
-        },
+        solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, sysvar},
+        solana_sha256_hasher::hashv,
+        solana_slot_hashes::{self as slot_hashes, SlotHashes},
+        solana_stable_layout::stable_instruction::StableInstruction,
+        solana_sysvar::stake_history::{self, StakeHistory, StakeHistoryEntry},
         std::{mem, str::FromStr},
         test_case::test_case,
     };
@@ -2211,8 +2257,8 @@ mod tests {
 
     #[allow(dead_code)]
     struct MockSlice {
-        pub vm_addr: u64,
-        pub len: usize,
+        vm_addr: u64,
+        len: usize,
     }
 
     #[test]
@@ -2263,7 +2309,7 @@ mod tests {
         let config = Config::default();
 
         // Pubkey
-        let pubkey = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
         let memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_readonly(bytes_of(&pubkey), 0x100000000)],
             &config,
@@ -2276,9 +2322,9 @@ mod tests {
 
         // Instruction
         let instruction = Instruction::new_with_bincode(
-            solana_sdk::pubkey::new_rand(),
+            solana_pubkey::new_rand(),
             &"foobar",
-            vec![AccountMeta::new(solana_sdk::pubkey::new_rand(), false)],
+            vec![AccountMeta::new(solana_pubkey::new_rand(), false)],
         );
         let instruction = StableInstruction::from(instruction);
         let memory_region = MemoryRegion::new_readonly(bytes_of(&instruction), 0x100000000);
@@ -2354,7 +2400,7 @@ mod tests {
         assert!(translate_slice::<u64>(&memory_mapping, 0x100000000, u64::MAX, true).is_err());
 
         // Pubkeys
-        let mut data = vec![solana_sdk::pubkey::new_rand(); 5];
+        let mut data = vec![solana_pubkey::new_rand(); 5];
         let memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_readonly(
                 unsafe {
@@ -2370,7 +2416,7 @@ mod tests {
             translate_slice::<Pubkey>(&memory_mapping, 0x100000000, data.len() as u64, true)
                 .unwrap();
         assert_eq!(data, translated_data);
-        *data.first_mut().unwrap() = solana_sdk::pubkey::new_rand(); // Both should point to same place
+        *data.first_mut().unwrap() = solana_pubkey::new_rand(); // Both should point to same place
         assert_eq!(data, translated_data);
     }
 
@@ -2608,7 +2654,7 @@ mod tests {
             let memory_mapping = &mut vm.memory_mapping;
             let result = SyscallAllocFree::rust(
                 invoke_context,
-                solana_sdk::entrypoint::HEAP_LENGTH as u64,
+                solana_program_entrypoint::HEAP_LENGTH as u64,
                 0,
                 0,
                 0,
@@ -2618,7 +2664,7 @@ mod tests {
             assert_ne!(result.unwrap(), 0);
             let result = SyscallAllocFree::rust(
                 invoke_context,
-                solana_sdk::entrypoint::HEAP_LENGTH as u64,
+                solana_program_entrypoint::HEAP_LENGTH as u64,
                 0,
                 0,
                 0,
@@ -2645,7 +2691,7 @@ mod tests {
             }
             let result = SyscallAllocFree::rust(
                 invoke_context,
-                solana_sdk::entrypoint::HEAP_LENGTH as u64,
+                solana_program_entrypoint::HEAP_LENGTH as u64,
                 0,
                 0,
                 0,
@@ -2668,7 +2714,7 @@ mod tests {
             }
             let result = SyscallAllocFree::rust(
                 invoke_context,
-                solana_sdk::entrypoint::HEAP_LENGTH as u64,
+                solana_program_entrypoint::HEAP_LENGTH as u64,
                 0,
                 0,
                 0,
@@ -4994,12 +5040,12 @@ mod tests {
         unsafe { slice::from_raw_parts_mut(slice::from_mut(val).as_mut_ptr().cast(), size) }
     }
 
-    pub fn bytes_of_slice<T>(val: &[T]) -> &[u8] {
+    fn bytes_of_slice<T>(val: &[T]) -> &[u8] {
         let size = val.len().wrapping_mul(mem::size_of::<T>());
         unsafe { slice::from_raw_parts(val.as_ptr().cast(), size) }
     }
 
-    pub fn bytes_of_slice_mut<T>(val: &mut [T]) -> &mut [u8] {
+    fn bytes_of_slice_mut<T>(val: &mut [T]) -> &mut [u8] {
         let size = val.len().wrapping_mul(mem::size_of::<T>());
         unsafe { slice::from_raw_parts_mut(val.as_mut_ptr().cast(), size) }
     }

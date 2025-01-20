@@ -30,7 +30,7 @@ impl<'a> AncestorIterator<'a> {
         }
     }
 }
-impl<'a> Iterator for AncestorIterator<'a> {
+impl Iterator for AncestorIterator<'_> {
     type Item = Slot;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -57,7 +57,7 @@ impl<'a> From<AncestorIterator<'a>> for AncestorIteratorWithHash<'a> {
         Self { ancestor_iterator }
     }
 }
-impl<'a> Iterator for AncestorIteratorWithHash<'a> {
+impl Iterator for AncestorIteratorWithHash<'_> {
     type Item = (Slot, Hash);
     fn next(&mut self) -> Option<Self::Item> {
         self.ancestor_iterator

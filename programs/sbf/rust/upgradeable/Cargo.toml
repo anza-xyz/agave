@@ -14,3 +14,6 @@ solana-program = { workspace = true }
 [lib]
 name = "solana_sbf_rust_upgradeable"
 crate-type = ["cdylib"]
+
+[lints]
+workspace = true

@@ -12,21 +12,40 @@ edition = { workspace = true }
 [dependencies]
 bincode = { workspace = true }
 log = { workspace = true }
+solana-account = { workspace = true }
+solana-bincode = { workspace = true }
+solana-clock = { workspace = true }
 solana-config-program = { workspace = true }
 solana-feature-set = { workspace = true }
+solana-instruction = { workspace = true }
 solana-log-collector = { workspace = true }
+solana-native-token = { workspace = true }
+solana-packet = { workspace = true }
+solana-program = { workspace = true }
 solana-program-runtime = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-rent = { workspace = true }
 solana-sdk = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-sysvar = { workspace = true }
+solana-transaction-context = { workspace = true }
 solana-type-overrides = { workspace = true }
-solana-vote-program = { workspace = true }
+solana-vote-program = { workspace = true, default-features = false }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
 criterion = { workspace = true }
 proptest = { workspace = true }
 solana-compute-budget = { workspace = true }
+solana-epoch-rewards = { workspace = true }
+solana-epoch-schedule = { workspace = true }
 solana-logger = { workspace = true }
+solana-sysvar-id = { workspace = true }
 test-case = { workspace = true }
+
+[features]
+default = ["metrics"]
+metrics = ["solana-vote-program/metrics"]
 
 [lib]
 crate-type = ["lib"]

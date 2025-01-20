@@ -1,8 +1,8 @@
 use {
     crate::accounts_db::AccountStorageEntry,
     log::*,
+    solana_clock::Slot,
     solana_measure::measure::Measure,
-    solana_sdk::clock::Slot,
     std::{
         collections::HashMap,
         ops::{Bound, Range, RangeBounds},

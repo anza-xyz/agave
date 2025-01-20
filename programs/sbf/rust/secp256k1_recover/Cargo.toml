@@ -15,3 +15,6 @@ solana-secp256k1-recover = { workspace = true }
 
 [lib]
 crate-type = ["cdylib"]
+
+[lints]
+workspace = true

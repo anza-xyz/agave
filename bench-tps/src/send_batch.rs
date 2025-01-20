@@ -193,7 +193,7 @@ trait Sliceable {
     fn get_pubkey(&self) -> Pubkey;
 }
 
-impl<'a, T: Sliceable + Send + Sync> SendBatchTransactions<'a, T> for Vec<(T, Transaction)>
+impl<T: Sliceable + Send + Sync> SendBatchTransactions<'_, T> for Vec<(T, Transaction)>
 where
     <T as Sliceable>::Slice: Signers,
 {

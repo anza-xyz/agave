@@ -9,7 +9,9 @@ use {
         account_storage::meta::StoredMetaWriteVersion,
         accounts::Accounts,
         accounts_db::AccountStorageEntry,
-        accounts_hash::{AccountsDeltaHash, AccountsHash, AccountsHashKind},
+        accounts_hash::{
+            AccountsDeltaHash, AccountsHash, AccountsHashKind, MerkleOrLatticeAccountsHash,
+        },
         epoch_accounts_hash::EpochAccountsHash,
     },
     solana_sdk::{
@@ -36,6 +38,7 @@ pub struct AccountsPackage {
     pub accounts: Arc<Accounts>,
     pub epoch_schedule: EpochSchedule,
     pub rent_collector: RentCollector,
+    pub accounts_hash_algorithm: AccountsHashAlgorithm,
 
     /// Supplemental information needed for snapshots
     pub snapshot_info: Option<SupplementalSnapshotInfo>,
@@ -90,11 +93,17 @@ impl AccountsPackage {
             }
         };
 
+        let accounts_hash_algorithm = if bank.is_snapshots_lt_hash_enabled() {
+            AccountsHashAlgorithm::Lattice
+        } else {
+            AccountsHashAlgorithm::Merkle
+        };
         Self::_new(
             package_kind,
             bank,
             snapshot_storages,
             accounts_hash_for_testing,
+            accounts_hash_algorithm,
             Some(snapshot_info),
         )
     }
@@ -113,6 +122,7 @@ impl AccountsPackage {
             bank,
             snapshot_storages,
             accounts_hash_for_testing,
+            AccountsHashAlgorithm::Merkle,
             None,
         )
     }
@@ -131,6 +141,7 @@ impl AccountsPackage {
             bank,
             snapshot_storages,
             accounts_hash_for_testing,
+            AccountsHashAlgorithm::Merkle,
             None,
         )
     }
@@ -140,6 +151,7 @@ impl AccountsPackage {
         bank: &Bank,
         snapshot_storages: Vec<Arc<AccountStorageEntry>>,
         accounts_hash_for_testing: Option<AccountsHash>,
+        accounts_hash_algorithm: AccountsHashAlgorithm,
         snapshot_info: Option<SupplementalSnapshotInfo>,
     ) -> Self {
         Self {
@@ -152,6 +164,7 @@ impl AccountsPackage {
             accounts: bank.accounts(),
             epoch_schedule: bank.epoch_schedule().clone(),
             rent_collector: bank.rent_collector().clone(),
+            accounts_hash_algorithm,
             snapshot_info,
             enqueued: Instant::now(),
         }
@@ -174,6 +187,7 @@ impl AccountsPackage {
             accounts: Arc::new(accounts),
             epoch_schedule: EpochSchedule::default(),
             rent_collector: RentCollector::default(),
+            accounts_hash_algorithm: AccountsHashAlgorithm::Merkle,
             snapshot_info: Some(SupplementalSnapshotInfo {
                 status_cache_slot_deltas: Vec::default(),
                 bank_fields_to_serialize: BankFieldsToSerialize::default_for_tests(),
@@ -193,6 +207,7 @@ impl std::fmt::Debug for AccountsPackage {
             .field("kind", &self.package_kind)
             .field("slot", &self.slot)
             .field("block_height", &self.block_height)
+            .field("accounts_hash_algorithm", &self.accounts_hash_algorithm)
             .finish_non_exhaustive()
     }
 }
@@ -241,7 +256,7 @@ pub struct SnapshotPackage {
 impl SnapshotPackage {
     pub fn new(
         accounts_package: AccountsPackage,
-        accounts_hash_kind: AccountsHashKind,
+        merkle_or_lattice_accounts_hash: MerkleOrLatticeAccountsHash,
         bank_incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>,
     ) -> Self {
         let AccountsPackageKind::Snapshot(kind) = accounts_package.package_kind else {
@@ -255,15 +270,24 @@ impl SnapshotPackage {
             );
         };
 
-        let accounts_hash = match accounts_hash_kind {
-            AccountsHashKind::Full(accounts_hash) => accounts_hash,
-            AccountsHashKind::Incremental(_) => {
-                // The accounts hash is only needed when serializing a full snapshot.
-                // When serializing an incremental snapshot, there will not be a full accounts hash
-                // at `slot`.  In that case, use the default, because it doesn't actually get used.
-                // The incremental snapshot will use the BankIncrementalSnapshotPersistence
-                // field, so ensure it is Some.
-                assert!(bank_incremental_snapshot_persistence.is_some());
+        let accounts_hash = match merkle_or_lattice_accounts_hash {
+            MerkleOrLatticeAccountsHash::Merkle(accounts_hash_kind) => {
+                match accounts_hash_kind {
+                    AccountsHashKind::Full(accounts_hash) => accounts_hash,
+                    AccountsHashKind::Incremental(_) => {
+                        // The accounts hash is only needed when serializing a full snapshot.
+                        // When serializing an incremental snapshot, there will not be a full accounts hash
+                        // at `slot`.  In that case, use the default, because it doesn't actually get used.
+                        // The incremental snapshot will use the BankIncrementalSnapshotPersistence
+                        // field, so ensure it is Some.
+                        assert!(bank_incremental_snapshot_persistence.is_some());
+                        AccountsHash(Hash::default())
+                    }
+                }
+            }
+            MerkleOrLatticeAccountsHash::Lattice => {
+                // This is the merkle-based accounts hash, which isn't used in the Lattice case,
+                // so any value is fine here.
                 AccountsHash(Hash::default())
             }
         };
@@ -273,8 +297,13 @@ impl SnapshotPackage {
             slot: accounts_package.slot,
             block_height: accounts_package.block_height,
             hash: SnapshotHash::new(
-                &accounts_hash_kind,
+                &merkle_or_lattice_accounts_hash,
                 snapshot_info.epoch_accounts_hash.as_ref(),
+                snapshot_info
+                    .bank_fields_to_serialize
+                    .accounts_lt_hash
+                    .as_ref()
+                    .map(|accounts_lt_hash| accounts_lt_hash.0.checksum()),
             ),
             snapshot_storages: accounts_package.snapshot_storages,
             status_cache_slot_deltas: snapshot_info.status_cache_slot_deltas,
@@ -339,4 +368,13 @@ impl SnapshotKind {
     pub fn is_incremental_snapshot(&self) -> bool {
         matches!(self, SnapshotKind::IncrementalSnapshot(_))
     }
+}
+
+/// Which algorithm should be used to calculate the accounts hash?
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum AccountsHashAlgorithm {
+    /// Merkle-based accounts hash algorithm
+    Merkle,
+    /// Lattice-based accounts hash algorithm
+    Lattice,
 }

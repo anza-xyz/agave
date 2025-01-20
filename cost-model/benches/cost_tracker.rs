@@ -6,7 +6,7 @@ use {
         cost_tracker::CostTracker,
         transaction_cost::{TransactionCost, UsageCostDetails, WritableKeysTransaction},
     },
-    solana_sdk::pubkey::Pubkey,
+    solana_pubkey::Pubkey,
     test::Bencher,
 };
 

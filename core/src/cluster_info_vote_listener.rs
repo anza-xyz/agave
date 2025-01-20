@@ -1,12 +1,13 @@
 use {
     crate::{
-        banking_trace::{BankingPacketBatch, BankingPacketSender},
+        banking_trace::BankingPacketSender,
         consensus::vote_stake_tracker::VoteStakeTracker,
         optimistic_confirmation_verifier::OptimisticConfirmationVerifier,
         replay_stage::DUPLICATE_THRESHOLD,
         result::{Error, Result},
         sigverify,
     },
+    agave_banking_stage_ingress_types::BankingPacketBatch,
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Select, Sender},
     log::*,
     solana_gossip::{
@@ -789,7 +790,7 @@ mod tests {
         } = setup();
 
         // Check outdated slots are purged with new root
-        let new_voter = solana_sdk::pubkey::new_rand();
+        let new_voter = solana_pubkey::new_rand();
         // Make separate copy so the original doesn't count toward
         // the ref count, which would prevent cleanup
         let new_voter_ = new_voter;

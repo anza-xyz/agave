@@ -455,7 +455,7 @@ impl SystemMonitorService {
     ) -> bool {
         current_limits
             .iter()
-            .map(|(key, interesting_limit, current_value)| {
+            .all(|(key, interesting_limit, current_value)| {
                 datapoint_warn!("os-config", (key, *current_value, i64));
                 match interesting_limit {
                     InterestingLimit::Recommend(recommended_value)
@@ -477,7 +477,6 @@ impl SystemMonitorService {
                     }
                 }
             })
-            .all(|good| good)
     }
 
     #[cfg(not(target_os = "linux"))]

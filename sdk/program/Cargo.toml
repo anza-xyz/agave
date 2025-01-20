@@ -27,7 +27,9 @@ serde = { workspace = true }
 serde_bytes = { workspace = true }
 serde_derive = { workspace = true }
 solana-account-info = { workspace = true, features = ["bincode"] }
+solana-address-lookup-table-interface = { workspace = true, features = ["bincode", "bytemuck"] }
 solana-atomic-u64 = { workspace = true }
+solana-big-mod-exp = { workspace = true }
 solana-bincode = { workspace = true }
 solana-borsh = { workspace = true, optional = true }
 solana-clock = { workspace = true, features = ["serde", "sysvar"] }
@@ -77,6 +79,7 @@ solana-stable-layout = { workspace = true }
 solana-system-interface = { workspace = true, features = ["bincode"] }
 solana-sysvar = { workspace = true, features = ["bincode", "bytemuck"] }
 solana-sysvar-id = { workspace = true }
+solana-vote-interface = { workspace = true, features = ["bincode"] }
 thiserror = { workspace = true }
 
 # This is currently needed to build on-chain programs reliably.

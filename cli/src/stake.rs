@@ -31,6 +31,7 @@ use {
         CliEpochReward, CliStakeHistory, CliStakeHistoryEntry, CliStakeState, CliStakeType,
         OutputFormat, ReturnSignersConfig,
     },
+    solana_commitment_config::CommitmentConfig,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::{
@@ -43,7 +44,6 @@ use {
         account::{from_account, Account},
         account_utils::StateMut,
         clock::{Clock, UnixTimestamp, SECONDS_PER_DAY},
-        commitment_config::CommitmentConfig,
         epoch_schedule::EpochSchedule,
         message::Message,
         native_token::Sol,
@@ -2544,6 +2544,7 @@ pub fn get_epoch_boundary_timestamps(
 
 pub fn make_cli_reward(
     reward: &RpcInflationReward,
+    block_time: UnixTimestamp,
     epoch_start_time: UnixTimestamp,
     epoch_end_time: UnixTimestamp,
 ) -> Option<CliEpochReward> {
@@ -2564,7 +2565,7 @@ pub fn make_cli_reward(
             percent_change: rate_change * 100.0,
             apr: Some(apr * 100.0),
             commission: reward.commission,
-            block_time: epoch_end_time,
+            block_time,
         })
     } else {
         None
@@ -2593,7 +2594,9 @@ pub(crate) fn fetch_epoch_rewards(
             if let Some(reward) = reward {
                 let (epoch_start_time, epoch_end_time) =
                     get_epoch_boundary_timestamps(rpc_client, reward, &epoch_schedule)?;
-                if let Some(cli_reward) = make_cli_reward(reward, epoch_start_time, epoch_end_time)
+                let block_time = rpc_client.get_block_time(reward.effective_slot)?;
+                if let Some(cli_reward) =
+                    make_cli_reward(reward, block_time, epoch_start_time, epoch_end_time)
                 {
                     all_epoch_rewards.push(cli_reward);
                 }
@@ -3975,9 +3978,9 @@ mod tests {
         );
 
         // Test CreateStakeAccount SubCommand
-        let custodian = solana_sdk::pubkey::new_rand();
+        let custodian = solana_pubkey::new_rand();
         let custodian_string = format!("{custodian}");
-        let authorized = solana_sdk::pubkey::new_rand();
+        let authorized = solana_pubkey::new_rand();
         let authorized_string = format!("{authorized}");
         let test_create_stake_account = test_commands.clone().get_matches_from(vec![
             "test",
@@ -4180,7 +4183,7 @@ mod tests {
         );
 
         // Test DelegateStake Subcommand
-        let vote_account_pubkey = solana_sdk::pubkey::new_rand();
+        let vote_account_pubkey = solana_pubkey::new_rand();
         let vote_account_string = vote_account_pubkey.to_string();
         let test_delegate_stake = test_commands.clone().get_matches_from(vec![
             "test",
@@ -4210,7 +4213,7 @@ mod tests {
         );
 
         // Test DelegateStake Subcommand w/ authority
-        let vote_account_pubkey = solana_sdk::pubkey::new_rand();
+        let vote_account_pubkey = solana_pubkey::new_rand();
         let vote_account_string = vote_account_pubkey.to_string();
         let test_delegate_stake = test_commands.clone().get_matches_from(vec![
             "test",
@@ -4339,7 +4342,7 @@ mod tests {
         );
 
         // Test Delegate Subcommand w/ absent fee payer
-        let key1 = solana_sdk::pubkey::new_rand();
+        let key1 = solana_pubkey::new_rand();
         let sig1 = Keypair::new().sign_message(&[0u8]);
         let signer1 = format!("{key1}={sig1}");
         let test_delegate_stake = test_commands.clone().get_matches_from(vec![
@@ -4382,7 +4385,7 @@ mod tests {
         );
 
         // Test Delegate Subcommand w/ absent fee payer and absent nonce authority
-        let key2 = solana_sdk::pubkey::new_rand();
+        let key2 = solana_pubkey::new_rand();
         let sig2 = Keypair::new().sign_message(&[0u8]);
         let signer2 = format!("{key2}={sig2}");
         let test_delegate_stake = test_commands.clone().get_matches_from(vec![
@@ -4808,7 +4811,7 @@ mod tests {
         );
 
         // Test Deactivate Subcommand w/ absent fee payer
-        let key1 = solana_sdk::pubkey::new_rand();
+        let key1 = solana_pubkey::new_rand();
         let sig1 = Keypair::new().sign_message(&[0u8]);
         let signer1 = format!("{key1}={sig1}");
         let test_deactivate_stake = test_commands.clone().get_matches_from(vec![
@@ -4850,7 +4853,7 @@ mod tests {
         );
 
         // Test Deactivate Subcommand w/ absent fee payer and nonce authority
-        let key2 = solana_sdk::pubkey::new_rand();
+        let key2 = solana_pubkey::new_rand();
         let sig2 = Keypair::new().sign_message(&[0u8]);
         let signer2 = format!("{key2}={sig2}");
         let test_deactivate_stake = test_commands.clone().get_matches_from(vec![
@@ -5043,7 +5046,7 @@ mod tests {
         let stake_account_keypair = Keypair::new();
         write_keypair(&stake_account_keypair, tmp_file.as_file_mut()).unwrap();
 
-        let source_stake_account_pubkey = solana_sdk::pubkey::new_rand();
+        let source_stake_account_pubkey = solana_pubkey::new_rand();
         let test_merge_stake_account = test_commands.clone().get_matches_from(vec![
             "test",
             "merge-stake",

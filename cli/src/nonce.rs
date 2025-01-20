@@ -1044,7 +1044,7 @@ mod tests {
     fn test_check_nonce_account() {
         let durable_nonce = DurableNonce::from_blockhash(&Hash::default());
         let blockhash = *durable_nonce.as_hash();
-        let nonce_pubkey = solana_sdk::pubkey::new_rand();
+        let nonce_pubkey = solana_pubkey::new_rand();
         let data = Versions::new(State::Initialized(nonce::state::Data::new(
             nonce_pubkey,
             durable_nonce,
@@ -1086,7 +1086,7 @@ mod tests {
             );
         }
 
-        let new_nonce_authority = solana_sdk::pubkey::new_rand();
+        let new_nonce_authority = solana_pubkey::new_rand();
         let data = Versions::new(State::Initialized(nonce::state::Data::new(
             new_nonce_authority,
             durable_nonce,

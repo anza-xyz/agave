@@ -13,7 +13,6 @@ edition = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
 bitflags = { workspace = true, features = ["serde"] }
-byteorder = { workspace = true }
 bzip2 = { workspace = true }
 chrono = { workspace = true, features = ["default", "serde"] }
 chrono-humanize = { workspace = true }
@@ -31,6 +30,7 @@ lru = { workspace = true }
 mockall = { workspace = true }
 num_cpus = { workspace = true }
 num_enum = { workspace = true }
+proptest = { workspace = true }
 prost = { workspace = true }
 qualifier_attr = { workspace = true }
 rand = { workspace = true }
@@ -56,7 +56,8 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-perf = { workspace = true }
-solana-program-runtime = { workspace = true }
+solana-program-runtime = { workspace = true, features = ["metrics"] }
+solana-pubkey = { workspace = true }
 solana-rayon-threadlimit = { workspace = true }
 solana-runtime = { workspace = true }
 solana-runtime-transaction = { workspace = true }

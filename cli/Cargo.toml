@@ -34,14 +34,17 @@ solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-cli-output = { workspace = true }
 solana-client = { workspace = true }
+solana-commitment-config = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-config-program = { workspace = true }
 solana-connection-cache = { workspace = true }
 solana-decode-error = { workspace = true }
+solana-feature-gate-client = { workspace = true }
 solana-feature-set = { workspace = true }
 solana-loader-v4-program = { workspace = true }
 solana-logger = { workspace = true }
 solana-program-runtime = { workspace = true }
+solana-pubkey = { workspace = true }
 solana-pubsub-client = { workspace = true }
 solana-quic-client = { workspace = true }
 solana-remote-wallet = { workspace = true, features = ["default"] }

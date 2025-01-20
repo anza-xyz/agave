@@ -23,11 +23,14 @@ solana-clap-utils = { workspace = true }
 solana-cli = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-cli-output = { workspace = true }
+solana-commitment-config = { workspace = true }
+solana-keypair = { workspace = true }
 solana-logger = { workspace = true }
+solana-pubkey = { workspace = true }
 solana-remote-wallet = { workspace = true, features = ["default"] }
 solana-rpc-client = { workspace = true, features = ["default"] }
 solana-rpc-client-api = { workspace = true }
-solana-sdk = { workspace = true }
+solana-signer = { workspace = true }
 solana-version = { workspace = true }
 tar = { workspace = true }
 tempfile = { workspace = true }

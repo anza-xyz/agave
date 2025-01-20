@@ -1,6 +1,6 @@
 [package]
 name = "solana-define-syscall"
-description = "Solana define_syscall macro. For internal use only."
+description = "Solana define_syscall macro and core syscall definitions."
 documentation = "https://docs.rs/solana-define-syscall"
 version = { workspace = true }
 authors = { workspace = true }
