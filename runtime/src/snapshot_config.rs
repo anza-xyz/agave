@@ -1,7 +1,7 @@
 use {
     crate::{
         snapshot_bank_utils,
-        snapshot_utils::{self, ArchiveFormat, SnapshotVersion},
+        snapshot_utils::{self, ArchiveFormat, SnapshotVersion, ZstdConfig},
     },
     solana_sdk::clock::Slot,
     std::{num::NonZeroUsize, path::PathBuf},
@@ -46,9 +46,6 @@ pub struct SnapshotConfig {
 
     // Thread niceness adjustment for snapshot packager service
     pub packager_thread_niceness_adj: i8,
-
-    /// The compression level to use when archiving with zstd
-    pub zstd_compression_level: i32,
 }
 
 impl Default for SnapshotConfig {
@@ -62,7 +59,9 @@ impl Default for SnapshotConfig {
             full_snapshot_archives_dir: PathBuf::default(),
             incremental_snapshot_archives_dir: PathBuf::default(),
             bank_snapshots_dir: PathBuf::default(),
-            archive_format: ArchiveFormat::TarZstd,
+            archive_format: ArchiveFormat::TarZstd {
+                config: ZstdConfig::default(),
+            },
             snapshot_version: SnapshotVersion::default(),
             maximum_full_snapshot_archives_to_retain:
                 snapshot_utils::DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
@@ -70,7 +69,6 @@ impl Default for SnapshotConfig {
                 snapshot_utils::DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
             accounts_hash_debug_verify: false,
             packager_thread_niceness_adj: 0,
-            zstd_compression_level: 0, // a level of 0 uses zstd's default
         }
     }
 }

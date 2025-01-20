@@ -818,7 +818,6 @@ pub fn serialize_and_archive_snapshot_package(
         &bank_snapshot_info.snapshot_dir,
         snapshot_archive_path,
         snapshot_config.archive_format,
-        snapshot_config.zstd_compression_level,
     )?;
 
     Ok(snapshot_archive_info)
@@ -976,7 +975,6 @@ fn archive_snapshot(
     bank_snapshot_dir: impl AsRef<Path>,
     archive_path: impl AsRef<Path>,
     archive_format: ArchiveFormat,
-    zstd_compression_level: i32,
 ) -> Result<SnapshotArchiveInfo> {
     use ArchiveSnapshotPackageError as E;
     const SNAPSHOTS_DIR: &str = "snapshots";
@@ -1088,9 +1086,10 @@ fn archive_snapshot(
                 do_archive_files(&mut encoder)?;
                 encoder.finish().map_err(E::FinishEncoder)?;
             }
-            ArchiveFormat::TarZstd => {
-                let mut encoder = zstd::stream::Encoder::new(archive_file, zstd_compression_level)
-                    .map_err(E::CreateEncoder)?;
+            ArchiveFormat::TarZstd { config } => {
+                let mut encoder =
+                    zstd::stream::Encoder::new(archive_file, config.compression_level)
+                        .map_err(E::CreateEncoder)?;
                 do_archive_files(&mut encoder)?;
                 encoder.finish().map_err(E::FinishEncoder)?;
             }
@@ -2271,7 +2270,7 @@ fn untar_snapshot_create_shared_buffer(
     match archive_format {
         ArchiveFormat::TarBzip2 => SharedBuffer::new(BzDecoder::new(BufReader::new(open_file()))),
         ArchiveFormat::TarGzip => SharedBuffer::new(GzDecoder::new(BufReader::new(open_file()))),
-        ArchiveFormat::TarZstd => SharedBuffer::new(
+        ArchiveFormat::TarZstd { .. } => SharedBuffer::new(
             zstd::stream::read::Decoder::new(BufReader::new(open_file())).unwrap(),
         ),
         ArchiveFormat::TarLz4 => {
@@ -2739,7 +2738,13 @@ mod tests {
                 Hash::default()
             ))
             .unwrap(),
-            (43, SnapshotHash(Hash::default()), ArchiveFormat::TarZstd)
+            (
+                43,
+                SnapshotHash(Hash::default()),
+                ArchiveFormat::TarZstd {
+                    config: ZstdConfig::default(),
+                }
+            )
         );
         assert_eq!(
             parse_full_snapshot_archive_filename(&format!("snapshot-44-{}.tar", Hash::default()))
@@ -2820,7 +2825,9 @@ mod tests {
                 43,
                 234,
                 SnapshotHash(Hash::default()),
-                ArchiveFormat::TarZstd
+                ArchiveFormat::TarZstd {
+                    config: ZstdConfig::default(),
+                }
             )
         );
         assert_eq!(

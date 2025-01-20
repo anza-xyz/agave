@@ -1730,8 +1730,13 @@ pub fn main() {
 
     let archive_format = {
         let archive_format_str = value_t_or_exit!(matches, "snapshot_archive_format", String);
-        ArchiveFormat::from_cli_arg(&archive_format_str)
-            .unwrap_or_else(|| panic!("Archive format not recognized: {archive_format_str}"))
+        let mut archive_format = ArchiveFormat::from_cli_arg(&archive_format_str)
+            .unwrap_or_else(|| panic!("Archive format not recognized: {archive_format_str}"));
+        if let ArchiveFormat::TarZstd { config } = &mut archive_format {
+            // level 1 is optimized for speed
+            config.compression_level = 1;
+        }
+        archive_format
     };
 
     let snapshot_version =
@@ -1798,7 +1803,6 @@ pub fn main() {
         maximum_incremental_snapshot_archives_to_retain,
         accounts_hash_debug_verify: validator_config.accounts_db_test_hash_calculation,
         packager_thread_niceness_adj: snapshot_packager_niceness_adj,
-        zstd_compression_level: 1, // level 1 is optimized for speed
     };
 
     // The accounts hash interval shall match the snapshot interval
