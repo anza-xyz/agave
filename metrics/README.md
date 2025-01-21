@@ -4,7 +4,7 @@
 
 ## InfluxDB
 
-In order to explore validator specific metrics from mainnet-beta, testnet or devnet you can use Chronograf:
+In order to explore validator-specific metrics from mainnet-beta, testnet or devnet you can use Chronograf:
 
 * https://metrics.solana.com:8888/ (production environment)
 * https://metrics.solana.com:8889/ (testing environment)
@@ -16,7 +16,7 @@ For local cluster deployments you should use:
 
 ## Public Grafana Dashboards
 
-There are three main public dashboards for cluster related metrics:
+There are three main public dashboards for cluster-related metrics:
 
 * https://metrics.solana.com/d/monitor-edge/cluster-telemetry
 * https://metrics.solana.com/d/0n54roOVz/fee-market
