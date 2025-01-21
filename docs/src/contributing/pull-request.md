@@ -2,7 +2,7 @@
 
 ## Preparation
 
-1. You’ll want a powerful machine for this. Building agave from sources takes a lot of RAM, make sure you have ~30GB to be sure it is enough.
+1. You’ll need a powerful machine for this task. Building Agave from source requires a significant amount of RAM—aim for at least 30GB to ensure sufficient memory.
    1. Rust-analyzer is quite capable of running on agave source tree, but expect high memory consumption
 2. Make a fork of `anza-xyz/agave` master branch under your own namespace in github. Let us assume it is called `ubercoder/agave`
    1. Do not ever commit anything into the master branch of your fork. Keep it synced to upstream, this will make rebase process painless.
