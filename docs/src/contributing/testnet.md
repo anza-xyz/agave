@@ -46,7 +46,7 @@ rights to create a new InfluxDB database, for example `solana`.
 ### To set up the metrics
 You will normally only need to do this once. Once this is done, you will be able to save the metrics configuration and load it later from the environment.
 
-* Go to ./net/ in agave repo
+* Go to `./net/` in agave repo
 * Run `./init-metrics.sh -c testnet-dev-${user} ${user} `
   * Script will ask for a password, it is the same one you’ve created when making a user in the InfluxDB UI
   * Put the username you have used in preparation, not your login user name
