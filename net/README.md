@@ -1,5 +1,5 @@
 # Test Network Management
-The `./net/` directory in the monorepo contains scripts useful for creation and manipulation of a test network.
+The `./net/` directory in the monorepo contains scripts useful for the creation and manipulation of a test network.
 The test network allows you to run a fully isolated set of validators and clients on a configurable hardware setup.
 It's intended to be both dev and CD friendly.
 
@@ -18,7 +18,7 @@ $ gcloud auth login
 ```
 If you are running the scripts on a headless machine, you can use curl to issue requests to confirm your auth.
 
-If you are doing it the first time, you might need to set up project
+If you are doing it for the first time, you might need to set up project
 ```bash
 gcloud config set project principal-lane-200702
 ```
@@ -60,7 +60,7 @@ You will normally only need to do this once. Once this is done, you will be able
 * For simple cases, storing `SOLANA_METRICS_CONFIG` in your env is appropriate, but you may want to use different databases for different runs of net.sh
   * You can call ./init-metrics.sh before you call net.sh start, this will change the metrics config for a particular run.
   * You can manually write `SOLANA_METRICS_CONFIG` in the `./net/config/config` file
-* By default, metrics are only logged by agave if `RUST_LOG` is set to `info` or higher. You can provide it as environment for `./net.sh start` command, or set this in your shell environment.
+* By default, metrics are only logged by agave if `RUST_LOG` is set to `info` or higher. You can provide it as an environment for `./net.sh start` command, or set this in your shell environment.
   ```bash
   RUST_LOG="info,solana_runtime=debug"
   ```
@@ -100,7 +100,7 @@ cd net/
 # Deploy the network from the local workspace and start processes on all nodes including bench-tps on the client node
 RUST_LOG=info ./net.sh start
 
-# Show a help to ssh into any testnet node to access logs/etc
+# Show help to ssh into any testnet node to access logs/etc
 ./ssh.sh
 
 # Stop running processes on all nodes
