@@ -1,7 +1,6 @@
 # thread-manager
-Balances machine resources between multiple threaded runtimes.
-The purpose is to manage thread contention between different parts
-of the code that may benefit from a diverse set of management options.
+Balances machine resources across multiple threaded runtimes to optimize performance.
+The goal is to manage thread contention effectively between different parts of the code, ensuring each can benefit from tailored management strategies.
 For example, we may want to have cores 1-4 handling networking via
 Tokio, core 5 handling file IO via Tokio, cores 9-16 allocated for
 Rayon thread pool, and cores 6-8 available for general use by std::thread.
@@ -23,7 +22,7 @@ in the codebase without having to manually patch the pointers through.
 
 # Supported threading models
 ## Affinity
-All threading models allow setting core affinity, but only on linux
+All threading models allow setting core affinity, but only on Linux.
 
 For core affinity you can set e.g.
 ```toml
@@ -32,7 +31,7 @@ core_allocation.DedicatedCoreSet = { min = 16, max = 64 }
 to pin the pool to cores 16-64.
 
 ## Scheduling policy and priority
-If you want you can set thread scheduling policy and priority. Keep in mind that this will likely require
+You can configure the thread scheduling policy and priority if desired. Keep in mind that this will likely require
 ```bash
  sudo setcap cap_sys_nice+ep
  ```
@@ -41,13 +40,11 @@ To see which policies are supported check (the sources)[./src/policy.rs]
 If you use realtime policies, priority to values from 1 (lowest) to 99 (highest) are possible.
 
 ## Tokio
-Multiple tokio runtimes can be created, and each may be assigned its own pool of CPU cores to run on.
-Number of worker and blocking threads is configurable, as are thread priorities for the pool.
+You can create multiple Tokio runtimes, each with its own dedicated pool of CPU cores. The number of worker and blocking threads, along with thread priorities for the pool, can be fully customized.
 
 ## Native
-Native threads (std::thread) can be spawned from managed pools, this allows them to inherit a particular
-affinity from the pool, as well as to
-control the total number of threads made in every pool.
+Native threads (`std::thread`) can be spawned from managed pools, allowing them to inherit specific
+affinity from the pool, along with providing control over the total number of threads in each pool.
 
 ## Rayon
 Rayon already manages thread pools well enough, all thread_manager does on top is enforce affinity and

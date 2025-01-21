@@ -88,7 +88,8 @@ impl TokioRuntime {
         let atomic_id: AtomicUsize = AtomicUsize::new(0);
 
         let counters = Arc::new(ThreadCounters {
-            namespace: format!("thread-manager-tokio-{}", &base_name).leak(), // no workaround, metrics crate will only consume 'static str
+            // no workaround, metrics crate will only consume 'static str
+            namespace: format!("thread-manager-tokio-{}", &base_name).leak(), 
             total_threads_cnt: cfg.worker_threads as u64,
             active_threads_cnt: AtomicU64::new(
                 (num_workers.wrapping_add(cfg.max_blocking_threads)) as u64,
@@ -151,7 +152,7 @@ impl TokioRuntime {
     }
 }
 
-///Internal counters to keep track of worker pool utilization
+/// Internal counters to keep track of worker pool utilization
 #[derive(Debug)]
 pub struct ThreadCounters {
     pub namespace: &'static str,
