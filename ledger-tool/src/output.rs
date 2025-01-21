@@ -4,6 +4,7 @@ use {
         ledger_utils::get_program_ids,
     },
     chrono::{Local, TimeZone},
+    itertools::Either,
     serde::ser::{Impossible, SerializeSeq, SerializeStruct, Serializer},
     serde_derive::{Deserialize, Serialize},
     solana_account_decoder::{encode_ui_account, UiAccountData, UiAccountEncoding},
@@ -514,15 +515,15 @@ pub struct BlockWithoutMetadata {
 }
 
 impl BlockContents {
-    pub fn transactions(&self) -> Box<dyn Iterator<Item = &VersionedTransaction> + '_> {
+    pub fn transactions(&self) -> impl Iterator<Item = &VersionedTransaction> {
         match self {
-            BlockContents::VersionedConfirmedBlock(block) => Box::new(
+            BlockContents::VersionedConfirmedBlock(block) => Either::Left(
                 block
                     .transactions
                     .iter()
                     .map(|VersionedTransactionWithStatusMeta { transaction, .. }| transaction),
             ),
-            BlockContents::BlockWithoutMetadata(block) => Box::new(block.transactions.iter()),
+            BlockContents::BlockWithoutMetadata(block) => Either::Right(block.transactions.iter()),
         }
     }
 }
