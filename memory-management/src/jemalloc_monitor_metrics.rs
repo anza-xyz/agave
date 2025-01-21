@@ -59,7 +59,7 @@ pub fn setup_watch_memory_usage() {
         "solSigVerTpuVot",
         "solRcvrGossip",
         "solSigVerTpu",
-        "solClusterInfo",
+        "solClusterSlots",
         "solGossipCons",
         "solGossipWork",
         "solGossip",
