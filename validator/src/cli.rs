@@ -1293,7 +1293,6 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .default_value(&default_args.snapshot_zstd_compression_level)
                 .value_name("LEVEL")
                 .takes_value(true)
-                .requires_if("snapshot-archive-format", "zstd")
                 .help("The compression level to use when archiving with zstd")
                 .long_help(
                     "The compression level to use when archiving with zstd. \
