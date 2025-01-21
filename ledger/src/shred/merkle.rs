@@ -164,6 +164,27 @@ impl ShredData {
     // Offset into the payload where the erasure coded slice begins.
     const ERASURE_SHARD_START_OFFSET: usize = SIZE_OF_SIGNATURE;
 
+    // Given shred payload, ShredVariant{..} and DataShredHeader.size, returns
+    // the slice storing ledger entries in the shred.
+    pub(super) fn get_data(
+        shred: &[u8],
+        proof_size: u8,
+        chained: bool,
+        resigned: bool,
+        size: u16, // DataShredHeader.size
+    ) -> Result<&[u8], Error> {
+        let size = usize::from(size);
+        let data_buffer_size = Self::capacity(proof_size, chained, resigned)?;
+        (Self::SIZE_OF_HEADERS..=Self::SIZE_OF_HEADERS + data_buffer_size)
+            .contains(&size)
+            .then(|| shred.get(Self::SIZE_OF_HEADERS..size))
+            .flatten()
+            .ok_or_else(|| Error::InvalidDataSize {
+                size: size as u16,
+                payload: shred.len(),
+            })
+    }
+
     pub(super) fn get_merkle_root(
         shred: &[u8],
         proof_size: u8,
@@ -592,6 +613,7 @@ impl ShredDataTrait for ShredData {
         &self.data_header
     }
 
+    #[inline]
     fn data(&self) -> Result<&[u8], Error> {
         let ShredVariant::MerkleData {
             proof_size,
@@ -601,18 +623,13 @@ impl ShredDataTrait for ShredData {
         else {
             return Err(Error::InvalidShredVariant);
         };
-        let data_buffer_size = Self::capacity(proof_size, chained, resigned)?;
-        let size = usize::from(self.data_header.size);
-        if size > self.payload.len()
-            || size < Self::SIZE_OF_HEADERS
-            || size > Self::SIZE_OF_HEADERS + data_buffer_size
-        {
-            return Err(Error::InvalidDataSize {
-                size: self.data_header.size,
-                payload: self.payload.len(),
-            });
-        }
-        Ok(&self.payload[Self::SIZE_OF_HEADERS..size])
+        Self::get_data(
+            &self.payload,
+            proof_size,
+            chained,
+            resigned,
+            self.data_header.size,
+        )
     }
 }
 
@@ -1919,7 +1936,7 @@ mod test {
             assert_eq!(common_header.version, shred_version);
             let proof_size = shred.proof_size().unwrap();
             match shred {
-                Shred::ShredCode(_) => {
+                Shred::ShredCode(shred) => {
                     assert_eq!(common_header.index, next_code_index + num_coding_shreds);
                     assert_eq!(
                         common_header.shred_variant,
@@ -1930,6 +1947,12 @@ mod test {
                         }
                     );
                     num_coding_shreds += 1;
+                    let shred = shred.payload();
+                    assert_matches!(
+                        shred::layout::get_flags(shred),
+                        Err(Error::InvalidShredType)
+                    );
+                    assert_matches!(shred::layout::get_data(shred), Err(Error::InvalidShredType));
                 }
                 Shred::ShredData(shred) => {
                     assert_eq!(common_header.index, next_shred_index + num_data_shreds);
@@ -1950,11 +1973,19 @@ mod test {
                         (shred.data_header.flags & ShredFlags::SHRED_TICK_REFERENCE_MASK).bits(),
                         reference_tick,
                     );
+                    let data_header = shred.data_header;
+                    let data = shred.data().unwrap();
                     let shred = shred.payload();
                     assert_eq!(
                         shred::layout::get_parent_offset(shred),
                         Some(u16::try_from(slot - parent_slot).unwrap()),
                     );
+                    assert_eq!(
+                        shred::layout::get_parent_offset(shred).unwrap(),
+                        data_header.parent_offset
+                    );
+                    assert_eq!(shred::layout::get_flags(shred).unwrap(), data_header.flags);
+                    assert_eq!(shred::layout::get_data(shred).unwrap(), data);
                     assert_eq!(
                         shred::layout::get_reference_tick(shred).unwrap(),
                         reference_tick

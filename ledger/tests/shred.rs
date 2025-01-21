@@ -109,7 +109,10 @@ fn test_multi_fec_block_coding(is_last_in_slot: bool) {
         all_shreds.extend(shred_info.into_iter().take(DATA_SHREDS_PER_FEC_BLOCK));
     }
 
-    let result = Shredder::deshred(&all_shreds[..]).unwrap();
+    let result = {
+        let shreds = all_shreds.iter().map(Shred::payload);
+        Shredder::deshred(shreds).unwrap()
+    };
     assert_eq!(serialized_entries[..], result[..serialized_entries.len()]);
 }
 
