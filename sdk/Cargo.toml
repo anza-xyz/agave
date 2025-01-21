@@ -21,20 +21,14 @@ default = [
     "full",  # functionality that is not compatible or needed for on-chain programs
 ]
 full = [
-    "rand",
-    "rand0-7",
     "serde_json",
     "solana-signature",
     "solana-transaction-context/debug-signature",
-    "ed25519-dalek",
-    "libsecp256k1",
-    "sha3",
-    "solana-commitment-config",
-    "digest",
     "solana-pubkey/rand",
     "dep:solana-client-traits",
     "dep:solana-cluster-type",
     "dep:solana-ed25519-program",
+    "dep:solana-commitment-config",
     "dep:solana-compute-budget-interface",
     "dep:solana-genesis-config",
     "dep:solana-hard-forks",
@@ -55,13 +49,11 @@ full = [
     "dep:solana-transaction-error",
 ]
 borsh = [
-    "dep:borsh",
     "solana-compute-budget-interface/borsh",
     "solana-program/borsh",
     "solana-secp256k1-recover/borsh",
 ]
 dev-context-only-utils = [
-    "qualifier_attr",
     "solana-account/dev-context-only-utils",
     "solana-compute-budget-interface/dev-context-only-utils",
     "solana-rent-debits/dev-context-only-utils",
@@ -69,8 +61,6 @@ dev-context-only-utils = [
     "solana-transaction-context/dev-context-only-utils",
 ]
 frozen-abi = [
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
     "solana-feature-set/frozen-abi",
     "solana-fee-structure/frozen-abi",
     "solana-account/frozen-abi",
@@ -92,30 +82,8 @@ openssl-vendored = ["solana-precompiles/openssl-vendored"]
 
 [dependencies]
 bincode = { workspace = true }
-bitflags = { workspace = true, features = ["serde"] }
-borsh = { workspace = true, optional = true }
-bs58 = { workspace = true }
-bytemuck = { workspace = true }
-bytemuck_derive = { workspace = true }
-curve25519-dalek = { workspace = true, optional = true }
-digest = { workspace = true, optional = true }
-ed25519-dalek = { workspace = true, optional = true }
-itertools = { workspace = true }
-lazy_static = { workspace = true }
-libsecp256k1 = { workspace = true, optional = true, features = ["hmac"] }
-log = { workspace = true }
-num-derive = { workspace = true }
-num-traits = { workspace = true }
-qualifier_attr = { workspace = true, optional = true }
-rand = { workspace = true, optional = true }
-rand0-7 = { workspace = true, optional = true }
 serde = { workspace = true }
-serde_bytes = { workspace = true }
-serde_derive = { workspace = true }
 serde_json = { workspace = true, optional = true }
-serde_with = { workspace = true, features = ["macros"] }
-sha2 = { workspace = true }
-sha3 = { workspace = true, optional = true }
 solana-account = { workspace = true, features = ["bincode"] }
 solana-bn254 = { workspace = true }
 solana-client-traits = { workspace = true, optional = true }
@@ -135,12 +103,6 @@ solana-epoch-info = { workspace = true, features = ["serde"] }
 solana-epoch-rewards-hasher = { workspace = true }
 solana-feature-set = { workspace = true }
 solana-fee-structure = { workspace = true, features = ["serde"] }
-solana-frozen-abi = { workspace = true, optional = true, features = [
-    "frozen-abi",
-] }
-solana-frozen-abi-macro = { workspace = true, optional = true, features = [
-    "frozen-abi",
-] }
 solana-genesis-config = { workspace = true, features = [
     "serde"
 ], optional = true }
@@ -215,17 +177,16 @@ js-sys = { workspace = true }
 wasm-bindgen = { workspace = true }
 
 [dev-dependencies]
-anyhow = { workspace = true }
-assert_matches = { workspace = true }
 curve25519-dalek = { workspace = true }
-hex = { workspace = true }
+ed25519-dalek = { workspace = true }
+libsecp256k1 = { workspace = true, features = ["hmac"] }
 openssl = { workspace = true }
+rand0-7 = { workspace = true }
+serde_derive = { workspace = true }
+serde_with = { workspace = true, features = ["macros"] }
 solana-instructions-sysvar = { workspace = true, features = ["dev-context-only-utils"] }
-solana-logger = { workspace = true }
 solana-program = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sdk = { path = ".", features = ["dev-context-only-utils"] }
-static_assertions = { workspace = true }
-tiny-bip39 = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]

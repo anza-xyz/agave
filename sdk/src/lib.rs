@@ -29,8 +29,6 @@
 //! [json]: https://solana.com/docs/rpc
 //! [`clap`]: https://docs.rs/clap
 
-#![allow(incomplete_features)]
-#![cfg_attr(feature = "frozen-abi", feature(specialization))]
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
 // Allows macro expansion of `use ::solana_sdk::*` to work within this crate
@@ -251,13 +249,6 @@ macro_rules! saturating_add_assign {
         $i = $i.saturating_add($v)
     }};
 }
-
-pub extern crate bs58;
-extern crate log as logger;
-extern crate serde_derive;
-
-#[cfg(feature = "frozen-abi")]
-extern crate solana_frozen_abi_macro;
 
 #[cfg(test)]
 mod tests {
