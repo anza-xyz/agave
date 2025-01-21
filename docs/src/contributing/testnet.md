@@ -73,7 +73,7 @@ Note: this only works if you store `SOLANA_METRICS_CONFIG` in your shell environ
   cd ./scripts/
   source  ./configure-metrics.sh
     INFLUX_HOST=https://internal-metrics.solana.com:8086
-    INFLUX_DATABASE=testnet-dev-solana
+    INFLUX_DATABASE=testnet-dev-<username>
     INFLUX_USERNAME=solana
     INFLUX_PASSWORD=********
   ./metrics-write-datapoint.sh "testnet-deploy net-create-begin=1"
