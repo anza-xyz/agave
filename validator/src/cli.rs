@@ -1240,6 +1240,20 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
                 .help("Snapshot archive format to use."),
         )
         .arg(
+            Arg::with_name("snapshot_zstd_compression_level")
+                .long("snapshot-zstd-compression-level")
+                .default_value(&default_args.snapshot_zstd_compression_level)
+                .value_name("LEVEL")
+                .takes_value(true)
+                .help("The compression level to use when archiving with zstd")
+                .long_help(
+                    "The compression level to use when archiving with zstd. \
+                     Higher compression levels generally produce higher \
+                     compression ratio at the expense of speed and memory. \
+                     See the zstd manpage for more information."
+                ),
+        )
+        .arg(
             Arg::with_name("max_genesis_archive_unpacked_size")
                 .long("max-genesis-archive-unpacked-size")
                 .value_name("NUMBER")
@@ -2276,6 +2290,7 @@ pub struct DefaultArgs {
 
     pub snapshot_version: SnapshotVersion,
     pub snapshot_archive_format: String,
+    pub snapshot_zstd_compression_level: String,
 
     pub rocksdb_shred_compaction: String,
     pub rocksdb_ledger_compression: String,
@@ -2367,6 +2382,7 @@ impl DefaultArgs {
             min_snapshot_download_speed: DEFAULT_MIN_SNAPSHOT_DOWNLOAD_SPEED.to_string(),
             max_snapshot_download_abort: MAX_SNAPSHOT_DOWNLOAD_ABORT.to_string(),
             snapshot_archive_format: DEFAULT_ARCHIVE_COMPRESSION.to_string(),
+            snapshot_zstd_compression_level: "1".to_string(), // level 1 is optimized for speed
             contact_debug_interval: "120000".to_string(),
             snapshot_version: SnapshotVersion::default(),
             rocksdb_shred_compaction: "level".to_string(),
