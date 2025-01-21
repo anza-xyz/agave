@@ -6,6 +6,7 @@ pub mod nonblocking;
 pub mod rpc_client;
 pub mod rpc_sender;
 pub mod spinner;
+pub mod error_messages;
 
 pub mod mock_sender_for_cli {
     /// Magic `SIGNATURE` value used by `solana-cli` unit tests.
@@ -13,3 +14,6 @@ pub mod mock_sender_for_cli {
     pub const SIGNATURE: &str =
         "43yNSFC6fYTuPgTNFFhF4axw7AfWxB2BPdurme8yrsWEYwm8299xh8n6TAHjGymiSub1XtyxTNyd9GBfY2hxoBw8";
 }
+
+pub use crate::nonblocking::rpc_client::*;
+pub use crate::rpc_client::*;
