@@ -250,6 +250,8 @@ macro_rules! saturating_add_assign {
     }};
 }
 
+pub extern crate bs58;
+
 #[cfg(test)]
 mod tests {
     #[test]

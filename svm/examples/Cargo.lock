@@ -6967,6 +6967,7 @@ name = "solana-sdk"
 version = "2.2.0"
 dependencies = [
  "bincode",
+ "bs58",
  "getrandom 0.1.16",
  "js-sys",
  "serde",

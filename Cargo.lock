@@ -9072,6 +9072,7 @@ name = "solana-sdk"
 version = "2.2.0"
 dependencies = [
  "bincode",
+ "bs58",
  "curve25519-dalek 4.1.3",
  "ed25519-dalek",
  "getrandom 0.1.16",

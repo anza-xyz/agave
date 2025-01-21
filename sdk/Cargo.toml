@@ -82,6 +82,7 @@ openssl-vendored = ["solana-precompiles/openssl-vendored"]
 
 [dependencies]
 bincode = { workspace = true }
+bs58 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true, optional = true }
 solana-account = { workspace = true, features = ["bincode"] }
