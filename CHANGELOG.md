@@ -20,6 +20,8 @@ Release channels have their own copy of this changelog:
     * Add new command `solana feature revoke` for revoking pending feature activations. When a feature is activated, `solana feature revoke <feature-keypair> <cluster>` can be used to deallocate and reassign the account to the System program, undoing the operation. This can only be done before the feature becomes active.
   * Unhide `--accounts-db-access-storages-method` for agave-validator and agave-ledger-tool and change default to `file`
   * Remove tracer stats from banking-trace. `banking-trace` directory should be cleared when restarting on v2.2 for first time. It will not break if not cleared, but the file will be a mix of new/old format. (#4043)
+  * SDK:
+    * `cargo-build-sbf`: add `--skip-tools-install` flag to avoid downloading platform tools and `--no-rustup-override` flag to not use rustup when invoking `cargo`. Useful for immutable environments like Nix.
 
 ## [2.1.0]
 * Breaking:
