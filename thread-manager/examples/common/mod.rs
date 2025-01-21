@@ -1,4 +1,5 @@
 use {
+    axum::{routing::get, Router},
     hyper::{Body, Request},
     log::info,
     std::{
@@ -10,13 +11,14 @@ use {
         },
         time::{Duration, Instant},
     },
-    tokio::{net::TcpStream, sync::oneshot::Sender, time::timeout},
+    tokio::{net::TcpStream, sync::oneshot::Sender, task::JoinSet, time::timeout},
     tower::ServiceExt,
 };
+// 10 seconds is just enough to get a reasonably accurate measurement under our crude methodology
 const TEST_SECONDS: u64 = 10;
 
+// A simple web server that puts load on tokio to measure thread contention impacts
 pub async fn axum_main(port: u16, ready: Sender<()>) {
-    use axum::{routing::get, Router};
     // basic handler that responds with a static string
     async fn root() -> &'static str {
         tokio::time::sleep(Duration::from_millis(1)).await;
@@ -55,6 +57,8 @@ pub struct Stats {
     pub requests_per_second: f32,
 }
 
+// Generates a bunch of HTTP load on the ports provided. Will spawn `tasks` worth
+// of connections for each of the ports given.
 pub async fn workload_main(ports: &[u16], tasks: usize) -> anyhow::Result<Stats> {
     struct ControlBlock {
         start_time: std::time::Instant,
@@ -62,7 +66,7 @@ pub async fn workload_main(ports: &[u16], tasks: usize) -> anyhow::Result<Stats>
         cumulative_latency_us: AtomicUsize,
     }
 
-    let cb = Arc::new(ControlBlock {
+    let control_block = Arc::new(ControlBlock {
         start_time: std::time::Instant::now(),
         requests: AtomicUsize::new(0),
         cumulative_latency_us: AtomicUsize::new(0),
@@ -75,9 +79,8 @@ pub async fn workload_main(ports: &[u16], tasks: usize) -> anyhow::Result<Stats>
         let (mut request_sender, connection) = hyper::client::conn::handshake(stream).await?;
         // spawn a task to poll the connection and drive the HTTP state
         tokio::spawn(async move {
-            if let Err(_e) = connection.await {
-                //eprintln!("Error in connection: {}", e);
-            }
+            // Technically, this can error but this only happens when server is killed
+            let _ = connection.await;
         });
 
         let path = "/";
@@ -110,19 +113,20 @@ pub async fn workload_main(ports: &[u16], tasks: usize) -> anyhow::Result<Stats>
         Ok(())
     }
 
-    let mut join_handles = vec![];
+    let mut join_set = JoinSet::new();
     for port in ports {
         info!("Starting load generation on port {port}");
         for _t in 0..tasks {
-            let jh = tokio::task::spawn(connection(*port, cb.clone()));
-            join_handles.push(jh);
+            join_set.spawn(connection(*port, control_block.clone()));
         }
     }
-    for jh in join_handles {
-        let _ = jh.await?; //Ignore errors since we do not care about reasons here
+
+    while let Some(jr) = join_set.join_next().await {
+        jr??;
     }
-    let requests = cb.requests.load(Ordering::Relaxed);
-    let latency_accumulator_us = cb.cumulative_latency_us.load(Ordering::Relaxed);
+
+    let requests = control_block.requests.load(Ordering::Relaxed);
+    let latency_accumulator_us = control_block.cumulative_latency_us.load(Ordering::Relaxed);
     Ok(Stats {
         requests_per_second: requests as f32 / TEST_SECONDS as f32,
         #[allow(clippy::arithmetic_side_effects)]

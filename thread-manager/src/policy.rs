@@ -9,7 +9,7 @@ cfg_if::cfg_if! {
 }
 use {
     serde::{Deserialize, Serialize},
-    std::sync::OnceLock,
+    std::sync::{Mutex, OnceLock},
 };
 
 static CORE_COUNT: OnceLock<usize> = OnceLock::new();
@@ -89,7 +89,7 @@ pub(crate) fn apply_policy(
     alloc: &CoreAllocation,
     policy: ThreadSchedulePolicy,
     priority: u8,
-    chosen_cores_mask: &std::sync::Mutex<Vec<usize>>,
+    chosen_cores_mask: &Mutex<Vec<usize>>,
 ) {
     apply_thread_scheduler_policy(policy, priority);
     match alloc {

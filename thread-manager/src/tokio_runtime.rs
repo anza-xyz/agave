@@ -61,7 +61,8 @@ impl Deref for TokioRuntime {
 }
 
 impl TokioRuntime {
-    /// Starts the metrics sampling task on the runtime to monitor how many workers are busy doing useful things.
+    /// Starts the metrics sampling task on the runtime to monitor
+    /// how many workers are busy doing useful things.
     pub fn start_metrics_sampling(&self, period: Duration) {
         let counters = self.counters.clone();
         self.tokio.spawn(metrics_sampler(counters, period));
@@ -89,7 +90,7 @@ impl TokioRuntime {
 
         let counters = Arc::new(ThreadCounters {
             // no workaround, metrics crate will only consume 'static str
-            namespace: format!("thread-manager-tokio-{}", &base_name).leak(), 
+            namespace: format!("thread-manager-tokio-{}", &base_name).leak(),
             total_threads_cnt: cfg.worker_threads as u64,
             active_threads_cnt: AtomicU64::new(
                 (num_workers.wrapping_add(cfg.max_blocking_threads)) as u64,
@@ -175,8 +176,7 @@ async fn metrics_sampler(counters: Arc<ThreadCounters>, period: Duration) {
     loop {
         interval.tick().await;
         let active = counters.active_threads_cnt.load(Ordering::Relaxed) as i64;
-        #[allow(clippy::arithmetic_side_effects)]
-        let parked = counters.total_threads_cnt as i64 - active;
+        let parked = (counters.total_threads_cnt as i64).saturating_sub(active);
         datapoint_info!(
             counters.namespace,
             ("threads_parked", parked, i64),
