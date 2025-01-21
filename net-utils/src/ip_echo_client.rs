@@ -28,7 +28,7 @@ pub(crate) async fn ip_echo_server_request_with_binding(
     msg: IpEchoServerMessage,
     bind_address: IpAddr,
 ) -> anyhow::Result<IpEchoServerResponse> {
-    let socket = tokio::net::TcpSocket::new_v4()?;
+    let socket = TcpSocket::new_v4()?;
     socket.bind(SocketAddr::new(bind_address, 0))?;
 
     let response =
@@ -41,7 +41,7 @@ pub(crate) async fn ip_echo_server_request(
     ip_echo_server_addr: SocketAddr,
     msg: IpEchoServerMessage,
 ) -> anyhow::Result<IpEchoServerResponse> {
-    let socket = tokio::net::TcpSocket::new_v4()?;
+    let socket = TcpSocket::new_v4()?;
     let response =
         tokio::time::timeout(TIMEOUT, make_request(socket, ip_echo_server_addr, msg)).await??;
     parse_response(response, ip_echo_server_addr)

@@ -172,7 +172,7 @@ async fn run_echo_server(tcp_listener: std::net::TcpListener, shred_version: Opt
     }
 }
 
-/// Starts a simple TCP server that reports the IP address of the client and shred version
+/// Starts a simple TCP server that echos the IP address of any peer that connects
 /// Used by functions like |get_public_ip_addr| and |get_cluster_shred_version|
 pub fn ip_echo_server(
     tcp_listener: std::net::TcpListener,
