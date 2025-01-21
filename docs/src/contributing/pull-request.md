@@ -68,7 +68,7 @@
 
 ## Convince a build script that your crate has correct version
 
-   In your Cargo.toml you will normally want to inherit the workspace version, which cargo new will default-init to
+   In your Cargo.toml you normally want to inherit the workspace version, which `cargo new` will default-init to
 
 ```toml
 version.workspace = true
