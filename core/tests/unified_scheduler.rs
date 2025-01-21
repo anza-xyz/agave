@@ -93,7 +93,6 @@ fn test_scheduler_waited_by_drop_bank_service() {
         None,
         None,
         ignored_prioritization_fee_cache,
-        None,
     );
     let pool = pool_raw.clone();
     bank_forks.write().unwrap().install_scheduler_pool(pool);
@@ -230,14 +229,7 @@ fn test_scheduler_producing_blocks() {
         None,
         Some(leader_schedule_cache),
     );
-    let pool = DefaultSchedulerPool::new(
-        None,
-        None,
-        None,
-        None,
-        ignored_prioritization_fee_cache,
-        Some(poh_recorder.read().unwrap().new_recorder()),
-    );
+    let pool = DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
     let channels = {
         let banking_tracer = BankingTracer::new_disabled();
         banking_tracer.create_channels(true)
