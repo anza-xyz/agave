@@ -8275,6 +8275,7 @@ dependencies = [
  "bytes",
  "clap 3.2.23",
  "crossbeam-channel",
+ "itertools 0.12.1",
  "log",
  "nix",
  "rand 0.8.5",

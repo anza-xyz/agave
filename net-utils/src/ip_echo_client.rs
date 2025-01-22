@@ -5,6 +5,7 @@ use {
     },
     anyhow::bail,
     bytes::{BufMut, BytesMut},
+    itertools::Itertools,
     log::*,
     std::{
         collections::{BTreeMap, HashSet},
@@ -106,39 +107,38 @@ fn parse_response(
 
 pub(crate) const DEFAULT_RETRY_COUNT: usize = 5;
 
-/// Checks if all of the provided TCP/UDP ports are not reachable by the machine at
+/// Checks if all of the provided TCP ports are reachable by the machine at
 /// `ip_echo_server_addr`. Tests must complete within timeout provided.
-/// Tests will run in parallel when possible.
-pub(crate) async fn do_verify_reachable_ports(
+/// Tests will run concurrently to avoid head-of-line blocking. Will return false on any error.
+pub(crate) async fn verify_reachable_tcp_ports(
     ip_echo_server_addr: SocketAddr,
-    tcp_listeners: Vec<(u16, TcpListener)>,
-    udp_sockets: &[&UdpSocket],
+    listeners: Vec<(u16, TcpListener)>,
     timeout: Duration,
-    udp_retry_count: usize,
 ) -> bool {
-    info!(
-        "Checking that tcp ports {:?} are reachable from {:?}",
-        tcp_listeners, ip_echo_server_addr
-    );
-
-    let tcp_ports: Vec<_> = tcp_listeners.iter().map(|(port, _)| *port).collect();
-    let _ = ip_echo_server_request(
-        ip_echo_server_addr,
-        IpEchoServerMessage::new(&tcp_ports, &[]),
-    )
-    .await
-    .map_err(|err| warn!("ip_echo_server request failed: {}", err));
-
-    let mut ok = true;
     let mut checkers = Vec::new();
+    let mut ok = true;
 
-    // since we do not know if tcp_listeners are nonblocking, we have to run them in native threads.
-    for (port, tcp_listener) in tcp_listeners {
-        let listening_addr = tcp_listener.local_addr().unwrap();
-        let (sender, receiver) = oneshot::channel();
-        let thread_handle = std::thread::Builder::new()
-            .name(format!("solVrfyTcp{port:05}"))
-            .spawn(move || {
+    // Chunk the port range into slices small enough to fit into one packet
+    for chunk in &listeners.into_iter().chunks(MAX_PORT_COUNT_PER_MESSAGE) {
+        let (ports, listeners): (Vec<_>, Vec<_>) = chunk.unzip();
+        info!(
+            "Checking that tcp ports {:?} are reachable from {:?}",
+            &ports, ip_echo_server_addr
+        );
+
+        // make request to the echo server
+        let _ = ip_echo_server_request(ip_echo_server_addr, IpEchoServerMessage::new(&ports, &[]))
+            .await
+            .map_err(|err| warn!("ip_echo_server request failed: {}", err));
+
+        // spawn checker to wait for reply
+        // since we do not know if tcp_listeners are nonblocking, we have to run them in native threads.
+        for (port, tcp_listener) in ports.into_iter().zip(listeners) {
+            let listening_addr = tcp_listener.local_addr().unwrap();
+            let (sender, receiver) = oneshot::channel();
+
+            // Use blocking API since we have no idea if sockets given to us are nonblocking or not
+            let thread_handle = tokio::task::spawn_blocking(move || {
                 debug!("Waiting for incoming connection on tcp/{}", port);
                 match tcp_listener.incoming().next() {
                     Some(_) => {
@@ -148,15 +148,16 @@ pub(crate) async fn do_verify_reachable_ports(
                     }
                     None => warn!("tcp incoming failed"),
                 }
-            })
-            .unwrap();
+            });
 
-        // Set the timeout on the receiver
-        let receiver = tokio::time::timeout(timeout, receiver);
-        checkers.push((listening_addr, thread_handle, receiver));
+            // Set the timeout on the receiver
+            let receiver = tokio::time::timeout(timeout, receiver);
+            checkers.push((listening_addr, thread_handle, receiver));
+        }
     }
 
-    for (listening_addr, thread_handle, receiver) in checkers {
+    // now wait for notifications from all the tasks we have spawned.
+    for (listening_addr, thread_handle, receiver) in checkers.drain(..) {
         match receiver.await {
             Ok(Ok(_)) => {
                 info!("tcp/{} is reachable", listening_addr.port());
@@ -177,15 +178,21 @@ pub(crate) async fn do_verify_reachable_ports(
                 ok = false;
             }
         }
-        thread_handle.join().expect("Thread should exit cleanly")
+        thread_handle.await.expect("Thread should exit cleanly")
     }
 
-    if !ok {
-        // No retries for TCP, abort on any failure
-        return false;
-    }
+    ok
+}
 
-    // now check UDP ports
+/// Checks if all of the provided UDP ports are reachable by the machine at
+/// `ip_echo_server_addr`. Tests must complete within timeout provided.
+/// A given amount of retries will be made to accommodate packet loss.
+pub(crate) async fn verify_reachable_udp_ports(
+    ip_echo_server_addr: SocketAddr,
+    udp_sockets: &[&UdpSocket],
+    timeout: Duration,
+    retry_count: usize,
+) -> bool {
     let mut ok = true;
     let mut udp_ports: BTreeMap<_, _> = BTreeMap::new();
     udp_sockets.iter().for_each(|udp_socket| {
@@ -206,7 +213,7 @@ pub(crate) async fn do_verify_reachable_ports(
     'outer: for checked_ports_and_sockets in udp_ports.chunks(MAX_PORT_COUNT_PER_MESSAGE) {
         ok = false;
 
-        for udp_remaining_retry in (0_usize..udp_retry_count).rev() {
+        for udp_remaining_retry in (0_usize..retry_count).rev() {
             let (checked_ports, checked_socket_iter) = (
                 checked_ports_and_sockets
                     .iter()
@@ -232,36 +239,34 @@ pub(crate) async fn do_verify_reachable_ports(
                     let udp_socket = udp_socket.try_clone().expect("Unable to clone udp socket");
                     let reachable_ports = reachable_ports.clone();
 
-                    std::thread::Builder::new()
-                        .name(format!("solVrfyUdp{port:05}"))
-                        .spawn(move || {
-                            let start = Instant::now();
+                    // Use blocking API since we have no idea if sockets given to us are nonblocking or not
+                    tokio::task::spawn_blocking(move || {
+                        let start = Instant::now();
 
-                            let original_read_timeout = udp_socket.read_timeout().unwrap();
-                            udp_socket
-                                .set_read_timeout(Some(Duration::from_millis(250)))
-                                .unwrap();
-                            loop {
-                                if reachable_ports.read().unwrap().contains(&port)
-                                    || Instant::now().duration_since(start) >= timeout
-                                {
-                                    break;
-                                }
-
-                                let recv_result = udp_socket.recv(&mut [0; 1]);
-                                debug!(
-                                    "Waited for incoming datagram on udp/{}: {:?}",
-                                    port, recv_result
-                                );
-
-                                if recv_result.is_ok() {
-                                    reachable_ports.write().unwrap().insert(port);
-                                    break;
-                                }
+                        let original_read_timeout = udp_socket.read_timeout().unwrap();
+                        udp_socket
+                            .set_read_timeout(Some(Duration::from_millis(250)))
+                            .unwrap();
+                        loop {
+                            if reachable_ports.read().unwrap().contains(&port)
+                                || Instant::now().duration_since(start) >= timeout
+                            {
+                                break;
                             }
-                            udp_socket.set_read_timeout(original_read_timeout).unwrap();
-                        })
-                        .unwrap()
+
+                            let recv_result = udp_socket.recv(&mut [0; 1]);
+                            debug!(
+                                "Waited for incoming datagram on udp/{}: {:?}",
+                                port, recv_result
+                            );
+
+                            if recv_result.is_ok() {
+                                reachable_ports.write().unwrap().insert(port);
+                                break;
+                            }
+                        }
+                        udp_socket.set_read_timeout(original_read_timeout).unwrap();
+                    })
                 })
                 .collect();
 
@@ -270,7 +275,7 @@ pub(crate) async fn do_verify_reachable_ports(
             // eager not lazy so that joining happens here at once after creating bunch of threads
             // at once.
             for thread in thread_handles {
-                thread.join().unwrap();
+                thread.await.expect("Threads should exit cleanly");
             }
 
             let reachable_ports = reachable_ports.read().unwrap().clone();
