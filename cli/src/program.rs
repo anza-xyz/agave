@@ -3094,7 +3094,7 @@ fn report_ephemeral_mnemonic(words: usize, mnemonic: bip39::Mnemonic) {
             eprintln!("`solana-keygen recover` and the following {words}-word seed phrase:");
             eprintln!("{divider}\n{phrase}\n{divider}");
             eprintln!("To resume a deploy, pass the recovered keypair as the");
-            eprintln!("[BUFFER_SIGNER] to `solana program deploy` or `solana program write-buffer'.");
+            eprintln!("[BUFFER_SIGNER] to `solana program deploy` or `solana program write-buffer`.");
             eprintln!("Or to recover the account's lamports, use:");
             eprintln!("{divider}\nsolana program close {}\n{divider}", keypair.pubkey().to_string());
         },
@@ -3103,7 +3103,7 @@ fn report_ephemeral_mnemonic(words: usize, mnemonic: bip39::Mnemonic) {
             eprintln!("`solana-keygen recover` and the following {words}-word seed phrase:");
             eprintln!("{divider}\n{phrase}\n{divider}");
             eprintln!("To resume a deploy, pass the recovered keypair as the");
-            eprintln!("[BUFFER_SIGNER] to `solana program deploy` or `solana program write-buffer'.");
+            eprintln!("[BUFFER_SIGNER] to `solana program deploy` or `solana program write-buffer`.");
             eprintln!("Or to recover the account's lamports, pass it as the");
             eprintln!("[BUFFER_ACCOUNT_ADDRESS] argument to `solana program close`.\n{divider}");
         }
