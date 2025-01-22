@@ -399,7 +399,7 @@ impl Shredder {
             <(Vec<u8>, Option<u32>, bool)>::default(),
             |(mut data, prev, data_complete), shred| {
                 // No trailing shreds if we have already observed
-                // DATA_COMPLETE_SHRED or LAST_SHRED_IN_SLOT.
+                // DATA_COMPLETE_SHRED.
                 if data_complete {
                     return Err(Error::InvalidDeshredSet);
                 }
@@ -412,11 +412,10 @@ impl Shredder {
                     }
                 }
                 data.extend_from_slice(shred.data()?);
-                let data_complete = shred.data_complete() || shred.last_in_slot();
-                Ok((data, index, data_complete))
+                Ok((data, index, shred.data_complete()))
             },
         )?;
-        // The last shred should be DATA_COMPLETE_SHRED or LAST_SHRED_IN_SLOT.
+        // The last shred should be DATA_COMPLETE_SHRED.
         if !data_complete {
             return Err(Error::from(TooFewDataShards));
         }
