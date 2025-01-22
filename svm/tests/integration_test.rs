@@ -430,9 +430,10 @@ pub struct TransactionBatchItem {
 impl TransactionBatchItem {
     fn with_nonce(nonce_info: NonceInfo) -> Self {
         Self {
-            check_result: Ok(CheckedTransactionDetails::new(Some(nonce_info),
-                 LAMPORTS_PER_SIGNATURE)
-            ),
+            check_result: Ok(CheckedTransactionDetails::new(
+                Some(nonce_info),
+                LAMPORTS_PER_SIGNATURE,
+            )),
             ..Self::default()
         }
     }

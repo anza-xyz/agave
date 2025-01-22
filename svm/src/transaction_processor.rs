@@ -2488,9 +2488,8 @@ mod tests {
                 .try_advance_nonce(next_durable_nonce, lamports_per_signature)
                 .unwrap();
 
-            let tx_details = CheckedTransactionDetails::new(Some(future_nonce.clone()),
-                lamports_per_signature
-            );
+            let tx_details =
+                CheckedTransactionDetails::new(Some(future_nonce.clone()), lamports_per_signature);
 
             let result = TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
