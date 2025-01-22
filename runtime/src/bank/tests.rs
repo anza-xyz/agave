@@ -12569,7 +12569,7 @@ fn test_system_instruction_allocate() {
         .is_ok());
 }
 
-fn with_create_zero_lamport<F>(callback: F)
+fn with_create_zero_lamport<F>(should_run_partitioned_rent_collection: bool, callback: F)
 where
     F: Fn(&Bank),
 {
@@ -12589,22 +12589,44 @@ where
     let len2 = 456;
 
     // create initial bank and fund the alice account
-    let (genesis_config, mint_keypair) = create_genesis_config_no_tx_fee_no_rent(mint_lamports);
+    let (mut genesis_config, mint_keypair) = create_genesis_config_no_tx_fee_no_rent(mint_lamports);
+    if should_run_partitioned_rent_collection {
+        genesis_config
+            .accounts
+            .remove(&solana_feature_set::disable_partitioned_rent_collection::id());
+    }
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let bank_client = BankClient::new_shared(bank.clone());
     bank_client
         .transfer_and_confirm(mint_lamports, &mint_keypair, &alice_pubkey)
         .unwrap();
 
-    // create and freeze a bank a few epochs in the future to trigger rent
-    // collection to visit (and rewrite) all accounts
+    // create a bank a few epochs in the future..
+    // - when partitioned rent collection is enabled, this will cause a lot of
+    // updated accounts to be added to this bank's accounts db storage entry.
+    // - when partitioned rent collection is disabled, the only account written
+    // will be the stake history sysvar.
     let bank = new_from_parent_next_epoch(bank, &bank_forks, 2);
-    bank.freeze(); // trigger rent collection
 
-    // create zero-lamports account to be cleaned
-    let account = AccountSharedData::new(0, len1, &program);
+    // create the next bank in the current epoch
+    // - when partitioned rent collection is enabled, the runtime won't add any
+    // accounts to the accounts db storage entry so we explicitly store an
+    // account here.
+    // - when partitioned rent collection is disabled, the only account written
+    // will be the epoch rewards sysvar.
     let slot = bank.slot() + 1;
     let bank = new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &collector, slot);
+    if should_run_partitioned_rent_collection {
+        bank.store_account(
+            &Pubkey::new_unique(),
+            &AccountSharedData::new(1, 0, &Pubkey::default()),
+        );
+    }
+
+    // create the next bank where we will store a zero-lamport account to be cleaned
+    let slot = bank.slot() + 1;
+    let bank = new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &collector, slot);
+    let account = AccountSharedData::new(0, len1, &program);
     bank.store_account(&bob_pubkey, &account);
 
     // transfer some to bogus pubkey just to make previous bank (=slot) really cleanable
@@ -12641,22 +12663,24 @@ where
     assert!(r.is_ok());
 }
 
-#[test]
-fn test_create_zero_lamport_with_clean() {
-    with_create_zero_lamport(|bank| {
+#[test_case(true; "enable partitioned rent collection")]
+#[test_case(false; "disable partitioned rent collection")]
+fn test_create_zero_lamport_with_clean(should_run_partitioned_rent_collection: bool) {
+    with_create_zero_lamport(should_run_partitioned_rent_collection, |bank| {
         bank.freeze();
         bank.squash();
         bank.force_flush_accounts_cache();
         // do clean and assert that it actually did its job
-        assert_eq!(5, bank.get_snapshot_storages(None).len());
+        assert_eq!(6, bank.get_snapshot_storages(None).len());
         bank.clean_accounts();
-        assert_eq!(4, bank.get_snapshot_storages(None).len());
+        assert_eq!(5, bank.get_snapshot_storages(None).len());
     });
 }
 
-#[test]
-fn test_create_zero_lamport_without_clean() {
-    with_create_zero_lamport(|_| {
+#[test_case(true; "enable partitioned rent collection")]
+#[test_case(false; "disable partitioned rent collection")]
+fn test_create_zero_lamport_without_clean(should_run_partitioned_rent_collection: bool) {
+    with_create_zero_lamport(should_run_partitioned_rent_collection, |_| {
         // just do nothing; this should behave identically with test_create_zero_lamport_with_clean
     });
 }
