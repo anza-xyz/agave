@@ -2311,34 +2311,36 @@ fn svm_inspect_account() {
     let recipient = Pubkey::new_unique();
 
     // Setting up the accounts for the transfer
+    // Non-programs are inspected twice, once when filtering programs and once when loaded
+    // Builtin programs are inspected twice, once when loaded and once during owner validation
+    // Non-builtin programs woud be inspected more, but this test does not have any
 
     // fee payer
     let mut fee_payer_account = AccountSharedData::default();
     fee_payer_account.set_lamports(85_000);
     fee_payer_account.set_rent_epoch(u64::MAX);
     initial_test_entry.add_initial_account(fee_payer, &fee_payer_account);
-    expected_inspected_accounts
-        .entry(fee_payer)
-        .or_default()
-        .push((Some(fee_payer_account.clone()), true));
+
+    let entry = expected_inspected_accounts.entry(fee_payer).or_default();
+    entry.push((Some(fee_payer_account.clone()), false));
+    entry.push((Some(fee_payer_account.clone()), true));
 
     // sender
     let mut sender_account = AccountSharedData::default();
     sender_account.set_lamports(11_000_000);
     sender_account.set_rent_epoch(u64::MAX);
     initial_test_entry.add_initial_account(sender, &sender_account);
-    expected_inspected_accounts
-        .entry(sender)
-        .or_default()
-        .push((Some(sender_account.clone()), true));
+
+    let entry = expected_inspected_accounts.entry(sender).or_default();
+    entry.push((Some(sender_account.clone()), false));
+    entry.push((Some(sender_account.clone()), true));
 
     // recipient -- initially dead
-    expected_inspected_accounts
-        .entry(recipient)
-        .or_default()
-        .push((None, true));
+    let entry = expected_inspected_accounts.entry(recipient).or_default();
+    entry.push((None, false));
+    entry.push((None, true));
 
-    // system, inspected twice due to owner checks
+    // system
     let system_account = AccountSharedData::create(
         5000,
         "system_program".as_bytes().to_vec(),
@@ -2347,13 +2349,11 @@ fn svm_inspect_account() {
         0,
     );
 
-    {
-        let system_entry = expected_inspected_accounts
-            .entry(system_program::id())
-            .or_default();
-        system_entry.push((Some(system_account.clone()), false));
-        system_entry.push((Some(system_account.clone()), false));
-    }
+    let entry = expected_inspected_accounts
+        .entry(system_program::id())
+        .or_default();
+    entry.push((Some(system_account.clone()), false));
+    entry.push((Some(system_account.clone()), false));
 
     let transfer_amount = 1_000_000;
     let transaction = Transaction::new_signed_with_payer(
@@ -2388,37 +2388,32 @@ fn svm_inspect_account() {
     let intermediate_fee_payer_account = initial_test_entry.final_accounts.get(&fee_payer).cloned();
     assert!(intermediate_fee_payer_account.is_some());
 
-    expected_inspected_accounts
-        .entry(fee_payer)
-        .or_default()
-        .push((intermediate_fee_payer_account, true));
+    let entry = expected_inspected_accounts.entry(fee_payer).or_default();
+    entry.push((intermediate_fee_payer_account.clone(), false));
+    entry.push((intermediate_fee_payer_account.clone(), true));
 
     // sender
     let intermediate_sender_account = initial_test_entry.final_accounts.get(&sender).cloned();
     assert!(intermediate_sender_account.is_some());
 
-    expected_inspected_accounts
-        .entry(sender)
-        .or_default()
-        .push((intermediate_sender_account, true));
+    let entry = expected_inspected_accounts.entry(sender).or_default();
+    entry.push((intermediate_sender_account.clone(), false));
+    entry.push((intermediate_sender_account.clone(), true));
 
     // recipient -- now alive
     let intermediate_recipient_account = initial_test_entry.final_accounts.get(&recipient).cloned();
     assert!(intermediate_recipient_account.is_some());
 
-    expected_inspected_accounts
-        .entry(recipient)
-        .or_default()
-        .push((intermediate_recipient_account, true));
+    let entry = expected_inspected_accounts.entry(recipient).or_default();
+    entry.push((intermediate_recipient_account.clone(), false));
+    entry.push((intermediate_recipient_account.clone(), true));
 
     // system
-    {
-        let system_entry = expected_inspected_accounts
-            .entry(system_program::id())
-            .or_default();
-        system_entry.push((Some(system_account.clone()), false));
-        system_entry.push((Some(system_account.clone()), false));
-    }
+    let entry = expected_inspected_accounts
+        .entry(system_program::id())
+        .or_default();
+    entry.push((Some(system_account.clone()), false));
+    entry.push((Some(system_account.clone()), false));
 
     let mut final_test_entry = SvmTestEntry {
         initial_accounts: initial_test_entry.final_accounts.clone(),
