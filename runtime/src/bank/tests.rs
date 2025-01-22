@@ -1651,13 +1651,20 @@ impl Bank {
 fn test_rent_eager_collect_rent_in_partition(should_collect_rent: bool) {
     solana_logger::setup();
     let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
-    for feature_id in FeatureSet::default().inactive {
-        if feature_id != solana_feature_set::skip_rent_rewrites::id()
-            && (!should_collect_rent
-                || feature_id != solana_feature_set::disable_rent_fees_collection::id())
-        {
-            activate_feature(&mut genesis_config, feature_id);
-        }
+    activate_all_features(&mut genesis_config);
+    genesis_config
+        .accounts
+        .remove(&feature_set::skip_rent_rewrites::id())
+        .unwrap();
+    genesis_config
+        .accounts
+        .remove(&feature_set::disable_partitioned_rent_collection::id())
+        .unwrap();
+    if should_collect_rent {
+        genesis_config
+            .accounts
+            .remove(&feature_set::disable_rent_fees_collection::id())
+            .unwrap();
     }
 
     let zero_lamport_pubkey = solana_pubkey::new_rand();
