@@ -3168,23 +3168,10 @@ impl Bank {
         &'a self,
         txs: &'b [Tx],
     ) -> TransactionBatch<'a, 'b, Tx> {
-        // HANA TODO there is probably something clever i can do where
-        // if we have no duplicates we never allocate the results vector at all
-        // NOTE we should gate this, leaving it open to see what tests fail
-        let mut deduped_tx_results: Vec<Result<()>> = vec![Ok(()); txs.len()];
-        let mut batch_signatures = AHashSet::with_capacity(txs.len());
-        for (i, tx) in txs.iter().enumerate() {
-            if !batch_signatures.insert(tx.signature()) {
-                deduped_tx_results[i] = Err(TransactionError::AccountInUse);
-            }
-        }
-
-        TransactionBatch::new(
-            self.try_lock_accounts_with_results(txs, deduped_tx_results.into_iter()),
-            self,
-            OwnedOrBorrowed::Borrowed(txs),
-        )
+        self.prepare_sanitized_batch_with_results(txs, txs.iter().map(|_| Ok(())))
     }
+
+    // HANA TODO test the dedupe logic at this level
 
     /// Prepare a locked transaction batch from a list of sanitized transactions, and their cost
     /// limited packing status
@@ -3195,18 +3182,21 @@ impl Bank {
     ) -> TransactionBatch<'a, 'b, Tx> {
         // this lock_results could be: Ok, AccountInUse, WouldExceedBlockMaxLimit or WouldExceedAccountMaxLimit
 
-        // HANA TODO if possible, change the callers to pass owned memory instead of an iter
-        // NOTE we should gate this, leaving it open to see what tests fail
-        let mut deduped_tx_results: Vec<_> = transaction_results.collect();
+        // HANA TODO gate this after running ci
         let mut batch_signatures = AHashSet::with_capacity(transactions.len());
-        for (i, tx) in transactions.iter().enumerate() {
-            if !batch_signatures.insert(tx.signature()) && deduped_tx_results[i].is_ok() {
-                deduped_tx_results[i] = Err(TransactionError::AccountInUse);
-            }
-        }
+        let transaction_results =
+            transaction_results
+                .enumerate()
+                .map(|(i, tx_result)| match tx_result {
+                    Err(e) => Err(e),
+                    Ok(()) if !batch_signatures.insert(transactions[i].signature()) => {
+                        Err(TransactionError::AccountInUse)
+                    }
+                    Ok(()) => Ok(()),
+                });
 
         TransactionBatch::new(
-            self.try_lock_accounts_with_results(transactions, deduped_tx_results.into_iter()),
+            self.try_lock_accounts_with_results(transactions, transaction_results),
             self,
             OwnedOrBorrowed::Borrowed(transactions),
         )
