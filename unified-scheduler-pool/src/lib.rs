@@ -177,6 +177,7 @@ struct BankingStageHandlerContext {
 trait_set! {
     pub trait BankingPacketHandler = DynClone + Fn(&BankingStageHelper, BankingPacketBatch) + Send + 'static;
 }
+// Make this `Clone`-able so that it can easily propagated to all the handler threads.
 clone_trait_object!(BankingPacketHandler);
 
 #[derive(Debug)]
@@ -1448,6 +1449,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             }
                         },
                         recv(handler_context.banking_packet_receiver) -> banking_packet => {
+                            // See solana_core::banking_stage::unified_scheduler module doc as to
+                            // justification of this additional work in the handler thread.
                             let Ok(banking_packet) = banking_packet else {
                                 info!("disconnected banking_packet_receiver");
                                 break;
