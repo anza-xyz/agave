@@ -58,7 +58,7 @@ use {
         inner_instruction::{InnerInstruction, InnerInstructionsList},
         rent_collector::RentCollector,
     },
-    solana_sdk_ids::{native_loader, system_program},
+    solana_sdk_ids::system_program,
     solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
     solana_timings::{ExecuteTimingType, ExecuteTimings},
@@ -352,19 +352,26 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut execute_timings = ExecuteTimings::default();
         let mut processing_results = Vec::with_capacity(sanitized_txs.len());
 
-        let native_loader = native_loader::id();
-        let (program_accounts_map, filter_executable_us) = measure_us!({
-            let mut program_accounts_map = Self::filter_executable_program_accounts(
-                callbacks,
+        // Determine a capacity for the internal account cache. This
+        // over-allocates but avoids ever reallocating, and spares us from
+        // deduplicating the account keys lists.
+        let account_keys_in_batch = sanitized_txs.iter().map(|tx| tx.account_keys().len()).sum();
+
+        // Create the account loader, which wraps all external account fetching.
+        let mut account_loader = AccountLoader::new_with_account_cache_capacity(
+            config.account_overrides,
+            callbacks,
+            environment.feature_set.clone(),
+            account_keys_in_batch,
+        );
+
+        let (program_accounts_map, filter_executable_us) = measure_us!(self
+            .filter_executable_program_accounts(
+                &mut account_loader,
                 sanitized_txs,
                 &check_results,
                 PROGRAM_OWNERS,
-            );
-            for builtin_program in self.builtin_program_ids.read().unwrap().iter() {
-                program_accounts_map.insert(*builtin_program, (&native_loader, 0));
-            }
-            program_accounts_map
-        });
+            ));
 
         let (mut program_cache_for_tx_batch, program_cache_us) = measure_us!({
             let program_cache_for_tx_batch = self.replenish_program_cache(
@@ -387,19 +394,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
             program_cache_for_tx_batch
         });
-
-        // Determine a capacity for the internal account cache. This
-        // over-allocates but avoids ever reallocating, and spares us from
-        // deduplicating the account keys lists.
-        let account_keys_in_batch = sanitized_txs.iter().map(|tx| tx.account_keys().len()).sum();
-
-        // Create the account loader, which wraps all external account fetching.
-        let mut account_loader = AccountLoader::new_with_account_cache_capacity(
-            config.account_overrides,
-            callbacks,
-            environment.feature_set.clone(),
-            account_keys_in_batch,
-        );
 
         let enable_transaction_loading_failure_fees = environment
             .feature_set
@@ -697,28 +691,37 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
     /// Returns a map from executable program accounts (all accounts owned by any loader)
     /// to their usage counters, for the transactions with a valid blockhash or nonce.
-    fn filter_executable_program_accounts<'a, CB: TransactionProcessingCallback>(
-        callbacks: &CB,
+    fn filter_executable_program_accounts<CB: TransactionProcessingCallback>(
+        &self,
+        account_loader: &mut AccountLoader<CB>,
         txs: &[impl SVMMessage],
         check_results: &[TransactionCheckResult],
-        program_owners: &'a [Pubkey],
-    ) -> HashMap<Pubkey, (&'a Pubkey, u64)> {
-        let mut result: HashMap<Pubkey, (&'a Pubkey, u64)> = HashMap::new();
+        program_owners: &[Pubkey],
+    ) -> HashMap<Pubkey, u64> {
+        let mut result: HashMap<Pubkey, u64> = self
+            .builtin_program_ids
+            .read()
+            .unwrap()
+            .iter()
+            .map(|pubkey| (*pubkey, 0))
+            .collect();
+
         check_results.iter().zip(txs).for_each(|etx| {
             if let (Ok(_), tx) = etx {
                 tx.account_keys()
                     .iter()
                     .for_each(|key| match result.entry(*key) {
                         Entry::Occupied(mut entry) => {
-                            let (_, count) = entry.get_mut();
+                            let count = entry.get_mut();
                             *count = count.saturating_add(1);
                         }
                         Entry::Vacant(entry) => {
-                            if let Some(index) =
-                                callbacks.account_matches_owners(key, program_owners)
+                            if let Some(ref loaded_account) =
+                                account_loader.load_account(key, false)
                             {
-                                if let Some(owner) = program_owners.get(index) {
-                                    entry.insert((owner, 1));
+                                let owner = loaded_account.account.owner();
+                                if program_owners.contains(owner) {
+                                    entry.insert(1);
                                 }
                             }
                         }
@@ -732,7 +735,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     fn replenish_program_cache<CB: TransactionProcessingCallback>(
         &self,
         callback: &CB,
-        program_accounts_map: &HashMap<Pubkey, (&Pubkey, u64)>,
+        program_accounts_map: &HashMap<Pubkey, u64>,
         execute_timings: &mut ExecuteTimings,
         check_program_modification_slot: bool,
         limit_to_load_programs: bool,
@@ -740,7 +743,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut missing_programs: Vec<(Pubkey, (ProgramCacheMatchCriteria, u64))> =
             program_accounts_map
                 .iter()
-                .map(|(pubkey, (_, count))| {
+                .map(|(pubkey, count)| {
                     let match_criteria = if check_program_modification_slot {
                         get_program_modification_slot(callback, pubkey)
                             .map_or(ProgramCacheMatchCriteria::Tombstone, |slot| {
