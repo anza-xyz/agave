@@ -11855,6 +11855,48 @@ fn test_get_rent_paying_pubkeys() {
     );
 }
 
+/// Ensure that accounts rent epoch is updated correctly by rent collection
+#[test_case(true; "enable partitioned rent fees collection")]
+#[test_case(false; "disable partitioned rent fees collection")]
+fn test_partitioned_rent_collection(should_run_partitioned_rent_collection: bool) {
+    let GenesisConfigInfo {
+        mut genesis_config, ..
+    } = genesis_utils::create_genesis_config(100 * LAMPORTS_PER_SOL);
+    genesis_config.rent = Rent::default();
+    if should_run_partitioned_rent_collection {
+        genesis_config
+            .accounts
+            .remove(&solana_feature_set::disable_partitioned_rent_collection::id());
+    }
+
+    let bank = Arc::new(Bank::new_for_tests(&genesis_config));
+
+    let slot = bank.slot() + bank.slot_count_per_normal_epoch();
+    let bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), slot));
+
+    // make another bank so that any reclaimed accounts from the previous bank do not impact
+    // this test
+    let slot = bank.slot() + bank.slot_count_per_normal_epoch();
+    let bank: Arc<Bank> = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), slot));
+
+    // Store an account into the bank that is rent-exempt
+    let rent_exempt_balance = genesis_config.rent.minimum_balance(0);
+    let account_pubkey = Pubkey::new_unique();
+    let account = AccountSharedData::new(rent_exempt_balance, 0, &Pubkey::default());
+    bank.store_account(&account_pubkey, &account);
+
+    // Run partitioned rent collection. If enabled, partitioned rent collection
+    // will update the rent epoch for any rent exempt accounts whose rent epoch
+    // is not already set to RENT_EXEMPT_RENT_EPOCH.
+    bank.collect_rent_eagerly();
+    let updated_account = bank.get_account(&account_pubkey).unwrap();
+    if should_run_partitioned_rent_collection {
+        assert_eq!(updated_account.rent_epoch(), RENT_EXEMPT_RENT_EPOCH);
+    } else {
+        assert_eq!(updated_account.rent_epoch(), INITIAL_RENT_EPOCH);
+    }
+}
+
 /// Ensure that accounts data size is updated correctly by rent collection
 #[test_case(true; "enable rent fees collection")]
 #[test_case(false; "disable rent fees collection")]
