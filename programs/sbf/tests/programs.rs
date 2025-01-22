@@ -1772,8 +1772,18 @@ fn test_program_sbf_invoke_in_same_tx_as_redeployment() {
         ],
     );
 
-    // Redeployment causes programs to be unavailable to both top-level-instructions and CPI instructions
-    for invoke_instruction in [invoke_instruction, indirect_invoke_instruction] {
+    // Redeployment fails when top-level-instructions invoke the program because of write lock demotion
+    // and the program becomes unavailable to CPI instructions
+    for (invoke_instruction, expected_error) in [
+        (
+            invoke_instruction,
+            TransactionError::InstructionError(0, InstructionError::InvalidArgument),
+        ),
+        (
+            indirect_invoke_instruction,
+            TransactionError::InstructionError(2, InstructionError::UnsupportedProgramId),
+        ),
+    ] {
         // Call upgradeable program
         let result =
             bank_client.send_and_confirm_instruction(&mint_keypair, invoke_instruction.clone());
@@ -1794,10 +1804,7 @@ fn test_program_sbf_invoke_in_same_tx_as_redeployment() {
             bank.last_blockhash(),
         );
         let (result, _, _, _) = process_transaction_and_record_inner(&bank, tx);
-        assert_eq!(
-            result.unwrap_err(),
-            TransactionError::InstructionError(2, InstructionError::UnsupportedProgramId),
-        );
+        assert_eq!(result.unwrap_err(), expected_error,);
     }
 }
 
@@ -1848,8 +1855,18 @@ fn test_program_sbf_invoke_in_same_tx_as_undeployment() {
     // Prepare undeployment
     let undeployment_instruction = loader_v4::retract(&program_id, &authority_keypair.pubkey());
 
-    // Undeployment is visible to both top-level-instructions and CPI instructions
-    for invoke_instruction in [invoke_instruction, indirect_invoke_instruction] {
+    // Undeployment fails when top-level-instructions invoke the program because of write lock demotion
+    // and the program becomes unavailable to CPI instructions
+    for (invoke_instruction, expected_error) in [
+        (
+            invoke_instruction,
+            TransactionError::InstructionError(0, InstructionError::InvalidArgument),
+        ),
+        (
+            indirect_invoke_instruction,
+            TransactionError::InstructionError(1, InstructionError::UnsupportedProgramId),
+        ),
+    ] {
         // Call upgradeable program
         let result =
             bank_client.send_and_confirm_instruction(&mint_keypair, invoke_instruction.clone());
@@ -1866,10 +1883,7 @@ fn test_program_sbf_invoke_in_same_tx_as_undeployment() {
             bank.last_blockhash(),
         );
         let (result, _, _, _) = process_transaction_and_record_inner(&bank, tx);
-        assert_eq!(
-            result.unwrap_err(),
-            TransactionError::InstructionError(1, InstructionError::UnsupportedProgramId),
-        );
+        assert_eq!(result.unwrap_err(), expected_error,);
     }
 }
 
