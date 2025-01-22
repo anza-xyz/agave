@@ -51,10 +51,10 @@ fn program_cache_execution(threads: usize) {
         deploy_program("clock-sysvar".to_string(), 0, &mut mock_bank),
     ];
 
-    let account_maps: HashMap<Pubkey, (&Pubkey, u64)> = programs
+    let account_maps: HashMap<Pubkey, u64> = programs
         .iter()
         .enumerate()
-        .map(|(idx, key)| (*key, (&LOADER, idx as u64)))
+        .map(|(idx, key)| (*key, idx as u64))
         .collect();
 
     let ths: Vec<_> = (0..threads)
