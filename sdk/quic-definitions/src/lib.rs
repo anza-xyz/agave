@@ -16,6 +16,10 @@ pub const QUIC_TOTAL_STAKED_CONCURRENT_STREAMS: usize = 100_000;
 // forwarded packets from staked nodes.
 pub const QUIC_MAX_STAKED_CONCURRENT_STREAMS: usize = 512;
 
+// Connection idle timeout, and keep alive.
+// Quic will close the connection after QUIC_MAX_TIMEOUT,
+// and send a ping every QUIC_KEEP_ALIVE.
+// These shouldn't be too low to avoid unnecessary ping traffic.
 pub const QUIC_MAX_TIMEOUT: Duration = Duration::from_secs(60);
 pub const QUIC_KEEP_ALIVE: Duration = Duration::from_secs(45);
 
