@@ -12666,6 +12666,17 @@ where
 #[test_case(true; "enable partitioned rent collection")]
 #[test_case(false; "disable partitioned rent collection")]
 fn test_create_zero_lamport_with_clean(should_run_partitioned_rent_collection: bool) {
+    // DEVELOPER TIP: To debug this test, you may want to add some logging to
+    // `AccountsDb::write_accounts_to_storage` to see what accounts are actually
+    // in the storage entries
+
+    /**
+     *  for index in 0..accounts_and_meta_to_store.len() {
+     *      accounts_and_meta_to_store.account(index, |account| {
+     *          println!("slot {slot} wrote account {}", account.pubkey());
+     *      })
+     *  }
+     */
     with_create_zero_lamport(should_run_partitioned_rent_collection, |bank| {
         bank.freeze();
         bank.squash();
