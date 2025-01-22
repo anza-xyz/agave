@@ -175,7 +175,8 @@ struct BankingStageHandlerContext {
 }
 
 trait_set! {
-    pub trait BankingPacketHandler = DynClone + Fn(&BankingStageHelper, BankingPacketBatch) + Send + 'static;
+    pub trait BankingPacketHandler =
+        DynClone + FnMut(&BankingStageHelper, BankingPacketBatch) + Send + 'static;
 }
 // Make this `Clone`-able so that it can easily propagated to all the handler threads.
 clone_trait_object!(BankingPacketHandler);
@@ -1414,7 +1415,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         };
 
         let handler_main_loop = || {
-            let handler_context = handler_context.clone();
+            let mut handler_context = handler_context.clone();
             let mut runnable_task_receiver = runnable_task_receiver.clone();
             let finished_blocked_task_sender = finished_blocked_task_sender.clone();
             let finished_idle_task_sender = finished_idle_task_sender.clone();
