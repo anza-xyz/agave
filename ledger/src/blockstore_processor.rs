@@ -3560,38 +3560,10 @@ pub mod tests {
             assert!(result.is_ok()); // No failing transaction error - only instruction errors
             bank.freeze();
 
-<<<<<<< HEAD
             assert_eq!(blockhash_ok, bank.last_blockhash());
-            assert!(bankhash_ok != bank.hash());
+            assert_eq!(bankhash_ok == bank.hash(), fee_payer_in_rent_partition);
             if let Some(bankhash) = bankhash_err {
                 assert_eq!(bankhash, bank.hash());
-=======
-            // Transaction success/failure should not affect block hash ...
-            assert_eq!(
-                ok_bank_details
-                    .bank_hash_components
-                    .as_ref()
-                    .unwrap()
-                    .last_blockhash,
-                bank_details
-                    .bank_hash_components
-                    .as_ref()
-                    .unwrap()
-                    .last_blockhash
-            );
-            // AND should not affect bankhash IF the rent is collected during freeze.
-            assert_eq!(ok_bank_details == bank_details, fee_payer_in_rent_partition);
-            // Different types of transaction failure should not affect bank hash
-            if let Some(prev_bank_details) = &err_bank_details {
-                assert_eq!(
-                    *prev_bank_details,
-                    bank_details,
-                    "bank hash mismatched for tx error: {:?}",
-                    get_instruction_errors()[err]
-                );
-            } else {
-                err_bank_details = Some(bank_details);
->>>>>>> c5473e4b3 (Fix flaky test_transaction_result_does_not_affect_bankhash (#3916))
             }
             bankhash_err = Some(bank.hash());
         });
