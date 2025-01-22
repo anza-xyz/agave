@@ -5,6 +5,7 @@ use {
     crossbeam_channel::{unbounded, Receiver, SendError, Sender, TryRecvError},
     rolling_file::{RollingCondition, RollingConditionBasic, RollingFileAppender},
     solana_sdk::{hash::Hash, slot_history::Slot},
+    solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{
         fs::{create_dir_all, remove_dir_all},
         io::{self, Write},
@@ -184,6 +185,27 @@ pub struct Channels {
     pub gossip_vote_receiver: BankingPacketReceiver,
 }
 
+impl Channels {
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn unified_sender(&self) -> &BankingPacketSender {
+        let unified_sender = &self.non_vote_sender;
+        assert!(unified_sender
+            .sender
+            .same_channel(&self.tpu_vote_sender.sender));
+        assert!(unified_sender
+            .sender
+            .same_channel(&self.gossip_vote_sender.sender));
+        unified_sender
+    }
+
+    pub(crate) fn unified_receiver(&self) -> &BankingPacketReceiver {
+        let unified_receiver = &self.non_vote_receiver;
+        assert!(unified_receiver.same_channel(&self.tpu_vote_receiver));
+        assert!(unified_receiver.same_channel(&self.gossip_vote_receiver));
+        unified_receiver
+    }
+}
+
 impl BankingTracer {
     pub fn new(
         maybe_config: Option<(&PathBuf, Arc<AtomicBool>, DirByteLimit)>,
@@ -261,6 +283,11 @@ impl BankingTracer {
                 gossip_vote_receiver,
             }
         }
+    }
+
+    pub fn create_channels_for_scheduler_pool(&self, pool: &DefaultSchedulerPool) -> Channels {
+        let should_unify = pool.block_production_supported();
+        self.create_channels(should_unify)
     }
 
     fn create_channel(&self, label: ChannelLabel) -> (BankingPacketSender, BankingPacketReceiver) {

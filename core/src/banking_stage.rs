@@ -41,6 +41,7 @@ use {
         vote_sender_types::ReplayVoteSender,
     },
     solana_sdk::{pubkey::Pubkey, timing::AtomicInterval},
+    solana_unified_scheduler_logic::SchedulingMode,
     std::{
         cmp, env,
         ops::Deref,
@@ -82,6 +83,13 @@ mod packet_receiver;
 mod read_write_account_set;
 mod scheduler_messages;
 mod transaction_scheduler;
+
+// proc_macro_hygiene needs to be stabilzied to use qualifier_attr...
+// error[E0658]: non-inline modules in proc macro input are unstable
+#[cfg(not(feature = "dev-context-only-utils"))]
+pub(crate) mod unified_scheduler;
+#[cfg(feature = "dev-context-only-utils")]
+pub mod unified_scheduler;
 
 // Fixed thread size seems to be fastest on GCP setup
 pub const NUM_THREADS: u32 = 6;
@@ -416,6 +424,9 @@ impl BankingStage {
                 prioritization_fee_cache,
                 enable_forwarding,
             ),
+            BlockProductionMethod::UnifiedScheduler => Self {
+                bank_thread_hdls: vec![],
+            },
         }
     }
 
@@ -794,11 +805,15 @@ pub(crate) fn update_bank_forks_and_poh_recorder_for_new_tpu_bank(
     tpu_bank: Bank,
     track_transaction_indexes: bool,
 ) {
-    let tpu_bank = bank_forks.write().unwrap().insert(tpu_bank);
+    let tpu_bank = bank_forks
+        .write()
+        .unwrap()
+        .insert_with_scheduling_mode(SchedulingMode::BlockProduction, tpu_bank);
     poh_recorder
         .write()
         .unwrap()
-        .set_bank(tpu_bank, track_transaction_indexes);
+        .set_bank(tpu_bank.clone_with_scheduler(), track_transaction_indexes);
+    tpu_bank.unblock_block_production();
 }
 
 #[cfg(test)]
