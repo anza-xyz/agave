@@ -1267,7 +1267,7 @@ impl TypedColumn for columns::Index {
         match index {
             Ok(index) => Ok(index),
             Err(_) => {
-                let index: blockstore_meta::IndexV2 = config.deserialize(data)?;
+                let index: blockstore_meta::IndexFallback = config.deserialize(data)?;
                 Ok(index.into())
             }
         }

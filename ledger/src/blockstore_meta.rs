@@ -107,12 +107,16 @@ mod serde_compat {
     }
 }
 
+pub type Index = IndexV2;
+pub type ShredIndex = ShredIndexV2;
+pub type IndexFallback = IndexLegacy;
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 /// Index recording presence/absence of shreds
-pub struct Index {
+pub struct IndexLegacy {
     pub slot: Slot,
-    data: ShredIndex,
-    coding: ShredIndex,
+    data: ShredIndexLegacy,
+    coding: ShredIndexLegacy,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -122,9 +126,9 @@ pub struct IndexV2 {
     coding: ShredIndexV2,
 }
 
-impl From<IndexV2> for Index {
+impl From<IndexV2> for IndexLegacy {
     fn from(index: IndexV2) -> Self {
-        Index {
+        IndexLegacy {
             slot: index.slot,
             data: index.data.into(),
             coding: index.coding.into(),
@@ -132,8 +136,8 @@ impl From<IndexV2> for Index {
     }
 }
 
-impl From<Index> for IndexV2 {
-    fn from(index: Index) -> Self {
+impl From<IndexLegacy> for IndexV2 {
+    fn from(index: IndexLegacy) -> Self {
         IndexV2 {
             slot: index.slot,
             data: index.data.into(),
@@ -143,7 +147,7 @@ impl From<Index> for IndexV2 {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-pub struct ShredIndex {
+pub struct ShredIndexLegacy {
     /// Map representing presence/absence of shreds
     index: BTreeSet<u64>,
 }
@@ -251,7 +255,7 @@ pub struct FrozenHashStatus {
 
 impl Index {
     pub(crate) fn new(slot: Slot) -> Self {
-        Index {
+        Self {
             slot,
             data: ShredIndex::default(),
             coding: ShredIndex::default(),
@@ -277,7 +281,8 @@ impl Index {
 ///
 /// TODO: Remove this once new [`ShredIndexV2`] is fully rolled out
 /// and no longer relies on it for fallback.
-impl ShredIndex {
+#[allow(unused)]
+impl ShredIndexLegacy {
     pub fn num_shreds(&self) -> usize {
         self.index.len()
     }
@@ -498,23 +503,23 @@ impl FromIterator<u64> for ShredIndexV2 {
     }
 }
 
-impl FromIterator<u64> for ShredIndex {
+impl FromIterator<u64> for ShredIndexLegacy {
     fn from_iter<T: IntoIterator<Item = u64>>(iter: T) -> Self {
-        ShredIndex {
+        ShredIndexLegacy {
             index: iter.into_iter().collect(),
         }
     }
 }
 
-impl From<ShredIndex> for ShredIndexV2 {
-    fn from(value: ShredIndex) -> Self {
+impl From<ShredIndexLegacy> for ShredIndexV2 {
+    fn from(value: ShredIndexLegacy) -> Self {
         value.index.into_iter().collect()
     }
 }
 
-impl From<ShredIndexV2> for ShredIndex {
+impl From<ShredIndexV2> for ShredIndexLegacy {
     fn from(value: ShredIndexV2) -> Self {
-        ShredIndex {
+        ShredIndexLegacy {
             index: value.iter().collect(),
         }
     }
@@ -922,7 +927,7 @@ mod test {
             shreds in rand_range(0..MAX_DATA_SHREDS_PER_SLOT as u64),
             range in rand_range(0..MAX_DATA_SHREDS_PER_SLOT as u64)
         ) {
-            let mut legacy = ShredIndex::default();
+            let mut legacy = ShredIndexLegacy::default();
             let mut v2 = ShredIndexV2::default();
 
             for i in shreds {
@@ -942,7 +947,7 @@ mod test {
             );
 
             assert_eq!(ShredIndexV2::from(legacy.clone()), v2.clone());
-            assert_eq!(ShredIndex::from(v2), legacy);
+            assert_eq!(ShredIndexLegacy::from(v2), legacy);
         }
 
         /// Property: [`Index`] cannot be deserialized from [`IndexV2`].
@@ -965,7 +970,7 @@ mod test {
                 slot,
             };
             let config = bincode::DefaultOptions::new().with_fixint_encoding().reject_trailing_bytes();
-            let legacy = config.deserialize::<Index>(&config.serialize(&index).unwrap());
+            let legacy = config.deserialize::<IndexLegacy>(&config.serialize(&index).unwrap());
             prop_assert!(legacy.is_err());
         }
 
@@ -983,7 +988,7 @@ mod test {
             data_indices in rand_range(0..MAX_DATA_SHREDS_PER_SLOT as u64),
             slot in 0..u64::MAX
         ) {
-            let index = Index {
+            let index = IndexLegacy {
                 coding: coding_indices.into_iter().collect(),
                 data: data_indices.into_iter().collect(),
                 slot,
