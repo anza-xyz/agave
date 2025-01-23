@@ -311,6 +311,7 @@ impl IndexFallback {
 ///
 /// TODO: Remove this once new [`ShredIndexV2`] is fully rolled out
 /// and no longer relies on it for fallback.
+#[cfg(test)]
 #[allow(unused)]
 impl ShredIndexV1 {
     pub fn num_shreds(&self) -> usize {
@@ -332,7 +333,6 @@ impl ShredIndexV1 {
         self.index.insert(index);
     }
 
-    #[cfg(test)]
     fn remove(&mut self, index: u64) {
         self.index.remove(&index);
     }
