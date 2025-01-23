@@ -19,7 +19,7 @@ use {
     solana_measure::measure::Measure,
     solana_net_utils::{SocketConfig, VALIDATOR_PORT_RANGE},
     solana_quic_definitions::{
-        QUIC_CONNECTION_HANDSHAKE_TIMEOUT, QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT,
+        QUIC_CONNECTION_HANDSHAKE_TIMEOUT, QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT, QUIC_SEND_FAIRNESS,
     },
     solana_rpc_client_api::client_error::ErrorKind as ClientErrorKind,
     solana_streamer::nonblocking::quic::ALPN_TPU_PROTOCOL_ID,
@@ -105,6 +105,7 @@ impl QuicLazyInitializedEndpoint {
         let timeout = IdleTimeout::try_from(QUIC_MAX_TIMEOUT).unwrap();
         transport_config.max_idle_timeout(Some(timeout));
         transport_config.keep_alive_interval(Some(QUIC_KEEP_ALIVE));
+        transport_config.send_fairness(QUIC_SEND_FAIRNESS);
         config.transport_config(Arc::new(transport_config));
 
         endpoint.set_default_client_config(config);

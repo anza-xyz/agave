@@ -1340,10 +1340,7 @@ mod tests {
         ];
 
         let check_results = vec![
-            TransactionCheckResult::Ok(CheckedTransactionDetails {
-                nonce: None,
-                lamports_per_signature: 0
-            });
+            TransactionCheckResult::Ok(CheckedTransactionDetails::default());
             check_results_len
         ];
 
@@ -2171,10 +2168,7 @@ mod tests {
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
-                CheckedTransactionDetails {
-                    nonce: None,
-                    lamports_per_signature,
-                },
+                CheckedTransactionDetails::new(None, lamports_per_signature),
                 &Hash::default(),
                 FeeStructure::default().lamports_per_signature,
                 &rent_collector,
@@ -2251,10 +2245,7 @@ mod tests {
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
-                CheckedTransactionDetails {
-                    nonce: None,
-                    lamports_per_signature,
-                },
+                CheckedTransactionDetails::new(None, lamports_per_signature),
                 &Hash::default(),
                 FeeStructure::default().lamports_per_signature,
                 &rent_collector,
@@ -2302,10 +2293,7 @@ mod tests {
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
-                CheckedTransactionDetails {
-                    nonce: None,
-                    lamports_per_signature,
-                },
+                CheckedTransactionDetails::new(None, lamports_per_signature),
                 &Hash::default(),
                 FeeStructure::default().lamports_per_signature,
                 &RentCollector::default(),
@@ -2336,10 +2324,7 @@ mod tests {
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
-                CheckedTransactionDetails {
-                    nonce: None,
-                    lamports_per_signature,
-                },
+                CheckedTransactionDetails::new(None, lamports_per_signature),
                 &Hash::default(),
                 FeeStructure::default().lamports_per_signature,
                 &RentCollector::default(),
@@ -2374,10 +2359,7 @@ mod tests {
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
-                CheckedTransactionDetails {
-                    nonce: None,
-                    lamports_per_signature,
-                },
+                CheckedTransactionDetails::new(None, lamports_per_signature),
                 &Hash::default(),
                 FeeStructure::default().lamports_per_signature,
                 &rent_collector,
@@ -2410,10 +2392,7 @@ mod tests {
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
-                CheckedTransactionDetails {
-                    nonce: None,
-                    lamports_per_signature,
-                },
+                CheckedTransactionDetails::new(None, lamports_per_signature),
                 &Hash::default(),
                 FeeStructure::default().lamports_per_signature,
                 &RentCollector::default(),
@@ -2442,10 +2421,7 @@ mod tests {
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
-                CheckedTransactionDetails {
-                    nonce: None,
-                    lamports_per_signature,
-                },
+                CheckedTransactionDetails::new(None, lamports_per_signature),
                 &Hash::default(),
                 FeeStructure::default().lamports_per_signature,
                 &RentCollector::default(),
@@ -2512,10 +2488,8 @@ mod tests {
                 .try_advance_nonce(next_durable_nonce, lamports_per_signature)
                 .unwrap();
 
-            let tx_details = CheckedTransactionDetails {
-                nonce: Some(future_nonce.clone()),
-                lamports_per_signature,
-            };
+            let tx_details =
+                CheckedTransactionDetails::new(Some(future_nonce.clone()), lamports_per_signature);
 
             let result = TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
@@ -2578,10 +2552,7 @@ mod tests {
             let result = TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
-                CheckedTransactionDetails {
-                    nonce: None,
-                    lamports_per_signature,
-                },
+                CheckedTransactionDetails::new(None, lamports_per_signature),
                 &Hash::default(),
                 FeeStructure::default().lamports_per_signature,
                 &rent_collector,
@@ -2623,10 +2594,7 @@ mod tests {
         TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
             &mut account_loader,
             &message,
-            CheckedTransactionDetails {
-                nonce: None,
-                lamports_per_signature: 5000,
-            },
+            CheckedTransactionDetails::new(None, 5000),
             &Hash::default(),
             FeeStructure::default().lamports_per_signature,
             &RentCollector::default(),
