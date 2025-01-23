@@ -2,8 +2,7 @@ use {
     super::{
         forward_packet_batches_by_accounts::ForwardPacketBatchesByAccounts,
         leader_slot_metrics::LeaderSlotMetricsTracker,
-        unprocessed_transaction_storage::VoteStorage, BankingStageStats,
-        ForwardOption,
+        unprocessed_transaction_storage::VoteStorage, BankingStageStats, ForwardOption,
     },
     crate::{
         banking_stage::{

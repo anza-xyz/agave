@@ -477,10 +477,7 @@ impl BankingStage {
                     connection_cache.clone(),
                     data_budget.clone(),
                 ),
-                VoteStorage::new(
-                    latest_unprocessed_votes.clone(),
-                    vote_source,
-                ),
+                VoteStorage::new(latest_unprocessed_votes.clone(), vote_source),
             ));
         }
 

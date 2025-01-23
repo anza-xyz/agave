@@ -10,9 +10,7 @@ use {
         leader_slot_metrics::LeaderSlotMetricsTracker,
         multi_iterator_scanner::{MultiIteratorScanner, ProcessingDecision},
         read_write_account_set::ReadWriteAccountSet,
-        unprocessed_packet_batches::{
-            DeserializedPacket, PacketBatchInsertionMetrics,
-        },
+        unprocessed_packet_batches::{DeserializedPacket, PacketBatchInsertionMetrics},
         BankingStageStats, FilterForwardingResults, ForwardOption,
     },
     itertools::Itertools,
@@ -20,10 +18,7 @@ use {
     solana_measure::measure_us,
     solana_runtime::bank::Bank,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk::{
-        hash::Hash,
-        transaction::SanitizedTransaction,
-    },
+    solana_sdk::{hash::Hash, transaction::SanitizedTransaction},
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     std::{
         collections::HashMap,
@@ -267,20 +262,22 @@ impl VoteStorage {
         &mut self,
         deserialized_packets: Vec<ImmutableDeserializedPacket>,
     ) -> InsertPacketBatchSummary {
-        InsertPacketBatchSummary::from(self.latest_unprocessed_votes.insert_batch(
-            deserialized_packets
-                .into_iter()
-                .filter_map(|deserialized_packet| {
-                    LatestValidatorVotePacket::new_from_immutable(
-                        Arc::new(deserialized_packet),
-                        self.vote_source,
-                        self.latest_unprocessed_votes
-                            .should_deprecate_legacy_vote_ixs(),
-                    )
-                    .ok()
-                }),
-            false, // should_replenish_taken_votes
-        ))
+        InsertPacketBatchSummary::from(
+            self.latest_unprocessed_votes.insert_batch(
+                deserialized_packets
+                    .into_iter()
+                    .filter_map(|deserialized_packet| {
+                        LatestValidatorVotePacket::new_from_immutable(
+                            Arc::new(deserialized_packet),
+                            self.vote_source,
+                            self.latest_unprocessed_votes
+                                .should_deprecate_legacy_vote_ixs(),
+                        )
+                        .ok()
+                    }),
+                false, // should_replenish_taken_votes
+            ),
+        )
     }
 
     pub fn filter_forwardable_packets_and_add_batches(
@@ -539,10 +536,8 @@ mod tests {
 
         let latest_unprocessed_votes =
             LatestUnprocessedVotes::new_for_tests(&[vote_keypair.pubkey()]);
-        let mut transaction_storage = VoteStorage::new(
-            Arc::new(latest_unprocessed_votes),
-            VoteSource::Tpu,
-        );
+        let mut transaction_storage =
+            VoteStorage::new(Arc::new(latest_unprocessed_votes), VoteSource::Tpu);
 
         transaction_storage.insert_batch(vec![ImmutableDeserializedPacket::new(vote.clone())?]);
         assert_eq!(1, transaction_storage.len());

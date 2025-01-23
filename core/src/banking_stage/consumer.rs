@@ -137,9 +137,7 @@ impl Consumer {
         );
 
         if reached_end_of_slot {
-            slot_metrics_tracker.set_end_of_slot_unprocessed_buffer_len(
-                vote_storage.len() as u64,
-            );
+            slot_metrics_tracker.set_end_of_slot_unprocessed_buffer_len(vote_storage.len() as u64);
         }
 
         proc_start.stop();
