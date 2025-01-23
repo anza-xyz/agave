@@ -5,12 +5,8 @@ use {
         crypto::rustls::QuicClientConfig, ClientConfig, Connection, Endpoint, IdleTimeout,
         TransportConfig,
     },
-<<<<<<< HEAD
     skip_server_verification::SkipServerVerification,
-    solana_sdk::quic::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT},
-=======
-    solana_quic_definitions::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT, QUIC_SEND_FAIRNESS},
->>>>>>> 1e721f086 (quic: disable send fairness (#4586))
+    solana_sdk::quic::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT, QUIC_SEND_FAIRNESS},
     solana_streamer::nonblocking::quic::ALPN_TPU_PROTOCOL_ID,
     std::{net::SocketAddr, sync::Arc},
 };

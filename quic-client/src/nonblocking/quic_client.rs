@@ -16,17 +16,13 @@ use {
         nonblocking::client_connection::ClientConnection,
     },
     solana_measure::measure::Measure,
-<<<<<<< HEAD
     solana_net_utils::VALIDATOR_PORT_RANGE,
-=======
-    solana_net_utils::{SocketConfig, VALIDATOR_PORT_RANGE},
-    solana_quic_definitions::{
-        QUIC_CONNECTION_HANDSHAKE_TIMEOUT, QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT, QUIC_SEND_FAIRNESS,
-    },
->>>>>>> 1e721f086 (quic: disable send fairness (#4586))
     solana_rpc_client_api::client_error::ErrorKind as ClientErrorKind,
     solana_sdk::{
-        quic::{QUIC_CONNECTION_HANDSHAKE_TIMEOUT, QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT},
+        quic::{
+            QUIC_CONNECTION_HANDSHAKE_TIMEOUT, QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT,
+            QUIC_SEND_FAIRNESS,
+        },
         signature::Keypair,
         transport::Result as TransportResult,
     },

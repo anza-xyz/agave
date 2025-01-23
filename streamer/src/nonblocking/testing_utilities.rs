@@ -16,16 +16,11 @@ use {
         TokioRuntime, TransportConfig,
     },
     solana_perf::packet::PacketBatch,
-<<<<<<< HEAD
     solana_sdk::{
         net::DEFAULT_TPU_COALESCE,
-        quic::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT},
+        quic::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT, QUIC_SEND_FAIRNESS},
         signer::keypair::Keypair,
     },
-=======
-    solana_quic_definitions::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT, QUIC_SEND_FAIRNESS},
-    solana_tls_utils::{new_dummy_x509_certificate, tls_client_config_builder},
->>>>>>> 1e721f086 (quic: disable send fairness (#4586))
     std::{
         net::{SocketAddr, UdpSocket},
         sync::{atomic::AtomicBool, Arc, RwLock},
