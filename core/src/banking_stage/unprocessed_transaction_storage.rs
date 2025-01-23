@@ -10,12 +10,11 @@ use {
         multi_iterator_scanner::{MultiIteratorScanner, ProcessingDecision},
         read_write_account_set::ReadWriteAccountSet,
         unprocessed_packet_batches::{
-            DeserializedPacket, PacketBatchInsertionMetrics, UnprocessedPacketBatches,
+            DeserializedPacket, PacketBatchInsertionMetrics,
         },
         BankingStageStats,
     },
     itertools::Itertools,
-    min_max_heap::MinMaxHeap,
     solana_accounts_db::account_locks::validate_account_locks,
     solana_measure::measure_us,
     solana_runtime::bank::Bank,
@@ -34,11 +33,6 @@ use {
 pub const UNPROCESSED_BUFFER_STEP_SIZE: usize = 64;
 /// Maximum number of votes a single receive call will accept
 const MAX_NUM_VOTES_RECEIVE: usize = 10_000;
-
-#[derive(Debug)]
-pub enum UnprocessedTransactionStorage {
-    VoteStorage(VoteStorage),
-}
 
 #[derive(Debug)]
 pub struct VoteStorage {
@@ -219,115 +213,6 @@ where
         payload,
         should_process_packet,
     )
-}
-
-impl UnprocessedTransactionStorage {
-    pub fn new_vote_storage(
-        latest_unprocessed_votes: Arc<LatestUnprocessedVotes>,
-        vote_source: VoteSource,
-    ) -> Self {
-        Self::VoteStorage(VoteStorage {
-            latest_unprocessed_votes,
-            vote_source,
-        })
-    }
-
-    pub fn is_empty(&self) -> bool {
-        let Self::VoteStorage(vote_storage) = self;
-        vote_storage.is_empty()
-    }
-
-    pub fn len(&self) -> usize {
-        let Self::VoteStorage(vote_storage) = self;
-        vote_storage.len()
-    }
-
-    pub fn get_min_priority(&self) -> Option<u64> {
-        None
-    }
-
-    pub fn get_max_priority(&self) -> Option<u64> {
-        None
-    }
-
-    /// Returns the maximum number of packets a receive should accept
-    pub fn max_receive_size(&self) -> usize {
-        let Self::VoteStorage(vote_storage) = self;
-        vote_storage.max_receive_size()
-    }
-
-    pub fn should_not_process(&self) -> bool {
-        // The gossip vote thread does not need to process any votes, that is
-        // handled by the tpu vote thread
-        let Self::VoteStorage(vote_storage) = self;
-        matches!(vote_storage.vote_source, VoteSource::Gossip)
-    }
-
-    pub fn forward_option(&self) -> ForwardOption {
-        let Self::VoteStorage(vote_storage) = self;
-        vote_storage.forward_option()
-    }
-
-    pub fn clear_forwarded_packets(&mut self) {
-        let Self::VoteStorage(vote_storage) = self;
-        vote_storage.clear_forwarded_packets()
-    }
-
-    pub(crate) fn insert_batch(
-        &mut self,
-        deserialized_packets: Vec<ImmutableDeserializedPacket>,
-    ) -> InsertPacketBatchSummary {
-        let Self::VoteStorage(vote_storage) = self;
-        InsertPacketBatchSummary::from(vote_storage.insert_batch(deserialized_packets))
-    }
-
-    pub fn filter_forwardable_packets_and_add_batches(
-        &mut self,
-        bank: Arc<Bank>,
-        forward_packet_batches_by_accounts: &mut ForwardPacketBatchesByAccounts,
-    ) -> FilterForwardingResults {
-        let Self::VoteStorage(vote_storage) = self;
-        vote_storage
-            .filter_forwardable_packets_and_add_batches(bank, forward_packet_batches_by_accounts)
-    }
-
-    /// The processing function takes a stream of packets ready to process, and returns the indices
-    /// of the unprocessed packets that are eligible for retry. A return value of None means that
-    /// all packets are unprocessed and eligible for retry.
-    #[must_use]
-    pub fn process_packets<F>(
-        &mut self,
-        bank: Arc<Bank>,
-        banking_stage_stats: &BankingStageStats,
-        slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
-        processing_function: F,
-    ) -> bool
-    where
-        F: FnMut(
-            &Vec<Arc<ImmutableDeserializedPacket>>,
-            &mut ConsumeScannerPayload,
-        ) -> Option<Vec<usize>>,
-    {
-        let Self::VoteStorage(vote_storage) = self;
-        vote_storage.process_packets(
-            bank,
-            banking_stage_stats,
-            slot_metrics_tracker,
-            processing_function,
-        )
-    }
-
-    pub(crate) fn clear(&mut self) {
-        match self {
-            Self::LocalTransactionStorage(_) => {}
-            Self::VoteStorage(vote_storage) => vote_storage.clear(),
-        }
-    }
-
-    pub(crate) fn cache_epoch_boundary_info(&mut self, bank: &Bank) {
-        let Self::VoteStorage(vote_storage) = self;
-        vote_storage.cache_epoch_boundary_info(bank);
-    }
 }
 
 impl VoteStorage {
