@@ -95,25 +95,6 @@ impl From<PacketBatchInsertionMetrics> for InsertPacketBatchSummary {
     }
 }
 
-fn filter_processed_packets<'a, F>(
-    retryable_transaction_indexes: impl Iterator<Item = &'a usize>,
-    mut f: F,
-) where
-    F: FnMut(usize, usize),
-{
-    let mut prev_retryable_index = 0;
-    for (i, retryable_index) in retryable_transaction_indexes.enumerate() {
-        let start = if i == 0 { 0 } else { prev_retryable_index + 1 };
-
-        let end = *retryable_index;
-        prev_retryable_index = *retryable_index;
-
-        if start < end {
-            f(start, end)
-        }
-    }
-}
-
 /// Convenient wrapper for shared-state between banking stage processing and the
 /// multi-iterator checking function.
 pub struct ConsumeScannerPayload<'a> {
@@ -651,6 +632,25 @@ mod tests {
         solana_vote_program::vote_state::TowerSync,
         std::error::Error,
     };
+
+    fn filter_processed_packets<'a, F>(
+        retryable_transaction_indexes: impl Iterator<Item = &'a usize>,
+        mut f: F,
+    ) where
+        F: FnMut(usize, usize),
+    {
+        let mut prev_retryable_index = 0;
+        for (i, retryable_index) in retryable_transaction_indexes.enumerate() {
+            let start = if i == 0 { 0 } else { prev_retryable_index + 1 };
+
+            let end = *retryable_index;
+            prev_retryable_index = *retryable_index;
+
+            if start < end {
+                f(start, end)
+            }
+        }
+    }
 
     #[test]
     fn test_filter_processed_packets() {
