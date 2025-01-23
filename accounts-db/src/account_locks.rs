@@ -106,7 +106,7 @@ impl AccountLocks {
 
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn is_locked_write(&self, key: &Pubkey) -> bool {
-        self.write_locks.get(key).map_or(false, |count| *count > 0)
+        self.write_locks.get(key).is_some_and(|count| *count > 0)
     }
 
     fn can_read_lock(&self, key: &Pubkey) -> bool {
