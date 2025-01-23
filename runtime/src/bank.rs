@@ -3992,6 +3992,15 @@ impl Bank {
             return;
         }
 
+        // When account rent epoch updates are disabled, partitioned rent
+        // collection no longer has any effect and can be skipped
+        if self
+            .feature_set
+            .is_active(&feature_set::disable_account_rent_epoch_updates::id())
+        {
+            return;
+        }
+
         let mut measure = Measure::start("collect_rent_eagerly-ms");
         let partitions = self.rent_collection_partitions();
         let count = partitions.len();

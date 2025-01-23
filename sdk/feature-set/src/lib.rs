@@ -920,6 +920,10 @@ pub mod raise_block_limits_to_50m {
     solana_pubkey::declare_id!("5oMCU3JPaFLr8Zr4ct7yFA7jdk6Mw1RmB8K4u9ZbS42z");
 }
 
+pub mod disable_account_rent_epoch_updates {
+    solana_pubkey::declare_id!("2B2SBNbUcr438LtGXNcJNBP2GBSxjx81F945SdSkUSfC");
+}
+
 lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES: AHashMap<Pubkey, &'static str> = [
@@ -1145,6 +1149,7 @@ lazy_static! {
         (deplete_cu_meter_on_vm_failure::id(), "Deplete compute meter for vm errors SIMD-0182 #3993"),
         (reserve_minimal_cus_for_builtin_instructions::id(), "Reserve minimal CUs for builtin instructions SIMD-170 #2562"),
         (raise_block_limits_to_50m::id(), "Raise block limit to 50M SIMD-0207"),
+        (disable_account_rent_epoch_updates::id(), "Disable account rent epoch field updates SIMD-0231 #XXXX"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()

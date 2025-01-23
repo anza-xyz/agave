@@ -4003,7 +4003,7 @@ fn test_program_sbf_inner_instruction_alignment_checks() {
         ..
     } = create_genesis_config(50);
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let noop = create_program(&bank, &bpf_loader_deprecated::id(), "solana_sbf_rust_noop");
+    let noop = create_program(&bank, &bpf_loader::id(), "solana_sbf_rust_noop");
     let inner_instruction_alignment_check = create_program(
         &bank,
         &bpf_loader_deprecated::id(),

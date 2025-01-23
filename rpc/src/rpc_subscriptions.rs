@@ -1268,10 +1268,7 @@ pub(crate) mod tests {
         space: usize,
     }
 
-    fn make_account_result(
-        non_default_account: bool,
-        account_result: AccountResult,
-    ) -> serde_json::Value {
+    fn make_account_result(account_result: AccountResult) -> serde_json::Value {
         json!({
            "jsonrpc": "2.0",
            "method": "accountNotification",
@@ -1283,7 +1280,7 @@ pub(crate) mod tests {
                        "executable": false,
                        "lamports": account_result.lamports,
                        "owner": "11111111111111111111111111111111",
-                       "rentEpoch": if non_default_account {u64::MAX} else {0},
+                       "rentEpoch": 0,
                        "space": account_result.space,
                     },
                },
@@ -1330,15 +1327,12 @@ pub(crate) mod tests {
             0,
             &system_program::id(),
         );
-        let expected0 = make_account_result(
-            true,
-            AccountResult {
-                lamports: 1,
-                subscription: 0,
-                space: 0,
-                data: "",
-            },
-        );
+        let expected0 = make_account_result(AccountResult {
+            lamports: 1,
+            subscription: 0,
+            space: 0,
+            data: "",
+        });
 
         let tx1 = {
             let instruction =
@@ -1346,15 +1340,12 @@ pub(crate) mod tests {
             let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
             Transaction::new(&[&alice, &mint_keypair], message, blockhash)
         };
-        let expected1 = make_account_result(
-            false,
-            AccountResult {
-                lamports: 0,
-                subscription: 2,
-                space: 0,
-                data: "",
-            },
-        );
+        let expected1 = make_account_result(AccountResult {
+            lamports: 0,
+            subscription: 2,
+            space: 0,
+            data: "",
+        });
 
         let tx2 = system_transaction::create_account(
             &mint_keypair,
@@ -1364,15 +1355,12 @@ pub(crate) mod tests {
             1024,
             &system_program::id(),
         );
-        let expected2 = make_account_result(
-            true,
-            AccountResult {
-                lamports: 1,
-                subscription: 4,
-                space: 1024,
-                data: "error: data too large for bs58 encoding",
-            },
-        );
+        let expected2 = make_account_result(AccountResult {
+            lamports: 1,
+            subscription: 4,
+            space: 1024,
+            data: "error: data too large for bs58 encoding",
+        });
 
         let subscribe_cases = vec![
             (alice.pubkey(), tx0, expected0),
@@ -1874,7 +1862,7 @@ pub(crate) mod tests {
                           "executable": false,
                           "lamports": 1,
                           "owner": "Stake11111111111111111111111111111111111111",
-                          "rentEpoch": u64::MAX,
+                          "rentEpoch": 0,
                           "space": 16,
                        },
                        "pubkey": alice.pubkey().to_string(),
@@ -2046,7 +2034,7 @@ pub(crate) mod tests {
                               "executable": false,
                               "lamports": lamports,
                               "owner": "Stake11111111111111111111111111111111111111",
-                              "rentEpoch": u64::MAX,
+                              "rentEpoch": 0,
                               "space": 16,
                            },
                            "pubkey": pubkey,
@@ -2339,7 +2327,7 @@ pub(crate) mod tests {
                               "executable": false,
                               "lamports": lamports,
                               "owner": "Stake11111111111111111111111111111111111111",
-                              "rentEpoch": u64::MAX,
+                              "rentEpoch": 0,
                               "space": 16,
                            },
                            "pubkey": pubkey,
@@ -2846,7 +2834,7 @@ pub(crate) mod tests {
                        "executable": false,
                        "lamports": 1,
                        "owner": "Stake11111111111111111111111111111111111111",
-                       "rentEpoch": u64::MAX,
+                       "rentEpoch": 0,
                        "space": 16,
                     },
                },
@@ -2900,7 +2888,7 @@ pub(crate) mod tests {
                        "executable": false,
                        "lamports": 1,
                        "owner": "Stake11111111111111111111111111111111111111",
-                       "rentEpoch": u64::MAX,
+                       "rentEpoch": 0,
                        "space": 16,
                     },
                },

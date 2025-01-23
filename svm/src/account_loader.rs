@@ -265,8 +265,10 @@ pub fn collect_rent_from_account(
     account: &mut AccountSharedData,
 ) -> CollectedInfo {
     if !feature_set.is_active(&feature_set::disable_rent_fees_collection::id()) {
-        rent_collector.collect_rent(address, account)
-    } else {
+        return rent_collector.collect_rent(address, account);
+    }
+
+    if !feature_set.is_active(&feature_set::disable_account_rent_epoch_updates::id()) {
         // When rent fee collection is disabled, we won't collect rent for any account. If there
         // are any rent paying accounts, their `rent_epoch` won't change either. However, if the
         // account itself is rent-exempted but its `rent_epoch` is not u64::MAX, we will set its
@@ -280,9 +282,9 @@ pub fn collect_rent_from_account(
         {
             account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
         }
-
-        CollectedInfo::default()
     }
+
+    CollectedInfo::default()
 }
 
 /// Check whether the payer_account is capable of paying the fee. The
@@ -565,10 +567,15 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
         loaded_account
     } else {
         let mut default_account = AccountSharedData::default();
-        // All new accounts must be rent-exempt (enforced in Bank::execute_loaded_transaction).
-        // Currently, rent collection sets rent_epoch to u64::MAX, but initializing the account
-        // with this field already set would allow us to skip rent collection for these accounts.
-        default_account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
+        if !account_loader
+            .feature_set
+            .is_active(&feature_set::disable_account_rent_epoch_updates::id())
+        {
+            // All new accounts must be rent-exempt (enforced in Bank::execute_loaded_transaction).
+            // Currently, rent collection sets rent_epoch to u64::MAX, but initializing the account
+            // with this field already set would allow us to skip rent collection for these accounts.
+            default_account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
+        }
         LoadedTransactionAccount {
             loaded_size: default_account.data().len(),
             account: default_account,
@@ -671,6 +678,7 @@ mod tests {
         solana_transaction_context::{TransactionAccount, TransactionContext},
         solana_transaction_error::{TransactionError, TransactionResult as Result},
         std::{borrow::Cow, cell::RefCell, collections::HashMap, fs::File, io::Read, sync::Arc},
+        test_case::test_case,
     };
 
     #[derive(Clone, Default)]
@@ -2053,9 +2061,16 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn test_collect_rent_from_account() {
-        let feature_set = FeatureSet::all_enabled();
+    #[test_case(true; "disable rent epoch updates")]
+    #[test_case(false; "enable rent epoch updates")]
+    fn test_collect_rent_from_account(disable_account_rent_epoch_updates: bool) {
+        let feature_set = if !disable_account_rent_epoch_updates {
+            all_features_except(Some(&[
+                feature_set::disable_account_rent_epoch_updates::id(),
+            ]))
+        } else {
+            FeatureSet::all_enabled()
+        };
         let rent_collector = RentCollector {
             epoch: 1,
             ..RentCollector::default()
@@ -2072,7 +2087,13 @@ mod tests {
             collect_rent_from_account(&feature_set, &rent_collector, &address, &mut account),
             CollectedInfo::default()
         );
-        assert_eq!(account.rent_epoch(), RENT_EXEMPT_RENT_EPOCH);
+
+        let expected_rent_epoch = if disable_account_rent_epoch_updates {
+            0
+        } else {
+            RENT_EXEMPT_RENT_EPOCH
+        };
+        assert_eq!(account.rent_epoch(), expected_rent_epoch);
     }
 
     #[test]

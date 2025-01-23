@@ -46,7 +46,7 @@ extern uint64_t entrypoint(const uint8_t *input) {
     sol_assert(accounts[ARGUMENT_INDEX].data_len == 100);
     sol_assert(accounts[ARGUMENT_INDEX].is_signer);
     sol_assert(accounts[ARGUMENT_INDEX].is_writable);
-    sol_assert(accounts[ARGUMENT_INDEX].rent_epoch == UINT64_MAX);
+    sol_assert(accounts[ARGUMENT_INDEX].rent_epoch == 0);
     sol_assert(!accounts[ARGUMENT_INDEX].executable);
     for (int i = 0; i < accounts[ARGUMENT_INDEX].data_len; i++) {
       sol_assert(accounts[ARGUMENT_INDEX].data[i] == i);
@@ -58,7 +58,7 @@ extern uint64_t entrypoint(const uint8_t *input) {
     sol_assert(accounts[INVOKED_ARGUMENT_INDEX].data_len == 10);
     sol_assert(accounts[INVOKED_ARGUMENT_INDEX].is_signer);
     sol_assert(accounts[INVOKED_ARGUMENT_INDEX].is_writable);
-    sol_assert(accounts[INVOKED_ARGUMENT_INDEX].rent_epoch == UINT64_MAX);
+    sol_assert(accounts[INVOKED_ARGUMENT_INDEX].rent_epoch == 0);
     sol_assert(!accounts[INVOKED_ARGUMENT_INDEX].executable);
 
     sol_assert(
@@ -67,7 +67,7 @@ extern uint64_t entrypoint(const uint8_t *input) {
                                   &sbf_loader_upgradeable_id));
     sol_assert(!accounts[INVOKED_PROGRAM_INDEX].is_signer);
     sol_assert(!accounts[INVOKED_PROGRAM_INDEX].is_writable);
-    sol_assert(accounts[INVOKED_PROGRAM_INDEX].rent_epoch == UINT64_MAX);
+    sol_assert(accounts[INVOKED_PROGRAM_INDEX].rent_epoch == 0);
     sol_assert(accounts[INVOKED_PROGRAM_INDEX].executable);
 
     sol_assert(SolPubkey_same(accounts[INVOKED_PROGRAM_INDEX].key,

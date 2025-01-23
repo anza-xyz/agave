@@ -5894,7 +5894,7 @@ pub mod tests {
                             "executable": false,
                             "owner": "11111111111111111111111111111111",
                             "lamports": rent_exempt_amount,
-                            "rentEpoch": u64::MAX,
+                            "rentEpoch": 0,
                             "space": 0,
                         }
                     ],
@@ -6245,7 +6245,7 @@ pub mod tests {
                               "executable": false,
                               "lamports": (token_account_rent_exempt_amount + 1),
                               "owner": bs58::encode(spl_token::id()).into_string(),
-                              "rentEpoch": u64::MAX,
+                              "rentEpoch": 0,
                               "space": spl_token::state::Account::LEN
                         },
                     ],
