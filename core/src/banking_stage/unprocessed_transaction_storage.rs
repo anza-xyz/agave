@@ -38,13 +38,6 @@ const MAX_NUM_VOTES_RECEIVE: usize = 10_000;
 #[derive(Debug)]
 pub enum UnprocessedTransactionStorage {
     VoteStorage(VoteStorage),
-    LocalTransactionStorage(ThreadLocalUnprocessedPackets),
-}
-
-#[derive(Debug)]
-pub struct ThreadLocalUnprocessedPackets {
-    unprocessed_packet_batches: UnprocessedPacketBatches,
-    thread_type: ThreadType,
 }
 
 #[derive(Debug)]
@@ -248,15 +241,6 @@ where
 }
 
 impl UnprocessedTransactionStorage {
-    pub fn new_transaction_storage(
-        unprocessed_packet_batches: UnprocessedPacketBatches,
-        thread_type: ThreadType,
-    ) -> Self {
-        Self::LocalTransactionStorage(ThreadLocalUnprocessedPackets {
-            unprocessed_packet_batches,
-            thread_type,
-        })
-    }
 
     pub fn new_vote_storage(
         latest_unprocessed_votes: Arc<LatestUnprocessedVotes>,
@@ -271,32 +255,24 @@ impl UnprocessedTransactionStorage {
     pub fn is_empty(&self) -> bool {
         match self {
             Self::VoteStorage(vote_storage) => vote_storage.is_empty(),
-            Self::LocalTransactionStorage(transaction_storage) => transaction_storage.is_empty(),
         }
     }
 
     pub fn len(&self) -> usize {
         match self {
             Self::VoteStorage(vote_storage) => vote_storage.len(),
-            Self::LocalTransactionStorage(transaction_storage) => transaction_storage.len(),
         }
     }
 
     pub fn get_min_priority(&self) -> Option<u64> {
         match self {
             Self::VoteStorage(_) => None,
-            Self::LocalTransactionStorage(transaction_storage) => {
-                transaction_storage.get_min_compute_unit_price()
-            }
         }
     }
 
     pub fn get_max_priority(&self) -> Option<u64> {
         match self {
             Self::VoteStorage(_) => None,
-            Self::LocalTransactionStorage(transaction_storage) => {
-                transaction_storage.get_max_compute_unit_price()
-            }
         }
     }
 
@@ -304,9 +280,6 @@ impl UnprocessedTransactionStorage {
     pub fn max_receive_size(&self) -> usize {
         match self {
             Self::VoteStorage(vote_storage) => vote_storage.max_receive_size(),
-            Self::LocalTransactionStorage(transaction_storage) => {
-                transaction_storage.max_receive_size()
-            }
         }
     }
 
@@ -322,8 +295,19 @@ impl UnprocessedTransactionStorage {
     #[cfg(test)]
     pub fn iter(&mut self) -> impl Iterator<Item = &DeserializedPacket> {
         match self {
-            Self::LocalTransactionStorage(transaction_storage) => transaction_storage.iter(),
             _ => panic!(),
+        }
+    }
+
+    pub fn forward_option(&self) -> ForwardOption {
+        match self {
+            Self::VoteStorage(vote_storage) => vote_storage.forward_option(),
+        }
+    }
+
+    pub fn clear_forwarded_packets(&mut self) {
+        match self {
+            Self::VoteStorage(vote_storage) => vote_storage.clear_forwarded_packets(),
         }
     }
 
@@ -335,9 +319,20 @@ impl UnprocessedTransactionStorage {
             Self::VoteStorage(vote_storage) => {
                 InsertPacketBatchSummary::from(vote_storage.insert_batch(deserialized_packets))
             }
-            Self::LocalTransactionStorage(transaction_storage) => InsertPacketBatchSummary::from(
-                transaction_storage.insert_batch(deserialized_packets),
-            ),
+        }
+    }
+
+    pub fn filter_forwardable_packets_and_add_batches(
+        &mut self,
+        bank: Arc<Bank>,
+        forward_packet_batches_by_accounts: &mut ForwardPacketBatchesByAccounts,
+    ) -> FilterForwardingResults {
+        match self {
+            Self::VoteStorage(vote_storage) => vote_storage
+                .filter_forwardable_packets_and_add_batches(
+                    bank,
+                    forward_packet_batches_by_accounts,
+                ),
         }
     }
 
@@ -359,13 +354,6 @@ impl UnprocessedTransactionStorage {
         ) -> Option<Vec<usize>>,
     {
         match self {
-            Self::LocalTransactionStorage(transaction_storage) => transaction_storage
-                .process_packets(
-                    &bank,
-                    banking_stage_stats,
-                    slot_metrics_tracker,
-                    processing_function,
-                ),
             Self::VoteStorage(vote_storage) => vote_storage.process_packets(
                 bank,
                 banking_stage_stats,
@@ -384,7 +372,6 @@ impl UnprocessedTransactionStorage {
 
     pub(crate) fn cache_epoch_boundary_info(&mut self, bank: &Bank) {
         match self {
-            Self::LocalTransactionStorage(_) => (),
             Self::VoteStorage(vote_storage) => vote_storage.cache_epoch_boundary_info(bank),
         }
     }
@@ -742,81 +729,6 @@ mod tests {
         };
         filter_processed_packets(retryable_indexes.iter(), f);
         assert_eq!(non_retryable_indexes, vec![(0, 1), (4, 5), (6, 8)]);
-    }
-
-    #[test]
-    fn test_unprocessed_transaction_storage_insert() -> Result<(), Box<dyn Error>> {
-        let keypair = Keypair::new();
-        let vote_keypair = Keypair::new();
-        let pubkey = solana_pubkey::new_rand();
-
-        let small_transfer = Packet::from_data(
-            None,
-            system_transaction::transfer(&keypair, &pubkey, 1, Hash::new_unique()),
-        )?;
-        let mut vote = Packet::from_data(
-            None,
-            new_tower_sync_transaction(
-                TowerSync::default(),
-                Hash::new_unique(),
-                &keypair,
-                &vote_keypair,
-                &vote_keypair,
-                None,
-            ),
-        )?;
-        vote.meta_mut().flags.set(PacketFlags::SIMPLE_VOTE_TX, true);
-        let big_transfer = Packet::from_data(
-            None,
-            system_transaction::transfer(&keypair, &pubkey, 1000000, Hash::new_unique()),
-        )?;
-
-        for thread_type in [
-            ThreadType::Transactions,
-            ThreadType::Voting(VoteSource::Gossip),
-            ThreadType::Voting(VoteSource::Tpu),
-        ] {
-            let mut transaction_storage = UnprocessedTransactionStorage::new_transaction_storage(
-                UnprocessedPacketBatches::with_capacity(100),
-                thread_type,
-            );
-            transaction_storage.insert_batch(vec![
-                ImmutableDeserializedPacket::new(small_transfer.clone())?,
-                ImmutableDeserializedPacket::new(vote.clone())?,
-                ImmutableDeserializedPacket::new(big_transfer.clone())?,
-            ]);
-            let deserialized_packets = transaction_storage
-                .iter()
-                .map(|packet| packet.immutable_section().original_packet().clone())
-                .collect_vec();
-            assert_eq!(3, deserialized_packets.len());
-            assert!(deserialized_packets.contains(&small_transfer));
-            assert!(deserialized_packets.contains(&vote));
-            assert!(deserialized_packets.contains(&big_transfer));
-        }
-
-        for (vote_source, staked) in iproduct!(
-            [VoteSource::Gossip, VoteSource::Tpu].into_iter(),
-            [true, false].into_iter()
-        ) {
-            let staked_keys = if staked {
-                vec![vote_keypair.pubkey()]
-            } else {
-                vec![]
-            };
-            let latest_unprocessed_votes = LatestUnprocessedVotes::new_for_tests(&staked_keys);
-            let mut transaction_storage = UnprocessedTransactionStorage::new_vote_storage(
-                Arc::new(latest_unprocessed_votes),
-                vote_source,
-            );
-            transaction_storage.insert_batch(vec![
-                ImmutableDeserializedPacket::new(small_transfer.clone())?,
-                ImmutableDeserializedPacket::new(vote.clone())?,
-                ImmutableDeserializedPacket::new(big_transfer.clone())?,
-            ]);
-            assert_eq!(if staked { 1 } else { 0 }, transaction_storage.len());
-        }
-        Ok(())
     }
 
     #[test]
