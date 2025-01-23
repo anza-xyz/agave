@@ -17,7 +17,7 @@ use {
     std::{
         borrow::Borrow,
         fmt::Debug,
-        sync::{Arc, RwLock},
+        sync::{Arc, OnceLock, RwLock},
     },
 };
 
@@ -38,8 +38,15 @@ pub(crate) const ERASURE_BATCH_SIZE: [usize; 33] = [
     55, 56, 58, 59, 60, 62, 63, 64, // 32
 ];
 
+// Arc<...> wrapper so that cache entries can be initialized without locking
+// the entire cache.
+type LruCacheOnce<K, V> = RwLock<LruCache<K, Arc<OnceLock<V>>>>;
+
 pub struct ReedSolomonCache(
-    RwLock<LruCache<(/*data_shards:*/ usize, /*parity_shards:*/ usize), Arc<ReedSolomon>>>,
+    LruCacheOnce<
+        (usize, usize), // number of {data,parity} shards
+        Result<Arc<ReedSolomon>, reed_solomon_erasure::Error>,
+    >,
 );
 
 #[derive(Debug)]
@@ -440,16 +447,21 @@ impl ReedSolomonCache {
         parity_shards: usize,
     ) -> Result<Arc<ReedSolomon>, reed_solomon_erasure::Error> {
         let key = (data_shards, parity_shards);
-        if let Some(entry) = self.0.read().unwrap().get(&key).cloned() {
-            return Ok(entry);
-        }
-        let entry = ReedSolomon::new(data_shards, parity_shards)?;
-        let entry = Arc::new(entry);
-        {
-            let entry = entry.clone();
-            self.0.write().unwrap().put(key, entry);
-        }
-        Ok(entry)
+        // Read from the cache with a shared lock.
+        let entry = self.0.read().unwrap().get(&key).cloned();
+        // Fall back to exclusive lock if there is a cache miss.
+        let entry: Arc<OnceLock<Result<_, _>>> = entry.unwrap_or_else(|| {
+            let mut cache = self.0.write().unwrap();
+            cache.get(&key).cloned().unwrap_or_else(|| {
+                let entry = Arc::<OnceLock<Result<_, _>>>::default();
+                cache.put(key, Arc::clone(&entry));
+                entry
+            })
+        });
+        // Initialize if needed by only a single thread outside locks.
+        entry
+            .get_or_init(|| ReedSolomon::new(data_shards, parity_shards).map(Arc::new))
+            .clone()
     }
 }
 
