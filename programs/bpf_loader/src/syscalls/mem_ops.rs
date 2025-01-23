@@ -556,13 +556,10 @@ impl DoubleEndedIterator for MemoryChunkIterator<'_> {
 
         let region_is_account;
 
-        let mut account_index = if let Some(account_index) = self.account_index {
-            account_index
-        } else {
-            let account_index = self.accounts.len().saturating_sub(1);
-            self.account_index = Some(account_index);
-            account_index
-        };
+        let mut account_index = self
+            .account_index
+            .unwrap_or_else(|| self.accounts.len().saturating_sub(1));
+        self.account_index = Some(account_index);
 
         loop {
             let Some(account) = self.accounts.get(account_index) else {
