@@ -2,7 +2,10 @@ use {
     solana_clock::Slot,
     solana_runtime::bank::Bank,
     std::{
-        sync::{Arc, Condvar, Mutex, MutexGuard, Weak},
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc, Condvar, Mutex, MutexGuard, Weak,
+        },
         time::{Duration, Instant},
     },
 };
@@ -16,6 +19,9 @@ pub struct LeaderBankNotifier {
     state: Mutex<SlotAndBankWithStatus>,
     /// CondVar to notify status changes and waiting
     condvar: Condvar,
+    /// Lightweight atomic variable that can be used to check the id of the
+    /// latest leader bank
+    current_bank_id: AtomicU64,
 }
 
 /// Leader status state machine for the validator.
@@ -27,6 +33,8 @@ enum Status {
     /// PoH-initiated bank is available.
     InProgress,
 }
+
+const STAND_BY_SENTINEL_ID: u64 = u64::MAX;
 
 #[derive(Debug, Default)]
 struct SlotAndBankWithStatus {
@@ -43,6 +51,8 @@ impl LeaderBankNotifier {
         let mut state = self.state.lock().unwrap();
         assert_eq!(state.status, Status::StandBy);
 
+        self.current_bank_id
+            .store(bank.bank_id(), Ordering::Release);
         *state = SlotAndBankWithStatus {
             status: Status::InProgress,
             slot: Some(bank.slot()),
@@ -61,10 +71,21 @@ impl LeaderBankNotifier {
         assert_eq!(state.status, Status::InProgress);
         assert_eq!(state.slot, Some(slot));
 
+        self.current_bank_id
+            .store(STAND_BY_SENTINEL_ID, Ordering::Release);
         state.status = Status::StandBy;
         drop(state);
 
         self.condvar.notify_all();
+    }
+
+    pub fn get_current_bank_id(&self) -> Option<u64> {
+        let current_bank_id = self.current_bank_id.load(Ordering::Acquire);
+        if current_bank_id == STAND_BY_SENTINEL_ID {
+            None
+        } else {
+            Some(current_bank_id)
+        }
     }
 
     /// If the status is `InProgress`, immediately return a weak reference to the bank.
@@ -124,6 +145,7 @@ mod tests {
     fn test_leader_bank_notifier_default() {
         let leader_bank_notifier = LeaderBankNotifier::default();
         let state = leader_bank_notifier.state.lock().unwrap();
+        assert_eq!(leader_bank_notifier.get_current_bank_id(), None);
         assert_eq!(state.status, Status::StandBy);
         assert_eq!(state.slot, None);
         assert!(state.bank.upgrade().is_none());
@@ -145,6 +167,10 @@ mod tests {
         leader_bank_notifier.set_in_progress(&bank);
 
         let state = leader_bank_notifier.state.lock().unwrap();
+        assert_eq!(
+            leader_bank_notifier.get_current_bank_id(),
+            Some(bank.bank_id())
+        );
         assert_eq!(state.status, Status::InProgress);
         assert_eq!(state.slot, Some(bank.slot()));
         assert_eq!(state.bank.upgrade(), Some(bank));
@@ -184,6 +210,10 @@ mod tests {
         leader_bank_notifier.set_completed(bank.slot());
 
         let state = leader_bank_notifier.state.lock().unwrap();
+        assert_eq!(
+            leader_bank_notifier.get_current_bank_id(),
+            Some(bank.bank_id())
+        );
         assert_eq!(state.status, Status::StandBy);
         assert_eq!(state.slot, Some(bank.slot()));
         assert_eq!(state.bank.upgrade(), Some(bank));
