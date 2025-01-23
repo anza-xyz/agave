@@ -2,7 +2,7 @@ use {
     super::{
         forward_packet_batches_by_accounts::ForwardPacketBatchesByAccounts,
         leader_slot_metrics::LeaderSlotMetricsTracker,
-        unprocessed_transaction_storage::UnprocessedTransactionStorage, BankingStageStats,
+        unprocessed_transaction_storage::VoteStorage, BankingStageStats,
         ForwardOption,
     },
     crate::{
@@ -91,7 +91,7 @@ impl<T: LikeClusterInfo> Forwarder<T> {
     /// to handle forwarding slight differently.
     pub fn handle_forwarding(
         &mut self,
-        unprocessed_transaction_storage: &mut UnprocessedTransactionStorage,
+        unprocessed_transaction_storage: &mut VoteStorage,
         hold: bool,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
         banking_stage_stats: &BankingStageStats,

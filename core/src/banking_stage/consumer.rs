@@ -8,7 +8,7 @@ use {
         leader_slot_timing_metrics::LeaderExecuteAndCommitTimings,
         qos_service::QosService,
         scheduler_messages::MaxAge,
-        unprocessed_transaction_storage::{ConsumeScannerPayload, UnprocessedTransactionStorage},
+        unprocessed_transaction_storage::{ConsumeScannerPayload, VoteStorage},
         BankingStageStats,
     },
     itertools::Itertools,
@@ -111,16 +111,16 @@ impl Consumer {
     pub fn consume_buffered_packets(
         &self,
         bank_start: &BankStart,
-        unprocessed_transaction_storage: &mut UnprocessedTransactionStorage,
+        vote_storage: &mut VoteStorage,
         banking_stage_stats: &BankingStageStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) {
         let mut rebuffered_packet_count = 0;
         let mut consumed_buffered_packets_count = 0;
         let mut proc_start = Measure::start("consume_buffered_process");
-        let num_packets_to_process = unprocessed_transaction_storage.len();
+        let num_packets_to_process = vote_storage.len();
 
-        let reached_end_of_slot = unprocessed_transaction_storage.process_packets(
+        let reached_end_of_slot = vote_storage.process_packets(
             bank_start.working_bank.clone(),
             banking_stage_stats,
             slot_metrics_tracker,
@@ -138,7 +138,7 @@ impl Consumer {
 
         if reached_end_of_slot {
             slot_metrics_tracker.set_end_of_slot_unprocessed_buffer_len(
-                unprocessed_transaction_storage.len() as u64,
+                vote_storage.len() as u64,
             );
         }
 
@@ -852,8 +852,7 @@ mod tests {
         crate::banking_stage::{
             immutable_deserialized_packet::DeserializedPacketError,
             tests::{create_slow_genesis_config, sanitize_transactions, simulate_poh},
-            unprocessed_packet_batches::{DeserializedPacket, UnprocessedPacketBatches},
-            unprocessed_transaction_storage::ThreadType,
+            unprocessed_packet_batches::DeserializedPacket,
         },
         crossbeam_channel::{unbounded, Receiver},
         solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
@@ -877,13 +876,12 @@ mod tests {
                 self,
                 state::{AddressLookupTable, LookupTableMeta},
             },
-            compute_budget,
             fee_calculator::FeeCalculator,
             hash::Hash,
             instruction::InstructionError,
             message::{
                 v0::{self, MessageAddressTableLookup},
-                Message, MessageHeader, VersionedMessage,
+                MessageHeader, VersionedMessage,
             },
             nonce::{self, state::DurableNonce},
             nonce_account::verify_nonce_account,
@@ -892,7 +890,7 @@ mod tests {
             reserved_account_keys::ReservedAccountKeys,
             signature::Keypair,
             signer::Signer,
-            system_instruction, system_program, system_transaction,
+            system_program, system_transaction,
             transaction::{Transaction, VersionedTransaction},
         },
         solana_svm::account_loader::CheckedTransactionDetails,

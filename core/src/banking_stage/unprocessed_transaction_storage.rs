@@ -329,34 +329,54 @@ impl UnprocessedTransactionStorage {
 }
 
 impl VoteStorage {
-    fn is_empty(&self) -> bool {
+    pub fn new(
+        latest_unprocessed_votes: Arc<LatestUnprocessedVotes>,
+        vote_source: VoteSource,
+    ) -> Self {
+        Self {
+            latest_unprocessed_votes,
+            vote_source,
+        }
+    }
+
+    // TODO: Remove this.
+    pub fn get_min_priority(&self) -> Option<u64> {
+        None
+    }
+
+    // TODO: Remove this.
+    pub fn get_max_priority(&self) -> Option<u64> {
+        None
+    }
+
+    pub fn is_empty(&self) -> bool {
         self.latest_unprocessed_votes.is_empty()
     }
 
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.latest_unprocessed_votes.len()
     }
 
-    fn max_receive_size(&self) -> usize {
+    pub fn max_receive_size(&self) -> usize {
         MAX_NUM_VOTES_RECEIVE
     }
 
-    fn forward_option(&self) -> ForwardOption {
+    pub fn forward_option(&self) -> ForwardOption {
         match self.vote_source {
             VoteSource::Tpu => ForwardOption::ForwardTpuVote,
             VoteSource::Gossip => ForwardOption::NotForward,
         }
     }
 
-    fn clear_forwarded_packets(&mut self) {
+    pub fn clear_forwarded_packets(&mut self) {
         self.latest_unprocessed_votes.clear_forwarded_packets();
     }
 
-    fn insert_batch(
+    pub(crate) fn insert_batch(
         &mut self,
         deserialized_packets: Vec<ImmutableDeserializedPacket>,
-    ) -> VoteBatchInsertionMetrics {
-        self.latest_unprocessed_votes.insert_batch(
+    ) -> InsertPacketBatchSummary {
+        InsertPacketBatchSummary::from(self.latest_unprocessed_votes.insert_batch(
             deserialized_packets
                 .into_iter()
                 .filter_map(|deserialized_packet| {
@@ -369,10 +389,10 @@ impl VoteStorage {
                     .ok()
                 }),
             false, // should_replenish_taken_votes
-        )
+        ))
     }
 
-    fn filter_forwardable_packets_and_add_batches(
+    pub fn filter_forwardable_packets_and_add_batches(
         &mut self,
         bank: Arc<Bank>,
         forward_packet_batches_by_accounts: &mut ForwardPacketBatchesByAccounts,
@@ -390,7 +410,7 @@ impl VoteStorage {
     }
 
     // returns `true` if the end of slot is reached
-    fn process_packets<F>(
+    pub fn process_packets<F>(
         &mut self,
         bank: Arc<Bank>,
         banking_stage_stats: &BankingStageStats,
@@ -465,12 +485,18 @@ impl VoteStorage {
         scanner.finalize().payload.reached_end_of_slot
     }
 
-    fn cache_epoch_boundary_info(&mut self, bank: &Bank) {
+    pub fn cache_epoch_boundary_info(&mut self, bank: &Bank) {
         if matches!(self.vote_source, VoteSource::Gossip) {
             panic!("Gossip vote thread should not be checking epoch boundary");
         }
         self.latest_unprocessed_votes
             .cache_epoch_boundary_info(bank);
+    }
+
+    pub fn should_not_process(&self) -> bool {
+        // The gossip vote thread does not need to process or forward any votes, that is
+        // handled by the tpu vote thread
+        matches!(self.vote_source, VoteSource::Gossip)
     }
 }
 
@@ -622,7 +648,7 @@ mod tests {
 
         let latest_unprocessed_votes =
             LatestUnprocessedVotes::new_for_tests(&[vote_keypair.pubkey()]);
-        let mut transaction_storage = UnprocessedTransactionStorage::new_vote_storage(
+        let mut transaction_storage = VoteStorage::new(
             Arc::new(latest_unprocessed_votes),
             VoteSource::Tpu,
         );
