@@ -3,6 +3,8 @@ use {
     rand::distributions::{Distribution, WeightedIndex},
     rand_chacha::{rand_core::SeedableRng, ChaChaRng},
     solana_pubkey::Pubkey,
+    solana_sdk::clock::Epoch,
+    solana_vote::vote_account::VoteAccountsHashMap,
     std::{collections::HashMap, convert::identity, ops::Index, sync::Arc},
 };
 
@@ -21,21 +23,66 @@ pub struct LeaderSchedule {
 }
 
 impl LeaderSchedule {
+    // Note: passing in zero vote accounts will cause a panic.
+    pub fn new_by_vote_delegation(
+        vote_accounts_map: &VoteAccountsHashMap,
+        epoch: Epoch,
+        len: u64,
+        repeat: u64,
+    ) -> Self {
+        let stakes: Vec<_> = vote_accounts_map
+            .iter()
+            .map(|(vote_pubkey, (stake, _account))| (*vote_pubkey, *stake))
+            .collect();
+        let slot_leaders = Self::stake_weighted_slot_leaders(
+            stakes,
+            |vote_key| *vote_accounts_map.get(vote_key).unwrap().1.node_pubkey(),
+            epoch,
+            len,
+            repeat,
+        );
+        Self::new_from_schedule(slot_leaders)
+    }
+
     // Note: passing in zero stakers will cause a panic.
-    pub fn new(ids_and_stakes: &[(Pubkey, u64)], seed: [u8; 32], len: u64, repeat: u64) -> Self {
-        let (ids, stakes): (Vec<_>, Vec<_>) = ids_and_stakes.iter().cloned().unzip();
-        let rng = &mut ChaChaRng::from_seed(seed);
+    pub fn new_by_node_total_stake(
+        stakes: &HashMap<Pubkey, u64>,
+        epoch: Epoch,
+        len: u64,
+        repeat: u64,
+    ) -> Self {
+        let stakes: Vec<_> = stakes
+            .iter()
+            .map(|(pubkey, stake)| (*pubkey, *stake))
+            .collect();
+        let slot_leaders =
+            Self::stake_weighted_slot_leaders(stakes, |leader| *leader, epoch, len, repeat);
+        Self::new_from_schedule(slot_leaders)
+    }
+
+    // Note: passing in zero stakers will cause a panic.
+    pub(crate) fn stake_weighted_slot_leaders(
+        mut stakes: Vec<(Pubkey, u64)>,
+        get_leader_node: impl Fn(&Pubkey) -> Pubkey,
+        epoch: Epoch,
+        len: u64,
+        repeat: u64,
+    ) -> Vec<Pubkey> {
+        sort_stakes(&mut stakes);
+        let (ids, stakes): (Vec<_>, Vec<_>) = stakes.into_iter().unzip();
         let weighted_index = WeightedIndex::new(stakes).unwrap();
+        let mut seed = [0u8; 32];
+        seed[0..8].copy_from_slice(&epoch.to_le_bytes());
+        let rng = &mut ChaChaRng::from_seed(seed);
         let mut current_node = Pubkey::default();
-        let slot_leaders = (0..len)
+        (0..len)
             .map(|i| {
                 if i % repeat == 0 {
-                    current_node = ids[weighted_index.sample(rng)];
+                    current_node = get_leader_node(&ids[weighted_index.sample(rng)]);
                 }
                 current_node
             })
-            .collect();
-        Self::new_from_schedule(slot_leaders)
+            .collect()
     }
 
     pub fn new_from_schedule(slot_leaders: Vec<Pubkey>) -> Self {
@@ -97,6 +144,22 @@ impl Index<u64> for LeaderSchedule {
     }
 }
 
+fn sort_stakes(stakes: &mut Vec<(Pubkey, u64)>) {
+    // Sort first by stake. If stakes are the same, sort by pubkey to ensure a
+    // deterministic result.
+    // Note: Use unstable sort, because we dedup right after to remove the equal elements.
+    stakes.sort_unstable_by(|(l_pubkey, l_stake), (r_pubkey, r_stake)| {
+        if r_stake == l_stake {
+            r_pubkey.cmp(l_pubkey)
+        } else {
+            r_stake.cmp(l_stake)
+        }
+    });
+
+    // Now that it's sorted, we can do an O(n) dedup.
+    stakes.dedup();
+}
+
 #[cfg(test)]
 mod tests {
     use {super::*, rand::Rng, std::iter::repeat_with};
@@ -114,16 +177,14 @@ mod tests {
     #[test]
     fn test_leader_schedule_basic() {
         let num_keys = 10;
-        let stakes: Vec<_> = (0..num_keys)
+        let stakes: HashMap<_, _> = (0..num_keys)
             .map(|i| (solana_pubkey::new_rand(), i))
             .collect();
 
-        let seed = solana_pubkey::new_rand();
-        let mut seed_bytes = [0u8; 32];
-        seed_bytes.copy_from_slice(seed.as_ref());
+        let epoch: Epoch = rand::random();
         let len = num_keys * 10;
-        let leader_schedule = LeaderSchedule::new(&stakes, seed_bytes, len, 1);
-        let leader_schedule2 = LeaderSchedule::new(&stakes, seed_bytes, len, 1);
+        let leader_schedule = LeaderSchedule::new_by_node_total_stake(&stakes, epoch, len, 1);
+        let leader_schedule2 = LeaderSchedule::new_by_node_total_stake(&stakes, epoch, len, 1);
         assert_eq!(leader_schedule.slot_leaders.len() as u64, len);
         // Check that the same schedule is reproducibly generated
         assert_eq!(leader_schedule, leader_schedule2);
@@ -132,16 +193,14 @@ mod tests {
     #[test]
     fn test_repeated_leader_schedule() {
         let num_keys = 10;
-        let stakes: Vec<_> = (0..num_keys)
+        let stakes: HashMap<_, _> = (0..num_keys)
             .map(|i| (solana_pubkey::new_rand(), i))
             .collect();
 
-        let seed = solana_pubkey::new_rand();
-        let mut seed_bytes = [0u8; 32];
-        seed_bytes.copy_from_slice(seed.as_ref());
+        let epoch = rand::random::<Epoch>();
         let len = num_keys * 10;
         let repeat = 8;
-        let leader_schedule = LeaderSchedule::new(&stakes, seed_bytes, len, repeat);
+        let leader_schedule = LeaderSchedule::new_by_node_total_stake(&stakes, epoch, len, repeat);
         assert_eq!(leader_schedule.slot_leaders.len() as u64, len);
         let mut leader_node = Pubkey::default();
         for (i, node) in leader_schedule.slot_leaders.iter().enumerate() {
@@ -157,17 +216,15 @@ mod tests {
     fn test_repeated_leader_schedule_specific() {
         let alice_pubkey = solana_pubkey::new_rand();
         let bob_pubkey = solana_pubkey::new_rand();
-        let stakes = vec![(alice_pubkey, 2), (bob_pubkey, 1)];
+        let stakes: HashMap<_, _> = [(alice_pubkey, 2), (bob_pubkey, 1)].into_iter().collect();
 
-        let seed = Pubkey::default();
-        let mut seed_bytes = [0u8; 32];
-        seed_bytes.copy_from_slice(seed.as_ref());
+        let epoch = 0;
         let len = 8;
         // What the schedule looks like without any repeats
-        let leaders1 = LeaderSchedule::new(&stakes, seed_bytes, len, 1).slot_leaders;
+        let leaders1 = LeaderSchedule::new_by_node_total_stake(&stakes, epoch, len, 1).slot_leaders;
 
         // What the schedule looks like with repeats
-        let leaders2 = LeaderSchedule::new(&stakes, seed_bytes, len, 2).slot_leaders;
+        let leaders2 = LeaderSchedule::new_by_node_total_stake(&stakes, epoch, len, 2).slot_leaders;
         assert_eq!(leaders1.len(), leaders2.len());
 
         let leaders1_expected = vec![
@@ -218,5 +275,32 @@ mod tests {
                 assert_eq!(schedule, index);
             }
         }
+    }
+
+    #[test]
+    fn test_sort_stakes_basic() {
+        let pubkey0 = solana_pubkey::new_rand();
+        let pubkey1 = solana_pubkey::new_rand();
+        let mut stakes = vec![(pubkey0, 1), (pubkey1, 2)];
+        sort_stakes(&mut stakes);
+        assert_eq!(stakes, vec![(pubkey1, 2), (pubkey0, 1)]);
+    }
+
+    #[test]
+    fn test_sort_stakes_with_dup() {
+        let pubkey0 = solana_pubkey::new_rand();
+        let pubkey1 = solana_pubkey::new_rand();
+        let mut stakes = vec![(pubkey0, 1), (pubkey1, 2), (pubkey0, 1)];
+        sort_stakes(&mut stakes);
+        assert_eq!(stakes, vec![(pubkey1, 2), (pubkey0, 1)]);
+    }
+
+    #[test]
+    fn test_sort_stakes_with_equal_stakes() {
+        let pubkey0 = Pubkey::default();
+        let pubkey1 = solana_pubkey::new_rand();
+        let mut stakes = vec![(pubkey0, 1), (pubkey1, 1)];
+        sort_stakes(&mut stakes);
+        assert_eq!(stakes, vec![(pubkey1, 1), (pubkey0, 1)]);
     }
 }

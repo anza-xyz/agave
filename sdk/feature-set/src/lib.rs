@@ -920,6 +920,10 @@ pub mod raise_block_limits_to_50m {
     solana_pubkey::declare_id!("5oMCU3JPaFLr8Zr4ct7yFA7jdk6Mw1RmB8K4u9ZbS42z");
 }
 
+pub mod enable_vote_address_leader_schedule {
+    solana_pubkey::declare_id!("5JsG4NWH8Jbrqdd8uL6BNwnyZK3dQSoieRXG5vmofj9y");
+}
+
 lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES: AHashMap<Pubkey, &'static str> = [
@@ -1145,6 +1149,7 @@ lazy_static! {
         (deplete_cu_meter_on_vm_failure::id(), "Deplete compute meter for vm errors SIMD-0182 #3993"),
         (reserve_minimal_cus_for_builtin_instructions::id(), "Reserve minimal CUs for builtin instructions SIMD-170 #2562"),
         (raise_block_limits_to_50m::id(), "Raise block limit to 50M SIMD-0207"),
+        (enable_vote_address_leader_schedule::id(), "Enable vote address leader schedule SIMD-0180 #4573"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
@@ -1205,6 +1210,19 @@ impl FeatureSet {
 
     pub fn activated_slot(&self, feature_id: &Pubkey) -> Option<u64> {
         self.active.get(feature_id).copied()
+    }
+
+    pub fn new_leader_schedule_epoch(&self, epoch_schedule: &EpochSchedule) -> Option<u64> {
+        // check the epoch of the slot when the new leader schedule feature was
+        // activated and then use the following epoch to start using the new
+        // leader schedule.
+        const NEW_LEADER_SCHEDULE_EPOCH_DELAY: u64 = 1;
+        self.activated_slot(&enable_vote_address_leader_schedule::id())
+            .map(|slot| {
+                epoch_schedule
+                    .get_epoch(slot)
+                    .wrapping_add(NEW_LEADER_SCHEDULE_EPOCH_DELAY)
+            })
     }
 
     /// List of enabled features that trigger full inflation
