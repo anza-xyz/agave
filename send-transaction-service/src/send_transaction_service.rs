@@ -420,7 +420,7 @@ impl SendTransactionService {
         let mut last_batch_sent = Instant::now();
         let mut transactions = HashMap::new();
 
-        info!("Starting send-transaction-service::receive_txn_thread with config.",);
+        debug!("Starting send-transaction-service::receive_txn_thread");
         Builder::new()
             .name("solStxReceive".to_string())
             .spawn(move || loop {
@@ -518,7 +518,7 @@ impl SendTransactionService {
         stats_report: Arc<SendTransactionServiceStatsReport>,
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
-        info!("Starting send-transaction-service::retry_thread with config.");
+        debug!("Starting send-transaction-service::retry_thread.");
         Builder::new()
             .name("solStxRetry".to_string())
             .spawn(move || loop {
