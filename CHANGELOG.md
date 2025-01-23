@@ -20,7 +20,7 @@ Release channels have their own copy of this changelog:
     * Add new command `solana feature revoke` for revoking pending feature activations. When a feature is activated, `solana feature revoke <feature-keypair> <cluster>` can be used to deallocate and reassign the account to the System program, undoing the operation. This can only be done before the feature becomes active.
   * Unhide `--accounts-db-access-storages-method` for agave-validator and agave-ledger-tool and change default to `file`
   * Remove tracer stats from banking-trace. `banking-trace` directory should be cleared when restarting on v2.2 for first time. It will not break if not cleared, but the file will be a mix of new/old format. (#4043)
-  * snapshot format change
+  * Snapshot format change
     * A new optional field `accounts_lt_hash` is introduced to bank snapshots. Support for reading this new field has been added to v2.1 but not v2.0. Thus, snapshots produced with v2.2 are compatible with v2.1 but incompatible with v2.0 (#3096).
   * Add `--snapshot-zstd-compression-level` to set the compression level when archiving snapshots with zstd.
 
