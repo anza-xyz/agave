@@ -22,7 +22,7 @@ use {
         crds::{Crds, Cursor, GossipRoute},
         crds_data::{
             self, CrdsData, EpochSlotsIndex, LowestSlot, NodeInstance, SnapshotHashes, Version,
-            Vote,
+            Vote, MAX_VOTES,
         },
         crds_gossip::CrdsGossip,
         crds_gossip_error::CrdsGossipError,
@@ -81,7 +81,6 @@ use {
         streamer::{PacketBatchReceiver, PacketBatchSender},
     },
     solana_vote::vote_parser,
-    solana_vote_program::vote_state::MAX_LOCKOUT_HISTORY,
     std::{
         collections::{HashMap, HashSet, VecDeque},
         fmt::Debug,
@@ -802,7 +801,7 @@ impl ClusterInfo {
     }
 
     pub fn push_vote_at_index(&self, vote: Transaction, vote_index: u8) {
-        assert!((vote_index as usize) < MAX_LOCKOUT_HISTORY);
+        assert!(vote_index < MAX_VOTES);
         let self_pubkey = self.id();
         let now = timestamp();
         let vote = Vote::new(self_pubkey, vote, now).unwrap();
@@ -828,7 +827,7 @@ impl ClusterInfo {
         let vote_index = {
             let gossip_crds =
                 self.time_gossip_read_lock("gossip_read_push_vote", &self.stats.push_vote_read);
-            (0..MAX_LOCKOUT_HISTORY as u8)
+            (0..MAX_VOTES)
                 .filter_map(|ix| {
                     let vote = CrdsValueLabel::Vote(ix, self_pubkey);
                     let vote: &CrdsData = gossip_crds.get(&vote)?;
@@ -850,7 +849,7 @@ impl ClusterInfo {
         if exists_newer_vote {
             return None;
         }
-        if num_crds_votes < MAX_LOCKOUT_HISTORY as u8 {
+        if num_crds_votes < MAX_VOTES {
             // Do not evict if there is space in crds
             Some(num_crds_votes)
         } else {
@@ -875,7 +874,7 @@ impl ClusterInfo {
                 tower
             );
         };
-        debug_assert!(vote_index < MAX_LOCKOUT_HISTORY as u8);
+        debug_assert!(vote_index < MAX_VOTES);
         self.push_vote_at_index(vote, vote_index);
     }
 
@@ -884,7 +883,7 @@ impl ClusterInfo {
             let self_pubkey = self.id();
             let gossip_crds =
                 self.time_gossip_read_lock("gossip_read_push_vote", &self.stats.push_vote_read);
-            (0..MAX_LOCKOUT_HISTORY as u8).find(|ix| {
+            (0..MAX_VOTES).find(|ix| {
                 let vote = CrdsValueLabel::Vote(*ix, self_pubkey);
                 let Some(vote) = gossip_crds.get::<&CrdsData>(&vote) else {
                     return false;
@@ -916,7 +915,7 @@ impl ClusterInfo {
                 );
                 return;
             };
-            debug_assert!(vote_index < MAX_LOCKOUT_HISTORY as u8);
+            debug_assert!(vote_index < MAX_VOTES);
             self.push_vote_at_index(refresh_vote, vote_index);
         }
     }
@@ -3176,7 +3175,10 @@ mod tests {
         solana_ledger::shred::Shredder,
         solana_net_utils::bind_to,
         solana_sdk::signature::{Keypair, Signer},
-        solana_vote_program::{vote_instruction, vote_state::Vote},
+        solana_vote_program::{
+            vote_instruction,
+            vote_state::{Vote, MAX_LOCKOUT_HISTORY},
+        },
         std::{
             iter::repeat_with,
             net::{IpAddr, Ipv4Addr},
@@ -3552,7 +3554,7 @@ mod tests {
         }
 
         let initial_votes = cluster_info.get_votes(&mut Cursor::default());
-        assert_eq!(initial_votes.len(), MAX_LOCKOUT_HISTORY);
+        assert_eq!(initial_votes.len(), MAX_VOTES as usize);
 
         // Trying to refresh a vote less than all votes in gossip should do nothing
         let refresh_slot = lowest_vote_slot - 1;
@@ -3587,7 +3589,7 @@ mod tests {
 
         // This should evict the latest vote since it's for a slot less than refresh_slot
         let votes = cluster_info.get_votes(&mut Cursor::default());
-        assert_eq!(votes.len(), MAX_LOCKOUT_HISTORY);
+        assert_eq!(votes.len(), MAX_VOTES as usize);
         assert!(votes.contains(&refresh_tx));
         assert!(!votes.contains(&first_vote.unwrap()));
     }
@@ -3757,7 +3759,7 @@ mod tests {
             cluster_info.push_vote(&tower, vote);
 
             let vote_slots = get_vote_slots(&cluster_info);
-            let min_vote = k.saturating_sub(MAX_LOCKOUT_HISTORY - 1) as u64;
+            let min_vote = k.saturating_sub(MAX_VOTES as usize - 1) as u64;
             assert!(vote_slots.into_iter().eq(min_vote..=(k as u64)));
             sleep(Duration::from_millis(1));
         }

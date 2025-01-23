@@ -29,9 +29,8 @@ pub(crate) const MAX_SLOT: u64 = 1_000_000_000_000_000;
 const MAX_ACCOUNTS_HASHES: usize = 16;
 
 pub(crate) type VoteIndex = u8;
-// TODO: Remove this in favor of vote_state::MAX_LOCKOUT_HISTORY once
-// the fleet is updated to the new ClusterInfo::push_vote code.
-const MAX_VOTES: VoteIndex = 32;
+/// Number of votes per validator to store.
+pub const MAX_VOTES: VoteIndex = 12;
 
 pub(crate) type EpochSlotsIndex = u8;
 pub(crate) const MAX_EPOCH_SLOTS: EpochSlotsIndex = 255;
