@@ -1216,7 +1216,7 @@ pub(crate) fn make_merkle_shreds_from_entries(
         reed_solomon_cache,
         stats,
     )?;
-    Ok(shreds.into_iter().flatten().map(Shred::from).collect())
+    Ok(shreds.into_iter().map(Shred::from).collect())
 }
 
 // Accepts shreds in the slot range [root + 1, max_slot].
@@ -1385,6 +1385,7 @@ mod tests {
         super::*,
         assert_matches::assert_matches,
         bincode::serialized_size,
+        itertools::Itertools,
         rand::Rng,
         rand_chacha::{rand_core::SeedableRng, ChaChaRng},
         rayon::ThreadPoolBuilder,
@@ -1410,7 +1411,7 @@ mod tests {
         data_size: usize,
         chained: bool,
         is_last_in_slot: bool,
-    ) -> Result<Vec<Vec<merkle::Shred>>, Error> {
+    ) -> Result<Vec<merkle::Shred>, Error> {
         let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
         let chained_merkle_root = chained.then(|| Hash::new_from_array(rng.gen()));
         let parent_offset = rng.gen_range(1..=u16::try_from(slot).unwrap_or(u16::MAX));
@@ -1567,8 +1568,8 @@ mod tests {
             is_last_in_slot,
         )
         .unwrap();
-        assert_eq!(shreds.len(), 1);
-        let shreds: Vec<_> = shreds.into_iter().flatten().map(Shred::from).collect();
+        let shreds: Vec<_> = shreds.into_iter().map(Shred::from).collect();
+        assert_eq!(shreds.iter().map(Shred::fec_set_index).dedup().count(), 1);
 
         assert_matches!(shreds[0].shred_type(), ShredType::Data);
         let parent_slot = shreds[0].parent().unwrap();
@@ -2279,7 +2280,6 @@ mod tests {
         )
         .unwrap()
         .into_iter()
-        .flatten()
         .map(Shred::from)
         .map(|shred| fill_retransmitter_signature(&mut rng, shred, chained, is_last_in_slot))
         .collect();
