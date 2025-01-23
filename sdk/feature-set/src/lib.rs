@@ -1216,8 +1216,13 @@ impl FeatureSet {
         // check the epoch of the slot when the new leader schedule feature was
         // activated and then use the following epoch to start using the new
         // leader schedule.
+        const NEW_LEADER_SCHEDULE_EPOCH_DELAY: u64 = 1;
         self.activated_slot(&enable_vote_address_leader_schedule::id())
-            .map(|slot| epoch_schedule.get_epoch(slot) + 1)
+            .map(|slot| {
+                epoch_schedule
+                    .get_epoch(slot)
+                    .wrapping_add(NEW_LEADER_SCHEDULE_EPOCH_DELAY)
+            })
     }
 
     /// List of enabled features that trigger full inflation
