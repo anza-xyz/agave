@@ -21,7 +21,7 @@ Release channels have their own copy of this changelog:
   * Unhide `--accounts-db-access-storages-method` for agave-validator and agave-ledger-tool and change default to `file`
   * Remove tracer stats from banking-trace. `banking-trace` directory should be cleared when restarting on v2.2 for first time. It will not break if not cleared, but the file will be a mix of new/old format. (#4043)
   * snapshot format change
-    * A new optional field `accounts_lt_hash` is introduced to bank snapshot. Support for handling this new field is backported to v2.1 only. This change makes v2.2 snapshot incompatible with v2.0 nodes. (#3096).
+    * A new optional field `accounts_lt_hash` is introduced to bank snapshots. Support for reading this new field has been added to v2.1 but not v2.0. Thus, snapshots produced with v2.2 are compatible with v2.1 but incompatible with v2.0 (#3096).
   * Add `--snapshot-zstd-compression-level` to set the compression level when archiving snapshots with zstd.
 
 ## [2.1.0]
