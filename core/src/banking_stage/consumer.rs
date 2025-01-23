@@ -847,10 +847,8 @@ impl Consumer {
 mod tests {
     use {
         super::*,
-        crate::banking_stage::{
-            immutable_deserialized_packet::DeserializedPacketError,
-            tests::{create_slow_genesis_config, sanitize_transactions, simulate_poh},
-            unprocessed_packet_batches::DeserializedPacket,
+        crate::banking_stage::tests::{
+            create_slow_genesis_config, sanitize_transactions, simulate_poh,
         },
         crossbeam_channel::{unbounded, Receiver},
         solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
@@ -862,10 +860,9 @@ mod tests {
             get_tmp_ledger_path_auto_delete,
             leader_schedule_cache::LeaderScheduleCache,
         },
-        solana_perf::packet::Packet,
-        solana_poh::poh_recorder::{PohRecorder, Record, WorkingBankEntry},
+        solana_poh::poh_recorder::{PohRecorder, Record},
         solana_rpc::transaction_status_service::TransactionStatusService,
-        solana_runtime::{bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache},
+        solana_runtime::prioritization_fee_cache::PrioritizationFeeCache,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
             account::AccountSharedData,
@@ -896,7 +893,6 @@ mod tests {
         solana_transaction_status::{TransactionStatusMeta, VersionedTransactionWithStatusMeta},
         std::{
             borrow::Cow,
-            path::Path,
             sync::{
                 atomic::{AtomicBool, AtomicU64},
                 RwLock,
@@ -997,76 +993,6 @@ mod tests {
         bank.store_account(&account_address, &account);
 
         account
-    }
-
-    #[allow(clippy::type_complexity)]
-    fn setup_conflicting_transactions(
-        ledger_path: &Path,
-    ) -> (
-        Vec<Transaction>,
-        Arc<Bank>,
-        Arc<RwLock<BankForks>>,
-        Arc<RwLock<PohRecorder>>,
-        Receiver<WorkingBankEntry>,
-        GenesisConfigInfo,
-        JoinHandle<()>,
-    ) {
-        Blockstore::destroy(ledger_path).unwrap();
-        let genesis_config_info = create_slow_genesis_config(100_000_000);
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = &genesis_config_info;
-        let blockstore =
-            Blockstore::open(ledger_path).expect("Expected to be able to open database ledger");
-        let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(genesis_config);
-        let exit = Arc::new(AtomicBool::default());
-        let (poh_recorder, entry_receiver, record_receiver) = PohRecorder::new(
-            bank.tick_height(),
-            bank.last_blockhash(),
-            bank.clone(),
-            Some((4, 4)),
-            bank.ticks_per_slot(),
-            Arc::new(blockstore),
-            &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
-            &PohConfig::default(),
-            exit,
-        );
-        let poh_recorder = Arc::new(RwLock::new(poh_recorder));
-
-        // Set up unparallelizable conflicting transactions
-        let pubkey0 = solana_pubkey::new_rand();
-        let pubkey1 = solana_pubkey::new_rand();
-        let pubkey2 = solana_pubkey::new_rand();
-        let transactions = vec![
-            system_transaction::transfer(mint_keypair, &pubkey0, 1, genesis_config.hash()),
-            system_transaction::transfer(mint_keypair, &pubkey1, 1, genesis_config.hash()),
-            system_transaction::transfer(mint_keypair, &pubkey2, 1, genesis_config.hash()),
-        ];
-        let poh_simulator = simulate_poh(record_receiver, &poh_recorder);
-
-        (
-            transactions,
-            bank,
-            bank_forks,
-            poh_recorder,
-            entry_receiver,
-            genesis_config_info,
-            poh_simulator,
-        )
-    }
-
-    fn transactions_to_deserialized_packets(
-        transactions: &[Transaction],
-    ) -> Result<Vec<DeserializedPacket>, DeserializedPacketError> {
-        transactions
-            .iter()
-            .map(|transaction| {
-                let packet = Packet::from_data(None, transaction)?;
-                DeserializedPacket::new(packet)
-            })
-            .collect()
     }
 
     #[test]
