@@ -10,10 +10,12 @@ use {
     },
 };
 
+const STAND_BY_SENTINEL_ID: u64 = u64::MAX;
+
 /// Tracks leader status of the validator node and notifies when:
 ///     1. A leader bank initiates (=PoH-initiated)
 ///     2. A leader slot completes (=PoH-completed)
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct LeaderBankNotifier {
     /// Current state (slot, bank, and status) of the system
     state: Mutex<SlotAndBankWithStatus>,
@@ -22,6 +24,16 @@ pub struct LeaderBankNotifier {
     /// Lightweight atomic variable that can be used to check the id of the
     /// latest leader bank
     current_bank_id: AtomicU64,
+}
+
+impl Default for LeaderBankNotifier {
+    fn default() -> Self {
+        Self {
+            state: Mutex::default(),
+            condvar: Condvar::default(),
+            current_bank_id: AtomicU64::new(STAND_BY_SENTINEL_ID),
+        }
+    }
 }
 
 /// Leader status state machine for the validator.
@@ -33,8 +45,6 @@ enum Status {
     /// PoH-initiated bank is available.
     InProgress,
 }
-
-const STAND_BY_SENTINEL_ID: u64 = u64::MAX;
 
 #[derive(Debug, Default)]
 struct SlotAndBankWithStatus {
@@ -210,10 +220,7 @@ mod tests {
         leader_bank_notifier.set_completed(bank.slot());
 
         let state = leader_bank_notifier.state.lock().unwrap();
-        assert_eq!(
-            leader_bank_notifier.get_current_bank_id(),
-            Some(bank.bank_id())
-        );
+        assert_eq!(leader_bank_notifier.get_current_bank_id(), None);
         assert_eq!(state.status, Status::StandBy);
         assert_eq!(state.slot, Some(bank.slot()));
         assert_eq!(state.bank.upgrade(), Some(bank));
