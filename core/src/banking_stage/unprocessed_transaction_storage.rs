@@ -561,7 +561,7 @@ impl ThreadLocalUnprocessedPackets {
 mod tests {
     use {
         super::*,
-        itertools::iproduct,
+        solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
         solana_perf::packet::{Packet, PacketFlags},
         solana_runtime::genesis_utils,
         solana_sdk::{
@@ -652,7 +652,6 @@ mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(10);
-        let (current_bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
         let simple_transactions: Vec<Transaction> = (0..256)
             .map(|_id| {
@@ -668,7 +667,7 @@ mod tests {
             })
             .collect_vec();
 
-        let mut packets: Vec<DeserializedPacket> = simple_transactions
+        let _packets: Vec<DeserializedPacket> = simple_transactions
             .iter()
             .enumerate()
             .map(|(packets_id, transaction)| {
