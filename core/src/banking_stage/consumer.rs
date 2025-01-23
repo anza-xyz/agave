@@ -893,7 +893,7 @@ mod tests {
             signature::Keypair,
             signer::Signer,
             system_instruction, system_program, system_transaction,
-            transaction::{SanitizedTransaction, Transaction, VersionedTransaction},
+            transaction::{Transaction, VersionedTransaction},
         },
         solana_svm::account_loader::CheckedTransactionDetails,
         solana_timings::ProgramTiming,
@@ -1549,14 +1549,17 @@ mod tests {
                 system_transaction::transfer(&mint_keypair, &pubkey, 2, genesis_config.hash()),
             ]);
 
-            let conflicting_transaction = SanitizedTransaction::from_transaction_for_tests(
-                system_transaction::transfer(&Keypair::new(), &pubkey, 1, genesis_config.hash()),
-            );
+            let conflicting_transaction =
+                sanitize_transactions(vec![system_transaction::transfer(
+                    &Keypair::new(),
+                    &pubkey,
+                    1,
+                    genesis_config.hash(),
+                )]);
+            bank.try_lock_accounts(&conflicting_transaction);
 
-            bank.try_lock_accounts(&[conflicting_transaction.clone()]);
             let process_transactions_batch_output =
                 consumer.process_and_record_transactions(&bank, &transactions, 0);
-            bank.unlock_accounts([(&conflicting_transaction, &Ok(()))].into_iter());
 
             let ExecuteAndCommitTransactionsOutput {
                 transaction_counts,
@@ -1622,10 +1625,13 @@ mod tests {
         Blockstore::destroy(ledger_path.path()).unwrap();
     }
 
-    #[test_case(false; "old")]
-    #[test_case(true; "simd83")]
+    #[test_case(false, false; "old::locked")]
+    #[test_case(false, true; "old::duplicate")]
+    #[test_case(true, false; "simd83::locked")]
+    #[test_case(true, true; "simd83::duplicate")]
     fn test_bank_process_and_record_transactions_account_in_use(
         relax_intrabatch_account_locks: bool,
+        use_duplicate_transaction: bool,
     ) {
         solana_logger::setup();
         let GenesisConfigInfo {
@@ -1644,8 +1650,21 @@ mod tests {
 
         let transactions = sanitize_transactions(vec![
             system_transaction::transfer(&mint_keypair, &pubkey, 1, genesis_config.hash()),
-            system_transaction::transfer(&mint_keypair, &pubkey1, 1, genesis_config.hash()),
+            system_transaction::transfer(
+                &mint_keypair,
+                if use_duplicate_transaction {
+                    &pubkey
+                } else {
+                    &pubkey1
+                },
+                1,
+                genesis_config.hash(),
+            ),
         ]);
+        assert_eq!(
+            transactions[0].signature() == transactions[1].signature(),
+            use_duplicate_transaction
+        );
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         {
@@ -1680,14 +1699,22 @@ mod tests {
             );
             let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
-            let conflicting_transaction = SanitizedTransaction::from_transaction_for_tests(
-                system_transaction::transfer(&Keypair::new(), &pubkey1, 1, genesis_config.hash()),
-            );
+            // with simd83 and no duplicate, we take a cross-batch lock on an account to create a conflict
+            // with a duplicate transaction and simd83 it comes from signature equality in the batch
+            // without simd83 the conflict comes from locks in batch
+            if relax_intrabatch_account_locks && !use_duplicate_transaction {
+                let conflicting_transaction =
+                    sanitize_transactions(vec![system_transaction::transfer(
+                        &Keypair::new(),
+                        &pubkey1,
+                        1,
+                        genesis_config.hash(),
+                    )]);
+                bank.try_lock_accounts(&conflicting_transaction);
+            }
 
-            bank.try_lock_accounts(&[conflicting_transaction.clone()]);
             let process_transactions_batch_output =
                 consumer.process_and_record_transactions(&bank, &transactions, 0);
-            bank.unlock_accounts([(&conflicting_transaction, &Ok(()))].into_iter());
 
             poh_recorder
                 .read()
