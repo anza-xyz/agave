@@ -490,12 +490,8 @@ impl<'a> Iterator for MemoryChunkIterator<'a> {
 
         let region_is_account;
 
-        let mut account_index = if let Some(account_index) = self.account_index {
-            account_index
-        } else {
-            self.account_index = Some(0);
-            0
-        };
+        let mut account_index = self.account_index.unwrap_or_default();
+        self.account_index = Some(account_index);
 
         loop {
             if let Some(account) = self.accounts.get(account_index) {
