@@ -160,7 +160,7 @@ block returned by the fork choice rule above [Fork Choice](#fork-choice). If `i`
 1. Respecting lockouts: For any block `B′` in the tower that is not an ancestor of `B`, `lockexp(B′) ≤ slot(B)`.
 2. Threshold check: Described above in [Threshold Check](#threshold-check)
 3. Switching threshold: Have sufficiently many votes on other forks if switching forks. Let `Btop` denote the block at the top of the stack. If `Btop` is not an ancestor of `B`, then:
-    - Let `VBtop ⊆ V` be the set of votes on `Btop` or ancestors or descendents of `Btop`.
+    - Let `VBtop ⊆ V` be the set of votes on `Btop` or ancestors or descendants of `Btop`.
     - We need `|V \ VBtop | > 38%`. More details on this can be found in [Optimistic Confirmation](../proposals/optimistic_confirmation.md)
 
 If all the conditions are satisfied and validator `i` votes for block `B` then it adjusts its tower as follows (same rules described above in [Vote Tower](#vote-tower)).
