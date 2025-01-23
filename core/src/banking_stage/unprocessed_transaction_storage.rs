@@ -331,23 +331,43 @@ impl UnprocessedTransactionStorage {
 }
 
 impl VoteStorage {
-    fn is_empty(&self) -> bool {
+    pub fn new(
+        latest_unprocessed_votes: Arc<LatestUnprocessedVotes>,
+        vote_source: VoteSource,
+    ) -> Self {
+        Self {
+            latest_unprocessed_votes,
+            vote_source,
+        }
+    }
+
+    // TODO: Remove this.
+    pub fn get_min_priority(&self) -> Option<u64> {
+        None
+    }
+
+    // TODO: Remove this.
+    pub fn get_max_priority(&self) -> Option<u64> {
+        None
+    }
+
+    pub fn is_empty(&self) -> bool {
         self.latest_unprocessed_votes.is_empty()
     }
 
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.latest_unprocessed_votes.len()
     }
 
-    fn max_receive_size(&self) -> usize {
+    pub fn max_receive_size(&self) -> usize {
         MAX_NUM_VOTES_RECEIVE
     }
 
-    fn insert_batch(
+    pub(crate) fn insert_batch(
         &mut self,
         deserialized_packets: Vec<ImmutableDeserializedPacket>,
-    ) -> VoteBatchInsertionMetrics {
-        self.latest_unprocessed_votes.insert_batch(
+    ) -> InsertPacketBatchSummary {
+        InsertPacketBatchSummary::from(self.latest_unprocessed_votes.insert_batch(
             deserialized_packets
                 .into_iter()
                 .filter_map(|deserialized_packet| {
@@ -360,11 +380,11 @@ impl VoteStorage {
                     .ok()
                 }),
             false, // should_replenish_taken_votes
-        )
+        ))
     }
 
     // returns `true` if the end of slot is reached
-    fn process_packets<F>(
+    pub fn process_packets<F>(
         &mut self,
         bank: Arc<Bank>,
         banking_stage_stats: &BankingStageStats,
@@ -449,6 +469,12 @@ impl VoteStorage {
         }
         self.latest_unprocessed_votes
             .cache_epoch_boundary_info(bank);
+    }
+
+    pub fn should_not_process(&self) -> bool {
+        // The gossip vote thread does not need to process or forward any votes, that is
+        // handled by the tpu vote thread
+        matches!(self.vote_source, VoteSource::Gossip)
     }
 }
 
@@ -726,7 +752,7 @@ mod tests {
 
         let latest_unprocessed_votes =
             LatestUnprocessedVotes::new_for_tests(&[vote_keypair.pubkey()]);
-        let mut transaction_storage = UnprocessedTransactionStorage::new_vote_storage(
+        let mut transaction_storage = VoteStorage::new(
             Arc::new(latest_unprocessed_votes),
             VoteSource::Tpu,
         );

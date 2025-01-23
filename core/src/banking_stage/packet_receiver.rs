@@ -3,7 +3,7 @@ use {
         immutable_deserialized_packet::ImmutableDeserializedPacket,
         leader_slot_metrics::LeaderSlotMetricsTracker,
         packet_deserializer::{PacketDeserializer, ReceivePacketResults},
-        unprocessed_transaction_storage::UnprocessedTransactionStorage,
+        unprocessed_transaction_storage::VoteStorage,
         BankingStageStats,
     },
     agave_banking_stage_ingress_types::BankingPacketReceiver,
@@ -29,7 +29,7 @@ impl PacketReceiver {
     /// Receive incoming packets, push into unprocessed buffer with packet indexes
     pub fn receive_and_buffer_packets(
         &mut self,
-        unprocessed_transaction_storage: &mut UnprocessedTransactionStorage,
+        unprocessed_transaction_storage: &mut VoteStorage,
         banking_stage_stats: &mut BankingStageStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) -> Result<(), RecvTimeoutError> {
@@ -69,7 +69,7 @@ impl PacketReceiver {
     }
 
     fn get_receive_timeout(
-        unprocessed_transaction_storage: &UnprocessedTransactionStorage,
+        unprocessed_transaction_storage: &VoteStorage,
     ) -> Duration {
         // Gossip thread (does not process) should not continuously receive with 0 duration.
         // This can cause the thread to run at 100% CPU because it is continuously polling.
@@ -93,7 +93,7 @@ impl PacketReceiver {
             deserialized_packets,
             packet_stats,
         }: ReceivePacketResults,
-        unprocessed_transaction_storage: &mut UnprocessedTransactionStorage,
+        unprocessed_transaction_storage: &mut VoteStorage,
         banking_stage_stats: &mut BankingStageStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) {
@@ -130,7 +130,7 @@ impl PacketReceiver {
     }
 
     fn push_unprocessed(
-        unprocessed_transaction_storage: &mut UnprocessedTransactionStorage,
+        unprocessed_transaction_storage: &mut VoteStorage,
         deserialized_packets: Vec<ImmutableDeserializedPacket>,
         dropped_packets_count: &mut usize,
         newly_buffered_packets_count: &mut usize,
