@@ -237,6 +237,7 @@ impl ShredCode {
 macro_rules! impl_merkle_shred {
     ($variant:ident) => {
         // proof_size is the number of merkle proof entries.
+        #[inline]
         fn proof_size(&self) -> Result<u8, Error> {
             match self.common_header.shred_variant {
                 ShredVariant::$variant { proof_size, .. } => Ok(proof_size),
@@ -905,13 +906,14 @@ pub(super) fn recover(
         return Err(Error::InvalidMerkleRoot);
     }
     let set_merkle_proof = move |(index, (mut shred, mask)): (_, (Shred, _))| {
-        let proof = make_merkle_proof(index, num_shards, &tree);
         if mask {
-            if shred.merkle_proof()?.map(Some).ne(proof.map(Result::ok)) {
-                return Err(Error::InvalidMerkleProof);
-            }
+            debug_assert!({
+                let proof = make_merkle_proof(index, num_shards, &tree);
+                shred.merkle_proof()?.map(Some).eq(proof.map(Result::ok))
+            });
             Ok(None)
         } else {
+            let proof = make_merkle_proof(index, num_shards, &tree);
             shred.set_merkle_proof(proof)?;
             // Already sanitized after reconstruct.
             debug_assert_matches!(shred.sanitize(), Ok(()));
