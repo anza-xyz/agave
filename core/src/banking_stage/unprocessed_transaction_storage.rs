@@ -263,20 +263,22 @@ impl VoteStorage {
         &mut self,
         deserialized_packets: Vec<ImmutableDeserializedPacket>,
     ) -> InsertPacketBatchSummary {
-        InsertPacketBatchSummary::from(self.latest_unprocessed_votes.insert_batch(
-            deserialized_packets
-                .into_iter()
-                .filter_map(|deserialized_packet| {
-                    LatestValidatorVotePacket::new_from_immutable(
-                        Arc::new(deserialized_packet),
-                        self.vote_source,
-                        self.latest_unprocessed_votes
-                            .should_deprecate_legacy_vote_ixs(),
-                    )
-                    .ok()
-                }),
-            false, // should_replenish_taken_votes
-        ))
+        InsertPacketBatchSummary::from(
+            self.latest_unprocessed_votes.insert_batch(
+                deserialized_packets
+                    .into_iter()
+                    .filter_map(|deserialized_packet| {
+                        LatestValidatorVotePacket::new_from_immutable(
+                            Arc::new(deserialized_packet),
+                            self.vote_source,
+                            self.latest_unprocessed_votes
+                                .should_deprecate_legacy_vote_ixs(),
+                        )
+                        .ok()
+                    }),
+                false, // should_replenish_taken_votes
+            ),
+        )
     }
 
     pub fn filter_forwardable_packets_and_add_batches(
@@ -700,10 +702,8 @@ mod tests {
 
         let latest_unprocessed_votes =
             LatestUnprocessedVotes::new_for_tests(&[vote_keypair.pubkey()]);
-        let mut transaction_storage = VoteStorage::new(
-            Arc::new(latest_unprocessed_votes),
-            VoteSource::Tpu,
-        );
+        let mut transaction_storage =
+            VoteStorage::new(Arc::new(latest_unprocessed_votes), VoteSource::Tpu);
 
         transaction_storage.insert_batch(vec![ImmutableDeserializedPacket::new(vote.clone())?]);
         assert_eq!(1, transaction_storage.len());
