@@ -20,6 +20,14 @@ pub const QUIC_MAX_STAKED_CONCURRENT_STREAMS: usize = 512;
 pub const QUIC_MAX_TIMEOUT: Duration = Duration::from_secs(2);
 pub const QUIC_KEEP_ALIVE: Duration = Duration::from_secs(1);
 
+// Disable Quic send fairness.
+// When set to false, streams are still scheduled based on priority,
+// but once a chunk of a stream has been written out, quinn tries to complete
+// the stream instead of trying to round-robin balance it among the streams
+// with the same priority.
+// See https://github.com/quinn-rs/quinn/pull/2002.
+pub const QUIC_SEND_FAIRNESS: bool = false;
+
 // Based on commonly-used handshake timeouts for various TCP
 // applications. Different applications vary, but most seem to
 // be in the 30-60 second range
