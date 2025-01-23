@@ -116,6 +116,9 @@ name = "sigverify_shreds"
 [[bench]]
 name = "blockstore"
 
+[[bench]]
+name = "make_shreds_from_entries"
+
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
