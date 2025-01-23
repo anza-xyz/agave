@@ -709,6 +709,34 @@ fn disconnected<T>() -> Receiver<T> {
     crossbeam_channel::unbounded().1
 }
 
+#[cfg_attr(doc, aquamarine::aquamarine)]
+/// The concrete scheduler instance along with 1 scheduler and N handler threads
+///
+/// ### Life cycle and ownership movement across crates of a particular scheduler
+///
+/// ```mermaid
+/// stateDiagram-v2
+///     [*] --> Active: Spawned (New bank by solReplayStage)
+///     state solana-runtime {
+///         state if_state <<choice>>
+///         Active --> if_state: Returned (Bank-freezing by solReplayStage)
+///         Active --> if_state: Dropped (BankForks-pruning by solReplayStage)
+///         Aborted --> if_state: Dropped (BankForks-pruning by solReplayStage)
+///         if_state --> Pooled: IF !overgrown && !aborted
+///         Active --> Aborted: Errored on TX execution
+///         Aborted --> Stale: !Droppped after TIMEOUT_DURATION since taken
+///         Active --> Stale: No new TX after TIMEOUT_DURATION since taken
+///         Stale --> if_state: Returned (Timeout-triggered by solScCleaner)
+///         Pooled --> Active: Taken (New bank by solReplayStage)
+///     }
+///     state solana-unified-scheduler-pool {
+///         Pooled --> Idle: !Taken after POOLING_DURATION
+///         if_state --> Trashed: IF overgrown || aborted
+///         Idle --> Terminated
+///         Trashed --> Terminated
+///     }
+///     Terminated --> [*]: Terminated (by solScCleaner)
+/// ```
 #[derive(Debug)]
 pub struct PooledScheduler<TH: TaskHandler> {
     inner: PooledSchedulerInner<Self, TH>,

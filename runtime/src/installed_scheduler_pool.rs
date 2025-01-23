@@ -96,23 +96,23 @@ impl Debug for TimeoutListener {
 /// graph TD
 ///     Bank["Arc#lt;Bank#gt;"]
 ///
-///     subgraph solana-runtime
+///     subgraph solana-runtime[<span style="font-size: 70%">solana-runtime</span>]
 ///         BankForks;
 ///         BankWithScheduler;
 ///         Bank;
-///         LoadExecuteAndCommitTransactions(["load_execute_and_commit_transactions()"]);
+///         LoadExecuteAndCommitTransactions([<span style="font-size: 67%">load_execute_and_commit_transactions#lpar;#rpar;</span>]);
 ///         SchedulingContext;
 ///         InstalledSchedulerPool{{InstalledSchedulerPool}};
 ///         InstalledScheduler{{InstalledScheduler}};
 ///     end
 ///
-///     subgraph solana-unified-scheduler-pool
+///     subgraph solana-unified-scheduler-pool[<span style="font-size: 70%">solana-unified-scheduler-pool</span>]
 ///         SchedulerPool;
 ///         PooledScheduler;
 ///         ScheduleExecution(["schedule_execution()"]);
 ///     end
 ///
-///     subgraph solana-ledger
+///     subgraph solana-ledger[<span style="font-size: 60%">solana-ledger</span>]
 ///         ExecuteBatch(["execute_batch()"]);
 ///     end
 ///
