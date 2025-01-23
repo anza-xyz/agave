@@ -5,13 +5,16 @@ use {
     solana_clock::{Clock, Epoch},
     solana_feature_set::FeatureSet,
     solana_instruction::AccountMeta,
-    solana_program::stake::{
-        instruction::{
-            self, AuthorizeCheckedWithSeedArgs, AuthorizeWithSeedArgs, LockupArgs,
-            LockupCheckedArgs, StakeInstruction,
+    solana_program::{
+        stake::{
+            instruction::{
+                self, AuthorizeCheckedWithSeedArgs, AuthorizeWithSeedArgs, LockupArgs,
+                LockupCheckedArgs, StakeInstruction,
+            },
+            stake_flags::StakeFlags,
+            state::{Authorized, Lockup, StakeAuthorize, StakeStateV2},
         },
-        stake_flags::StakeFlags,
-        state::{Authorized, Lockup, StakeAuthorize, StakeStateV2},
+        vote::state::{VoteState, VoteStateVersions},
     },
     solana_program_runtime::invoke_context::mock_process_instruction,
     solana_pubkey::Pubkey,
@@ -22,7 +25,7 @@ use {
         stake_state::{Delegation, Meta, Stake},
     },
     solana_sysvar::stake_history::StakeHistory,
-    solana_vote_program::vote_state::{self, VoteState, VoteStateVersions},
+    solana_vote_program::vote_state,
     std::sync::Arc,
 };
 
@@ -629,7 +632,7 @@ fn bench_deactivate_delinquent(c: &mut Criterion) {
         1,
         &VoteStateVersions::new_current(vote_state),
         VoteState::size_of(),
-        &solana_vote_program::id(),
+        &solana_sdk_ids::vote::id(),
     )
     .unwrap();
 
