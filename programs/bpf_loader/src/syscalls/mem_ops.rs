@@ -419,7 +419,7 @@ struct MemoryChunkIterator<'a> {
     // exclusive end index (start + len, so one past the last valid address)
     vm_addr_end: u64,
     len: u64,
-    account_index: usize,
+    account_index: Option<usize>,
     is_account: Option<bool>,
 }
 
@@ -446,7 +446,7 @@ impl<'a> MemoryChunkIterator<'a> {
             len,
             vm_addr_start: vm_addr,
             vm_addr_end,
-            account_index: 0,
+            account_index: None,
             is_account: None,
         })
     }
@@ -490,14 +490,18 @@ impl<'a> Iterator for MemoryChunkIterator<'a> {
 
         let region_is_account;
 
+        let mut account_index = self.account_index.unwrap_or_default();
+        self.account_index = Some(account_index);
+
         loop {
-            if let Some(account) = self.accounts.get(self.account_index) {
+            if let Some(account) = self.accounts.get(account_index) {
                 let account_addr = account.vm_data_addr;
                 let resize_addr = account_addr.saturating_add(account.original_data_len as u64);
 
                 if resize_addr < region.vm_addr {
                     // region is after this account, move on next one
-                    self.account_index = self.account_index.saturating_add(1);
+                    account_index = account_index.saturating_add(1);
+                    self.account_index = Some(account_index);
                 } else {
                     region_is_account =
                         region.vm_addr == account_addr || region.vm_addr == resize_addr;
@@ -549,6 +553,41 @@ impl<'a> DoubleEndedIterator for MemoryChunkIterator<'a> {
                 return Some(Err(e));
             }
         };
+
+        let region_is_account;
+
+        let mut account_index = self
+            .account_index
+            .unwrap_or_else(|| self.accounts.len().saturating_sub(1));
+        self.account_index = Some(account_index);
+
+        loop {
+            let Some(account) = self.accounts.get(account_index) else {
+                // address is after all the accounts
+                region_is_account = false;
+                break;
+            };
+
+            let account_addr = account.vm_data_addr;
+            let resize_addr = account_addr.saturating_add(account.original_data_len as u64);
+
+            if account_index > 0 && account_addr > region.vm_addr {
+                account_index = account_index.saturating_sub(1);
+
+                self.account_index = Some(account_index);
+            } else {
+                region_is_account = region.vm_addr == account_addr || region.vm_addr == resize_addr;
+                break;
+            }
+        }
+
+        if let Some(is_account) = self.is_account {
+            if is_account != region_is_account {
+                return Some(Err(SyscallError::InvalidLength.into()));
+            }
+        } else {
+            self.is_account = Some(region_is_account);
+        }
 
         let chunk_len = if region.vm_addr >= self.vm_addr_start {
             // consume the whole region
