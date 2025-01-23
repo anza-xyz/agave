@@ -149,7 +149,7 @@ fi
 # dcou tends to newly trigger `unused_imports` and `dead_code` lints.
 # We could selectively deny (= `-D`) them here, however, deny all warnings for
 # consistency with other CI steps and for the possibility of new similar lints.
-export RUSTFLAGS="-D warnings -Z threads=8 $RUSTFLAGS"
+export RUSTFLAGS="-D warnings -Z threads=0 $RUSTFLAGS"
 export CARGO_INCREMENTAL=0
 unset CI_COMMIT
 
