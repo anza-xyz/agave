@@ -11916,6 +11916,9 @@ fn test_accounts_data_size_and_rent_collection(should_collect_rent: bool) {
         genesis_config
             .accounts
             .remove(&solana_feature_set::disable_rent_fees_collection::id());
+        genesis_config
+            .accounts
+            .remove(&solana_feature_set::disable_partitioned_rent_collection::id());
     }
 
     let bank = Arc::new(Bank::new_for_tests(&genesis_config));
