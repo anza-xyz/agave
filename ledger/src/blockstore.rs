@@ -818,17 +818,18 @@ impl Blockstore {
         })
     }
 
-    fn recover_shreds(
-        &self,
-        index: &Index,
-        erasure_meta: &ErasureMeta,
-        prev_inserted_shreds: &HashMap<ShredId, Shred>,
-        reed_solomon_cache: &ReedSolomonCache,
-    ) -> std::result::Result<Vec<Shred>, shred::Error> {
+    fn recover_shreds<'a>(
+        &'a self,
+        index: &'a Index,
+        erasure_meta: &'a ErasureMeta,
+        prev_inserted_shreds: &'a HashMap<ShredId, Shred>,
+        reed_solomon_cache: &'a ReedSolomonCache,
+    ) -> std::result::Result<impl Iterator<Item = Shred> + 'a, shred::Error> {
         // Find shreds for this erasure set and try recovery
         let data = self.get_recovery_data_shreds(index, erasure_meta, prev_inserted_shreds);
         let code = self.get_recovery_coding_shreds(index, erasure_meta, prev_inserted_shreds);
-        shred::recover(data.chain(code), reed_solomon_cache)
+        let shreds = shred::recover(data.chain(code), reed_solomon_cache)?;
+        Ok(shreds.filter_map(std::result::Result::ok))
     }
 
     /// Collects and reports [`BlockstoreRocksDbColumnFamilyMetrics`] for the
@@ -935,7 +936,7 @@ impl Blockstore {
         index_working_set: &'a HashMap<u64, IndexMetaWorkingSetEntry>,
         prev_inserted_shreds: &'a HashMap<ShredId, Shred>,
         reed_solomon_cache: &'a ReedSolomonCache,
-    ) -> impl Iterator<Item = Vec<Shred>> + 'a {
+    ) -> impl Iterator<Item = Shred> + 'a {
         // Recovery rules:
         // 1. Only try recovery around indexes for which new data or coding shreds are received
         // 2. For new data shreds, check if an erasure set exists. If not, don't try recovery
@@ -960,6 +961,7 @@ impl Blockstore {
                     })?
                     .ok()
             })
+            .flatten()
     }
 
     /// Attempts shred recovery and does the following for recovered data
@@ -985,21 +987,27 @@ impl Blockstore {
                 &shred_insertion_tracker.just_inserted_shreds,
                 reed_solomon_cache,
             )
-            .map(|mut shreds| {
+            .filter_map(|shred| {
                 // All shreds should be retransmitted, but because there are no
                 // more missing data shreds in the erasure batch, coding shreds
                 // are not stored in blockstore.
-                recovered_shreds
-                    .extend(shred::drain_coding_shreds(&mut shreds).map(Shred::into_payload));
-                recovered_shreds.extend(shreds.iter().map(Shred::payload).cloned());
-                shreds
+                match shred.shred_type() {
+                    ShredType::Code => {
+                        recovered_shreds.push(shred.into_payload());
+                        None
+                    }
+                    ShredType::Data => {
+                        recovered_shreds.push(shred.payload().clone());
+                        Some(shred)
+                    }
+                }
             })
             .collect();
         if !recovered_shreds.is_empty() {
             let _ = retransmit_sender.send(recovered_shreds);
         }
-        for shred in recovered_data_shreds.into_iter().flatten() {
-            metrics.num_recovered += 1;
+        metrics.num_recovered += recovered_data_shreds.len();
+        for shred in recovered_data_shreds {
             *match self.check_insert_data_shred(
                 shred,
                 shred_insertion_tracker,

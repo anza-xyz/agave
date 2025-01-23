@@ -11,12 +11,12 @@ use {
     },
     dashmap::DashMap,
     log::*,
+    solana_pubkey::Pubkey,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount},
         address_lookup_table::{self, error::AddressLookupError, state::AddressLookupTable},
         clock::{BankId, Slot},
         message::v0::LoadedAddresses,
-        pubkey::Pubkey,
         slot_hashes::SlotHashes,
         transaction::{Result, SanitizedTransaction},
         transaction_context::TransactionAccount,

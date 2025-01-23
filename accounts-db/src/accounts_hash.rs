@@ -11,9 +11,9 @@ use {
     rayon::prelude::*,
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{measure::Measure, measure_us},
+    solana_pubkey::Pubkey,
     solana_sdk::{
         hash::{Hash, Hasher, HASH_BYTES},
-        pubkey::Pubkey,
         rent_collector::RentCollector,
         slot_history::Slot,
         sysvar::epoch_schedule::EpochSchedule,

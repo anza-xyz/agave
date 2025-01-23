@@ -6,10 +6,10 @@ use {
         account_storage::meta::{StoredAccountMeta, StoredMeta},
         accounts_hash::AccountHash,
     },
+    solana_pubkey::Pubkey,
     solana_sdk::{
         account::{Account, AccountSharedData, ReadableAccount},
         hash::Hash,
-        pubkey::Pubkey,
         rent_collector::RENT_EXEMPT_RENT_EPOCH,
     },
 };

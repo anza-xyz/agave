@@ -10,6 +10,10 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+qualifier_attr = { workspace = true }
 solana-feature-set = { workspace = true }
 solana-fee-structure = { workspace = true }
 solana-svm-transaction = { workspace = true }
+
+[features]
+svm-internal = []

@@ -2,9 +2,8 @@
 
 use {
     crate::storable_accounts::{AccountForStorage, StorableAccounts},
-    solana_sdk::{
-        account::AccountSharedData, clock::Slot, pubkey::Pubkey, reward_info::RewardInfo,
-    },
+    solana_pubkey::Pubkey,
+    solana_sdk::{account::AccountSharedData, clock::Slot, reward_info::RewardInfo},
 };
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
