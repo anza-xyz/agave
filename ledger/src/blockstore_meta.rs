@@ -109,14 +109,14 @@ mod serde_compat {
 
 pub type Index = IndexV2;
 pub type ShredIndex = ShredIndexV2;
-pub type IndexFallback = IndexLegacy;
+pub type IndexFallback = IndexV1;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 /// Index recording presence/absence of shreds
-pub struct IndexLegacy {
+pub struct IndexV1 {
     pub slot: Slot,
-    data: ShredIndexLegacy,
-    coding: ShredIndexLegacy,
+    data: ShredIndexV1,
+    coding: ShredIndexV1,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -126,9 +126,9 @@ pub struct IndexV2 {
     coding: ShredIndexV2,
 }
 
-impl From<IndexV2> for IndexLegacy {
+impl From<IndexV2> for IndexV1 {
     fn from(index: IndexV2) -> Self {
-        IndexLegacy {
+        IndexV1 {
             slot: index.slot,
             data: index.data.into(),
             coding: index.coding.into(),
@@ -136,8 +136,8 @@ impl From<IndexV2> for IndexLegacy {
     }
 }
 
-impl From<IndexLegacy> for IndexV2 {
-    fn from(index: IndexLegacy) -> Self {
+impl From<IndexV1> for IndexV2 {
+    fn from(index: IndexV1) -> Self {
         IndexV2 {
             slot: index.slot,
             data: index.data.into(),
@@ -147,7 +147,7 @@ impl From<IndexLegacy> for IndexV2 {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-pub struct ShredIndexLegacy {
+pub struct ShredIndexV1 {
     /// Map representing presence/absence of shreds
     index: BTreeSet<u64>,
 }
@@ -282,7 +282,7 @@ impl Index {
 /// TODO: Remove this once new [`ShredIndexV2`] is fully rolled out
 /// and no longer relies on it for fallback.
 #[allow(unused)]
-impl ShredIndexLegacy {
+impl ShredIndexV1 {
     pub fn num_shreds(&self) -> usize {
         self.index.len()
     }
@@ -503,23 +503,23 @@ impl FromIterator<u64> for ShredIndexV2 {
     }
 }
 
-impl FromIterator<u64> for ShredIndexLegacy {
+impl FromIterator<u64> for ShredIndexV1 {
     fn from_iter<T: IntoIterator<Item = u64>>(iter: T) -> Self {
-        ShredIndexLegacy {
+        ShredIndexV1 {
             index: iter.into_iter().collect(),
         }
     }
 }
 
-impl From<ShredIndexLegacy> for ShredIndexV2 {
-    fn from(value: ShredIndexLegacy) -> Self {
+impl From<ShredIndexV1> for ShredIndexV2 {
+    fn from(value: ShredIndexV1) -> Self {
         value.index.into_iter().collect()
     }
 }
 
-impl From<ShredIndexV2> for ShredIndexLegacy {
+impl From<ShredIndexV2> for ShredIndexV1 {
     fn from(value: ShredIndexV2) -> Self {
-        ShredIndexLegacy {
+        ShredIndexV1 {
             index: value.iter().collect(),
         }
     }
@@ -927,7 +927,7 @@ mod test {
             shreds in rand_range(0..MAX_DATA_SHREDS_PER_SLOT as u64),
             range in rand_range(0..MAX_DATA_SHREDS_PER_SLOT as u64)
         ) {
-            let mut legacy = ShredIndexLegacy::default();
+            let mut legacy = ShredIndexV1::default();
             let mut v2 = ShredIndexV2::default();
 
             for i in shreds {
@@ -947,7 +947,7 @@ mod test {
             );
 
             assert_eq!(ShredIndexV2::from(legacy.clone()), v2.clone());
-            assert_eq!(ShredIndexLegacy::from(v2), legacy);
+            assert_eq!(ShredIndexV1::from(v2), legacy);
         }
 
         /// Property: [`Index`] cannot be deserialized from [`IndexV2`].
@@ -970,7 +970,7 @@ mod test {
                 slot,
             };
             let config = bincode::DefaultOptions::new().with_fixint_encoding().reject_trailing_bytes();
-            let legacy = config.deserialize::<IndexLegacy>(&config.serialize(&index).unwrap());
+            let legacy = config.deserialize::<IndexV1>(&config.serialize(&index).unwrap());
             prop_assert!(legacy.is_err());
         }
 
@@ -988,7 +988,7 @@ mod test {
             data_indices in rand_range(0..MAX_DATA_SHREDS_PER_SLOT as u64),
             slot in 0..u64::MAX
         ) {
-            let index = IndexLegacy {
+            let index = IndexV1 {
                 coding: coding_indices.into_iter().collect(),
                 data: data_indices.into_iter().collect(),
                 slot,
