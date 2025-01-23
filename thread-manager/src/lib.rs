@@ -140,11 +140,11 @@ impl ThreadManager {
         Ok(chosen_cores_mask)
     }
 
-    pub fn new(config: ThreadManagerConfig) -> anyhow::Result<Self> {
+    pub fn new(config: &ThreadManagerConfig) -> anyhow::Result<Self> {
         let mut core_allocations = HashMap::<String, Vec<usize>>::new();
-        Self::set_process_affinity(&config)?;
+        Self::set_process_affinity(config)?;
         let mut manager = ThreadManagerInner::default();
-        manager.populate_mappings(&config);
+        manager.populate_mappings(config);
         for (name, cfg) in config.native_configs.iter() {
             let nrt = NativeThreadRuntime::new(name.clone(), cfg.clone());
             manager.native_thread_runtimes.insert(name.clone(), nrt);
@@ -234,7 +234,7 @@ mod tests {
             ..Default::default()
         };
 
-        let manager = ThreadManager::new(conf).unwrap();
+        let manager = ThreadManager::new(&conf).unwrap();
         let high = manager.get_native("high");
         let low = manager.get_native("low");
         let default = manager.get_native("default");
@@ -295,7 +295,7 @@ mod tests {
             ..Default::default()
         };
 
-        let manager = ThreadManager::new(conf).unwrap();
+        let manager = ThreadManager::new(&conf).unwrap();
         let runtime = manager.get_native("test");
 
         let thread1 = runtime
@@ -336,7 +336,7 @@ mod tests {
             ..Default::default()
         };
 
-        let manager = ThreadManager::new(conf).unwrap();
+        let manager = ThreadManager::new(&conf).unwrap();
         let rayon_runtime = manager.get_rayon("test");
 
         let _rr = rayon_runtime.rayon_pool.broadcast(|ctx| {

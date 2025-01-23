@@ -30,7 +30,7 @@ use {
         tpu::{Tpu, TpuSockets, DEFAULT_TPU_COALESCE},
         tvu::{Tvu, TvuConfig, TvuSockets},
     },
-    agave_thread_manager::ThreadManagerConfig,
+    agave_thread_manager::{ThreadManager, ThreadManagerConfig},
     anyhow::{anyhow, Context, Result},
     crossbeam_channel::{bounded, unbounded, Receiver},
     lazy_static::lazy_static,
@@ -622,6 +622,7 @@ impl Validator {
 
         let start_time = Instant::now();
 
+        let _thread_manager = ThreadManager::new(&config.thread_manager_config)?;
         // Initialize the global rayon pool first to ensure the value in config
         // is honored. Otherwise, some code accessing the global pool could
         // cause it to get initialized with Rayon's default (not ours)
