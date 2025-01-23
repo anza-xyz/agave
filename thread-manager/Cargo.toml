@@ -21,6 +21,7 @@ serde = { workspace = true, features = ["derive"] }
 solana-metrics = { workspace = true }
 thread-priority = { workspace = true }
 tokio = { workspace = true, features = ["time", "rt-multi-thread"] }
+toml = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 affinity = "0.1.2"
@@ -31,7 +32,6 @@ axum = { workspace = true }
 env_logger = { workspace = true }
 hyper = { workspace = true, features = ["http1", "client", "stream", "tcp"] }
 serde_json = { workspace = true }
-toml = { workspace = true }
 tower = { workspace = true }
 
 [features]

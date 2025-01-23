@@ -1,15 +1,16 @@
 use {
     anyhow::Ok,
-    serde::{Deserialize, Serialize},
     std::{collections::HashMap, ops::Deref, sync::Arc},
 };
 
+pub mod config;
 pub mod native_thread_runtime;
 pub mod policy;
 pub mod rayon_runtime;
 pub mod tokio_runtime;
 
 pub use {
+    config::ThreadManagerConfig,
     native_thread_runtime::{JoinHandle, NativeConfig, NativeThreadRuntime},
     policy::CoreAllocation,
     rayon_runtime::{RayonConfig, RayonRuntime},
@@ -71,35 +72,6 @@ impl Deref for ThreadManager {
 
     fn deref(&self) -> &Self::Target {
         &self.inner
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(default)]
-pub struct ThreadManagerConfig {
-    pub native_configs: HashMap<String, NativeConfig>,
-    pub native_runtime_mapping: HashMap<String, String>,
-
-    pub rayon_configs: HashMap<String, RayonConfig>,
-    pub rayon_runtime_mapping: HashMap<String, String>,
-
-    pub tokio_configs: HashMap<String, TokioConfig>,
-    pub tokio_runtime_mapping: HashMap<String, String>,
-
-    pub default_core_allocation: CoreAllocation,
-}
-
-impl Default for ThreadManagerConfig {
-    fn default() -> Self {
-        Self {
-            native_configs: HashMap::from([("default".to_owned(), NativeConfig::default())]),
-            native_runtime_mapping: HashMap::new(),
-            rayon_configs: HashMap::from([("default".to_owned(), RayonConfig::default())]),
-            rayon_runtime_mapping: HashMap::new(),
-            tokio_configs: HashMap::from([("default".to_owned(), TokioConfig::default())]),
-            tokio_runtime_mapping: HashMap::new(),
-            default_core_allocation: CoreAllocation::OsDefault,
-        }
     }
 }
 
