@@ -110,6 +110,7 @@ mod serde_compat {
 pub type Index = IndexV2;
 pub type ShredIndex = ShredIndexV2;
 pub type IndexFallback = IndexV1;
+pub type ShredIndexFallback = ShredIndexV1;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 /// Index recording presence/absence of shreds
@@ -273,6 +274,32 @@ impl Index {
         &mut self.data
     }
     pub(crate) fn coding_mut(&mut self) -> &mut ShredIndex {
+        &mut self.coding
+    }
+}
+
+#[cfg(test)]
+#[allow(unused)]
+impl IndexFallback {
+    pub(crate) fn new(slot: Slot) -> Self {
+        Self {
+            slot,
+            data: ShredIndexFallback::default(),
+            coding: ShredIndexFallback::default(),
+        }
+    }
+
+    pub fn data(&self) -> &ShredIndexFallback {
+        &self.data
+    }
+    pub fn coding(&self) -> &ShredIndexFallback {
+        &self.coding
+    }
+
+    pub(crate) fn data_mut(&mut self) -> &mut ShredIndexFallback {
+        &mut self.data
+    }
+    pub(crate) fn coding_mut(&mut self) -> &mut ShredIndexFallback {
         &mut self.coding
     }
 }

@@ -5372,7 +5372,7 @@ pub mod tests {
             shred::{max_ticks_per_n_shreds, ShredFlags, LEGACY_SHRED_DATA_CAPACITY},
         },
         assert_matches::assert_matches,
-        bincode::serialize,
+        bincode::{serialize, Options},
         crossbeam_channel::unbounded,
         rand::{seq::SliceRandom, thread_rng},
         solana_account_decoder::parse_token::UiTokenAmount,
@@ -5838,6 +5838,36 @@ pub mod tests {
     fn test_insert_slots() {
         test_insert_data_shreds_slots(false);
         test_insert_data_shreds_slots(true);
+    }
+
+    #[test]
+    fn test_index_fallback_deserialize() {
+        let ledger_path = get_tmp_ledger_path_auto_delete!();
+        let blockstore = Blockstore::open(ledger_path.path()).unwrap();
+        let mut rng = rand::thread_rng();
+        let slot = rng.gen_range(0..100);
+        let bincode = bincode::DefaultOptions::new()
+            .reject_trailing_bytes()
+            .with_fixint_encoding();
+
+        let data = 0..rng.gen_range(100..MAX_DATA_SHREDS_PER_SLOT as u64);
+        let coding = 0..rng.gen_range(100..MAX_DATA_SHREDS_PER_SLOT as u64);
+        let mut fallback = IndexFallback::new(slot);
+        for (d, c) in data.clone().zip(coding.clone()) {
+            fallback.data_mut().insert(d);
+            fallback.coding_mut().insert(c);
+        }
+
+        blockstore
+            .index_cf
+            .put_bytes(slot, &bincode.serialize(&fallback).unwrap())
+            .unwrap();
+
+        let current = blockstore.index_cf.get(slot).unwrap().unwrap();
+        for (d, c) in data.zip(coding) {
+            assert!(current.data().contains(d));
+            assert!(current.coding().contains(c));
+        }
     }
 
     /*
