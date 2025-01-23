@@ -150,6 +150,8 @@ fi
 # We could selectively deny (= `-D`) them here, however, deny all warnings for
 # consistency with other CI steps and for the possibility of new similar lints.
 export RUSTFLAGS="-D warnings -Z threads=8 $RUSTFLAGS"
+export CARGO_INCREMENTAL=0
+unset CI_COMMIT
 
 if [[ $mode = "check-bins-and-lib" || $mode = "full" ]]; then
   _ cargo "+${rust_nightly}" hack "$@" check
