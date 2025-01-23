@@ -57,6 +57,12 @@ if [[ -n $CI ]]; then
       ARGS+=(
         --env "RUSTC_WRAPPER=/usr/local/cargo/bin/sccache"
       )
+      # local disk storage for sccache (experimental; only used by dcou for now)
+      mkdir -p "$HOME/.cache/sccache-for-docker"
+      CONTAINER_HOME="/"
+      ARGS+=(
+        --volume "$HOME/.cache/sccache-for-docker:$CONTAINER_HOME/.cache/sccache"
+      )
 
       # s3
       if [ -n "$AWS_ACCESS_KEY_ID" ]; then
