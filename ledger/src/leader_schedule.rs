@@ -36,7 +36,7 @@ impl LeaderSchedule {
             .collect();
         let slot_leaders = Self::stake_weighted_slot_leaders(
             stakes,
-            |vote_key| *vote_accounts_map.get(&vote_key).unwrap().1.node_pubkey(),
+            |vote_key| *vote_accounts_map.get(vote_key).unwrap().1.node_pubkey(),
             epoch,
             len,
             repeat,
