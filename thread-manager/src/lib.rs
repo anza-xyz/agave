@@ -17,7 +17,7 @@ pub use {
     tokio_runtime::{TokioConfig, TokioRuntime},
 };
 
-pub const MAX_THREAD_NAME_CHARS: usize = 12;
+pub const MAX_THREAD_NAME_CHARS: usize = 16;
 
 #[derive(Default, Debug)]
 pub struct ThreadManagerInner {

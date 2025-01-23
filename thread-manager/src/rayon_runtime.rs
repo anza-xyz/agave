@@ -62,7 +62,7 @@ impl Deref for RayonRuntime {
 
 impl RayonRuntime {
     pub fn new(name: String, config: RayonConfig) -> anyhow::Result<Self> {
-        debug_assert!(name.len() < MAX_THREAD_NAME_CHARS, "Thread name too long");
+        debug_assert!(name.len() <= MAX_THREAD_NAME_CHARS, "Thread name too long");
         let core_allocation = config.core_allocation.clone();
         let chosen_cores_mask = Mutex::new(core_allocation.as_core_mask_vector());
         let priority = config.priority;

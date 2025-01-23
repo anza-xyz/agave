@@ -69,7 +69,7 @@ impl TokioRuntime {
     }
 
     pub fn new(name: String, cfg: TokioConfig) -> anyhow::Result<Self> {
-        debug_assert!(name.len() < MAX_THREAD_NAME_CHARS, "Thread name too long");
+        debug_assert!(name.len() <= MAX_THREAD_NAME_CHARS, "Thread name too long");
         let num_workers = if cfg.worker_threads == 0 {
             num_cpus::get()
         } else {
