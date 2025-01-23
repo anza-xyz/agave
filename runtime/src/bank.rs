@@ -3133,19 +3133,11 @@ impl Bank {
 
     /// Attempt to take locks on the accounts in a transaction batch
     pub fn try_lock_accounts(&self, txs: &[impl SVMMessage]) -> Vec<Result<()>> {
-        let tx_account_lock_limit = self.get_transaction_account_lock_limit();
-        let relax_intrabatch_account_locks = self
-            .feature_set
-            .is_active(&feature_set::relax_intrabatch_account_locks::id());
-        self.rc.accounts.lock_accounts(
-            txs.iter(),
-            tx_account_lock_limit,
-            relax_intrabatch_account_locks,
-        )
+        self.try_lock_accounts_with_results(txs, vec![Ok(()); txs.len()].into_iter())
     }
 
     /// Attempt to take locks on the accounts in a transaction batch, and their cost
-    /// limited packing status
+    /// limited packing status and duplicate transaction conflict status
     pub fn try_lock_accounts_with_results(
         &self,
         txs: &[impl SVMMessage],
@@ -3171,8 +3163,6 @@ impl Bank {
         self.prepare_sanitized_batch_with_results(txs, txs.iter().map(|_| Ok(())))
     }
 
-    // HANA TODO test the dedupe logic at this level
-
     /// Prepare a locked transaction batch from a list of sanitized transactions, and their cost
     /// limited packing status
     pub fn prepare_sanitized_batch_with_results<'a, 'b, Tx: SVMTransaction>(
@@ -3182,17 +3172,25 @@ impl Bank {
     ) -> TransactionBatch<'a, 'b, Tx> {
         // this lock_results could be: Ok, AccountInUse, WouldExceedBlockMaxLimit or WouldExceedAccountMaxLimit
 
-        // HANA TODO gate this after running ci
+        let relax_intrabatch_account_locks = self
+            .feature_set
+            .is_active(&feature_set::relax_intrabatch_account_locks::id());
+
+        // with simd83 enabled, we must deduplicate transactions by signature
+        // previously, conflicting account locks would do it as a side effect
         let mut batch_signatures = AHashSet::with_capacity(transactions.len());
         let transaction_results =
             transaction_results
                 .enumerate()
                 .map(|(i, tx_result)| match tx_result {
-                    Err(e) => Err(e),
-                    Ok(()) if !batch_signatures.insert(transactions[i].signature()) => {
+                    Ok(())
+                        if relax_intrabatch_account_locks
+                            && !batch_signatures.insert(transactions[i].signature()) =>
+                    {
                         Err(TransactionError::AccountInUse)
                     }
                     Ok(()) => Ok(()),
+                    Err(e) => Err(e),
                 });
 
         TransactionBatch::new(

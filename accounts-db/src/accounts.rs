@@ -572,6 +572,8 @@ impl Accounts {
         self.lock_accounts_inner(tx_account_locks_results, relax_intrabatch_account_locks)
     }
 
+    /// This function will prevent multiple threads from modifying the same account state at the
+    /// same time, possibly excluding transactions based on prior results
     #[must_use]
     pub fn lock_accounts_with_results<'a>(
         &self,
