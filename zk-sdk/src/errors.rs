@@ -33,13 +33,13 @@ pub enum ElGamalError {
 
 #[derive(Error, Clone, Debug, Eq, PartialEq)]
 pub enum TranscriptError {
-    #[error("point is the identity")]
+    #[error("Invalid point: point is the identity")]
     ValidationError,
 }
 
 #[derive(Error, Debug, Clone, Eq, PartialEq)]
 pub enum ParseError {
-    #[error("String is the wrong size")]
+    #[error("Input string has wrong size")]
     WrongSize,
     #[error("Invalid Base64 string")]
     Invalid,
