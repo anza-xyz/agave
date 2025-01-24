@@ -591,7 +591,7 @@ pub struct Validator {
     repair_quic_endpoints: Option<[Endpoint; 3]>,
     repair_quic_endpoints_runtime: Option<TokioRuntime>,
     repair_quic_endpoints_join_handle: Option<repair::quic_endpoint::AsyncTryJoinHandle>,
-    _thread_manager: ThreadManager,
+    thread_manager: ThreadManager,
 }
 
 impl Validator {
@@ -1664,7 +1664,7 @@ impl Validator {
             repair_quic_endpoints,
             repair_quic_endpoints_runtime,
             repair_quic_endpoints_join_handle,
-            _thread_manager: thread_manager,
+            thread_manager,
         })
     }
 
@@ -1822,6 +1822,7 @@ impl Validator {
         self.poh_timing_report_service
             .join()
             .expect("poh_timing_report_service");
+        self.thread_manager.destroy();
     }
 }
 

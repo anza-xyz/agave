@@ -1,6 +1,10 @@
 use {
-    anyhow::Ok,
-    std::{collections::HashMap, ops::Deref, sync::Arc},
+    log::{debug, error, warn},
+    std::{
+        collections::HashMap,
+        ops::Deref,
+        sync::{atomic::Ordering, Arc},
+    },
 };
 
 pub mod config;
@@ -87,7 +91,7 @@ impl ThreadManager {
             Some(n) => runtimes.get(n),
             None => match mapping.get("default") {
                 Some(n) => {
-                    log::warn!("Falling back to default runtime for {name}");
+                    warn!("Falling back to default runtime for {name}");
                     runtimes.get(n)
                 }
                 None => None,
@@ -163,6 +167,31 @@ impl ThreadManager {
         Ok(Self {
             inner: Arc::new(manager),
         })
+    }
+
+    pub fn destroy(self) {
+        let Ok(mut inner) = Arc::try_unwrap(self.inner) else {
+            error!(
+                      "References to Thread Manager are still active, clean shutdown may not be possible!"
+                  );
+            return;
+        };
+
+        for (name, runtime) in inner.tokio_runtimes.drain() {
+            let active_cnt = runtime.counters.active_threads_cnt.load(Ordering::SeqCst);
+            match active_cnt {
+                0 => debug!("Shutting down Tokio runtime {name}"),
+                _ => warn!("Tokio runtime {name} has active workers during shutdown!"),
+            }
+            runtime.tokio.shutdown_background();
+        }
+        for (name, runtime) in inner.native_thread_runtimes.drain() {
+            let active_cnt = runtime.running_count.load(Ordering::SeqCst);
+            match active_cnt {
+                0 => debug!("Shutting down Native thread pool {name}"),
+                _ => warn!("Native pool {name} has active threads during shutdown!"),
+            }
+        }
     }
 }
 
