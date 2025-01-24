@@ -7341,6 +7341,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-sbf-rust-efficient-panic"
+version = "2.2.0"
+dependencies = [
+ "solana-program",
+]
+
+[[package]]
 name = "solana-sbf-rust-error-handling"
 version = "2.2.0"
 dependencies = [
