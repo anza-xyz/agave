@@ -17,6 +17,7 @@ use {
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpSocket,
         sync::oneshot,
+        task::JoinSet,
     },
 };
 
@@ -110,11 +111,16 @@ pub(crate) const DEFAULT_RETRY_COUNT: usize = 5;
 /// Checks if all of the provided TCP ports are reachable by the machine at
 /// `ip_echo_server_addr`. Tests must complete within timeout provided.
 /// Tests will run concurrently to avoid head-of-line blocking. Will return false on any error.
-pub(crate) async fn verify_reachable_tcp_ports(
+/// This function may panic.
+pub(crate) async fn verify_all_reachable_tcp(
     ip_echo_server_addr: SocketAddr,
     listeners: Vec<(u16, TcpListener)>,
     timeout: Duration,
 ) -> bool {
+    if listeners.is_empty() {
+        warn!("No ports provided for verify_all_reachable_tcp to check");
+        return true;
+    }
     let mut checkers = Vec::new();
     let mut ok = true;
 
@@ -175,6 +181,7 @@ pub(crate) async fn verify_reachable_tcp_ports(
                 // So, to close the thread cleanly, just connect from here.
                 // ref: https://github.com/rust-lang/rust/issues/31615
                 TcpStream::connect_timeout(&listening_addr, timeout).unwrap();
+                // Mark that we have found error, but do  not exit yet, as we will have stuck ports otherwise.
                 ok = false;
             }
         }
@@ -185,120 +192,122 @@ pub(crate) async fn verify_reachable_tcp_ports(
 }
 
 /// Checks if all of the provided UDP ports are reachable by the machine at
-/// `ip_echo_server_addr`. Tests must complete within timeout provided.
+/// `ip_echo_server_addr`.
+/// This function will test a few ports at a time, retrying if necessary.
+/// Tests must complete within timeout provided, so a longer timeout may be
+/// necessary if checking many ports.
 /// A given amount of retries will be made to accommodate packet loss.
-pub(crate) async fn verify_reachable_udp_ports(
+/// This function may panic.
+pub(crate) async fn verify_all_reachable_udp(
     ip_echo_server_addr: SocketAddr,
-    udp_sockets: &[&UdpSocket],
+    sockets: &[&UdpSocket],
     timeout: Duration,
     retry_count: usize,
 ) -> bool {
-    let mut ok = true;
-    let mut udp_ports: BTreeMap<_, _> = BTreeMap::new();
-    udp_sockets.iter().for_each(|udp_socket| {
-        let port = udp_socket.local_addr().unwrap().port();
-        udp_ports
+    if sockets.is_empty() {
+        warn!("No ports provided for verify_all_reachable_udp to check");
+        return true;
+    }
+    // This function may get fed multiple sockets bound to the same port.
+    // In such case we need to know which sockets are bound to each port,
+    // as only one of them will receive a packet from echo server
+    let mut ports_to_socks_map: BTreeMap<_, _> = BTreeMap::new();
+    sockets.iter().for_each(|&socket| {
+        let port = socket.local_addr().expect("Sockets should be bound").port();
+        ports_to_socks_map
             .entry(port)
             .or_insert_with(Vec::new)
-            .push(udp_socket);
+            .push(socket);
     });
-    let udp_ports: Vec<_> = udp_ports.into_iter().collect();
+    let ports: Vec<_> = ports_to_socks_map.into_iter().collect();
 
     info!(
         "Checking that udp ports {:?} are reachable from {:?}",
-        udp_ports.iter().map(|(port, _)| port).collect::<Vec<_>>(),
+        ports.iter().map(|(port, _)| port).collect::<Vec<_>>(),
         ip_echo_server_addr
     );
 
-    'outer: for checked_ports_and_sockets in udp_ports.chunks(MAX_PORT_COUNT_PER_MESSAGE) {
-        ok = false;
+    'outer: for chunk_to_check in ports.chunks(MAX_PORT_COUNT_PER_MESSAGE) {
+        let ports_to_check = chunk_to_check
+            .iter()
+            .map(|(port, _)| *port)
+            .collect::<Vec<_>>();
 
-        for udp_remaining_retry in (0_usize..retry_count).rev() {
-            let (checked_ports, checked_socket_iter) = (
-                checked_ports_and_sockets
+        for attempt in 0..retry_count {
+            if attempt > 0 {
+                error!("There are some udp ports with no response!! Retrying...");
+            }
+            // clone off the sockets that use ports within our chunk
+            let sockets_to_check = chunk_to_check.iter().flat_map(|(_, sockets)| {
+                sockets
                     .iter()
-                    .map(|(port, _)| *port)
-                    .collect::<Vec<_>>(),
-                checked_ports_and_sockets
-                    .iter()
-                    .flat_map(|(_, sockets)| sockets),
-            );
+                    .map(|&s| s.try_clone().expect("Unable to clone udp socket"))
+            });
 
             let _ = ip_echo_server_request(
                 ip_echo_server_addr,
-                IpEchoServerMessage::new(&[], &checked_ports),
+                IpEchoServerMessage::new(&[], &ports_to_check),
             )
             .await
             .map_err(|err| warn!("ip_echo_server request failed: {}", err));
 
-            // Spawn threads at once!
             let reachable_ports = Arc::new(RwLock::new(HashSet::new()));
-            let thread_handles: Vec<_> = checked_socket_iter
-                .map(|udp_socket| {
-                    let port = udp_socket.local_addr().unwrap().port();
-                    let udp_socket = udp_socket.try_clone().expect("Unable to clone udp socket");
-                    let reachable_ports = reachable_ports.clone();
+            // Spawn threads for each socket to check
+            let mut checkers = JoinSet::new();
+            for socket in sockets_to_check {
+                let port = socket.local_addr().unwrap().port();
+                let reachable_ports = reachable_ports.clone();
 
-                    // Use blocking API since we have no idea if sockets given to us are nonblocking or not
-                    tokio::task::spawn_blocking(move || {
-                        let start = Instant::now();
+                // Use blocking API since we have no idea if sockets given to us are nonblocking or not
+                checkers.spawn_blocking(move || {
+                    let start = Instant::now();
 
-                        let original_read_timeout = udp_socket.read_timeout().unwrap();
-                        udp_socket
-                            .set_read_timeout(Some(Duration::from_millis(250)))
-                            .unwrap();
-                        loop {
-                            if reachable_ports.read().unwrap().contains(&port)
-                                || Instant::now().duration_since(start) >= timeout
-                            {
-                                break;
-                            }
+                    let original_read_timeout = socket.read_timeout().unwrap();
+                    socket
+                        .set_read_timeout(Some(Duration::from_millis(250)))
+                        .unwrap();
 
-                            let recv_result = udp_socket.recv(&mut [0; 1]);
-                            debug!(
-                                "Waited for incoming datagram on udp/{}: {:?}",
-                                port, recv_result
-                            );
-
-                            if recv_result.is_ok() {
-                                reachable_ports.write().unwrap().insert(port);
-                                break;
-                            }
+                    loop {
+                        if reachable_ports.read().unwrap().contains(&port)
+                            || Instant::now().duration_since(start) >= timeout
+                        {
+                            break;
                         }
-                        udp_socket.set_read_timeout(original_read_timeout).unwrap();
-                    })
-                })
-                .collect();
 
-            // Now join threads!
-            // Separate from the above by collect()-ing as an intermediately step to make the iterator
-            // eager not lazy so that joining happens here at once after creating bunch of threads
-            // at once.
-            for thread in thread_handles {
-                thread.await.expect("Threads should exit cleanly");
+                        let recv_result = socket.recv(&mut [0; 1]);
+                        debug!(
+                            "Waited for incoming datagram on udp/{}: {:?}",
+                            port, recv_result
+                        );
+
+                        if recv_result.is_ok() {
+                            reachable_ports.write().unwrap().insert(port);
+                            break;
+                        }
+                    }
+                    socket.set_read_timeout(original_read_timeout).unwrap();
+                });
             }
 
-            let reachable_ports = reachable_ports.read().unwrap().clone();
-            if reachable_ports.len() == checked_ports.len() {
-                info!(
-                    "checked udp ports: {:?}, reachable udp ports: {:?}",
-                    checked_ports, reachable_ports
-                );
-                ok = true;
-                break;
-            } else if udp_remaining_retry > 0 {
-                // Might have lost a UDP packet, retry a couple times
-                error!(
-                    "checked udp ports: {:?}, reachable udp ports: {:?}",
-                    checked_ports, reachable_ports
-                );
-                error!("There are some udp ports with no response!! Retrying...");
-            } else {
-                error!("Maximum retry count is reached....");
-                break 'outer;
+            while let Some(r) = checkers.join_next().await {
+                r.expect("Threads should exit cleanly");
+            }
+
+            // Might have lost a UDP packet, check that all ports were reached
+            let reachable_ports = Arc::into_inner(reachable_ports)
+                .expect("Single owner expected")
+                .into_inner()
+                .expect("No threads should hold the lock");
+            info!(
+                "checked udp ports: {:?}, reachable udp ports: {:?}",
+                ports_to_check, reachable_ports
+            );
+            if reachable_ports.len() == ports_to_check.len() {
+                continue 'outer; // starts checking next chunk of ports, if any
             }
         }
+        error!("Maximum retry count is reached....");
+        return false;
     }
-
-    ok
+    true
 }

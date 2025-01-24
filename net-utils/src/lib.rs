@@ -1,8 +1,19 @@
 //! The `net_utils` module assists with networking
+mod ip_echo_client;
+mod ip_echo_server;
+
+pub use ip_echo_server::{
+    ip_echo_server, IpEchoServer, DEFAULT_IP_ECHO_SERVER_THREADS, MAX_PORT_COUNT_PER_MESSAGE,
+    MINIMUM_IP_ECHO_SERVER_THREADS,
+};
 #[cfg(feature = "dev-context-only-utils")]
 use tokio::net::UdpSocket as TokioUdpSocket;
 use {
-    ip_echo_client::{verify_reachable_tcp_ports, verify_reachable_udp_ports},
+    ip_echo_client::{
+        ip_echo_server_request, ip_echo_server_request_with_binding, verify_all_reachable_tcp,
+        verify_all_reachable_udp,
+    },
+    ip_echo_server::IpEchoServerMessage,
     log::*,
     rand::{thread_rng, Rng},
     socket2::{Domain, SockAddr, Socket, Type},
@@ -11,17 +22,6 @@ use {
         net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, ToSocketAddrs, UdpSocket},
     },
     url::Url,
-};
-
-mod ip_echo_client;
-mod ip_echo_server;
-pub use ip_echo_server::{
-    ip_echo_server, IpEchoServer, DEFAULT_IP_ECHO_SERVER_THREADS, MAX_PORT_COUNT_PER_MESSAGE,
-    MINIMUM_IP_ECHO_SERVER_THREADS,
-};
-use {
-    ip_echo_client::{ip_echo_server_request, ip_echo_server_request_with_binding},
-    ip_echo_server::IpEchoServerMessage,
 };
 
 /// A data type representing a public Udp socket
@@ -117,17 +117,14 @@ pub fn verify_reachable_ports(
         .build()
         .expect("Tokio builder should be able to reliably create a current thread runtime");
     let fut = async {
-        let udp = verify_reachable_udp_ports(
+        let udp = verify_all_reachable_udp(
             *ip_echo_server_addr,
             udp_sockets,
             ip_echo_client::TIMEOUT,
             ip_echo_client::DEFAULT_RETRY_COUNT,
         );
-        let tcp = verify_reachable_tcp_ports(
-            *ip_echo_server_addr,
-            tcp_listeners,
-            ip_echo_client::TIMEOUT,
-        );
+        let tcp =
+            verify_all_reachable_tcp(*ip_echo_server_addr, tcp_listeners, ip_echo_client::TIMEOUT);
         let (udp, tcp) = tokio::join!(udp, tcp);
         udp && tcp
     };
@@ -614,6 +611,7 @@ mod tests {
     use {
         super::*,
         ip_echo_server::IpEchoServerResponse,
+        itertools::Itertools,
         std::{net::Ipv4Addr, time::Duration},
         tokio::runtime::Runtime,
     };
@@ -854,7 +852,7 @@ mod tests {
             bind_common_in_range_with_config(ip_addr, (3200, 3250), config).unwrap();
 
         let rt = runtime();
-        assert!(!rt.block_on(verify_reachable_tcp_ports(
+        assert!(!rt.block_on(verify_all_reachable_tcp(
             server_ip_echo_addr,
             vec![(correct_client_port, client_tcp_listener)],
             Duration::from_secs(2),
@@ -877,7 +875,7 @@ mod tests {
             bind_common_in_range_with_config(ip_addr, (3200, 3250), config).unwrap();
 
         let rt = runtime();
-        assert!(!rt.block_on(verify_reachable_udp_ports(
+        assert!(!rt.block_on(verify_all_reachable_udp(
             server_ip_echo_addr,
             &[&client_udp_socket],
             Duration::from_secs(2),
@@ -920,10 +918,11 @@ mod tests {
             parse_host("127.0.0.1").unwrap(),
         );
 
+        let socket_refs = udp_sockets.iter().collect_vec();
         assert!(verify_reachable_ports(
             &ip_echo_server_addr,
             tcp_listeners,
-            &[]
+            &socket_refs
         ));
     }
 
