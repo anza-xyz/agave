@@ -74,7 +74,6 @@ solana-vote-program = { path = "../../programs/vote", version = "=2.2.0" }
 agave-validator = { path = "../../validator", version = "=2.2.0" }
 solana-zk-sdk = { path = "../../zk-sdk", version = "=2.2.0" }
 thiserror = "1.0"
-test-case = "3.3.1"
 
 [package]
 name = "solana-sbf-programs"
@@ -143,7 +142,6 @@ solana-transaction-status = { workspace = true }
 solana-type-overrides = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
-test-case = { workspace = true }
 
 [[bench]]
 name = "bpf_loader"
