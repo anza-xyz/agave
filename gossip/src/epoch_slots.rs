@@ -8,6 +8,7 @@ use {
     flate2::{Compress, Compression, Decompress, FlushCompress, FlushDecompress},
     solana_sanitize::{Sanitize, SanitizeError},
     solana_sdk::{clock::Slot, pubkey::Pubkey},
+    std::sync::Arc,
 };
 
 pub const MAX_SLOTS_PER_ENTRY: usize = 2048 * 8;
@@ -16,7 +17,7 @@ pub const MAX_SLOTS_PER_ENTRY: usize = 2048 * 8;
 pub struct Uncompressed {
     pub first_slot: Slot,
     pub num: usize,
-    pub slots: BitVec<u8>,
+    pub slots: Arc<BitVec<u8>>,
 }
 
 impl Sanitize for Uncompressed {
@@ -45,8 +46,32 @@ impl Sanitize for Uncompressed {
 pub struct Flate2 {
     pub first_slot: Slot,
     pub num: usize,
-    #[serde(with = "serde_bytes")]
-    pub compressed: Vec<u8>,
+    #[serde(with = "serde_compat_bytes")]
+    pub compressed: Arc<Vec<u8>>,
+}
+
+mod serde_compat_bytes {
+    use {
+        serde::{Deserialize, Deserializer, Serializer},
+        serde_bytes::ByteBuf,
+        std::sync::Arc,
+    };
+
+    pub(super) fn serialize<S: Serializer>(
+        bytes: &Arc<Vec<u8>>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.serialize_bytes(bytes)
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Arc<Vec<u8>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Deserialize::deserialize(deserializer)
+            .map(ByteBuf::into_vec)
+            .map(Arc::new)
+    }
 }
 
 impl Sanitize for Flate2 {
@@ -86,13 +111,13 @@ impl Flate2 {
         let mut compressor = Compress::new(Compression::best(), false);
         let first_slot = unc.first_slot;
         let num = unc.num;
-        unc.slots.shrink_to_fit();
-        let bits = unc.slots.into_boxed_slice();
+        Arc::make_mut(&mut unc.slots).shrink_to_fit();
+        let bits = Arc::unwrap_or_clone(unc.slots).into_boxed_slice();
         compressor.compress_vec(&bits, &mut compressed, FlushCompress::Finish)?;
         let rv = Self {
             first_slot,
             num,
-            compressed,
+            compressed: Arc::new(compressed),
         };
         let _ = rv.inflate()?;
         Ok(rv)
@@ -105,17 +130,18 @@ impl Flate2 {
         Ok(Uncompressed {
             first_slot: self.first_slot,
             num: self.num,
-            slots: BitVec::from_bits(&uncompressed),
+            slots: Arc::new(BitVec::from_bits(&uncompressed)),
         })
     }
 }
 
 impl Uncompressed {
     pub fn new(max_size: usize) -> Self {
+        let slots = BitVec::new_fill(false, 8 * max_size as u64);
         Self {
             num: 0,
             first_slot: 0,
-            slots: BitVec::new_fill(false, 8 * max_size as u64),
+            slots: Arc::new(slots),
         }
     }
     pub fn to_slots(&self, min_slot: Slot) -> Vec<Slot> {
@@ -149,7 +175,7 @@ impl Uncompressed {
             if *s - self.first_slot >= self.slots.len() {
                 return i;
             }
-            self.slots.set(*s - self.first_slot, true);
+            Arc::make_mut(&mut self.slots).set(*s - self.first_slot, true);
             self.num = std::cmp::max(self.num, 1 + (*s - self.first_slot) as usize);
         }
         slots.len()
@@ -423,11 +449,11 @@ mod tests {
         assert_eq!(o.sanitize(), Err(SanitizeError::ValueOutOfBounds));
 
         let mut o = slots.clone();
-        o.slots = BitVec::new_fill(false, 7); // Length not a multiple of 8
+        o.slots = Arc::new(BitVec::new_fill(false, 7)); // Length not a multiple of 8
         assert_eq!(o.sanitize(), Err(SanitizeError::ValueOutOfBounds));
 
         let mut o = slots.clone();
-        o.slots = BitVec::with_capacity(8); // capacity() not equal to len()
+        o.slots = Arc::new(BitVec::with_capacity(8)); // capacity() not equal to len()
         assert_eq!(o.sanitize(), Err(SanitizeError::ValueOutOfBounds));
 
         let compressed = Flate2::deflate(slots).unwrap();
