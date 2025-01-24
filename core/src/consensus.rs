@@ -175,7 +175,7 @@ pub(crate) struct ComputedBankState {
     pub my_latest_landed_vote: Option<Slot>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum TowerVersions {
     V1_17_14(Tower1_7_14),
     V1_14_11(Tower1_14_11),
@@ -236,19 +236,13 @@ pub(crate) enum BlockhashStatus {
     Blockhash(Hash),
 }
 
-#[cfg_attr(
-    feature = "frozen-abi",
-    derive(AbiExample),
-    frozen_abi(digest = "FcHteDgmzjrtyFD9D6EQ2hY9FRz42gs2S7eJ1DyHWP7s")
-)]
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Tower {
     pub node_pubkey: Pubkey,
     pub(crate) threshold_depth: usize,
     threshold_size: f64,
     pub(crate) vote_state: VoteState,
     last_vote: VoteTransaction,
-    #[serde(skip)]
     // The blockhash used in the last vote transaction, may or may not equal the
     // blockhash of the voted block itself, depending if the vote slot was refreshed.
     // For instance, a vote for slot 5, may be refreshed/resubmitted for inclusion in
@@ -256,7 +250,6 @@ pub struct Tower {
     // For non voting validators this is NonVoting
     last_vote_tx_blockhash: BlockhashStatus,
     last_timestamp: BlockTimestamp,
-    #[serde(skip)]
     // Restored last voted slot which cannot be found in SlotHistory at replayed root
     // (This is a special field for slashing-free validator restart with edge cases).
     // This could be emptied after some time; but left intact indefinitely for easier
@@ -264,7 +257,6 @@ pub struct Tower {
     // Further, stray slot can be stale or not. `Stale` here means whether given
     // bank_forks (=~ ledger) lacks the slot or not.
     stray_restored_slot: Option<Slot>,
-    #[serde(skip)]
     pub last_switch_threshold_check: Option<(Slot, SwitchForkDecision)>,
 }
 
