@@ -6,7 +6,7 @@ ARG \
   RUST_NIGHTLY_VERSION= \
   GOLANG_VERSION=1.21.3 \
   NODE_MAJOR=18 \
-  SCCACHE_VERSION=v0.8.1 \
+  SCCACHE_VERSION=v0.9.1 \
   GRCOV_VERSION=v0.8.18
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
