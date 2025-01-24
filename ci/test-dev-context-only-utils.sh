@@ -24,6 +24,6 @@ scripts/check-dev-context-only-utils.sh check-all-targets "$@"
 scripts/check-dev-context-only-utils.sh check-bins-and-lib "$@"
 
 # This shows final stats while stopping the sccache background server as well
-# for later normal sccache use (if any), Remember that sccache is now
+# for later normal sccache use (if any). Remember that sccache is now
 # temporarily and experimtally running with the local disk storage.
 _ sccache --stop-server
