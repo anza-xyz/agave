@@ -10,10 +10,10 @@ mkdir sbf-sdk/
 cp LICENSE sbf-sdk/
 
 (
-  ci/crate-version.sh sdk/Cargo.toml
+  ci/crate-version.sh platform-tools-sdk/cargo-build-sbf/Cargo.toml
   git rev-parse HEAD
 ) > sbf-sdk/version.txt
 
-cp -a sdk/sbf/* sbf-sdk/
+cp -a platform-tools-sdk/sbf/* sbf-sdk/
 
 tar jvcf sbf-sdk.tar.bz2 sbf-sdk/

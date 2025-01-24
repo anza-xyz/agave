@@ -56,7 +56,7 @@ impl Default for Config<'_> {
                 .parent()
                 .expect("Unable to get parent directory")
                 .to_path_buf()
-                .join("sdk")
+                .join("platform-tools-sdk")
                 .join("sbf"),
             sbf_out_dir: None,
             platform_tools_version: None,
@@ -340,7 +340,7 @@ fn install_if_missing(
         fs::remove_file(download_file_path).map_err(|err| err.to_string())?;
     }
     // Make a symbolic link source_path -> target_path in the
-    // sdk/sbf/dependencies directory if no valid link found.
+    // platform-tools-sdk/sbf/dependencies directory if no valid link found.
     let source_base = config.sbf_sdk.join("dependencies");
     if !source_base.exists() {
         fs::create_dir_all(&source_base).map_err(|err| err.to_string())?;
